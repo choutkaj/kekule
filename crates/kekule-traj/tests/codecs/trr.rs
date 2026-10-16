@@ -19,8 +19,8 @@ use kekule_traj::io::{
     TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
-    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
@@ -150,7 +150,7 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
             assert_eq!(
             writer.write_frame(frame.frame_view()),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 TrajectoryFormat::Trr,
                 "box-rounding.trr",
@@ -237,14 +237,14 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
 
     assert_eq!(
         codec_kind(&open(dense_bytes - 1).err().unwrap()),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     let mut too_small = open(f32_total - 1).unwrap();
     let mut destination = populated_frame(&topology, 99.0, 99);
     let before = buffer_snapshot(&destination);
     assert_eq!(
         codec_kind(&too_small.read_next(&mut destination).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     assert_eq!(buffer_snapshot(&destination), before);
 
@@ -256,12 +256,12 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
         let before = buffer_snapshot(&destination);
         assert_eq!(
             codec_kind(&reader.read_next(&mut destination).unwrap_err()),
-            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            Some(TrajectoryIoErrorKind::LimitExceeded)
         );
         assert_eq!(buffer_snapshot(&destination), before);
         assert_eq!(
             codec_kind(&open_indexed(limit).err().unwrap()),
-            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            Some(TrajectoryIoErrorKind::LimitExceeded)
         );
     }
 
@@ -494,7 +494,7 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     let before = buffer_snapshot(&destination);
     control.arm_at_current_position();
     let error = indexed.read_frame(1, &mut destination).unwrap_err();
-    assert!(matches!(error, TrajectoryIoError::Io(_)));
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::Io);
     assert_eq!(buffer_snapshot(&destination), before);
 }
 
@@ -533,7 +533,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     assert!(!control.violated());
     assert_eq!(control.probed_bytes(), 1);
@@ -564,7 +564,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         .unwrap();
         assert_eq!(
             codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            Some(TrajectoryIoErrorKind::LimitExceeded)
         );
         assert!(!control.violated());
         assert_eq!(control.probed_bytes(), 1);
@@ -585,13 +585,14 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     assert_eq!(
         writer.write_frame(frame.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Trr,
             "zero.trr",
             Some(0),
-            "TRR cannot preserve properties",
-        ))
+            "TRR cannot preserve frame properties",
+        )
+        .with_field(TrajectoryField::Properties))
     );
     frame.frame_mut().properties_mut().owner_mut().clear();
     writer.write_frame(frame.frame_view()).unwrap();
@@ -639,7 +640,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InvalidRecordLength)
+        Some(TrajectoryIoErrorKind::InvalidRecordLength)
     );
 
     let mut truncated = valid.clone();
@@ -658,11 +659,9 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     let error = reader.read_next(&mut destination).unwrap_err();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::TruncatedRecord)
+        Some(TrajectoryIoErrorKind::TruncatedRecord)
     );
-    let TrajectoryIoError::Codec(context) = &error else {
-        panic!("expected typed TRR codec context");
-    };
+    let context = &error;
     assert_eq!(context.frame(), Some(1));
     assert!(context.byte_offset().is_some());
     assert_eq!(xs(&destination), before);
@@ -682,7 +681,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     let error = reader.read_next(&mut destination).unwrap_err();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
 }
 
@@ -756,7 +755,7 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
         assert_eq!(
             writer.write_frame(frame.frame_view()),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 TrajectoryFormat::Trr,
                 "triplets.trr",
@@ -793,7 +792,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
     assert_eq!(
         writer.write_frame(frame.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Trr,
             "late-invalid.trr",
@@ -819,13 +818,14 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
     assert_eq!(
         writer.write_frame(bond_annotated.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Trr,
             "late-invalid.trr",
             Some(0),
             "TRR cannot preserve bond properties",
-        ))
+        )
+        .with_field(TrajectoryField::BondProperties))
     );
     assert!(writer.writer().get_ref().is_empty());
 }

@@ -14,23 +14,48 @@ use kekule::structure::{AsModelView, Trajectory};
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ReductionError {
+    /// The atom selection is invalid; see the source.
     Selection(SelectionError),
+    /// A quantity could not be converted to the canonical unit; see the
+    /// source.
     Unit(UnitError),
+    /// The selection names no atom or pair.
     EmptySelection,
+    /// The reduction was finished before observing a frame.
     NoFrames,
+    /// The contact cutoff is not finite and nonnegative.
     InvalidCutoff,
-    SelfPair { pair: usize },
-    DuplicatePair { pair: usize },
-    TopologyMismatch { frame: usize },
-    NumericalFailure { frame: usize, atom: InstanceAtomId },
+    /// A contact pair names the same atom twice.
+    SelfPair {
+        /// The index of the pair in the input.
+        pair: usize,
+    },
+    /// A contact pair repeats an earlier unordered pair.
+    DuplicatePair {
+        /// The index of the repeated pair in the input.
+        pair: usize,
+    },
+    /// An observed frame belongs to a different topology snapshot.
+    TopologyMismatch {
+        /// The index of the observed frame.
+        frame: usize,
+    },
+    /// An accumulated value left the finite numerical range.
+    NumericalFailure {
+        /// The index of the observed frame.
+        frame: usize,
+        /// The atom whose value overflowed.
+        atom: InstanceAtomId,
+    },
+    /// The frame count no longer fits the exact reduction arithmetic.
     FrameCountOverflow,
 }
 
 impl fmt::Display for ReductionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Selection(error) => write!(f, "reduction selection: {error}"),
-            Self::Unit(error) => write!(f, "reduction unit: {error}"),
+            Self::Selection(_) => f.write_str("invalid reduction selection"),
+            Self::Unit(_) => f.write_str("invalid reduction unit"),
             Self::EmptySelection => f.write_str("reduction requires at least one atom or pair"),
             Self::NoFrames => f.write_str("reduction requires at least one observed frame"),
             Self::InvalidCutoff => f.write_str("contact cutoff must be finite and nonnegative"),

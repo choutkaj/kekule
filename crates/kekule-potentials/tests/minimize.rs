@@ -9,8 +9,9 @@ use kekule::units::{
     NANOMETER,
 };
 use kekule_potentials::{
-    minimize, minimize_with_observer, Energy, Evaluation, EvaluationError, MinimizationError,
-    MinimizationStatus, MinimizeOptions, Potential, SingularGeometry,
+    minimize, minimize_with_observer, Energy, Evaluation, EvaluationError, InteractionKind,
+    MinimizationError, MinimizationStatus, MinimizeOption, MinimizeOptions, Potential,
+    SingularGeometry,
 };
 
 /// `sum_i sum_axis k_axis * scale * (x - center_i)^2`, optionally singular
@@ -52,7 +53,7 @@ impl Potential for Bowl {
         for (index, (p, c)) in x.iter().zip(&self.centers).enumerate() {
             if p.x > self.wall {
                 return Err(EvaluationError::InvalidGeometry {
-                    interaction: "wall",
+                    interaction: InteractionKind::Restraint,
                     atoms: vec![model.topology().atom_ids()[index]],
                     kind: SingularGeometry::CoincidentAtoms,
                 });
@@ -271,26 +272,35 @@ fn progress_is_independent_of_the_gradient_scale() {
 fn invalid_options_are_rejected_before_evaluation() {
     let model = start();
     let bowl = Bowl::new(&model, centers());
-    for options in [
-        tight(0.0),
-        tight(f64::NAN),
-        MinimizeOptions {
-            max_step: Quantity::new(0.0, NANOMETER),
-            ..MinimizeOptions::default()
-        },
-        MinimizeOptions {
-            memory: 0,
-            ..MinimizeOptions::default()
-        },
-        MinimizeOptions {
-            max_line_search_evaluations: 0,
-            ..MinimizeOptions::default()
-        },
+    for (options, option) in [
+        (tight(0.0), MinimizeOption::GradientTolerance),
+        (tight(f64::NAN), MinimizeOption::GradientTolerance),
+        (
+            MinimizeOptions {
+                max_step: Quantity::new(0.0, NANOMETER),
+                ..MinimizeOptions::default()
+            },
+            MinimizeOption::MaxStep,
+        ),
+        (
+            MinimizeOptions {
+                memory: 0,
+                ..MinimizeOptions::default()
+            },
+            MinimizeOption::Memory,
+        ),
+        (
+            MinimizeOptions {
+                max_line_search_evaluations: 0,
+                ..MinimizeOptions::default()
+            },
+            MinimizeOption::MaxLineSearchEvaluations,
+        ),
     ] {
-        assert!(matches!(
-            minimize(&bowl, model.as_model_view(), &options),
-            Err(MinimizationError::InvalidOptions(_))
-        ));
+        assert_eq!(
+            minimize(&bowl, model.as_model_view(), &options).unwrap_err(),
+            MinimizationError::InvalidOptions(option)
+        );
     }
     let wrong_unit = MinimizeOptions {
         max_step: Quantity::new(1.0, CANONICAL_ENERGY_UNIT),

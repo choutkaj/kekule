@@ -1,13 +1,13 @@
 //! Bounded GROMACS XTC trajectories with a checked reader and writer.
 
+use crate::TrajectoryField;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::{
-    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
-    TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::TrajectoryFrameView;
@@ -281,15 +281,14 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         validate_atom_count(atom_count, limits, source_label)?;
         let expected_atoms = topology.atom_count();
         if atom_count != expected_atoms {
-            return Err(TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::InconsistentAtomCount,
+            return Err(TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentAtomCount,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Xtc),
             )
             .with_source_label(source_label)
             .with_frame(frame_index)
-            .with_counts(expected_atoms as u64, atom_count as u64)
-            .into());
+            .with_counts(expected_atoms as u64, atom_count as u64));
         }
         let repeated_raw = i32::from_be_bytes(header[52..56].try_into().expect("repeat"));
         let repeated = nonnegative_xdr_count(
@@ -300,21 +299,20 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             start + 52,
         )?;
         if repeated != atom_count {
-            return Err(TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::InconsistentAtomCount,
+            return Err(TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentAtomCount,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Xtc),
             )
             .with_source_label(source_label)
             .with_frame(frame_index)
             .with_counts(atom_count as u64, repeated as u64)
-            .with_detail("XTC repeated atom count differs from its header")
-            .into());
+            .with_detail("XTC repeated atom count differs from its header"));
         }
         let step_raw = i32::from_be_bytes(header[8..12].try_into().expect("step"));
         let step = u64::try_from(step_raw).map_err(|_| {
-            TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
+            TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Xtc),
             )
@@ -783,16 +781,15 @@ impl<R: Read + Seek> XtcReader<R> {
             return Ok(None);
         };
         if info.magic != self.first_info.magic || info.precision != self.first_info.precision {
-            return Err(TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+            return Err(TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Xtc),
             )
             .with_source_label(&self.options.source_label)
             .with_frame(self.frame_cursor)
             .with_byte_offset(info.start)
-            .with_detail("XTC magic and coordinate precision must remain constant across frames")
-            .into());
+            .with_detail("XTC magic and coordinate precision must remain constant across frames"));
         }
         if self.adapter.decoded_start != Some(info.start) {
             self.adapter
@@ -963,7 +960,9 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         let offset = self.pending_info.as_ref().map_or_else(
             || {
@@ -1059,16 +1058,18 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         let offset = self
             .offsets
             .get(
                 usize::try_from(index)
-                    .map_err(|_| TrajectoryIoError::FrameIndexOutOfRange(index))?,
+                    .map_err(|_| TrajectoryIoError::frame_index_out_of_range(index))?,
             )
             .copied()
-            .ok_or(TrajectoryIoError::FrameIndexOutOfRange(index))?;
+            .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
         let saved_offset = self
             .inner
             .adapter
@@ -1103,7 +1104,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             .inner
             .parse_next()
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|info| info.ok_or(TrajectoryIoError::FrameIndexOutOfRange(index)));
+            .and_then(|info| info.ok_or(TrajectoryIoError::frame_index_out_of_range(index)));
         let restore = self
             .inner
             .adapter
@@ -1252,14 +1253,25 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             &self.source_label,
         )?;
         if !frame.topology().shares_layout(self.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         for (present, field) in [
-            (frame.velocities().is_some(), "velocities"),
-            (frame.forces().is_some(), "forces"),
-            (frame.properties().atoms().has_data(), "atom properties"),
-            (frame.properties().bonds().has_data(), "bond properties"),
-            (!frame.properties().owner().is_empty(), "owner properties"),
+            (frame.velocities().is_some(), TrajectoryField::Velocities),
+            (frame.forces().is_some(), TrajectoryField::Forces),
+            (
+                frame.properties().atoms().has_data(),
+                TrajectoryField::AtomProperties,
+            ),
+            (
+                frame.properties().bonds().has_data(),
+                TrajectoryField::BondProperties,
+            ),
+            (
+                !frame.properties().owner().is_empty(),
+                TrajectoryField::Properties,
+            ),
         ] {
             if present {
                 return Err(writer_field_error(
@@ -1271,7 +1283,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         }
         let step = frame.step().ok_or_else(|| {
             codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xtc),
                 &self.source_label,
@@ -1280,7 +1292,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         })?;
         let step = i32::try_from(step).map_err(|_| {
             codec_context(
-                TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
+                TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xtc),
                 &self.source_label,
@@ -1289,7 +1301,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         })?;
         let time = frame.time().ok_or_else(|| {
             codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xtc),
                 &self.source_label,
@@ -1298,7 +1310,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         })?;
         let time = time.value_in(PICOSECOND).map_err(|error| {
             codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xtc),
                 &self.source_label,
@@ -1311,7 +1323,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             (None, XtcCellPolicy::ZeroMatrixAsAbsent) => {}
             (None, XtcCellPolicy::RequirePeriodic) => {
                 return Err(codec_context(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Xtc),
                     &self.source_label,
@@ -1321,7 +1333,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             (Some(cell), _) => {
             if cell.periodic_axes() != [true; 3] {
                 return Err(codec_context(
-                    TrajectoryCodecErrorKind::UnsupportedVariant,
+                    TrajectoryIoErrorKind::UnsupportedVariant,
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Xtc),
                     &self.source_label,
@@ -1330,7 +1342,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             }
             let vectors = cell.vectors().value_in(NANOMETER).map_err(|error| {
                 codec_context(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Xtc),
                     &self.source_label,
@@ -1354,7 +1366,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             )
             .map_err(|error| {
                 codec_context(
-                    TrajectoryCodecErrorKind::InvalidFrame,
+                    TrajectoryIoErrorKind::InvalidFrame,
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Xtc),
                     &self.source_label,
@@ -1372,7 +1384,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             .conversion_factor_to(NANOMETER)
             .map_err(|error| {
                 codec_context(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Xtc),
                     &self.source_label,
@@ -1418,7 +1430,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     let scaled = (value * self.options.precision).round();
                     if !scaled.is_finite() || f64::from(scaled).abs() > XTC_MAX_SCALED as f64 {
                         return Err(codec_context(
-                            TrajectoryCodecErrorKind::InvalidFrame,
+                            TrajectoryIoErrorKind::InvalidFrame,
                             TrajectoryIoOperation::WriteFrame,
                             Some(TrajectoryFormat::Xtc),
                             &self.source_label,
@@ -1439,7 +1451,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         }
         if compressed && (0..3).any(|axis| maximum[axis] - minimum[axis] >= XTC_MAX_SCALED) {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xtc),
                 &self.source_label,
@@ -1955,7 +1967,7 @@ fn decode_cell(
         return match policy {
             XtcCellPolicy::ZeroMatrixAsAbsent => Ok(None),
             XtcCellPolicy::RequirePeriodic => Err(codec_context(
-                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Xtc),
                 source_label,
@@ -2054,8 +2066,8 @@ fn nonnegative_xdr_count(
     byte_offset: u64,
 ) -> Result<usize, TrajectoryIoError> {
     usize::try_from(value).map_err(|_| {
-        TrajectoryCodecErrorContext::new(
-            TrajectoryCodecErrorKind::InvalidHeader,
+        TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::InvalidHeader,
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Xtc),
         )
@@ -2063,14 +2075,13 @@ fn nonnegative_xdr_count(
         .with_frame(frame)
         .with_byte_offset(byte_offset)
         .with_detail(format!("XTC {field} is a negative signed XDR integer"))
-        .into()
     })
 }
 
 fn validate_precision(precision: f32, source_label: &str) -> Result<(), TrajectoryIoError> {
     if !precision.is_finite() || precision <= 0.0 {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::InvalidPrecision,
+            TrajectoryIoErrorKind::InvalidPrecision,
             TrajectoryIoOperation::Open,
             Some(TrajectoryFormat::Xtc),
             source_label,
@@ -2084,7 +2095,7 @@ fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, Trajec
     let narrowed = value as f32;
     if !value.is_finite() || !narrowed.is_finite() {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Xtc),
             source_label,
@@ -2096,7 +2107,7 @@ fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, Trajec
 
 fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
     codec_context(
-        TrajectoryCodecErrorKind::InvalidHeader,
+        TrajectoryIoErrorKind::InvalidHeader,
         TrajectoryIoOperation::ReadHeader,
         Some(TrajectoryFormat::Xtc),
         source_label,
@@ -2105,27 +2116,25 @@ fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoEr
 }
 
 fn frame_error(source_label: &str, frame: u64, detail: impl Into<String>) -> TrajectoryIoError {
-    TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::InvalidFrame,
+    TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::InvalidFrame,
         TrajectoryIoOperation::ReadFrame,
         Some(TrajectoryFormat::Xtc),
     )
     .with_source_label(source_label)
     .with_frame(frame)
     .with_detail(detail)
-    .into()
 }
 
 fn corrupt_error(source_label: &str, frame: u64, detail: impl Into<String>) -> TrajectoryIoError {
-    TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::CorruptCompressedData,
+    TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::CorruptCompressedData,
         TrajectoryIoOperation::ReadFrame,
         Some(TrajectoryFormat::Xtc),
     )
     .with_source_label(source_label)
     .with_frame(frame)
     .with_detail(detail)
-    .into()
 }
 
 fn truncated_error(
@@ -2133,8 +2142,8 @@ fn truncated_error(
     frame: Option<u64>,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
-    let mut context = TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::TruncatedRecord,
+    let mut context = TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::TruncatedRecord,
         if frame.is_some() {
             TrajectoryIoOperation::ReadFrame
         } else {
@@ -2147,7 +2156,7 @@ fn truncated_error(
     if let Some(frame) = frame {
         context = context.with_frame(frame);
     }
-    context.into()
+    context
 }
 
 fn resource_error(
@@ -2155,8 +2164,8 @@ fn resource_error(
     frame: Option<u64>,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
-    let mut context = TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+    let mut context = TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::LimitExceeded,
         if frame.is_some() {
             TrajectoryIoOperation::ReadFrame
         } else {
@@ -2169,19 +2178,19 @@ fn resource_error(
     if let Some(frame) = frame {
         context = context.with_frame(frame);
     }
-    context.into()
+    context
 }
 
-fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryIoError {
-    TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::UnsupportedField,
+fn writer_field_error(source_label: &str, frame: u64, field: TrajectoryField) -> TrajectoryIoError {
+    TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,
         Some(TrajectoryFormat::Xtc),
     )
     .with_source_label(source_label)
     .with_frame(frame)
+    .with_field(field)
     .with_detail(format!("XTC cannot preserve {field}"))
-    .into()
 }
 
 #[cfg(test)]

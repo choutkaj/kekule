@@ -7,11 +7,11 @@ use kekule::structure::{Ensemble, Model, ModelView, Positions};
 use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
-use kekule_openff::{ForceField, ParameterizedTopology};
+use kekule_openff::{ForceField, ParameterizedTopology, VdwMethod};
 use kekule_potentials::openff::{OpenFfPotential, OpenFfPotentialError};
 use kekule_potentials::{
-    minimize, ComponentKind, EvaluationError, MinimizationStatus, MinimizeOptions, Potential,
-    SingularGeometry,
+    minimize, ComponentKind, EvaluationError, InteractionKind, MinimizationStatus, MinimizeOptions,
+    Potential, SingularGeometry,
 };
 use kekule_traj::FrameBuffer;
 
@@ -373,7 +373,7 @@ fn singular_coordinates_name_the_qualified_atoms() {
     let carbon = model.position(ids[1]).unwrap();
     model.set_position(ids[13], carbon).unwrap();
     let expected = EvaluationError::InvalidGeometry {
-        interaction: "nonbonded pair",
+        interaction: InteractionKind::NonbondedPair,
         atoms: vec![ids[1], ids[13]],
         kind: SingularGeometry::CoincidentAtoms,
     };
@@ -438,12 +438,14 @@ fn nonperiodic_vdw_cutoff_is_rejected_at_preparation() {
             kekule_openff::ChargeMethod::LibraryOnly,
         )
         .unwrap();
+    let error = OpenFfPotential::new(&p).unwrap_err();
     assert_eq!(
-        OpenFfPotential::new(&p).unwrap_err(),
-        OpenFfPotentialError::UnsupportedNonbondedMethod {
-            handler: "vdW",
-            method: "cutoff",
-        }
+        error,
+        OpenFfPotentialError::UnsupportedVdwMethod(VdwMethod::Cutoff)
+    );
+    assert_eq!(
+        error.to_string(),
+        "unsupported nonperiodic vdW method \"cutoff\"; only no-cutoff vdW and Coulomb electrostatics are implemented"
     );
 }
 

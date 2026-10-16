@@ -9,8 +9,7 @@ use kekule_traj::io::{
     TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule_traj::{
-    SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryReader,
+    SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryReader,
 };
 
 use crate::support;
@@ -122,7 +121,7 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
     // the same atom count. Rejection must not consume the pending frame.
     assert!(matches!(
         default_sequential.read_next(&mut destination),
-        Err(TrajectoryIoError::TopologyMismatch)
+        Err(error) if error.kind() == TrajectoryIoErrorKind::TopologyMismatch
     ));
     assert!(default_sequential.read_next(&mut owned_buffer).unwrap());
     assert_eq!(
@@ -167,11 +166,9 @@ fn path_options_enforce_global_limits_and_path_diagnostics() {
     for error in errors {
         assert_eq!(
             support::codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            Some(TrajectoryIoErrorKind::LimitExceeded)
         );
-        let TrajectoryIoError::Codec(context) = error else {
-            panic!("expected codec error")
-        };
+        let context = error;
         assert_eq!(context.source_label(), Some(path.to_str().unwrap()));
     }
     fs::remove_file(path).unwrap();

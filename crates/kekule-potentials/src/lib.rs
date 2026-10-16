@@ -69,9 +69,9 @@ pub mod openff;
 
 pub use minimize::{
     minimize, minimize_with_observer, Minimization, MinimizationError, MinimizationStatus,
-    MinimizationStep, MinimizeOptions,
+    MinimizationStep, MinimizeOption, MinimizeOptions, NumericalFailure,
 };
 pub use potential::{
-    ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, Potential,
-    SingularGeometry,
+    ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, InteractionKind,
+    Potential, SingularGeometry,
 };

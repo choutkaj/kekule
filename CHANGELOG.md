@@ -264,6 +264,45 @@ All notable changes to Kekule are documented in this file.
     the input position. `ModelError::InvalidBondId`, never constructed, is
     removed. `CipAssignmentIssue` and `ValenceIssue` are
     `#[non_exhaustive]`.
+  - `kekule_traj::TrajectoryIoError` is one struct with `kind()`
+    (`TrajectoryIoErrorKind`), `operation()`, `format()`, `source_label()`,
+    `frame()`, `byte_offset()`, `expected()`, `actual()`, `limit_exceeded()`,
+    `field()`, `detail()`, `io_error_kind()` and `source()` (the
+    `std::io::Error` or Kekule error), and public constructors for
+    `TrajectoryReader` and `TrajectoryWriter` implementors. It replaces the
+    `TrajectoryIoError` enum, `TrajectoryIoErrorContext`,
+    `TrajectoryCodecErrorContext` and `TrajectoryCodecErrorKind`
+    (`ResourceLimitExceeded` is `LimitExceeded`); `Io(_)`, `Codec(_)`,
+    `Structure(_)`, `Trajectory(_)`, `TopologyMismatch` and
+    `FrameIndexOutOfRange(n)` are kinds `Io`, the codec kinds,
+    `InvalidStructure`, `InvalidTrajectory`, `TopologyMismatch` and
+    `FrameIndexOutOfRange` with `frame()`. `UnsupportedField(&'static str)`
+    is kind `UnsupportedField` with `field()` (`kekule_traj::TrajectoryField`),
+    which writers now also set; the XTC and TRR property messages say
+    "frame properties". The XYZ frame-byte limit carries its
+    `LimitExceeded`. The never-constructed `AtomOrderMismatch`,
+    `UnsupportedRandomAccess`, `MissingRequiredTopology` and
+    `TrajectoryIoOperation::WriteHeader` are removed.
+  - `kekule_openff::Error` returns the wrapped Kekule, I/O, JSON or OFFXML
+    error from `source()` (it used to skip to that error's own source) and
+    its `Display` gives `ErrorKind`'s description instead of repeating the
+    wrapped message; `ErrorKind` gains `Display`. `Error::limit_exceeded()`
+    gives the exceeded bound of `ErrorKind::ResourceLimit` failures.
+  - `kekule_potentials`: `EvaluationError::Backend { backend, message }` is
+    `Backend(Arc<dyn Error + Send + Sync>)`, built with
+    `EvaluationError::backend`, with the cause as `source()`;
+    `InvalidGeometry::interaction` is an `InteractionKind`;
+    `MinimizationError::InvalidOptions` carries a `MinimizeOption` and
+    `NumericalFailure` a `NumericalFailure`;
+    `OpenFfPotentialError::UnsupportedNonbondedMethod { handler, method }` is
+    `UnsupportedVdwMethod(VdwMethod)` or
+    `UnsupportedElectrostaticsMethod(ElectrostaticsMethod)`;
+    `InvalidParameter { parameter, message }` is `InvalidParameter {
+    parameter: openff::OpenFfParameter, value }`, `ZeroTorsionDivisor`,
+    `SelfPairException` or `DuplicatePairException`; and
+    `AtomCountMismatch::parameter` is `array: openff::PerAtomArray`.
+    `MinimizationError`, `EvaluationError` and `OpenFfPotentialError` no
+    longer repeat their source in `Display`.
 - **Breaking:** Public items live in the module of the domain that owns them,
   and every operation has one home. Behaviour is unchanged; callers update
   paths, names, and signatures as listed.

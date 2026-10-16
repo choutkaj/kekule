@@ -1,3 +1,4 @@
+use crate::TrajectoryIoErrorKind;
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -272,7 +273,9 @@ impl FrameBuffer {
     /// Copies a complete frame of any snapshot sharing this buffer's layout.
     pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(frame.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         Ok(self.replace_from_data(FrameData::from_frame_view(frame))?)
     }

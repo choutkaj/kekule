@@ -1,13 +1,13 @@
 //! Strict common-profile CHARMM/NAMD/OpenMM DCD trajectory I/O.
 
+use crate::TrajectoryField;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::{
-    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
-    TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
-    TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::TrajectoryFrameView;
@@ -304,7 +304,7 @@ impl<R: Read + Seek> DcdReader<R> {
             DcdEndian::Big
         } else {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InvalidHeader,
+                TrajectoryIoErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
                 source_label,
@@ -329,7 +329,7 @@ impl<R: Read + Seek> DcdReader<R> {
         )?;
         if record.len() != HEADER_BYTES || &record[..4] != b"CORD" {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InvalidHeader,
+                TrajectoryIoErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
                 source_label,
@@ -339,7 +339,7 @@ impl<R: Read + Seek> DcdReader<R> {
         let controls = parse_controls(&record[4..], endian, source_label)?;
         if controls[11] != 0 || controls[12] != 0 {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
                 source_label,
@@ -353,7 +353,7 @@ impl<R: Read + Seek> DcdReader<R> {
         let delta = endian.f32(record[40..44].try_into().expect("header slice"));
         if !delta.is_finite() || delta < 0.0 {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
                 source_label,
@@ -364,7 +364,7 @@ impl<R: Read + Seek> DcdReader<R> {
         let charmm_version = controls[19];
         if charmm_version <= 0 {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
                 source_label,
@@ -408,14 +408,13 @@ impl<R: Read + Seek> DcdReader<R> {
         )?;
         validate_atom_count(file_atoms, limits, source_label)?;
         if file_atoms != atom_count {
-            return Err(TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::InconsistentAtomCount,
+            return Err(TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentAtomCount,
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Dcd),
             )
             .with_source_label(source_label)
-            .with_counts(atom_count as u64, file_atoms as u64)
-            .into());
+            .with_counts(atom_count as u64, file_atoms as u64));
         }
         if fixed_count > atom_count {
             return Err(header_error(
@@ -563,8 +562,8 @@ impl<R: Read + Seek> DcdReader<R> {
     }
 
     fn early_eof_error(&self, frame_start: u64) -> TrajectoryIoError {
-        TrajectoryCodecErrorContext::new(
-            TrajectoryCodecErrorKind::InconsistentMetadata,
+        TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::ReadFrame,
             Some(TrajectoryFormat::Dcd),
         )
@@ -573,7 +572,6 @@ impl<R: Read + Seek> DcdReader<R> {
         .with_byte_offset(frame_start)
         .with_counts(self.header.declared_frames, self.frame_cursor)
         .with_detail("DCD ended before its declared NSET count")
-        .into()
     }
 
     fn parse_next(
@@ -601,8 +599,8 @@ impl<R: Read + Seek> DcdReader<R> {
             )? {
                 return Ok(None);
             }
-            return Err(TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+            return Err(TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Dcd),
             )
@@ -613,8 +611,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 self.header.declared_frames,
                 self.frame_cursor.saturating_add(1),
             )
-            .with_detail("DCD contains a frame beyond its declared NSET count")
-            .into());
+            .with_detail("DCD contains a frame beyond its declared NSET count"));
         }
         if self.frame_cursor >= self.options.limits.max_frames {
             if probe_seekable_eof(
@@ -649,7 +646,7 @@ impl<R: Read + Seek> DcdReader<R> {
             }
             if self.record.len() != CELL_BYTES {
                 return Err(frame_error(
-                    TrajectoryCodecErrorKind::InvalidFrame,
+                    TrajectoryIoErrorKind::InvalidFrame,
                     &self.options.source_label,
                     self.frame_cursor,
                     "DCD unit-cell record must contain six f64 values",
@@ -701,7 +698,7 @@ impl<R: Read + Seek> DcdReader<R> {
             }
             if self.record.len() != coordinate_bytes {
                 return Err(frame_error(
-                    TrajectoryCodecErrorKind::InvalidFrame,
+                    TrajectoryIoErrorKind::InvalidFrame,
                     &self.options.source_label,
                     self.frame_cursor,
                     "DCD coordinate record has the wrong size",
@@ -711,7 +708,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 let value = f64::from(self.header.endian.f32(*chunk));
                 if !value.is_finite() {
                     return Err(frame_error(
-                        TrajectoryCodecErrorKind::InvalidFrame,
+                        TrajectoryIoErrorKind::InvalidFrame,
                         &self.options.source_label,
                         self.frame_cursor,
                         "DCD coordinate is not finite",
@@ -736,7 +733,7 @@ impl<R: Read + Seek> DcdReader<R> {
         })?;
         let frame_bytes = frame_end.checked_sub(frame_start).ok_or_else(|| {
             frame_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 &self.options.source_label,
                 self.frame_cursor,
                 "DCD frame end precedes its start",
@@ -766,7 +763,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     .checked_mul(self.header.step_interval)
                     .ok_or_else(|| {
                         frame_error(
-                            TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
+                            TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                             &self.options.source_label,
                             self.frame_cursor,
                             "DCD frame step multiplication overflows",
@@ -775,7 +772,7 @@ impl<R: Read + Seek> DcdReader<R> {
             )
             .ok_or_else(|| {
                 frame_error(
-                    TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
+                    TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                     &self.options.source_label,
                     self.frame_cursor,
                     "DCD frame step addition overflows",
@@ -785,7 +782,7 @@ impl<R: Read + Seek> DcdReader<R> {
             let time = (step as f64) * f64::from(self.header.delta);
             if !time.is_finite() {
                 return Err(frame_error(
-                    TrajectoryCodecErrorKind::InvalidFrame,
+                    TrajectoryIoErrorKind::InvalidFrame,
                     &self.options.source_label,
                     self.frame_cursor,
                     "DCD derived frame time is not finite",
@@ -837,8 +834,8 @@ impl<R: Read + Seek> DcdReader<R> {
                 )? {
                     break;
                 }
-                return Err(TrajectoryCodecErrorContext::new(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                return Err(TrajectoryIoError::codec(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Dcd),
                 )
@@ -847,8 +844,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     self.header.declared_frames,
                     (offsets.len() as u64).saturating_add(1),
                 )
-                .with_detail("DCD contains frames beyond its declared NSET count")
-                .into());
+                .with_detail("DCD contains frames beyond its declared NSET count"));
             }
             if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
                 if probe_seekable_eof(
@@ -857,15 +853,14 @@ impl<R: Read + Seek> DcdReader<R> {
                     TrajectoryFormat::Dcd,
                     &self.options.source_label,
                 )? {
-                    return Err(TrajectoryCodecErrorContext::new(
-                        TrajectoryCodecErrorKind::InconsistentMetadata,
+                    return Err(TrajectoryIoError::codec(
+                        TrajectoryIoErrorKind::InconsistentMetadata,
                         TrajectoryIoOperation::Index,
                         Some(TrajectoryFormat::Dcd),
                     )
                     .with_source_label(&self.options.source_label)
                     .with_counts(self.header.declared_frames, offsets.len() as u64)
-                    .with_detail("DCD ended before its declared NSET count")
-                    .into());
+                    .with_detail("DCD ended before its declared NSET count"));
                 }
                 return Err(resource_error(
                     TrajectoryIoOperation::Index,
@@ -887,15 +882,14 @@ impl<R: Read + Seek> DcdReader<R> {
                 .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
                 .is_none()
             {
-                return Err(TrajectoryCodecErrorContext::new(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                return Err(TrajectoryIoError::codec(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Index,
                     Some(TrajectoryFormat::Dcd),
                 )
                 .with_source_label(&self.options.source_label)
                 .with_counts(self.header.declared_frames, offsets.len() as u64)
-                .with_detail("DCD ended before its declared NSET count")
-                .into());
+                .with_detail("DCD ended before its declared NSET count"));
             }
             reserve_index_for_push(
                 &mut offsets,
@@ -935,7 +929,9 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         let offset = self.reader.stream_position().map_err(|error| {
             io_context(
@@ -1025,16 +1021,18 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         let offset = self
             .offsets
             .get(
                 usize::try_from(index)
-                    .map_err(|_| TrajectoryIoError::FrameIndexOutOfRange(index))?,
+                    .map_err(|_| TrajectoryIoError::frame_index_out_of_range(index))?,
             )
             .copied()
-            .ok_or(TrajectoryIoError::FrameIndexOutOfRange(index))?;
+            .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
         let saved_offset = self.inner.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Index,
@@ -1060,7 +1058,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
             .inner
             .parse_next(false)
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::FrameIndexOutOfRange(index)));
+            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::frame_index_out_of_range(index)));
         let restore = self
             .inner
             .reader
@@ -1126,7 +1124,7 @@ impl<W: Write + Seek> DcdWriter<W> {
             || options.delta < 0.0
         {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::Open,
                 Some(TrajectoryFormat::Dcd),
                 &source_label,
@@ -1137,7 +1135,7 @@ impl<W: Write + Seek> DcdWriter<W> {
         let atom_count = topology.atom_count();
         if atom_count == 0 || atom_count > i32::MAX as usize {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Open,
                 Some(TrajectoryFormat::Dcd),
                 &source_label,
@@ -1227,7 +1225,7 @@ impl<W: Write + Seek> DcdWriter<W> {
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Dcd, &self.source_label)?;
         if self.frame_count > i32::MAX as u64 {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Finish,
                 Some(TrajectoryFormat::Dcd),
                 &self.source_label,
@@ -1244,7 +1242,7 @@ impl<W: Write + Seek> DcdWriter<W> {
         })?;
         let count_offset = self.header_start.checked_add(8).ok_or_else(|| {
             codec_context(
-                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Finish,
                 Some(TrajectoryFormat::Dcd),
                 &self.source_label,
@@ -1309,7 +1307,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         )?;
         if self.finalized {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Dcd),
                 &self.source_label,
@@ -1317,41 +1315,43 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             ));
         }
         if !frame.topology().shares_layout(self.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         if frame.velocities().is_some() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "velocities",
+                TrajectoryField::Velocities,
             ));
         }
         if frame.forces().is_some() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "forces",
+                TrajectoryField::Forces,
             ));
         }
         if frame.properties().atoms().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "atom properties",
+                TrajectoryField::AtomProperties,
             ));
         }
         if frame.properties().bonds().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "bond properties",
+                TrajectoryField::BondProperties,
             ));
         }
         if !frame.properties().owner().is_empty() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "properties",
+                TrajectoryField::Properties,
             ));
         }
         if self.frame_count >= i32::MAX as u64 {
@@ -1371,7 +1371,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             .ok_or_else(|| writer_overflow(&self.source_label, "DCD step overflow"))?;
         if frame.step() != Some(expected_step) {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Dcd),
                 &self.source_label,
@@ -1381,12 +1381,12 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         match (self.options.time_policy, frame.time()) {
             (DcdTimePolicy::Absent, None) => {}
             (DcdTimePolicy::Absent, Some(_)) => {
-                return Err(TrajectoryIoError::UnsupportedField("time"))
+                return Err(TrajectoryIoError::unsupported_field(TrajectoryField::Time))
             }
             (DcdTimePolicy::HeaderDelta { unit }, Some(time)) => {
                 let actual = time.value_in(unit).map_err(|error| {
                     codec_context(
-                        TrajectoryCodecErrorKind::InconsistentMetadata,
+                        TrajectoryIoErrorKind::InconsistentMetadata,
                         TrajectoryIoOperation::WriteFrame,
                         Some(TrajectoryFormat::Dcd),
                         &self.source_label,
@@ -1402,7 +1402,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     || (actual - expected).abs() > f64::from(f32::EPSILON) * expected.abs()
                 {
                     return Err(codec_context(
-                        TrajectoryCodecErrorKind::InconsistentMetadata,
+                        TrajectoryIoErrorKind::InconsistentMetadata,
                         TrajectoryIoOperation::WriteFrame,
                         Some(TrajectoryFormat::Dcd),
                         &self.source_label,
@@ -1412,7 +1412,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             }
             (DcdTimePolicy::HeaderDelta { .. }, None) => {
                 return Err(codec_context(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Dcd),
                     &self.source_label,
@@ -1423,7 +1423,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         let cell = frame.cell().copied();
         if self.options.write_cell != cell.is_some() {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Dcd),
                 &self.source_label,
@@ -1434,7 +1434,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             .conversion_factor_to(ANGSTROM)
             .map_err(|error| {
                 codec_context(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Dcd),
                     &self.source_label,
@@ -1446,7 +1446,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             for value in [point.x * factor, point.y * factor, point.z * factor] {
                 if !value.is_finite() || !(value as f32).is_finite() {
                     return Err(codec_context(
-                        TrajectoryCodecErrorKind::InvalidFrame,
+                        TrajectoryIoErrorKind::InvalidFrame,
                         TrajectoryIoOperation::WriteFrame,
                         Some(TrajectoryFormat::Dcd),
                         &self.source_label,
@@ -1607,7 +1607,7 @@ fn validate_time_policy(
         unit.conversion_factor_to(CANONICAL_TIME_UNIT)
             .map_err(|error| {
                 codec_context(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Open,
                     Some(TrajectoryFormat::Dcd),
                     source_label,
@@ -1630,7 +1630,7 @@ fn decode_cell(
     }
     if values.iter().any(|value| !value.is_finite()) {
         return Err(frame_error(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             source_label,
             frame,
             "DCD cell contains a non-finite value",
@@ -1639,7 +1639,7 @@ fn decode_cell(
     let [a, gamma_raw, b, beta_raw, alpha_raw, c] = values;
     if a <= 0.0 || b <= 0.0 || c <= 0.0 {
         return Err(frame_error(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             source_label,
             frame,
             "DCD cell lengths must be positive",
@@ -1665,7 +1665,7 @@ fn decode_cell(
         || sin_gamma.abs() <= f64::EPSILON
     {
         return Err(frame_error(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             source_label,
             frame,
             "DCD cell angles are degenerate",
@@ -1678,7 +1678,7 @@ fn decode_cell(
     let cz_squared = c * c - cx * cx - cy * cy;
     if !cz_squared.is_finite() || cz_squared <= 0.0 {
         return Err(frame_error(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             source_label,
             frame,
             "DCD cell vectors are degenerate",
@@ -1690,7 +1690,7 @@ fn decode_cell(
     )
     .map_err(|error| {
         frame_error(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             source_label,
             frame,
             format!("invalid DCD cell: {error}"),
@@ -1701,7 +1701,7 @@ fn decode_cell(
 fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], TrajectoryIoError> {
     if cell.periodic_axes() != [true; 3] {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::UnsupportedVariant,
+            TrajectoryIoErrorKind::UnsupportedVariant,
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Dcd),
             source_label,
@@ -1710,7 +1710,7 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
     }
     let [a, b, c] = cell.vectors().value_in(ANGSTROM).map_err(|error| {
         codec_context(
-            TrajectoryCodecErrorKind::InconsistentMetadata,
+            TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Dcd),
             source_label,
@@ -1719,7 +1719,7 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
     })?;
     if a.x <= 0.0 || a.y != 0.0 || a.z != 0.0 || b.y <= 0.0 || b.z != 0.0 || c.z <= 0.0 {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::UnsupportedVariant,
+            TrajectoryIoErrorKind::UnsupportedVariant,
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Dcd),
             source_label,
@@ -1742,7 +1742,7 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
     let values = [la, gamma, lb, beta, alpha, lc];
     if values.iter().any(|value| !value.is_finite()) {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Dcd),
             source_label,
@@ -1755,7 +1755,7 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
     }
     decode_cell(&record, DcdEndian::Little, source_label, 0).map_err(|error| {
         codec_context(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Dcd),
             source_label,
@@ -1851,8 +1851,8 @@ fn read_record<R: Read>(
         "missing DCD trailing record marker",
     )?;
     if endian.u32(trailing) != size as u32 {
-        let mut context = TrajectoryCodecErrorContext::new(
-            TrajectoryCodecErrorKind::RecordMarkerMismatch,
+        let mut context = TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::RecordMarkerMismatch,
             operation,
             Some(TrajectoryFormat::Dcd),
         )
@@ -1862,7 +1862,7 @@ fn read_record<R: Read>(
         if let Some(frame) = frame {
             context = context.with_frame(frame);
         }
-        return Err(context.into());
+        return Err(context);
     }
     Ok(true)
 }
@@ -1953,7 +1953,7 @@ fn nonnegative_usize(
 
 fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
     codec_context(
-        TrajectoryCodecErrorKind::InvalidHeader,
+        TrajectoryIoErrorKind::InvalidHeader,
         TrajectoryIoOperation::ReadHeader,
         Some(TrajectoryFormat::Dcd),
         source_label,
@@ -1967,8 +1967,8 @@ fn record_error(
     frame: Option<u64>,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
-    let mut context = TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::TruncatedRecord,
+    let mut context = TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::TruncatedRecord,
         operation,
         Some(TrajectoryFormat::Dcd),
     )
@@ -1977,16 +1977,16 @@ fn record_error(
     if let Some(frame) = frame {
         context = context.with_frame(frame);
     }
-    context.into()
+    context
 }
 
 fn frame_error(
-    kind: TrajectoryCodecErrorKind,
+    kind: TrajectoryIoErrorKind,
     source_label: &str,
     frame: u64,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
-    TrajectoryCodecErrorContext::new(
+    TrajectoryIoError::codec(
         kind,
         TrajectoryIoOperation::ReadFrame,
         Some(TrajectoryFormat::Dcd),
@@ -1994,7 +1994,6 @@ fn frame_error(
     .with_source_label(source_label)
     .with_frame(frame)
     .with_detail(detail)
-    .into()
 }
 
 fn resource_error(
@@ -2003,8 +2002,8 @@ fn resource_error(
     frame: Option<u64>,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
-    let mut context = TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+    let mut context = TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::LimitExceeded,
         operation,
         Some(TrajectoryFormat::Dcd),
     )
@@ -2013,12 +2012,12 @@ fn resource_error(
     if let Some(frame) = frame {
         context = context.with_frame(frame);
     }
-    context.into()
+    context
 }
 
 fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
     codec_context(
-        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+        TrajectoryIoErrorKind::LimitExceeded,
         TrajectoryIoOperation::WriteFrame,
         Some(TrajectoryFormat::Dcd),
         source_label,
@@ -2026,14 +2025,14 @@ fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryI
     )
 }
 
-fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryIoError {
-    TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::UnsupportedField,
+fn writer_field_error(source_label: &str, frame: u64, field: TrajectoryField) -> TrajectoryIoError {
+    TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,
         Some(TrajectoryFormat::Dcd),
     )
     .with_source_label(source_label)
     .with_frame(frame)
+    .with_field(field)
     .with_detail(format!("DCD cannot preserve {field}"))
-    .into()
 }

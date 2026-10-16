@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use kekule::diagnostics::{LimitExceeded, Resource};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
@@ -16,8 +17,8 @@ use kekule_traj::io::{
     TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule_traj::{
-    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
-    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
@@ -155,19 +156,16 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
     for (input, expected) in [
         (
             "2\nbad\nC 0 0 0\nO 1 1 1\n",
-            TrajectoryCodecErrorKind::InconsistentMetadata,
+            TrajectoryIoErrorKind::InconsistentMetadata,
         ),
-        (
-            "2\nbad\nC 0 0 0\n",
-            TrajectoryCodecErrorKind::TruncatedRecord,
-        ),
+        ("2\nbad\nC 0 0 0\n", TrajectoryIoErrorKind::TruncatedRecord),
         (
             "2\nbad\nC 0 0 0\nH NaN 1 1\n",
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
         ),
         (
             "3\nbad\nC 0 0 0\nH 1 1 1\nH 2 2 2\n",
-            TrajectoryCodecErrorKind::InconsistentAtomCount,
+            TrajectoryIoErrorKind::InconsistentAtomCount,
         ),
     ] {
         let mut reader = XyzReader::new(
@@ -209,7 +207,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
                 .read_next(&mut FrameBuffer::new(topology))
                 .unwrap_err()
         ),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
 }
 
@@ -233,7 +231,7 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
     assert_xs_close(&buffer, &[0.0, 0.3]);
     assert!(matches!(
         reader.read_frame(2, &mut buffer),
-        Err(TrajectoryIoError::FrameIndexOutOfRange(2))
+        Err(error) if error.kind() == TrajectoryIoErrorKind::FrameIndexOutOfRange && error.frame() == Some(2)
     ));
     assert_xs_close(&buffer, &[0.0, 0.3]);
 }
@@ -328,7 +326,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     .unwrap();
     assert_eq!(
         codec_kind(&strict.write_frame(buffer.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::UnsupportedField)
+        Some(TrajectoryIoErrorKind::UnsupportedField)
     );
     buffer.frame_mut().set_step(None);
     buffer
@@ -345,7 +343,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
         .unwrap();
     assert_eq!(
         codec_kind(&strict.write_frame(buffer.frame_view()).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::UnsupportedField)
+        Some(TrajectoryIoErrorKind::UnsupportedField)
     );
 }
 
@@ -403,7 +401,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
             .err()
             .unwrap()
         ),
-        Some(TrajectoryCodecErrorKind::FormatMismatch)
+        Some(TrajectoryIoErrorKind::FormatMismatch)
     );
     open_trajectory(
         &mismatch,
@@ -468,7 +466,7 @@ fn detection_restores_position_on_read_failure_and_honors_a_zero_byte_limit() {
     .unwrap_err();
     assert!(matches!(
         error,
-        TrajectoryIoError::Io(context) if context.error_kind() == io::ErrorKind::ConnectionReset
+        error if error.io_error_kind() == Some(io::ErrorKind::ConnectionReset)
     ));
     assert_eq!(reader.stream_position().unwrap(), 3);
 
@@ -486,7 +484,7 @@ fn detection_restores_position_on_read_failure_and_honors_a_zero_byte_limit() {
     .unwrap_err();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     assert_eq!(cursor.stream_position().unwrap(), 2);
 }
@@ -561,7 +559,7 @@ fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
         assert_eq!(
             first,
             Err(codec_error(
-                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::ReadHeader,
                 TrajectoryFormat::Xyz,
                 "frame-bytes.xyz",
@@ -570,7 +568,12 @@ fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
                     "XYZ frame exceeds configured {}-byte limit",
                     frame_bytes - 1
                 ),
-            )),
+            )
+            .with_limit(LimitExceeded::new(
+                Resource::RecordBytes,
+                usize::try_from(frame_bytes - 1).unwrap(),
+                usize::try_from(frame_bytes).unwrap(),
+            ))),
             "{input:?}"
         );
     }
@@ -610,7 +613,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
     // with its terminator; the count and atom lines alone would fit.
     let required = positions + comment.len() + 1;
     let exceeded = codec_error(
-        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+        TrajectoryIoErrorKind::LimitExceeded,
         TrajectoryIoOperation::ReadHeader,
         TrajectoryFormat::Xyz,
         "scratch.xyz",
@@ -676,7 +679,7 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     assert!(!control.violated());
     assert_eq!(control.probed_bytes(), 0);
@@ -707,7 +710,7 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
         .unwrap();
         assert_eq!(
             codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            Some(TrajectoryIoErrorKind::LimitExceeded)
         );
         assert!(!control.violated());
         assert_eq!(control.probed_bytes(), 0);
@@ -729,10 +732,7 @@ fn compressed_wrappers_and_insufficient_signatures_are_not_extension_dispatched(
         .unwrap();
         assert!(matches!(
             codec_kind(&error),
-            Some(
-                TrajectoryCodecErrorKind::UnsupportedVariant
-                    | TrajectoryCodecErrorKind::UnknownFormat
-            )
+            Some(TrajectoryIoErrorKind::UnsupportedVariant | TrajectoryIoErrorKind::UnknownFormat)
         ));
         let _ = std::fs::remove_file(path);
     }

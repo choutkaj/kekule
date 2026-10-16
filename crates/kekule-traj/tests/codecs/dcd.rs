@@ -11,8 +11,8 @@ use kekule_traj::io::dcd::{
 };
 use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
-    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
@@ -112,7 +112,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
         assert_eq!(
             writer.write_frame(frame.frame_view()),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 TrajectoryFormat::Dcd,
                 "acute.dcd",
@@ -202,7 +202,7 @@ fn dcd_scratch_limit_includes_records_fixed_atoms_and_indexed_reuse() {
         };
         assert_eq!(
             codec_kind(&open(required - 1).err().unwrap()),
-            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            Some(TrajectoryIoErrorKind::LimitExceeded)
         );
         let mut sequential = open(required).unwrap();
         let mut destination = sequential.frame_buffer();
@@ -253,7 +253,7 @@ fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
     let before = buffer_snapshot(&destination);
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     assert!(
         !control.violated(),
@@ -292,7 +292,7 @@ fn failed_random_dcd_read_cannot_poison_sequential_fixed_atom_reconstruction() {
     stream.overwrite(232, &f32::NAN.to_le_bytes());
     assert_eq!(
         codec_kind(&reader.read_frame(0, &mut destination).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::InvalidFrame)
+        Some(TrajectoryIoErrorKind::InvalidFrame)
     );
     assert_eq!(buffer_snapshot(&destination), before);
     assert!(reader.read_next(&mut destination).unwrap());
@@ -364,7 +364,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
         assert_eq!(
             writer.write_frame(frame.frame_view()),
             Err(codec_error(
-                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::WriteFrame,
                 TrajectoryFormat::Dcd,
                 "oriented.dcd",
@@ -613,7 +613,7 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
         }
         assert_eq!(
             codec_kind(&sequential.read_next(&mut destination).unwrap_err()),
-            Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+            Some(TrajectoryIoErrorKind::InconsistentMetadata)
         );
 
         let error = IndexedDcdReader::new(
@@ -627,7 +627,7 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
         .unwrap();
         assert_eq!(
             codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+            Some(TrajectoryIoErrorKind::InconsistentMetadata)
         );
     }
 }
@@ -664,7 +664,7 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
     let before = buffer_snapshot(&destination);
     control.arm_at_current_position();
     let error = indexed.read_frame(1, &mut destination).unwrap_err();
-    assert!(matches!(error, TrajectoryIoError::Io(_)));
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::Io);
     assert_eq!(buffer_snapshot(&destination), before);
 }
 
@@ -716,7 +716,7 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     assert!(!control.violated());
     assert_eq!(control.probed_bytes(), 1);
@@ -747,7 +747,7 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         .unwrap();
         assert_eq!(
             codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            Some(TrajectoryIoErrorKind::LimitExceeded)
         );
         assert!(!control.violated());
         assert_eq!(control.probed_bytes(), 1);
@@ -804,7 +804,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+        Some(TrajectoryIoErrorKind::InconsistentMetadata)
     );
 
     let mut bad_marker = valid.clone();
@@ -823,11 +823,9 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let error = reader.read_next(&mut buffer).unwrap_err();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::RecordMarkerMismatch)
+        Some(TrajectoryIoErrorKind::RecordMarkerMismatch)
     );
-    let TrajectoryIoError::Codec(context) = &error else {
-        panic!("expected typed DCD codec context");
-    };
+    let context = &error;
     assert_eq!(context.frame(), Some(1));
     assert!(context.byte_offset().is_some());
     assert_eq!(xs(&buffer), before);
@@ -845,7 +843,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::TruncatedRecord)
+        Some(TrajectoryIoErrorKind::TruncatedRecord)
     );
 
     let limits = TrajectoryIoLimits {
@@ -863,7 +861,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let error = reader.read_next(&mut buffer).unwrap_err();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
 }
 
@@ -897,7 +895,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
     assert_eq!(
         writer.write_frame(frame.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Dcd,
             "late-invalid.dcd",
@@ -930,13 +928,14 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
     assert_eq!(
         writer.write_frame(bond_annotated.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Dcd,
             "late-invalid.dcd",
             Some(0),
             "DCD cannot preserve bond properties",
-        ))
+        )
+        .with_field(TrajectoryField::BondProperties))
     );
     assert_eq!(writer.writer().get_ref().len(), header_bytes);
 }
@@ -1061,7 +1060,7 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
     assert_eq!(
         writer.write_frame(source.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::InconsistentMetadata,
+            TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Dcd,
             "timestep.dcd",

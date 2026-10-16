@@ -41,7 +41,7 @@ use crate::mm::{
     self, FourierTerm, Gradients, HarmonicAngle, HarmonicBond, Nonbonded, PeriodicTorsion, Singular,
 };
 use crate::potential::{
-    ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, Potential,
+    ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, InteractionKind, Potential,
 };
 
 const KINDS: [ComponentKind; mm::COMPONENTS] = [
@@ -81,27 +81,25 @@ impl OpenFfPotential {
         let topology = Arc::clone(parameters.topology());
         let settings = parameters.nonbonded_settings();
         if settings.vdw_nonperiodic_method != VdwMethod::NoCutoff {
-            return Err(OpenFfPotentialError::UnsupportedNonbondedMethod {
-                handler: "vdW",
-                method: settings.vdw_nonperiodic_method.smirnoff_name(),
-            });
+            return Err(OpenFfPotentialError::UnsupportedVdwMethod(
+                settings.vdw_nonperiodic_method,
+            ));
         }
         if settings.electrostatics_nonperiodic_method != ElectrostaticsMethod::Coulomb {
-            return Err(OpenFfPotentialError::UnsupportedNonbondedMethod {
-                handler: "Electrostatics",
-                method: settings.electrostatics_nonperiodic_method.smirnoff_name(),
-            });
+            return Err(OpenFfPotentialError::UnsupportedElectrostaticsMethod(
+                settings.electrostatics_nonperiodic_method,
+            ));
         }
         let mut bonds = Vec::with_capacity(parameters.bonds().len());
         for term in parameters.bonds() {
             bonds.push(HarmonicBond {
                 atoms: dense(&topology, term.atoms)?,
                 k: finite(
-                    "bond k",
+                    OpenFfParameter::BondK,
                     term.parameter.k.value_in(CANONICAL_FORCE_CONSTANT_UNIT)?,
                 )?,
                 length: finite(
-                    "bond length",
+                    OpenFfParameter::BondLength,
                     term.parameter.length.value_in(CANONICAL_LENGTH_UNIT)?,
                 )?,
             });
@@ -111,9 +109,9 @@ impl OpenFfPotential {
         for term in parameters.angles() {
             angles.push(HarmonicAngle {
                 atoms: dense(&topology, term.atoms)?,
-                k: finite("angle k", term.parameter.k.value_in(angle_k)?)?,
+                k: finite(OpenFfParameter::AngleK, term.parameter.k.value_in(angle_k)?)?,
                 angle: finite(
-                    "angle",
+                    OpenFfParameter::Angle,
                     term.parameter.angle.value_in(CANONICAL_ANGLE_UNIT)?,
                 )?,
             });
@@ -124,7 +122,7 @@ impl OpenFfPotential {
         let n = topology.atom_count();
         if parameters.vdw().len() != n {
             return Err(OpenFfPotentialError::AtomCountMismatch {
-                parameter: "vdW",
+                array: PerAtomArray::VdwParameters,
                 expected: n,
                 actual: parameters.vdw().len(),
             });
@@ -133,11 +131,11 @@ impl OpenFfPotential {
         let mut epsilon = Vec::with_capacity(n);
         for vdw in parameters.vdw() {
             sigma.push(non_negative(
-                "sigma",
+                OpenFfParameter::Sigma,
                 vdw.sigma.value_in(CANONICAL_LENGTH_UNIT)?,
             )?);
             epsilon.push(non_negative(
-                "epsilon",
+                OpenFfParameter::Epsilon,
                 vdw.epsilon.value_in(CANONICAL_ENERGY_UNIT)?,
             )?);
         }
@@ -146,16 +144,13 @@ impl OpenFfPotential {
             let mut pair = dense(&topology, exception.atoms)?;
             pair.sort_unstable();
             if pair[0] == pair[1] {
-                return Err(OpenFfPotentialError::InvalidParameter {
-                    parameter: "pair exception",
-                    message: "an exception must name two distinct atoms".into(),
-                });
+                return Err(OpenFfPotentialError::SelfPairException);
             }
             exceptions[pair[0]].push((
                 pair[1],
-                finite("vdW exception scale", exception.vdw_scale)?,
+                finite(OpenFfParameter::VdwExceptionScale, exception.vdw_scale)?,
                 finite(
-                    "electrostatics exception scale",
+                    OpenFfParameter::ElectrostaticsExceptionScale,
                     exception.electrostatics_scale,
                 )?,
             ));
@@ -163,10 +158,7 @@ impl OpenFfPotential {
         for list in &mut exceptions {
             list.sort_unstable_by_key(|&(j, _, _)| j);
             if list.windows(2).any(|w| w[0].0 == w[1].0) {
-                return Err(OpenFfPotentialError::InvalidParameter {
-                    parameter: "pair exception",
-                    message: "an atom pair has more than one exception".into(),
-                });
+                return Err(OpenFfPotentialError::DuplicatePairException);
             }
         }
         let mut potential = Self {
@@ -202,13 +194,13 @@ impl OpenFfPotential {
         let charges = charges.into_unit(CANONICAL_CHARGE_UNIT)?.into_value();
         if charges.len() != self.topology.atom_count() {
             return Err(OpenFfPotentialError::AtomCountMismatch {
-                parameter: "charges",
+                array: PerAtomArray::Charges,
                 expected: self.topology.atom_count(),
                 actual: charges.len(),
             });
         }
         for &charge in &charges {
-            finite("charge", charge)?;
+            finite(OpenFfParameter::Charge, charge)?;
         }
         self.nonbonded.charge = charges;
         Ok(())
@@ -276,7 +268,7 @@ impl OpenFfPotential {
         energies[mm::ANGLES] = mm::angles(&self.angles, x, &mut gradients).map_err(located)?;
         energies[mm::PROPER_TORSIONS] = mm::torsions(
             mm::PROPER_TORSIONS,
-            "proper torsion",
+            InteractionKind::ProperTorsion,
             &self.propers,
             x,
             &mut gradients,
@@ -284,7 +276,7 @@ impl OpenFfPotential {
         .map_err(located)?;
         energies[mm::IMPROPER_TORSIONS] = mm::torsions(
             mm::IMPROPER_TORSIONS,
-            "improper torsion",
+            InteractionKind::ImproperTorsion,
             &self.impropers,
             x,
             &mut gradients,
@@ -357,17 +349,20 @@ fn torsions(
     for term in interactions {
         let mut terms = Vec::with_capacity(term.parameter.terms.len());
         for t in &term.parameter.terms {
-            let idivf = finite("torsion idivf", t.idivf)?;
+            let idivf = finite(OpenFfParameter::TorsionIdivf, t.idivf)?;
             if idivf == 0.0 {
-                return Err(OpenFfPotentialError::InvalidParameter {
-                    parameter: "torsion idivf",
-                    message: "the divisor must be nonzero".into(),
-                });
+                return Err(OpenFfPotentialError::ZeroTorsionDivisor);
             }
             terms.push(FourierTerm {
-                k: finite("torsion k", t.k.value_in(CANONICAL_ENERGY_UNIT)? / idivf)?,
+                k: finite(
+                    OpenFfParameter::TorsionK,
+                    t.k.value_in(CANONICAL_ENERGY_UNIT)? / idivf,
+                )?,
                 periodicity: f64::from(t.periodicity),
-                phase: finite("torsion phase", t.phase.value_in(CANONICAL_ANGLE_UNIT)?)?,
+                phase: finite(
+                    OpenFfParameter::TorsionPhase,
+                    t.phase.value_in(CANONICAL_ANGLE_UNIT)?,
+                )?,
             });
         }
         result.push(PeriodicTorsion {
@@ -378,71 +373,167 @@ fn torsions(
     Ok(result)
 }
 
-fn finite(parameter: &'static str, value: f64) -> Result<f64, OpenFfPotentialError> {
+fn finite(parameter: OpenFfParameter, value: f64) -> Result<f64, OpenFfPotentialError> {
     if value.is_finite() {
         Ok(value)
     } else {
-        Err(OpenFfPotentialError::InvalidParameter {
-            parameter,
-            message: format!("{value} is not finite"),
+        Err(OpenFfPotentialError::InvalidParameter { parameter, value })
+    }
+}
+
+fn non_negative(parameter: OpenFfParameter, value: f64) -> Result<f64, OpenFfPotentialError> {
+    if finite(parameter, value)? < 0.0 {
+        return Err(OpenFfPotentialError::InvalidParameter { parameter, value });
+    }
+    Ok(value)
+}
+
+/// A lowered OpenFF parameter that must be finite (and, for Lennard-Jones
+/// parameters, non-negative).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum OpenFfParameter {
+    /// A bond force constant.
+    BondK,
+    /// A bond equilibrium length.
+    BondLength,
+    /// An angle force constant.
+    AngleK,
+    /// An angle equilibrium value.
+    Angle,
+    /// A torsion barrier height.
+    TorsionK,
+    /// A torsion phase.
+    TorsionPhase,
+    /// A torsion `idivf` divisor.
+    TorsionIdivf,
+    /// A Lennard-Jones sigma.
+    Sigma,
+    /// A Lennard-Jones epsilon.
+    Epsilon,
+    /// A pair exception's van der Waals scale.
+    VdwExceptionScale,
+    /// A pair exception's electrostatics scale.
+    ElectrostaticsExceptionScale,
+    /// An atomic partial charge.
+    Charge,
+}
+
+impl fmt::Display for OpenFfParameter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::BondK => "bond k",
+            Self::BondLength => "bond length",
+            Self::AngleK => "angle k",
+            Self::Angle => "angle",
+            Self::TorsionK => "torsion k",
+            Self::TorsionPhase => "torsion phase",
+            Self::TorsionIdivf => "torsion idivf",
+            Self::Sigma => "sigma",
+            Self::Epsilon => "epsilon",
+            Self::VdwExceptionScale => "vdW exception scale",
+            Self::ElectrostaticsExceptionScale => "electrostatics exception scale",
+            Self::Charge => "charge",
         })
     }
 }
 
-fn non_negative(parameter: &'static str, value: f64) -> Result<f64, OpenFfPotentialError> {
-    if finite(parameter, value)? < 0.0 {
-        return Err(OpenFfPotentialError::InvalidParameter {
-            parameter,
-            message: format!("{value} is negative"),
-        });
+/// A per-atom parameter array that must cover the bound topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PerAtomArray {
+    /// The assigned van der Waals parameters.
+    VdwParameters,
+    /// The partial charges.
+    Charges,
+}
+
+impl fmt::Display for PerAtomArray {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::VdwParameters => "vdW parameters",
+            Self::Charges => "charges",
+        })
     }
-    Ok(value)
 }
 
 /// A parameterization that cannot be lowered into an evaluable potential.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum OpenFfPotentialError {
-    /// The nonperiodic method has no implementation in this potential.
-    UnsupportedNonbondedMethod {
-        handler: &'static str,
-        method: &'static str,
-    },
+    /// The nonperiodic vdW method has no implementation in this potential;
+    /// only [`VdwMethod::NoCutoff`] is implemented.
+    UnsupportedVdwMethod(VdwMethod),
+    /// The nonperiodic electrostatics method has no implementation in this
+    /// potential; only [`ElectrostaticsMethod::Coulomb`] is implemented.
+    UnsupportedElectrostaticsMethod(ElectrostaticsMethod),
     /// An interaction refers to an atom outside the bound topology.
     InvalidAtom(InstanceAtomId),
     /// A per-atom array does not cover the topology.
     AtomCountMismatch {
-        parameter: &'static str,
+        /// The array that does not cover the topology.
+        array: PerAtomArray,
+        /// The topology's atom count.
         expected: usize,
+        /// The array's length.
         actual: usize,
     },
+    /// A parameter is not finite, or a Lennard-Jones parameter is negative.
     InvalidParameter {
-        parameter: &'static str,
-        message: String,
+        /// The parameter at fault.
+        parameter: OpenFfParameter,
+        /// Its value in the canonical unit.
+        value: f64,
     },
+    /// A torsion term's `idivf` divisor is zero.
+    ZeroTorsionDivisor,
+    /// A pair exception names the same atom twice.
+    SelfPairException,
+    /// An atom pair has more than one pair exception.
+    DuplicatePairException,
+    /// A parameter could not be converted to the canonical unit; see the
+    /// source.
     Unit(UnitError),
 }
 
 impl fmt::Display for OpenFfPotentialError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedNonbondedMethod { handler, method } => write!(
+            Self::UnsupportedVdwMethod(method) => write!(
                 f,
-                "unsupported nonperiodic {handler} method {method:?}; only no-cutoff vdW and Coulomb electrostatics are implemented"
+                "unsupported nonperiodic vdW method {:?}; only no-cutoff vdW and Coulomb electrostatics are implemented",
+                method.smirnoff_name()
+            ),
+            Self::UnsupportedElectrostaticsMethod(method) => write!(
+                f,
+                "unsupported nonperiodic Electrostatics method {:?}; only no-cutoff vdW and Coulomb electrostatics are implemented",
+                method.smirnoff_name()
             ),
             Self::InvalidAtom(atom) => write!(f, "interaction refers to unknown atom {atom}"),
             Self::AtomCountMismatch {
-                parameter,
+                array,
                 expected,
                 actual,
             } => write!(
                 f,
-                "{parameter} cover {actual} atoms, but the topology has {expected}"
+                "{array} cover {actual} atoms, but the topology has {expected}"
             ),
-            Self::InvalidParameter { parameter, message } => {
-                write!(f, "invalid {parameter}: {message}")
+            Self::InvalidParameter { parameter, value } if value.is_finite() => {
+                write!(f, "invalid {parameter}: {value} is negative")
             }
-            Self::Unit(error) => write!(f, "invalid parameter unit: {error}"),
+            Self::InvalidParameter { parameter, value } => {
+                write!(f, "invalid {parameter}: {value} is not finite")
+            }
+            Self::ZeroTorsionDivisor => {
+                f.write_str("invalid torsion idivf: the divisor must be nonzero")
+            }
+            Self::SelfPairException => {
+                f.write_str("invalid pair exception: an exception must name two distinct atoms")
+            }
+            Self::DuplicatePairException => {
+                f.write_str("invalid pair exception: an atom pair has more than one exception")
+            }
+            Self::Unit(_) => f.write_str("invalid parameter unit"),
         }
     }
 }

@@ -7,6 +7,8 @@
 //! forms that upstream's identifier merges fall back to inference.
 use crate::{Error, ErrorKind, Result};
 
+use kekule::diagnostics::{LimitExceeded, Resource};
+
 use kekule::molecule::*;
 use kekule::stereo::{StereoCarrier, StereoElementKind};
 use std::collections::{BTreeMap, HashMap};
@@ -158,9 +160,9 @@ impl Search<'_> {
         *states += 1;
         // Bounds pathological symmetry, not molecule size.
         if *states > self.state_limit {
-            return Err(Error::new(
-                ErrorKind::ResourceLimit,
+            return Err(Error::limit(
                 "lookup mapping search limit exceeded",
+                LimitExceeded::new(Resource::SearchStates, self.state_limit, *states),
             ));
         }
         if depth == self.ids.len() {

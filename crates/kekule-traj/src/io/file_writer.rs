@@ -1,3 +1,4 @@
+use crate::TrajectoryField;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter};
@@ -10,7 +11,7 @@ use std::sync::{
 use kekule::topology::Topology;
 
 use crate::{
-    TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
     TrajectoryWriter,
 };
 use kekule::structure::{Trajectory, TrajectoryFrameView};
@@ -217,7 +218,7 @@ impl FileTrajectoryWriter {
         let label = self.destination.display().to_string();
         if self.failed {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::Finish,
                 Some(self.format()),
                 &label,
@@ -272,7 +273,7 @@ impl TrajectoryWriter for FileTrajectoryWriter {
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if self.failed {
             return Err(codec_context(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 Some(self.format),
                 &self.destination.display().to_string(),
@@ -282,7 +283,7 @@ impl TrajectoryWriter for FileTrajectoryWriter {
         let result = match &mut self.inner {
             Some(inner) => inner.write_frame(frame),
             None => Err(codec_context(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 Some(self.format),
                 &self.destination.display().to_string(),
@@ -330,7 +331,9 @@ pub fn write_trajectory(
     let path = path.as_ref();
     resolve_format(path, options.format)?;
     if !trajectory.properties().is_empty() {
-        return Err(TrajectoryIoError::UnsupportedField("collection properties"));
+        return Err(TrajectoryIoError::unsupported_field(
+            TrajectoryField::CollectionProperties,
+        ));
     }
     let mut writer = create_trajectory_writer(path, trajectory.shared_topology(), options)?;
     for frame in trajectory {
@@ -347,7 +350,7 @@ fn resolve_format(
     match format {
         Some(format) => Ok(format),
         None => detect::extension_format(path).ok_or_else(|| codec_context(
-            TrajectoryCodecErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
+            TrajectoryIoErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
             &path.display().to_string(), "destination extension does not identify a supported format; supply explicit write options",
         )),
     }
@@ -385,7 +388,7 @@ pub fn create_trajectory_writer(
         {
             let _ = std::fs::remove_file(&temporary);
             return Err(codec_context(
-                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::Open,
                 Some(format),
                 &label,
@@ -448,7 +451,7 @@ fn create_temporary_sibling(
         }
     }
     Err(codec_context(
-        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+        TrajectoryIoErrorKind::LimitExceeded,
         TrajectoryIoOperation::Open,
         Some(format),
         &destination.display().to_string(),

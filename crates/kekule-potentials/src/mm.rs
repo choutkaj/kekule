@@ -10,7 +10,7 @@
 
 use kekule::geometry::{Point3, Vector3};
 
-use crate::potential::SingularGeometry;
+use crate::potential::{InteractionKind, SingularGeometry};
 
 /// Coulomb conversion factor, kJ mol^-1 nm e^-2, matching OpenMM.
 pub(crate) const COULOMB: f64 = 138.935_457_644_381_98;
@@ -27,12 +27,12 @@ pub(crate) const COMPONENTS: usize = 6;
 /// A singular interaction, reported with dense atom indices.
 #[derive(Debug)]
 pub(crate) struct Singular {
-    pub interaction: &'static str,
+    pub interaction: InteractionKind,
     pub atoms: Vec<usize>,
     pub kind: SingularGeometry,
 }
 
-fn singular(interaction: &'static str, atoms: &[usize], kind: SingularGeometry) -> Singular {
+fn singular(interaction: InteractionKind, atoms: &[usize], kind: SingularGeometry) -> Singular {
     Singular {
         interaction,
         atoms: atoms.to_vec(),
@@ -127,7 +127,7 @@ pub(crate) fn bonds(
         if gradients.enabled() {
             if r2 < MIN_DISTANCE_SQUARED {
                 return Err(singular(
-                    "harmonic bond",
+                    InteractionKind::Bond,
                     &term.atoms,
                     SingularGeometry::CoincidentAtoms,
                 ));
@@ -158,7 +158,7 @@ pub(crate) fn angles(
         // cosine terms underflow are indistinguishable from zero.
         if r1 == 0.0 || r2 == 0.0 || (normal == Vector3::zero() && cosine == 0.0) {
             return Err(singular(
-                "harmonic angle",
+                InteractionKind::Angle,
                 &term.atoms,
                 SingularGeometry::DegenerateAngle,
             ));
@@ -174,7 +174,7 @@ pub(crate) fn angles(
         if norm == 0.0 {
             if offset.abs() > 1e-12 && term.k != 0.0 {
                 return Err(singular(
-                    "harmonic angle",
+                    InteractionKind::Angle,
                     &term.atoms,
                     SingularGeometry::LinearAngle,
                 ));
@@ -194,7 +194,7 @@ pub(crate) fn angles(
 
 pub(crate) fn torsions(
     component: usize,
-    interaction: &'static str,
+    interaction: InteractionKind,
     terms: &[PeriodicTorsion],
     x: &[Point3],
     gradients: &mut Gradients,
@@ -315,7 +315,7 @@ impl Nonbonded {
                 let r2 = r.norm_squared();
                 if r2 < MIN_DISTANCE_SQUARED {
                     return Err(singular(
-                        "nonbonded pair",
+                        InteractionKind::NonbondedPair,
                         &[i, j],
                         SingularGeometry::CoincidentAtoms,
                     ));
@@ -411,7 +411,14 @@ mod tests {
             }]),
         };
         let points = [p(1., 0., 0.), p(0., 0., 0.), p(0., 0., 1.), p(0., 1., 1.)];
-        let energy = torsions(0, "t", &[torsion], &points, &mut Gradients::None).unwrap();
+        let energy = torsions(
+            0,
+            InteractionKind::ProperTorsion,
+            &[torsion],
+            &points,
+            &mut Gradients::None,
+        )
+        .unwrap();
         assert!((energy - 4.0).abs() < 1e-14);
         assert!(dihedral([p(0., 0., 0.); 4]).is_none());
         // An outer atom on the axis leaves the dihedral undefined.
@@ -468,7 +475,7 @@ mod tests {
         let kernels: [Kernel; 4] = [
             Box::new(|x, g| bonds(&bond, x, g).unwrap()),
             Box::new(|x, g| angles(&angle, x, g).unwrap()),
-            Box::new(|x, g| torsions(0, "t", &torsion, x, g).unwrap()),
+            Box::new(|x, g| torsions(0, InteractionKind::ProperTorsion, &torsion, x, g).unwrap()),
             Box::new(|x, g| {
                 let (v, q) = nonbonded.evaluate(x, g).unwrap();
                 v + q
@@ -570,17 +577,42 @@ mod tests {
                 ]),
             }]
         };
-        let energy = torsions(0, "t", &torsion(0.0), &collinear, &mut Gradients::None).unwrap();
+        let energy = torsions(
+            0,
+            InteractionKind::ProperTorsion,
+            &torsion(0.0),
+            &collinear,
+            &mut Gradients::None,
+        )
+        .unwrap();
         assert_eq!(energy, 0.0);
         let mut gradients = Gradients::total(4);
-        let energy = torsions(0, "t", &torsion(0.0), &collinear, &mut gradients).unwrap();
+        let energy = torsions(
+            0,
+            InteractionKind::ProperTorsion,
+            &torsion(0.0),
+            &collinear,
+            &mut gradients,
+        )
+        .unwrap();
         assert_eq!(energy, 0.0);
         assert_eq!(total(gradients), vec![Vector3::zero(); 4]);
         for mut gradients in [Gradients::None, Gradients::total(4)] {
-            let error = torsions(0, "t", &torsion(1.0), &collinear, &mut gradients).unwrap_err();
+            let error = torsions(
+                0,
+                InteractionKind::ProperTorsion,
+                &torsion(1.0),
+                &collinear,
+                &mut gradients,
+            )
+            .unwrap_err();
             assert_eq!(
                 (error.interaction, error.atoms, error.kind),
-                ("t", vec![0, 1, 2, 3], SingularGeometry::DegenerateDihedral)
+                (
+                    InteractionKind::ProperTorsion,
+                    vec![0, 1, 2, 3],
+                    SingularGeometry::DegenerateDihedral
+                )
             );
         }
         // A linear equilibrium is stationary, so its zero gradient is defined.

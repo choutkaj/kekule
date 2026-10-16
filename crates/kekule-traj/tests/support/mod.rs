@@ -10,8 +10,8 @@ use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::structure::TrajectoryFrame;
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorContext, TrajectoryCodecErrorKind,
-    TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
 };
 
 /// Reject another topology context without changing its buffer or consuming input.
@@ -22,7 +22,7 @@ pub(crate) fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader
     let before = buffer_snapshot(&wrong);
     assert!(matches!(
         reader.read_next(&mut wrong),
-        Err(TrajectoryIoError::TopologyMismatch)
+        Err(error) if error.kind() == TrajectoryIoErrorKind::TopologyMismatch
     ));
     assert_eq!(buffer_snapshot(&wrong), before);
     assert!(Arc::ptr_eq(
@@ -62,29 +62,26 @@ pub(crate) fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
     topology(&symbols, &bonds)
 }
 
-pub(crate) fn codec_kind(error: &TrajectoryIoError) -> Option<TrajectoryCodecErrorKind> {
-    match error {
-        TrajectoryIoError::Codec(context) => Some(context.kind()),
-        _ => None,
-    }
+pub(crate) fn codec_kind(error: &TrajectoryIoError) -> Option<TrajectoryIoErrorKind> {
+    Some(error.kind())
 }
 
 /// The exact codec error a reader or writer reports, for whole-value assertions.
 pub(crate) fn codec_error(
-    kind: TrajectoryCodecErrorKind,
+    kind: TrajectoryIoErrorKind,
     operation: TrajectoryIoOperation,
     format: TrajectoryFormat,
     source_label: &str,
     frame: Option<u64>,
     detail: &str,
 ) -> TrajectoryIoError {
-    let mut context = TrajectoryCodecErrorContext::new(kind, operation, Some(format))
+    let mut error = TrajectoryIoError::codec(kind, operation, Some(format))
         .with_source_label(source_label)
         .with_detail(detail);
     if let Some(frame) = frame {
-        context = context.with_frame(frame);
+        error = error.with_frame(frame);
     }
-    context.into()
+    error
 }
 
 pub(crate) fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {

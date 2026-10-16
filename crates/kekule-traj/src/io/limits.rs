@@ -1,7 +1,4 @@
-use crate::{
-    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryIoOperation,
-};
+use crate::{TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation};
 
 /// Limits applied before attacker-controlled allocation, scanning, or seeking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,8 +138,8 @@ pub(crate) fn reserve_index_for_push(
     let Some(target_capacity) =
         next_index_capacity(offsets.len(), offsets.capacity(), hard_capacity)
     else {
-        return Err(TrajectoryCodecErrorContext::new(
-            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+        return Err(TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::Index,
             Some(format),
         )
@@ -150,14 +147,13 @@ pub(crate) fn reserve_index_for_push(
         .with_frame(frame)
         .with_detail(format!(
             "{format} index reached its configured hard capacity"
-        ))
-        .into());
+        )));
     };
     offsets
         .try_reserve_exact(target_capacity.saturating_sub(offsets.len()))
         .map_err(|_| {
-            TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+            TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Index,
                 Some(format),
             )
@@ -166,7 +162,6 @@ pub(crate) fn reserve_index_for_push(
             .with_detail(format!(
                 "could not grow {format} index toward its bounded capacity"
             ))
-            .into()
         })
 }
 
@@ -175,13 +170,12 @@ mod scratch_tests {
     use super::*;
 
     fn error(detail: &str) -> TrajectoryIoError {
-        TrajectoryCodecErrorContext::new(
-            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+        TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::ReadFrame,
             Some(TrajectoryFormat::Xtc),
         )
         .with_detail(detail)
-        .into()
     }
 
     #[test]
