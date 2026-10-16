@@ -192,6 +192,28 @@ All notable changes to Kekule are documented in this file.
     `editor()`/`builder()` are `draft()` and `into_editor()`/`into_builder()`
     are `into_draft()`. Its `Display` no longer repeats the error, which is
     its `source()`.
+  - `MoleculeError::InvalidStereoReference` carries a
+    `stereo::StereoValidationIssue` instead of one of 24 `&'static str`
+    reasons; elements and groups being added are named by the ID they would
+    receive. `StereoValidationIssue` gains the group and membership issues
+    (`GroupMembershipOutsideGroupEdit`, `MissingStereoGroup`,
+    `EmptyStereoGroup`, `DuplicateStereoGroupMember`,
+    `MissingStereoGroupMember`, `InconsistentStereoGroupMembership`,
+    `StereoElementAlreadyGrouped`, `SplitCorrelatedStereoGroup`), `Display`,
+    and `#[non_exhaustive]`. `MoleculeError::UnsupportedFeature`, which was
+    never constructed, and `impl Eq for MoleculeError`, unsound because the
+    error can hold an `f64` property value, are removed; types that wrap it
+    (`HydrogenTransformError`, `CoordinateStereoError`, `NormalizationError`
+    and `SourceStereoNormalizationError`) are no longer `Eq` either.
+  - `MoleculePublicationError` is the one publication error.
+    `MoleculeConnectivityError` becomes `Disconnected { components }`, and
+    `StereoPublicationError` becomes `InvalidStereo(StereoValidationIssue)`,
+    which now names the specific issue instead of
+    `InvalidElementReference`. `GraphValidationError` and the
+    `InvalidGraph` variant are removed: the public API cannot corrupt graph
+    storage, so publication checks it only as a debug assertion.
+  - `PerceptionInstallError::InvalidDelocalization` carries a
+    `perception::DelocalizationIssue` instead of a `&'static str`.
 - **Breaking:** Public items live in the module of the domain that owns them,
   and every operation has one home. Behaviour is unchanged; callers update
   paths, names, and signatures as listed.

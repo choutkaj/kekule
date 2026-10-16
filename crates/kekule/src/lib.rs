@@ -758,8 +758,8 @@ pub mod perception {
     }
     pub use crate::chemistry::PerceptionError;
     pub use crate::molecule::perception::{
-        Perception, PerceptionBuildError, PerceptionBuilder, PerceptionComponent,
-        PerceptionInstallError,
+        DelocalizationIssue, Perception, PerceptionBuildError, PerceptionBuilder,
+        PerceptionComponent, PerceptionInstallError,
     };
 
     /// Expert valence perception for canonical represented chemistry.

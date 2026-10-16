@@ -1,6 +1,9 @@
 use crate::DraftError;
 use std::fmt;
 
+use super::MoleculeError;
+use crate::stereo::StereoValidationIssue;
+
 use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
 
 use super::{
@@ -9,45 +12,25 @@ use super::{
     StereoGroupId,
 };
 
-/// A connectedness violation at a public [`Molecule`] boundary.
-///
-/// Every published molecule must contain exactly one graph component.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MoleculeConnectivityError {
-    components: usize,
-}
-
-impl MoleculeConnectivityError {
-    pub const fn components(self) -> usize {
-        self.components
-    }
-}
-
-impl fmt::Display for MoleculeConnectivityError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "molecule must be connected, but contains {} graph components",
-            self.components
-        )
-    }
-}
-
-impl std::error::Error for MoleculeConnectivityError {}
-
 /// Failure to publish checked molecule construction or editing state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MoleculePublicationError {
+    /// The draft has no atoms.
     EmptyGraph,
-    DisconnectedGraph(MoleculeConnectivityError),
-    InvalidGraph(GraphValidationError),
-    InvalidStereo(StereoPublicationError),
+    /// The draft is not one connected graph; every published molecule is.
+    Disconnected {
+        /// The number of graph components.
+        components: usize,
+    },
+    /// Represented stereo is inconsistent with the graph or with itself.
+    InvalidStereo(StereoValidationIssue),
     /// A neutral chlorine, bromine, or iodine with only oxygen neighbors and
     /// explicit valence 3, 5, or 7 still has `X=O` bonds. Canonical chemistry
     /// separates them as `[X+]-[O-]`; call
     /// [`MoleculeEditor::normalize_oxohalogens`] before publishing.
     UnnormalizedOxohalogen {
+        /// The halogen.
         atom: AtomId,
     },
 }
@@ -56,32 +39,25 @@ impl fmt::Display for MoleculePublicationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyGraph => formatter.write_str("molecule must contain at least one atom"),
-            Self::DisconnectedGraph(error) => write!(formatter, "{error}"),
-            Self::InvalidGraph(error) => write!(formatter, "invalid molecular graph: {error}"),
-            Self::InvalidStereo(error) => write!(formatter, "invalid represented stereo: {error}"),
+            Self::Disconnected { components } => write!(
+                formatter,
+                "molecule must be connected, but contains {components} graph components"
+            ),
+            Self::InvalidStereo(issue) => write!(formatter, "invalid represented stereo: {issue}"),
             Self::UnnormalizedOxohalogen { atom } => write!(
                 formatter,
-                "halogen atom{} has oxo double bonds; normalize oxohalogens before publishing",
-                atom.raw()
+                "halogen {atom} has oxo double bonds; normalize oxohalogens before publishing"
             ),
         }
     }
 }
 
-impl std::error::Error for MoleculePublicationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::DisconnectedGraph(error) => Some(error),
-            Self::InvalidGraph(error) => Some(error),
-            Self::InvalidStereo(error) => Some(error),
-            Self::EmptyGraph | Self::UnnormalizedOxohalogen { .. } => None,
-        }
-    }
-}
+impl std::error::Error for MoleculePublicationError {}
 
+/// An internal graph-storage invariant violation. The public API cannot
+/// produce one, so publication checks it only in debug builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum GraphValidationError {
+pub(crate) enum GraphValidationError {
     AdjacencySlotCount,
     AtomPropertySlotCount { expected: usize, actual: usize },
     BondPropertySlotCount { expected: usize, actual: usize },
@@ -92,134 +68,6 @@ pub enum GraphValidationError {
     DuplicateAdjacencyEntry { atom: AtomId, bond: BondId },
     MissingAdjacencyEntry { atom: AtomId, bond: BondId },
 }
-
-impl fmt::Display for GraphValidationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AtomPropertySlotCount { expected, actual } => write!(formatter,
-                "atom property storage requires {expected} slots, but has {actual}"),
-            Self::BondPropertySlotCount { expected, actual } => write!(formatter,
-                "bond property storage requires {expected} slots, but has {actual}"),
-            Self::AdjacencySlotCount => formatter.write_str(
-                "molecular graph adjacency has a different slot count than atom storage",
-            ),
-            Self::TombstonedAtomHasAdjacency { atom } => {
-                write!(
-                    formatter,
-                    "tombstoned atom atom{} still has adjacency entries",
-                    atom.raw()
-                )
-            }
-            Self::InvalidBondEndpoint { bond } => {
-                write!(formatter, "bond bond{} references a missing atom", bond.raw())
-            }
-            Self::InvalidAdjacencyBond { atom, bond } => write!(
-                formatter,
-                "atom atom{} adjacency references missing bond bond{}",
-                atom.raw(),
-                bond.raw()
-            ),
-            Self::AdjacencyEndpointMismatch { atom, bond } => write!(
-                formatter,
-                "atom atom{} adjacency contains bond bond{}, but that bond is not incident to the atom",
-                atom.raw(),
-                bond.raw()
-            ),
-            Self::DuplicateAdjacencyEntry { atom, bond } => write!(
-                formatter,
-                "atom atom{} adjacency contains bond bond{} more than once",
-                atom.raw(),
-                bond.raw()
-            ),
-            Self::MissingAdjacencyEntry { atom, bond } => write!(
-                formatter,
-                "bond bond{} is missing from atom atom{} adjacency",
-                bond.raw(),
-                atom.raw()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for GraphValidationError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum StereoPublicationError {
-    DuplicateElementFocus {
-        element: StereoElementId,
-        previous: StereoElementId,
-    },
-    InvalidElementReference {
-        element: StereoElementId,
-    },
-    InvalidElementGroup {
-        element: StereoElementId,
-    },
-    EmptyGroup {
-        group: StereoGroupId,
-    },
-    InvalidGroupMember {
-        group: StereoGroupId,
-        element: StereoElementId,
-    },
-    DuplicateGroupMember {
-        group: StereoGroupId,
-        element: StereoElementId,
-    },
-    InconsistentGroupMembership {
-        group: StereoGroupId,
-        element: StereoElementId,
-    },
-}
-
-impl fmt::Display for StereoPublicationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DuplicateElementFocus { element, previous } => write!(
-                formatter,
-                "stereo elements {previous} and {element} assert the same focus"
-            ),
-            Self::InvalidElementReference { element } => write!(
-                formatter,
-                "stereo element stereo{} references an invalid atom or bond",
-                element.raw()
-            ),
-            Self::InvalidElementGroup { element } => write!(
-                formatter,
-                "stereo element stereo{} references a missing stereo group",
-                element.raw()
-            ),
-            Self::EmptyGroup { group } => {
-                write!(
-                    formatter,
-                    "stereo group group{} contains no members",
-                    group.raw()
-                )
-            }
-            Self::InvalidGroupMember { group, element } => write!(
-                formatter,
-                "stereo group group{} references missing stereo element stereo{}",
-                group.raw(),
-                element.raw()
-            ),
-            Self::DuplicateGroupMember { group, element } => write!(
-                formatter,
-                "stereo group group{} contains stereo element stereo{} more than once",
-                group.raw(),
-                element.raw()
-            ),
-            Self::InconsistentGroupMembership { group, element } => write!(
-                formatter,
-                "stereo group group{} and stereo element stereo{} disagree about membership",
-                group.raw(),
-                element.raw()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for StereoPublicationError {}
 
 impl Molecule {
     /// Starts a detached transaction from this published molecule.
@@ -241,12 +89,12 @@ impl Molecule {
     }
 
     /// Validates the public connectedness invariant.
-    pub(crate) fn validate_connected(&self) -> std::result::Result<(), MoleculeConnectivityError> {
+    pub(crate) fn validate_connected(&self) -> std::result::Result<(), MoleculePublicationError> {
         let components = self.connected_components().len();
         if components == 1 {
             Ok(())
         } else {
-            Err(MoleculeConnectivityError { components })
+            Err(MoleculePublicationError::Disconnected { components })
         }
     }
 }
@@ -604,10 +452,12 @@ fn publish_molecule(
     if molecule.atom_count() == 0 {
         return Err(MoleculePublicationError::EmptyGraph);
     }
-    validate_graph(&molecule).map_err(MoleculePublicationError::InvalidGraph)?;
-    molecule
-        .validate_connected()
-        .map_err(MoleculePublicationError::DisconnectedGraph)?;
+    debug_assert_eq!(
+        validate_graph(&molecule),
+        Ok(()),
+        "editors keep graph storage consistent"
+    );
+    molecule.validate_connected()?;
     validate_stereo(&molecule).map_err(MoleculePublicationError::InvalidStereo)?;
     if let Some(atom) = unnormalized_oxohalogens(&molecule).first() {
         return Err(MoleculePublicationError::UnnormalizedOxohalogen { atom: *atom });
@@ -684,28 +534,38 @@ fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidatio
     Ok(())
 }
 
-fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoPublicationError> {
+fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoValidationIssue> {
     let mut foci = std::collections::BTreeMap::new();
     for (element_id, element) in molecule.stereo_elements() {
         if let Some(previous) = foci.insert(element.kind.focus(), element_id) {
-            return Err(StereoPublicationError::DuplicateElementFocus {
+            return Err(StereoValidationIssue::DuplicateStereoFocus {
                 element: element_id,
                 previous,
             });
         }
         molecule
-            .validate_stereo_element_refs(element)
-            .map_err(|_| StereoPublicationError::InvalidElementReference {
-                element: element_id,
+            .validate_stereo_element_refs(element_id, element)
+            .map_err(|error| match error {
+                MoleculeError::InvalidStereoReference(issue) => issue,
+                MoleculeError::InvalidBondId(bond) => StereoValidationIssue::MissingStereoBond {
+                    element: element_id,
+                    bond,
+                },
+                MoleculeError::InvalidAtomId(atom) => StereoValidationIssue::MissingStereoAtom {
+                    element: element_id,
+                    atom,
+                },
+                error => unreachable!("stereo references fail only on atoms and bonds: {error}"),
             })?;
         if let Some(group_id) = element.group {
             let group = molecule.stereo_group(group_id).map_err(|_| {
-                StereoPublicationError::InvalidElementGroup {
+                StereoValidationIssue::MissingStereoGroup {
                     element: element_id,
+                    group: group_id,
                 }
             })?;
             if !group.members.contains(&element_id) {
-                return Err(StereoPublicationError::InconsistentGroupMembership {
+                return Err(StereoValidationIssue::InconsistentStereoGroupMembership {
                     group: group_id,
                     element: element_id,
                 });
@@ -714,24 +574,24 @@ fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoPublica
     }
     for (group_id, group) in molecule.stereo_groups() {
         if group.members.is_empty() {
-            return Err(StereoPublicationError::EmptyGroup { group: group_id });
+            return Err(StereoValidationIssue::EmptyStereoGroup { group: group_id });
         }
         let mut seen = std::collections::BTreeSet::new();
         for &element_id in &group.members {
             if !seen.insert(element_id) {
-                return Err(StereoPublicationError::DuplicateGroupMember {
+                return Err(StereoValidationIssue::DuplicateStereoGroupMember {
                     group: group_id,
                     element: element_id,
                 });
             }
             let element = molecule.stereo_element(element_id).map_err(|_| {
-                StereoPublicationError::InvalidGroupMember {
+                StereoValidationIssue::MissingStereoGroupMember {
                     group: group_id,
                     element: element_id,
                 }
             })?;
             if element.group != Some(group_id) {
-                return Err(StereoPublicationError::InconsistentGroupMembership {
+                return Err(StereoValidationIssue::InconsistentStereoGroupMembership {
                     group: group_id,
                     element: element_id,
                 });
@@ -855,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn publication_checks_property_domains_and_recovery_preserves_malformed_draft() {
+    fn graph_validation_checks_property_domains() {
         for bonds in [false, true] {
             let mut editor = MoleculeEditor::new();
             editor.add_atom(carbon()).unwrap();
@@ -864,8 +724,6 @@ mod tests {
             } else {
                 editor.working.properties.atoms_mut().resize_missing(0);
             }
-            let before = format!("{editor:#?}");
-            let error = editor.try_finish().unwrap_err();
             let expected = if bonds {
                 GraphValidationError::BondPropertySlotCount {
                     expected: 0,
@@ -877,40 +735,22 @@ mod tests {
                     actual: 0,
                 }
             };
-            assert_eq!(
-                error.error(),
-                &MoleculePublicationError::InvalidGraph(expected)
-            );
-            assert_eq!(format!("{:#?}", error.draft()), before);
+            assert_eq!(validate_graph(&editor.working), Err(expected));
         }
     }
 
     #[test]
-    fn graph_validation_errors_have_diagnostic_display_messages() {
-        let error = GraphValidationError::InvalidAdjacencyBond {
-            atom: AtomId::new(4),
-            bond: BondId::new(9),
-        };
-        let message = error.to_string();
-        assert_eq!(
-            message,
-            "atom atom4 adjacency references missing bond bond9"
+    fn stereo_publication_issues_have_diagnostic_display_messages() {
+        let error = MoleculePublicationError::InvalidStereo(
+            StereoValidationIssue::DuplicateStereoGroupMember {
+                group: StereoGroupId::new(2),
+                element: StereoElementId::new(7),
+            },
         );
-        assert!(!message.contains("InvalidAdjacencyBond"));
-    }
-
-    #[test]
-    fn stereo_publication_errors_have_diagnostic_display_messages() {
-        let error = StereoPublicationError::DuplicateGroupMember {
-            group: StereoGroupId::new(2),
-            element: StereoElementId::new(7),
-        };
-        let message = error.to_string();
         assert_eq!(
-            message,
-            "stereo group group2 contains stereo element stereo7 more than once"
+            error.to_string(),
+            "invalid represented stereo: sg2 lists s7 more than once"
         );
-        assert!(!message.contains("DuplicateGroupMember"));
     }
 
     #[test]
@@ -920,9 +760,7 @@ mod tests {
         builder.add_atom(carbon()).expect("second atom");
         assert_eq!(
             builder.finish(),
-            Err(MoleculePublicationError::DisconnectedGraph(
-                MoleculeConnectivityError { components: 2 }
-            ))
+            Err(MoleculePublicationError::Disconnected { components: 2 })
         );
     }
 
@@ -959,7 +797,11 @@ mod tests {
         assert_eq!(
             error.error(),
             &MoleculePublicationError::InvalidStereo(
-                StereoPublicationError::InvalidElementReference { element }
+                StereoValidationIssue::InvalidDoubleBondOrder {
+                    element,
+                    bond,
+                    order: BondOrder::Single,
+                }
             )
         );
         let mut repaired = error.into_draft();
@@ -978,14 +820,19 @@ mod tests {
         let StereoElementKind::Tetrahedral(stereo) = &mut invalid.kind else {
             panic!("expected tetrahedral stereo");
         };
-        stereo.carriers[0] = StereoCarrier::Atom(stereo.center);
+        let center = stereo.center;
+        stereo.carriers[0] = StereoCarrier::Atom(center);
         let mut editor = molecule.into_editor();
         editor.working.graph.stereo_elements[element.index()] = Some(invalid);
         let failure = editor.try_finish().unwrap_err();
         assert_eq!(
             failure.error(),
             &MoleculePublicationError::InvalidStereo(
-                StereoPublicationError::InvalidElementReference { element }
+                StereoValidationIssue::TetrahedralCarrierNotAdjacent {
+                    element,
+                    center,
+                    carrier: StereoCarrier::Atom(center),
+                }
             )
         );
         let mut repaired = failure.into_draft();
@@ -1076,9 +923,7 @@ mod tests {
         editor.delete_bond(bond).expect("delete in working copy");
         assert_eq!(
             editor.finish(),
-            Err(MoleculePublicationError::DisconnectedGraph(
-                MoleculeConnectivityError { components: 2 }
-            ))
+            Err(MoleculePublicationError::Disconnected { components: 2 })
         );
         assert_eq!(molecule, before);
     }

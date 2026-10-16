@@ -121,7 +121,7 @@ pub struct RemoveHydrogensReport {
 
 /// Failure from planning or committing a transactional hydrogen transform.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HydrogenTransformError {
     MissingValencePerception,
     /// The transform would add more hydrogens than

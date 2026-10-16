@@ -17,7 +17,7 @@ const MAX_AROMATIC_LOCALIZATION_MATCHING_STATES: usize = 100_000;
 
 /// Failure to publish Kekule's canonical represented chemistry.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum NormalizationError {
     /// Source-aromatic bonds cannot be localized under the fixed rules.
     InvalidAromaticRepresentation(AtomId),
@@ -53,7 +53,7 @@ pub(crate) enum NormalizationWarning {
 }
 
 /// One concrete source-stereo normalization issue.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SourceStereoNormalizationIssue {
     MissingSourceBondMark {
         bond: BondId,
@@ -83,7 +83,7 @@ pub(crate) enum SourceStereoNormalizationIssue {
 }
 
 /// Collected failure to canonicalize source-declared stereochemistry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SourceStereoNormalizationError {
     pub issues: Vec<SourceStereoNormalizationIssue>,
 }

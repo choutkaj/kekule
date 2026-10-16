@@ -219,22 +219,18 @@ impl MoleculeEditor {
         replacement: StereoGroup,
     ) -> Result<StereoGroup> {
         let previous = self.stereo_group(id)?.clone();
-        if replacement.members.is_empty()
-            || replacement.members.iter().collect::<BTreeSet<_>>().len()
-                != replacement.members.len()
-        {
-            return Err(MoleculeError::InvalidStereoReference(
-                "stereo group requires nonempty unique members",
-            ));
-        }
+        super::owner::validate_group_members(id, &replacement)?;
         for &member in &replacement.members {
-            if self
+            if let Some(group) = self
                 .stereo_element(member)?
                 .group
-                .is_some_and(|group| group != id)
+                .filter(|&group| group != id)
             {
                 return Err(MoleculeError::InvalidStereoReference(
-                    "stereo element already belongs to another group",
+                    crate::stereo::StereoValidationIssue::StereoElementAlreadyGrouped {
+                        element: member,
+                        group,
+                    },
                 ));
             }
         }

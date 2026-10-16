@@ -100,100 +100,369 @@ pub enum StereoCandidate {
     },
 }
 
+/// One way represented stereo is inconsistent with the graph or with the
+/// other stereo assertions.
+///
+/// Elements and groups are named by ID; an element or group being added is
+/// named by the ID it would receive.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StereoValidationIssue {
+    /// Two elements assert the same focus.
     DuplicateStereoFocus {
+        /// The later element.
         element: StereoElementId,
+        /// The element that already asserts the focus.
         previous: StereoElementId,
     },
+    /// The element references an atom that does not exist.
     MissingStereoAtom {
+        /// The element.
         element: StereoElementId,
+        /// The missing atom.
         atom: AtomId,
     },
+    /// The element references a bond that does not exist.
     MissingStereoBond {
+        /// The element.
         element: StereoElementId,
+        /// The missing bond.
         bond: BondId,
     },
+    /// A tetrahedral center does not have four carriers.
     InvalidTetrahedralCarrierCount {
+        /// The element.
         element: StereoElementId,
+        /// The center.
         center: AtomId,
+        /// The number of carriers.
         carrier_count: usize,
     },
+    /// A tetrahedral carrier appears twice.
     DuplicateTetrahedralCarrier {
+        /// The element.
         element: StereoElementId,
+        /// The center.
         center: AtomId,
+        /// The repeated carrier.
         carrier: StereoCarrier,
     },
+    /// A neighbor of a tetrahedral center is not one of its carriers.
     UnrepresentedTetrahedralNeighbor {
+        /// The element.
         element: StereoElementId,
+        /// The center.
         center: AtomId,
+        /// The missing neighbor.
         neighbor: AtomId,
     },
+    /// A tetrahedral atom carrier is not bonded to the center.
     TetrahedralCarrierNotAdjacent {
+        /// The element.
         element: StereoElementId,
+        /// The center.
         center: AtomId,
+        /// The carrier.
         carrier: StereoCarrier,
     },
+    /// A double-bond focus is not a double bond.
     InvalidDoubleBondOrder {
+        /// The element.
         element: StereoElementId,
+        /// The focus bond.
         bond: BondId,
+        /// Its order.
         order: BondOrder,
     },
+    /// The stated endpoints are not the endpoints of the focus bond.
     DoubleBondFocusMismatch {
+        /// The element.
         element: StereoElementId,
+        /// The focus bond.
         bond: BondId,
+        /// The stated left endpoint.
         left: AtomId,
+        /// The stated right endpoint.
         right: AtomId,
     },
+    /// A double-bond carrier is the other endpoint of the focus.
     DoubleBondCarrierIsFocusAtom {
+        /// The element.
         element: StereoElementId,
+        /// The endpoint.
         endpoint: AtomId,
+        /// The carrier.
         carrier: AtomId,
     },
+    /// A double-bond atom carrier is not bonded to its endpoint.
     DoubleBondCarrierNotAdjacent {
+        /// The element.
         element: StereoElementId,
+        /// The endpoint.
         endpoint: AtomId,
+        /// The carrier.
         carrier: StereoCarrier,
     },
+    /// A double-bond carrier is neither an atom nor an implicit hydrogen.
     UnsupportedDoubleBondCarrier {
+        /// The element.
         element: StereoElementId,
+        /// The endpoint.
         endpoint: AtomId,
+        /// The carrier.
         carrier: StereoCarrier,
     },
+    /// A double-bond endpoint has more than two substituents.
     DoubleBondEndpointOvercoordinated {
+        /// The element.
         element: StereoElementId,
+        /// The endpoint.
         endpoint: AtomId,
+        /// Its substituents, excluding the other endpoint.
         substituent_count: usize,
     },
+    /// An axis does not have two carriers.
     InvalidAxisCarrierCount {
+        /// The element.
         element: StereoElementId,
+        /// The axis bond.
         axis: BondId,
+        /// The number of carriers.
         carrier_count: usize,
     },
+    /// An axis carrier is an endpoint of the axis.
     AxisCarrierIsFocusAtom {
+        /// The element.
         element: StereoElementId,
+        /// The axis bond.
         axis: BondId,
+        /// The carrier.
         carrier: AtomId,
     },
+    /// An axis carrier is not bonded to exactly one axis endpoint.
     AxisCarrierNotAdjacent {
+        /// The element.
         element: StereoElementId,
+        /// The axis bond.
         axis: BondId,
+        /// The carrier.
         carrier: StereoCarrier,
     },
+    /// An axis carrier is not an explicit atom.
     UnsupportedAxisCarrier {
+        /// The element.
         element: StereoElementId,
+        /// The axis bond.
         axis: BondId,
+        /// The carrier.
         carrier: StereoCarrier,
     },
+    /// The axis carriers do not sit one at each endpoint.
     AxisCarrierEndpointMismatch {
+        /// The element.
         element: StereoElementId,
+        /// The axis bond.
         axis: BondId,
     },
+    /// An axis endpoint has more than two substituents.
     AxisEndpointOvercoordinated {
+        /// The element.
         element: StereoElementId,
+        /// The endpoint.
         endpoint: AtomId,
+        /// Its substituents, excluding the other endpoint.
         substituent_count: usize,
     },
+    /// Group membership was set on an element directly; it changes only
+    /// through stereo-group operations.
+    GroupMembershipOutsideGroupEdit {
+        /// The element.
+        element: StereoElementId,
+    },
+    /// The element names a group that does not exist.
+    MissingStereoGroup {
+        /// The element.
+        element: StereoElementId,
+        /// The missing group.
+        group: StereoGroupId,
+    },
+    /// The group has no members.
+    EmptyStereoGroup {
+        /// The group.
+        group: StereoGroupId,
+    },
+    /// The group lists an element twice.
+    DuplicateStereoGroupMember {
+        /// The group.
+        group: StereoGroupId,
+        /// The repeated member.
+        element: StereoElementId,
+    },
+    /// The group lists an element that does not exist.
+    MissingStereoGroupMember {
+        /// The group.
+        group: StereoGroupId,
+        /// The missing member.
+        element: StereoElementId,
+    },
+    /// A group and an element disagree about the element's membership.
+    InconsistentStereoGroupMembership {
+        /// The group.
+        group: StereoGroupId,
+        /// The element.
+        element: StereoElementId,
+    },
+    /// The element already belongs to another group.
+    StereoElementAlreadyGrouped {
+        /// The element.
+        element: StereoElementId,
+        /// The group it belongs to.
+        group: StereoGroupId,
+    },
+    /// Splitting the molecule would separate the members of a correlated
+    /// (non-absolute) group across molecules.
+    SplitCorrelatedStereoGroup {
+        /// The group.
+        group: StereoGroupId,
+    },
+}
+
+impl fmt::Display for StereoValidationIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateStereoFocus { element, previous } => {
+                write!(f, "{element} and {previous} assert the same focus")
+            }
+            Self::MissingStereoAtom { element, atom } => {
+                write!(f, "{element} references missing {atom}")
+            }
+            Self::MissingStereoBond { element, bond } => {
+                write!(f, "{element} references missing {bond}")
+            }
+            Self::InvalidTetrahedralCarrierCount {
+                element,
+                center,
+                carrier_count,
+            } => write!(
+                f,
+                "{element} at {center} has {carrier_count} carriers, not four"
+            ),
+            Self::DuplicateTetrahedralCarrier {
+                element,
+                center,
+                carrier,
+            } => write!(f, "{element} at {center} repeats carrier {carrier:?}"),
+            Self::UnrepresentedTetrahedralNeighbor {
+                element,
+                center,
+                neighbor,
+            } => write!(f, "{element} at {center} omits bonded neighbor {neighbor}"),
+            Self::TetrahedralCarrierNotAdjacent {
+                element,
+                center,
+                carrier,
+            } => write!(f, "{element} carrier {carrier:?} is not bonded to {center}"),
+            Self::InvalidDoubleBondOrder {
+                element,
+                bond,
+                order,
+            } => write!(f, "{element} focus {bond} has order {order:?}, not double"),
+            Self::DoubleBondFocusMismatch {
+                element,
+                bond,
+                left,
+                right,
+            } => write!(f, "{element} endpoints {left} and {right} do not match {bond}"),
+            Self::DoubleBondCarrierIsFocusAtom {
+                element,
+                endpoint,
+                carrier,
+            } => write!(
+                f,
+                "{element} carrier {carrier} of {endpoint} is the other endpoint"
+            ),
+            Self::DoubleBondCarrierNotAdjacent {
+                element,
+                endpoint,
+                carrier,
+            } => write!(f, "{element} carrier {carrier:?} is not bonded to {endpoint}"),
+            Self::UnsupportedDoubleBondCarrier {
+                element,
+                endpoint,
+                carrier,
+            } => write!(
+                f,
+                "{element} carrier {carrier:?} of {endpoint} is neither an atom nor an implicit hydrogen"
+            ),
+            Self::DoubleBondEndpointOvercoordinated {
+                element,
+                endpoint,
+                substituent_count,
+            } => write!(
+                f,
+                "{element} endpoint {endpoint} has {substituent_count} substituents, more than two"
+            ),
+            Self::InvalidAxisCarrierCount {
+                element,
+                axis,
+                carrier_count,
+            } => write!(f, "{element} on {axis} has {carrier_count} carriers, not two"),
+            Self::AxisCarrierIsFocusAtom {
+                element,
+                axis,
+                carrier,
+            } => write!(f, "{element} carrier {carrier} is an endpoint of {axis}"),
+            Self::AxisCarrierNotAdjacent {
+                element,
+                axis,
+                carrier,
+            } => write!(
+                f,
+                "{element} carrier {carrier:?} is not bonded to exactly one endpoint of {axis}"
+            ),
+            Self::UnsupportedAxisCarrier {
+                element,
+                axis,
+                carrier,
+            } => write!(f, "{element} carrier {carrier:?} on {axis} is not an atom"),
+            Self::AxisCarrierEndpointMismatch { element, axis } => write!(
+                f,
+                "{element} carriers are not one at each endpoint of {axis}"
+            ),
+            Self::AxisEndpointOvercoordinated {
+                element,
+                endpoint,
+                substituent_count,
+            } => write!(
+                f,
+                "{element} endpoint {endpoint} has {substituent_count} substituents, more than two"
+            ),
+            Self::GroupMembershipOutsideGroupEdit { element } => write!(
+                f,
+                "{element} group membership changes only through stereo-group operations"
+            ),
+            Self::MissingStereoGroup { element, group } => {
+                write!(f, "{element} names missing {group}")
+            }
+            Self::EmptyStereoGroup { group } => write!(f, "{group} has no members"),
+            Self::DuplicateStereoGroupMember { group, element } => {
+                write!(f, "{group} lists {element} more than once")
+            }
+            Self::MissingStereoGroupMember { group, element } => {
+                write!(f, "{group} lists missing {element}")
+            }
+            Self::InconsistentStereoGroupMembership { group, element } => {
+                write!(f, "{group} and {element} disagree about membership")
+            }
+            Self::StereoElementAlreadyGrouped { element, group } => {
+                write!(f, "{element} already belongs to {group}")
+            }
+            Self::SplitCorrelatedStereoGroup { group } => write!(
+                f,
+                "splitting the molecule would separate correlated {group} across molecules"
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,7 +484,7 @@ impl std::error::Error for StereoValidationError {}
 
 /// Failure while inferring or explicitly materializing coordinate stereo.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CoordinateStereoError {
     Perception(StereoSearchError),
     PositionCountMismatch { expected: usize, actual: usize },
@@ -232,11 +501,8 @@ impl fmt::Display for CoordinateStereoError {
                 "molecule requires {expected} positions, but received {actual}"
             ),
             Self::InvalidStereo(error) => write!(formatter, "{error}"),
-            Self::CouldNotCreateElement(error) => {
-                write!(
-                    formatter,
-                    "could not materialize coordinate stereo: {error}"
-                )
+            Self::CouldNotCreateElement(_) => {
+                formatter.write_str("could not materialize coordinate stereo")
             }
         }
     }

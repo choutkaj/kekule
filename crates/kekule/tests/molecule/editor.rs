@@ -627,7 +627,7 @@ fn failed_finish_returns_exact_draft_for_repair() {
     let error = editor.try_finish().unwrap_err();
     assert!(matches!(
         error.error(),
-        MoleculePublicationError::DisconnectedGraph(_)
+        MoleculePublicationError::Disconnected { .. }
     ));
     assert_eq!(snapshot(error.draft()), before);
     let mut editor = error.into_draft();
@@ -734,7 +734,7 @@ fn editor_enforces_molecule_publication_invariants() {
         .unwrap();
     assert!(matches!(
         disconnected.finish(),
-        Err(kekule::molecule::MoleculePublicationError::DisconnectedGraph(_))
+        Err(kekule::molecule::MoleculePublicationError::Disconnected { .. })
     ));
 }
 
@@ -751,7 +751,7 @@ fn editor_ids_are_stable_while_drafting_and_compact_on_publication() {
     editor.delete_atom(tombstone).unwrap();
     assert!(matches!(
         editor.clone().finish(),
-        Err(MoleculePublicationError::DisconnectedGraph(_))
+        Err(MoleculePublicationError::Disconnected { .. })
     ));
     // Draft IDs remain stable across deletion while the graph is edited.
     editor.add_bond(first, last, BondOrder::Single).unwrap();
