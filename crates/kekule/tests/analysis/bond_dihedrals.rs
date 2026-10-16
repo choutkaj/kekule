@@ -49,7 +49,12 @@ fn bond(model: &Model, b: usize, c: usize) -> InstanceBondId {
 }
 
 fn definition(model: &Model, b: usize, c: usize) -> BondDihedral {
-    BondDihedral::new(&model.shared_topology(), bond(model, b, c)).unwrap()
+    BondDihedral::new(
+        &model.shared_topology(),
+        bond(model, b, c),
+        Default::default(),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -249,7 +254,7 @@ fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
         InstanceBondId::new(MoleculeInstanceId::new(99), BondId::new(0)),
     ] {
         assert!(
-            matches!(BondDihedral::new(&model.shared_topology(), invalid), Err(BondDihedralError::InvalidBondId(id)) if id == invalid)
+            matches!(BondDihedral::new(&model.shared_topology(), invalid, Default::default()), Err(BondDihedralError::InvalidBondId(id)) if id == invalid)
         );
     }
 }
@@ -276,8 +281,7 @@ fn losing_reference_ties_do_not_exhaust_ranking_bounds() {
             },
         ] {
             let selected =
-                BondDihedral::with_options(&model.shared_topology(), bond(&model, b, 5), options)
-                    .unwrap();
+                BondDihedral::new(&model.shared_topology(), bond(&model, b, 5), options).unwrap();
             assert_eq!(selected.atoms(), Some([ids[a], ids[b], ids[5], ids[6]]));
         }
     }
@@ -299,7 +303,7 @@ fn only_possible_maxima_consume_further_ranking_budget() {
     let model = make_model("C(C(C)(C)C)(C(F)C)(C(F)C)CO", true);
     let axis = bond(&model, 0, 11);
     let ids = model.topology().atom_ids();
-    let selected = BondDihedral::with_options(
+    let selected = BondDihedral::new(
         &model.shared_topology(),
         axis,
         CipAssignmentOptions {
@@ -328,7 +332,7 @@ fn only_possible_maxima_consume_further_ranking_budget() {
         ),
     ] {
         assert!(matches!(
-            BondDihedral::with_options(&model.shared_topology(), axis, options),
+            BondDihedral::new(&model.shared_topology(), axis, options),
             Err(BondDihedralError::Ranking { error, .. }) if error == expected
         ));
     }
@@ -355,12 +359,16 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
         ),
     ] {
         assert!(
-            matches!(BondDihedral::with_options(&model.shared_topology(), axis, options), Err(BondDihedralError::Ranking { bond, error }) if bond == axis && error == expected)
+            matches!(BondDihedral::new(&model.shared_topology(), axis, options), Err(BondDihedralError::Ranking { bond, error }) if bond == axis && error == expected)
         );
     }
     let unperceived = make_model("CC(CO)CC", false);
     assert!(matches!(
-        BondDihedral::new(&unperceived.shared_topology(), bond(&unperceived, 1, 4)),
+        BondDihedral::new(
+            &unperceived.shared_topology(),
+            bond(&unperceived, 1, 4),
+            Default::default()
+        ),
         Err(BondDihedralError::Ranking {
             error: CipRankingError::UnknownHydrogenCount { .. },
             ..
@@ -368,7 +376,7 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
     ));
     // A proved element ordering needs no complete digraph or deep exploration.
     let model = make_model("FC(Cl)C(Br)I", true);
-    let tiny = BondDihedral::with_options(
+    let tiny = BondDihedral::new(
         &model.shared_topology(),
         bond(&model, 1, 3),
         CipAssignmentOptions {
@@ -385,7 +393,7 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
     );
     let tied = make_model("CC(C)C(C)C", true);
     assert!(matches!(
-        BondDihedral::with_options(
+        BondDihedral::new(
             &tied.shared_topology(),
             bond(&tied, 1, 3),
             CipAssignmentOptions {
@@ -416,7 +424,7 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
         .unwrap();
     let model = builder.build().unwrap();
     let axis = InstanceBondId::new(second, BondId::new(1));
-    let selected = BondDihedral::new(&model.shared_topology(), axis).unwrap();
+    let selected = BondDihedral::new(&model.shared_topology(), axis, Default::default()).unwrap();
     assert_eq!(
         selected.atoms().unwrap(),
         [0, 1, 2, 3].map(|i| InstanceAtomId::new(second, AtomId::new(i)))

@@ -179,6 +179,8 @@ All notable changes to Kekule are documented in this file.
     `materialize_coordinate_stereo`, `Molecule::add_hydrogens`,
     `alignment::rmsd`, `Ensemble` and `Trajectory` `superpose`, `rmsd`, and
     `aligned_rmsd`, and `Ensemble::cluster_by_radius`.
+    `structure::measure::BondDihedral::new(topology, bond, options)` replaces
+    `BondDihedral::new` and `with_options`.
   - `perception::rings::perceive_rings(mol, options)` replaces
     `perceive_ring_membership`, `perceive_ring_set`, and
     `perceive_ring_set_with_options`. It installs ring perception and returns
