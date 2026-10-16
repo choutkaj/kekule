@@ -940,12 +940,17 @@ impl fmt::Display for TopologyIdKind {
     }
 }
 
+/// A topology builder edit or publication was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyBuildError {
+    /// The builder has no molecule instances to publish.
     NoMoleculeInstances,
+    /// Reordering or validating topology property rows failed; see the source.
     Property(Box<PropertyError>),
+    /// A molecule definition reference is not staged.
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
+    /// A residue reference is not in the staged hierarchy.
     InvalidResidueId(ResidueId),
     /// A staged definition was not instantiated and cannot be published.
     UnusedMoleculeDefinition(MoleculeDefinitionId),
@@ -960,7 +965,9 @@ pub enum TopologyBuildError {
     IdentifierCapacityExceeded(TopologyIdKind),
     /// A replacement dense atom order does not list every staged atom once.
     AtomOrderLengthMismatch {
+        /// The number of staged atoms.
         expected: usize,
+        /// The number of atoms in the replacement order.
         actual: usize,
     },
     /// A replacement dense atom order names an atom that is not staged.

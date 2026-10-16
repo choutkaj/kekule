@@ -300,7 +300,9 @@ pub enum StructureError {
     Array(DenseArrayError),
     /// Bound bond property rows have the wrong length.
     BondCountMismatch {
+        /// The required bond row count.
         expected: usize,
+        /// The supplied bond row count.
         actual: usize,
     },
     /// A frame time is not finite.
@@ -311,8 +313,11 @@ pub enum StructureError {
     InvalidWeight,
     /// The payload exceeds addressable capacity.
     CapacityOverflow,
+    /// A structure property edit failed; see the source.
     Property(Box<PropertyError>),
+    /// The periodic cell is invalid; see the source.
     Cell(Box<PeriodicCellError>),
+    /// A quantity could not be converted to the required unit; see the source.
     Unit(Box<UnitError>),
 }
 

@@ -379,13 +379,20 @@ impl Default for RigidTransform {
     }
 }
 
+/// Cell vectors or axis flags do not describe a valid periodic cell.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum PeriodicCellError {
+    /// The vectors could not be converted to the canonical length unit; see the
+    /// source.
     Unit(UnitError),
+    /// No axis is marked periodic.
     NoPeriodicAxes,
+    /// A cell vector component is not finite.
     NonFiniteVector,
+    /// The cell vectors span zero or non-finite volume.
     DegenerateVectors,
+    /// An orthorhombic length is not finite and strictly positive.
     InvalidOrthorhombicLengths,
 }
 
@@ -419,10 +426,13 @@ impl From<UnitError> for PeriodicCellError {
     }
 }
 
+/// A rotation and translation do not form a proper rigid transform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RigidTransformError {
+    /// A rotation or translation component is not finite.
     NonFinite,
+    /// The rotation matrix is not orthonormal with determinant +1.
     NonRigidRotation,
 }
 

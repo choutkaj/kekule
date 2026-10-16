@@ -1546,28 +1546,43 @@ impl fmt::Display for PropertyDomain {
     }
 }
 
+/// A property key, column or value is invalid for its table.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PropertyError {
+    /// The text is not a 1 to `MAX_PROPERTY_KEY_LEN` character ASCII identifier.
     InvalidKey(String),
+    /// A column or row set has a different length than the table.
     LengthMismatch {
+        /// The table's row count.
         expected: usize,
+        /// The number of values supplied.
         actual: usize,
     },
+    /// A row index is outside the table.
     InvalidIndex {
+        /// The table's row count.
         len: usize,
+        /// The requested row index.
         index: usize,
     },
     /// The row belongs to an atom or bond removed from an editing draft.
     RemovedRow {
+        /// The removed row's index.
         index: usize,
     },
+    /// A column or value has a different type than the existing column.
     TypeMismatch {
+        /// The key of the existing column.
         key: PropertyKey,
     },
+    /// A real value is NaN or infinite.
     NonFiniteValue {
+        /// The row of the value, or `None` for a single value.
         index: Option<usize>,
     },
+    /// A real column could not be converted to the existing column's unit; see
+    /// the source.
     Unit(UnitError),
 }
 

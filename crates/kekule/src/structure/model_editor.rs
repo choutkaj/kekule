@@ -673,6 +673,7 @@ fn checked_point(
     Ok(point)
 }
 
+/// A model edit was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelEditError {

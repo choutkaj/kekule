@@ -4,24 +4,43 @@ use super::*;
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyEditError {
+    /// Publication was requested with no atoms left.
     EmptyTopology,
+    /// An atom handle is deleted or belongs to another editor.
     InvalidAtom(EditAtomId),
+    /// A bond handle is deleted or belongs to another editor.
     InvalidBond(EditBondId),
+    /// A chain handle is deleted or belongs to another editor.
     InvalidChain(EditChainId),
+    /// A residue handle is deleted or belongs to another editor.
     InvalidResidue(EditResidueId),
+    /// An atom-site handle is deleted or belongs to another editor.
     InvalidAtomSite(EditAtomSiteId),
+    /// A source-topology atom has no live editing handle.
     InvalidSourceAtom(InstanceAtomId),
+    /// A source-topology bond has no live editing handle.
     InvalidSourceBond(InstanceBondId),
+    /// A source molecule instance is absent or no longer matches its edited atoms.
     InvalidSourceInstance(MoleculeInstanceId),
+    /// A source-topology chain has no live editing handle.
     InvalidSourceChain(ChainId),
+    /// A source-topology residue has no live editing handle.
     InvalidSourceResidue(ResidueId),
+    /// A source-topology atom site has no live editing handle.
     InvalidSourceAtomSite(AtomSiteId),
+    /// The atom already has a hierarchy site.
     DuplicateAtomPlacement(EditAtomId),
+    /// A molecule edit failed; see the source.
     Molecule(MoleculeError),
+    /// An edited molecule could not be published; see the source.
     Publication(MoleculePublicationError),
+    /// The edited topology could not be published; see the source.
     Topology(TopologyBuildError),
+    /// A hierarchy edit failed; see the source.
     Hierarchy(HierarchyError),
+    /// A property edit failed; see the source.
     Property(PropertyError),
+    /// Property rows of an appended topology could not be copied into a table.
     AppendProperty {
         /// The table whose rows could not be appended.
         domain: crate::properties::PropertyDomain,

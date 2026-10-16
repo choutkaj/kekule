@@ -257,6 +257,7 @@ impl RingPerceptionOptions {
     }
 }
 
+/// Ring perception could not produce a complete ring set.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RingPerceptionError {

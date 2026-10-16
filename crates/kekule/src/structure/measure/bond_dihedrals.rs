@@ -11,13 +11,18 @@ use super::{dihedral, ConnectivityCheck, MeasurementError};
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum BondDihedralError {
+    /// The bond is not in the topology.
     InvalidBondId(InstanceBondId),
     /// A prepared definition can only measure views sharing its topology layout.
     TopologyMismatch,
+    /// Ranking the bond's neighbours to choose reference atoms failed.
     Ranking {
+        /// The central bond.
         bond: InstanceBondId,
+        /// The ranking failure.
         error: CipRankingError,
     },
+    /// Measuring the dihedral failed; see the source.
     Measurement(MeasurementError),
 }
 

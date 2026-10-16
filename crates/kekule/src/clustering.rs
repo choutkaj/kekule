@@ -316,18 +316,29 @@ fn undirected(atoms: FitAtoms<'_>) -> Result<FitAtoms<'_>, ClusteringError> {
 pub enum PartitionError {
     /// A member is assigned to a cluster without a representative.
     ClusterOutOfRange {
+        /// The assigned member.
         member: usize,
+        /// The cluster it is assigned to.
         cluster: usize,
+        /// The number of clusters, one per representative.
         clusters: usize,
     },
     /// A representative is not a partitioned member.
     RepresentativeOutOfRange {
+        /// The represented cluster.
         cluster: usize,
+        /// The representative member index.
         member: usize,
+        /// The number of partitioned members.
         members: usize,
     },
     /// A representative is assigned to another cluster.
-    RepresentativeNotInCluster { cluster: usize, member: usize },
+    RepresentativeNotInCluster {
+        /// The represented cluster.
+        cluster: usize,
+        /// The representative member index.
+        member: usize,
+    },
 }
 
 impl fmt::Display for PartitionError {
@@ -367,47 +378,64 @@ pub enum ClusteringError {
     InvalidRadius,
     /// A partition has a different member count than the ensemble.
     PartitionMismatch {
+        /// The ensemble's member count.
         expected: usize,
+        /// The partition's member count.
         actual: usize,
     },
     /// A distance matrix covers a different member count than the ensemble.
     MatrixMismatch {
+        /// The ensemble's member count.
         expected: usize,
+        /// The matrix's member count.
         actual: usize,
     },
     /// Condensed distances have the wrong length for their member count.
     CondensedLength {
+        /// The stated member count.
         members: usize,
+        /// The condensed length for that member count.
         expected: usize,
+        /// The number of distances supplied.
         actual: usize,
     },
     /// A distance is not finite and nonnegative; `index` is condensed.
     InvalidDistance {
+        /// The condensed index of the invalid distance.
         index: usize,
     },
     /// The pairwise distances of this many members are not addressable.
     MatrixTooLarge {
+        /// The requested member count.
         members: usize,
     },
     /// Fitting one pair of members failed.
     PairFit {
+        /// The first member of the pair.
         first: usize,
+        /// The second member of the pair.
         second: usize,
+        /// The fit failure.
         source: Box<AlignmentError>,
     },
     /// A dendrogram cut height is not finite and nonnegative.
     InvalidHeight,
     /// A requested cluster count is zero or exceeds the member count.
     InvalidClusterCount {
+        /// The requested cluster count.
         requested: usize,
+        /// The number of members.
         members: usize,
     },
     /// Distances between members were requested over an
     /// [`AtomCorrespondence`](crate::alignment::AtomCorrespondence), whose
     /// fits depend on which member moves.
     DirectedCorrespondence,
+    /// Fitting members or validating the fit atoms failed; see the source.
     Alignment(Box<AlignmentError>),
+    /// Reading or building the ensemble failed; see the source.
     Ensemble(Box<EnsembleError>),
+    /// A quantity could not be converted to the required unit; see the source.
     Unit(Box<UnitError>),
 }
 

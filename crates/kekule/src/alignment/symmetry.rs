@@ -158,7 +158,10 @@ pub enum SymmetryError {
     /// Perceiving inferred hydrogen counts failed.
     Perception(TopologyPerceptionError),
     /// An atom's hydrogen count is unknown even after perception.
-    UnknownHydrogenCount { atom: TopologyAtomIndex },
+    UnknownHydrogenCount {
+        /// The atom with the unknown count.
+        atom: TopologyAtomIndex,
+    },
 }
 
 impl fmt::Display for SymmetryError {

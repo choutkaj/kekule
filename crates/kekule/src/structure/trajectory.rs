@@ -658,22 +658,33 @@ impl ExactSizeIterator for TrajectoryIter<'_> {}
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TrajectoryError {
+    /// A frame index is outside the trajectory.
     IndexOutOfRange {
+        /// The requested frame index.
         index: usize,
+        /// The number of frames.
         len: usize,
     },
     /// A trajectory-wide replacement has the wrong number of frames.
     FrameCountMismatch {
+        /// The trajectory's frame count.
         expected: usize,
+        /// The number of replacements supplied.
         actual: usize,
     },
+    /// Time validation requires every frame to have a time, and one has none.
     MissingTime {
+        /// The index of the frame without a time.
         frame: usize,
     },
+    /// A frame time is earlier than the previous timed frame.
     NonMonotonicTime {
+        /// The index of the out-of-order frame.
         frame: usize,
     },
+    /// A frame's structural state is invalid; see the source.
     Structure(StructureError),
+    /// Projecting the topology onto a selection failed; see the source.
     Subset(TopologySubsetError),
 }
 

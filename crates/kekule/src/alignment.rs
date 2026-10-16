@@ -575,10 +575,17 @@ pub enum AlignmentError {
     /// RMSD requires at least one atom pair.
     EmptySelection,
     /// A collection reference index does not exist.
-    ReferenceOutOfRange { index: usize, len: usize },
+    ReferenceOutOfRange {
+        /// The requested reference index.
+        index: usize,
+        /// The number of items in the collection.
+        len: usize,
+    },
     /// One collection item failed.
     Item {
+        /// The index of the failed item.
         index: usize,
+        /// The item's failure.
         source: Box<AlignmentError>,
     },
     /// A fitted transform could not be applied to one item's state.

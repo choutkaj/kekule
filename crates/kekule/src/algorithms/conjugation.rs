@@ -11,7 +11,9 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConjugationError {
+    /// The molecule has no installed aromaticity perception.
     MissingAromaticity,
+    /// The atom's implicit hydrogen count is not yet perceived.
     UnknownHydrogens(AtomId),
 }
 impl fmt::Display for ConjugationError {

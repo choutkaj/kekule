@@ -16,31 +16,47 @@ impl Default for ValenceOptions {
     }
 }
 
+/// One atom's invalid valence state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ValenceIssue {
+    /// In strict mode, an unbonded hydrogen with inferred hydrogens has a
+    /// formal charge other than -1, 0 or +1.
     InvalidFormalCharge {
+        /// The hydrogen atom.
         atom: AtomId,
+        /// Its formal charge.
         formal_charge: i8,
     },
+    /// In strict mode, the represented valence exceeds the element's maximum.
     ValenceExceeded {
+        /// The offending atom.
         atom: AtomId,
+        /// Bond orders plus explicit hydrogens.
         explicit_valence: usize,
+        /// The largest allowed explicit valence.
         max_allowed: usize,
     },
     /// Represented valence plus radical electrons and/or the hypervalent-anion
     /// charge offset exceeds the unsubtracted target valence.
     ValenceOccupancyExceeded {
+        /// The offending atom.
         atom: AtomId,
+        /// Bond orders plus explicit hydrogens.
         explicit_valence: usize,
+        /// Radical electrons counted against the target valence.
         radical_electrons: usize,
+        /// The hypervalent-anion charge offset, or zero.
         charge_offset: usize,
+        /// The applicable maximum valence.
         max_allowed: usize,
     },
 }
 
+/// Valence perception found atoms whose valence state is invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValenceError {
+    /// One issue per offending atom.
     pub issues: Vec<ValenceIssue>,
 }
 

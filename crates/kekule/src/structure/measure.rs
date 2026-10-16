@@ -82,16 +82,25 @@ pub enum ConnectivityCheck {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum MeasurementError {
+    /// A measurement atom is not in the view's topology.
     InvalidAtomId(InstanceAtomId),
     /// Consecutive measurement atoms lack a direct bond, in argument order.
     MissingBond {
+        /// The earlier atom of the pair.
         a: InstanceAtomId,
+        /// The later atom of the pair.
         b: InstanceAtomId,
     },
+    /// A selection does not match the view's topology; see the source.
     Selection(SelectionError),
+    /// The cutoff could not be converted to the canonical length unit; see
+    /// the source.
     Unit(UnitError),
+    /// The cutoff is negative or not finite.
     InvalidCutoff,
+    /// A direction needed by the measurement has zero length.
     DegenerateGeometry,
+    /// An intermediate length is not finite.
     NumericalFailure,
 }
 

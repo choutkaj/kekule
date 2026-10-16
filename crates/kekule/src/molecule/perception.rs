@@ -775,7 +775,9 @@ pub enum PerceptionInstallError {
     InvalidStereoElementId(StereoElementId),
     /// A descriptor uses a different stereo geometry than its represented focus.
     IncompatibleStereoDescriptor {
+        /// The stereo element being described.
         element: StereoElementId,
+        /// The incompatible descriptor.
         descriptor: StereoDescriptor,
     },
     /// Ring atom flags do not cover the molecule's exact stable atom slots.

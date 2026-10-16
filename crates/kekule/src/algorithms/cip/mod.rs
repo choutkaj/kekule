@@ -18,13 +18,18 @@ pub enum CipRankingError {
     /// ([`Resource::DigraphDepth`](crate::diagnostics::Resource::DigraphDepth)) or [`CipAssignmentOptions::max_nodes`]
     /// ([`Resource::DigraphNodes`](crate::diagnostics::Resource::DigraphNodes)).
     LimitExceeded(LimitExceeded),
+    /// The ligands could not be ordered, for example because a nested
+    /// stereo element on a path still lacks its auxiliary descriptor.
     UnresolvedPriority,
+    /// The molecule's stereo elements fail validation.
     InvalidStereo {
+        /// The first validation issue found.
         issue: StereoValidationIssue,
     },
     /// Run valence perception explicitly before ranking ligands whose inferred
     /// hydrogen counts are unknown. No perception is installed by ranking.
     UnknownHydrogenCount {
+        /// The atom whose implicit hydrogen count is unknown.
         atom: AtomId,
     },
 }
@@ -98,8 +103,10 @@ pub struct CipAssignmentReport {
     pub skipped: Vec<CipSkipped>,
 }
 
+/// CIP descriptor assignment failed and left existing CIP perception unchanged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CipAssignmentError {
+    /// Every issue that prevented assignment.
     pub issues: Vec<CipAssignmentIssue>,
 }
 
@@ -133,13 +140,18 @@ pub enum CipSkippedReason {
     NotStereogenic,
 }
 
+/// One reason CIP descriptor assignment failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CipAssignmentIssue {
+    /// The molecule's stereo elements fail validation.
     InvalidStereo {
+        /// The validation issue.
         issue: StereoValidationIssue,
     },
+    /// The element's ligands or stereo carriers could not be ordered.
     UnresolvedPriority {
+        /// The stereo element being assigned.
         element: StereoElementId,
     },
     /// Ranking the element's ligands exceeded a digraph bound.
@@ -152,6 +164,7 @@ pub enum CipAssignmentIssue {
     /// The atom's implicit hydrogen count is inferred but not yet perceived.
     /// Missing valence perception is not zero hydrogens, so no ranking ran.
     UnknownHydrogenCount {
+        /// The atom whose implicit hydrogen count is unknown.
         atom: AtomId,
     },
 }

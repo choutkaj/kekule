@@ -823,15 +823,22 @@ fn validate_position_count(expected: usize, actual: usize) -> Result<(), ModelBu
     Ok(())
 }
 
+/// A model builder edit or the final build was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelBuildError {
+    /// An added instance's positions do not match its molecule's atom count.
     InstancePositionCountMismatch {
+        /// The molecule's atom count.
         expected: usize,
+        /// The number of positions supplied.
         actual: usize,
     },
+    /// Reserving per-atom state exceeded capacity.
     CapacityOverflow,
+    /// A topology edit or the topology build failed; see the source.
     Topology(TopologyBuildError),
+    /// A chain, residue or atom-site edit failed; see the source.
     Hierarchy(crate::topology::HierarchyError),
     /// Final model validation failed after topology publication.
     Model(Box<ModelError>),

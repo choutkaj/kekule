@@ -157,20 +157,38 @@ impl fmt::Display for MolecularFormula {
 #[non_exhaustive]
 pub enum MolecularDescriptorError {
     /// Installed implicit-hydrogen state is absent for a live atom that permits it.
-    MissingImplicitHydrogens { atom: AtomId },
+    MissingImplicitHydrogens {
+        /// The atom without installed hydrogen state.
+        atom: AtomId,
+    },
     /// No AME 2020 atomic mass is available for an asserted isotope label.
     UnknownIsotope {
+        /// The labelled atom.
         atom: AtomId,
+        /// The atom's element.
         element: Element,
+        /// The asserted mass number.
         mass_number: u16,
     },
     /// CIAAW does not define an abridged standard atomic weight for an element.
-    MissingStandardAtomicWeight { atom: AtomId, element: Element },
+    MissingStandardAtomicWeight {
+        /// The atom of that element.
+        atom: AtomId,
+        /// The element without a standard atomic weight.
+        element: Element,
+    },
     /// CIAAW does not define a naturally occurring isotope for an element.
-    MissingNaturalIsotope { atom: AtomId, element: Element },
+    MissingNaturalIsotope {
+        /// The atom of that element.
+        atom: AtomId,
+        /// The element without a naturally occurring isotope.
+        element: Element,
+    },
     /// Formula count accumulation exceeded `u64`.
     CountOverflow {
+        /// The element whose count overflowed.
         element: Element,
+        /// The isotope label counted, or `None` for unlabelled atoms.
         mass_number: Option<u16>,
     },
     /// The calculated mass exceeded the finite range of `f64`.

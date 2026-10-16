@@ -16,9 +16,11 @@ const LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT: usize = 300;
 #[cfg(test)]
 mod fused_tests;
 
+/// Aromaticity perception could not assign aromatic atoms and bonds.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AromaticityError {
+    /// Ring perception failed; see the source.
     RingPerception(RingPerceptionError),
     /// MDL requires an identified SSSR-like ring set, not fallback cycles.
     IncompatibleRingBasis,

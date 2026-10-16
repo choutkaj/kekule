@@ -670,18 +670,29 @@ impl AtomSelection {
     }
 }
 
+/// An atom or bond selection references something outside its topology.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SelectionError {
+    /// The selection belongs to a different topology layout.
     TopologyMismatch,
+    /// A molecule definition is not in the topology.
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
+    /// A molecule instance is not in the topology.
     InvalidMoleculeInstanceId(MoleculeInstanceId),
+    /// An atom is not in the topology.
     InvalidAtomId(InstanceAtomId),
+    /// A chain is not in the topology's hierarchy.
     InvalidChainId(ChainId),
+    /// A residue is not in the topology's hierarchy.
     InvalidResidueId(ResidueId),
+    /// An atom site is not in the topology's hierarchy.
     InvalidAtomSiteId(AtomSiteId),
+    /// A dense atom index is outside the topology.
     InvalidAtomIndex(TopologyAtomIndex),
+    /// A bond is not in the topology.
     InvalidBondId(InstanceBondId),
+    /// A dense bond index is outside the topology.
     InvalidBondIndex(TopologyBondIndex),
 }
 

@@ -465,8 +465,10 @@ impl fmt::Display for StereoValidationIssue {
     }
 }
 
+/// The molecule's represented stereo elements and groups are inconsistent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoValidationError {
+    /// Every validation issue found.
     pub issues: Vec<StereoValidationIssue>,
 }
 
@@ -486,9 +488,19 @@ impl std::error::Error for StereoValidationError {}
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoordinateStereoError {
+    /// Stereo candidate detection failed; see the source.
     Perception(StereoSearchError),
-    PositionCountMismatch { expected: usize, actual: usize },
+    /// `positions` does not hold one position per atom.
+    PositionCountMismatch {
+        /// The molecule's atom count.
+        expected: usize,
+        /// The number of positions supplied.
+        actual: usize,
+    },
+    /// Represented stereo fails validation before or after materialization;
+    /// see the source.
     InvalidStereo(StereoValidationError),
+    /// Adding an inferred stereo element to the editor failed; see the source.
     CouldNotCreateElement(MoleculeError),
 }
 

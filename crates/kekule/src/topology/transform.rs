@@ -361,12 +361,19 @@ fn project_topology_properties(
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologySubsetError {
+    /// The selection contains no atoms.
     EmptySelection,
+    /// The selection does not match the topology; see the source.
     Selection(SelectionError),
+    /// Extracting a selected molecule fragment failed; see the source.
     Molecule(MoleculeError),
+    /// A selected molecule fragment could not be published; see the source.
     Publication(MoleculePublicationError),
+    /// Building the subset hierarchy failed; see the source.
     Hierarchy(HierarchyError),
+    /// Publishing the subset topology failed; see the source.
     TopologyBuild(TopologyBuildError),
+    /// Projecting property rows onto the subset failed; see the source.
     Property(PropertyError),
 }
 

@@ -98,6 +98,7 @@ impl TryFrom<char> for DsspSecondaryStructure {
     }
 }
 
+/// A character is not a DSSP secondary-structure code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspCodeError {
     code: char,

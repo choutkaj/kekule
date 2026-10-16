@@ -12,9 +12,13 @@ use crate::molecule::{AromaticityModel, Molecule, ValenceModel};
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerceptionError {
+    /// Conjugation perception failed; see the source.
     Conjugation(ConjugationError),
+    /// Valence perception failed; see the source.
     Valence(ValenceError),
+    /// Ring perception failed; see the source.
     Rings(RingPerceptionError),
+    /// Aromaticity perception failed; see the source.
     Aromaticity(AromaticityError),
 }
 

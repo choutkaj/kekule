@@ -99,6 +99,7 @@ impl fmt::Display for QueryPerception {
     }
 }
 
+/// Substructure search could not run to completion.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubstructureMatchError {
@@ -110,7 +111,10 @@ pub enum SubstructureMatchError {
         /// The configured bound.
         limit: usize,
     },
+    /// The query needs this perception, which the target has not installed.
     MissingPerception(QueryPerception),
+    /// The target's installed perception uses a model the query cannot use,
+    /// such as a ring basis other than the SSSR-like one.
     IncompatiblePerception(QueryPerception),
     /// A configured bound was exceeded; `work` is the work done before it.
     LimitExceeded {

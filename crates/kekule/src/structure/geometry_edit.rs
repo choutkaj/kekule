@@ -28,18 +28,24 @@ use super::{
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum GeometryEditError {
+    /// A reference atom is not in the topology.
     InvalidAtomId(InstanceAtomId),
+    /// A reference atom appears more than once.
     RepeatedAtom(InstanceAtomId),
     /// Selection or prepared edit belongs to a different shared snapshot.
     TopologyMismatch,
+    /// Consecutive reference atoms lack a direct bond, in argument order.
     MissingBond {
+        /// The earlier atom of the pair.
         a: InstanceAtomId,
+        /// The later atom of the pair.
         b: InstanceAtomId,
     },
     /// Removing the traversal bond did not separate moving and fixed references.
     InseparableFragment,
     /// The last reference must be selected and the first must be excluded.
     InvalidMovingSelection,
+    /// A quantity could not be converted to the canonical unit; see the source.
     Unit(UnitError),
     /// Nonfinite target, nonpositive distance, or angle outside [0, pi].
     InvalidTarget,

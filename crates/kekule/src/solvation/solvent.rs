@@ -145,30 +145,49 @@ pub struct SolvationReport {
     pub cleared_model_properties: Vec<PropertyKey>,
 }
 
+/// Solvation options or the model prevent filling the cell with solvent.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum SolvationError {
+    /// The model has no periodic cell.
     MissingCell,
+    /// The model's cell is not periodic along all three axes.
     NotFullyPeriodic,
+    /// The supplied solute radii belong to a different topology layout.
     RadiusTopologyMismatch,
+    /// The number of radii differs from the topology's atom count.
     RadiusCountMismatch,
+    /// A radius is negative or not finite.
     InvalidRadius,
+    /// No reference van der Waals radius is known for this atom's element.
     MissingElementRadius(InstanceAtomId),
+    /// The ionic strength is negative or not finite.
     InvalidIonicStrength,
+    /// The ion separation is not finite and positive.
     InvalidIonSeparation,
     /// Tiling would examine more candidate waters than
     /// [`SolventOptions::max_candidates`] allows.
     LimitExceeded(LimitExceeded),
+    /// An ion count or allocation does not fit in `usize`.
     CapacityOverflow,
+    /// The cell is too small for a water, or every water site clashes.
     NoSolventSpace,
+    /// Too few water sites satisfy the ion separation for the requested ions.
     InsufficientIonSites {
+        /// The number of ions to place.
         requested: usize,
+        /// The number of eligible sites found.
         placed: usize,
     },
+    /// A quantity could not be converted to the required unit; see the source.
     Unit(UnitError),
+    /// A periodic-geometry calculation failed; see the source.
     Geometry(PeriodicGeometryError),
+    /// Position data was rejected; see the source.
     Position(DenseArrayError),
+    /// Building the solvated model failed; see the source.
     Build(ModelBuildError),
+    /// Adding solvent molecules, chains or residues failed; see the source.
     Hierarchy(HierarchyError),
 }
 impl fmt::Display for SolvationError {

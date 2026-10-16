@@ -494,17 +494,25 @@ impl QueryGraphBuilder {
     }
 }
 
+/// A query graph edit or build was rejected.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryGraphError {
+    /// The graph has no atoms.
     EmptyGraph,
+    /// An atom reference is not in the graph.
     InvalidAtomId(QueryAtomId),
+    /// A bond reference is not in the graph.
     InvalidBondId(QueryBondId),
     /// A stereo constraint or group is invalid.
     InvalidStereo(QueryStereoIssue),
+    /// A bond would connect an atom to itself.
     SelfBond(QueryAtomId),
+    /// The two atoms are already bonded.
     DuplicateBond {
+        /// The first atom.
         a: QueryAtomId,
+        /// The second atom.
         b: QueryAtomId,
     },
     /// The query exceeds a built-in bound: [`MAX_QUERY_RECURSION_DEPTH`],
