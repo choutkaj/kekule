@@ -181,6 +181,17 @@ All notable changes to Kekule are documented in this file.
     MAX_QUERY_TOTAL_EXPRESSION_NODES}`, `geometry::MAX_LATTICE_IMAGES`, and
     the canonical and isomeric SMILES writer bounds
     `smiles::MAX_CANONICAL_*` and `smiles::MAX_DIRECTIONAL_*`.
+  - A failed `try_build` or `try_finish` returns `kekule::DraftError<D, E>`
+    with `error()`, `draft()`, `into_draft()` and `into_parts()`. It replaces
+    `MoleculeFinishError` (`DraftError<MoleculeEditor,
+    MoleculePublicationError>`), `TopologyBuilderError`
+    (`DraftError<TopologyBuilder, TopologyBuildError>`),
+    `TopologyFinishError` (`DraftError<TopologyEditor, TopologyEditError>`),
+    `ModelBuilderError` (`DraftError<ModelBuilder, ModelBuildError>`) and
+    `ModelFinishError` (`DraftError<ModelEditor, ModelEditError>`);
+    `editor()`/`builder()` are `draft()` and `into_editor()`/`into_builder()`
+    are `into_draft()`. Its `Display` no longer repeats the error, which is
+    its `source()`.
 - **Breaking:** Public items live in the module of the domain that owns them,
   and every operation has one home. Behaviour is unchanged; callers update
   paths, names, and signatures as listed.

@@ -534,8 +534,8 @@ fn failures_are_atomic_and_empty_publication_is_recoverable() {
     editor.delete_atoms(handles).unwrap();
     let before = format!("{editor:?}");
     let failure = editor.try_finish().unwrap_err();
-    assert_eq!(format!("{:?}", failure.editor()), before);
-    let mut editor = failure.into_editor();
+    assert_eq!(format!("{:?}", failure.draft()), before);
+    let mut editor = failure.into_draft();
     editor
         .add_atom(atom("O"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
@@ -1014,8 +1014,8 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
     let failed = builder.try_build().unwrap_err();
     assert!(failed.source().is_some());
-    assert_eq!(failed.builder().topology_builder().definition_count(), 1);
-    let mut builder = failed.into_builder();
+    assert_eq!(failed.draft().topology_builder().definition_count(), 1);
+    let mut builder = failed.into_draft();
     let instance = builder
         .add_instance(definition, &positions(&[3.0]))
         .unwrap();
@@ -1061,7 +1061,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     editor.delete_atom(handle).unwrap();
     let failed = editor.try_finish().unwrap_err();
     assert!(failed.source().is_some());
-    let mut editor = failed.into_editor();
+    let mut editor = failed.into_draft();
     let replacement = editor
         .add_atom(atom("N"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
@@ -1102,8 +1102,8 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
     let failed = builder.try_build().unwrap_err();
-    assert_eq!(failed.builder().definition_count(), 1);
-    let mut builder = failed.into_builder();
+    assert_eq!(failed.draft().definition_count(), 1);
+    let mut builder = failed.into_draft();
     builder.add_instance(definition).unwrap();
     builder.validate().unwrap();
     assert_eq!(builder.build().unwrap().atom_count(), 1);

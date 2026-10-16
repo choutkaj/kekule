@@ -18,6 +18,7 @@ use crate::topology::{
     TopologyBondIndex,
 };
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
+use crate::DraftError;
 use std::fmt;
 
 /// Detached structural editing for one geometry-bearing molecular system.
@@ -585,12 +586,10 @@ impl ModelEditor {
         ))
     }
     /// Publishes a model, returning the draft with any publication error.
-    pub fn try_finish(self) -> Result<Model, ModelFinishError> {
+    pub fn try_finish(self) -> Result<Model, DraftError<Self, ModelEditError>> {
         let snapshot = self.clone();
-        self.finish().map_err(|error| ModelFinishError {
-            error: Box::new(error),
-            editor: Box::new(snapshot),
-        })
+        self.finish()
+            .map_err(|error| DraftError::new(error, snapshot))
     }
 
     /// Runs one topology edit and keeps slot rows in step: new slots get rows,
@@ -723,32 +722,6 @@ convert!(StructureError, Structure);
 impl From<ModelError> for ModelEditError {
     fn from(error: ModelError) -> Self {
         Self::Model(Box::new(error))
-    }
-}
-#[derive(Debug)]
-pub struct ModelFinishError {
-    error: Box<ModelEditError>,
-    editor: Box<ModelEditor>,
-}
-impl ModelFinishError {
-    pub fn error(&self) -> &ModelEditError {
-        &self.error
-    }
-    pub fn editor(&self) -> &ModelEditor {
-        &self.editor
-    }
-    pub fn into_editor(self) -> ModelEditor {
-        *self.editor
-    }
-}
-impl fmt::Display for ModelFinishError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-impl std::error::Error for ModelFinishError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.error.as_ref())
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::DraftError;
 use std::fmt;
 use std::sync::Arc;
 
@@ -698,11 +699,11 @@ impl ModelBuilder {
         self.clone().build().map(|_| ())
     }
 
-    pub fn try_build(self) -> Result<Model, ModelBuilderError> {
-        self.clone().build().map_err(|error| ModelBuilderError {
-            error,
-            builder: Box::new(self),
-        })
+    /// Builds the model, or returns this builder for repair with the error.
+    pub fn try_build(self) -> Result<Model, DraftError<Self, ModelBuildError>> {
+        self.clone()
+            .build()
+            .map_err(|error| DraftError::new(error, self))
     }
 
     /// Replaces the dense atom order with a permutation of every staged atom.
@@ -873,37 +874,6 @@ impl From<PositionError> for ModelBuildError {
 impl From<StructureError> for ModelBuildError {
     fn from(error: StructureError) -> Self {
         ModelError::from(error).into()
-    }
-}
-
-/// Failed model construction retaining its complete original builder for repair.
-#[derive(Debug)]
-pub struct ModelBuilderError {
-    error: ModelBuildError,
-    builder: Box<ModelBuilder>,
-}
-
-impl ModelBuilderError {
-    pub fn error(&self) -> &ModelBuildError {
-        &self.error
-    }
-    pub fn builder(&self) -> &ModelBuilder {
-        &self.builder
-    }
-    pub fn into_builder(self) -> ModelBuilder {
-        *self.builder
-    }
-}
-
-impl fmt::Display for ModelBuilderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-
-impl std::error::Error for ModelBuilderError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
     }
 }
 

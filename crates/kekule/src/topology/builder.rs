@@ -1,3 +1,4 @@
+use crate::DraftError;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -172,11 +173,12 @@ impl TopologyBuilder {
     pub fn validate(&self) -> Result<(), TopologyBuildError> {
         self.clone().build().map(|_| ())
     }
-    pub fn try_build(self) -> Result<Topology, TopologyBuilderError> {
-        self.clone().build().map_err(|error| TopologyBuilderError {
-            error,
-            builder: Box::new(self),
-        })
+    /// Builds the topology, or returns this builder for repair with the
+    /// error.
+    pub fn try_build(self) -> Result<Topology, DraftError<Self, TopologyBuildError>> {
+        self.clone()
+            .build()
+            .map_err(|error| DraftError::new(error, self))
     }
 
     pub(super) fn from_topology(topology: Topology) -> Self {
@@ -615,34 +617,6 @@ impl TopologyBuilder {
             self.properties.owner_mut().clear();
         }
         Ok((definition, instance))
-    }
-}
-
-/// Failed topology construction retaining the original builder for repair.
-#[derive(Debug)]
-pub struct TopologyBuilderError {
-    error: TopologyBuildError,
-    builder: Box<TopologyBuilder>,
-}
-impl TopologyBuilderError {
-    pub fn error(&self) -> &TopologyBuildError {
-        &self.error
-    }
-    pub fn builder(&self) -> &TopologyBuilder {
-        &self.builder
-    }
-    pub fn into_builder(self) -> TopologyBuilder {
-        *self.builder
-    }
-}
-impl fmt::Display for TopologyBuilderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-impl std::error::Error for TopologyBuilderError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
     }
 }
 

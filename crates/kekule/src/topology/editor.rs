@@ -21,7 +21,7 @@ use crate::properties::{
     TopologyProperties,
 };
 pub(crate) use append::AppendMapping;
-pub use error::{TopologyEditError, TopologyFinishError};
+pub use error::TopologyEditError;
 use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};

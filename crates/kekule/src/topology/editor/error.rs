@@ -105,31 +105,3 @@ impl From<super::super::components::ComponentBuildError> for TopologyEditError {
         }
     }
 }
-
-/// Failed publication retaining the exact draft for repair, including its handles.
-#[derive(Debug)]
-pub struct TopologyFinishError {
-    pub(super) error: Box<TopologyEditError>,
-    pub(super) editor: Box<TopologyEditor>,
-}
-impl TopologyFinishError {
-    pub fn error(&self) -> &TopologyEditError {
-        &self.error
-    }
-    pub fn editor(&self) -> &TopologyEditor {
-        &self.editor
-    }
-    pub fn into_editor(self) -> TopologyEditor {
-        *self.editor
-    }
-}
-impl fmt::Display for TopologyFinishError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-impl std::error::Error for TopologyFinishError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.error.as_ref())
-    }
-}

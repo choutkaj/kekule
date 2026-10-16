@@ -124,6 +124,7 @@ mod chemistry;
 pub mod clustering;
 pub mod descriptors;
 pub mod diagnostics;
+mod draft;
 pub mod dssp;
 pub mod geometry;
 mod io;
@@ -134,6 +135,8 @@ pub mod solvation;
 pub mod structure;
 pub mod topology;
 pub mod units;
+
+pub use draft::DraftError;
 
 /// Syntax-independent substructure matching algorithms.
 ///

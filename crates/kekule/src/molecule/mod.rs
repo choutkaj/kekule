@@ -35,8 +35,8 @@ pub use ids::{AtomId, BondId};
 pub(crate) use ids::{StereoElementId, StereoGroupId};
 pub(crate) use molecule_edit::canonicalize_represented_chemistry;
 pub use molecule_edit::{
-    GraphValidationError, MoleculeConnectivityError, MoleculeEditor, MoleculeFinishError,
-    MoleculePublicationError, StereoPublicationError,
+    GraphValidationError, MoleculeConnectivityError, MoleculeEditor, MoleculePublicationError,
+    StereoPublicationError,
 };
 pub use molecule_editor_ops::MoleculeCorrespondence;
 pub use owner::{AtomMut, BondMut, Molecule, MoleculeError, MoleculeIdKind};

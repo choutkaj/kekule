@@ -316,7 +316,7 @@ fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
 #[test]
 fn failed_publication_returns_the_editor_by_ownership_transfer() {
     let failed = MoleculeEditor::new().try_finish().unwrap_err();
-    let mut editor = failed.into_editor();
+    let mut editor = failed.into_draft();
     editor
         .append_molecule(&smiles::to_molecules("C").unwrap().pop().unwrap())
         .unwrap();

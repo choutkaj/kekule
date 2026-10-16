@@ -7,7 +7,7 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 
 | Operation | Contract |
 | --- | --- |
-| `Molecule::into_editor()`, editor error recovery | Transfer ownership into a mutable draft. |
+| `Molecule::into_editor()`, `DraftError::into_draft()` | Transfer ownership into a mutable draft. |
 | Interpretation `into_molecule()`, `into_molecules()`, `into_model()`, `into_parts()` | Consume the interpretation and extract canonical results. |
 | `smiles::to_molecules(&str)`, `smiles::to_topology(&str)` | Interpret borrowed input. |
 | Collection item view `to_model()`, `payload().clone()` | Materialize an owned model or payload while retaining the collection. |

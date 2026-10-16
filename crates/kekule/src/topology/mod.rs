@@ -43,10 +43,7 @@ use crate::molecule::{AtomId, BondId, Molecule};
 use crate::properties::{
     PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties, TopologyPropertiesMut,
 };
-pub use builder::{
-    TopologyBuildError, TopologyBuilder, TopologyBuilderError, TopologyHierarchyError,
-    TopologyIdKind,
-};
+pub use builder::{TopologyBuildError, TopologyBuilder, TopologyHierarchyError, TopologyIdKind};
 use dense_order::DenseOrder;
 pub(crate) use editor::AppendMapping;
 pub use entity_views::{AtomView, BondView};
@@ -70,7 +67,7 @@ pub mod edit {
     pub use super::editor::{
         EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
         EditCorrespondence, EditMolecule, EditResidue, EditResidueId, TopologyEditError,
-        TopologyEditor, TopologyFinishError,
+        TopologyEditor,
     };
 }
 

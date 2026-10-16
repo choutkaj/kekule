@@ -604,7 +604,7 @@ fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recov
     assert!(imported.atom(invalid).is_err());
     editor.clear();
     let failure = editor.try_finish().unwrap_err();
-    let mut editor = failure.into_editor();
+    let mut editor = failure.into_draft();
     editor
         .add_atom(atom("Na"), Quantity::new(Point3::origin(), NANOMETER))
         .unwrap();

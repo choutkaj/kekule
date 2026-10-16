@@ -629,8 +629,8 @@ fn failed_finish_returns_exact_draft_for_repair() {
         error.error(),
         MoleculePublicationError::DisconnectedGraph(_)
     ));
-    assert_eq!(snapshot(error.editor()), before);
-    let mut editor = error.into_editor();
+    assert_eq!(snapshot(error.draft()), before);
+    let mut editor = error.into_draft();
     editor.add_bond(a, b, BondOrder::Single).unwrap();
     assert_eq!(editor.try_finish().unwrap().atom_count(), 2);
 }

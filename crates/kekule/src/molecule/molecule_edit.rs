@@ -1,3 +1,4 @@
+use crate::DraftError;
 use std::fmt;
 
 use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
@@ -301,37 +302,6 @@ pub struct MoleculeEditor {
     pub(super) pruned_stereo: Vec<StereoElementId>,
 }
 
-/// A failed recoverable finish, retaining the original, unmodified editing state.
-#[derive(Debug)]
-pub struct MoleculeFinishError {
-    error: MoleculePublicationError,
-    editor: Box<MoleculeEditor>,
-}
-
-impl MoleculeFinishError {
-    pub const fn error(&self) -> &MoleculePublicationError {
-        &self.error
-    }
-    pub fn editor(&self) -> &MoleculeEditor {
-        &self.editor
-    }
-    pub fn into_editor(self) -> MoleculeEditor {
-        *self.editor
-    }
-}
-
-impl fmt::Display for MoleculeFinishError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-
-impl std::error::Error for MoleculeFinishError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
-    }
-}
-
 impl std::ops::Deref for MoleculeEditor {
     type Target = Graph;
 
@@ -616,16 +586,15 @@ impl MoleculeEditor {
     }
 
     /// Publishes, or returns the original editor for repair through
-    /// [`MoleculeFinishError::into_editor`]. Keeps a cloned rollback snapshot;
+    /// [`DraftError::into_draft`]. Keeps a cloned rollback snapshot;
     /// use [`Self::finish`] when recovery is unnecessary.
-    pub fn try_finish(self) -> std::result::Result<Molecule, MoleculeFinishError> {
+    pub fn try_finish(
+        self,
+    ) -> std::result::Result<Molecule, DraftError<Self, MoleculePublicationError>> {
         let snapshot = self.clone();
         publish_molecule(self.working)
             .map(|(molecule, _)| molecule)
-            .map_err(|error| MoleculeFinishError {
-                error,
-                editor: Box::new(snapshot),
-            })
+            .map_err(|error| DraftError::new(error, snapshot))
     }
 }
 
@@ -912,7 +881,7 @@ mod tests {
                 error.error(),
                 &MoleculePublicationError::InvalidGraph(expected)
             );
-            assert_eq!(format!("{:#?}", error.editor()), before);
+            assert_eq!(format!("{:#?}", error.draft()), before);
         }
     }
 
@@ -993,7 +962,7 @@ mod tests {
                 StereoPublicationError::InvalidElementReference { element }
             )
         );
-        let mut repaired = error.into_editor();
+        let mut repaired = error.into_draft();
         repaired.remove_stereo_element(element).unwrap();
         assert_eq!(repaired.finish().unwrap().stereo_elements().count(), 0);
     }
@@ -1019,7 +988,7 @@ mod tests {
                 StereoPublicationError::InvalidElementReference { element }
             )
         );
-        let mut repaired = failure.into_editor();
+        let mut repaired = failure.into_draft();
         repaired.remove_stereo_element(element).unwrap();
         repaired.finish().unwrap();
     }
@@ -1076,7 +1045,7 @@ mod tests {
             error.error(),
             &MoleculePublicationError::UnnormalizedOxohalogen { atom: chlorine }
         );
-        let mut builder = error.into_editor();
+        let mut builder = error.into_draft();
         assert_eq!(builder, before);
         assert_eq!(builder.normalize_oxohalogens(), [chlorine]);
         assert!(
