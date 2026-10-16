@@ -135,9 +135,10 @@ impl MoleculeEditor {
                 .then_some(element_id)
             })
             .collect::<Vec<_>>();
-        for element in invalid {
+        for &element in &invalid {
             self.remove_stereo_element(element)?;
         }
+        self.pruned_stereo.extend(invalid);
         self.working.clear_perception();
         self.working.properties.owner_mut().clear();
         Ok(previous)

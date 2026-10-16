@@ -225,7 +225,12 @@ pub(crate) fn add_hydrogens_to_molecule(
     for (parent, count, origin) in plan {
         for _ in 0..count {
             let hydrogen_id = editor.add_atom(Atom::new(hydrogen))?;
-            editor.add_bond(parent, hydrogen_id, BondOrder::Single)?;
+            // The parent's stereo still lists an implicit hydrogen until
+            // materialize_stereo_hydrogen_carriers names this atom instead,
+            // so insert without pruning.
+            editor
+                .working_mut()
+                .add_bond(parent, hydrogen_id, BondOrder::Single)?;
             added_by_parent.entry(parent).or_default().push(hydrogen_id);
             report.added.push(AddedHydrogen {
                 hydrogen: hydrogen_id,

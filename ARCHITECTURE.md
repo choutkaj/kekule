@@ -80,9 +80,11 @@ Source aromatic and stereo syntax is normalized during interpretation.
 
 Represented stereo must refer to valid focuses and adjacent carriers, with the
 required focus bond order and consistent assertions and groups. Validate these
-conditions before canonicalization. Changing a focus order or deleting a carrier
-bond prunes invalid stereo and group membership, even if an alternate graph path
-keeps the molecule connected. Unaffected assertions survive.
+conditions before canonicalization. Changing a focus order, adding a bond to a
+focus, or deleting a carrier bond prunes the stereo and group membership it
+invalidates, even if an alternate graph path keeps the molecule connected.
+Pruning is local to the edited atoms and bonds, so unaffected assertions
+survive, and the editor reports every pruned element.
 Enhanced stereo groups belong to a connected molecule. Splitting a correlated
 group across components is rejected at publication; absolute memberships may
 split independently. Formats that cannot encode a relationship fail explicitly.

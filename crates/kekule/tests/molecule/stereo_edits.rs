@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use kekule::core::{
-    AxisStereo, Bond, BondOrder, Molecule, MoleculeError, StereoCarrier, StereoElement,
-    StereoElementKind, StereoGroup, StereoGroupKind,
+    Atom, AtomId, AxisStereo, Bond, BondId, BondOrder, Element, Molecule, MoleculeError,
+    StereoCarrier, StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
 };
 use kekule::topology::{InstanceBondId, Topology};
 
@@ -30,6 +30,11 @@ fn changed_bond_orders_prune_stereo_through_all_molecular_mutators() {
                     .unwrap();
             }
         }
+        assert_eq!(
+            editor.pruned_stereo_elements(),
+            [StereoElementId::new(0)],
+            "operation {operation}"
+        );
         editor.validate().unwrap();
         let result = editor.try_finish().unwrap();
         assert_eq!(result.bond(bond).unwrap().order, BondOrder::Single);
@@ -136,6 +141,42 @@ fn topology_order_changes_publish_without_stale_double_bond_stereo() {
 }
 
 #[test]
+fn bond_edits_prune_exactly_the_stereo_they_invalidate() {
+    // Atoms: center 0, F 1, Cl 2, ring atoms 3-5. Bonds 3 and 4 are ring bonds
+    // away from the center; bond 2 joins the center to the ring.
+    let source = molecule("[C@@H](F)(Cl)C1CC1");
+    let element = StereoElementId::new(0);
+    // A new bond to the center (atom 0) adds a neighbor its carriers do not
+    // list, so the assertion is pruned, whatever unrelated edits accompany
+    // it. Bonds elsewhere, even to a carrier such as F, leave it intact.
+    for (anchor, deleted, pruned) in [
+        (0, None, vec![element]),
+        (0, Some(4), vec![element]),
+        (0, Some(3), vec![element]),
+        (4, None, vec![]),
+        (3, Some(4), vec![]),
+        (1, Some(3), vec![]),
+    ] {
+        let mut editor = source.edit();
+        let oxygen = editor
+            .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+            .unwrap();
+        editor
+            .add_bond(AtomId::new(anchor), oxygen, BondOrder::Single)
+            .unwrap();
+        if let Some(bond) = deleted {
+            editor.delete_bond(BondId::new(bond)).unwrap();
+        }
+        let row = format!("bond to {anchor}, delete {deleted:?}");
+        assert_eq!(editor.pruned_stereo_elements(), pruned, "{row}");
+        assert_eq!(editor.take_pruned_stereo_elements(), pruned, "{row}");
+        assert_eq!(editor.pruned_stereo_elements(), [], "{row}");
+        let result = editor.finish().unwrap();
+        assert_eq!(result.stereo_elements().count(), 1 - pruned.len(), "{row}");
+    }
+}
+
+#[test]
 fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_groups() {
     let mut source = molecule("F[C@]1(Cl)CCNC1C[C@H](Br)I").into_editor();
     let elements = source.stereo_element_ids().collect::<Vec<_>>();
@@ -173,6 +214,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
             editor.delete_bond(removed).unwrap();
         }
         assert!(editor.stereo_element(elements[0]).is_err());
+        assert_eq!(editor.pruned_stereo_elements(), [elements[0]]);
         assert_eq!(
             editor.stereo_element(elements[1]).unwrap(),
             source.stereo_element(elements[1]).unwrap()

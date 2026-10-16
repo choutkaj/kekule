@@ -228,7 +228,10 @@ impl Molecule {
 
     /// Moves this molecule into an editor without cloning its graph or properties.
     pub fn into_editor(self) -> MoleculeEditor {
-        MoleculeEditor { working: self }
+        MoleculeEditor {
+            working: self,
+            pruned_stereo: Vec::new(),
+        }
     }
 
     #[cfg(test)]
@@ -294,6 +297,8 @@ impl Molecule {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MoleculeEditor {
     pub(super) working: Molecule,
+    /// Stereo elements that structural edits removed, in removal order.
+    pub(super) pruned_stereo: Vec<StereoElementId>,
 }
 
 /// A failed recoverable finish, retaining the original, unmodified editing state.
@@ -345,6 +350,7 @@ impl Default for MoleculeEditor {
                 perception: Perception::default(),
                 properties: MoleculeProperties::new(0, 0),
             },
+            pruned_stereo: Vec::new(),
         }
     }
 }
@@ -448,23 +454,59 @@ impl MoleculeEditor {
     /// }
     /// ```
     pub fn bond_mut(&mut self, bond: BondId) -> Result<super::BondMut<'_>> {
-        self.working.bond_mut(bond)
+        self.working
+            .bond_mut_recording(bond, &mut self.pruned_stereo)
     }
 
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
         self.working.add_atom(atom)
     }
 
+    /// Deletes an atom and its bonds, removing every stereo element that
+    /// references the atom and those its deleted bonds invalidate. See
+    /// [`Self::pruned_stereo_elements`].
     pub fn delete_atom(&mut self, atom: AtomId) -> Result<Atom> {
-        self.working.delete_atom(atom)
+        let (atom, pruned) = self.working.delete_atom(atom)?;
+        self.pruned_stereo.extend(pruned);
+        Ok(atom)
     }
 
+    /// Adds a bond. Stereo elements it invalidates are removed, such as a
+    /// tetrahedral center that gains a neighbor its carriers do not list, or
+    /// a double-bond endpoint that gains a third substituent; elements away
+    /// from the bond's endpoints are untouched. See
+    /// [`Self::pruned_stereo_elements`].
     pub fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
-        self.working.add_bond(a, b, order)
+        let bond = self.working.add_bond(a, b, order)?;
+        let pruned = self.working.prune_invalid_stereo_at([a, b], bond);
+        self.pruned_stereo.extend(pruned);
+        Ok(bond)
     }
 
+    /// Deletes a bond. As for [`Self::add_bond`], stereo elements it
+    /// invalidates are removed, such as an assertion whose carrier it bonded
+    /// to the focus, and every other element is untouched. See
+    /// [`Self::pruned_stereo_elements`].
     pub fn delete_bond(&mut self, bond: BondId) -> Result<Bond> {
-        self.working.delete_bond(bond)
+        let (bond, pruned) = self.working.delete_bond(bond)?;
+        self.pruned_stereo.extend(pruned);
+        Ok(bond)
+    }
+
+    /// Stereo elements that structural edits of this draft removed because
+    /// they no longer described valid stereo, in removal order: those pruned
+    /// by adding, deleting, or rewiring bonds, by changing a bond order, by
+    /// deleting atoms, and by oxohalogen normalization. Explicit
+    /// [`Self::remove_stereo_element`] calls are not listed. IDs are draft
+    /// IDs, which are never reused within a draft.
+    pub fn pruned_stereo_elements(&self) -> &[StereoElementId] {
+        &self.pruned_stereo
+    }
+
+    /// Returns [`Self::pruned_stereo_elements`] and clears the record, so a
+    /// caller can check one edit at a time.
+    pub fn take_pruned_stereo_elements(&mut self) -> Vec<StereoElementId> {
+        std::mem::take(&mut self.pruned_stereo)
     }
 
     pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
@@ -564,7 +606,7 @@ impl MoleculeEditor {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn normalize_oxohalogens(&mut self) -> Vec<AtomId> {
-        normalize_oxohalogens(&mut self.working)
+        normalize_oxohalogens_recording(&mut self.working, &mut self.pruned_stereo)
     }
 
     /// Checks whether a snapshot would publish successfully, leaving this editor
@@ -754,6 +796,14 @@ fn unnormalized_oxohalogens(molecule: &Molecule) -> Vec<AtomId> {
 /// Separates `X=O` bonds of neutral oxohalogens into `[X+]-[O-]`, returning
 /// the rewritten halogens.
 pub(crate) fn normalize_oxohalogens(molecule: &mut Molecule) -> Vec<AtomId> {
+    normalize_oxohalogens_recording(molecule, &mut Vec::new())
+}
+
+/// [`normalize_oxohalogens`], recording the stereo elements it prunes.
+fn normalize_oxohalogens_recording(
+    molecule: &mut Molecule,
+    pruned_stereo: &mut Vec<StereoElementId>,
+) -> Vec<AtomId> {
     let halogens = unnormalized_oxohalogens(molecule);
     for &atom_id in &halogens {
         let oxo_bonds = oxo_bonds_to_oxygen(molecule, atom_id);
@@ -771,7 +821,7 @@ pub(crate) fn normalize_oxohalogens(molecule: &mut Molecule) -> Vec<AtomId> {
             if let Some(bond) = molecule.graph.bonds[bond_id.index()].as_mut() {
                 bond.order = BondOrder::Single;
             }
-            molecule.prune_stereo_for_bond(bond_id);
+            pruned_stereo.extend(molecule.prune_stereo_for_bond(bond_id));
         }
     }
     if !halogens.is_empty() {
