@@ -5,8 +5,9 @@ use crate::geometry::Point3;
 
 use super::molfile_document::{
     MolfileAtom, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileCtab, MolfileLines,
-    MolfileParseError, MolfileRadical, MolfileUnsupported, MolfileUnsupportedContent,
+    MolfileRadical, MolfileUnsupported, MolfileUnsupportedContent,
 };
+use crate::diagnostics::FormatError;
 
 pub(super) const V2000_MAX_ATOMS: usize = 999;
 pub(super) const V2000_MAX_BONDS: usize = 999;
@@ -15,7 +16,7 @@ pub(super) const V2000_MAX_BONDS: usize = 999;
 /// of its `M  END` line.
 pub(super) fn parse_v2000_ctab(
     lines: MolfileLines<'_>,
-) -> std::result::Result<(MolfileCtab, usize), MolfileParseError> {
+) -> std::result::Result<(MolfileCtab, usize), FormatError> {
     let counts = lines.text(3).expect("the caller checked the counts line");
     let (atom_count, bond_count) = parse_counts_line(counts)
         .ok_or_else(|| lines.error(3, DiagnosticKind::Syntax, "invalid V2000 counts line"))?;
@@ -110,7 +111,7 @@ fn parse_v2000_atom(
     line: &str,
     unsupported: &mut Vec<MolfileUnsupported>,
     atom_index: usize,
-) -> std::result::Result<MolfileAtom, MolfileParseError> {
+) -> std::result::Result<MolfileAtom, FormatError> {
     let symbol = atom_symbol_from_v2000_line(line)
         .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "invalid V2000 atom line"))?;
     let [x, y, z] = atom_coordinates_from_v2000_line(line).ok_or_else(|| {
@@ -256,23 +257,22 @@ fn apply_atom_v2000_fields(
     line: &str,
     unsupported: &mut Vec<MolfileUnsupported>,
     atom_index: usize,
-) -> std::result::Result<(), MolfileParseError> {
+) -> std::result::Result<(), FormatError> {
     let fields = V2000AtomFields::of(line);
-    let number =
-        |field: usize, name: &str| -> std::result::Result<Option<i32>, MolfileParseError> {
-            fields
-                .get(field)
-                .map(|value| {
-                    value.parse::<i32>().map_err(|_| {
-                        lines.error(
-                            index,
-                            DiagnosticKind::Syntax,
-                            format!("invalid V2000 atom {name} field"),
-                        )
-                    })
+    let number = |field: usize, name: &str| -> std::result::Result<Option<i32>, FormatError> {
+        fields
+            .get(field)
+            .map(|value| {
+                value.parse::<i32>().map_err(|_| {
+                    lines.error(
+                        index,
+                        DiagnosticKind::Syntax,
+                        format!("invalid V2000 atom {name} field"),
+                    )
                 })
-                .transpose()
-        };
+            })
+            .transpose()
+    };
     let invalid = |message: String| lines.error(index, DiagnosticKind::InvalidValue, message);
     if let Some(difference) = number(MASS_DIFFERENCE, "mass difference")?.filter(|&d| d != 0) {
         if !(-3..=4).contains(&difference) {
@@ -357,11 +357,11 @@ fn parse_v2000_bond(
     atom_count: usize,
     unsupported: &mut Vec<MolfileUnsupported>,
     bond_index: usize,
-) -> std::result::Result<MolfileBond, MolfileParseError> {
+) -> std::result::Result<MolfileBond, FormatError> {
     let fields = parse_v2000_bond_line(line)
         .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "invalid V2000 bond line"))?;
     let (a, b, order_code) = fields.required;
-    let number = |field: usize, name: &str| -> std::result::Result<u8, MolfileParseError> {
+    let number = |field: usize, name: &str| -> std::result::Result<u8, FormatError> {
         fields.optional[field].map_or(Ok(0), |value| {
             value.parse::<u8>().map_err(|_| {
                 lines.error(
@@ -526,7 +526,7 @@ fn parse_v2000_properties(
     lines: MolfileLines<'_>,
     range: std::ops::Range<usize>,
     ctab: &mut MolfileCtab,
-) -> std::result::Result<(), MolfileParseError> {
+) -> std::result::Result<(), FormatError> {
     let mut replaced_legacy_charge_and_radical = false;
     let mut replaced_legacy_mass_differences = false;
     let mut index = range.start;
@@ -619,7 +619,7 @@ fn parse_atom_value_pairs<F>(
     fields: &[&str],
     atoms: &mut [MolfileAtom],
     mut apply: F,
-) -> std::result::Result<(), MolfileParseError>
+) -> std::result::Result<(), FormatError>
 where
     F: FnMut(&mut MolfileAtom, i32) -> std::result::Result<(), &'static str>,
 {

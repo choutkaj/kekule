@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use std::{io, io::Write};
 
-use kekule::diagnostics::UnrepresentablePolicy;
+use kekule::diagnostics::{
+    DiagnosticKind, Format, FormatError, FormatErrorDetail, FormatStage, UnrepresentablePolicy,
+};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::EntityKind;
-use kekule::mmcif::{self, MmcifEntityClassifications, MmcifWriteOptions};
-use kekule::molfile::{self, MoleculeWriteErrorKind, MolfileWriteOptions, MolfileWriteVersion};
+use kekule::mmcif::{self, MmcifEntityClassifications, MmcifWriteIssue, MmcifWriteOptions};
+use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{Ensemble, Model, Positions};
@@ -151,7 +153,7 @@ fn molfile_rejects_asserted_stereo_its_coordinates_contradict() {
         assert_eq!(
             (error.kind(), error.message()),
             (
-                MoleculeWriteErrorKind::UnsupportedRepresentation,
+                DiagnosticKind::Unsupported,
                 "specified tetrahedral stereo at atom a1 contradicts the emitted coordinates, which readers take as the configuration"
             ),
             "{version:?}"
@@ -196,7 +198,7 @@ fn molfile_rejects_atom_map_zero_which_both_versions_read_as_no_map() {
             assert_eq!(
                 (error.kind(), error.message()),
                 (
-                    MoleculeWriteErrorKind::UnsupportedRepresentation,
+                    DiagnosticKind::Unsupported,
                     format!(
                         "Molfile cannot encode atom map 0 on atom {atom}, which it reads as no atom map"
                     )
@@ -368,10 +370,7 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
         },
     )
     .unwrap_err();
-    assert_eq!(
-        error.kind(),
-        MoleculeWriteErrorKind::UnsupportedRepresentation
-    );
+    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
 
     let promoted = molfile::write(&model, MolfileWriteOptions::default()).unwrap();
     assert!(promoted.contains("V3000"));
@@ -652,16 +651,19 @@ fn sdf_ensemble_members_carry_their_weight_and_energy_through_data_fields() {
         sdf::ensemble(&interpret_records(&malformed))
             .unwrap_err()
             .to_string(),
-        "SDF record 1 data field `kekule.weight` is not a number: `heavy`"
+        "SDF interpretation error in record 2: data field `kekule.weight` is not a number: `heavy`"
     );
     let fields = [SdfDataField::new(sdf::WEIGHT_FIELD, "2")];
     let member = sdf::SdfRecordSource::from(ensemble.get(0).unwrap()).with_data_fields(&fields);
     assert_eq!(
-        sdf::write([member], SdfWriteOptions::default()).unwrap_err(),
-        sdf::SdfWriteError::InvalidDataField {
-            name: sdf::WEIGHT_FIELD.to_owned(),
-            message: "this field carries the ensemble member's own metadata".to_owned(),
-        }
+        described(sdf::write([member], SdfWriteOptions::default()).unwrap_err()),
+        (
+            DiagnosticKind::Inconsistent,
+            Some(FormatErrorDetail::DataField {
+                name: sdf::WEIGHT_FIELD.to_owned(),
+            }),
+            "this field carries the ensemble member's own metadata".to_owned(),
+        )
     );
 }
 
@@ -671,7 +673,7 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
     let error = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "mmCIF cannot represent the energy of ensemble member 1"
+        "mmCIF write error: mmCIF cannot represent the energy of ensemble member 1"
     );
     for index in 0..2 {
         ensemble.get_mut(index).unwrap().set_energy(None).unwrap();
@@ -679,7 +681,7 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
     let error = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "mmCIF cannot represent the weight of ensemble member 2"
+        "mmCIF write error: mmCIF cannot represent the weight of ensemble member 2"
     );
     let omitted = mmcif::write(
         [&weighted_ensemble()],
@@ -734,7 +736,7 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
         let error = molfile::write(&boxed, options).unwrap_err();
         assert_eq!(
             (error.kind(), error.message()),
-            (MoleculeWriteErrorKind::UnsupportedRepresentation, message)
+            (DiagnosticKind::Unsupported, message)
         );
         let omitted = MolfileWriteOptions {
             cell: UnrepresentablePolicy::Omit,
@@ -746,7 +748,10 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
         );
     }
     let error = sdf::write([&boxed], SdfWriteOptions::default()).unwrap_err();
-    assert_eq!(error.to_string(), message);
+    assert_eq!(
+        error.to_string(),
+        format!("SDF write error in record 1: {message}")
+    );
     let omitted = SdfWriteOptions {
         cell: UnrepresentablePolicy::Omit,
         ..Default::default()
@@ -790,7 +795,7 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
         mmcif::write([&slab], MmcifWriteOptions::default())
             .unwrap_err()
             .to_string(),
-        "mmCIF cannot represent the periodic cell: an mmCIF cell is periodic along all three axes"
+        "mmCIF write error: mmCIF cannot represent the periodic cell: an mmCIF cell is periodic along all three axes"
     );
     let omit = MmcifWriteOptions {
         cell: UnrepresentablePolicy::Omit,
@@ -814,19 +819,29 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
         mmcif::write([&ensemble], MmcifWriteOptions::default())
             .unwrap_err()
             .to_string(),
-        "mmCIF cannot represent the periodic cell: ensemble members have different cells"
+        "mmCIF write error: mmCIF cannot represent the periodic cell: ensemble members have different cells"
     );
     mmcif::write([&ensemble], omit).unwrap();
 }
 
 #[test]
 fn sdf_rejects_titles_and_data_fields_that_would_break_record_framing() {
-    use sdf::SdfWriteError;
     let methane = model("C", &[[0.0, 0.0, 0.0]]);
-    let title = |message: &str| SdfWriteError::InvalidTitle(message.to_owned());
-    let field = |name: &str, message: &str| SdfWriteError::InvalidDataField {
-        name: name.to_owned(),
-        message: message.to_owned(),
+    let title = |message: &str| {
+        (
+            DiagnosticKind::Unsupported,
+            Some(FormatErrorDetail::Title),
+            message.to_owned(),
+        )
+    };
+    let field = |name: &str, message: &str| {
+        (
+            DiagnosticKind::Unsupported,
+            Some(FormatErrorDetail::DataField {
+                name: name.to_owned(),
+            }),
+            message.to_owned(),
+        )
     };
     const NAME: &str =
         "SDF data field names must be nonempty, trimmed, and exclude angle brackets or line breaks";
@@ -877,10 +892,9 @@ fn sdf_rejects_titles_and_data_fields_that_would_break_record_framing() {
         let record = sdf::SdfRecordSource::model(&methane)
             .with_title(record_title)
             .with_data_fields(&fields);
-        assert_eq!(
-            sdf::write([record], SdfWriteOptions::default()),
-            Err(expected)
-        );
+        let error = sdf::write([record], SdfWriteOptions::default()).unwrap_err();
+        assert_eq!(error.record(), Some(1));
+        assert_eq!(described(error), expected);
     }
 }
 
@@ -1137,10 +1151,10 @@ fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
         .unwrap();
     let model = Model::new(builder.build().unwrap(), Positions::zeros(2)).unwrap();
     assert_eq!(
-        mmcif::write([&model], MmcifWriteOptions::default()),
-        Err(mmcif::MmcifWriteError::MissingAtomSite(
-            InstanceAtomId::new(instance, atoms[0])
-        ))
+        mmcif_issue(mmcif::write([&model], MmcifWriteOptions::default())),
+        Some(MmcifWriteIssue::MissingAtomSite(InstanceAtomId::new(
+            instance, atoms[0]
+        )))
     );
 }
 
@@ -1248,16 +1262,18 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
         MmcifWriteOptions::default(),
     )
     .unwrap_err();
-    assert!(matches!(
-        &model_error,
-        mmcif::MmcifWriteError::ReportCountMismatch {
-            expected: 1,
-            actual: 0
-        }
-    ));
+    assert_eq!(
+        model_error.detail(),
+        Some(&FormatErrorDetail::MmcifWrite(
+            MmcifWriteIssue::ReportCountMismatch {
+                expected: 1,
+                actual: 0
+            }
+        ))
+    );
     assert_eq!(
         model_error.to_string(),
-        "mmCIF writing requires 1 interpretation reports, but received 0"
+        "mmCIF write error: mmCIF writing requires 1 interpretation reports, but received 0"
     );
 
     let ensemble = Ensemble::from_models([first, second]).unwrap();
@@ -1266,17 +1282,36 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
         MmcifWriteOptions::default(),
     )
     .unwrap_err();
-    assert!(matches!(
-        &ensemble_error,
-        mmcif::MmcifWriteError::ReportCountMismatch {
-            expected: 2,
-            actual: 0
-        }
-    ));
+    assert_eq!(
+        ensemble_error.detail(),
+        Some(&FormatErrorDetail::MmcifWrite(
+            MmcifWriteIssue::ReportCountMismatch {
+                expected: 2,
+                actual: 0
+            }
+        ))
+    );
     assert_eq!(
         ensemble_error.to_string(),
-        "mmCIF writing requires 2 interpretation reports, but received 0"
+        "mmCIF write error: mmCIF writing requires 2 interpretation reports, but received 0"
     );
+}
+
+/// The kind, typed detail and message of a format error.
+fn described(error: FormatError) -> (DiagnosticKind, Option<FormatErrorDetail>, String) {
+    (
+        error.kind(),
+        error.detail().cloned(),
+        error.message().to_owned(),
+    )
+}
+
+/// The mmCIF writer issue of a failed write.
+fn mmcif_issue<T>(result: Result<T, FormatError>) -> Option<MmcifWriteIssue> {
+    match result.err()?.detail()? {
+        FormatErrorDetail::MmcifWrite(issue) => Some(issue.clone()),
+        _ => None,
+    }
 }
 
 struct FailingWriter;
@@ -1291,36 +1326,61 @@ impl Write for FailingWriter {
     }
 }
 
+/// The format, stage, kind and sink error kind of a failed write.
+fn sink_failure(
+    error: FormatError,
+) -> (Format, FormatStage, DiagnosticKind, Option<io::ErrorKind>) {
+    let sink = std::error::Error::source(&error)
+        .and_then(|source| source.downcast_ref::<io::Error>())
+        .map(io::Error::kind);
+    (error.format(), error.stage(), error.kind(), sink)
+}
+
 #[test]
 fn streaming_writers_report_structured_io_failures() {
     let model = model("C", &[[0.0, 0.0, 0.0]]);
-    assert!(matches!(
-        smiles::write_to(&mut FailingWriter, &molecule("C"), SmilesWriteOptions::default()),
-        Err(error) if error.kind() == MoleculeWriteErrorKind::Io(io::ErrorKind::BrokenPipe)
-    ));
-    assert!(matches!(
-        molfile::write_to(&mut FailingWriter, &model, MolfileWriteOptions::default()),
-        Err(error) if error.kind() == MoleculeWriteErrorKind::Io(io::ErrorKind::BrokenPipe)
-    ));
-    assert!(matches!(
-        sdf::write_to(&mut FailingWriter, [&model], SdfWriteOptions::default()),
-        Err(sdf::SdfWriteError::Io {
-            kind: io::ErrorKind::BrokenPipe,
-            ..
-        })
-    ));
-    assert!(matches!(
-        mmcif::write_to(
-            &mut FailingWriter,
-            [
-                mmcif::MmcifBlockSource::model(&model)
-                    .with_classifications(&classifications(&model))
-            ],
-            MmcifWriteOptions::default()
+    let expected = |format| {
+        (
+            format,
+            FormatStage::Write,
+            DiagnosticKind::Io,
+            Some(io::ErrorKind::BrokenPipe),
+        )
+    };
+    assert_eq!(
+        sink_failure(
+            smiles::write_to(
+                &mut FailingWriter,
+                &molecule("C"),
+                SmilesWriteOptions::default()
+            )
+            .unwrap_err()
         ),
-        Err(mmcif::MmcifWriteError::Io {
-            kind: io::ErrorKind::BrokenPipe,
-            ..
-        })
-    ));
+        expected(Format::Smiles)
+    );
+    assert_eq!(
+        sink_failure(
+            molfile::write_to(&mut FailingWriter, &model, MolfileWriteOptions::default())
+                .unwrap_err()
+        ),
+        expected(Format::Molfile)
+    );
+    assert_eq!(
+        sink_failure(
+            sdf::write_to(&mut FailingWriter, [&model], SdfWriteOptions::default()).unwrap_err()
+        ),
+        expected(Format::Sdf)
+    );
+    assert_eq!(
+        sink_failure(
+            mmcif::write_to(
+                &mut FailingWriter,
+                [mmcif::MmcifBlockSource::model(&model)
+                    .with_classifications(&classifications(&model))],
+                MmcifWriteOptions::default()
+            )
+            .unwrap_err()
+        ),
+        expected(Format::Mmcif)
+    );
 }

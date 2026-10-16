@@ -151,7 +151,7 @@ duplicate covale A C1 A C2 {order}
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::macromolecular::{self, EntityKind, StructureInterpretOptions};
     use kekule::mmcif::{
-        self, MmcifBlock, MmcifEntityClassifications, MmcifWriteError, MmcifWriteOptions,
+        self, MmcifBlock, MmcifEntityClassifications, MmcifWriteIssue, MmcifWriteOptions,
     };
 
     let document = mmcif::parse_str(MINIMAL_MMCIF, Default::default())?;
@@ -242,12 +242,19 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         &format!("{MINIMAL_MMCIF}{}", MINIMAL_MMCIF.replace("demo", "other")),
         Default::default(),
     )?;
+    // The same failure, whichever projection follows interpretation.
     assert_eq!(
-        two_blocks
-            .interpret(Default::default())
-            .map(|interpretation| interpretation.into_model())
-            .unwrap_err(),
-        two_blocks.interpret(Default::default()).unwrap_err()
+        format!(
+            "{:?}",
+            two_blocks
+                .interpret(Default::default())
+                .map(|interpretation| interpretation.into_model())
+                .unwrap_err()
+        ),
+        format!(
+            "{:?}",
+            two_blocks.interpret(Default::default()).unwrap_err()
+        )
     );
     assert_eq!(interpreted.report().selected_model(), Some("1"));
     assert_eq!(interpreted.report().instances().len(), 1);
@@ -280,13 +287,21 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         },
     )?;
     assert!(custom_written.starts_with("data_custom\n"));
-    assert!(matches!(
-        mmcif::write([mmcif::MmcifBlockSource::model(interpreted.model()).with_reports(std::slice::from_ref(interpreted.report()))], MmcifWriteOptions {
-                block_name: String::new(),
-                ..MmcifWriteOptions::default()
-            }),
-        Err(MmcifWriteError::InvalidBlockName(name)) if name.is_empty()
-    ));
+    let unnamed = mmcif::write(
+        [mmcif::MmcifBlockSource::model(interpreted.model())
+            .with_reports(std::slice::from_ref(interpreted.report()))],
+        MmcifWriteOptions {
+            block_name: String::new(),
+            ..MmcifWriteOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        unnamed.detail(),
+        Some(&kekule::diagnostics::FormatErrorDetail::MmcifWrite(
+            MmcifWriteIssue::InvalidBlockName(String::new())
+        ))
+    );
     let automatic = mmcif::write([interpreted.model()], MmcifWriteOptions::default())?;
     assert!(automatic.contains("1 non-polymer"));
     let mut classifications = MmcifEntityClassifications::new();
@@ -326,12 +341,12 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
 
 #[test]
 fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
-    use kekule::macromolecular::StructureInterpretError;
+    use kekule::diagnostics::FormatError;
     use kekule::mmcif;
 
     let document = mmcif::parse_str(&with_struct_conn("doub"), Default::default())
         .expect("duplicate conflicting connectivity parses");
-    let error: StructureInterpretError = document
+    let error: FormatError = document
         .interpret(Default::default())
         .expect_err("conflicting authoritative bond orders must be rejected");
 

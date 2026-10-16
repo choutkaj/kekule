@@ -1,4 +1,6 @@
-use super::{default_bond_expression, BondExpression, SmartsParseError};
+use super::{
+    default_bond_expression, syntax_error, unsupported_error, BondExpression, FormatError,
+};
 use crate::query::{QueryAtomId, QueryBondId, QueryGraphBuilder, QueryStereoConstraint};
 use crate::stereo::TetrahedralOrientation;
 use std::ops::Range;
@@ -11,7 +13,7 @@ pub(super) struct BondSyntax {
 }
 
 impl BondSyntax {
-    pub(super) fn default_at(span: Range<usize>) -> Result<Self, SmartsParseError> {
+    pub(super) fn default_at(span: Range<usize>) -> Result<Self, FormatError> {
         Ok(Self {
             expression: default_bond_expression()?,
             direction: None,
@@ -23,7 +25,7 @@ impl BondSyntax {
         opening: Option<Self>,
         closing: Option<Self>,
         span: Range<usize>,
-    ) -> Result<Self, SmartsParseError> {
+    ) -> Result<Self, FormatError> {
         // Closing notation is written in the opposite direction to the edge.
         let closing = closing.map(|mut bond| {
             bond.direction = bond.direction.map(|up| !up);
@@ -41,7 +43,7 @@ impl BondSyntax {
                 if left.expression != right.expression
                     || matches!((left.direction, right.direction), (Some(a), Some(b)) if a != b)
                 {
-                    return Err(SmartsParseError::syntax(
+                    return Err(syntax_error(
                         left.span.start..right.span.end,
                         "conflicting bond expressions on ring closure",
                     ));
@@ -64,7 +66,7 @@ impl AtomStereo {
         source: &str,
         start: usize,
         base: usize,
-    ) -> Result<(Self, usize), SmartsParseError> {
+    ) -> Result<(Self, usize), FormatError> {
         let bytes = source.as_bytes();
         let mut end = start + 1;
         let inverted = if bytes.get(end) == Some(&b'@') {
@@ -77,7 +79,7 @@ impl AtomStereo {
             false
         };
         if bytes.get(end) == Some(&b'@') {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 base + start..base + end + 1,
                 "duplicate stereochemical atom query",
             ));
@@ -89,7 +91,7 @@ impl AtomStereo {
                 .iter()
                 .any(|class| source[end..].starts_with(class))
         {
-            return Err(SmartsParseError::unsupported(
+            return Err(unsupported_error(
                 base + start..base + bytes.len(),
                 "only specified tetrahedral stereochemical atom queries are supported",
             ));
@@ -108,7 +110,7 @@ impl AtomStereo {
                     match digits.parse::<u8>() {
                         Ok(0) => false,
                         Ok(1) => true,
-                        _ => return Err(SmartsParseError::unsupported(
+                        _ => return Err(unsupported_error(
                             base + start..base + end + 1 + digits.len(),
                             "tetrahedral inline hydrogen counts greater than one are unsupported",
                         )),
@@ -212,7 +214,7 @@ impl StereoSyntax {
         }
     }
 
-    pub(super) fn install(self, builder: &mut QueryGraphBuilder) -> Result<(), SmartsParseError> {
+    pub(super) fn install(self, builder: &mut QueryGraphBuilder) -> Result<(), FormatError> {
         for (index, atom) in self.atoms.iter().enumerate() {
             let Some(stereo) = &atom.stereo else {
                 continue;
@@ -245,7 +247,7 @@ impl StereoSyntax {
                     },
                 )
                 .map_err(|error| {
-                    SmartsParseError::syntax(stereo.span.clone(), error.to_string())
+                    syntax_error(stereo.span.clone(), "invalid query").with_source(error)
                 })?;
         }
         // Direction predicates stay in the bond expression. Validate contradictory
@@ -263,7 +265,7 @@ impl StereoSyntax {
         &self,
         endpoint: QueryAtomId,
         other: QueryAtomId,
-    ) -> Result<Option<(QueryAtomId, bool, Range<usize>)>, SmartsParseError> {
+    ) -> Result<Option<(QueryAtomId, bool, Range<usize>)>, FormatError> {
         let mut selected: Option<(QueryAtomId, bool, Range<usize>)> = None;
         let mut seen = [false; 2];
         for edge in &self.directions {
@@ -279,7 +281,7 @@ impl StereoSyntax {
             }
             if let Some((_, _, span)) = &selected {
                 if seen[usize::from(up)] {
-                    return Err(SmartsParseError::syntax(
+                    return Err(syntax_error(
                         span.start.min(edge.span.start)..span.end.max(edge.span.end),
                         "contradictory directions at double-bond endpoint",
                     ));

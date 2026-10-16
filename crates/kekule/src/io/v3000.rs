@@ -6,16 +6,17 @@ use crate::io::MolfileParseOptions;
 
 use super::molfile_document::{
     MolfileAtom, MolfileAtomParity, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileCtab,
-    MolfileLines, MolfileParseError, MolfileRadical, MolfileStereoGroup, MolfileStereoGroupKind,
-    MolfileUnsupported, MolfileUnsupportedContent,
+    MolfileLines, MolfileRadical, MolfileStereoGroup, MolfileStereoGroupKind, MolfileUnsupported,
+    MolfileUnsupportedContent,
 };
+use crate::diagnostics::FormatError;
 
 /// Parses the V3000 connection table after the header and returns the index
 /// of its `M  END` line.
 pub(super) fn parse_v3000_ctab(
     lines: MolfileLines<'_>,
     options: MolfileParseOptions,
-) -> std::result::Result<(MolfileCtab, usize), MolfileParseError> {
+) -> std::result::Result<(MolfileCtab, usize), FormatError> {
     let (records, end) = collect_v3000_lines(lines, options)?;
     let Some(first) = records.first() else {
         return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 BEGIN CTAB"));
@@ -200,7 +201,7 @@ struct V3000Line {
 fn collect_v3000_lines(
     lines: MolfileLines<'_>,
     options: MolfileParseOptions,
-) -> std::result::Result<(Vec<V3000Line>, usize), MolfileParseError> {
+) -> std::result::Result<(Vec<V3000Line>, usize), FormatError> {
     let limit = |index| {
         lines.error(
             index,
@@ -316,7 +317,7 @@ fn parse_v3000_atom(
     row: &V3000Line,
     position: usize,
     unsupported: &mut Vec<MolfileUnsupported>,
-) -> std::result::Result<(usize, MolfileAtom), MolfileParseError> {
+) -> std::result::Result<(usize, MolfileAtom), FormatError> {
     let syntax = || lines.error(row.index, DiagnosticKind::Syntax, "invalid V3000 atom line");
     let invalid = |name: &str| {
         lines.error(
@@ -421,7 +422,7 @@ fn parse_v3000_bonds(
     rows: &[V3000Line],
     atom_positions: &BTreeMap<usize, usize>,
     ctab: &mut MolfileCtab,
-) -> std::result::Result<(), MolfileParseError> {
+) -> std::result::Result<(), FormatError> {
     let mut serials = BTreeSet::new();
     let mut endpoints = BTreeSet::new();
     for row in rows {
@@ -452,7 +453,7 @@ fn parse_v3000_bond(
     position: usize,
     atom_positions: &BTreeMap<usize, usize>,
     unsupported: &mut Vec<MolfileUnsupported>,
-) -> std::result::Result<(usize, MolfileBond), MolfileParseError> {
+) -> std::result::Result<(usize, MolfileBond), FormatError> {
     let syntax = || lines.error(row.index, DiagnosticKind::Syntax, "invalid V3000 bond line");
     let fields = v3000_fields(&row.body).ok_or_else(syntax)?;
     let [serial, order, a, b, options @ ..] = fields.as_slice() else {
@@ -574,7 +575,7 @@ fn parse_v3000_collection(
     rows: &[V3000Line],
     atom_positions: &BTreeMap<usize, usize>,
     ctab: &mut MolfileCtab,
-) -> std::result::Result<(), MolfileParseError> {
+) -> std::result::Result<(), FormatError> {
     for row in rows {
         let error = |kind, message: &str| lines.error(row.index, kind, message);
         let syntax = |message: &str| error(DiagnosticKind::Syntax, message);

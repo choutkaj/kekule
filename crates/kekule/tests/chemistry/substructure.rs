@@ -1,3 +1,4 @@
+use kekule::diagnostics::{DiagnosticKind, SourceLocation};
 use kekule::{
     molecule::*,
     perception::{
@@ -5,7 +6,7 @@ use kekule::{
         rings::{RingBasisModel, RingBasisState},
         Perception,
     },
-    smarts::{self, SmartsParseErrorKind, SmartsParseOptions},
+    smarts::{self, SmartsParseOptions},
     smiles,
     substructure::*,
     topology::Topology,
@@ -303,15 +304,17 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
     ] {
         assert_eq!(
             smarts::parse_str(source, opts).unwrap_err().kind(),
-            SmartsParseErrorKind::ResourceLimit
+            DiagnosticKind::Limit
         );
     }
     for source in [
         "[$()]", "[$([C)]", "[$(C)", "[C:]", "[C:1:2]", "C-,C", "C;&C",
     ] {
         let e = smarts::parse_str(source, Default::default()).unwrap_err();
+        let location = e.location().expect("SMARTS errors are located");
+        assert_eq!(location.line(), 1, "{source}: {e}");
         assert!(
-            e.span().start <= e.span().end && e.span().end <= source.len(),
+            (1..=source.len() + 1).contains(&location.column().unwrap()),
             "{source}: {e}"
         );
     }
@@ -526,6 +529,6 @@ fn graph_complexity_exhaustion_remains_a_resource_error() {
         },
     )
     .unwrap_err();
-    assert_eq!(error.kind(), SmartsParseErrorKind::ResourceLimit);
-    assert_eq!(error.span(), 0..input.len());
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    assert_eq!(error.location(), Some(SourceLocation::at_column(1, 1)));
 }

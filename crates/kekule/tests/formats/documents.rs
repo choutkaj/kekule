@@ -1,4 +1,6 @@
-use kekule::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
+use kekule::diagnostics::{
+    DiagnosticKind, Format, FormatErrorDetail, FormatStage, SourceLocation, UnsupportedContent,
+};
 use kekule::geometry::Point3;
 use kekule::{
     molecule::{Element, Molecule},
@@ -64,7 +66,7 @@ fn empty_molfile_fails_at_interpretation_before_any_projection() {
         .interpret(Default::default())
         .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Chemistry);
-    assert_eq!(error.record(), 1);
+    assert_eq!(error.record(), Some(1));
 }
 
 #[test]
@@ -458,10 +460,13 @@ fn component_interpretation_types_are_nameable_through_format_facades() {
     let smiles_components: &[smiles::SmilesComponentInterpretation] =
         smiles_interpretation.components();
     assert_eq!(smiles_components.len(), 2);
-    let count_error: smiles::SmilesComponentCountError = smiles_interpretation
+    let count_error = smiles_interpretation
         .molecule()
         .expect_err("singular access rejects multiple components");
-    assert_eq!(count_error.actual(), 2);
+    assert_eq!(
+        count_error.detail(),
+        Some(&FormatErrorDetail::ComponentCount { actual: 2 })
+    );
 
     let molfile_source = "two components\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 O   0  0  0  0  0  0\nM  END\n";
     let molfile_document =
@@ -485,7 +490,7 @@ fn sdf_interpretation_errors_carry_record_kind_and_input_location() {
         .interpret(Default::default())
         .expect_err("unsupported element fails Molfile interpretation");
 
-    assert_eq!(error.record(), 2);
+    assert_eq!(error.record(), Some(2));
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     // The atom line of the second record, counted in the SDF input.
     assert_eq!(error.location(), Some(SourceLocation::at_line(12)));
@@ -494,10 +499,12 @@ fn sdf_interpretation_errors_carry_record_kind_and_input_location() {
         error.to_string(),
         "SDF interpretation error in record 2 at line 12: unsupported element symbol `Xx`"
     );
-    let source = std::error::Error::source(&error)
-        .and_then(|source| source.downcast_ref::<molfile::MolfileInterpretError>())
-        .expect("the Molfile failure is the source");
-    assert_eq!(source.location(), error.location());
+    // The Molfile failure is reported as the SDF record's own failure.
+    assert_eq!(
+        (error.format(), error.stage()),
+        (Format::Sdf, FormatStage::Interpret)
+    );
+    assert!(std::error::Error::source(&error).is_none());
 }
 
 #[test]
@@ -905,7 +912,11 @@ fn stream(records: sdf::SdfRecords<&[u8]>) -> Vec<StreamItem> {
                 record.location().line(),
                 record.title().to_owned(),
             )),
-            Err(error) => Err((error.record(), error.kind(), error.location().line())),
+            Err(error) => Err((
+                error.record().unwrap(),
+                error.kind(),
+                error.location().unwrap().line(),
+            )),
         })
         .collect()
 }
@@ -973,7 +984,11 @@ fn sdf_record_stream_isolates_malformed_records_and_resumes() {
     .unwrap_err();
     assert_eq!(
         (error.record(), error.kind(), error.location()),
-        (2, DiagnosticKind::Syntax, SourceLocation::at_line(12))
+        (
+            Some(2),
+            DiagnosticKind::Syntax,
+            Some(SourceLocation::at_line(12))
+        )
     );
 }
 
@@ -1031,7 +1046,7 @@ fn format_readers_match_string_parsing_and_enforce_limits() {
     let error = smiles::parse_reader(smiles_text.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
-        (DiagnosticKind::Limit, SourceLocation::at_column(1, 1))
+        (DiagnosticKind::Limit, Some(SourceLocation::at_column(1, 1)))
     );
     let error = smiles::parse_reader(b"\xff\xfe".as_slice(), Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Io);
@@ -1048,7 +1063,7 @@ fn format_readers_match_string_parsing_and_enforce_limits() {
     let error = molfile::parse_reader(molfile.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
-        (DiagnosticKind::Limit, SourceLocation::at_line(1))
+        (DiagnosticKind::Limit, Some(SourceLocation::at_line(1)))
     );
     let error = molfile::parse_reader(b"\xff\xfe".as_slice(), Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Io);
@@ -1065,6 +1080,10 @@ fn format_readers_match_string_parsing_and_enforce_limits() {
     let error = sdf::parse_reader(sdf_text.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.record(), error.kind(), error.location()),
-        (1, DiagnosticKind::Limit, SourceLocation::at_line(1))
+        (
+            Some(1),
+            DiagnosticKind::Limit,
+            Some(SourceLocation::at_line(1))
+        )
     );
 }

@@ -1,4 +1,5 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::geometry::PeriodicCell;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::{
@@ -50,106 +51,291 @@ impl Default for MmcifWriteOptions {
     }
 }
 
+/// A failure specific to the mmCIF writer: the typed
+/// [`detail`](crate::diagnostics::FormatError::detail) of a write-stage
+/// [`FormatError`], as
+/// [`FormatErrorDetail::MmcifWrite`](crate::diagnostics::FormatErrorDetail::MmcifWrite).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MmcifWriteError {
+pub enum MmcifWriteIssue {
+    /// [`MmcifWriteOptions::block_name`] is empty or not a valid data block
+    /// name.
     InvalidBlockName(String),
+    /// [`MmcifWriteOptions::coordinate_precision`] exceeds the supported
+    /// maximum.
     CoordinatePrecisionTooLarge(usize),
-    InvalidModel(String),
-    InvalidHierarchy {
-        message: String,
-    },
+    /// Explicit entity semantics leave this molecule instance unclassified.
     MissingEntityClassification(MoleculeInstanceId),
+    /// Entity semantics classify this molecule instance more than once.
     DuplicateEntityClassification(MoleculeInstanceId),
+    /// The instances one mmCIF entity would cover have different
+    /// classifications.
     ConflictingEntityClassifications {
+        /// The molecule instance.
         molecule: MoleculeInstanceId,
+        /// The conflicting classifications.
         classifications: Vec<EntityKind>,
     },
+    /// The classification names an entity type the writer does not support.
     UnsupportedEntityClassification {
+        /// The molecule instance.
         molecule: MoleculeInstanceId,
+        /// The source entity type.
         classification: String,
     },
+    /// Canonical topology classification does not determine one mmCIF entity
+    /// kind for this molecule instance.
     UnresolvedCanonicalEntityClassification {
+        /// The molecule instance.
         molecule: MoleculeInstanceId,
+        /// Its canonical class.
         classification: MoleculeClass,
     },
+    /// A structural instance has several source entity IDs.
     ConflictingAsymEntityIds {
+        /// The structural instance (`label_asym_id`).
         asym_id: String,
+        /// The conflicting entity IDs.
         entity_ids: Vec<String>,
     },
+    /// A structural instance has several entity classifications.
     ConflictingAsymEntityClassifications {
+        /// The structural instance (`label_asym_id`).
         asym_id: String,
+        /// The conflicting classifications.
         classifications: Vec<EntityKind>,
     },
+    /// A source entity has several classifications.
     ConflictingSourceEntityClassifications {
+        /// The source entity ID.
         entity_id: String,
+        /// The conflicting classifications.
         classifications: Vec<EntityKind>,
     },
+    /// Entity semantics name a molecule instance the model does not have.
     UnknownClassifiedMolecule(MoleculeInstanceId),
+    /// Two structural instances share one ID.
     DuplicateAsymId(String),
+    /// A hierarchy atom has no biomolecular atom site.
     MissingAtomSite(InstanceAtomId),
+    /// An atom appears in more than one biomolecular atom site.
     DuplicateAtomSite(InstanceAtomId),
+    /// An atom's atom-site field disagrees with the rest of its residue or
+    /// chain.
     InconsistentAtomSite {
+        /// The atom.
         atom: InstanceAtomId,
-        field: &'static str,
+        /// The inconsistent field.
+        field: MmcifAtomField,
     },
-    InvalidGroupPdb {
-        atom: InstanceAtomId,
-        value: String,
-    },
+    /// An atom duplicates another atom's identity within one residue.
     DuplicateAtomIdentity(InstanceAtomId),
+    /// Interpretation reports carry no atom-level provenance for this atom.
     MissingAtomProvenance(InstanceAtomId),
+    /// Interpretation reports carry atom-level provenance for this atom twice.
     DuplicateAtomProvenance(InstanceAtomId),
+    /// Interpretation reports carry provenance for an atom the model does not
+    /// have.
     UnknownAtomProvenance(InstanceAtomId),
+    /// An atom has state the writer does not represent.
     UnsupportedAtomField {
+        /// The atom.
         atom: InstanceAtomId,
-        field: &'static str,
+        /// The unsupported field.
+        field: MmcifAtomField,
     },
+    /// An atom's formal charge is outside the PDBx/mmCIF range -8..=8.
     FormalChargeOutOfRange {
+        /// The atom.
         atom: InstanceAtomId,
+        /// Its formal charge.
         charge: i8,
     },
+    /// A molecule instance carries stereochemistry the writer does not
+    /// represent.
     UnsupportedStereo(MoleculeInstanceId),
+    /// A bond has an order mmCIF connectivity cannot represent.
     UnsupportedBondOrder {
+        /// The bond.
         bond: InstanceBondId,
+        /// Its order.
         order: BondOrder,
     },
+    /// A `_struct_conn` partner cannot select this atom unambiguously.
     AmbiguousConnectionSelector(InstanceAtomId),
+    /// A text value cannot be written as a single mmCIF token, for example
+    /// because it is empty or spans lines.
     UnsupportedTextValue {
-        field: &'static str,
+        /// The mmCIF item the value belongs to, such as
+        /// `_atom_site.label_atom_id`.
+        item: String,
     },
+    /// The ensemble has no members.
     EmptyEnsemble,
+    /// The number of interpretation reports does not match the number of
+    /// models.
     ReportCountMismatch {
+        /// The number of models.
         expected: usize,
+        /// The number of reports.
         actual: usize,
     },
-    ClassificationCountMismatch {
-        expected: usize,
-        actual: usize,
-    },
+    /// The 1-based ensemble member `member` differs from the first member in
+    /// state one mmCIF block shares between models.
     IncompatibleEnsembleMember {
+        /// The 1-based member number.
         member: usize,
-        field: &'static str,
+        /// The differing state.
+        field: MmcifMemberField,
     },
-    /// Ensemble member state mmCIF cannot represent, with
-    /// [`UnrepresentablePolicy::Fail`]: `field` is `"weight"` for unequal
-    /// weights or `"energy"` for a member energy.
+    /// The 1-based ensemble member `member` has state mmCIF cannot represent,
+    /// with [`UnrepresentablePolicy::Fail`].
     UnrepresentableEnsembleMember {
+        /// The 1-based member number.
         member: usize,
-        field: &'static str,
+        /// [`MmcifMemberField::Weight`] for unequal weights or
+        /// [`MmcifMemberField::Energy`] for a member energy.
+        field: MmcifMemberField,
     },
     /// A periodic cell mmCIF cannot represent, with
     /// [`UnrepresentablePolicy::Fail`].
     UnrepresentableCell {
-        reason: &'static str,
-    },
-    Io {
-        kind: std::io::ErrorKind,
-        message: String,
+        /// Why the cell cannot be written.
+        reason: MmcifCellReason,
     },
 }
 
-impl fmt::Display for MmcifWriteError {
+/// Atom state named by an [`MmcifWriteIssue`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MmcifAtomField {
+    /// The atom's isotope.
+    Isotope,
+    /// The atom's radical electrons.
+    Radical,
+    /// The atom's implicit hydrogens.
+    Hydrogens,
+    /// The atom's atom-map number.
+    AtomMap,
+    /// `_atom_site.label_asym_id`.
+    LabelAsymId,
+    /// The source `asym_id` recorded in provenance.
+    SourceAsymId,
+    /// `_atom_site.type_symbol`.
+    TypeSymbol,
+}
+
+impl fmt::Display for MmcifAtomField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Isotope => "isotope",
+            Self::Radical => "radical",
+            Self::Hydrogens => "hydrogens",
+            Self::AtomMap => "atom_map",
+            Self::LabelAsymId => "label_asym_id",
+            Self::SourceAsymId => "source asym_id",
+            Self::TypeSymbol => "type_symbol",
+        })
+    }
+}
+
+/// Ensemble member state named by an [`MmcifWriteIssue`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MmcifMemberField {
+    /// The `_entity` representation.
+    Entities,
+    /// The `_struct_asym` representation.
+    StructuralAsymmetry,
+    /// The `_struct_conn` and `_chem_comp_bond` representation.
+    Connectivity,
+    /// The `_atom_site` identity columns.
+    AtomSites,
+    /// The member's relative weight.
+    Weight,
+    /// The member's energy.
+    Energy,
+}
+
+impl fmt::Display for MmcifMemberField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Entities => "entity representation",
+            Self::StructuralAsymmetry => "structural asymmetry representation",
+            Self::Connectivity => "connectivity representation",
+            Self::AtomSites => "atom-site representation",
+            Self::Weight => "weight",
+            Self::Energy => "energy",
+        })
+    }
+}
+
+/// Why mmCIF cannot represent a periodic cell.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MmcifCellReason {
+    /// Ensemble members have different cells; one block has one `_cell`.
+    MemberCellsDiffer,
+    /// The cell is not periodic along all three axes.
+    PartiallyPeriodic,
+    /// The cell does not have `a` along x and `b` in the xy plane, as mmCIF
+    /// coordinates assume.
+    NonstandardOrientation,
+}
+
+impl fmt::Display for MmcifCellReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::MemberCellsDiffer => "ensemble members have different cells",
+            Self::PartiallyPeriodic => "an mmCIF cell is periodic along all three axes",
+            Self::NonstandardOrientation => {
+                "an mmCIF cell has a along x and b in the xy plane, as its coordinates assume"
+            }
+        })
+    }
+}
+
+impl MmcifWriteIssue {
+    /// The diagnostic kind of a write error with this detail.
+    pub const fn kind(&self) -> DiagnosticKind {
+        match self {
+            Self::InvalidBlockName(_) | Self::CoordinatePrecisionTooLarge(_) => {
+                DiagnosticKind::InvalidValue
+            }
+            Self::UnknownClassifiedMolecule(_) | Self::UnknownAtomProvenance(_) => {
+                DiagnosticKind::InvalidReference
+            }
+            Self::UnsupportedEntityClassification { .. }
+            | Self::UnresolvedCanonicalEntityClassification { .. }
+            | Self::UnsupportedAtomField { .. }
+            | Self::FormalChargeOutOfRange { .. }
+            | Self::UnsupportedStereo(_)
+            | Self::UnsupportedBondOrder { .. }
+            | Self::AmbiguousConnectionSelector(_)
+            | Self::UnsupportedTextValue { .. }
+            | Self::UnrepresentableEnsembleMember { .. }
+            | Self::UnrepresentableCell { .. } => DiagnosticKind::Unsupported,
+            Self::MissingEntityClassification(_)
+            | Self::DuplicateEntityClassification(_)
+            | Self::ConflictingEntityClassifications { .. }
+            | Self::ConflictingAsymEntityIds { .. }
+            | Self::ConflictingAsymEntityClassifications { .. }
+            | Self::ConflictingSourceEntityClassifications { .. }
+            | Self::DuplicateAsymId(_)
+            | Self::MissingAtomSite(_)
+            | Self::DuplicateAtomSite(_)
+            | Self::InconsistentAtomSite { .. }
+            | Self::DuplicateAtomIdentity(_)
+            | Self::MissingAtomProvenance(_)
+            | Self::DuplicateAtomProvenance(_)
+            | Self::EmptyEnsemble
+            | Self::ReportCountMismatch { .. }
+            | Self::IncompatibleEnsembleMember { .. } => DiagnosticKind::Inconsistent,
+        }
+    }
+}
+
+impl fmt::Display for MmcifWriteIssue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBlockName(name) => {
@@ -159,10 +345,6 @@ impl fmt::Display for MmcifWriteError {
                 f,
                 "mmCIF coordinate precision {precision} exceeds the supported maximum of {MAX_COORDINATE_PRECISION}"
             ),
-            Self::InvalidModel(message) => write!(f, "invalid molecular model: {message}"),
-            Self::InvalidHierarchy { message } => {
-                write!(f, "invalid topology hierarchy: {message}")
-            }
             Self::MissingEntityClassification(molecule) => write!(
                 f,
                 "{molecule} has no explicit mmCIF entity classification"
@@ -227,10 +409,6 @@ impl fmt::Display for MmcifWriteError {
             Self::InconsistentAtomSite { atom, field } => {
                 write!(f, "{atom} has inconsistent atom-site {field}")
             }
-            Self::InvalidGroupPdb { atom, value } => write!(
-                f,
-                "{atom} has unsupported _atom_site.group_PDB value `{value}`"
-            ),
             Self::DuplicateAtomIdentity(atom) => write!(
                 f,
                 "{atom} duplicates an mmCIF atom identity within one residue"
@@ -262,18 +440,14 @@ impl fmt::Display for MmcifWriteError {
                 f,
                 "{atom} cannot be selected unambiguously by an mmCIF struct_conn partner"
             ),
-            Self::UnsupportedTextValue { field } => write!(
+            Self::UnsupportedTextValue { item } => write!(
                 f,
-                "{field} contains a text value that cannot be emitted as a single mmCIF token"
+                "{item} contains a text value that cannot be emitted as a single mmCIF token"
             ),
             Self::EmptyEnsemble => f.write_str("cannot write an empty ensemble as mmCIF"),
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
                 "mmCIF writing requires {expected} interpretation reports, but received {actual}"
-            ),
-            Self::ClassificationCountMismatch { expected, actual } => write!(
-                f,
-                "mmCIF model collection writing requires {expected} classification sets, but received {actual}"
             ),
             Self::IncompatibleEnsembleMember { member, field } => write!(
                 f,
@@ -286,12 +460,25 @@ impl fmt::Display for MmcifWriteError {
             Self::UnrepresentableCell { reason } => {
                 write!(f, "mmCIF cannot represent the periodic cell: {reason}")
             }
-            Self::Io { message, .. } => write!(f, "mmCIF output failed: {message}"),
         }
     }
 }
 
-impl std::error::Error for MmcifWriteError {}
+/// The write error carrying `issue` as its detail.
+pub(super) fn fail(issue: MmcifWriteIssue) -> FormatError {
+    FormatError::write(Format::Mmcif, issue.kind(), issue.to_string())
+        .with_detail(FormatErrorDetail::MmcifWrite(issue))
+}
+
+/// The source model is internally inconsistent or incomplete.
+pub(super) fn invalid_model(message: impl Into<String>) -> FormatError {
+    FormatError::write(Format::Mmcif, DiagnosticKind::Inconsistent, message)
+}
+
+/// The output sink failed.
+pub(super) fn sink(error: std::io::Error) -> FormatError {
+    FormatError::sink(Format::Mmcif, error)
+}
 
 /// Expert mmCIF entity-kind overrides for canonical molecule instances.
 ///
@@ -315,9 +502,11 @@ impl MmcifEntityClassifications {
         &mut self,
         molecule: MoleculeInstanceId,
         kind: EntityKind,
-    ) -> Result<(), MmcifWriteError> {
+    ) -> Result<(), FormatError> {
         if self.kinds.contains_key(&molecule) {
-            return Err(MmcifWriteError::DuplicateEntityClassification(molecule));
+            return Err(fail(MmcifWriteIssue::DuplicateEntityClassification(
+                molecule,
+            )));
         }
         self.kinds.insert(molecule, kind);
         Ok(())
@@ -442,7 +631,7 @@ impl<'a> From<&'a StructureEnsembleInterpretation> for MmcifBlockSource<'a> {
 pub(crate) fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
     blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,
-) -> Result<String, MmcifWriteError> {
+) -> Result<String, FormatError> {
     let mut output = Vec::new();
     write_mmcif_to(&mut output, blocks, options)?;
     Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
@@ -457,7 +646,7 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     writer: &mut impl Write,
     blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     validate_options(&options)?;
     let blocks = blocks.into_iter().map(Into::into).collect::<Vec<_>>();
     let numbered = blocks.len() > 1;
@@ -487,14 +676,14 @@ fn write_model_block_to(
     view: ModelView<'_>,
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {
-                return Err(MmcifWriteError::ReportCountMismatch {
+                return Err(fail(MmcifWriteIssue::ReportCountMismatch {
                     expected: 1,
                     actual: reports.len(),
-                });
+                }));
             };
             entity_plan_from_report(view, report)?
         }
@@ -522,25 +711,23 @@ fn write_model_block_to(
 fn block_cell<'a>(
     cells: impl IntoIterator<Item = Option<&'a PeriodicCell>>,
     policy: UnrepresentablePolicy,
-) -> Result<Option<CellParameters>, MmcifWriteError> {
+) -> Result<Option<CellParameters>, FormatError> {
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
-        Err("ensemble members have different cells")
+        Err(MmcifCellReason::MemberCellsDiffer)
     } else {
         match first.map(cell_parameters).transpose() {
             Ok(parameters) => return Ok(parameters),
-            Err(CellParameterError::PartiallyPeriodic) => {
-                Err("an mmCIF cell is periodic along all three axes")
-            }
+            Err(CellParameterError::PartiallyPeriodic) => Err(MmcifCellReason::PartiallyPeriodic),
             Err(CellParameterError::NonstandardOrientation) => {
-                Err("an mmCIF cell has a along x and b in the xy plane, as its coordinates assume")
+                Err(MmcifCellReason::NonstandardOrientation)
             }
         }
     };
     match (parameters, policy) {
         (Err(reason), UnrepresentablePolicy::Fail) => {
-            Err(MmcifWriteError::UnrepresentableCell { reason })
+            Err(fail(MmcifWriteIssue::UnrepresentableCell { reason }))
         }
         (Err(_), UnrepresentablePolicy::Omit) => Ok(None),
         (Ok(parameters), _) => Ok(parameters),
@@ -552,16 +739,16 @@ fn write_ensemble_block_to(
     ensemble: &Ensemble,
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     let (classifications, reports) = match entities {
         EntitySemantics::Canonical => (None, None),
         EntitySemantics::Classifications(classifications) => (Some(classifications), None),
         EntitySemantics::Reports(reports) => {
             if reports.len() != ensemble.len() {
-                return Err(MmcifWriteError::ReportCountMismatch {
+                return Err(fail(MmcifWriteIssue::ReportCountMismatch {
                     expected: ensemble.len(),
                     actual: reports.len(),
-                });
+                }));
             }
             (None, Some(reports))
         }
@@ -572,16 +759,16 @@ fn write_ensemble_block_to(
         let weight = ensemble.get(0).map(|member| member.weight());
         for (index, member) in ensemble.iter().enumerate() {
             let field = if member.energy().is_some() {
-                "energy"
+                MmcifMemberField::Energy
             } else if Some(member.weight()) != weight {
-                "weight"
+                MmcifMemberField::Weight
             } else {
                 continue;
             };
-            return Err(MmcifWriteError::UnrepresentableEnsembleMember {
+            return Err(fail(MmcifWriteIssue::UnrepresentableEnsembleMember {
                 member: index + 1,
                 field,
-            });
+            }));
         }
     }
     let cell = block_cell(
@@ -589,7 +776,9 @@ fn write_ensemble_block_to(
         options.cell,
     )?;
     let mut members = ensemble.iter().enumerate();
-    let (_, first_member) = members.next().ok_or(MmcifWriteError::EmptyEnsemble)?;
+    let (_, first_member) = members
+        .next()
+        .ok_or_else(|| fail(MmcifWriteIssue::EmptyEnsemble))?;
     let first_view = first_member.as_model_view();
     let first_plan = ensemble_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
     let first = prepare_model(first_view, first_plan)?;
@@ -614,21 +803,21 @@ fn write_ensemble_block_to(
     write_block_end(writer, &first)
 }
 
-fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> {
+fn validate_options(options: &MmcifWriteOptions) -> Result<(), FormatError> {
     if options.block_name.is_empty()
         || !options
             .block_name
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || "_-.".contains(character))
     {
-        return Err(MmcifWriteError::InvalidBlockName(
+        return Err(fail(MmcifWriteIssue::InvalidBlockName(
             options.block_name.clone(),
-        ));
+        )));
     }
     if options.coordinate_precision > MAX_COORDINATE_PRECISION {
-        return Err(MmcifWriteError::CoordinatePrecisionTooLarge(
+        return Err(fail(MmcifWriteIssue::CoordinatePrecisionTooLarge(
             options.coordinate_precision,
-        ));
+        )));
     }
     Ok(())
 }

@@ -7,13 +7,14 @@ use crate::diagnostics::{DiagnosticKind, SourceLocation};
 use super::super::element_symbol::parse_structure_element_symbol;
 use super::super::mmcif_category::MmcifCategory;
 use super::super::{MmcifBlock, MmcifValue};
-use super::{Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentError};
+use super::{component_error, Component, ComponentAtom, ComponentBond, ComponentBondOrder};
+use crate::diagnostics::FormatError;
 
-pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, ComponentError> {
+pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, FormatError> {
     let scalar = |tag: &str| block.item(tag).and_then(|value| value.optional_text());
     let id = scalar("_chem_comp.id").unwrap_or(block.name()).to_owned();
     let error = |kind, value: Option<MmcifValue<'_>>, message: String| {
-        ComponentError::new(
+        component_error(
             kind,
             value.map(|value| value.location()),
             format!("component `{id}`: {message}"),
@@ -21,7 +22,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Comp
     };
 
     let atoms_table = category(block, "_chem_comp_atom", &id)?.ok_or_else(|| {
-        ComponentError::new(
+        component_error(
             DiagnosticKind::Syntax,
             None,
             format!("component `{id}` has no _chem_comp_atom category"),
@@ -34,7 +35,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Comp
         let text = |tag: &str| field(tag).and_then(|value| value.optional_text());
         let required = |tag: &str| {
             text(tag).ok_or_else(|| {
-                ComponentError::new(
+                component_error(
                     DiagnosticKind::Syntax,
                     atoms_table.row_line(row).map(SourceLocation::at_line),
                     format!("component `{id}`: atom row lacks {tag}"),
@@ -96,7 +97,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Comp
                 .zip(["_chem_comp_bond.atom_id_1", "_chem_comp_bond.atom_id_2"])
             {
                 let name = text(tag).ok_or_else(|| {
-                    ComponentError::new(
+                    component_error(
                         DiagnosticKind::Syntax,
                         table.row_line(row).map(SourceLocation::at_line),
                         format!("component `{id}`: bond row lacks {tag}"),
@@ -167,9 +168,9 @@ fn category<'a>(
     block: &'a MmcifBlock,
     name: &str,
     id: &str,
-) -> Result<Option<MmcifCategory<'a>>, ComponentError> {
+) -> Result<Option<MmcifCategory<'a>>, FormatError> {
     block.category(name).map_err(|error| {
-        ComponentError::new(
+        component_error(
             error.kind(),
             error.location(),
             format!("component `{id}`: {}", error.message()),
@@ -178,9 +179,9 @@ fn category<'a>(
 }
 
 /// Rows of a multi-component block must belong to the block's component.
-fn check_component(id: &str, value: Option<MmcifValue<'_>>) -> Result<(), ComponentError> {
+fn check_component(id: &str, value: Option<MmcifValue<'_>>) -> Result<(), FormatError> {
     match value.and_then(|value| value.optional_text().map(|text| (value, text))) {
-        Some((value, text)) if !text.eq_ignore_ascii_case(id) => Err(ComponentError::new(
+        Some((value, text)) if !text.eq_ignore_ascii_case(id) => Err(component_error(
             DiagnosticKind::Inconsistent,
             Some(value.location()),
             format!("component `{id}` contains a row of component `{text}`"),

@@ -1,5 +1,7 @@
+use super::byte_offset;
+use crate::diagnostics::{DiagnosticKind, SourceLocation};
 use crate::query::*;
-use crate::smarts::{self, SmartsParseErrorKind, SmartsParseOptions};
+use crate::smarts::{self, SmartsParseOptions};
 use crate::substructure::{self, *};
 
 use super::*;
@@ -438,20 +440,20 @@ fn bounded_smarts_rejects_unsupported_semantics_instead_of_approximating() {
         ("(C.C)", "component-level"),
     ] {
         let error = smarts::parse_str(input, Default::default()).expect_err(input);
-        assert_eq!(error.kind(), SmartsParseErrorKind::Unsupported, "{input}");
+        assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{input}");
         assert!(
             error.message().contains(expected_fragment),
             "{input}: {error}"
         );
-        assert!(error.span().start < input.len(), "{input}: {error}");
+        assert!(byte_offset(&error) < input.len(), "{input}: {error}");
     }
 }
 
 #[test]
 fn malformed_smarts_returns_structured_syntax_errors() {
     let empty = smarts::parse_str("", Default::default()).unwrap_err();
-    assert_eq!(empty.kind(), SmartsParseErrorKind::Empty);
-    assert_eq!(empty.span(), 0..0);
+    assert_eq!(empty.kind(), DiagnosticKind::Syntax);
+    assert_eq!(empty.location(), Some(SourceLocation::at_column(1, 1)));
 
     for input in [
         "C(",
@@ -469,11 +471,7 @@ fn malformed_smarts_returns_structured_syntax_errors() {
         "C/1CCCCC/1",
     ] {
         let error = smarts::parse_str(input, Default::default()).expect_err(input);
-        assert_eq!(
-            error.kind(),
-            SmartsParseErrorKind::InvalidSyntax,
-            "{input}: {error}"
-        );
+        assert_eq!(error.kind(), DiagnosticKind::Syntax, "{input}: {error}");
     }
 }
 
@@ -488,9 +486,7 @@ fn smarts_parser_is_total_over_deterministic_text_mutations() {
     ] {
         for input in deterministic_text_mutations(seed) {
             if let Err(error) = smarts::parse_str(&input, Default::default()) {
-                let span = error.span();
-                assert!(span.start <= span.end, "{input:?}: {error}");
-                assert!(span.end <= input.len(), "{input:?}: {error}");
+                assert!(byte_offset(&error) <= input.len(), "{input:?}: {error}");
             }
         }
     }
@@ -506,7 +502,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
         },
     )
     .unwrap_err();
-    assert_eq!(input_error.kind(), SmartsParseErrorKind::ResourceLimit);
+    assert_eq!(input_error.kind(), DiagnosticKind::Limit);
 
     let atom_error = smarts::parse_str(
         "CC",
@@ -516,7 +512,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
         },
     )
     .unwrap_err();
-    assert_eq!(atom_error.kind(), SmartsParseErrorKind::ResourceLimit);
+    assert_eq!(atom_error.kind(), DiagnosticKind::Limit);
 
     let branch_error = smarts::parse_str(
         "C(C(C))",
@@ -526,7 +522,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
         },
     )
     .unwrap_err();
-    assert_eq!(branch_error.kind(), SmartsParseErrorKind::ResourceLimit);
+    assert_eq!(branch_error.kind(), DiagnosticKind::Limit);
 
     let expression_error = smarts::parse_str(
         "[!C]",
@@ -536,7 +532,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
         },
     )
     .unwrap_err();
-    assert_eq!(expression_error.kind(), SmartsParseErrorKind::ResourceLimit);
+    assert_eq!(expression_error.kind(), DiagnosticKind::Limit);
 }
 
 #[test]

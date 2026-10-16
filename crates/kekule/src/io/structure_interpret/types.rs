@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use super::altloc::{AltLocDecision, AltLocPolicy, SourceResidueId};
 use crate::components::ComponentLibrary;
-use crate::diagnostics::{DiagnosticKind, SourceLocation};
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, SourceLocation};
 use crate::molecule::Molecule;
-use crate::structure::{Ensemble, EnsembleError, Model};
+use crate::structure::{Ensemble, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -620,54 +620,26 @@ impl StructureInterpretation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructureInterpretError {
+/// A macromolecular interpretation failure, located at the source line it
+/// concerns when it concerns one. The pipeline is shared, so errors start as
+/// mmCIF errors and PDB entry points relabel them.
+pub(in crate::io) fn structure_error(
     kind: DiagnosticKind,
-    location: Option<SourceLocation>,
-    message: String,
+    line: Option<usize>,
+    message: impl Into<String>,
+) -> FormatError {
+    FormatError::interpret(Format::Mmcif, kind, message)
+        .with_location(line.map(SourceLocation::at_line))
 }
 
-impl StructureInterpretError {
-    pub(in crate::io) fn new(
-        kind: DiagnosticKind,
-        line: Option<usize>,
-        message: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind,
-            location: line.map(SourceLocation::at_line),
-            message: message.into(),
-        }
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.kind
-    }
-
-    /// The source location, when the failure concerns specific source text.
-    pub const fn location(&self) -> Option<SourceLocation> {
-        self.location
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
+/// An ensemble-level failure with typed `detail`.
+pub(in crate::io) fn ensemble_error(
+    kind: DiagnosticKind,
+    message: impl Into<String>,
+    detail: FormatErrorDetail,
+) -> FormatError {
+    FormatError::interpret(Format::Mmcif, kind, message).with_detail(detail)
 }
-
-impl fmt::Display for StructureInterpretError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.location {
-            Some(location) => write!(
-                f,
-                "structure interpretation error at {location}: {}",
-                self.message
-            ),
-            None => write!(f, "structure interpretation error: {}", self.message),
-        }
-    }
-}
-
-impl std::error::Error for StructureInterpretError {}
 
 /// Converts deposited coordinate models to members, applying `altloc_policy`
 /// within each model. Alternate locations never generate additional members or
@@ -719,111 +691,5 @@ impl StructureEnsembleInterpretation {
 
     pub fn into_parts(self) -> (Ensemble, Vec<StructureInterpretationReport>) {
         (self.ensemble, self.reports)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum StructureEnsembleInterpretError {
-    NoCoordinateModels,
-    EmptyModelSelection,
-    EmptyConformationSelection,
-    /// A zero-based caller-supplied conformation selection failed.
-    Conformation {
-        selection: usize,
-        error: StructureInterpretError,
-    },
-    /// Document-level interpretation found more than one atom-site block.
-    MultipleAtomSiteBlocks,
-    DuplicateRequestedModel(String),
-    UnknownRequestedModel(String),
-    Model {
-        model_id: String,
-        error: StructureInterpretError,
-    },
-    InconsistentTopology {
-        model_id: String,
-    },
-    InconsistentAtomSet {
-        model_id: String,
-    },
-    InconsistentDenseAtomOrder {
-        model_id: String,
-    },
-    Ensemble(Box<EnsembleError>),
-}
-
-impl fmt::Display for StructureEnsembleInterpretError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyConformationSelection => formatter.write_str("explicit conformation selection is empty"),
-            Self::Conformation { selection, error } => write!(formatter, "cannot interpret conformation selection {selection}: {error}"),
-            Self::NoCoordinateModels => {
-                formatter.write_str("input contains no coordinate models")
-            }
-            Self::EmptyModelSelection => {
-                formatter.write_str("explicit coordinate model selection is empty")
-            }
-            Self::MultipleAtomSiteBlocks => formatter
-                .write_str("mmCIF document has atom-site data in more than one data block"),
-            Self::DuplicateRequestedModel(model) => {
-                write!(formatter, "coordinate model `{model}` was requested more than once")
-            }
-            Self::UnknownRequestedModel(model) => {
-                write!(formatter, "coordinate model `{model}` is not present")
-            }
-            Self::Model { model_id, error } => {
-                write!(formatter, "cannot interpret coordinate model `{model_id}`: {error}")
-            }
-            Self::InconsistentTopology { model_id } => write!(
-                formatter,
-                "coordinate model `{model_id}` has inconsistent molecule partition, chemistry, connectivity, or hierarchy"
-            ),
-            Self::InconsistentAtomSet { model_id } => write!(
-                formatter,
-                "coordinate model `{model_id}` has an inconsistent atom identity set"
-            ),
-            Self::InconsistentDenseAtomOrder { model_id } => write!(
-                formatter,
-                "coordinate model `{model_id}` has an inconsistent dense atom identity order"
-            ),
-            Self::Ensemble(error) => write!(formatter, "cannot assemble ensemble: {error}"),
-        }
-    }
-}
-
-impl StructureEnsembleInterpretError {
-    pub fn kind(&self) -> DiagnosticKind {
-        match self {
-            Self::Conformation { error, .. } | Self::Model { error, .. } => error.kind(),
-            Self::NoCoordinateModels
-            | Self::EmptyModelSelection
-            | Self::EmptyConformationSelection
-            | Self::MultipleAtomSiteBlocks
-            | Self::DuplicateRequestedModel(_)
-            | Self::UnknownRequestedModel(_)
-            | Self::InconsistentTopology { .. }
-            | Self::InconsistentAtomSet { .. }
-            | Self::InconsistentDenseAtomOrder { .. } => DiagnosticKind::Inconsistent,
-            Self::Ensemble(_) => DiagnosticKind::Chemistry,
-        }
-    }
-
-    /// The source location of the underlying model or selection failure.
-    pub fn location(&self) -> Option<SourceLocation> {
-        match self {
-            Self::Conformation { error, .. } | Self::Model { error, .. } => error.location(),
-            _ => None,
-        }
-    }
-}
-
-impl std::error::Error for StructureEnsembleInterpretError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Conformation { error, .. } | Self::Model { error, .. } => Some(error),
-            Self::Ensemble(error) => Some(error.as_ref()),
-            _ => None,
-        }
     }
 }

@@ -10,10 +10,9 @@ mod ccd;
 mod force_field;
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::sync::{Arc, OnceLock};
 
-use crate::diagnostics::{DiagnosticKind, SourceLocation};
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, SourceLocation};
 use crate::molecule::Element;
 
 use super::MmcifDocument;
@@ -206,55 +205,20 @@ impl Component {
     }
 
     /// Reads one dictionary entry from a CIF data block.
-    pub fn from_mmcif_block(block: &super::MmcifBlock) -> Result<Self, ComponentError> {
+    pub fn from_mmcif_block(block: &super::MmcifBlock) -> Result<Self, FormatError> {
         ccd::component_from_block(block)
     }
 }
 
-/// Failure to read a component definition.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComponentError {
+/// A failure to read a component definition from a chemical component
+/// dictionary block, or to add one to a library.
+pub(super) fn component_error(
     kind: DiagnosticKind,
     location: Option<SourceLocation>,
-    message: String,
+    message: impl Into<String>,
+) -> FormatError {
+    FormatError::interpret(Format::Mmcif, kind, message).with_location(location)
 }
-
-impl ComponentError {
-    pub(crate) fn new(
-        kind: DiagnosticKind,
-        location: Option<SourceLocation>,
-        message: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind,
-            location,
-            message: message.into(),
-        }
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.kind
-    }
-
-    pub const fn location(&self) -> Option<SourceLocation> {
-        self.location
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl fmt::Display for ComponentError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.location {
-            Some(location) => write!(f, "component error at {location}: {}", self.message),
-            None => write!(f, "component error: {}", self.message),
-        }
-    }
-}
-
-impl std::error::Error for ComponentError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ComponentEntry {
@@ -332,7 +296,7 @@ impl ComponentLibrary {
 
     /// Reads every data block that defines component atoms, such as a CCD
     /// entry file or the complete `components.cif`.
-    pub fn from_mmcif(document: &MmcifDocument) -> Result<Self, ComponentError> {
+    pub fn from_mmcif(document: &MmcifDocument) -> Result<Self, FormatError> {
         let mut library = Self::new();
         for block in document.blocks() {
             if block.has_category("_chem_comp_atom") {
@@ -359,9 +323,9 @@ impl ComponentLibrary {
 
     /// Adds a protonation variant of a component already in the library. The
     /// variant must name the component and have a variant name.
-    pub fn insert_variant(&mut self, variant: Component) -> Result<(), ComponentError> {
+    pub fn insert_variant(&mut self, variant: Component) -> Result<(), FormatError> {
         let Some(name) = variant.variant.clone() else {
-            return Err(ComponentError::new(
+            return Err(component_error(
                 DiagnosticKind::InvalidValue,
                 None,
                 format!("variant of `{}` has no variant name", variant.id),
@@ -371,7 +335,7 @@ impl ComponentLibrary {
             .entries
             .get_mut(&variant.id.to_ascii_uppercase())
             .ok_or_else(|| {
-                ComponentError::new(
+                component_error(
                     DiagnosticKind::InvalidReference,
                     None,
                     format!("variant `{name}` names unknown component `{}`", variant.id),

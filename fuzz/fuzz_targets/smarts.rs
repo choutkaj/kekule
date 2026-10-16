@@ -18,7 +18,10 @@ fuzz_target!(|data: &[u8]| {
         },
     );
     if let Err(error) = result {
-        let span = error.span();
-        assert!(span.start <= span.end && span.end <= input.len());
+        let location = error.location().expect("SMARTS errors are located");
+        let column = location
+            .column()
+            .expect("SMARTS errors carry a byte column");
+        assert!(location.line() == 1 && (1..=input.len() + 1).contains(&column));
     }
 });

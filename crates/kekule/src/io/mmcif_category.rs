@@ -2,8 +2,9 @@
 //! retains scalar items and loops exactly as parsed; no coordinate table is copied.
 use crate::diagnostics::DiagnosticKind;
 
-use super::structure_interpret::StructureInterpretError;
+use super::structure_interpret::structure_error;
 use super::{MmcifBlock, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifValue};
+use crate::diagnostics::FormatError;
 
 pub(crate) enum MmcifCategory<'a> {
     Scalars(Vec<MmcifItem<'a>>),
@@ -28,7 +29,7 @@ impl MmcifBlock {
     pub(crate) fn category(
         &self,
         category: &str,
-    ) -> Result<Option<MmcifCategory<'_>>, StructureInterpretError> {
+    ) -> Result<Option<MmcifCategory<'_>>, FormatError> {
         let mut scalars = Vec::new();
         let mut table = None;
         for entry in self.entries() {
@@ -46,14 +47,14 @@ impl MmcifBlock {
                         .iter()
                         .any(|tag| !in_category(tag, category))
                     {
-                        return Err(StructureInterpretError::new(
+                        return Err(structure_error(
                             DiagnosticKind::Inconsistent,
                             line,
                             format!("category {category} shares a loop with another category"),
                         ));
                     }
                     if table.replace(candidate).is_some() {
-                        return Err(StructureInterpretError::new(
+                        return Err(structure_error(
                             DiagnosticKind::Inconsistent,
                             line,
                             format!("category {category} is split across multiple loops"),
@@ -64,7 +65,7 @@ impl MmcifBlock {
             }
         }
         match (table, scalars.is_empty()) {
-            (Some(_), false) => Err(StructureInterpretError::new(
+            (Some(_), false) => Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 Some(scalars[0].value().line()),
                 format!("category {category} mixes scalar items and a loop"),

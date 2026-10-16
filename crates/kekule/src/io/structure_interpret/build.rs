@@ -1,6 +1,6 @@
-use crate::diagnostics::DiagnosticKind;
+use super::types::structure_error;
+use crate::diagnostics::{DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 
 use crate::chemistry::canonicalize_molecule_for_publication;
 use crate::geometry::Point3;
@@ -17,7 +17,7 @@ use super::atom_site::AtomRow;
 use super::connections::{DeclaredConnection, InstanceUnion};
 use super::types::{
     AtomProvenance, BondEvidence, BondProvenance, EntityKind, InstanceProvenance,
-    StructureInterpretError, StructureInterpretIssue, StructureInterpretationReport,
+    StructureInterpretIssue, StructureInterpretationReport,
 };
 
 #[derive(Debug)]
@@ -202,7 +202,7 @@ impl BuiltMolecule {
         &mut self,
         catalog: &super::super::structure_connectivity::ConnectivityCatalog,
         report: &mut StructureInterpretationReport,
-    ) -> Result<(), StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         let Self {
             editor,
             provenance,
@@ -256,12 +256,14 @@ impl BuiltMolecule {
         Ok(())
     }
 
-    pub(super) fn publish_components(
-        self,
-    ) -> Result<Vec<PublishedMolecule>, StructureInterpretError> {
+    pub(super) fn publish_components(self) -> Result<Vec<PublishedMolecule>, FormatError> {
         let components = self.editor.working().connected_components();
         if components.is_empty() {
-            return Err(graph_error("mmCIF molecule group has no atoms"));
+            return Err(structure_error(
+                DiagnosticKind::Chemistry,
+                None,
+                "mmCIF molecule group has no atoms",
+            ));
         }
         let mut published = Vec::with_capacity(components.len());
         for component in components {
@@ -291,7 +293,13 @@ impl BuiltMolecule {
                     .evidence
                     .get(&(left.min(right), left.max(right)))
                     .cloned()
-                    .ok_or_else(|| graph_error("an mmCIF bond has no recorded evidence"))?;
+                    .ok_or_else(|| {
+                        structure_error(
+                            DiagnosticKind::Chemistry,
+                            None,
+                            "an mmCIF bond has no recorded evidence",
+                        )
+                    })?;
                 bonds.push(([atom_map[&left], atom_map[&right]], evidence));
             }
             let bond_sources = self
@@ -355,7 +363,7 @@ impl BuiltMolecule {
 pub(super) fn build_molecule(
     group: MoleculeGroup,
     connections: &[&DeclaredConnection],
-) -> Result<BuiltMolecule, StructureInterpretError> {
+) -> Result<BuiltMolecule, FormatError> {
     let mut editor = crate::molecule::MoleculeEditor::new();
     let mut atoms = BTreeMap::new();
     let mut representative = Vec::<(String, AtomRow)>::new();
@@ -370,7 +378,7 @@ pub(super) fn build_molecule(
                 || prior.comp_id != row.comp_id
                 || prior.entity_id != row.entity_id
             {
-                return Err(StructureInterpretError::new(
+                return Err(structure_error(
                     DiagnosticKind::Inconsistent,
                     Some(row.line),
                     format!(
@@ -394,14 +402,12 @@ pub(super) fn build_molecule(
         .rows
         .first()
         .map(|row| row.model_id.clone())
-        .ok_or_else(|| {
-            StructureInterpretError::new(DiagnosticKind::Chemistry, None, "empty molecule group")
-        })?;
+        .ok_or_else(|| structure_error(DiagnosticKind::Chemistry, None, "empty molecule group"))?;
     let mut coordinates =
         StagedCoordinates::with_atom_capacity(atoms.len(), ANGSTROM).map_err(graph_error)?;
     for row in &group.rows {
         let point = row.point.ok_or_else(|| {
-            StructureInterpretError::new(
+            structure_error(
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
@@ -452,7 +458,7 @@ pub(super) fn build_molecule(
                 .map_err(graph_error)?
                 .expect("existing bond was found");
             if editor.working().bond(existing).map_err(graph_error)?.order != connection.order {
-                return Err(StructureInterpretError::new(
+                return Err(structure_error(
                     DiagnosticKind::Inconsistent,
                     None,
                     "duplicate connection records assign conflicting bond orders",
@@ -538,7 +544,7 @@ const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
 fn count_bond_candidates(
     graph: &Molecule,
     sites: &[(AtomId, Element, Point3, usize)],
-) -> Result<usize, StructureInterpretError> {
+) -> Result<usize, FormatError> {
     let mut cells = BTreeMap::<[i64; 3], Vec<usize>>::new();
     let mut candidates = 0usize;
 
@@ -592,7 +598,7 @@ fn count_bond_candidates(
     Ok(candidates)
 }
 
-fn covalent_bond_cell(point: Point3, line: usize) -> Result<[i64; 3], StructureInterpretError> {
+fn covalent_bond_cell(point: Point3, line: usize) -> Result<[i64; 3], FormatError> {
     Ok([
         covalent_bond_cell_axis(point.x, "x", line)?,
         covalent_bond_cell_axis(point.y, "y", line)?,
@@ -600,14 +606,10 @@ fn covalent_bond_cell(point: Point3, line: usize) -> Result<[i64; 3], StructureI
     ])
 }
 
-fn covalent_bond_cell_axis(
-    coordinate: f64,
-    axis: &str,
-    line: usize,
-) -> Result<i64, StructureInterpretError> {
+fn covalent_bond_cell_axis(coordinate: f64, axis: &str, line: usize) -> Result<i64, FormatError> {
     let cell = (coordinate / COVALENT_BOND_CELL_ANGSTROM).floor();
     if !cell.is_finite() || cell <= i64::MIN as f64 || cell >= i64::MAX as f64 {
-        return Err(StructureInterpretError::new(DiagnosticKind::Limit,
+        return Err(structure_error(DiagnosticKind::Limit,
             Some(line),
             format!(
                 "_atom_site.Cartn_{axis} coordinate is outside the supported covalent-connectivity diagnostic cell range"
@@ -621,10 +623,10 @@ fn covalent_bond_neighbor(
     cell: [i64; 3],
     offset: [i64; 3],
     line: usize,
-) -> Result<[i64; 3], StructureInterpretError> {
+) -> Result<[i64; 3], FormatError> {
     let checked = |axis: usize| {
         cell[axis].checked_add(offset[axis]).ok_or_else(|| {
-            StructureInterpretError::new(
+            structure_error(
                 DiagnosticKind::Limit,
                 Some(line),
                 "atom-site coordinate exceeds the covalent-connectivity diagnostic neighbor range",
@@ -646,7 +648,7 @@ fn point_distance_squared(left: Point3, right: Point3) -> f64 {
 pub(super) fn build_topology_hierarchy(
     instances: &[InstanceProvenance],
     polymer_asym_order: &BTreeMap<String, usize>,
-) -> Result<Hierarchy, StructureInterpretError> {
+) -> Result<Hierarchy, FormatError> {
     #[derive(Clone)]
     struct ResidueMetadata {
         component_id: String,
@@ -792,13 +794,13 @@ fn merge_optional_source_value(
     field: &'static str,
     identity: &str,
     source_line: usize,
-) -> Result<(), StructureInterpretError> {
+) -> Result<(), FormatError> {
     let Some(incoming) = incoming else {
         return Ok(());
     };
     if let Some(current) = current {
         if current != incoming {
-            return Err(StructureInterpretError::new(DiagnosticKind::Inconsistent,
+            return Err(structure_error(DiagnosticKind::Inconsistent,
                 Some(source_line),
                 format!(
                     "canonical hierarchy identity `{identity}` has conflicting _atom_site.{field} values `{current}` and `{incoming}`"
@@ -811,11 +813,8 @@ fn merge_optional_source_value(
     Ok(())
 }
 
-fn inconsistent_residue_metadata(
-    atom: &AtomProvenance,
-    field: &'static str,
-) -> StructureInterpretError {
-    StructureInterpretError::new(
+fn inconsistent_residue_metadata(atom: &AtomProvenance, field: &'static str) -> FormatError {
+    structure_error(
         DiagnosticKind::Inconsistent,
         Some(atom.source_line),
         format!(
@@ -825,10 +824,21 @@ fn inconsistent_residue_metadata(
     )
 }
 
-pub(super) fn graph_error(error: impl fmt::Display) -> StructureInterpretError {
-    StructureInterpretError::new(DiagnosticKind::Chemistry, None, error.to_string())
+/// Molecule construction failed with `source` as the cause.
+pub(super) fn graph_error(source: impl std::error::Error + Send + Sync + 'static) -> FormatError {
+    structure_error(
+        DiagnosticKind::Chemistry,
+        None,
+        "molecule construction failed",
+    )
+    .with_source(source)
 }
 
-fn hierarchy_error(error: impl fmt::Display) -> StructureInterpretError {
-    StructureInterpretError::new(DiagnosticKind::Inconsistent, None, error.to_string())
+fn hierarchy_error(source: impl std::error::Error + Send + Sync + 'static) -> FormatError {
+    structure_error(
+        DiagnosticKind::Inconsistent,
+        None,
+        "invalid source hierarchy",
+    )
+    .with_source(source)
 }

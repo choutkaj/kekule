@@ -4,7 +4,7 @@ pub(super) fn parse(
     input: &str,
     start: usize,
     options: SmartsParseOptions,
-) -> Result<(BondExpression, Option<bool>, usize), SmartsParseError> {
+) -> Result<(BondExpression, Option<bool>, usize), FormatError> {
     let mut parser = BondParser {
         input: input.as_bytes(),
         cursor: start,
@@ -14,7 +14,7 @@ pub(super) fn parse(
     if expression.node_count() > options.max_expression_nodes
         || expression.depth() > options.max_expression_depth
     {
-        return Err(SmartsParseError::limit(
+        return Err(limit_error(
             start..parser.cursor,
             "bond expression nodes",
             expression.node_count(),
@@ -33,7 +33,7 @@ impl BondParser<'_> {
     fn peek(&self) -> Option<u8> {
         self.input.get(self.cursor).copied()
     }
-    fn low_and(&mut self) -> Result<BondExpression, SmartsParseError> {
+    fn low_and(&mut self) -> Result<BondExpression, FormatError> {
         let mut terms = vec![self.or()?];
         while self.peek() == Some(b';') {
             self.cursor += 1;
@@ -41,7 +41,7 @@ impl BondParser<'_> {
         }
         BondExpression::all(terms).map_err(|e| expression_error(0..self.cursor, e))
     }
-    fn or(&mut self) -> Result<BondExpression, SmartsParseError> {
+    fn or(&mut self) -> Result<BondExpression, FormatError> {
         let mut terms = vec![self.and()?];
         while self.peek() == Some(b',') {
             self.cursor += 1;
@@ -49,7 +49,7 @@ impl BondParser<'_> {
         }
         BondExpression::any(terms).map_err(|e| expression_error(0..self.cursor, e))
     }
-    fn and(&mut self) -> Result<BondExpression, SmartsParseError> {
+    fn and(&mut self) -> Result<BondExpression, FormatError> {
         let mut terms = vec![self.unary()?];
         loop {
             if self.peek() == Some(b'&') {
@@ -61,16 +61,16 @@ impl BondParser<'_> {
         }
         BondExpression::all(terms).map_err(|e| expression_error(0..self.cursor, e))
     }
-    fn unary(&mut self) -> Result<BondExpression, SmartsParseError> {
+    fn unary(&mut self) -> Result<BondExpression, FormatError> {
         let start = self.cursor;
         let mut negate = false;
         while self.peek() == Some(b'!') {
             self.cursor += 1;
             negate = !negate;
         }
-        let byte = self.peek().ok_or_else(|| {
-            SmartsParseError::syntax(start..self.cursor, "missing bond primitive")
-        })?;
+        let byte = self
+            .peek()
+            .ok_or_else(|| syntax_error(start..self.cursor, "missing bond primitive"))?;
         self.cursor += 1;
         let expression = match byte {
             b'-' => non_aromatic_bond_expression(BondOrder::Single),
@@ -90,7 +90,7 @@ impl BondParser<'_> {
                 // Directional alternatives are normalized by the stereo parser.
                 let up = byte == b'/';
                 if self.peek() == Some(b'?') {
-                    return Err(SmartsParseError::unsupported(
+                    return Err(unsupported_error(
                         start..self.cursor + 1,
                         "unspecified directional syntax is outside this dialect",
                     ));
@@ -104,7 +104,7 @@ impl BondParser<'_> {
                 ])
             }
             _ => {
-                return Err(SmartsParseError::syntax(
+                return Err(syntax_error(
                     start..self.cursor,
                     "missing or invalid bond primitive",
                 ))

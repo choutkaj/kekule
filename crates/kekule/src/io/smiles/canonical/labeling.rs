@@ -20,10 +20,7 @@ pub(super) struct CanonicalOrder {
 }
 
 impl CanonicalOrder {
-    pub(super) fn new(
-        molecule: &Molecule,
-        style: CanonicalAtomStyle,
-    ) -> Result<Self, MoleculeWriteError> {
+    pub(super) fn new(molecule: &Molecule, style: CanonicalAtomStyle) -> Result<Self, FormatError> {
         Self::with_limits(molecule, style, MAX_SEARCH_STATES, MAX_REFINEMENT_WORK)
     }
 
@@ -32,7 +29,7 @@ impl CanonicalOrder {
         style: CanonicalAtomStyle,
         max_states: usize,
         max_work: usize,
-    ) -> Result<Self, MoleculeWriteError> {
+    ) -> Result<Self, FormatError> {
         let atoms = molecule.atom_ids().collect::<Vec<_>>();
         let slots = molecule.graph.atom_slot_count();
         let mut dense = vec![usize::MAX; slots];
@@ -78,7 +75,7 @@ impl CanonicalOrder {
                 neighbors.sort_unstable();
                 Ok(neighbors)
             })
-            .collect::<Result<Vec<_>, MoleculeWriteError>>()?;
+            .collect::<Result<Vec<_>, FormatError>>()?;
         let element_indices: BTreeMap<_, _> = molecule
             .stereo_elements()
             .enumerate()
@@ -263,7 +260,7 @@ struct Frame {
 }
 
 impl Search {
-    fn run(&mut self) -> Result<Vec<usize>, MoleculeWriteError> {
+    fn run(&mut self) -> Result<Vec<usize>, FormatError> {
         let mut pending = Vec::<Frame>::new();
         let mut colors = self.initial.clone();
         loop {
@@ -349,7 +346,7 @@ impl Search {
         colors: &[usize],
         prior: &[usize],
         atom: usize,
-    ) -> Result<bool, MoleculeWriteError> {
+    ) -> Result<bool, FormatError> {
         if prior.is_empty() || self.automorphisms.is_empty() {
             return Ok(false);
         }
@@ -390,7 +387,7 @@ impl Search {
         Ok(false)
     }
 
-    fn refine(&mut self, colors: &mut Vec<usize>) -> Result<(), MoleculeWriteError> {
+    fn refine(&mut self, colors: &mut Vec<usize>) -> Result<(), FormatError> {
         loop {
             let cost = colors
                 .len()
@@ -514,7 +511,7 @@ impl Search {
         keys
     }
 
-    fn charge_work(&mut self, cost: usize) -> Result<(), MoleculeWriteError> {
+    fn charge_work(&mut self, cost: usize) -> Result<(), FormatError> {
         self.work = self.work.saturating_add(cost);
         if self.work > self.max_work {
             Err(limit("refinement work", self.max_work))
@@ -656,8 +653,8 @@ impl Search {
     }
 }
 
-fn limit(resource: &str, bound: usize) -> MoleculeWriteError {
-    MoleculeWriteError::resource_limit(format!(
+fn limit(resource: &str, bound: usize) -> FormatError {
+    SMILES_WRITE.resource_limit(format!(
         "canonical SMILES {resource} limit {bound} exceeded before canonical labeling completed"
     ))
 }
@@ -677,10 +674,7 @@ mod tests {
         )
         .err()
         .expect("search is incomplete");
-        assert_eq!(
-            error.kind(),
-            crate::io::MoleculeWriteErrorKind::ResourceLimit
-        );
+        assert_eq!(error.kind(), crate::diagnostics::DiagnosticKind::Limit);
         assert!(error.message().contains("search states"));
         let error = CanonicalOrder::with_limits(
             &molecule,
@@ -690,10 +684,7 @@ mod tests {
         )
         .err()
         .expect("refinement is incomplete");
-        assert_eq!(
-            error.kind(),
-            crate::io::MoleculeWriteErrorKind::ResourceLimit
-        );
+        assert_eq!(error.kind(), crate::diagnostics::DiagnosticKind::Limit);
         assert!(error.message().contains("refinement work"));
     }
 }

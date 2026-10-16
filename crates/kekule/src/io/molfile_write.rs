@@ -4,7 +4,9 @@ use std::io::Write;
 use crate::molecule::Molecule;
 use crate::structure::{AsModelView, Model, ModelView};
 
-use super::{MoleculeWriteError, MoleculeWriteErrorKind, MolfileVersion, UnrepresentablePolicy};
+use super::write_error::MOLFILE_WRITE;
+use super::{MolfileVersion, UnrepresentablePolicy};
+use crate::diagnostics::{DiagnosticKind, FormatError};
 
 mod record;
 mod v2000;
@@ -16,7 +18,7 @@ use record::MolfileRecord;
 #[non_exhaustive]
 pub enum MolfileWriteVersion {
     /// V2000 when it can represent the content, otherwise V3000. Only an
-    /// [`UnsupportedRepresentation`](MoleculeWriteErrorKind::UnsupportedRepresentation)
+    /// [`UnsupportedRepresentation`](DiagnosticKind::Unsupported)
     /// failure promotes; any other failure is returned as is.
     #[default]
     Auto,
@@ -69,7 +71,7 @@ impl<'a> From<&'a Model> for MolfileSource<'a> {
 pub(crate) fn write_molfile<'a>(
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,
-) -> Result<String, MoleculeWriteError> {
+) -> Result<String, FormatError> {
     match source.into() {
         MolfileSource::Molecule(molecule) => {
             render_molecule(&MolfileRecord::molecule(molecule)?, "", options.version)
@@ -85,17 +87,17 @@ pub(crate) fn write_molfile_to<'a>(
     writer: &mut impl Write,
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,
-) -> Result<(), MoleculeWriteError> {
+) -> Result<(), FormatError> {
     writer
         .write_all(write_molfile(source, options)?.as_bytes())
-        .map_err(MoleculeWriteError::io)
+        .map_err(|error| MOLFILE_WRITE.io(error))
 }
 
 fn render_molecule(
     record: &MolfileRecord<'_>,
     title: &str,
     version: MolfileWriteVersion,
-) -> Result<String, MoleculeWriteError> {
+) -> Result<String, FormatError> {
     match version {
         MolfileWriteVersion::V2000 => v2000::render(record, title),
         MolfileWriteVersion::V3000 => v3000::render(record, title),
@@ -111,9 +113,9 @@ fn render_molecule(
 pub(super) fn check_cell(
     model: ModelView<'_>,
     policy: UnrepresentablePolicy,
-) -> Result<(), MoleculeWriteError> {
+) -> Result<(), FormatError> {
     if model.cell().is_some() && policy == UnrepresentablePolicy::Fail {
-        return Err(MoleculeWriteError::unsupported(
+        return Err(MOLFILE_WRITE.unsupported(
             "a Molfile cannot represent a periodic cell; set the cell option to omit it",
         ));
     }
@@ -125,7 +127,7 @@ pub(super) fn render_model(
     model: ModelView<'_>,
     title: &str,
     version: MolfileWriteVersion,
-) -> Result<String, MoleculeWriteError> {
+) -> Result<String, FormatError> {
     match version {
         MolfileWriteVersion::V2000 => {
             v2000::render(&MolfileRecord::model(model, MolfileVersion::V2000)?, title)
@@ -159,6 +161,6 @@ pub(super) fn render_model(
 
 /// Only a format limit promotes Auto to V3000; any other failure would
 /// recur in V3000 and is reported as V2000 found it.
-fn is_representational(error: &MoleculeWriteError) -> bool {
-    error.kind() == MoleculeWriteErrorKind::UnsupportedRepresentation
+fn is_representational(error: &FormatError) -> bool {
+    error.kind() == DiagnosticKind::Unsupported
 }

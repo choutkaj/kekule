@@ -1,5 +1,4 @@
 //! SDF writing: independent Molfile records, each with a title and data fields.
-use std::fmt;
 use std::io::Write;
 
 use crate::structure::{AsModelView, EnsembleMemberView, Model, ModelView, TrajectoryFrameView};
@@ -7,7 +6,8 @@ use crate::units::{Quantity, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
-use super::{MoleculeWriteError, MolfileWriteVersion, UnrepresentablePolicy};
+use super::{MolfileWriteVersion, UnrepresentablePolicy};
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfWriteOptions {
@@ -15,49 +15,6 @@ pub struct SdfWriteOptions {
     /// A model's periodic cell, which an SDF record cannot carry: by default
     /// a record whose model has a cell fails to write.
     pub cell: UnrepresentablePolicy,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SdfWriteError {
-    Molfile(MoleculeWriteError),
-    InvalidTitle(String),
-    InvalidDataField {
-        name: String,
-        message: String,
-    },
-    Io {
-        kind: std::io::ErrorKind,
-        message: String,
-    },
-}
-
-impl fmt::Display for SdfWriteError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Molfile(error) => write!(formatter, "{error}"),
-            Self::InvalidTitle(message) => write!(formatter, "invalid SDF title: {message}"),
-            Self::InvalidDataField { name, message } => {
-                write!(formatter, "invalid SDF data field `{name}`: {message}")
-            }
-            Self::Io { message, .. } => write!(formatter, "SDF output failed: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for SdfWriteError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Molfile(error) => Some(error),
-            Self::InvalidTitle(_) | Self::InvalidDataField { .. } | Self::Io { .. } => None,
-        }
-    }
-}
-
-impl From<MoleculeWriteError> for SdfWriteError {
-    fn from(error: MoleculeWriteError) -> Self {
-        Self::Molfile(error)
-    }
 }
 
 /// The data field an ensemble member's relative weight is written to and
@@ -143,7 +100,7 @@ impl<'a> From<&'a SdfRecordInterpretation> for SdfRecordSource<'a> {
 pub(crate) fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
     records: impl IntoIterator<Item = R>,
     options: SdfWriteOptions,
-) -> Result<String, SdfWriteError> {
+) -> Result<String, FormatError> {
     let mut output = Vec::new();
     write_sdf_to(&mut output, records, options)?;
     Ok(String::from_utf8(output).expect("SDF writer emits UTF-8"))
@@ -155,32 +112,45 @@ pub(crate) fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     writer: &mut impl Write,
     records: impl IntoIterator<Item = R>,
     options: SdfWriteOptions,
-) -> Result<(), SdfWriteError> {
-    for record in records {
-        let record = record.into();
-        validate_title(record.title)?;
-        let member_fields = record.member.map_or_else(Vec::new, member_fields);
-        for field in record.data_fields {
-            validate_data_field(field)?;
-            if member_fields
-                .iter()
-                .any(|member| member.name() == field.name())
-            {
-                return Err(SdfWriteError::InvalidDataField {
-                    name: field.name().to_owned(),
-                    message: "this field carries the ensemble member's own metadata".to_owned(),
-                });
-            }
-        }
-        check_cell(record.model, options.cell)?;
-        let ctab = render_model(record.model, record.title, options.version)?;
-        writer.write_all(ctab.as_bytes()).map_err(sdf_io)?;
-        for field in record.data_fields.iter().chain(&member_fields) {
-            writeln!(writer, ">  <{}>\n{}\n", field.name(), field.value()).map_err(sdf_io)?;
-        }
-        writer.write_all(b"$$$$\n").map_err(sdf_io)?;
+) -> Result<(), FormatError> {
+    for (number, record) in (1..).zip(records) {
+        write_record(writer, record.into(), options).map_err(|error| error.in_record(number))?;
     }
     Ok(())
+}
+
+fn write_record(
+    writer: &mut impl Write,
+    record: SdfRecordSource<'_>,
+    options: SdfWriteOptions,
+) -> Result<(), FormatError> {
+    validate_title(record.title)?;
+    let member_fields = record.member.map_or_else(Vec::new, member_fields);
+    for field in record.data_fields {
+        validate_data_field(field)?;
+        if member_fields
+            .iter()
+            .any(|member| member.name() == field.name())
+        {
+            return Err(FormatError::write(
+                Format::Sdf,
+                DiagnosticKind::Inconsistent,
+                "this field carries the ensemble member's own metadata",
+            )
+            .with_detail(FormatErrorDetail::DataField {
+                name: field.name().to_owned(),
+            }));
+        }
+    }
+    let molfile = |error: FormatError| error.in_format(Format::Sdf);
+    check_cell(record.model, options.cell).map_err(molfile)?;
+    let ctab = render_model(record.model, record.title, options.version).map_err(molfile)?;
+    let sink = |error| FormatError::sink(Format::Sdf, error);
+    writer.write_all(ctab.as_bytes()).map_err(sink)?;
+    for field in record.data_fields.iter().chain(&member_fields) {
+        writeln!(writer, ">  <{}>\n{}\n", field.name(), field.value()).map_err(sink)?;
+    }
+    writer.write_all(b"$$$$\n").map_err(sink)
 }
 
 /// An ensemble member's weight and energy as data fields, in the shortest
@@ -196,8 +166,13 @@ fn member_fields((weight, energy): (f64, Option<Quantity<f64>>)) -> Vec<SdfDataF
     fields
 }
 
-fn validate_title(title: &str) -> Result<(), SdfWriteError> {
-    let invalid = |message: &str| Err(SdfWriteError::InvalidTitle(message.to_owned()));
+fn validate_title(title: &str) -> Result<(), FormatError> {
+    let invalid = |message: &str| {
+        Err(
+            FormatError::write(Format::Sdf, DiagnosticKind::Unsupported, message)
+                .with_detail(FormatErrorDetail::Title),
+        )
+    };
     if title.contains(['\r', '\n']) {
         return invalid("SDF record titles cannot contain line breaks");
     }
@@ -207,12 +182,15 @@ fn validate_title(title: &str) -> Result<(), SdfWriteError> {
     Ok(())
 }
 
-fn validate_data_field(field: &SdfDataField) -> Result<(), SdfWriteError> {
+fn validate_data_field(field: &SdfDataField) -> Result<(), FormatError> {
     let invalid = |message: &str| {
-        Err(SdfWriteError::InvalidDataField {
-            name: field.name().to_owned(),
-            message: message.to_owned(),
-        })
+        Err(
+            FormatError::write(Format::Sdf, DiagnosticKind::Unsupported, message).with_detail(
+                FormatErrorDetail::DataField {
+                    name: field.name().to_owned(),
+                },
+            ),
+        )
     };
     let name = field.name();
     if name.is_empty() || name.trim() != name || name.contains(['<', '>', '\r', '\n']) {
@@ -231,11 +209,4 @@ fn validate_data_field(field: &SdfDataField) -> Result<(), SdfWriteError> {
         return invalid("SDF data field values cannot contain a record delimiter line");
     }
     Ok(())
-}
-
-fn sdf_io(error: std::io::Error) -> SdfWriteError {
-    SdfWriteError::Io {
-        kind: error.kind(),
-        message: error.to_string(),
-    }
 }

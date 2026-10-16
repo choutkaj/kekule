@@ -8,20 +8,19 @@ mod write;
 pub(crate) use canonical::write_canonical_smiles;
 pub use cx::{SmilesCxField, SmilesCxFieldKind, SmilesCxStereoGroupKind};
 pub use interpret::{
-    SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError, SmilesComponentInterpretation,
-    SmilesInterpretError, SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport,
+    SmilesAtomMapping, SmilesBondMapping, SmilesComponentInterpretation, SmilesInterpretOptions,
+    SmilesInterpretation, SmilesInterpretationReport,
 };
 pub(crate) use parse::{parse_smiles_document, parse_smiles_reader};
 pub use parse::{
-    SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesParseError,
-    SmilesParseOptions, SmilesRecords,
+    SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesParseOptions, SmilesRecords,
 };
 pub(crate) use write::{write_isomeric_smiles, write_smiles};
 
 pub(crate) fn write_topology(
     topology: &crate::topology::Topology,
     options: crate::smiles::SmilesWriteOptions,
-) -> Result<String, crate::io::MoleculeWriteError> {
+) -> Result<String, crate::diagnostics::FormatError> {
     use crate::smiles::SmilesWriteMode;
     let mut parts = topology
         .molecules()
@@ -43,7 +42,7 @@ pub(crate) fn write_topology(
         let mut keyed = parts
             .into_iter()
             .map(|p| Ok((p.render()?, p)))
-            .collect::<Result<Vec<_>, crate::io::MoleculeWriteError>>()?;
+            .collect::<Result<Vec<_>, crate::diagnostics::FormatError>>()?;
         keyed.sort_by(|a, b| a.0.cmp(&b.0));
         parts = keyed.into_iter().map(|(_, p)| p).collect();
     }

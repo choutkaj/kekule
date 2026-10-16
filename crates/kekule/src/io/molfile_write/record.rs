@@ -12,12 +12,14 @@ use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::ANGSTROM;
 
+use crate::diagnostics::FormatError;
 use crate::io::structure_documents::{
     materialize_molfile_stereo_hydrogens, molfile_coordinate_double_bonds,
     molfile_coordinate_tetrahedra, molfile_coordinates_are_flat,
     molfile_stereo_group_members_at_atom,
 };
-use crate::io::{MoleculeWriteError, MolfileVersion};
+use crate::io::write_error::MOLFILE_WRITE;
+use crate::io::MolfileVersion;
 
 const PROGRAM: &str = "kekule";
 
@@ -77,7 +79,7 @@ impl<'a> MolfileRecord<'a> {
         out.push_str(&format!("{title}\n  {PROGRAM:<8}{:10}{dimension}\n\n", ""));
     }
 
-    pub(super) fn molecule(molecule: &'a Molecule) -> Result<Self, MoleculeWriteError> {
+    pub(super) fn molecule(molecule: &'a Molecule) -> Result<Self, FormatError> {
         let atoms = molecule
             .atoms()
             .map(|(id, atom)| MolfileAtom {
@@ -120,7 +122,7 @@ impl<'a> MolfileRecord<'a> {
     pub(super) fn model(
         model: ModelView<'a>,
         version: MolfileVersion,
-    ) -> Result<Self, MoleculeWriteError> {
+    ) -> Result<Self, FormatError> {
         let topology = model.topology();
         let mut atoms = Vec::with_capacity(topology.atom_count());
         let mut indexes = BTreeMap::new();
@@ -131,9 +133,17 @@ impl<'a> MolfileRecord<'a> {
             let occurrence = view.molecule();
             let position = model
                 .position(qualified)
-                .map_err(|error| MoleculeWriteError::invalid_model(error.to_string()))?
+                .map_err(|error| {
+                    MOLFILE_WRITE
+                        .invalid_model("inconsistent source model")
+                        .with_source(error)
+                })?
                 .value_in(ANGSTROM)
-                .map_err(|error| MoleculeWriteError::invalid_model(error.to_string()))?;
+                .map_err(|error| {
+                    MOLFILE_WRITE
+                        .invalid_model("inconsistent source model")
+                        .with_source(error)
+                })?;
             // V2000 has four-place fixed-width fields. V3000 emits round-trip
             // decimal values. Stereo projection must use each format's actual
             // emitted coordinates, including V2000 tie rounding.
@@ -222,9 +232,9 @@ impl<'a> MolfileRecord<'a> {
 }
 
 /// Both Molfile versions write and read atom map 0 as no atom map.
-fn reject_zero_atom_maps(atoms: &[MolfileAtom<'_>]) -> Result<(), MoleculeWriteError> {
+fn reject_zero_atom_maps(atoms: &[MolfileAtom<'_>]) -> Result<(), FormatError> {
     match atoms.iter().position(|atom| atom.atom.atom_map == Some(0)) {
-        Some(index) => Err(MoleculeWriteError::unsupported(format!(
+        Some(index) => Err(MOLFILE_WRITE.unsupported(format!(
             "Molfile cannot encode atom map 0 on atom {}, which it reads as no atom map",
             index + 1
         ))),
@@ -279,17 +289,21 @@ fn prepare_bond(
 fn stereo_projections(
     molecule: &Molecule,
     geometry: Option<&dyn AtomPositionSource>,
-) -> Result<BTreeMap<BondId, (AtomId, SourceStereoBondMarkKind)>, MoleculeWriteError> {
+) -> Result<BTreeMap<BondId, (AtomId, SourceStereoBondMarkKind)>, FormatError> {
     // A 3D Molfile implicitly asserts configurations even without wedges.
     // Add unknown annotations in detached writer state where the source graph
     // makes no assertion, so writing a conformation cannot invent chemistry.
     let mut staged;
     let molecule = if let Some(geometry) = geometry {
         let mut warnings = Vec::new();
-        let inferred = molfile_coordinate_tetrahedra(molecule, geometry, &mut warnings)
-            .map_err(|error| MoleculeWriteError::invalid_model(error.to_string()))?;
+        let inferred =
+            molfile_coordinate_tetrahedra(molecule, geometry, &mut warnings).map_err(|error| {
+                MOLFILE_WRITE
+                    .invalid_model("inconsistent source model")
+                    .with_source(error)
+            })?;
         if !warnings.is_empty() {
-            return Err(MoleculeWriteError::unsupported(format!(
+            return Err(MOLFILE_WRITE.unsupported(format!(
                 "cannot verify 3D stereo preservation: {warnings:?}"
             )));
         }
@@ -302,9 +316,11 @@ fn stereo_projections(
                     materialize_molfile_stereo_hydrogens(&mut staged, [stereo.center]);
                     stereo.orientation = None;
                 }
-                staged
-                    .add_stereo_element(element)
-                    .map_err(|error| MoleculeWriteError::invalid_model(error.to_string()))?;
+                staged.add_stereo_element(element).map_err(|error| {
+                    MOLFILE_WRITE
+                        .invalid_model("inconsistent source model")
+                        .with_source(error)
+                })?;
             }
             &staged
         }
@@ -316,11 +332,15 @@ fn stereo_projections(
     let coordinate_double_bonds = geometry
         .map(|geometry| molfile_coordinate_double_bonds(molecule, geometry))
         .transpose()
-        .map_err(|error| MoleculeWriteError::invalid_model(error.to_string()))?
+        .map_err(|error| {
+            MOLFILE_WRITE
+                .invalid_model("inconsistent source model")
+                .with_source(error)
+        })?
         .flatten();
     Ok(
         project_molfile_stereo_bond_marks(molecule, geometry, coordinate_double_bonds.as_ref())
-            .map_err(MoleculeWriteError::unsupported)?
+            .map_err(|message| MOLFILE_WRITE.unsupported(message))?
             .into_iter()
             .map(|(bond, projection)| (bond, (projection.from, projection.kind)))
             .collect(),
@@ -330,7 +350,7 @@ fn stereo_projections(
 fn project_stereo_groups(
     molecule: &Molecule,
     atom_serial: impl Fn(AtomId) -> u64,
-) -> Result<Vec<MolfileStereoGroup>, MoleculeWriteError> {
+) -> Result<Vec<MolfileStereoGroup>, FormatError> {
     molecule
         .stereo_groups()
         .map(|(_, group)| {
@@ -338,9 +358,8 @@ fn project_stereo_groups(
                 group.kind,
                 StereoGroupKind::Absolute | StereoGroupKind::And | StereoGroupKind::Or
             ) {
-                return Err(MoleculeWriteError::unsupported(
-                    "Molfile writer cannot encode this stereo group kind",
-                ));
+                return Err(MOLFILE_WRITE
+                    .unsupported("Molfile writer cannot encode this stereo group kind"));
             }
             let mut projected = MolfileStereoGroup {
                 kind: group.kind,
@@ -359,7 +378,7 @@ fn project_stereo_groups(
                         vec![bond.a(), bond.b()]
                     }
                     StereoElementKind::DoubleBond(_) => {
-                        return Err(MoleculeWriteError::unsupported(
+                        return Err(MOLFILE_WRITE.unsupported(
                             "Molfile writer cannot encode double-bond stereo group members",
                         ))
                     }
@@ -368,7 +387,7 @@ fn project_stereo_groups(
                     .into_iter()
                     .find(|atom| molfile_stereo_group_members_at_atom(molecule, *atom) == [*member])
                     .ok_or_else(|| {
-                        MoleculeWriteError::unsupported(
+                        MOLFILE_WRITE.unsupported(
                             "V3000 stereo group member has no unambiguous atom or axis endpoint",
                         )
                     })?;

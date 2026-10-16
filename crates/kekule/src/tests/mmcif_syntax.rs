@@ -1,4 +1,6 @@
 //! Focused regressions for the CIF source-syntax boundary.
+use super::error_detail;
+use crate::diagnostics::FormatErrorDetail;
 use crate::macromolecular;
 use crate::mmcif::{self, MmcifParseOptions};
 
@@ -191,10 +193,10 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         .unwrap_err()
         .message()
         .contains("more than one data block"));
-    assert!(matches!(
-        doc.interpret_ensemble(Default::default()),
-        Err(macromolecular::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
-    ));
+    assert_eq!(
+        error_detail(doc.interpret_ensemble(Default::default())),
+        Some(FormatErrorDetail::MultipleAtomSiteBlocks)
+    );
 }
 
 #[test]
@@ -315,7 +317,7 @@ fn mmcif_quotes_must_close_before_whitespace_or_end_of_line() {
     for literal in ["'value'junk", "\"value\"junk", "'value'#comment"] {
         let error = mmcif::parse_str(&format!("data_x\n_x.text {literal}\n"), Default::default())
             .unwrap_err();
-        assert_eq!(error.location().line(), 2);
+        assert_eq!(error.location().unwrap().line(), 2);
         assert!(error.message().contains("unterminated quoted value"));
     }
 }
@@ -367,11 +369,11 @@ fn mmcif_semicolon_closing_line_preserves_following_tokens() {
         Default::default(),
     )
     .unwrap_err();
-    assert_eq!(error.location().line(), 4);
+    assert_eq!(error.location().unwrap().line(), 4);
     assert!(error.message().contains("closing semicolon"));
     let error =
         mmcif::parse_str("data_x\n_x.text\n;value\nno end", Default::default()).unwrap_err();
-    assert_eq!(error.location().line(), 3);
+    assert_eq!(error.location().unwrap().line(), 3);
     assert!(error.message().contains("unterminated semicolon"));
 }
 
@@ -387,7 +389,7 @@ fn mmcif_semicolon_size_limit_counts_opening_line_and_newlines() {
     }
     for field in [";123456789\n;", ";1234\n6789\n;", ";12345678\n\n;"] {
         let error = mmcif::parse_str(&format!("data_x\n_x.v\n{field}\n"), options).unwrap_err();
-        assert_eq!(error.location().line(), 3);
+        assert_eq!(error.location().unwrap().line(), 3);
         assert!(error.message().contains("token limit"));
     }
 }
@@ -406,7 +408,7 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
         let error = mmcif::parse_str(input, Default::default()).unwrap_err();
         assert_eq!(
             (error.kind(), error.location()),
-            (kind, SourceLocation::at_line(line)),
+            (kind, Some(SourceLocation::at_line(line))),
             "{input:?}: {error}"
         );
     }
@@ -417,7 +419,7 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
     let error = mmcif::parse_str("data_x\n_a.b 1\n_a.c 2\n", limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
-        (DiagnosticKind::Limit, SourceLocation::at_line(2))
+        (DiagnosticKind::Limit, Some(SourceLocation::at_line(2)))
     );
 
     let unknown_element = SINGLE_SITE.replace("O O HOH", "Xx O HOH");
@@ -485,7 +487,7 @@ fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
             (error.kind(), error.location(), error.message()),
             (
                 DiagnosticKind::Limit,
-                SourceLocation::at_line(line),
+                Some(SourceLocation::at_line(line)),
                 "atom-site row count exceeds configured limit"
             ),
             "{input:?}"
@@ -521,7 +523,7 @@ fn mmcif_readers_enforce_limits_while_reading_and_match_string_parsing() {
     let error = mmcif::parse_reader(SINGLE_SITE.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
-        (DiagnosticKind::Limit, SourceLocation::at_line(1))
+        (DiagnosticKind::Limit, Some(SourceLocation::at_line(1)))
     );
     let error = mmcif::parse_reader([b'd', b'a', 0xff].as_slice(), Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Io);

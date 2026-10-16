@@ -1,20 +1,16 @@
-use std::fmt;
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 
-use crate::diagnostics::{read_bounded, DiagnosticKind, SourceLocation};
+use crate::diagnostics::{read_bounded, DiagnosticKind, Format, FormatError, SourceLocation};
 use crate::molecule::Molecule;
 use crate::structure::Model;
 use crate::topology::Topology;
 
 use super::lines::read_line;
 use super::molfile_document::{
-    parse_molfile_lines, MolfileDocument, MolfileLines, MolfileParseError, MolfileParseOptions,
-    MolfileUnsupported,
+    parse_molfile_lines, MolfileDocument, MolfileLines, MolfileParseOptions, MolfileUnsupported,
 };
-use super::structure_documents::{
-    MolfileInterpretError, MolfileInterpretOptions, MolfileInterpretationReport,
-};
+use super::structure_documents::{MolfileInterpretOptions, MolfileInterpretationReport};
 
 /// Resource and record-boundary policy for SDF parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,62 +37,18 @@ impl Default for SdfParseOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SdfParseError {
+/// An SDF parse failure in the 1-based nonempty `record`, on `line` of the
+/// input.
+fn sdf_parse_error(
     record: usize,
     kind: DiagnosticKind,
-    location: SourceLocation,
-    message: String,
+    line: usize,
+    message: impl Into<String>,
+) -> FormatError {
+    FormatError::parse(Format::Sdf, kind, message)
+        .at(SourceLocation::at_line(line))
+        .in_record(record)
 }
-
-impl SdfParseError {
-    fn new(record: usize, kind: DiagnosticKind, line: usize, message: impl Into<String>) -> Self {
-        Self {
-            record,
-            kind,
-            location: SourceLocation::at_line(line),
-            message: message.into(),
-        }
-    }
-
-    fn molfile(record: usize, error: MolfileParseError) -> Self {
-        Self {
-            record,
-            kind: error.kind(),
-            location: error.location(),
-            message: error.message().to_owned(),
-        }
-    }
-
-    /// The 1-based number of the failing record among nonempty records.
-    pub const fn record(&self) -> usize {
-        self.record
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.kind
-    }
-
-    pub const fn location(&self) -> SourceLocation {
-        self.location
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl fmt::Display for SdfParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "SDF parse error in record {} at {}: {}",
-            self.record, self.location, self.message
-        )
-    }
-}
-
-impl std::error::Error for SdfParseError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdfDataField {
@@ -167,14 +119,11 @@ impl SdfRecord {
     pub fn interpret(
         &self,
         options: MolfileInterpretOptions,
-    ) -> Result<SdfRecordInterpretation, SdfInterpretError> {
+    ) -> Result<SdfRecordInterpretation, FormatError> {
         let (model, molfile_components, omitted) = self
             .molfile
             .interpret(options)
-            .map_err(|error| SdfInterpretError {
-                record: self.number,
-                error,
-            })?
+            .map_err(|error| error.in_format(Format::Sdf).in_record(self.number))?
             .into_parts();
         let report = SdfRecordInterpretationReport {
             record: self.number,
@@ -294,49 +243,6 @@ impl SdfRecordInterpretation {
     }
 }
 
-/// Failure to interpret one SDF record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SdfInterpretError {
-    record: usize,
-    error: MolfileInterpretError,
-}
-
-impl SdfInterpretError {
-    /// The 1-based number of the failing record.
-    pub const fn record(&self) -> usize {
-        self.record
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.error.kind()
-    }
-
-    /// The SDF input line the failure concerns, when one does.
-    pub const fn location(&self) -> Option<SourceLocation> {
-        self.error.location()
-    }
-
-    pub fn message(&self) -> &str {
-        self.error.message()
-    }
-}
-
-impl fmt::Display for SdfInterpretError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SDF interpretation error in record {}", self.record)?;
-        if let Some(location) = self.location() {
-            write!(f, " at {location}")?;
-        }
-        write!(f, ": {}", self.message())
-    }
-}
-
-impl std::error::Error for SdfInterpretError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SdfRecordInterpretationReport {
     record: usize,
@@ -370,9 +276,9 @@ impl SdfRecordInterpretationReport {
 pub(crate) fn parse_sdf_document(
     input: &str,
     options: SdfParseOptions,
-) -> Result<SdfDocument, SdfParseError> {
+) -> Result<SdfDocument, FormatError> {
     if input.len() > options.max_input_bytes {
-        return Err(SdfParseError::new(
+        return Err(sdf_parse_error(
             1,
             DiagnosticKind::Limit,
             1,
@@ -387,9 +293,9 @@ pub(crate) fn parse_sdf_document(
 pub(crate) fn parse_sdf_reader(
     reader: impl Read,
     options: SdfParseOptions,
-) -> Result<SdfDocument, SdfParseError> {
-    let input = read_bounded(reader, options.max_input_bytes)
-        .map_err(|(kind, message)| SdfParseError::new(1, kind, 1, message))?;
+) -> Result<SdfDocument, FormatError> {
+    let input = read_bounded(reader, options.max_input_bytes, Format::Sdf)
+        .map_err(|error| error.at(SourceLocation::at_line(1)).in_record(1))?;
     parse_sdf_document(&input, options)
 }
 
@@ -426,12 +332,12 @@ impl<R: Read> SdfRecords<R> {
         kind: DiagnosticKind,
         line: usize,
         message: impl Into<String>,
-    ) -> SdfParseError {
-        SdfParseError::new(self.records + 1, kind, line, message)
+    ) -> FormatError {
+        sdf_parse_error(self.records + 1, kind, line, message)
     }
 
     /// Numbers a completed record and enforces the record-count limit.
-    fn finish(&mut self, first_line: usize) -> Result<usize, SdfParseError> {
+    fn finish(&mut self, first_line: usize) -> Result<usize, FormatError> {
         if self.records >= self.options.max_records {
             self.done = true;
             return Err(self.record_error(
@@ -446,7 +352,7 @@ impl<R: Read> SdfRecords<R> {
 }
 
 impl<R: Read> Iterator for SdfRecords<R> {
-    type Item = Result<SdfRecord, SdfParseError>;
+    type Item = Result<SdfRecord, FormatError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {
@@ -456,7 +362,7 @@ impl<R: Read> Iterator for SdfRecords<R> {
         let mut lines = Vec::<std::ops::Range<usize>>::new();
         let mut first_line = self.lines_read + 1;
         let mut nonblank = false;
-        let mut failure = None::<SdfParseError>;
+        let mut failure = None::<FormatError>;
         let mut bytes = 0usize;
         loop {
             let truncated = match read_line(
@@ -476,7 +382,7 @@ impl<R: Read> Iterator for SdfRecords<R> {
                         (Ok(record), None) if self.options.allow_missing_final_delimiter => {
                             parse_sdf_record(record, &text, &lines, first_line, false)
                         }
-                        (Ok(record), None) => Err(SdfParseError::new(
+                        (Ok(record), None) => Err(sdf_parse_error(
                             record,
                             DiagnosticKind::Syntax,
                             self.lines_read,
@@ -486,11 +392,9 @@ impl<R: Read> Iterator for SdfRecords<R> {
                 }
                 Err(error) => {
                     self.done = true;
-                    return Some(Err(self.record_error(
-                        DiagnosticKind::Io,
-                        self.lines_read + 1,
-                        format!("cannot read input: {error}"),
-                    )));
+                    return Some(Err(self
+                        .record_error(DiagnosticKind::Io, self.lines_read + 1, "cannot read input")
+                        .with_source(error)));
                 }
             };
             self.lines_read += 1;
@@ -529,11 +433,14 @@ impl<R: Read> Iterator for SdfRecords<R> {
                     lines.push(start..text.len());
                 }
                 Err(error) => {
-                    failure = Some(self.record_error(
-                        DiagnosticKind::Io,
-                        number,
-                        format!("SDF record is not valid UTF-8: {error}"),
-                    ));
+                    failure = Some(
+                        self.record_error(
+                            DiagnosticKind::Io,
+                            number,
+                            "SDF record is not valid UTF-8",
+                        )
+                        .with_source(error),
+                    );
                 }
             }
         }
@@ -548,16 +455,16 @@ fn parse_sdf_record(
     ranges: &[std::ops::Range<usize>],
     first_line: usize,
     ended_by_delimiter: bool,
-) -> Result<SdfRecord, SdfParseError> {
+) -> Result<SdfRecord, FormatError> {
     let lines = ranges
         .iter()
         .map(|range| &text[range.clone()])
         .collect::<Vec<_>>();
     let molfile_lines = MolfileLines::new(&lines, first_line);
     let (molfile, end) = parse_molfile_lines(molfile_lines, MolfileParseOptions::default())
-        .map_err(|error| SdfParseError::molfile(record, error))?;
+        .map_err(|error| error.in_format(Format::Sdf).in_record(record))?;
     let syntax = |index: usize, message: &str| {
-        SdfParseError::new(
+        sdf_parse_error(
             record,
             DiagnosticKind::Syntax,
             molfile_lines.number(index),

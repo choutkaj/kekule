@@ -2,7 +2,7 @@
 //! evidence: the source's own component bond table or connection records,
 //! component templates, polymer and branch linkage, and, for residues nothing
 //! else covers, covalent radii.
-use crate::diagnostics::DiagnosticKind;
+use crate::diagnostics::{DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -71,7 +71,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
     model_id: &str,
     evidence: &mut BondEvidenceMap,
     issues: &mut Vec<raw::StructureInterpretIssue>,
-) -> Result<(), raw::StructureInterpretError> {
+) -> Result<(), FormatError> {
     let mut source_aromatic_bonds = BTreeSet::new();
     let mut resolver = Resolver {
         catalog,
@@ -168,7 +168,7 @@ impl ConnectivityCatalog {
     pub(crate) fn from_block(
         block: &MmcifBlock,
         options: &raw::ConnectivityOptions,
-    ) -> Result<Self, raw::StructureInterpretError> {
+    ) -> Result<Self, FormatError> {
         let mut catalog = Self::new(options);
         if let Some(table) = block.category("_chem_comp_bond")? {
             let table = &table;
@@ -418,7 +418,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         residues: BTreeMap<ResidueKey, ResidueAtoms>,
         listed: &[ListedBond],
-    ) -> Result<(), raw::StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         let mut residue_of = BTreeMap::new();
         for residue in residues.values() {
             for site in &residue.sites {
@@ -520,10 +520,7 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Whether a declared connection already bonds two atoms of the residue.
-    fn has_stated_internal_bond(
-        &self,
-        residue: &ResidueAtoms,
-    ) -> Result<bool, raw::StructureInterpretError> {
+    fn has_stated_internal_bond(&self, residue: &ResidueAtoms) -> Result<bool, FormatError> {
         for site in &residue.sites {
             if self
                 .graph
@@ -543,7 +540,7 @@ impl<'r> Resolver<'r, '_> {
         right: AtomId,
         order: SourceBondOrder,
         source: raw::BondEvidence,
-    ) -> Result<(), raw::StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         add_bond_if_missing(self.graph, left, right, order, self.source_aromatic_bonds)?;
         record_evidence(self.evidence, left, right, source);
         Ok(())
@@ -551,10 +548,7 @@ impl<'r> Resolver<'r, '_> {
 
     /// Adds listed bonds between atoms not yet bonded; an existing bond keeps
     /// its order, since connectivity-only records state none reliably.
-    fn add_listed_bonds(
-        &mut self,
-        listed: &[&ListedBond],
-    ) -> Result<(), raw::StructureInterpretError> {
+    fn add_listed_bonds(&mut self, listed: &[&ListedBond]) -> Result<(), FormatError> {
         for bond in listed {
             let [left, right] = bond.atoms;
             if self
@@ -581,7 +575,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         component: &Component,
         matched: &BTreeMap<usize, AtomId>,
-    ) -> Result<(), raw::StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         for bond in component.bonds() {
             let [a, b] = bond.atoms();
             let (Some(&left), Some(&right)) = (matched.get(&a), matched.get(&b)) else {
@@ -610,12 +604,9 @@ impl<'r> Resolver<'r, '_> {
 
     /// Bonds every pair of a residue's atoms within covalent bonding
     /// distance, when the caller allows it.
-    fn infer_residue_bonds(
-        &mut self,
-        residue: &ResidueAtoms,
-    ) -> Result<(), raw::StructureInterpretError> {
+    fn infer_residue_bonds(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
         if !self.catalog.infer_bonds_from_distance {
-            return Err(raw::StructureInterpretError::new(
+            return Err(raw::structure_error(
                 DiagnosticKind::Unsupported,
                 residue.sites.first().map(|site| site.line),
                 format!(
@@ -661,7 +652,7 @@ impl<'r> Resolver<'r, '_> {
     fn apply_branch_links(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
-    ) -> Result<(), raw::StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         for link in &self.catalog.branch_links {
             let asyms = self
                 .catalog
@@ -718,7 +709,7 @@ impl<'r> Resolver<'r, '_> {
     fn apply_polymer_links(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
-    ) -> Result<(), raw::StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         let mut chains = BTreeMap::<(String, Option<String>), Vec<&ResidueAtoms>>::new();
         for residue in residues.values() {
             if residue.key.polymer_position.is_none() {
@@ -829,7 +820,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
         stray_hydrogens: Vec<(ResidueKey, AtomId)>,
-    ) -> Result<(), raw::StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         for (key, hydrogen) in stray_hydrogens {
             let residue = &residues[&key];
             let site = residue
@@ -889,7 +880,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         templated: &TemplatedResidue<'_>,
         residue: &ResidueAtoms,
-    ) -> Result<(), raw::StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         let named = templated
             .matched
             .iter()
@@ -911,7 +902,7 @@ impl<'r> Resolver<'r, '_> {
             .find(|(_, charges)| charges.iter().all(|charge| charge.delta == 0))
             .or_else(|| evaluated.first())
             .ok_or_else(|| {
-                raw::StructureInterpretError::new(
+                raw::structure_error(
                     DiagnosticKind::Inconsistent,
                     residue.sites.first().map(|site| site.line),
                     format!(
@@ -958,7 +949,7 @@ impl<'r> Resolver<'r, '_> {
         named: &[(&str, AtomId)],
         residue: &ResidueAtoms,
         has_hydrogens: bool,
-    ) -> Result<Option<Vec<TemplateCharge>>, raw::StructureInterpretError> {
+    ) -> Result<Option<Vec<TemplateCharge>>, FormatError> {
         let mut charges = Vec::new();
         for &(name, atom) in named {
             let Some((index, template_atom)) = candidate.atom(name) else {
@@ -1006,7 +997,7 @@ impl<'r> Resolver<'r, '_> {
                         return Ok(None);
                     }
                     delta = i8::try_from(difference).map_err(|_| {
-                        interpret_error("hydrogen count difference exceeds charge range")
+                        chemistry_error("hydrogen count difference exceeds charge range")
                     })?;
                 }
             }
@@ -1020,11 +1011,7 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Whether a residue atom is bonded to an atom of another residue.
-    fn links_outside(
-        &self,
-        atom: AtomId,
-        residue: &ResidueAtoms,
-    ) -> Result<bool, raw::StructureInterpretError> {
+    fn links_outside(&self, atom: AtomId, residue: &ResidueAtoms) -> Result<bool, FormatError> {
         Ok(self
             .graph
             .neighbors(atom)
@@ -1037,7 +1024,7 @@ impl<'r> Resolver<'r, '_> {
         &mut self,
         variant: &Component,
         named: &[(&str, AtomId)],
-    ) -> Result<(), raw::StructureInterpretError> {
+    ) -> Result<(), FormatError> {
         let atom_of = |index: usize| {
             let name = variant.atoms()[index].name();
             named
@@ -1108,13 +1095,13 @@ fn match_template(
     residue: &ResidueAtoms,
     component: &Component,
     strict: bool,
-) -> Result<Option<TemplateMatch>, raw::StructureInterpretError> {
+) -> Result<Option<TemplateMatch>, FormatError> {
     let mut matched = BTreeMap::new();
     let mut strays = Vec::new();
     for site in &residue.sites {
         let failure = |message: String| {
             if strict {
-                Err(raw::StructureInterpretError::new(
+                Err(raw::structure_error(
                     DiagnosticKind::Inconsistent,
                     Some(site.line),
                     message,
@@ -1245,7 +1232,7 @@ fn add_bond_if_missing(
     right: AtomId,
     source_order: SourceBondOrder,
     source_aromatic_bonds: &mut BTreeSet<crate::molecule::BondId>,
-) -> Result<(), raw::StructureInterpretError> {
+) -> Result<(), FormatError> {
     let existing = graph.bond_between(left, right).map_err(interpret_error)?;
     let Some(existing) = existing else {
         let bond = graph
@@ -1268,7 +1255,7 @@ fn add_bond_if_missing(
             SourceBondOrder::Localized(order) => format!("{order:?}"),
             SourceBondOrder::Aromatic => "Aromatic".to_owned(),
         };
-        return Err(interpret_error(format!(
+        return Err(chemistry_error(format!(
             "conflicting authoritative bond evidence for one atom pair: {existing_order:?} versus {source_order}"
         )));
     }
@@ -1279,7 +1266,7 @@ fn component_bond_order(
     value: &str,
     table: &MmcifCategory<'_>,
     row: usize,
-) -> Result<SourceBondOrder, raw::StructureInterpretError> {
+) -> Result<SourceBondOrder, FormatError> {
     match value.to_ascii_lowercase().as_str() {
         "sing" | "poly" => Ok(SourceBondOrder::Localized(BondOrder::Single)),
         "doub" | "pi" => Ok(SourceBondOrder::Localized(BondOrder::Double)),
@@ -1316,7 +1303,7 @@ fn required<'a>(
     table: &'a MmcifCategory<'_>,
     row: usize,
     tag: &str,
-) -> Result<&'a str, raw::StructureInterpretError> {
+) -> Result<&'a str, FormatError> {
     let value = table.value(row, tag).ok_or_else(|| {
         row_error(
             table,
@@ -1335,11 +1322,7 @@ fn required<'a>(
     })
 }
 
-fn required_i32(
-    table: &MmcifCategory<'_>,
-    row: usize,
-    tag: &str,
-) -> Result<i32, raw::StructureInterpretError> {
+fn required_i32(table: &MmcifCategory<'_>, row: usize, tag: &str) -> Result<i32, FormatError> {
     required(table, row, tag)?.parse::<i32>().map_err(|_| {
         row_error(
             table,
@@ -1361,12 +1344,17 @@ fn row_error(
     row: usize,
     kind: DiagnosticKind,
     message: impl Into<String>,
-) -> raw::StructureInterpretError {
-    raw::StructureInterpretError::new(kind, table.row_line(row), message)
+) -> FormatError {
+    raw::structure_error(kind, table.row_line(row), message)
 }
 
-fn interpret_error(error: impl std::fmt::Display) -> raw::StructureInterpretError {
-    raw::StructureInterpretError::new(DiagnosticKind::Chemistry, None, error.to_string())
+/// Molecule construction failed with `source` as the cause.
+fn interpret_error(source: impl std::error::Error + Send + Sync + 'static) -> FormatError {
+    chemistry_error("molecule construction failed").with_source(source)
+}
+
+fn chemistry_error(message: impl Into<String>) -> FormatError {
+    raw::structure_error(DiagnosticKind::Chemistry, None, message)
 }
 
 #[cfg(test)]

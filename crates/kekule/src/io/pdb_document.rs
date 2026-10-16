@@ -6,18 +6,16 @@
 //! columns; every other record is kept verbatim. Numbers wider than their columns follow the
 //! hybrid-36 convention.
 use std::collections::BTreeSet;
-use std::fmt;
 
-use crate::diagnostics::{read_bounded, DiagnosticKind, SourceLocation};
+use crate::diagnostics::{read_bounded, DiagnosticKind, Format, FormatError, SourceLocation};
 use crate::geometry::Point3;
 
 use super::structure_interpret::{
     interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
 };
 use super::{
-    AltLocResidue, StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretOptions,
-    StructureInterpretation,
+    AltLocResidue, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+    StructureInterpretOptions, StructureInterpretation,
 };
 
 /// Syntax and resource limits for parsing a PDB entry.
@@ -38,42 +36,14 @@ impl Default for PdbParseOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PdbParseError {
+/// A PDB parse failure at `location`.
+fn pdb_parse_error(
     kind: DiagnosticKind,
     location: SourceLocation,
-    message: String,
+    message: impl Into<String>,
+) -> FormatError {
+    FormatError::parse(Format::Pdb, kind, message).at(location)
 }
-
-impl PdbParseError {
-    fn new(kind: DiagnosticKind, location: SourceLocation, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            location,
-            message: message.into(),
-        }
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.kind
-    }
-
-    pub const fn location(&self) -> SourceLocation {
-        self.location
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl fmt::Display for PdbParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PDB parse error at {}: {}", self.location, self.message)
-    }
-}
-
-impl std::error::Error for PdbParseError {}
 
 /// Whether a coordinate record is an `ATOM` or a `HETATM` record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -492,8 +462,8 @@ impl PdbDocument {
     pub fn interpret(
         &self,
         options: StructureInterpretOptions,
-    ) -> Result<StructureInterpretation, StructureInterpretError> {
-        interpret_pdb(self, options)
+    ) -> Result<StructureInterpretation, FormatError> {
+        interpret_pdb(self, options).map_err(pdb)
     }
 
     /// Interprets the coordinate models that `options` selects, by default
@@ -502,8 +472,8 @@ impl PdbDocument {
     pub fn interpret_ensemble(
         &self,
         options: StructureEnsembleInterpretOptions,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        interpret_pdb_ensemble(self, options)
+    ) -> Result<StructureEnsembleInterpretation, FormatError> {
+        interpret_pdb_ensemble(self, options).map_err(pdb)
     }
 
     /// Interprets explicit model and alternate-location selections, in the
@@ -512,32 +482,37 @@ impl PdbDocument {
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
-        interpret_pdb_conformations(self, selections)
+    ) -> Result<StructureEnsembleInterpretation, FormatError> {
+        interpret_pdb_conformations(self, selections).map_err(pdb)
     }
 
     /// Residues with alternate locations, by the identities that
     /// [`AltLocSelection`](super::AltLocSelection) overrides use.
-    pub fn alternate_locations(&self) -> Result<Vec<AltLocResidue>, StructureInterpretError> {
-        pdb_alternate_locations(self)
+    pub fn alternate_locations(&self) -> Result<Vec<AltLocResidue>, FormatError> {
+        pdb_alternate_locations(self).map_err(pdb)
     }
+}
+
+/// Relabels an error of the shared macromolecular pipeline as a PDB error.
+fn pdb(error: FormatError) -> FormatError {
+    error.in_format(Format::Pdb)
 }
 
 pub(crate) fn parse_pdb_reader(
     reader: impl std::io::Read,
     options: PdbParseOptions,
-) -> Result<PdbDocument, PdbParseError> {
-    let input = read_bounded(reader, options.max_input_bytes)
-        .map_err(|(kind, message)| PdbParseError::new(kind, SourceLocation::at_line(1), message))?;
+) -> Result<PdbDocument, FormatError> {
+    let input = read_bounded(reader, options.max_input_bytes, Format::Pdb)
+        .map_err(|error| error.at(SourceLocation::at_line(1)))?;
     parse_pdb_str(&input, options)
 }
 
 pub(crate) fn parse_pdb_str(
     input: &str,
     options: PdbParseOptions,
-) -> Result<PdbDocument, PdbParseError> {
+) -> Result<PdbDocument, FormatError> {
     if input.len() > options.max_input_bytes {
-        return Err(PdbParseError::new(
+        return Err(pdb_parse_error(
             DiagnosticKind::Limit,
             SourceLocation::at_line(1),
             "input exceeds configured byte limit",
@@ -589,13 +564,13 @@ impl Parser {
         line: &str,
         number: usize,
         options: PdbParseOptions,
-    ) -> Result<(), PdbParseError> {
+    ) -> Result<(), FormatError> {
         if line.trim().is_empty() {
             return Ok(());
         }
         let at_line = SourceLocation::at_line(number);
         if self.ended {
-            return Err(PdbParseError::new(
+            return Err(pdb_parse_error(
                 DiagnosticKind::Unsupported,
                 at_line,
                 "content after the END record; split concatenated entries before parsing",
@@ -619,7 +594,7 @@ impl Parser {
                 | "SSBOND"
         );
         if typed && !line.is_ascii() {
-            return Err(PdbParseError::new(
+            return Err(pdb_parse_error(
                 DiagnosticKind::Syntax,
                 at_line,
                 format!("{name} record contains non-ASCII text"),
@@ -631,7 +606,7 @@ impl Parser {
                 let record = fields.cryst1()?;
                 let document = self.document();
                 if document.cryst1.is_some() {
-                    return Err(PdbParseError::new(
+                    return Err(pdb_parse_error(
                         DiagnosticKind::Inconsistent,
                         at_line,
                         "duplicate CRYST1 record",
@@ -641,7 +616,7 @@ impl Parser {
             }
             "ATOM" | "HETATM" => {
                 if self.model.is_none() && !self.model_serials.is_empty() {
-                    return Err(PdbParseError::new(
+                    return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         at_line,
                         "coordinate record outside a MODEL block",
@@ -658,7 +633,7 @@ impl Parser {
                 let atom = fields.atom(kind, self.model)?;
                 let document = self.document();
                 if document.atoms.len() >= options.max_atom_records {
-                    return Err(PdbParseError::new(
+                    return Err(pdb_parse_error(
                         DiagnosticKind::Limit,
                         at_line,
                         "coordinate records exceed configured limit",
@@ -674,14 +649,14 @@ impl Parser {
             }
             "MODEL" => {
                 if self.model.is_some() {
-                    return Err(PdbParseError::new(
+                    return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         at_line,
                         "MODEL record inside an open MODEL block",
                     ));
                 }
                 if let Some(line) = self.unmodelled_atom {
-                    return Err(PdbParseError::new(
+                    return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         SourceLocation::at_line(line),
                         "coordinate record outside a MODEL block",
@@ -689,7 +664,7 @@ impl Parser {
                 }
                 let serial = fields.model_serial()?;
                 if !self.model_serials.insert(serial) {
-                    return Err(PdbParseError::new(
+                    return Err(pdb_parse_error(
                         DiagnosticKind::Inconsistent,
                         at_line,
                         format!("duplicate MODEL serial number {serial}"),
@@ -703,7 +678,7 @@ impl Parser {
             }
             "ENDMDL" => {
                 if self.model.take().is_none() {
-                    return Err(PdbParseError::new(
+                    return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         at_line,
                         "ENDMDL record without an open MODEL block",
@@ -766,8 +741,8 @@ impl<'a> Fields<'a> {
             .filter(|character| *character != ' ')
     }
 
-    fn error(&self, column: usize, message: impl Into<String>) -> PdbParseError {
-        PdbParseError::new(
+    fn error(&self, column: usize, message: impl Into<String>) -> FormatError {
+        pdb_parse_error(
             DiagnosticKind::InvalidValue,
             SourceLocation::at_column(self.number, column),
             message,
@@ -779,12 +754,12 @@ impl<'a> Fields<'a> {
         (!text.is_empty()).then(|| text.to_owned())
     }
 
-    fn integer(&self, first: usize, last: usize, what: &str) -> Result<Option<i64>, PdbParseError> {
+    fn integer(&self, first: usize, last: usize, what: &str) -> Result<Option<i64>, FormatError> {
         hybrid36(self.text(first, last), last - first + 1)
             .map_err(|()| self.error(first, format!("invalid {what}")))
     }
 
-    fn serial(&self, first: usize, last: usize, what: &str) -> Result<Option<u32>, PdbParseError> {
+    fn serial(&self, first: usize, last: usize, what: &str) -> Result<Option<u32>, FormatError> {
         // Some writers fill an overflowing serial number with asterisks.
         if self
             .text(first, last)
@@ -801,7 +776,7 @@ impl<'a> Fields<'a> {
             .transpose()
     }
 
-    fn sequence(&self, first: usize, last: usize) -> Result<Option<i32>, PdbParseError> {
+    fn sequence(&self, first: usize, last: usize) -> Result<Option<i32>, FormatError> {
         self.integer(first, last, "residue sequence number")?
             .map(|value| {
                 i32::try_from(value)
@@ -810,12 +785,12 @@ impl<'a> Fields<'a> {
             .transpose()
     }
 
-    fn required_sequence(&self, first: usize, last: usize) -> Result<i32, PdbParseError> {
+    fn required_sequence(&self, first: usize, last: usize) -> Result<i32, FormatError> {
         self.sequence(first, last)?
             .ok_or_else(|| self.error(first, "missing residue sequence number"))
     }
 
-    fn real(&self, first: usize, last: usize, what: &str) -> Result<Option<f64>, PdbParseError> {
+    fn real(&self, first: usize, last: usize, what: &str) -> Result<Option<f64>, FormatError> {
         let text = self.text(first, last).trim();
         if text.is_empty() {
             return Ok(None);
@@ -826,12 +801,12 @@ impl<'a> Fields<'a> {
         }
     }
 
-    fn coordinate(&self, first: usize, axis: &str) -> Result<f64, PdbParseError> {
+    fn coordinate(&self, first: usize, axis: &str) -> Result<f64, FormatError> {
         self.real(first, first + 7, &format!("{axis} coordinate"))?
             .ok_or_else(|| self.error(first, format!("missing {axis} coordinate")))
     }
 
-    fn atom(&self, kind: PdbAtomKind, model: Option<u32>) -> Result<PdbAtom, PdbParseError> {
+    fn atom(&self, kind: PdbAtomKind, model: Option<u32>) -> Result<PdbAtom, FormatError> {
         let name_field = format!("{:<4}", self.text(13, 16));
         if name_field.trim().is_empty() {
             return Err(self.error(13, "missing atom name"));
@@ -861,7 +836,7 @@ impl<'a> Fields<'a> {
     }
 
     /// A charge such as `2+` or `1-`; the sign may also lead.
-    fn charge(&self) -> Result<Option<i8>, PdbParseError> {
+    fn charge(&self) -> Result<Option<i8>, FormatError> {
         let text = self.text(79, 80).trim();
         if text.is_empty() {
             return Ok(None);
@@ -878,7 +853,7 @@ impl<'a> Fields<'a> {
         Ok(Some(if sign == b'-' { -magnitude } else { magnitude }))
     }
 
-    fn cryst1(&self) -> Result<PdbCryst1, PdbParseError> {
+    fn cryst1(&self) -> Result<PdbCryst1, FormatError> {
         Ok(PdbCryst1 {
             lengths: [
                 self.real(7, 15, "cell length a")?,
@@ -899,7 +874,7 @@ impl<'a> Fields<'a> {
         })
     }
 
-    fn ter(&self, preceding_atoms: usize, model: Option<u32>) -> Result<PdbTer, PdbParseError> {
+    fn ter(&self, preceding_atoms: usize, model: Option<u32>) -> Result<PdbTer, FormatError> {
         Ok(PdbTer {
             serial: self.serial(7, 11, "TER serial number")?,
             residue_name: self.optional_text(18, 21),
@@ -912,14 +887,14 @@ impl<'a> Fields<'a> {
         })
     }
 
-    fn model_serial(&self) -> Result<u32, PdbParseError> {
+    fn model_serial(&self) -> Result<u32, FormatError> {
         // The serial belongs in columns 11-14; writers vary its alignment.
         let text = self.text(7, self.line.len()).trim();
         text.parse::<u32>()
             .map_err(|_| self.error(7, format!("invalid MODEL serial number `{text}`")))
     }
 
-    fn conect(&self) -> Result<PdbConect, PdbParseError> {
+    fn conect(&self) -> Result<PdbConect, FormatError> {
         let serial = self
             .integer(7, 11, "CONECT serial number")?
             .ok_or_else(|| self.error(7, "missing CONECT serial number"))?;
@@ -943,7 +918,7 @@ impl<'a> Fields<'a> {
         })
     }
 
-    fn partner(&self, columns: PartnerColumns) -> Result<PdbPartner, PdbParseError> {
+    fn partner(&self, columns: PartnerColumns) -> Result<PdbPartner, FormatError> {
         let residue_name = self
             .text(columns.residue_name, columns.residue_name + 3)
             .trim()
@@ -967,7 +942,7 @@ impl<'a> Fields<'a> {
         })
     }
 
-    fn link(&self) -> Result<PdbLink, PdbParseError> {
+    fn link(&self) -> Result<PdbLink, FormatError> {
         let partners = [
             self.partner(PartnerColumns {
                 atom_name: Some(13),
@@ -994,7 +969,7 @@ impl<'a> Fields<'a> {
         })
     }
 
-    fn ssbond(&self) -> Result<PdbSsbond, PdbParseError> {
+    fn ssbond(&self) -> Result<PdbSsbond, FormatError> {
         Ok(PdbSsbond {
             serial: self.serial(8, 10, "SSBOND serial number")?,
             partners: [

@@ -56,10 +56,11 @@ pub enum AltLocPreference {
 /// choices are errors, including those in unselected source coordinate models.
 ///
 /// ```
+/// use kekule::diagnostics::FormatError;
 /// use kekule::macromolecular::{AltLocPolicy, AltLocPreference, AltLocSelection,
-///     StructureInterpretError, StructureInterpretOptions, StructureInterpretation};
+///     StructureInterpretOptions, StructureInterpretation};
 /// use kekule::mmcif::MmcifBlock;
-/// # fn choose(block: &MmcifBlock) -> Result<StructureInterpretation, StructureInterpretError> {
+/// # fn choose(block: &MmcifBlock) -> Result<StructureInterpretation, FormatError> {
 /// let mut selection = AltLocSelection {
 ///     default: AltLocPreference::PreferLabel("A".into()),
 ///     ..Default::default()

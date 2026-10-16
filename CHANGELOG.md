@@ -105,6 +105,50 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Errors follow one policy (ARCHITECTURE.md, "Lookups, errors,
+  and panics"). Which inputs fail is unchanged; callers update the error
+  types they name and match.
+  - Every format failure, SMARTS included, is one
+    `diagnostics::FormatError` with `format()` (`diagnostics::Format`),
+    `stage()` (`FormatStage::{Parse, Interpret, Write}`), `kind()`
+    (`DiagnosticKind`), `location()`, `record()`, `message()`, typed
+    `detail()` (`FormatErrorDetail`) and `source()`. It replaces
+    `SmilesParseError`, `SmilesInterpretError`, `smiles::SmilesReadError`,
+    `SmilesComponentCountError` (now `FormatErrorDetail::ComponentCount`),
+    `MolfileParseError`, `MolfileInterpretError`, `MoleculeWriteError` and
+    `MoleculeWriteErrorKind`, `SdfParseError`, `SdfInterpretError`,
+    `SdfWriteError`, `SdfEnsembleError`, `MmcifParseError`,
+    `MmcifWriteError`, `PdbParseError`, `StructureInterpretError`,
+    `StructureEnsembleInterpretError` (its variants are `FormatErrorDetail`
+    variants), `components::ComponentError`, and `SmartsParseError` and
+    `SmartsParseErrorKind`.
+  - `location()` is an `Option` for every stage. SMILES and SMARTS errors
+    locate the byte column within their line; `SmilesParseError::offset()`
+    and `SmartsParseError::span()` are gone (the column is `offset + 1`).
+    `record()` is an `Option` and counts SDF records from 1, including the
+    ensemble assembly error, which used to count from 0.
+  - Writer kinds follow the writer failure taxonomy:
+    `MoleculeWriteErrorKind::UnsupportedRepresentation` is
+    `DiagnosticKind::Unsupported`, `MissingPerception` is the new
+    `DiagnosticKind::MissingPerception`, `ResourceLimit` is
+    `DiagnosticKind::Limit`, `InvalidModel` is `DiagnosticKind::Inconsistent`,
+    and `Io(kind)` is `DiagnosticKind::Io` with the `std::io::Error` as
+    `source()`. SMARTS `Empty` and `InvalidSyntax` are
+    `DiagnosticKind::Syntax`, `ResourceLimit` is `DiagnosticKind::Limit`.
+  - The mmCIF writer's typed failures are `mmcif::MmcifWriteIssue`, carried
+    as `FormatErrorDetail::MmcifWrite`. Its `&'static str` fields are typed:
+    `MmcifAtomField`, `MmcifMemberField` and `MmcifCellReason`;
+    `UnsupportedTextValue { item }` names the mmCIF item. `InvalidModel`,
+    `InvalidHierarchy` and `Io` are plain `Inconsistent` and `Io` errors with
+    their cause as `source()`. The never-constructed
+    `ClassificationCountMismatch` and `InvalidGroupPdb` are removed.
+  - An ensemble failure inside one coordinate model is that model's error
+    with `FormatErrorDetail::Model { model_id }` or
+    `Conformation { selection }`, not a wrapper; the `"<model inventory>"`
+    sentinel model ID is gone.
+  - `Display` is `"<format> <stage> error[ in record N][ at LOCATION]:
+    message"` and never repeats the source; causes that used to be formatted
+    into messages, such as I/O and graph-construction errors, are `source()`.
 - **Breaking:** Public items live in the module of the domain that owns them,
   and every operation has one home. Behaviour is unchanged; callers update
   paths, names, and signatures as listed.
