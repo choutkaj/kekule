@@ -11,7 +11,7 @@ pub(super) struct BondSyntax {
 }
 
 impl BondSyntax {
-    pub fn default_at(span: Range<usize>) -> Result<Self, SmartsParseError> {
+    pub(super) fn default_at(span: Range<usize>) -> Result<Self, SmartsParseError> {
         Ok(Self {
             expression: default_bond_expression()?,
             direction: None,
@@ -19,7 +19,7 @@ impl BondSyntax {
         })
     }
 
-    pub fn ring(
+    pub(super) fn ring(
         opening: Option<Self>,
         closing: Option<Self>,
         span: Range<usize>,
@@ -60,7 +60,7 @@ pub(super) struct AtomStereo {
 }
 
 impl AtomStereo {
-    pub fn parse(
+    pub(super) fn parse(
         source: &str,
         start: usize,
         base: usize,
@@ -159,7 +159,7 @@ pub(super) struct StereoSyntax {
 }
 
 impl StereoSyntax {
-    pub fn add_atom(
+    pub(super) fn add_atom(
         &mut self,
         atom: QueryAtomId,
         previous: Option<QueryAtomId>,
@@ -177,13 +177,13 @@ impl StereoSyntax {
         });
     }
 
-    pub fn open_ring(&mut self, atom: QueryAtomId, label: u16) {
+    pub(super) fn open_ring(&mut self, atom: QueryAtomId, label: u16) {
         self.atoms[atom.index()]
             .neighbors
             .push(SourceNeighbor::Ring(label));
     }
 
-    pub fn close_ring(&mut self, opening: QueryAtomId, closing: QueryAtomId, label: u16) {
+    pub(super) fn close_ring(&mut self, opening: QueryAtomId, closing: QueryAtomId, label: u16) {
         let neighbor = self.atoms[opening.index()]
             .neighbors
             .iter_mut()
@@ -195,7 +195,7 @@ impl StereoSyntax {
             .push(SourceNeighbor::Atom(opening));
     }
 
-    pub fn add_bond(
+    pub(super) fn add_bond(
         &mut self,
         id: QueryBondId,
         a: QueryAtomId,
@@ -212,7 +212,7 @@ impl StereoSyntax {
         }
     }
 
-    pub fn install(self, builder: &mut QueryGraphBuilder) -> Result<(), SmartsParseError> {
+    pub(super) fn install(self, builder: &mut QueryGraphBuilder) -> Result<(), SmartsParseError> {
         for (index, atom) in self.atoms.iter().enumerate() {
             let Some(stereo) = &atom.stereo else {
                 continue;

@@ -100,6 +100,28 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Every public module is an explicit list of re-exports, and
+  every public item has exactly one public path; only `prelude` repeats items.
+  No item is renamed and no behaviour changes, so callers only update imports.
+  Items that no public path reached are now crate-private, which removes no
+  public path.
+  - The perception state types are exported only from their
+    `kekule::perception` module, no longer from `kekule::core`:
+    `valence::{ValenceModel, ValencePerception}`,
+    `rings::{Ring, RingSet, RingMembership, RingBasisModel, RingBasisState,
+    RingPerception}`, `aromaticity::{AromaticityModel,
+    AromaticityPerception}`, `conjugation::{ConjugationModel,
+    ConjugationPerception}`, and `resonance::{ResonanceGroup,
+    ResonancePerception}`. `ValencePerception`, `RingPerception`, and
+    `AromaticityPerception` were reachable only through `kekule::core`.
+  - `kekule::rotatable_bonds::PerceptionError` is removed; use
+    `kekule::perception::PerceptionError`.
+  - `kekule::core::Result`, an alias of `Result<T, MoleculeError>`, is no
+    longer public.
+  - `kekule::prelude` holds `Molecule`, `MoleculeEditor`, `Atom`, `Bond`,
+    `BondOrder`, `Element`, `ImplicitHydrogens`, `Topology`, `Model`,
+    `Positions`, and `Quantity`. `AtomId`, `BondId`, and `Hierarchy` left it;
+    import them from `kekule::core` and `kekule::topology`.
 - **Breaking:** `kekule-traj` indexed readers are opened directly with
   `IndexedXyzReader::new`, `IndexedDcdReader::new`, `IndexedTrrReader::new`,
   and `IndexedXtcReader::new`, which take the same arguments as the

@@ -8,11 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use kekule::core::{
-    AromaticityModel, AxisOrientation, BondOrder, DoubleBondOrientation, StereoCarrier,
-    StereoDescriptor, StereoElementId, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
+    AxisOrientation, BondOrder, DoubleBondOrientation, StereoCarrier, StereoDescriptor,
+    StereoElementId, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
 };
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
-use kekule::perception::{aromaticity, resonance, rings};
+use kekule::perception::aromaticity::{self, AromaticityModel};
+use kekule::perception::{resonance, rings};
 use kekule::rotatable_bonds::{self, RotatableBondOptions};
 use kekule::stereo::{self, StereoCandidate};
 use kekule::substructure::{PreparedTopologyTarget, SubstructureMatchOptions};

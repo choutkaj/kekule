@@ -1241,7 +1241,7 @@ impl Bond {
     }
 }
 
-pub type Result<T> = std::result::Result<T, MoleculeError>;
+pub(crate) type Result<T> = std::result::Result<T, MoleculeError>;
 
 /// Fixed-width identifier spaces owned by [`Molecule`].
 #[non_exhaustive]

@@ -1,6 +1,8 @@
 use kekule::{
     core::*,
-    perception::{self, conjugation::*, resonance::*},
+    perception::{
+        self, aromaticity::AromaticityModel, conjugation::*, resonance::*, valence::ValenceModel,
+    },
     smiles,
 };
 

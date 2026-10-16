@@ -9,7 +9,7 @@
 mod boxes;
 mod neighbors;
 mod packing;
-pub use boxes::*;
+pub use boxes::{BoxShape, PeriodicBoxError, PeriodicBoxOptions};
 
 use super::{Model, ModelBuildError, PositionError};
 use crate::{

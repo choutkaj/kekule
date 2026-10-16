@@ -1,5 +1,13 @@
 use kekule::{
-    core::*, perception::aromaticity, query::*, smiles, substructure::*, topology::Topology,
+    core::*,
+    perception::{
+        aromaticity::{self, AromaticityModel},
+        rings::{RingBasisModel, RingBasisState},
+    },
+    query::*,
+    smiles,
+    substructure::*,
+    topology::Topology,
 };
 use std::ops::ControlFlow;
 use std::sync::Arc;

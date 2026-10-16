@@ -975,12 +975,12 @@ pub mod perception {
             enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError,
             ResonanceFlags, ResonanceOptions, ResonanceStructures,
         };
-        pub use crate::core::{ResonanceGroup, ResonancePerception};
+        pub use crate::core::delocalization::{ResonanceGroup, ResonancePerception};
     }
     /// Bond conjugation, including aromatic bonds, without contributor enumeration.
     pub mod conjugation {
         pub use crate::algorithms::{perceive_conjugation, ConjugationError};
-        pub use crate::core::{ConjugationModel, ConjugationPerception};
+        pub use crate::core::delocalization::{ConjugationModel, ConjugationPerception};
     }
     pub use crate::chemistry::PerceptionError;
 
@@ -996,7 +996,7 @@ pub mod perception {
             perceive_valence, perceive_valence_with_options, represented_valence, ValenceError,
             ValenceIssue, ValenceOptions,
         };
-        pub use crate::core::ValenceModel;
+        pub use crate::core::perception::{ValenceModel, ValencePerception};
     }
 
     /// Ring membership and deterministic ring-basis perception.
@@ -1008,7 +1008,9 @@ pub mod perception {
             perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options,
             RingPerceptionError, RingPerceptionOptions,
         };
-        pub use crate::core::{Ring, RingBasisModel, RingBasisState, RingMembership, RingSet};
+        pub use crate::core::perception::{
+            Ring, RingBasisModel, RingBasisState, RingMembership, RingPerception, RingSet,
+        };
     }
 
     /// Aromaticity perception over canonical localized bond orders.
@@ -1020,7 +1022,7 @@ pub mod perception {
             perceive_aromaticity, perceive_aromaticity_with_options,
             perceive_aromaticity_with_ring_options, AromaticityError, AromaticityOptions,
         };
-        pub use crate::core::AromaticityModel;
+        pub use crate::core::perception::{AromaticityModel, AromaticityPerception};
     }
 }
 
@@ -1071,8 +1073,8 @@ pub mod canon {
 /// state.
 pub mod rotatable_bonds {
     pub use crate::algorithms::{RotatableBondOptions, RotatableBondSet};
-    pub use crate::chemistry::PerceptionError;
 
+    use crate::chemistry::PerceptionError;
     use crate::core::Molecule;
 
     /// Detects rotatable bonds using the supplied options.
@@ -1116,13 +1118,41 @@ pub mod hydrogens {
 
 /// Common foundational types for small examples and interactive use.
 ///
-/// The prelude is intentionally small. Format APIs, structure types, and
-/// algorithms remain available through their focused modules.
+/// The prelude is intentionally small: the molecule, its editor and parts, the
+/// topology and model that hold it, and [`Quantity`](crate::units::Quantity).
+/// It is the only module that repeats items exported elsewhere. Format APIs,
+/// identifiers, and algorithms remain available through their focused modules.
+///
+/// ```
+/// use kekule::prelude::*;
+/// use kekule::{geometry::Point3, units::ANGSTROM};
+///
+/// let mut editor = MoleculeEditor::new();
+/// let carbon = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+/// let mut oxygen = Atom::new(Element::from_symbol("O").unwrap());
+/// oxygen.hydrogens = ImplicitHydrogens::Fixed(1);
+/// let oxygen = editor.add_atom(oxygen)?;
+/// editor.add_bond(carbon, oxygen, BondOrder::Single)?;
+/// let molecule: Molecule = editor.finish()?;
+/// let (_, bond): (_, &Bond) = molecule.bonds().next().unwrap();
+/// assert_eq!(bond.order, BondOrder::Single);
+///
+/// let topology = Topology::from_molecule(molecule.clone())?;
+/// let positions = Positions::new(Quantity::new(
+///     vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.43, 0.0, 0.0)],
+///     ANGSTROM,
+/// ))?;
+/// let model = Model::from_molecule(molecule, &positions)?;
+/// assert_eq!(model.atom_count(), topology.atom_count());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod prelude {
     pub use crate::core::{
-        Atom, AtomId, Bond, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
+        Atom, Bond, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
     };
-    pub use crate::topology::Hierarchy;
+    pub use crate::structure::{Model, Positions};
+    pub use crate::topology::Topology;
+    pub use crate::units::Quantity;
 }
 
 #[cfg(test)]

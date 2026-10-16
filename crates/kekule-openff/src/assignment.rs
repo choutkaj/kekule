@@ -5,8 +5,8 @@ use crate::{
     ChargeAssignment, ChargeSource, Error, ErrorKind, NaglModel, Result,
 };
 use kekule::{
-    core::{AromaticityModel, AtomId, Molecule},
-    perception::aromaticity,
+    core::{AtomId, Molecule},
+    perception::aromaticity::{self, AromaticityModel},
     substructure::{
         PreparedTarget, SubstructureMatchError, SubstructureMatchOptions, TaggedMatchError,
         TaggedQuery,

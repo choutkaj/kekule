@@ -1,6 +1,6 @@
 //! One-structure coordination over the coordinate-free structural editor.
 mod append;
-pub use append::*;
+pub use append::{ModelAppend, ModelAppendReport};
 
 use super::model_state::ModelState;
 use super::{Model, ModelError, PositionError, Positions, StructureError};

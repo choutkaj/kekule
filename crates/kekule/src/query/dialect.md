@@ -100,7 +100,7 @@ SMARTS support supplies tagged environments, not OFFXML parsing or force-field
 assignment. SMIRNOFF uses MDL aromaticity and explicit hydrogen vertices:
 
 ```rust
-use kekule::{core::AromaticityModel, perception::aromaticity,
+use kekule::{perception::aromaticity::{self, AromaticityModel},
              query::parse_smarts, smiles, substructure::*};
 let mut molecule = smiles::to_molecules("CO")?.pop().unwrap();
 molecule.perceive()?;

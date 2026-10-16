@@ -30,7 +30,15 @@ mod graph;
 mod smarts;
 mod stereo;
 
-pub use expression::*;
-pub use graph::*;
-pub use smarts::*;
-pub use stereo::*;
+pub use expression::{
+    AtomExpression, AtomPredicate, BondExpression, BondPredicate, QueryExpression,
+    QueryExpressionError, MAX_QUERY_EXPRESSION_DEPTH, MAX_QUERY_EXPRESSION_NODES,
+};
+pub use graph::{
+    QueryAtom, QueryAtomId, QueryBond, QueryBondId, QueryGraph, QueryGraphBuilder, QueryGraphError,
+};
+pub use smarts::{
+    parse_smarts, parse_smarts_with_options, SmartsParseError, SmartsParseErrorKind,
+    SmartsParseOptions,
+};
+pub use stereo::{QueryStereoConstraint, QueryStereoGroup};

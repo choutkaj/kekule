@@ -28,7 +28,7 @@ impl CanonicalAtomRanking {
     }
 }
 
-pub fn canonical_atom_ranking(mol: &Molecule) -> CanonicalAtomRanking {
+pub(crate) fn canonical_atom_ranking(mol: &Molecule) -> CanonicalAtomRanking {
     let atoms = mol.atom_ids().collect::<Vec<_>>();
     let mut ranks = initial_ranks(mol, &atoms);
 

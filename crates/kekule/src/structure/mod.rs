@@ -68,16 +68,29 @@ mod scalars;
 mod solvation;
 mod state;
 mod trajectory;
-pub use solvation::*;
 
-pub use dynamics::*;
-pub use ensemble::*;
-pub use geometry_edit::*;
-pub use model::*;
-pub use model_editor::*;
-pub use positions::*;
+pub use dynamics::{Forces, Velocities};
+pub use ensemble::{
+    Ensemble, EnsembleError, EnsembleIter, EnsembleMember, EnsembleMemberMut, EnsembleMemberView,
+};
+pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
+pub use model::{
+    AsModelView, Model, ModelAtomView, ModelBuildError, ModelBuilder, ModelBuilderError,
+    ModelError, ModelTopologyMut, ModelView,
+};
+pub use model_editor::{
+    ModelAppend, ModelAppendReport, ModelEditError, ModelEditor, ModelFinishError,
+};
+pub use positions::{PositionError, Positions};
+pub use solvation::{
+    BoxShape, NegativeIon, PeriodicBoxError, PeriodicBoxOptions, PositiveIon, SolvationChargeBasis,
+    SolvationError, SolvationRadii, SolvationReport, SolventOptions, WaterModel,
+};
 pub use state::StructureError;
-pub use trajectory::*;
+pub use trajectory::{
+    Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut, TrajectoryFrameView,
+    TrajectoryIter,
+};
 
 #[cfg(test)]
 mod model_tests;

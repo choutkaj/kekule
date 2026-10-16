@@ -13,7 +13,11 @@ mod symmetry;
 use eligibility::{
     has_repeated_terminal_ligands, tetrahedral_carriers, unclassified_tetrahedral_geometry,
 };
-pub use perception::*;
+use perception::prepared;
+pub use perception::{
+    cleanup_stereo, detect_stereo_candidates_with_options, StereoCleanupReport,
+    StereoPerceptionError, StereoPerceptionOptions,
+};
 
 struct MoleculePositions<'a> {
     atom_to_dense: Vec<Option<usize>>,

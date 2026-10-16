@@ -11,7 +11,7 @@ pub(super) struct GroupMatches {
 }
 
 impl GroupMatches {
-    pub fn add(
+    pub(crate) fn add(
         &mut self,
         target: &Molecule,
         center: AtomId,

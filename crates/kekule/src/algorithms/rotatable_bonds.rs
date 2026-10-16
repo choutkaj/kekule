@@ -109,7 +109,7 @@ impl RotatableBondSet {
 /// installed perception never changes the selected chemistry model. Neither
 /// represented chemistry nor installed perception on the source is modified.
 /// Strict valence validation also applies when reusing cached perception.
-pub fn detect_rotatable_bonds(
+pub(crate) fn detect_rotatable_bonds(
     molecule: &Molecule,
     options: RotatableBondOptions,
 ) -> Result<RotatableBondSet, PerceptionError> {

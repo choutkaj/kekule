@@ -4,8 +4,16 @@ mod perception;
 mod source_stereo;
 
 pub(crate) use coordinate_source::AtomPositionSource;
-pub use normalization::*;
-pub use perception::*;
+pub(crate) use normalization::{
+    canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
+    NormalizationWarning,
+};
+#[cfg(test)]
+pub(crate) use normalization::{
+    NormalizationReport, SourceStereoNormalizationError, SourceStereoNormalizationIssue,
+};
+pub(crate) use perception::perceive_molecule;
+pub use perception::PerceptionError;
 pub(crate) use source_stereo::{
     molfile_double_bond_geometry_marks, molfile_keeps_decoded_stereo, normalize_source_stereo,
     project_molfile_stereo_bond_marks, source_tetrahedral_carriers, SourceStereoBondMark,
