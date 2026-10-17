@@ -105,6 +105,12 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `Model::apply_transform` is renamed `Model::transform_atoms`:
+  it moves a selection's atoms and keeps the cell. The new
+  `Model::apply_rigid_transform(&RigidTransform)` moves the whole model and
+  rotates its cell, as `EnsembleMemberMut` and `TrajectoryFrameMut` already
+  did, so a fitted transform applied to a periodic model keeps its lattice in
+  the same frame as its coordinates.
 - **Breaking:** `kekule-traj` reductions accept only trajectory frames
   (ARCHITECTURE.md, "Trajectories and streaming").
   `RmsfAccumulator::observe` and `ContactOccupancyAccumulator::observe` take

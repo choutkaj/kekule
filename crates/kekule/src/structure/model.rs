@@ -2,7 +2,7 @@ use crate::DraftError;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3};
+use crate::geometry::{PeriodicCell, Point3, RigidTransform};
 use crate::molecule::Molecule;
 use crate::properties::{StructureProperties, TopologyPropertiesMut};
 use crate::topology::TopologySubsetError;
@@ -17,7 +17,7 @@ use super::model_state::ModelState;
 use super::scalars::{b_factor_quantities, b_factor_quantity, AtomScalars};
 use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
-    validate_binding,
+    transform_cell, transform_positions, validate_binding,
 };
 use super::{DenseArrayError, Forces, Positions, StructureError, Velocities};
 
@@ -164,6 +164,38 @@ impl Model {
 
     pub fn atom_count(&self) -> usize {
         self.positions.len()
+    }
+
+    /// Applies a rigid transform to the whole model transactionally:
+    /// positions move and the cell rotates, as for ensemble members and
+    /// trajectory frames. Use [`Self::transform_atoms`] to move a selection
+    /// while keeping the cell.
+    ///
+    /// ```
+    /// use kekule::{smiles, geometry::{Matrix3, PeriodicCell, RigidTransform, Vector3},
+    ///     structure::{Model, Positions}, units::{Quantity, NANOMETER}};
+    /// let mut model = Model::new(smiles::to_topology("O")?, Positions::zeros(1))?;
+    /// let cell = PeriodicCell::orthorhombic(
+    ///     Quantity::new(Vector3::new(1.0, 2.0, 3.0), NANOMETER), [true; 3])?;
+    /// model.set_cell(Some(cell));
+    /// // A quarter turn about z.
+    /// let turn = Matrix3::from_columns(
+    ///     Vector3::new(0.0, 1.0, 0.0), Vector3::new(-1.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+    /// let still = Quantity::new(Vector3::zero(), NANOMETER);
+    /// model.apply_rigid_transform(&RigidTransform::new(turn, still)?)?;
+    /// let [a, b, _] = model.cell().unwrap().vectors().into_value();
+    /// assert_eq!((a, b), (Vector3::new(0.0, 1.0, 0.0), Vector3::new(-2.0, 0.0, 0.0)));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn apply_rigid_transform(
+        &mut self,
+        transform: &RigidTransform,
+    ) -> Result<(), StructureError> {
+        let cell = transform_cell(self.cell, *transform)?;
+        let positions = transform_positions(&self.positions, *transform)?;
+        self.cell = cell;
+        self.positions = positions;
+        Ok(())
     }
 
     /// Borrows this model as the common kernel input without copying.

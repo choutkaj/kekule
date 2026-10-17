@@ -53,8 +53,10 @@
 //!
 //! Geometry edits are atomic, use stored Cartesian coordinates, and preserve
 //! topology, properties, and cell. Apply periodic preprocessing explicitly.
-//! [`Model::translate`], [`Model::rotate`], and [`Model::apply_transform`] also
-//! support rigid selection manipulation. No relaxation is performed.
+//! [`Model::translate`], [`Model::rotate`], and [`Model::transform_atoms`] also
+//! support rigid selection manipulation and keep the cell;
+//! [`Model::apply_rigid_transform`] moves the whole model and rotates its cell.
+//! No relaxation is performed.
 
 mod dynamics;
 mod ensemble;

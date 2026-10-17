@@ -550,10 +550,12 @@ impl Model {
         publish(self, &staged)
     }
 
-    /// Applies a validated rigid transform atomically to a selection. Translation
-    /// is in canonical length units, as in [`RigidTransform`]. The cell, topology,
-    /// and properties are preserved, including for an all-atom selection.
-    pub fn apply_transform(
+    /// Applies a validated rigid transform atomically to a selection's atoms.
+    /// Translation is in canonical length units, as in [`RigidTransform`]. The
+    /// cell, topology, and properties are preserved, including for an all-atom
+    /// selection; [`Model::apply_rigid_transform`] moves the whole model with
+    /// its cell.
+    pub fn transform_atoms(
         &mut self,
         selection: &AtomSelection,
         transform: &RigidTransform,

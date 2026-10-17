@@ -332,7 +332,9 @@ policies and supported geometries live with
 [alignment](crates/kekule/src/alignment.rs).
 
 Cartesian geometry edits mutate `Model` coordinates atomically while retaining
-the exact topology, cell, and properties. Prepared distance, angle, and dihedral
+the exact topology, cell, and properties. A rigid motion of a whole structure
+(`apply_rigid_transform` on a model, member, or frame) rotates its cell with
+its coordinates; selection edits such as `transform_atoms` keep the cell. Prepared distance, angle, and dihedral
 edits bind references and moving selections to that layout, never to cached
 coordinates. Automatic fragments must separate from fixed references; explicit
 selections may deliberately deform boundary bonds. Neither path performs ring
