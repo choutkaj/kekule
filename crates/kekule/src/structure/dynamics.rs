@@ -79,6 +79,12 @@ macro_rules! vector_array {
 
         impl $name {
             /// Copies dense vectors and converts them to canonical units.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`DenseArrayError::Unit`] when the unit has the wrong
+            /// dimension and [`DenseArrayError::NonFinite`] for the first
+            /// non-finite converted vector.
             pub fn new<T>(values: Quantity<T>) -> Result<Self, DenseArrayError>
             where
                 T: AsRef<[Vector3]>,
@@ -87,10 +93,15 @@ macro_rules! vector_array {
             }
 
             /// Takes ownership of dense vectors, converting and validating in place.
+            ///
+            /// # Errors
+            ///
+            /// As for [`Self::new`].
             pub fn from_vec(values: Quantity<Vec<Vector3>>) -> Result<Self, DenseArrayError> {
                 Ok(Self(DenseVectors::from_vec(values, $unit)?))
             }
 
+            /// Creates `len` zero vectors in the canonical unit.
             pub fn zeros(len: usize) -> Self {
                 Self(DenseVectors {
                     values: vec![Vector3::zero(); len],
@@ -98,14 +109,17 @@ macro_rules! vector_array {
                 })
             }
 
+            /// Number of per-atom vectors.
             pub fn len(&self) -> usize {
                 self.0.values.len()
             }
 
+            /// Whether the array holds no vectors.
             pub fn is_empty(&self) -> bool {
                 self.0.values.is_empty()
             }
 
+            /// Borrows the dense vectors in the canonical unit.
             pub fn values(&self) -> Quantity<&[Vector3]> {
                 Quantity::new(self.0.values.as_slice(), self.0.unit)
             }
@@ -116,6 +130,14 @@ macro_rules! vector_array {
             }
 
             /// Replaces every vector without changing the length.
+            ///
+            /// The array is unchanged when an error is returned.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`DenseArrayError::Unit`] for a unit of the wrong dimension,
+            /// [`DenseArrayError::CountMismatch`] when the length differs, and
+            /// [`DenseArrayError::NonFinite`] for the first non-finite converted vector.
             pub fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), DenseArrayError>
             where
                 T: AsRef<[Vector3]>,
@@ -140,6 +162,10 @@ macro_rules! vector_array {
 vector_array!(
     Velocities,
     CANONICAL_VELOCITY_UNIT,
-    "Dense per-atom velocities."
+    "Dense per-atom velocities; the canonical unit is nm/ps."
 );
-vector_array!(Forces, CANONICAL_FORCE_UNIT, "Dense per-atom forces.");
+vector_array!(
+    Forces,
+    CANONICAL_FORCE_UNIT,
+    "Dense per-atom forces; the canonical unit is kJ/(mol·nm)."
+);

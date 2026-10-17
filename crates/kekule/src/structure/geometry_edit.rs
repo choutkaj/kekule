@@ -327,6 +327,7 @@ macro_rules! prepared_edit {
                 Prepared::new(&topology.into(), atoms, Some(moving)).map(Self)
             }
 
+            /// The defining reference atoms, in the order given at preparation.
             pub fn atoms(&self) -> [InstanceAtomId; $n] {
                 self.0.atoms
             }

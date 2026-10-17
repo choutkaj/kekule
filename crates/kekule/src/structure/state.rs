@@ -137,6 +137,7 @@ macro_rules! structure_readers {
             &self.storage_ref().positions
         }
 
+        /// The periodic cell, or `None` for a non-periodic structure.
         pub fn cell(&self) -> Option<&$crate::geometry::PeriodicCell> {
             self.storage_ref().cell.as_ref()
         }
@@ -204,6 +205,8 @@ macro_rules! structure_mutators {
             Ok(self.storage().positions.set(atom.index(), position)?)
         }
 
+        /// Replaces the periodic cell; `None` makes the structure non-periodic.
+        /// Positions are not wrapped or rescaled.
         pub fn set_cell(&mut self, cell: Option<$crate::geometry::PeriodicCell>) {
             self.storage().cell = cell;
         }

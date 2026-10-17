@@ -15,16 +15,19 @@
 //! [`BondDihedral`] once to reuse its topology-bound references across frames.
 //!
 //! ```
-//! use kekule::structure::{measure::{self, ConnectivityCheck}, Model};
-//! use kekule::topology::InstanceAtomId;
+//! use kekule::{geometry::Point3, smiles, units::{Quantity, NANOMETER}};
+//! use kekule::structure::{measure::{self, ConnectivityCheck}, Model, Positions};
 //!
-//! # fn bonded_angle(model: &Model, a: InstanceAtomId, b: InstanceAtomId,
-//! # c: InstanceAtomId) -> Result<(), Box<dyn std::error::Error>> {
-//! let angle = measure::angle(
-//!     model.as_model_view(), a, b, c, ConnectivityCheck::ConsecutiveBonds,
+//! let positions = Positions::new(Quantity::new(
+//!     [Point3::origin(), Point3::new(0.125, 0.0, 0.0)], NANOMETER,
+//! ))?;
+//! let model = Model::new(smiles::to_topology("CO")?, positions)?;
+//! let [c, o] = model.topology().atom_ids().try_into().unwrap();
+//! let length = measure::distance(
+//!     model.as_model_view(), c, o, ConnectivityCheck::ConsecutiveBonds,
 //! )?;
-//! # Ok(())
-//! # }
+//! assert_eq!(length.into_unit(NANOMETER)?.into_value(), 0.125);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! A whole-residue pocket around one source-identified ligand:

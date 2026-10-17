@@ -183,9 +183,11 @@ pub struct ModelAppend {
 }
 
 impl ModelAppend {
+    /// The source topology in which the IDs passed to this mapping are interpreted.
     pub fn source_topology(&self) -> &Topology {
         &self.mapping.source
     }
+    /// Owner property keys cleared or omitted by this append.
     pub fn report(&self) -> &ModelAppendReport {
         &self.report
     }

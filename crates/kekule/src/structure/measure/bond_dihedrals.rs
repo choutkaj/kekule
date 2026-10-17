@@ -116,6 +116,7 @@ impl BondDihedral {
         })
     }
 
+    /// The bond whose dihedral this definition measures.
     pub fn bond(&self) -> InstanceBondId {
         self.bond
     }

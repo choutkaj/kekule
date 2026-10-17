@@ -17,6 +17,7 @@ use std::{fmt, sync::Arc};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WaterModel {
+    /// Three-site TIP3P water geometry, bundled from OpenMM's equilibrated box.
     #[default]
     Tip3p,
 }
@@ -24,11 +25,16 @@ pub enum WaterModel {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PositiveIon {
+    /// Li⁺.
     Lithium,
+    /// Na⁺, the default.
     #[default]
     Sodium,
+    /// K⁺.
     Potassium,
+    /// Rb⁺.
     Rubidium,
+    /// Cs⁺.
     Cesium,
 }
 impl PositiveIon {
@@ -46,10 +52,14 @@ impl PositiveIon {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NegativeIon {
+    /// F⁻.
     Fluoride,
+    /// Cl⁻, the default.
     #[default]
     Chloride,
+    /// Br⁻.
     Bromide,
+    /// I⁻.
     Iodide,
 }
 impl NegativeIon {
@@ -71,6 +81,15 @@ pub struct SolvationRadii {
     radii: Vec<f64>,
 }
 impl SolvationRadii {
+    /// Binds one radius per atom, in `topology`'s dense atom order, accepting
+    /// any length unit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SolvationError::Unit`] when the unit is not a length,
+    /// [`SolvationError::RadiusCountMismatch`] when the count differs from the
+    /// atom count, and [`SolvationError::InvalidRadius`] for a negative or
+    /// non-finite radius.
     pub fn new(
         topology: impl Into<Arc<Topology>>,
         radii: Quantity<Vec<f64>>,
@@ -109,6 +128,7 @@ pub struct SolventOptions {
 }
 
 impl SolventOptions {
+    /// The water geometry to add; default [`WaterModel::Tip3p`].
     pub const fn water_model(&self) -> WaterModel {
         self.water_model
     }
@@ -120,6 +140,7 @@ impl SolventOptions {
         self
     }
 
+    /// Whether counterions are added to cancel the solute charge; default `true`.
     pub const fn neutralize(&self) -> bool {
         self.neutralize
     }
@@ -131,6 +152,8 @@ impl SolventOptions {
         self
     }
 
+    /// Additional salt concentration of monovalent ion pairs; default 0 M. Any
+    /// concentration unit is accepted; [`solvate`] converts to mol/L.
     pub const fn ionic_strength(&self) -> Quantity<f64> {
         self.ionic_strength
     }
@@ -142,6 +165,7 @@ impl SolventOptions {
         self
     }
 
+    /// The cation used for counterions and salt; default [`PositiveIon::Sodium`].
     pub const fn positive_ion(&self) -> PositiveIon {
         self.positive_ion
     }
@@ -153,6 +177,7 @@ impl SolventOptions {
         self
     }
 
+    /// The anion used for counterions and salt; default [`NegativeIon::Chloride`].
     pub const fn negative_ion(&self) -> NegativeIon {
         self.negative_ion
     }
@@ -188,6 +213,8 @@ impl SolventOptions {
         self
     }
 
+    /// Explicit solute exclusion radii, or `None` to use each element's reference
+    /// van der Waals radius.
     pub fn solute_radii(&self) -> Option<&SolvationRadii> {
         self.solute_radii.as_ref()
     }
@@ -245,10 +272,13 @@ impl Default for SolventOptions {
     }
 }
 
+/// Where the solute charge used for ion counting came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SolvationChargeBasis {
+    /// The sum of the topology's represented formal charges.
     FormalCharges,
+    /// [`SolventOptions::net_charge`].
     Override,
 }
 /// Optional diagnostics from a successful operation. It is fine to discard this value.
@@ -265,14 +295,17 @@ pub struct SolvationReport {
 }
 
 impl SolvationReport {
+    /// Number of water molecules added, after ion replacement.
     pub const fn waters_added(&self) -> usize {
         self.waters_added
     }
 
+    /// Number of cations added, counterions and salt together.
     pub const fn positive_ions_added(&self) -> usize {
         self.positive_ions_added
     }
 
+    /// Number of anions added, counterions and salt together.
     pub const fn negative_ions_added(&self) -> usize {
         self.negative_ions_added
     }
@@ -282,18 +315,22 @@ impl SolvationReport {
         self.solute_charge
     }
 
+    /// Whether [`Self::solute_charge`] was summed or supplied.
     pub const fn charge_basis(&self) -> SolvationChargeBasis {
         self.charge_basis
     }
 
+    /// The ion-placement seed that was used.
     pub const fn seed(&self) -> u64 {
         self.seed
     }
 
+    /// Destination topology owner keys cleared because the topology changed.
     pub fn cleared_topology_properties(&self) -> &[PropertyKey] {
         &self.cleared_topology_properties
     }
 
+    /// Destination structure owner keys cleared because the model changed.
     pub fn cleared_model_properties(&self) -> &[PropertyKey] {
         &self.cleared_model_properties
     }
@@ -425,6 +462,20 @@ from_error!(HierarchyError, Hierarchy);
 ///
 /// Extremely large coordinate offsets that cannot retain generated positions
 /// within 1e-8 nm are rejected. This preserves the water's internal geometry.
+///
+/// # Errors
+///
+/// The model is unchanged on error. The cell must exist
+/// ([`SolvationError::MissingCell`]) and be periodic along all three axes
+/// ([`SolvationError::NotFullyPeriodic`]). Invalid options return
+/// [`SolvationError::InvalidIonicStrength`], [`SolvationError::InvalidIonSeparation`],
+/// [`SolvationError::Unit`] or [`SolvationError::RadiusTopologyMismatch`];
+/// a solute element without a reference radius returns
+/// [`SolvationError::MissingElementRadius`]. A cell with no room for water returns
+/// [`SolvationError::NoSolventSpace`], too few separated sites for the ions
+/// [`SolvationError::InsufficientIonSites`], and exceeding
+/// [`SolventOptions::max_candidates`] [`SolvationError::LimitExceeded`]. The
+/// remaining variants report numerical, capacity or publication failures.
 ///
 /// ```
 /// use kekule::{smiles, solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions},
