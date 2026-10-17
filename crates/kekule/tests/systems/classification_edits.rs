@@ -734,7 +734,9 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
     );
     let mut editor = retained.to_editor();
     editor
-        .insert_property(PropertyKey::new("label").unwrap(), PropertyValue::Int(1))
+        .properties_mut()
+        .owner_mut()
+        .insert(PropertyKey::new("label").unwrap(), PropertyValue::Int(1))
         .unwrap();
     assert_eq!(
         water_classes(&editor.finish().unwrap()),

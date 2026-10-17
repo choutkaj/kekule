@@ -105,6 +105,39 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Editor properties go through guards (ARCHITECTURE.md,
+  "Properties and units").
+  - `TopologyEditor`'s flat property API (`owner_properties`,
+    `insert_property`, `remove_property`, `clear_properties`,
+    `atom_property`, `set_atom_property`, `set_atom_properties`,
+    `atom_property_column`, `insert_atom_property_column`,
+    `remove_atom_property_column`, their bond, chain, residue and atom-site
+    forms, and `set_definition_atom_property`/`set_definition_bond_property`)
+    is replaced by `properties()` and `properties_mut()`. The new
+    `topology::edit::EditPropertiesMut` has `owner_mut` and
+    `atoms_mut`/`bonds_mut`/`chains_mut`/`residues_mut`/`atom_sites_mut`,
+    each an `EditPropertyTableMut` keyed by `Edit*Id` with the method set of
+    `PropertyTableMut` (`insert`, `remove`, `clear`, `set_value`,
+    `clear_value`, `set_values`) plus reads (`get`, `value`, `keys`), and
+    `set_definition_atom_value`/`set_definition_bond_value`. Arguments follow
+    the table order: `set_value(key, handle, value)`. A deleted handle fails
+    with `TopologyEditError::InvalidAtom` (and the bond, chain, residue and
+    atom-site forms).
+  - `ModelEditor` no longer implements `Deref<Target = TopologyEditor>`.
+    Read the draft through `topology()` (formerly `topology_editor()`);
+    `topology_mut()` returns `ModelEditorTopologyMut` with `properties_mut`,
+    `set_molecule_class`, `set_residue_class` and `clear_residue_class`.
+    Structure-scoped values move to `ModelEditor::properties()` and
+    `properties_mut()` (`ModelEditorProperties`, `ModelEditorPropertiesMut`).
+    The forwarding wrappers `insert_topology_property`,
+    `set_topology_atom_property`, `set_topology_bond_property`,
+    `remove_topology_property`, `clear_topology_properties`,
+    `set_chain_property`, `set_residue_property`, `set_atom_site_property`,
+    `set_definition_atom_property`, `set_definition_bond_property`,
+    `set_molecule_class` and `set_residue_class` are removed, as are the
+    structure-scoped `owner_properties`, `owner_properties_mut`,
+    `atom_property`, `set_atom_property`, ... methods. Structure property
+    failures are now `TopologyEditError`s.
 - **Breaking:** The topology views are the only read path for hierarchy
   data (ARCHITECTURE.md, "Topology, hierarchy, and classification").
   - `Hierarchy`, `Chain`, `Residue` and `AtomSite` are crate-private, and

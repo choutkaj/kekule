@@ -105,7 +105,11 @@ impl TopologyEditor {
         if self.is_empty() {
             return Err(TopologyEditError::EmptyTopology);
         }
-        if self.revision == 0 {
+        let owner_unchanged = self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.properties().owner() == self.properties.owner());
+        if self.revision == 0 && owner_unchanged {
             if let Some(source) = self.source.take() {
                 return Ok(TopologyPublication {
                     atom_slots: (0..source.atom_count()).collect(),

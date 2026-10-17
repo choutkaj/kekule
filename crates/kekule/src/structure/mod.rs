@@ -79,7 +79,10 @@ pub use model::{
     AsModelView, Model, ModelAtomView, ModelBuildError, ModelBuilder, ModelError, ModelTopologyMut,
     ModelView, StructureKind,
 };
-pub use model_editor::{ModelAppend, ModelAppendReport, ModelEditError, ModelEditor};
+pub use model_editor::{
+    ModelAppend, ModelAppendReport, ModelEditError, ModelEditor, ModelEditorProperties,
+    ModelEditorPropertiesMut, ModelEditorTopologyMut,
+};
 pub use positions::{DenseArrayError, Positions};
 pub use state::StructureError;
 pub use trajectory::{

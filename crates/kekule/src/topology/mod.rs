@@ -67,8 +67,8 @@ pub use transform::{TopologySubset, TopologySubsetCorrespondence, TopologySubset
 pub mod edit {
     pub use super::editor::{
         EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
-        EditCorrespondence, EditMolecule, EditResidue, EditResidueId, TopologyEditError,
-        TopologyEditor,
+        EditCorrespondence, EditMolecule, EditProperties, EditPropertiesMut, EditPropertyTable,
+        EditPropertyTableMut, EditResidue, EditResidueId, TopologyEditError, TopologyEditor,
     };
 }
 

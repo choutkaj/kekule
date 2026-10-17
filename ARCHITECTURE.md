@@ -266,6 +266,12 @@ take the table's row type. Writes go through length-preserving
 `*Mut` guards: whole-column replacement or removal, single-cell writes, and
 transactional batches with ordered update semantics. A draft editor addresses
 allocated slots, and writing a value to a deleted slot fails with `RemovedRow`.
+System editors expose the same guard keyed by editing handle
+(`TopologyEditor::properties_mut`), and a deleted handle fails with the
+editor's typed invalid-handle error. `ModelEditor` does not dereference to its
+topology draft: `topology()` reads it, `topology_mut()` reaches the edits that
+need no coordination with geometry, and its own `properties_mut()` holds
+structure-scoped values, so the two scopes never shadow each other.
 
 Keys are validated and never reserved. A column has one type and, for real
 values, one physical unit; missing entries are explicit. Column length matches

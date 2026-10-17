@@ -1,4 +1,5 @@
 use super::*;
+use crate::properties::PropertyKey;
 use crate::structure::AsModelView;
 use crate::topology::{AppendMapping, Topology};
 use crate::topology::{AtomSiteId, ChainId, InstanceAtomId, InstanceBondId, ResidueId};
@@ -52,14 +53,20 @@ impl ModelEditor {
     ) -> Result<ModelAppend, ModelEditError> {
         let source = source.as_model_view();
         let cell = match (self.cell().copied(), source.cell().copied()) {
-            (None, cell) if self.is_empty() => cell,
+            (None, cell) if self.topology.is_empty() => cell,
             (cell, None) => cell,
             (Some(left), Some(right)) if compatible_cells(left, right) => Some(left),
             _ => return Err(ModelEditError::IncompatibleAppendCell),
         };
         let report = ModelAppendReport {
-            cleared_topology_properties: self.owner_properties_of_topology(),
-            cleared_model_properties: self.owner_properties().keys().cloned().collect(),
+            cleared_topology_properties: self
+                .topology
+                .properties()
+                .owner()
+                .keys()
+                .cloned()
+                .collect(),
+            cleared_model_properties: self.slots.properties.owner().keys().cloned().collect(),
             omitted_topology_properties: source
                 .topology()
                 .properties()
@@ -108,10 +115,6 @@ impl ModelEditor {
         staged.slots.cell = cell;
         *self = staged;
         Ok(ModelAppend { mapping, report })
-    }
-
-    fn owner_properties_of_topology(&self) -> Vec<PropertyKey> {
-        self.topology.owner_properties().keys().cloned().collect()
     }
 }
 

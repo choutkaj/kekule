@@ -4,8 +4,8 @@ use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Model, ModelEditor, Positions};
 use kekule::topology::{
-    edit::TopologyEditor, AtomSiteMetadata, InstanceAtomId, MoleculeClass, Topology,
-    TopologyBuilder,
+    edit::{EditAtomId, EditBondId, TopologyEditor},
+    AtomSiteMetadata, InstanceAtomId, MoleculeClass, Topology, TopologyBuilder,
 };
 use kekule::units::{Quantity, ANGSTROM, BOHR, NANOMETER};
 use std::num::NonZeroU16;
@@ -88,9 +88,12 @@ fn split_then_merge_preserves_handles_geometry_and_hierarchy() {
         .topology()
         .atom_ids()
         .iter()
-        .map(|&id| editor.atom_handle(id).unwrap())
+        .map(|&id| editor.topology().atom_handle(id).unwrap())
         .collect::<Vec<_>>();
-    let removed = editor.bond_handle(source.topology().bond_ids()[0]).unwrap();
+    let removed = editor
+        .topology()
+        .bond_handle(source.topology().bond_ids()[0])
+        .unwrap();
     editor.delete_bond(removed).unwrap();
     editor.validate().unwrap();
     let split = editor.clone().finish().unwrap();
@@ -226,7 +229,7 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
         .unwrap();
     let source = Model::new(builder.build().unwrap(), positions(&[2.0, 6.0])).unwrap();
     let mut editor = source.to_editor();
-    let handles = editor.atom_ids().collect::<Vec<_>>();
+    let handles = editor.topology().atom_ids().collect::<Vec<_>>();
     editor
         .add_bond(handles[0], handles[1], BondOrder::Single)
         .unwrap();
@@ -320,9 +323,9 @@ fn no_op_and_geometry_only_keep_exact_source_topology() {
     assert_eq!(no_op, source);
     assert!(Arc::ptr_eq(&no_op.shared_topology(), &topology));
     let mut editor = source.to_editor();
-    let id = editor.atom_ids().next().unwrap();
+    let id = editor.topology().atom_ids().next().unwrap();
     editor
-        .replace_atom(id, editor.atom(id).unwrap().clone())
+        .replace_atom(id, editor.topology().atom(id).unwrap().clone())
         .unwrap();
     editor
         .set_position(id, Quantity::new(Point3::new(3.0, 0.0, 0.0), NANOMETER))
@@ -379,7 +382,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         .insert(key("energy"), PropertyValue::Int(10))
         .unwrap();
     let mut editor = source.to_editor();
-    let removed = editor.atom_handle(source_atoms[0]).unwrap();
+    let removed = editor.topology().atom_handle(source_atoms[0]).unwrap();
     editor.delete_atom(removed).unwrap();
     assert!(editor.position(removed).is_none());
     editor
@@ -389,11 +392,15 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         )
         .unwrap();
     editor
-        .insert_atom_property_column(key("live"), PropertyColumn::Int(vec![Some(7), Some(8)]))
+        .properties_mut()
+        .atoms_mut()
+        .insert(key("live"), PropertyColumn::Int(vec![Some(7), Some(8)]))
         .unwrap();
-    let column = editor.atom_property_column(&key("live")).unwrap();
+    let column = editor.properties().atoms().get(&key("live")).unwrap();
     editor
-        .insert_atom_property_column(key("live"), column)
+        .properties_mut()
+        .atoms_mut()
+        .insert(key("live"), column)
         .unwrap();
     let result = editor.finish().unwrap();
     assert_eq!(result.topology().chains().len(), 1);
@@ -443,15 +450,20 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
 fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
     let source = model("CCC");
     let mut editor = source.to_editor();
-    let bonds = editor.bond_ids().collect::<Vec<_>>();
+    let bonds = editor.topology().bond_ids().collect::<Vec<_>>();
     editor
-        .set_bond_property(bonds[1], key("dynamic"), Some(PropertyValue::Int(17)))
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key("dynamic"), bonds[1], Some(PropertyValue::Int(17)))
         .unwrap();
     editor
-        .set_topology_bond_property(bonds[1], key("static"), Some(PropertyValue::Int(23)))
+        .topology_mut()
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key("static"), bonds[1], Some(PropertyValue::Int(23)))
         .unwrap();
     editor.delete_bond(bonds[0]).unwrap();
-    let structural = editor.topology_editor().clone();
+    let structural = editor.topology().clone();
     let finished_topology: Arc<Topology> = structural.clone().finish().unwrap();
     let recovered_topology: Arc<Topology> = structural.try_finish().unwrap();
     assert!(finished_topology.same_layout(&recovered_topology));
@@ -505,7 +517,7 @@ fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
 fn failures_are_atomic_and_empty_publication_is_recoverable() {
     let source = model("CC");
     let mut editor = source.to_editor();
-    let handles = editor.atom_ids().collect::<Vec<_>>();
+    let handles = editor.topology().atom_ids().collect::<Vec<_>>();
     let mut foreign = ModelEditor::new();
     let invalid = foreign
         .add_atom(atom("O"), Quantity::new(Point3::origin(), ANGSTROM))
@@ -723,17 +735,22 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
         .set_value(key("dynamic"), row, Some(PropertyValue::Int(10)))
         .unwrap();
     let mut editor = source.to_editor();
-    let atoms = editor.atom_ids().collect::<Vec<_>>();
-    let bond = editor.bond_handle(source_bond).unwrap();
+    let atoms = editor.topology().atom_ids().collect::<Vec<_>>();
+    let bond = editor.topology().bond_handle(source_bond).unwrap();
     editor
-        .set_topology_bond_property(bond, key("static"), Some(PropertyValue::Int(20)))
+        .topology_mut()
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key("static"), bond, Some(PropertyValue::Int(20)))
         .unwrap();
     editor
-        .set_definition_bond_property(bond, key("definition"), Some(PropertyValue::Int(30)))
+        .topology_mut()
+        .properties_mut()
+        .set_definition_bond_value(key("definition"), bond, Some(PropertyValue::Int(30)))
         .unwrap();
-    let before = editor.bond(bond).unwrap();
+    let before = editor.topology().bond(bond).unwrap();
     assert!(editor.set_bond_endpoints(bond, atoms[2], atoms[2]).is_err());
-    assert_eq!(editor.bond(bond).unwrap(), before);
+    assert_eq!(editor.topology().bond(bond).unwrap(), before);
     editor.set_bond_endpoints(bond, atoms[0], atoms[2]).unwrap();
     let result = editor.finish().unwrap();
     let target = result.topology().bond_ids()[0];
@@ -798,7 +815,9 @@ fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
     let atoms = editor.atom_ids().collect::<Vec<_>>();
     let bond = editor.bond_ids().next().unwrap();
     editor
-        .set_bond_property(bond, key("tag"), Some(PropertyValue::Int(7)))
+        .properties_mut()
+        .bonds_mut()
+        .set_value(key("tag"), bond, Some(PropertyValue::Int(7)))
         .unwrap();
     let previous = editor.bond(bond).unwrap();
     let snapshot = format!("{editor:?}");
@@ -812,7 +831,11 @@ fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
     assert_eq!(editor.replace_bond(bond, replacement).unwrap(), previous);
     assert_eq!(editor.bond(bond).unwrap(), replacement);
     assert_eq!(
-        editor.bond_property(bond, &key("tag")).unwrap(),
+        editor
+            .properties()
+            .bonds()
+            .value(&key("tag"), bond)
+            .unwrap(),
         Some(PropertyValue::Int(7))
     );
     let result = editor.finish().unwrap();
@@ -826,11 +849,13 @@ fn model_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
     use kekule::units::Unit;
 
     let mut editor = model("C").into_editor();
-    let atom = editor.atom_ids().next().unwrap();
+    let atom = editor.topology().atom_ids().next().unwrap();
     editor
-        .set_atom_property(
-            atom,
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
             key("length"),
+            atom,
             Some(PropertyValue::Real {
                 value: 0.0,
                 unit: NANOMETER,
@@ -840,7 +865,9 @@ fn model_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
     let alias = Unit::new(NANOMETER.dimension(), NANOMETER.scale(), Some("custom_nm")).unwrap();
     assert_eq!(alias, NANOMETER); // Unit equality deliberately ignores symbols.
     editor
-        .set_atom_properties(
+        .properties_mut()
+        .atoms_mut()
+        .set_values(
             key("length"),
             [
                 (atom, None),
@@ -854,8 +881,11 @@ fn model_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
             ],
         )
         .unwrap();
-    let Some(PropertyValue::Real { value, unit }) =
-        editor.atom_property(atom, &key("length")).unwrap()
+    let Some(PropertyValue::Real { value, unit }) = editor
+        .properties()
+        .atoms()
+        .value(&key("length"), atom)
+        .unwrap()
     else {
         panic!("expected recreated real column");
     };
@@ -867,26 +897,35 @@ fn model_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
 #[test]
 fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics() {
     macro_rules! check_batches {
-        ($editor:expr) => {{
+        ($editor:expr, $atoms:expr, $bonds:expr) => {{
             let editor = &mut $editor;
-            let atoms = editor.atom_ids().collect::<Vec<_>>();
-            let bonds = editor.bond_ids().collect::<Vec<_>>();
+            let (atoms, bonds): (Vec<EditAtomId>, Vec<EditBondId>) = ($atoms, $bonds);
             editor
-                .set_atom_property(atoms[0], key("untouched"), Some(PropertyValue::Int(1)))
+                .properties_mut()
+                .atoms_mut()
+                .set_value(key("untouched"), atoms[0], Some(PropertyValue::Int(1)))
                 .unwrap();
             editor
-                .set_bond_property(bonds[0], key("untouched"), Some(PropertyValue::Int(2)))
+                .properties_mut()
+                .bonds_mut()
+                .set_value(key("untouched"), bonds[0], Some(PropertyValue::Int(2)))
                 .unwrap();
-            let untouched_atoms = editor.atom_property_column(&key("untouched"));
-            let untouched_bonds = editor.bond_property_column(&key("untouched"));
+            let untouched_atoms = editor.properties().atoms().get(&key("untouched"));
+            let untouched_bonds = editor.properties().bonds().get(&key("untouched"));
             editor
-                .set_atom_property(atoms[0], key("edited"), Some(PropertyValue::Int(3)))
+                .properties_mut()
+                .atoms_mut()
+                .set_value(key("edited"), atoms[0], Some(PropertyValue::Int(3)))
                 .unwrap();
             editor
-                .set_bond_property(bonds[0], key("edited"), Some(PropertyValue::Int(3)))
+                .properties_mut()
+                .bonds_mut()
+                .set_value(key("edited"), bonds[0], Some(PropertyValue::Int(3)))
                 .unwrap();
             editor
-                .set_atom_properties(
+                .properties_mut()
+                .atoms_mut()
+                .set_values(
                     key("edited"),
                     [
                         (atoms[0], Some(PropertyValue::Int(3))),
@@ -909,15 +948,21 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
                 )
                 .unwrap();
             assert_eq!(
-                editor.atom_property(atoms[1], &key("edited")).unwrap(),
+                editor
+                    .properties()
+                    .atoms()
+                    .value(&key("edited"), atoms[1])
+                    .unwrap(),
                 Some(PropertyValue::Real {
                     value: 20.0,
                     unit: ANGSTROM
                 })
             );
-            let snapshot = editor.atom_property_column(&key("edited"));
+            let snapshot = editor.properties().atoms().get(&key("edited"));
             assert!(editor
-                .set_atom_properties(
+                .properties_mut()
+                .atoms_mut()
+                .set_values(
                     key("edited"),
                     [
                         (
@@ -931,9 +976,11 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
                     ]
                 )
                 .is_err());
-            assert_eq!(editor.atom_property_column(&key("edited")), snapshot);
+            assert_eq!(editor.properties().atoms().get(&key("edited")), snapshot);
             editor
-                .set_bond_properties(
+                .properties_mut()
+                .bonds_mut()
+                .set_values(
                     key("edited"),
                     [
                         (bonds[0], Some(PropertyValue::Int(3))),
@@ -943,12 +990,18 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
                 )
                 .unwrap();
             assert_eq!(
-                editor.bond_property(bonds[1], &key("edited")).unwrap(),
+                editor
+                    .properties()
+                    .bonds()
+                    .value(&key("edited"), bonds[1])
+                    .unwrap(),
                 Some(PropertyValue::String("new type".into()))
             );
-            let snapshot = editor.bond_property_column(&key("edited"));
+            let snapshot = editor.properties().bonds().get(&key("edited"));
             assert!(editor
-                .set_bond_properties(
+                .properties_mut()
+                .bonds_mut()
+                .set_values(
                     key("edited"),
                     [
                         (bonds[0], Some(PropertyValue::String("staged".into()))),
@@ -956,17 +1009,19 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
                     ]
                 )
                 .is_err());
-            assert_eq!(editor.bond_property_column(&key("edited")), snapshot);
+            assert_eq!(editor.properties().bonds().get(&key("edited")), snapshot);
             editor
-                .set_bond_properties(key("edited"), [(bonds[1], None)])
+                .properties_mut()
+                .bonds_mut()
+                .set_values(key("edited"), [(bonds[1], None)])
                 .unwrap();
-            assert!(editor.bond_property_column(&key("edited")).is_none());
+            assert!(editor.properties().bonds().get(&key("edited")).is_none());
             assert_eq!(
-                editor.atom_property_column(&key("untouched")),
+                editor.properties().atoms().get(&key("untouched")),
                 untouched_atoms
             );
             assert_eq!(
-                editor.bond_property_column(&key("untouched")),
+                editor.properties().bonds().get(&key("untouched")),
                 untouched_bonds
             );
         }};
@@ -975,29 +1030,42 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
     let source = model("CCC");
     let mut topology_editor = TopologyEditor::from_topology(source.shared_topology());
     topology_editor
-        .insert_property(key("owner"), PropertyValue::String("retained".into()))
+        .properties_mut()
+        .owner_mut()
+        .insert(key("owner"), PropertyValue::String("retained".into()))
         .unwrap();
-    check_batches!(topology_editor);
+    let (atoms, bonds) = (
+        topology_editor.atom_ids().collect(),
+        topology_editor.bond_ids().collect(),
+    );
+    check_batches!(topology_editor, atoms, bonds);
     assert_eq!(
-        topology_editor.owner_properties().get(&key("owner")),
+        topology_editor.properties().owner().get(&key("owner")),
         Some(&PropertyValue::String("retained".into()))
     );
     topology_editor.finish().unwrap();
     let mut editor = source.into_editor();
     editor
-        .owner_properties_mut()
+        .properties_mut()
+        .owner_mut()
         .insert(key("owner"), PropertyValue::String("retained".into()))
         .unwrap();
-    check_batches!(editor);
+    let (atoms, bonds) = (
+        editor.topology().atom_ids().collect(),
+        editor.topology().bond_ids().collect(),
+    );
+    check_batches!(editor, atoms, bonds);
     assert_eq!(
-        editor.owner_properties().get(&key("owner")),
+        editor.properties().owner().get(&key("owner")),
         Some(&PropertyValue::String("retained".into()))
     );
     // Generic structure keys are unreserved: "occupancy" is independent of
     // the typed occupancy state.
-    let atom = editor.atom_ids().next().unwrap();
+    let atom = editor.topology().atom_ids().next().unwrap();
     editor
-        .set_atom_properties(key("occupancy"), [(atom, Some(PropertyValue::Int(1)))])
+        .properties_mut()
+        .atoms_mut()
+        .set_values(key("occupancy"), [(atom, Some(PropertyValue::Int(1)))])
         .unwrap();
     assert_eq!(editor.occupancy(atom), None);
     editor.finish().unwrap();
@@ -1054,7 +1122,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     builder.validate().unwrap();
     let source = builder.build().unwrap();
     let mut editor = source.into_editor();
-    let handle = editor.atom_handle(id).unwrap();
+    let handle = editor.topology().atom_handle(id).unwrap();
     editor.delete_atom(handle).unwrap();
     let failed = editor.try_finish().unwrap_err();
     assert!(failed.source().is_some());
@@ -1063,7 +1131,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         .add_atom(atom("N"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(handle, replacement);
-    assert!(editor.atom(handle).is_none());
+    assert!(editor.topology().atom(handle).is_none());
     let result = editor.finish().unwrap();
     assert_eq!(result.atom_count(), 1);
     assert_eq!(result.topology().instance_count(), 1);
@@ -1254,15 +1322,19 @@ fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
     );
     assert!(source.properties().atoms().get(&key("tag")).is_none());
     let mut editor = source.into_editor();
-    let handles = editor.atom_ids().collect::<Vec<_>>();
+    let handles = editor.topology().atom_ids().collect::<Vec<_>>();
     editor
-        .set_atom_property(handles[0], key("tag"), Some(PropertyValue::Int(5)))
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("tag"), handles[0], Some(PropertyValue::Int(5)))
         .unwrap();
     editor.delete_atom(handles[0]).unwrap();
     editor
-        .set_atom_property(
-            handles[1],
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
             key("tag"),
+            handles[1],
             Some(PropertyValue::String("valid".into())),
         )
         .unwrap();
@@ -1305,12 +1377,18 @@ fn unchanged_setters_keep_topology_snapshot_and_perception() {
         .replace_atom(a, editor.atom(a).unwrap().clone())
         .unwrap();
     editor.set_bond_order(b, BondOrder::Single).unwrap();
-    editor.set_atom_property(a, key("absent"), None).unwrap();
     editor
-        .set_definition_atom_property(a, key("absent"), None)
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("absent"), a, None)
         .unwrap();
     editor
-        .set_definition_bond_property(b, key("absent"), None)
+        .properties_mut()
+        .set_definition_atom_value(key("absent"), a, None)
+        .unwrap();
+    editor
+        .properties_mut()
+        .set_definition_bond_value(key("absent"), b, None)
         .unwrap();
     assert!(Arc::ptr_eq(&source, &editor.finish().unwrap()));
 }
@@ -1320,11 +1398,19 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
     let source = model("F[C@](Cl)(Br)CC");
     let mut editor = source.to_editor();
     let terminal = editor
+        .topology()
         .atoms()
-        .find(|(id, a)| a.element().symbol() == "C" && editor.neighbors(*id).unwrap().count() == 1)
+        .find(|(id, a)| {
+            a.element().symbol() == "C" && editor.topology().neighbors(*id).unwrap().count() == 1
+        })
         .unwrap()
         .0;
-    let cut = editor.incident_bonds(terminal).unwrap().next().unwrap();
+    let cut = editor
+        .topology()
+        .incident_bonds(terminal)
+        .unwrap()
+        .next()
+        .unwrap();
     editor.delete_bond(cut).unwrap();
     let result = editor.clone().finish().unwrap();
     assert_eq!(
@@ -1336,6 +1422,7 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
         1
     );
     let fluorine = editor
+        .topology()
         .atoms()
         .find(|(_, a)| a.element().symbol() == "F")
         .unwrap()
@@ -1357,8 +1444,8 @@ fn independently_created_or_cleared_drafts_never_accept_foreign_handles() {
     let source = model("C");
     let mut first = source.to_editor();
     let mut second = source.to_editor();
-    let a = first.atom_ids().next().unwrap();
-    let b = second.atom_ids().next().unwrap();
+    let a = first.topology().atom_ids().next().unwrap();
+    let b = second.topology().atom_ids().next().unwrap();
     assert_ne!(a, b);
     assert!(first.delete_atom(b).is_err());
     assert!(second.delete_atom(a).is_err());
@@ -1370,13 +1457,13 @@ fn independently_created_or_cleared_drafts_never_accept_foreign_handles() {
         .add_atom(atom("N"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(c, d);
-    assert!(branch.atom(c).is_none());
+    assert!(branch.topology().atom(c).is_none());
     first.clear();
     let e = first
         .add_atom(atom("C"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(a, e);
-    assert!(first.atom(a).is_none());
+    assert!(first.topology().atom(a).is_none());
 }
 
 #[test]
@@ -1406,7 +1493,7 @@ fn publication_correspondence_tracks_reordering_deletion_and_bonds() {
     let (id, index) = map.bond(bond).unwrap();
     assert_eq!(model.topology().bond_ids()[index.index()], id);
     let mut next = model.to_editor();
-    let handle = next.bond_handle(id).unwrap();
+    let handle = next.topology().bond_handle(id).unwrap();
     next.delete_bond(handle).unwrap();
     let (split, second) = next.finish_with_correspondence().unwrap();
     assert!(second.bond(handle).is_none());
@@ -1467,9 +1554,11 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
         .all(|m| m.molecule().stereo_elements().count() == 1));
     let mut changed = original.to_editor();
     let id = changed
+        .topology()
         .atom_handle(original.topology().atom_ids()[0])
         .unwrap();
     let a = changed
+        .topology()
         .atom(id)
         .unwrap()
         .clone()
@@ -1478,4 +1567,86 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
     assert!(changed
         .replace_source_instance_stereo(instances[0], &[])
         .is_err());
+}
+
+#[test]
+fn editor_property_guards_reject_deleted_handles_with_the_typed_error() {
+    use kekule::topology::edit::TopologyEditError;
+
+    let source = model("CO");
+    let value = Some(PropertyValue::Int(1));
+    let mut editor = source.shared_topology().to_editor();
+    let chain = editor.add_chain("A", None).unwrap();
+    let [carbon, oxygen]: [EditAtomId; 2] =
+        editor.atom_ids().collect::<Vec<_>>().try_into().unwrap();
+    let bond = editor.bond_ids().next().unwrap();
+    editor.delete_bond(bond).unwrap();
+    editor.delete_atom(oxygen).unwrap();
+    editor.delete_chain(chain).unwrap();
+    let mut properties = editor.properties_mut();
+    assert_eq!(
+        properties
+            .atoms_mut()
+            .set_value(key("tag"), oxygen, value.clone()),
+        Err(TopologyEditError::InvalidAtom(oxygen))
+    );
+    assert_eq!(
+        properties
+            .bonds_mut()
+            .set_values(key("tag"), [(bond, value.clone())]),
+        Err(TopologyEditError::InvalidBond(bond))
+    );
+    assert_eq!(
+        properties.chains_mut().clear_value(key("tag"), chain),
+        Err(TopologyEditError::InvalidChain(chain))
+    );
+    assert_eq!(
+        editor.properties().atoms().value(&key("tag"), oxygen),
+        Err(TopologyEditError::InvalidAtom(oxygen))
+    );
+    editor
+        .properties_mut()
+        .atoms_mut()
+        .set_value(key("tag"), carbon, value.clone())
+        .unwrap();
+    assert_eq!(
+        editor.properties().atoms().get(&key("tag")),
+        Some(PropertyColumn::Int(vec![Some(1)]))
+    );
+
+    // Structure annotations of a model draft resolve handles the same way.
+    let mut model_editor = source.into_editor();
+    let [_, oxygen]: [EditAtomId; 2] = model_editor
+        .topology()
+        .atom_ids()
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+    let bond = model_editor.topology().bond_ids().next().unwrap();
+    model_editor.delete_bond(bond).unwrap();
+    model_editor.delete_atom(oxygen).unwrap();
+    assert_eq!(
+        model_editor
+            .properties_mut()
+            .atoms_mut()
+            .set_value(key("tag"), oxygen, value),
+        Err(TopologyEditError::InvalidAtom(oxygen))
+    );
+}
+
+#[test]
+fn owner_only_topology_edits_publish_a_new_topology() {
+    let source = Arc::new(model("C").topology().clone());
+    let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
+    editor
+        .properties_mut()
+        .owner_mut()
+        .insert(key("note"), PropertyValue::String("edited".into()))
+        .unwrap();
+    let edited = editor.finish().unwrap();
+    assert_eq!(
+        edited.properties().owner().get(&key("note")),
+        Some(&PropertyValue::String("edited".into()))
+    );
+    assert_eq!(source.properties().owner().get(&key("note")), None);
 }

@@ -25,6 +25,7 @@ pub use error::TopologyEditError;
 use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
+pub use properties::{EditProperties, EditPropertiesMut, EditPropertyTable, EditPropertyTableMut};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -46,7 +47,7 @@ struct Group {
     class_explicit: bool,
 }
 #[derive(Debug, Clone, Copy)]
-struct Location<Id> {
+pub(crate) struct Location<Id> {
     group: usize,
     local: Id,
     slot: usize,

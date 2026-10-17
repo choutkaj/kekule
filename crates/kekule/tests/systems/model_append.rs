@@ -490,6 +490,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     editor
         .delete_atom(
             editor
+                .topology()
                 .atom_handle(receptor.topology().atom_ids()[1])
                 .unwrap(),
         )
@@ -506,7 +507,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     editor.add_bond(left, hydrogen, BondOrder::Single).unwrap();
     editor
         .add_bond(
-            editor.atom_handle(receptor_atom).unwrap(),
+            editor.topology().atom_handle(receptor_atom).unwrap(),
             left,
             BondOrder::Single,
         )
@@ -539,7 +540,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     );
     let removed = imported.bond(source_bond).unwrap();
     editor.delete_bond(removed).unwrap();
-    assert!(editor.bond(removed).is_none());
+    assert!(editor.topology().bond(removed).is_none());
     let split = editor.clone().finish().unwrap();
     assert_eq!(split.topology().instance_count(), 2);
     assert_eq!(split.atom_count(), 4);
@@ -562,8 +563,8 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     );
     editor.delete_atom(left).unwrap();
     editor.delete_atom(right).unwrap();
-    assert!(editor.atom(left).is_none());
-    assert!(editor.atom(right).is_none());
+    assert!(editor.topology().atom(left).is_none());
+    assert!(editor.topology().atom(right).is_none());
     let deleted = editor.finish().unwrap();
     assert_eq!(deleted.atom_count(), 2);
     assert_eq!(deleted.topology().instance_count(), 2);
@@ -927,7 +928,7 @@ fn edited_source_ids_and_reordered_definition_occurrences_keep_dense_state_assoc
         .insert(key("tag"), column(2, 500, false))
         .unwrap();
     let mut destination = model("CCC").into_editor();
-    let deleted = destination.atom_ids().next().unwrap();
+    let deleted = destination.topology().atom_ids().next().unwrap();
     destination.delete_atom(deleted).unwrap();
     destination.append_model(&source).unwrap();
     let result = destination.finish().unwrap();
