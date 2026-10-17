@@ -22,6 +22,7 @@ categories = ["science", "data-structures", "parser-implementations"]
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"
+missing_docs = "warn"
 
 [profile.dev.package.sha2]
 opt-level = 3
