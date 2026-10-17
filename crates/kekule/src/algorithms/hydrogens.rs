@@ -95,14 +95,18 @@ pub struct AddedHydrogen {
 }
 
 impl AddedHydrogen {
+    /// The new hydrogen atom, in the transformed molecule.
     pub const fn hydrogen(&self) -> AtomId {
         self.hydrogen
     }
 
+    /// The atom whose implicit hydrogen it materializes; its ID is the same
+    /// before and after addition.
     pub const fn parent(&self) -> AtomId {
         self.parent
     }
 
+    /// Whether the materialized hydrogen came from a fixed or inferred count.
     pub const fn origin(&self) -> AddedHydrogenOrigin {
         self.origin
     }
@@ -118,6 +122,7 @@ pub struct AddHydrogensReport {
 }
 
 impl AddHydrogensReport {
+    /// Every added hydrogen, in ascending new atom ID order.
     pub fn added(&self) -> &[AddedHydrogen] {
         &self.added
     }
@@ -131,10 +136,12 @@ pub struct RemovedHydrogen {
 }
 
 impl RemovedHydrogen {
+    /// The removed hydrogen atom, in the input molecule.
     pub const fn hydrogen(&self) -> AtomId {
         self.hydrogen
     }
 
+    /// The atom whose implicit count absorbed it, in the input molecule.
     pub const fn parent(&self) -> AtomId {
         self.parent
     }
@@ -144,17 +151,30 @@ impl RemovedHydrogen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RetainedHydrogenReason {
+    /// The hydrogen carries an isotope label.
     Isotopic,
+    /// The hydrogen carries an atom map number.
     Mapped,
+    /// The hydrogen carries a formal charge.
     Charged,
+    /// The hydrogen carries radical electrons.
     Radical,
+    /// The hydrogen itself declares a nonzero implicit hydrogen count.
     EncodedHydrogenCount,
+    /// The hydrogen carries atom property data.
     AtomProperties,
+    /// The hydrogen has no bonded neighbor.
     NoHeavyAtomNeighbor,
+    /// The hydrogen has more than one bonded neighbor.
     MultipleNeighbors,
+    /// The hydrogen's only neighbor is another hydrogen.
     HydrogenNeighbor,
+    /// The hydrogen's bond is not single.
     NonSingleBond,
+    /// The hydrogen's bond carries bond property data.
     BondProperties,
+    /// The hydrogen is a stereo carrier that cannot become implicit, or the
+    /// caller asked to keep it.
     UnsupportedStereoRole,
 }
 
@@ -166,10 +186,12 @@ pub struct RetainedHydrogen {
 }
 
 impl RetainedHydrogen {
+    /// The retained hydrogen atom, in the input molecule.
     pub const fn hydrogen(&self) -> AtomId {
         self.hydrogen
     }
 
+    /// Why it could not be removed losslessly.
     pub const fn reason(&self) -> RetainedHydrogenReason {
         self.reason
     }
@@ -186,10 +208,12 @@ pub struct HydrogenCountAdjustment {
 }
 
 impl HydrogenCountAdjustment {
+    /// The parent atom, in the input molecule.
     pub const fn parent(&self) -> AtomId {
         self.parent
     }
 
+    /// Graph hydrogens collapsed into the parent's implicit count.
     pub const fn removed_graph_hydrogens(&self) -> usize {
         self.removed_graph_hydrogens
     }
@@ -226,18 +250,24 @@ pub struct RemoveHydrogensReport {
 }
 
 impl RemoveHydrogensReport {
+    /// Every removed hydrogen.
     pub fn removed(&self) -> &[RemovedHydrogen] {
         &self.removed
     }
 
+    /// Every graph hydrogen that was kept, with its reason.
     pub fn retained(&self) -> &[RetainedHydrogen] {
         &self.retained
     }
 
+    /// The new implicit hydrogen declaration of every parent that lost a
+    /// graph hydrogen.
     pub fn adjustments(&self) -> &[HydrogenCountAdjustment] {
         &self.adjustments
     }
 
+    /// Maps every surviving input atom ID to its ID in the transformed
+    /// molecule.
     pub fn correspondence(&self) -> &MoleculeCorrespondence {
         &self.correspondence
     }

@@ -161,6 +161,11 @@ impl RotatableBondSet {
 /// returned without changing the source graph or its perception. Disabling
 /// resonance exclusions requires only graph ring membership and does not run
 /// chemical perception.
+///
+/// # Errors
+///
+/// When resonance exclusions apply, the [`PerceptionError`] of strict valence
+/// validation or of the default perception profile on the temporary copy.
 pub fn rotatable_bonds(
     molecule: &Molecule,
     options: RotatableBondOptions,

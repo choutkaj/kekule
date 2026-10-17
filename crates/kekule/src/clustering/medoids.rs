@@ -26,7 +26,13 @@ impl Ensemble {
     /// lowest member, and each is represented by its medoid.
     ///
     /// `clusters` ranges from one to the member count (zero only for no
-    /// members). Fails when the matrix covers a different member count.
+    /// members).
+    ///
+    /// # Errors
+    ///
+    /// [`ClusteringError::MatrixMismatch`] when the matrix covers a different
+    /// member count, and [`ClusteringError::InvalidClusterCount`] when
+    /// `clusters` is out of range.
     pub fn cluster_k_medoids(
         &self,
         distances: &DistanceMatrix,

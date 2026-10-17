@@ -161,6 +161,19 @@ pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoSearch
 /// Axial assertions and groups containing unclassified members are conservatively
 /// held fixed; these cannot provide a proof based on only part of a relationship.
 /// Exhaustion is an error, never evidence of equivalence or stereogenicity.
+///
+/// Candidates are tetrahedral centers in atom order, then double bonds in
+/// bond order.
+///
+/// # Errors
+///
+/// - [`StereoSearchError::LimitExceeded`] when the molecule has more than
+///   [`StereoSearchOptions::max_atoms`] atoms or the symmetry search exceeds
+///   [`StereoSearchOptions::max_search_states`].
+/// - [`StereoSearchError::InvalidStereo`] when represented stereo fails
+///   stereo validation.
+/// - [`StereoSearchError::Perception`] when perceiving the temporary copy
+///   fails.
 pub fn detect_stereo_candidates(
     mol: &Molecule,
     options: StereoSearchOptions,
@@ -188,6 +201,8 @@ pub struct StereoCleanupReport {
 }
 
 impl StereoCleanupReport {
+    /// The removed stereo elements, in element order. Their IDs refer to the
+    /// editor before cleanup.
     pub fn removed_elements(&self) -> &[StereoElementId] {
         &self.removed_elements
     }
@@ -208,6 +223,11 @@ impl StereoCleanupReport {
 /// local geometries and axial assertions are reported as unclassified and
 /// preserved. Default perception and parsing never invoke this operation.
 /// Failure leaves the editor, its properties and installed perception untouched.
+///
+/// # Errors
+///
+/// The errors of [`detect_stereo_candidates`] for the editor's working
+/// molecule.
 pub fn cleanup_stereo(
     editor: &mut MoleculeEditor,
     options: StereoSearchOptions,

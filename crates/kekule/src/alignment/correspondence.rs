@@ -28,6 +28,12 @@ impl AtomCorrespondence {
     /// that side. Elements and bonding are not compared: the caller chooses the
     /// scientific correspondence. Empty or short correspondences are permitted;
     /// each calculation enforces its own minimum size and geometry requirements.
+    ///
+    /// # Errors
+    ///
+    /// [`AtomCorrespondenceError::InvalidAtom`] when an atom is absent from its
+    /// side's topology, and [`AtomCorrespondenceError::DuplicateAtom`] when an
+    /// atom repeats on its side; both name the first offending pair.
     pub fn from_pairs(
         moving: impl Into<Arc<Topology>>,
         reference: impl Into<Arc<Topology>>,
@@ -83,6 +89,11 @@ impl AtomCorrespondence {
     /// This is useful for independent imports of the same record. It does not
     /// infer graph isomorphism, reorder atoms, or resolve symmetry. Perception,
     /// properties, and coordinate differences do not prevent layout matching.
+    ///
+    /// # Errors
+    ///
+    /// [`AtomCorrespondenceError::LayoutMismatch`] when the two topologies do
+    /// not have the same layout.
     pub fn from_same_layout(
         moving: impl Into<Arc<Topology>>,
         reference: impl Into<Arc<Topology>>,
@@ -106,18 +117,22 @@ impl AtomCorrespondence {
         })
     }
 
+    /// The topology the moving atoms belong to.
     pub fn moving_topology(&self) -> &Topology {
         &self.moving
     }
 
+    /// The topology the reference atoms belong to.
     pub fn reference_topology(&self) -> &Topology {
         &self.reference
     }
 
+    /// Number of atom pairs.
     pub fn len(&self) -> usize {
         self.pairs.len()
     }
 
+    /// Whether there are no atom pairs.
     pub fn is_empty(&self) -> bool {
         self.pairs.is_empty()
     }
@@ -142,7 +157,14 @@ impl AtomCorrespondence {
         })
     }
 
-    /// Checks exact allocation identity independently on both sides.
+    /// Checks, independently on each side, that a topology shares the layout
+    /// of the one this correspondence was built for
+    /// ([`Topology::shares_layout`]).
+    ///
+    /// # Errors
+    ///
+    /// [`AtomCorrespondenceError::TopologyMismatch`] naming the first side,
+    /// moving then reference, whose topology does not share the layout.
     pub fn ensure_compatible(
         &self,
         moving: &Topology,
@@ -169,7 +191,9 @@ impl AtomCorrespondence {
 /// This enum is closed: a correspondence has exactly two sides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorrespondenceSide {
+    /// The moving side, whose coordinates are fitted.
     Moving,
+    /// The reference side, which stays fixed.
     Reference,
 }
 

@@ -53,7 +53,8 @@
 //! ensemble.assign_boltzmann_weights(Quantity::new(298.15, KELVIN))?;
 //!
 //! let atoms = SymmetricSelection::new(&AtomSelection::all(topology.clone()))?;
-//! let rotamers = ensemble.cluster_by_radius(Quantity::new(0.125, ANGSTROM), &atoms, Default::default())?;
+//! let radius = Quantity::new(0.125, ANGSTROM);
+//! let rotamers = ensemble.cluster_by_radius(radius, &atoms, Default::default())?;
 //! assert_eq!(rotamers.assignments(), [0, 0, 1]);
 //!
 //! let conformers = ensemble.collapse(&rotamers)?;
@@ -91,6 +92,14 @@ impl EnsemblePartition {
     /// Validates a partition built elsewhere: `assignments[m]` is the cluster
     /// of member `m`, and `representatives[c]` is a member assigned to
     /// cluster `c`.
+    ///
+    /// # Errors
+    ///
+    /// [`PartitionError::ClusterOutOfRange`] when a member's cluster has no
+    /// representative, [`PartitionError::RepresentativeOutOfRange`] when a
+    /// representative is not a member, and
+    /// [`PartitionError::RepresentativeNotInCluster`] when a representative is
+    /// assigned to another cluster.
     pub fn new(
         assignments: Vec<usize>,
         representatives: Vec<usize>,
@@ -133,6 +142,7 @@ impl EnsemblePartition {
         self.assignments.len()
     }
 
+    /// The number of clusters, one per representative.
     pub fn cluster_count(&self) -> usize {
         self.representatives.len()
     }
@@ -223,7 +233,22 @@ impl Ensemble {
     /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
     /// is rejected. Each member is fitted to at most every representative, so
     /// the cost grows with members times clusters (times symmetry
-    /// permutations). Fit failures name the member being placed.
+    /// permutations). An empty ensemble gives an empty partition.
+    ///
+    /// # Errors
+    ///
+    /// - [`ClusteringError::Unit`] when `radius` is not a length, and
+    ///   [`ClusteringError::InvalidRadius`] when it is negative or not finite.
+    /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
+    ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
+    /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
+    ///   ensemble's layout, has fewer than three pairs, or the explicit
+    ///   weights of `options` are invalid.
+    ///   A failed fit is wrapped in [`AlignmentError::Item`] naming the
+    ///   member being placed.
+    /// - [`ClusteringError::Ensemble`] wrapping
+    ///   [`EnsembleError::MissingEnergy`] when ordering by
+    ///   [`ClusterOrder::Energy`] and a member has no energy.
     pub fn cluster_by_radius<'a>(
         &self,
         radius: Quantity<f64>,
@@ -296,8 +321,13 @@ impl Ensemble {
     /// The representative keeps its own positions, energy, and other state,
     /// and the topology and ensemble properties are shared. Summed weights
     /// stay relative, so collapsing Boltzmann-weighted rotamers gives each
-    /// conformer its degeneracy-weighted population. Fails when the
-    /// partition has a different member count or a summed weight overflows.
+    /// conformer its degeneracy-weighted population.
+    ///
+    /// # Errors
+    ///
+    /// [`ClusteringError::PartitionMismatch`] when the partition has a
+    /// different member count, and [`ClusteringError::Ensemble`] when a summed
+    /// weight is not finite.
     pub fn collapse(&self, partition: &EnsemblePartition) -> Result<Self, ClusteringError> {
         if partition.member_count() != self.len() {
             return Err(ClusteringError::PartitionMismatch {

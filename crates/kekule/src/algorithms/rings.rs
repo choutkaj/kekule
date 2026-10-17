@@ -216,6 +216,7 @@ impl RingPerceptionOptions {
         self
     }
 
+    /// Maximum candidate cycles generated while selecting the basis.
     pub const fn max_candidates(&self) -> usize {
         self.max_candidates
     }
@@ -227,6 +228,7 @@ impl RingPerceptionOptions {
         self
     }
 
+    /// Maximum breadth-first path expansions across all candidate searches.
     pub const fn max_path_expansions(&self) -> usize {
         self.max_path_expansions
     }
@@ -238,6 +240,8 @@ impl RingPerceptionOptions {
         self
     }
 
+    /// Maximum equivalent shortest paths recorded across all candidate
+    /// searches.
     pub const fn max_equivalent_shortest_paths(&self) -> usize {
         self.max_equivalent_shortest_paths
     }
@@ -252,6 +256,7 @@ impl RingPerceptionOptions {
         self
     }
 
+    /// Maximum atoms in one candidate cycle.
     pub const fn max_cycle_size(&self) -> usize {
         self.max_cycle_size
     }
@@ -263,6 +268,7 @@ impl RingPerceptionOptions {
         self
     }
 
+    /// Maximum total work, as itemized above.
     pub const fn max_total_work(&self) -> usize {
         self.max_total_work
     }
@@ -397,6 +403,13 @@ impl std::error::Error for RingPerceptionError {}
 /// clears aromaticity and dependent stereo; membership-only perception also
 /// clears the ring set. Failure preserves the previously installed perception
 /// state, and bound failures never install partial state.
+///
+/// # Errors
+///
+/// Only basis perception fails. [`RingPerceptionError::LimitExceeded`] when a
+/// bound of `options` is exceeded, and
+/// [`RingPerceptionError::IncompleteRingCoverage`] when even the fallback
+/// basis leaves a cyclic bond uncovered.
 pub fn perceive_rings(
     mol: &mut Molecule,
     options: RingPerceptionOptions,

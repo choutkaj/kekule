@@ -162,14 +162,24 @@ impl std::error::Error for AromaticityError {
 /// Perceives aromatic atom and bond membership without changing localized bonds.
 ///
 /// Reuses installed rings and implicit hydrogen counts. Missing rings are
-/// perceived with `options.ring_options`; an installed ring basis is reused,
-/// so those limits do not revalidate it. Missing hydrogen counts use the
-/// default valence calculation without installing valence state.
-/// `options.max_total_work` bounds the aromaticity assignment itself,
+/// perceived with [`AromaticityOptions::ring_options`]; an installed ring
+/// basis is reused, so those limits do not revalidate it. Missing hydrogen
+/// counts use the default valence calculation without installing valence
+/// state. [`AromaticityOptions::max_total_work`] bounds the aromaticity
+/// assignment itself,
 /// including fused-ring search; pass [`AromaticityOptions::for_molecule`] for
 /// the default profile's bounds, which grow with the molecule. The operation
 /// is transactional: on failure, all previously installed perception and
 /// represented chemistry are preserved.
+///
+/// # Errors
+///
+/// - [`AromaticityError::RingPerception`] when perceiving missing rings
+///   fails.
+/// - [`AromaticityError::IncompatibleRingBasis`] when the MDL model meets an
+///   installed ring basis that is not SSSR-like.
+/// - [`AromaticityError::LimitExceeded`] when the assignment exceeds
+///   [`AromaticityOptions::max_total_work`].
 pub fn perceive_aromaticity(
     mol: &mut Molecule,
     model: AromaticityModel,

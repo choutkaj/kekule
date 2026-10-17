@@ -35,6 +35,12 @@ impl std::error::Error for ConjugationError {}
 /// including its element restrictions and treatment of cumulenes and radicals.
 /// Success replaces conjugation and invalidates prepared resonance groups.
 /// Failure leaves all state untouched. No resonance structures are enumerated.
+///
+/// # Errors
+///
+/// [`ConjugationError::MissingAromaticity`] when aromaticity is not installed,
+/// and [`ConjugationError::UnknownHydrogens`] for the first atom whose
+/// implicit hydrogen count is unknown.
 pub fn perceive_conjugation(
     mol: &mut Molecule,
     model: ConjugationModel,

@@ -1,7 +1,7 @@
 //! Rigid alignment and RMSD through selections or explicit atom correspondence.
 //!
 //! Atoms are paired by [`FitAtoms`]: an [`AtomSelection`] pairs each selected
-//! atom with itself (both sides share one topology layout), and an
+//! atom with itself (both sides share one topology layout), an
 //! [`AtomCorrespondence`] pairs atoms of independent topologies, and a
 //! [`SymmetricSelection`] pairs a selection under every permutation of
 //! symmetry-equivalent atoms, keeping the smallest RMSD. Every operation
@@ -150,6 +150,7 @@ impl FitAtoms<'_> {
         }
     }
 
+    /// Whether there are no atom pairs.
     pub fn is_empty(self) -> bool {
         self.pair_count() == 0
     }
@@ -206,6 +207,24 @@ fn check_selection(
 /// policy; the default weights are uniform. The result maps moving coordinates
 /// into the reference coordinate system, and its RMSD is the weighted post-fit
 /// value in [`CANONICAL_LENGTH_UNIT`].
+///
+/// # Errors
+///
+/// - [`AlignmentError::TopologyMismatch`] or
+///   [`AlignmentError::SelectionTopologyMismatch`] when a selection's views or
+///   the selection itself do not share one topology layout, and
+///   [`AlignmentError::Correspondence`] when a correspondence belongs to other
+///   topologies.
+/// - [`AlignmentError::WeightCountMismatch`],
+///   [`AlignmentError::NonFiniteWeight`], or
+///   [`AlignmentError::NonPositiveWeight`] for invalid explicit weights.
+/// - [`AlignmentError::PeriodicCoordinates`] when either view has a cell under
+///   [`PeriodicPolicy::RejectPeriodic`].
+/// - [`AlignmentError::InsufficientSelectedAtoms`] for fewer than three fit
+///   pairs, and [`AlignmentError::DegenerateGeometry`] when the paired
+///   coordinates do not span two dimensions.
+/// - [`AlignmentError::NumericalFailure`] or
+///   [`AlignmentError::InvalidRigidTransform`] when the solution is not finite.
 pub fn fit<'a>(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
@@ -221,7 +240,22 @@ pub fn fit<'a>(
 /// Direct RMSD over paired atoms, measured exactly as stored without fitting.
 ///
 /// `options` selects the weights, which follow pair order, and the periodic
-/// policy.
+/// policy. The value is in [`CANONICAL_LENGTH_UNIT`].
+///
+/// # Errors
+///
+/// - [`AlignmentError::TopologyMismatch`] or
+///   [`AlignmentError::SelectionTopologyMismatch`] when a selection's views or
+///   the selection itself do not share one topology layout, and
+///   [`AlignmentError::Correspondence`] when a correspondence belongs to other
+///   topologies.
+/// - [`AlignmentError::WeightCountMismatch`],
+///   [`AlignmentError::NonFiniteWeight`], or
+///   [`AlignmentError::NonPositiveWeight`] for invalid explicit weights.
+/// - [`AlignmentError::PeriodicCoordinates`] when either view has a cell under
+///   [`PeriodicPolicy::RejectPeriodic`].
+/// - [`AlignmentError::EmptySelection`] when there are no pairs.
+/// - [`AlignmentError::NumericalFailure`] when the value is not finite.
 pub fn rmsd<'a>(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
@@ -250,6 +284,11 @@ pub fn rmsd<'a>(
 /// permutation under it. `options` holds the fit options, whose periodic
 /// policy applies to both steps, and the measurement weights. The value is in
 /// [`CANONICAL_LENGTH_UNIT`].
+///
+/// # Errors
+///
+/// Any error of [`fit`] for the fit pairs, and of [`rmsd`] for the
+/// measurement pairs.
 pub fn aligned_rmsd<'a>(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
