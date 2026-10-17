@@ -6,7 +6,7 @@ do not enter the runtime workspace graph.
 List the registered targets and run a bounded campaign from the repository root:
 
 ```bash
-cargo install cargo-fuzz --locked
+cargo install cargo-fuzz --version 0.13.2 --locked
 cargo +nightly fuzz list
 cargo +nightly fuzz run <target> -- -runs=256 -max_len=4096 -seed=1
 ```
@@ -15,7 +15,10 @@ The input-parser targets are `mol_v2000`, `mol_v3000`, `sdf_v2000`, `smiles`,
 `mmcif`, and `pdb`. The trajectory targets are `trajectory_detection`,
 `trajectory_xyz`, `trajectory_dcd`, `trajectory_trr`, and `trajectory_xtc`.
 `smarts` checks query parsing; `smarts_match` compares complete collection and
-streaming match results under shared resource bounds.
+streaming match results under shared resource bounds. `resonance` enumerates
+resonance contributors of small parsed SMILES molecules under structure and
+work bounds, and checks that every contributor keeps the source's atoms and
+bonds.
 
 The SMILES target requires every successful plain write to parse and interpret.
 For perceivable molecules with at most 32 atoms and 48 bonds, it also checks

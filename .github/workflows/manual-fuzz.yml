@@ -13,9 +13,11 @@ on:
           - mol_v3000
           - sdf_v2000
           - smiles
+          - resonance
           - smarts
           - smarts_match
           - mmcif
+          - pdb
           - trajectory_detection
           - trajectory_xyz
           - trajectory_dcd
@@ -38,10 +40,15 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@cargo-fuzz
-      - name: Seed SMILES with the supplied PubChem smoke inputs
-        if: inputs.target == 'smiles'
-        run: cp crates/kekule/tests/fixtures/corpus/smoke/data/pubchem_smiles/*.txt fuzz/corpus/smiles/
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz --version 0.13.2 --locked
+      - name: Seed SMILES targets with the supplied PubChem smoke inputs
+        if: inputs.target == 'smiles' || inputs.target == 'resonance'
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          mkdir -p "fuzz/corpus/$TARGET"
+          cp crates/kekule/tests/fixtures/corpus/smoke/data/pubchem_smiles/*.txt "fuzz/corpus/$TARGET/"
       - name: Run bounded campaign
         env:
           TARGET: ${{ inputs.target }}
