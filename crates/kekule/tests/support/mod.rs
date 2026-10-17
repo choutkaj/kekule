@@ -152,7 +152,7 @@ pub(crate) fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomI
         match &mut kind {
             StereoElementKind::Tetrahedral(value) => {
                 value.center = atoms[&value.center];
-                value.carriers = value.carriers.iter().copied().map(carrier).collect();
+                value.carriers = value.carriers.map(carrier);
             }
             StereoElementKind::DoubleBond(value) => {
                 value.bond = bonds[&value.bond];
@@ -163,7 +163,7 @@ pub(crate) fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomI
             }
             StereoElementKind::Axis(value) => {
                 value.axis = bonds[&value.axis];
-                value.carriers = value.carriers.iter().copied().map(carrier).collect();
+                value.carriers = value.carriers.map(carrier);
             }
             other => unimplemented!("support cannot remap {other:?}"),
         }

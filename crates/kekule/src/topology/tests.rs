@@ -1239,7 +1239,7 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
     }
     let tetra = StereoElementKind::Tetrahedral(TetrahedralStereo {
         center: atoms[2],
-        carriers: vec![
+        carriers: [
             StereoCarrier::Atom(atoms[1]),
             StereoCarrier::Atom(atoms[3]),
             StereoCarrier::Atom(atoms[4]),
@@ -1263,7 +1263,7 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
         }),
         StereoElementKind::Axis(AxisStereo {
             axis,
-            carriers: vec![
+            carriers: [
                 StereoCarrier::Atom(atoms[9]),
                 StereoCarrier::Atom(atoms[12]),
             ],
@@ -1296,7 +1296,7 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
     let expected = [
         StereoElementKind::Tetrahedral(TetrahedralStereo {
             center: AtomId::new(1),
-            carriers: vec![
+            carriers: [
                 carrier(0),
                 carrier(2),
                 carrier(3),
@@ -1314,7 +1314,7 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
         }),
         StereoElementKind::Axis(AxisStereo {
             axis: BondId::new(1),
-            carriers: vec![carrier(0), carrier(3)],
+            carriers: [carrier(0), carrier(3)],
             orientation: Some(AxisOrientation::Clockwise),
         }),
     ];

@@ -177,7 +177,6 @@ impl SourceStereoNormalizationError {
                 StereoValidationIssue::MissingStereoBond { bond, .. }
                 | StereoValidationIssue::InvalidDoubleBondOrder { bond, .. }
                 | StereoValidationIssue::DoubleBondFocusMismatch { bond, .. }
-                | StereoValidationIssue::InvalidAxisCarrierCount { axis: bond, .. }
                 | StereoValidationIssue::AxisCarrierIsFocusAtom { axis: bond, .. }
                 | StereoValidationIssue::AxisCarrierNotAdjacent { axis: bond, .. }
                 | StereoValidationIssue::UnsupportedAxisCarrier { axis: bond, .. },

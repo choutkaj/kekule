@@ -828,7 +828,9 @@ fn install_v3000_atom_cfg(
                 .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
                     TetrahedralStereo {
                         center,
-                        carriers,
+                        carriers: carriers
+                            .try_into()
+                            .expect("source tetrahedral carriers number four"),
                         orientation,
                     },
                 )))
@@ -1178,7 +1180,7 @@ mod stereo_group_tests {
                 editor
                     .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
                         axis: bond,
-                        carriers: vec![StereoCarrier::Atom(left), StereoCarrier::Atom(right)],
+                        carriers: [StereoCarrier::Atom(left), StereoCarrier::Atom(right)],
                         orientation: Some(AxisOrientation::Clockwise),
                     })))
                     .unwrap(),

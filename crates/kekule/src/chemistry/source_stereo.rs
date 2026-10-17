@@ -610,7 +610,7 @@ fn tetrahedral_element_from_wedge(
     Some(StereoElement::new(StereoElementKind::Tetrahedral(
         TetrahedralStereo {
             center,
-            carriers,
+            carriers: carriers.try_into().ok()?,
             orientation,
         },
     )))
@@ -944,7 +944,7 @@ fn atropisomeric_axis_candidate(
     };
     Some(StereoElement::new(StereoElementKind::Axis(AxisStereo {
         axis,
-        carriers: vec![
+        carriers: [
             StereoCarrier::Atom(left_reference),
             StereoCarrier::Atom(right_reference),
         ],

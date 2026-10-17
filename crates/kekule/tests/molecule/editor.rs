@@ -337,9 +337,9 @@ fn append_preserves_fragment_stereo_groups_and_entity_properties() {
     let new_element = editor
         .stereo_element(map.stereo_elements()[&old_id])
         .unwrap();
-    let old_group = old_element.group.unwrap();
+    let old_group = old_element.group().unwrap();
     let new_group = map.stereo_groups()[&old_group];
-    assert_eq!(new_element.group, Some(new_group));
+    assert_eq!(new_element.group(), Some(new_group));
     assert_eq!(
         editor.stereo_group(new_group).unwrap().members,
         vec![map.stereo_elements()[&old_id]]
@@ -353,7 +353,7 @@ fn append_preserves_fragment_stereo_groups_and_entity_properties() {
     assert_eq!(new.center, map.atoms()[&old.center]);
     assert_eq!(new.orientation, old.orientation);
     assert_eq!(
-        new.carriers,
+        new.carriers.to_vec(),
         old.carriers
             .iter()
             .map(|c| match c {
@@ -398,7 +398,7 @@ fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
     let axis = source
         .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis: focus,
-            carriers: vec![StereoCarrier::Atom(atoms[1]), StereoCarrier::Atom(atoms[4])],
+            carriers: [StereoCarrier::Atom(atoms[1]), StereoCarrier::Atom(atoms[4])],
             orientation: Some(AxisOrientation::Clockwise),
         })))
         .unwrap();
@@ -435,7 +435,7 @@ fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
                 assert_eq!(new.axis, map.bonds()[&old.axis]);
                 assert_eq!(
                     new.carriers,
-                    vec![
+                    [
                         StereoCarrier::Atom(map.atoms()[&atoms[1]]),
                         StereoCarrier::Atom(map.atoms()[&atoms[4]])
                     ]
@@ -547,7 +547,7 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
         .unwrap();
     assert_eq!(editor.stereo_group(id).unwrap().kind, StereoGroupKind::Or);
     assert_eq!(
-        editor.stereo_element(group.members[0]).unwrap().group,
+        editor.stereo_element(group.members[0]).unwrap().group(),
         Some(id)
     );
     let StereoElementKind::Tetrahedral(original) = editor
@@ -572,7 +572,7 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers,
+                carriers: carriers.try_into().unwrap(),
                 orientation: original.orientation,
             },
         )))
@@ -597,8 +597,11 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
             },
         )
         .unwrap();
-    assert_eq!(editor.stereo_element(group.members[0]).unwrap().group, None);
-    assert_eq!(editor.stereo_element(added).unwrap().group, Some(id));
+    assert_eq!(
+        editor.stereo_element(group.members[0]).unwrap().group(),
+        None
+    );
+    assert_eq!(editor.stereo_element(added).unwrap().group(), Some(id));
     let bond = editor.bond_between(original.center, center).unwrap();
     let other = editor.add_atom(atom("C")).unwrap();
     editor
@@ -693,7 +696,7 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
         .carriers
         .contains(&StereoCarrier::Atom(AtomId::new(0))));
     assert_eq!(
-        published.stereo_element(element).unwrap().group,
+        published.stereo_element(element).unwrap().group(),
         Some(StereoGroupId::new(0))
     );
     let groups = published.stereo_groups().collect::<Vec<_>>();

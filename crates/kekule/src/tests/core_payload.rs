@@ -110,7 +110,7 @@ fn implicit_hydrogens_are_either_wholly_fixed_or_wholly_inferred() {
 
 #[test]
 fn radical_electron_count_preserves_explicit_or_unspecified_spin() {
-    for (electrons, multiplicity) in [(2, 1), (1, 2), (2, 3), (3, 4), (4, 5), (4, 1), (4, 3)] {
+    for (electrons, multiplicity) in [(2, 1), (2, 3), (3, 4), (4, 5), (4, 1), (4, 3)] {
         let specified = AtomRadical::new(electrons, Some(multiplicity)).unwrap();
         let unspecified = AtomRadical::new(electrons, None).unwrap();
         assert_eq!(specified.electron_count(), electrons);
@@ -120,6 +120,14 @@ fn radical_electron_count_preserves_explicit_or_unspecified_spin() {
         assert_ne!(specified, unspecified);
     }
     assert_ne!(AtomRadical::new(2, Some(1)), AtomRadical::new(2, Some(3)));
+}
+
+#[test]
+fn single_electron_radicals_are_always_doublets() {
+    let unspecified = AtomRadical::new(1, None).unwrap();
+    assert_eq!(unspecified, AtomRadical::new(1, Some(2)).unwrap());
+    assert_eq!(unspecified.electron_count(), 1);
+    assert_eq!(unspecified.spin_multiplicity(), Some(2));
 }
 
 #[test]
@@ -173,7 +181,7 @@ fn stereo_elements_and_groups_live_on_molecule() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(a),
                     StereoCarrier::Atom(b),
                     StereoCarrier::Atom(c),
@@ -219,7 +227,7 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(a),
                     StereoCarrier::Atom(b),
                     StereoCarrier::Atom(c),
@@ -283,7 +291,7 @@ fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: canonical_carriers.clone(),
+                carriers: canonical_carriers.clone().try_into().unwrap(),
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
         )))
@@ -293,7 +301,7 @@ fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     canonical_carriers[1],
                     canonical_carriers[0],
                     canonical_carriers[2],
@@ -311,7 +319,7 @@ fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: canonical_carriers.clone(),
+                carriers: canonical_carriers.clone().try_into().unwrap(),
                 orientation: None,
             },
         )))
@@ -321,7 +329,7 @@ fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     canonical_carriers[3],
                     canonical_carriers[1],
                     canonical_carriers[0],
@@ -338,7 +346,7 @@ fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
 
     let replacement = StereoElement::new(StereoElementKind::Tetrahedral(TetrahedralStereo {
         center,
-        carriers: vec![
+        carriers: [
             canonical_carriers[2],
             canonical_carriers[1],
             canonical_carriers[0],
@@ -492,7 +500,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
     };
     let canonical = add(
         mol.working_mut(),
-        vec![
+        [
             StereoCarrier::Atom(left_reference),
             StereoCarrier::Atom(right_reference),
         ],
@@ -500,7 +508,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
     );
     let reversed = add(
         mol.working_mut(),
-        vec![
+        [
             StereoCarrier::Atom(right_reference),
             StereoCarrier::Atom(left_reference),
         ],
@@ -508,7 +516,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
     );
     let alternate_left = add(
         mol.working_mut(),
-        vec![
+        [
             StereoCarrier::Atom(left_alternative),
             StereoCarrier::Atom(right_reference),
         ],
@@ -516,7 +524,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
     );
     let both_alternatives = add(
         mol.working_mut(),
-        vec![
+        [
             StereoCarrier::Atom(right_alternative),
             StereoCarrier::Atom(left_alternative),
         ],
@@ -528,7 +536,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
 
     let unknown = add(
         mol.working_mut(),
-        vec![
+        [
             StereoCarrier::Atom(left_reference),
             StereoCarrier::Atom(right_reference),
         ],
@@ -536,7 +544,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
     );
     let unknown_alternatives = add(
         mol.working_mut(),
-        vec![
+        [
             StereoCarrier::Atom(right_alternative),
             StereoCarrier::Atom(left_alternative),
         ],
@@ -560,7 +568,7 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(a),
                     StereoCarrier::Atom(b),
                     StereoCarrier::Atom(c),
@@ -670,7 +678,7 @@ fn topology_deletions_prune_referencing_stereo_state() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: c,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(b),
                     StereoCarrier::Atom(fluorine),
                     StereoCarrier::Atom(chlorine),
@@ -686,23 +694,19 @@ fn topology_deletions_prune_referencing_stereo_state() {
 }
 
 #[test]
-fn checked_stereo_rejects_invalid_carrier_shapes_transactionally() {
+fn checked_stereo_rejects_duplicate_tetrahedral_carriers_transactionally() {
     let mut molecule = read_smiles("F[C@](Cl)(Br)I").unwrap();
     perceive(&mut molecule).unwrap();
     stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
     let (id, element) = molecule.stereo_elements().next().unwrap();
     let element = element.clone();
     let mut editor = molecule.to_editor();
-    for duplicate in [false, true] {
+    {
         let mut invalid = element.clone();
         let StereoElementKind::Tetrahedral(stereo) = &mut invalid.kind else {
             unreachable!();
         };
-        if duplicate {
-            stereo.carriers[3] = stereo.carriers[0];
-        } else {
-            stereo.carriers.pop();
-        }
+        stereo.carriers[3] = stereo.carriers[0];
         let before = editor.clone();
         assert!(matches!(
             editor.add_stereo_element(invalid.clone()),
@@ -728,13 +732,12 @@ fn checked_stereo_rejects_invalid_carrier_shapes_transactionally() {
 fn axis_stereo_rejects_duplicate_and_same_endpoint_references() {
     let (molecule, _, axis) = coordinate_axis_graph(true);
     for carriers in [
-        vec![StereoCarrier::Atom(AtomId::new(2))],
-        vec![StereoCarrier::Atom(AtomId::new(2)); 2],
-        vec![
+        [StereoCarrier::Atom(AtomId::new(2)); 2],
+        [
             StereoCarrier::Atom(AtomId::new(2)),
             StereoCarrier::Atom(AtomId::new(3)),
         ],
-        vec![
+        [
             StereoCarrier::ImplicitHydrogen,
             StereoCarrier::Atom(AtomId::new(4)),
         ],
@@ -848,7 +851,7 @@ fn bond_stereo_focus_rejects_duplicate_or_conflicting_axis_assertions() {
     };
     let axis = StereoElement::new(StereoElementKind::Axis(AxisStereo {
         axis: stereo.bond,
-        carriers: vec![stereo.left_carrier, stereo.right_carrier],
+        carriers: [stereo.left_carrier, stereo.right_carrier],
         orientation: Some(AxisOrientation::Clockwise),
     }));
     assert!(matches!(
@@ -874,7 +877,7 @@ fn axis_reference_canonicalization_preserves_exclusive_endpoint_adjacency() {
     }
     let element = StereoElement::new(StereoElementKind::Axis(AxisStereo {
         axis,
-        carriers: vec![StereoCarrier::Atom(atoms[3]), StereoCarrier::Atom(atoms[4])],
+        carriers: [StereoCarrier::Atom(atoms[3]), StereoCarrier::Atom(atoms[4])],
         orientation: Some(AxisOrientation::Clockwise),
     }));
     let id = editor.add_stereo_element(element.clone()).unwrap();
@@ -967,7 +970,7 @@ fn stereo_bond_endpoints_reject_more_than_two_explicit_substituents() {
         } else {
             StereoElementKind::Axis(AxisStereo {
                 axis: focus,
-                carriers: vec![StereoCarrier::Atom(atoms[2]), StereoCarrier::Atom(atoms[5])],
+                carriers: [StereoCarrier::Atom(atoms[2]), StereoCarrier::Atom(atoms[5])],
                 orientation: Some(AxisOrientation::Clockwise),
             })
         };

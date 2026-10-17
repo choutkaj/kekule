@@ -27,7 +27,7 @@ pub use atom_bond::{Atom, AtomRadical, Bond, BondOrder, ImplicitHydrogens};
 pub(crate) use delocalization::{
     ConjugationModel, ConjugationPerception, ResonanceGroup, ResonancePerception,
 };
-pub use element::Element;
+pub use element::{Element, ElementError};
 pub use element_reference::VanDerWaalsRadiusSource;
 pub use graph::Graph;
 pub(crate) use ids::{checked_fixed_id_collection_len, checked_raw_id};

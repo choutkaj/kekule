@@ -159,10 +159,7 @@ pub(super) fn validate_smiles_writeable(
         StereoWriteMode::Reject => {}
     }
     for (_, atom) in mol.atoms() {
-        if atom
-            .radical
-            .is_some_and(|radical| radical.spin_multiplicity().is_some())
-        {
+        if atom.radical.is_some_and(AtomRadical::has_explicit_spin) {
             return Err(SMILES_WRITE
                 .unsupported("SMILES writer cannot encode explicit radical spin multiplicity"));
         }
@@ -418,7 +415,7 @@ impl SmilesStereoWriteContext {
                         .insert(
                             stereo.center,
                             TetrahedralSmilesState {
-                                carriers: stereo.carriers.clone(),
+                                carriers: stereo.carriers.to_vec(),
                                 orientation,
                             },
                         )

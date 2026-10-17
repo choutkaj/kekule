@@ -28,7 +28,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
         StereoElementKind::Tetrahedral(stereo) => {
             assert_eq!(stereo.center, center);
             assert_eq!(
-                stereo.carriers,
+                stereo.carriers.to_vec(),
                 carriers
                     .iter()
                     .copied()
@@ -96,7 +96,7 @@ fn coordinate_stereo_resolves_tombstoned_atom_ids_to_dense_positions() {
         &inferred.elements[0].kind,
         StereoElementKind::Tetrahedral(stereo)
             if stereo.center == center
-                && stereo.carriers
+                && stereo.carriers.to_vec()
                     == carriers
                         .iter()
                         .copied()
@@ -186,7 +186,7 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
             assert_eq!(stereo.axis, axis);
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(4)),
                 ]
@@ -224,7 +224,13 @@ fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
     mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
         TetrahedralStereo {
             center,
-            carriers: carriers.iter().copied().map(StereoCarrier::Atom).collect(),
+            carriers: carriers
+                .iter()
+                .copied()
+                .map(StereoCarrier::Atom)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
             orientation: Some(TetrahedralOrientation::CounterClockwise),
         },
     )))
@@ -254,10 +260,11 @@ fn coordinate_stereo_materialization_is_transactional_on_invalid_representation(
         &mut mol,
         StereoElement::new(StereoElementKind::Tetrahedral(TetrahedralStereo {
             center,
-            carriers: vec![
+            carriers: [
                 StereoCarrier::Atom(carriers[0]),
                 StereoCarrier::Atom(carriers[0]),
                 StereoCarrier::Atom(carriers[1]),
+                StereoCarrier::Atom(carriers[2]),
             ],
             orientation: Some(TetrahedralOrientation::Clockwise),
         })),
@@ -698,7 +705,12 @@ fn coordinate_stereo_compares_implicit_hydrogen_carriers_and_ignores_flat_center
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: carriers.into_iter().map(StereoCarrier::Atom).collect(),
+                carriers: carriers
+                    .into_iter()
+                    .map(StereoCarrier::Atom)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap(),
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
         )))

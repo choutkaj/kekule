@@ -105,6 +105,20 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Stereo carriers have a fixed count:
+  `TetrahedralStereo::carriers` is `[StereoCarrier; 4]` and
+  `AxisStereo::carriers` is `[StereoCarrier; 2]`, so
+  `StereoValidationIssue::InvalidAxisCarrierCount` is gone.
+  `InvalidTetrahedralCarrierCount` remains for source readers that resolve
+  the wrong number of neighbours. `StereoElement::group` is private behind
+  `group()`; set it through the editor's stereo-group operations.
+- **Breaking:** `AtomRadical::new(1, None)` records a doublet: one radical
+  electron always has spin multiplicity 2, so it equals
+  `AtomRadical::new(1, Some(2))`, and Molfile writers encode it as radical
+  code 2 instead of rejecting it.
+- **Breaking:** `Element` has a constant per element (`Element::H` …
+  `Element::OG`), implements `FromStr` and `TryFrom<u8>`, and the new
+  `ElementError` reports an unknown symbol or atomic number.
 - **Breaking:** Topology handles follow one convention (ARCHITECTURE.md,
   "Units, topology handles, and traits"): `topology()` returns `&Topology`
   and `shared_topology()` returns `Arc<Topology>`.

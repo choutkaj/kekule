@@ -14,11 +14,7 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoElement {
     pub kind: StereoElementKind,
-    /// Owning relation group, assigned only by [`MoleculeEditor::add_stereo_group`].
-    ///
-    /// [`MoleculeEditor::add_stereo_element`] rejects values with this field set, and
-    /// [`MoleculeEditor::remove_stereo_element`] clears it on the returned value.
-    pub group: Option<StereoGroupId>,
+    pub(crate) group: Option<StereoGroupId>,
 }
 
 impl StereoElement {
@@ -28,6 +24,15 @@ impl StereoElement {
     /// conventions before storing it.
     pub fn new(kind: StereoElementKind) -> Self {
         Self { kind, group: None }
+    }
+
+    /// Owning relation group, assigned only by [`MoleculeEditor::add_stereo_group`].
+    ///
+    /// An element read from a molecule reports its group;
+    /// [`MoleculeEditor::add_stereo_element`] rejects a grouped element, and
+    /// [`MoleculeEditor::remove_stereo_element`] returns the element ungrouped.
+    pub const fn group(&self) -> Option<StereoGroupId> {
+        self.group
     }
 
     /// Whether this element asserts a concrete local configuration.
@@ -116,7 +121,7 @@ pub struct TetrahedralStereo {
     pub center: AtomId,
     /// Four distinct carriers in the order used by `orientation`. The explicit
     /// atom carriers are exactly the center's bonded neighbors.
-    pub carriers: Vec<StereoCarrier>,
+    pub carriers: [StereoCarrier; 4],
     /// `None` represents an explicit assertion of unknown configuration.
     pub orientation: Option<TetrahedralOrientation>,
 }
@@ -137,7 +142,7 @@ pub struct AxisStereo {
     pub axis: BondId,
     /// Two explicit atom references, one bonded exclusively to each axis
     /// endpoint. Checked insertion canonicalizes endpoint and reference order.
-    pub carriers: Vec<StereoCarrier>,
+    pub carriers: [StereoCarrier; 2],
     /// `None` represents an explicit assertion of unknown configuration.
     pub orientation: Option<AxisOrientation>,
 }

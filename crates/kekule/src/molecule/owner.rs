@@ -392,6 +392,27 @@ impl Molecule {
     /// Group membership must be established separately through
     /// [`Self::add_stereo_group`]. A pre-grouped element is rejected before
     /// slot allocation or perception invalidation.
+    /// The four carriers of a tetrahedral assertion read from a source, or the
+    /// error inserting an element with this many carriers reports.
+    pub(crate) fn tetrahedral_carriers(
+        &self,
+        center: AtomId,
+        carriers: Vec<StereoCarrier>,
+    ) -> Result<[StereoCarrier; 4]> {
+        let carrier_count = carriers.len();
+        carriers.try_into().map_err(|_| {
+            MoleculeError::InvalidStereoReference(
+                StereoValidationIssue::InvalidTetrahedralCarrierCount {
+                    element: StereoElementId::new(
+                        u32::try_from(self.graph.stereo_elements.len()).unwrap_or(u32::MAX),
+                    ),
+                    center,
+                    carrier_count,
+                },
+            )
+        })
+    }
+
     pub(crate) fn add_stereo_element(
         &mut self,
         mut element: StereoElement,
@@ -796,13 +817,6 @@ impl Molecule {
             StereoElementKind::Tetrahedral(stereo) => {
                 let center = stereo.center;
                 self.require_atom(center)?;
-                if stereo.carriers.len() != 4 {
-                    return invalid(StereoValidationIssue::InvalidTetrahedralCarrierCount {
-                        element: id,
-                        center,
-                        carrier_count: stereo.carriers.len(),
-                    });
-                }
                 for (index, &carrier) in stereo.carriers.iter().enumerate() {
                     if stereo.carriers[..index].contains(&carrier) {
                         return invalid(StereoValidationIssue::DuplicateTetrahedralCarrier {
@@ -899,13 +913,6 @@ impl Molecule {
             }
             StereoElementKind::Axis(stereo) => {
                 let axis = self.require_bond(stereo.axis)?;
-                if stereo.carriers.len() != 2 {
-                    return invalid(StereoValidationIssue::InvalidAxisCarrierCount {
-                        element: id,
-                        axis: stereo.axis,
-                        carrier_count: stereo.carriers.len(),
-                    });
-                }
                 self.validate_stereo_carriers(&stereo.carriers)?;
                 let mut endpoints = [false; 2];
                 for &carrier in &stereo.carriers {
@@ -1099,7 +1106,7 @@ impl Molecule {
             right_carrier = canonical;
         }
 
-        stereo.carriers = vec![left_carrier, right_carrier];
+        stereo.carriers = [left_carrier, right_carrier];
         if reference_changes % 2 == 1 {
             stereo.orientation = stereo.orientation.map(AxisOrientation::inverted);
         }
@@ -1292,7 +1299,7 @@ fn dense_slots<T, Id>(slots: &[Option<T>], id: impl Fn(u32) -> Id) -> Vec<Option
         .collect()
 }
 
-fn sort_stereo_carriers(carriers: &mut Vec<StereoCarrier>) -> bool {
+fn sort_stereo_carriers(carriers: &mut [StereoCarrier]) -> bool {
     let mut indexed = carriers.iter().copied().enumerate().collect::<Vec<_>>();
     indexed.sort_by_key(|(_, carrier)| carrier.canonical_order_key());
 
@@ -1306,7 +1313,9 @@ fn sort_stereo_carriers(carriers: &mut Vec<StereoCarrier>) -> bool {
             }
         }
     }
-    *carriers = indexed.into_iter().map(|(_, carrier)| carrier).collect();
+    for (slot, (_, carrier)) in carriers.iter_mut().zip(indexed) {
+        *slot = carrier;
+    }
     odd_permutation
 }
 

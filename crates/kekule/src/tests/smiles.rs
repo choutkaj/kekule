@@ -1379,7 +1379,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: a,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(b),
                     StereoCarrier::Atom(c),
                     StereoCarrier::Atom(d),
@@ -1406,8 +1406,8 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .expect("remove atom stereo");
     {
         let mut atom = molecule.atom_mut(a).expect("atom");
-        atom.radical = AtomRadical::new(1, Some(2));
-        atom.hydrogens = ImplicitHydrogens::Fixed(2);
+        atom.radical = AtomRadical::new(2, Some(3));
+        atom.hydrogens = ImplicitHydrogens::Fixed(1);
     }
     assert!(smiles_api::write(
         molecule.working(),
@@ -1728,7 +1728,7 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
             );
             assert_eq!(
                 tetrahedral.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(0)),
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
@@ -1754,7 +1754,7 @@ fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_s
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(AtomId::new(0)),
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
@@ -1795,7 +1795,7 @@ fn isomeric_smiles_flips_tetrahedral_marker_for_odd_writer_carrier_order() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: AtomId::new(1),
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(AtomId::new(0)),
                     StereoCarrier::ImplicitHydrogen,
                     StereoCarrier::Atom(AtomId::new(3)),

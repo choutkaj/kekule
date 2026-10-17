@@ -99,12 +99,17 @@ impl AtomRadical {
     ///
     /// Returns `None` for zero electrons or a multiplicity incompatible with
     /// coupling that many spin-one-half electrons. An atom without radical
-    /// occupancy uses `Atom::radical = None`; an unspecified spin uses
-    /// `AtomRadical::new(electrons, None)`.
+    /// occupancy has no `AtomRadical`; an unspecified spin uses
+    /// `AtomRadical::new(electrons, None)`. A single electron is always a
+    /// doublet, so `new(1, None)` records multiplicity 2.
     pub const fn new(electron_count: u8, spin_multiplicity: Option<u8>) -> Option<Self> {
         if electron_count == 0 {
             return None;
         }
+        let spin_multiplicity = match (electron_count, spin_multiplicity) {
+            (1, None) => Some(2),
+            (_, multiplicity) => multiplicity,
+        };
         if let Some(multiplicity) = spin_multiplicity {
             if multiplicity == 0
                 || multiplicity as u16 > electron_count as u16 + 1
@@ -126,8 +131,15 @@ impl AtomRadical {
     }
 
     /// Explicit atom-local spin multiplicity, or `None` when not specified.
+    /// A single electron always reports a doublet.
     pub const fn spin_multiplicity(self) -> Option<u8> {
         self.spin_multiplicity
+    }
+
+    /// Whether the multiplicity says more than the electron count does: a
+    /// single electron's doublet is implied, any other assertion is not.
+    pub(crate) const fn has_explicit_spin(self) -> bool {
+        self.spin_multiplicity.is_some() && self.electron_count != 1
     }
 }
 

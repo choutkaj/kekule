@@ -777,6 +777,17 @@ fn add_smiles_tetrahedral_elements(
                 .unwrap_or_default(),
             offset,
         )?;
+        let carriers = editor
+            .working()
+            .tetrahedral_carriers(center, carriers)
+            .map_err(|error| {
+                interpret_error(
+                    DiagnosticKind::Chemistry,
+                    offset,
+                    "cannot add stereo center",
+                )
+                .with_source(error)
+            })?;
         editor
             .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
                 TetrahedralStereo {

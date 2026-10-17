@@ -225,7 +225,7 @@ M  END
             assert_eq!(stereo.center, AtomId::new(0));
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(1)),
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
@@ -298,7 +298,7 @@ fn canonical_tetrahedral_stereo_is_identical_across_smiles_molfile_and_manual_so
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(fluorine),
                     StereoCarrier::Atom(chlorine),
                     StereoCarrier::Atom(bromine),
@@ -324,7 +324,7 @@ fn interpretation_uses_source_declared_h_for_molfile_wedge_geometry() {
             assert_eq!(stereo.center, AtomId::new(0));
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(1)),
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
@@ -655,7 +655,7 @@ fn interpretation_assembles_molfile_atropisomeric_axis() {
             assert_eq!(stereo.axis, BondId::new(3));
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(6)),
                     StereoCarrier::Atom(AtomId::new(11)),
                 ]
@@ -750,7 +750,7 @@ fn interpretation_prefers_exocyclic_molfile_atropisomeric_axis() {
             assert_eq!(stereo.axis, BondId::new(3));
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(6)),
                     StereoCarrier::Atom(AtomId::new(11)),
                 ]
@@ -848,7 +848,12 @@ fn canonical_tetrahedral_molecule() -> Molecule {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: carriers.into_iter().map(StereoCarrier::Atom).collect(),
+                carriers: carriers
+                    .into_iter()
+                    .map(StereoCarrier::Atom)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap(),
                 orientation: Some(TetrahedralOrientation::CounterClockwise),
             },
         )))

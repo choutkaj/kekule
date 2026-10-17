@@ -178,7 +178,7 @@ fn stereo_symmetry_is_invariant_to_atom_and_bond_numbering() {
                 match &mut element.kind {
                     StereoElementKind::Tetrahedral(s) => {
                         s.center = atoms[&s.center];
-                        s.carriers = s.carriers.iter().copied().map(carrier).collect();
+                        s.carriers = s.carriers.map(carrier);
                     }
                     StereoElementKind::DoubleBond(s) => {
                         s.bond = bonds[&s.bond];

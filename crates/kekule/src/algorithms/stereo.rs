@@ -263,15 +263,6 @@ pub enum StereoValidationIssue {
         /// Its substituents, excluding the other endpoint.
         substituent_count: usize,
     },
-    /// An axis does not have two carriers.
-    InvalidAxisCarrierCount {
-        /// The element.
-        element: StereoElementId,
-        /// The axis bond.
-        axis: BondId,
-        /// The number of carriers.
-        carrier_count: usize,
-    },
     /// An axis carrier is an endpoint of the axis.
     AxisCarrierIsFocusAtom {
         /// The element.
@@ -444,11 +435,6 @@ impl fmt::Display for StereoValidationIssue {
                 f,
                 "{element} endpoint {endpoint} has {substituent_count} substituents, more than two"
             ),
-            Self::InvalidAxisCarrierCount {
-                element,
-                axis,
-                carrier_count,
-            } => write!(f, "{element} on {axis} has {carrier_count} carriers, not two"),
             Self::AxisCarrierIsFocusAtom {
                 element,
                 axis,
@@ -692,13 +678,6 @@ fn validate_tetrahedral(
         });
         return;
     }
-    if stereo.carriers.len() != 4 {
-        issues.push(StereoValidationIssue::InvalidTetrahedralCarrierCount {
-            element,
-            center: stereo.center,
-            carrier_count: stereo.carriers.len(),
-        });
-    }
     let mut seen = Vec::<StereoCarrier>::new();
     for carrier in &stereo.carriers {
         if seen.contains(carrier) {
@@ -850,13 +829,6 @@ fn validate_axis(
         });
         return;
     };
-    if stereo.carriers.len() != 2 {
-        issues.push(StereoValidationIssue::InvalidAxisCarrierCount {
-            element,
-            axis: stereo.axis,
-            carrier_count: stereo.carriers.len(),
-        });
-    }
     let (left, right) = bond.endpoints();
     for (endpoint, other) in [(left, right), (right, left)] {
         let substituent_count = mol
@@ -876,11 +848,10 @@ fn validate_axis(
     for carrier in &stereo.carriers {
         validate_axis_carrier(mol, element, stereo.axis, left, right, *carrier, issues);
     }
-    if stereo.carriers.len() == 2
-        && stereo
-            .carriers
-            .iter()
-            .all(|carrier| matches!(carrier, StereoCarrier::Atom(_)))
+    if stereo
+        .carriers
+        .iter()
+        .all(|carrier| matches!(carrier, StereoCarrier::Atom(_)))
     {
         let endpoint_counts = [left, right].map(|endpoint| {
             stereo
@@ -1096,7 +1067,9 @@ fn infer_coordinate_tetrahedral(
         assigned.push(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers,
+                carriers: carriers
+                    .try_into()
+                    .expect("tetrahedral candidates have four carriers"),
                 orientation: Some(orientation),
             },
         )));
@@ -1188,7 +1161,7 @@ fn infer_coordinate_axes(
         };
         assigned.push(StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis,
-            carriers: vec![
+            carriers: [
                 StereoCarrier::Atom(left_reference),
                 StereoCarrier::Atom(right_reference),
             ],

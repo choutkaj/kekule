@@ -1321,7 +1321,6 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
 #[test]
 fn mol_writers_reject_radical_states_that_require_guessing_or_losing_spin() {
     for radical in [
-        AtomRadical::new(1, None).unwrap(),
         AtomRadical::new(2, None).unwrap(),
         AtomRadical::new(4, Some(3)).unwrap(),
         AtomRadical::new(3, Some(4)).unwrap(),
@@ -1350,6 +1349,44 @@ fn mol_writers_reject_radical_states_that_require_guessing_or_losing_spin() {
                 .contains("electron count and explicit spin"));
         }
         assert_eq!(molecule.atoms().next().unwrap().1.radical, Some(radical));
+    }
+}
+
+/// A monoradical is a doublet, which both Molfile versions encode as radical
+/// code 2 (`M  RAD` value 2 in V2000, `RAD=2` in V3000), as the MDL CTfile
+/// specification defines; SMILES writes it back as the bracket atom it came from,
+/// with the redundant CX radical annotation.
+#[test]
+fn mol_writers_encode_single_electron_radicals_as_doublets() {
+    let molecule = read_smiles("[CH3]").unwrap();
+    let doublet = AtomRadical::new(1, Some(2));
+    assert_eq!(molecule.atoms().next().unwrap().1.radical, doublet);
+    let v2000 = molfile::write(
+        &molecule,
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
+    )
+    .unwrap();
+    assert!(
+        v2000.lines().any(|line| line == "M  RAD  1   1   2"),
+        "{v2000}"
+    );
+    let v3000 = molfile::write(
+        &molecule,
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
+    )
+    .unwrap();
+    assert!(v3000.contains(" RAD=2"), "{v3000}");
+    for text in [v2000, v3000] {
+        let reread = molfile::parse_str(&text, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap()
+            .into_molecule();
+        assert_eq!(reread.atoms().next().unwrap().1.radical, doublet);
+        assert_eq!(
+            smiles_api::write(&reread, smiles_api::SmilesWriteOptions::default()).unwrap(),
+            "[CH3] |^1:0|"
+        );
     }
 }
 
@@ -1389,7 +1426,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .push(Some(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: a,
-                carriers: vec![StereoCarrier::ImplicitHydrogen],
+                carriers: [StereoCarrier::ImplicitHydrogen; 4],
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
         ))));

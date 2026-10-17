@@ -79,7 +79,10 @@ fn order_changes_update_stereo_groups_without_removing_unrelated_assertions() {
     let retained = editor.stereo_element_ids().next().unwrap();
     assert_eq!(editor.stereo_element_ids().count(), 1);
     assert_eq!(editor.stereo_group(group).unwrap().members, vec![retained]);
-    assert_eq!(editor.stereo_element(retained).unwrap().group, Some(group));
+    assert_eq!(
+        editor.stereo_element(retained).unwrap().group(),
+        Some(group)
+    );
     let mut editor = editor.finish().unwrap().into_editor();
     editor.set_bond_order(bonds[1], BondOrder::Single).unwrap();
     let result = editor.finish().unwrap();
@@ -270,7 +273,7 @@ fn checked_stereo_boundaries_reject_nonadjacent_carriers_transactionally() {
     let atoms = axis.atom_ids().collect::<Vec<_>>();
     axis.add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
         axis: axis.bond_between(atoms[1], atoms[2]).unwrap(),
-        carriers: vec![StereoCarrier::Atom(atoms[0]), StereoCarrier::Atom(atoms[3])],
+        carriers: [StereoCarrier::Atom(atoms[0]), StereoCarrier::Atom(atoms[3])],
         orientation: None,
     })))
     .unwrap();

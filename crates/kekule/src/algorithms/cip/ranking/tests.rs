@@ -300,7 +300,7 @@ fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
         // 3D structure independently gives this orientation at both nitrogens.
         assert_eq!(
             stereo.carriers,
-            vec![aryl, benzyl, bridge, StereoCarrier::ImplicitLonePair]
+            [aryl, benzyl, bridge, StereoCarrier::ImplicitLonePair]
         );
         assert_eq!(stereo.orientation, Some(TetrahedralOrientation::Clockwise));
         let fractions = cip_atomic_number_fractions(&molecule);
@@ -1201,7 +1201,7 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
         let element = molecule
             .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
                 axis,
-                carriers: vec![StereoCarrier::Atom(fluorine), StereoCarrier::Atom(bromine)],
+                carriers: [StereoCarrier::Atom(fluorine), StereoCarrier::Atom(bromine)],
                 orientation: Some(orientation),
             })))
             .unwrap();
