@@ -18,6 +18,7 @@ pub struct QueryStereoGroup {
 /// stereo groups. They require a specified target assertion. Target coordinates
 /// are not interpreted and stereo is not perceived during matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QueryStereoConstraint {
     /// Ordered explicit query neighbors, followed by any omitted target carriers.
     /// With fewer than three neighbors, either handedness can complete the query;

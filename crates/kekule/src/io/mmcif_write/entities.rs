@@ -111,7 +111,7 @@ pub(super) fn entity_plan_from_report(
             report
                 .instances()
                 .iter()
-                .map(|instance| (instance.molecule(), instance.entity_kinds().to_vec())),
+                .map(|instance| (instance.instance(), instance.entity_kinds().to_vec())),
         )?;
         generic_entity_plan(model, &classifications)
     } else {
@@ -153,7 +153,7 @@ pub(super) fn generic_entity_plan(
             // classifications hold as given.
             let molecule_kinds = sites
                 .iter()
-                .filter_map(|site| classifications.get(&site.atom().molecule()).copied())
+                .filter_map(|site| classifications.get(&site.atom().instance()).copied())
                 .map(|molecule| {
                     if molecule.canonical {
                         residue_entity_kind(molecule.kind, residue.class())
@@ -166,7 +166,7 @@ pub(super) fn generic_entity_plan(
                 .into_iter()
                 .collect::<Vec<_>>();
             let kind = match molecule_kinds.as_slice() {
-                [kind] => entity_kind_from_source(sites[0].atom().molecule(), kind)?,
+                [kind] => entity_kind_from_source(sites[0].atom().instance(), kind)?,
                 _ => {
                     return Err(fail(
                         MmcifWriteIssue::ConflictingAsymEntityClassifications {
@@ -194,10 +194,10 @@ pub(super) fn generic_entity_plan(
         }
     }
 
-    for (id, molecule) in model.topology().instances() {
+    for (id, molecule) in model.topology().instance_records() {
         let definition = model
             .topology()
-            .molecule(id)
+            .instance(id)
             .expect("listed instances are topology molecules")
             .definition();
         let qualified_atoms = definition
@@ -265,18 +265,18 @@ fn report_entity_plan(
     let mut provenance = BTreeMap::new();
     let mut reserved_entity_ids = BTreeSet::new();
     for instance in report.instances() {
-        if model.topology().molecule(instance.molecule()).is_none() {
+        if model.topology().instance(instance.instance()).is_none() {
             return Err(fail(MmcifWriteIssue::UnknownClassifiedMolecule(
-                instance.molecule(),
+                instance.instance(),
             )));
         }
-        if !seen_instances.insert(instance.molecule()) {
+        if !seen_instances.insert(instance.instance()) {
             return Err(fail(MmcifWriteIssue::DuplicateEntityClassification(
-                instance.molecule(),
+                instance.instance(),
             )));
         }
         for atom in instance.atoms() {
-            if atom.atom().molecule() != instance.molecule()
+            if atom.atom().instance() != instance.instance()
                 || model.topology().atom(atom.atom()).is_none()
             {
                 return Err(fail(MmcifWriteIssue::UnknownAtomProvenance(atom.atom())));
@@ -334,7 +334,7 @@ fn report_entity_plan(
                 .into_iter()
                 .collect::<Vec<_>>();
             let kind = match source_kinds.as_slice() {
-                [kind] => entity_kind_from_source(source_atoms[0].atom().molecule(), kind)?,
+                [kind] => entity_kind_from_source(source_atoms[0].atom().instance(), kind)?,
                 _ => {
                     return Err(fail(
                         MmcifWriteIssue::ConflictingAsymEntityClassifications {
@@ -601,7 +601,7 @@ pub(super) fn normalize_entity_classifications(
 ) -> Result<BTreeMap<MoleculeInstanceId, MoleculeEntityKind>, FormatError> {
     let mut explicit = BTreeMap::new();
     for (molecule, source_kinds) in entries {
-        if model.topology().molecule(molecule).is_none() {
+        if model.topology().instance(molecule).is_none() {
             return Err(fail(MmcifWriteIssue::UnknownClassifiedMolecule(molecule)));
         }
         if explicit.contains_key(&molecule) {
@@ -628,7 +628,7 @@ pub(super) fn normalize_entity_classifications(
     }
     model
         .topology()
-        .instances()
+        .instance_records()
         .map(|(molecule, _)| {
             let classification = match explicit.get(&molecule) {
                 Some(&kind) => MoleculeEntityKind {
@@ -650,7 +650,7 @@ fn canonical_entity_kind(
     molecule: MoleculeInstanceId,
 ) -> Result<AssignedEntityKind, FormatError> {
     let class = topology
-        .molecule(molecule)
+        .instance(molecule)
         .ok_or_else(|| invalid_molecule(molecule))?
         .class();
     match class {
@@ -674,7 +674,7 @@ fn carbohydrate_entity_kind(
     molecule: MoleculeInstanceId,
 ) -> Result<AssignedEntityKind, FormatError> {
     let view = topology
-        .molecule(molecule)
+        .instance(molecule)
         .ok_or_else(|| invalid_molecule(molecule))?;
     let mut residues = view.residues();
     if residues

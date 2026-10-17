@@ -27,14 +27,60 @@ const TYPICAL_ATOM_SITE_COLUMNS: usize = 21;
 /// `max_input_bytes` admits the largest current wwPDB entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MmcifParseOptions {
+    max_input_bytes: usize,
+    max_tokens: usize,
+    max_token_bytes: usize,
+    max_atom_site_rows: usize,
+}
+
+impl MmcifParseOptions {
     /// Maximum UTF-8 byte length of the input; at most 4 GiB.
-    pub max_input_bytes: usize,
+    pub const fn max_input_bytes(&self) -> usize {
+        self.max_input_bytes
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub const fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Self {
+        self.max_input_bytes = max_input_bytes;
+        self
+    }
+
     /// Maximum number of tags, values, and control words.
-    pub max_tokens: usize,
+    pub const fn max_tokens(&self) -> usize {
+        self.max_tokens
+    }
+
+    /// Sets [`Self::max_tokens`].
+    #[must_use]
+    pub const fn with_max_tokens(mut self, max_tokens: usize) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
     /// Maximum byte length of one value.
-    pub max_token_bytes: usize,
+    pub const fn max_token_bytes(&self) -> usize {
+        self.max_token_bytes
+    }
+
+    /// Sets [`Self::max_token_bytes`].
+    #[must_use]
+    pub const fn with_max_token_bytes(mut self, max_token_bytes: usize) -> Self {
+        self.max_token_bytes = max_token_bytes;
+        self
+    }
+
     /// Maximum number of `_atom_site` rows in one data block.
-    pub max_atom_site_rows: usize,
+    pub const fn max_atom_site_rows(&self) -> usize {
+        self.max_atom_site_rows
+    }
+
+    /// Sets [`Self::max_atom_site_rows`].
+    #[must_use]
+    pub const fn with_max_atom_site_rows(mut self, max_atom_site_rows: usize) -> Self {
+        self.max_atom_site_rows = max_atom_site_rows;
+        self
+    }
 }
 
 impl MmcifParseOptions {
@@ -240,6 +286,7 @@ impl MmcifBlock {
 
 /// One scalar item or loop of a data block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MmcifEntry<'a> {
     Item(MmcifItem<'a>),
     Loop(MmcifLoopTable<'a>),

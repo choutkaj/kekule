@@ -189,10 +189,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
         assert_eq!(point_xs(&destination), before);
     }
 
-    let limits = TrajectoryIoLimits {
-        max_text_line_bytes: 8,
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default().with_max_text_line_bytes(8);
     let mut reader = XyzReader::new(
         Cursor::new("2\ncomment\nC 000000000 0 0\nH 1 1 1\n".as_bytes()),
         Arc::clone(&topology),
@@ -365,7 +362,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
         .contains(&FormatDetectionEvidence::MissingExtension));
     assert_eq!(sequential.metadata().atom_count(), 2);
     assert_eq!(
-        sequential.metadata().fields().positions,
+        sequential.metadata().fields().positions(),
         FieldAvailability::Required
     );
     assert_eq!(
@@ -476,10 +473,7 @@ fn detection_restores_position_on_read_failure_and_honors_a_zero_byte_limit() {
         &mut cursor,
         "limited.xyz",
         TrajectoryFormatHint::Auto,
-        &TrajectoryIoLimits {
-            max_detection_bytes: 0,
-            ..TrajectoryIoLimits::default()
-        },
+        &TrajectoryIoLimits::default().with_max_detection_bytes(0),
     )
     .unwrap_err();
     assert_eq!(
@@ -492,12 +486,10 @@ fn detection_restores_position_on_read_failure_and_honors_a_zero_byte_limit() {
 #[test]
 fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     let topology = topology();
-    let limits = TrajectoryIoLimits {
-        max_frames: 2,
-        max_index_entries: 2,
-        max_index_bytes: 2 * std::mem::size_of::<u64>(),
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default()
+        .with_max_frames(2)
+        .with_max_index_entries(2)
+        .with_max_index_bytes(2 * std::mem::size_of::<u64>());
     let mut reader = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
@@ -538,10 +530,9 @@ fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
                 Cursor::new(input.as_bytes()),
                 Arc::clone(&topology),
                 XyzReadOptions::default()
-                    .with_limits(TrajectoryIoLimits {
-                        max_frame_bytes,
-                        ..TrajectoryIoLimits::default()
-                    })
+                    .with_limits(
+                        TrajectoryIoLimits::default().with_max_frame_bytes(max_frame_bytes),
+                    )
                     .with_source_label("frame-bytes.xyz"),
             )
             .unwrap();
@@ -588,10 +579,7 @@ fn read_first_xyz_frame<R: BufRead>(
         stream,
         Arc::clone(topology),
         XyzReadOptions::default()
-            .with_limits(TrajectoryIoLimits {
-                max_scratch_bytes,
-                ..TrajectoryIoLimits::default()
-            })
+            .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(max_scratch_bytes))
             .with_source_label("scratch.xyz"),
     )
     .unwrap();
@@ -640,10 +628,9 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
             Cursor::new(input.clone()),
             Arc::clone(&topology),
             XyzReadOptions::default()
-                .with_limits(TrajectoryIoLimits {
-                    max_scratch_bytes,
-                    ..TrajectoryIoLimits::default()
-                })
+                .with_limits(
+                    TrajectoryIoLimits::default().with_max_scratch_bytes(max_scratch_bytes),
+                )
                 .with_source_label("scratch.xyz"),
         );
         assert_eq!(indexed.err(), Some(exceeded.clone()), "{max_scratch_bytes}");
@@ -668,10 +655,7 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
         stream,
         Arc::clone(&topology),
         XyzReadOptions::default()
-            .with_limits(TrajectoryIoLimits {
-                max_frames: 1,
-                ..TrajectoryIoLimits::default()
-            })
+            .with_limits(TrajectoryIoLimits::default().with_max_frames(1))
             .with_source_label("guarded-sequential.xyz"),
     )
     .unwrap();
@@ -685,18 +669,9 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
     assert_eq!(control.probed_bytes(), 0);
 
     for limits in [
-        TrajectoryIoLimits {
-            max_frames: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_entries: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_bytes: std::mem::size_of::<u64>(),
-            ..TrajectoryIoLimits::default()
-        },
+        TrajectoryIoLimits::default().with_max_frames(1),
+        TrajectoryIoLimits::default().with_max_index_entries(1),
+        TrajectoryIoLimits::default().with_max_index_bytes(std::mem::size_of::<u64>()),
     ] {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
         let error = IndexedXyzReader::new(

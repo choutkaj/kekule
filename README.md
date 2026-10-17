@@ -94,14 +94,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     // Assign and print stereochemistry
     let stereochemistry = stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())?;
-    for assignment in &stereochemistry.assigned {
-        println!("stereo {}: {:?}", assignment.element, assignment.descriptor);
+    for assignment in stereochemistry.assigned() {
+        println!("stereo {}: {:?}", assignment.element(), assignment.descriptor());
     }
     
     // Assign and print rotatable bonds
     let rotatable = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)?;
     for &bond_id in rotatable.bond_ids() {
-        let bond = molecule.bond(bond_id)?;
+        let bond = molecule.bond(bond_id).expect("detected bonds are in the molecule");
         println!("rotatable bond {bond_id}: {}-{}", bond.a(), bond.b());
     }
     Ok(())
@@ -165,11 +165,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Initiate Model builder and combine both Models
     let mut builder = Model::builder();
     builder.add_molecule(
-        sdf_model.topology().molecules().next().unwrap().molecule().clone(),
+        sdf_model.topology().instances().next().unwrap().molecule().clone(),
         sdf_model.positions(),
     )?;
     builder.add_molecule(
-        cif_model.topology().molecules().next().unwrap().molecule().clone(),
+        cif_model.topology().instances().next().unwrap().molecule().clone(),
         cif_model.positions(),
     )?;
     let combined = builder.build()?;

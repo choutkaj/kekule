@@ -86,7 +86,7 @@ fn read_smiles(text: &str) -> Result<Vec<Component>, Failure> {
 fn from_model(model: &Model) -> Result<Vec<Component>, Failure> {
     let topology = model.topology();
     topology
-        .molecules()
+        .instances()
         .map(|instance| {
             let molecule = instance.molecule().clone();
             let mut source = Vec::with_capacity(molecule.atom_count());
@@ -99,7 +99,7 @@ fn from_model(model: &Model) -> Result<Vec<Component>, Failure> {
                 source.push(dense.index());
                 let position = model
                     .position(qualified)
-                    .map_err(|e| Failure::new("parse", e))?;
+                    .expect("atoms come from the model topology");
                 points.push(
                     position
                         .value_in(ANGSTROM)
@@ -132,7 +132,7 @@ mod tests {
                 let symbols = c
                     .molecule
                     .atoms()
-                    .map(|(id, atom)| (c.atom(id), atom.element.symbol()))
+                    .map(|(id, atom)| (c.atom(id), atom.element().symbol()))
                     .collect::<Vec<_>>();
                 (symbols, c.positions.as_ref().map(Positions::len))
             })

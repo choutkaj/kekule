@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Retain one complete reference before the reusable input buffer advances.
     let reference = buffer.frame_view().to_model();
-    let atoms = AtomSelection::all(&topology);
+    let atoms = AtomSelection::all(topology.clone());
     let superposer = FrameSuperposer::new(&reference, &atoms, Default::default());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));

@@ -36,10 +36,10 @@ impl AnalysisGraph {
                 .atom_ids()
                 .map(|id| usize::from(atom_hydrogen_count(mol, id)))
                 .sum::<usize>();
-        if size > options.max_atoms {
+        if size > options.max_atoms() {
             return Err(StereoSearchError::LimitExceeded(LimitExceeded::new(
                 Resource::Atoms,
-                options.max_atoms,
+                options.max_atoms(),
                 size,
             )));
         }
@@ -49,14 +49,14 @@ impl AnalysisGraph {
             atoms[id.index()] = signatures.len();
             signatures.push((
                 AtomIdentity::of(atom),
-                mol.atom_is_aromatic(id).ok().flatten() == Some(true),
+                mol.atom_is_aromatic(id) == Some(true),
             ));
         }
         let mut adjacency = vec![Vec::new(); size];
         for (id, bond) in mol.bonds() {
             let (a, b) = (atoms[bond.a().index()], atoms[bond.b().index()]);
             let order = if matches!(bond.order, BondOrder::Single | BondOrder::Double)
-                && mol.bond_is_aromatic(id).ok().flatten() == Some(true)
+                && mol.bond_is_aromatic(id) == Some(true)
             {
                 7
             } else {
@@ -340,7 +340,7 @@ pub(super) fn filter(
             });
             if can_reverse
                 && Search::new(&graph, &sites, &active, focus, colors)
-                    .reverses(&mut work, options.max_search_states)?
+                    .reverses(&mut work, options.max_search_states())?
             {
                 removed.push(focus);
             }

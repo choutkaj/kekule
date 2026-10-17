@@ -73,8 +73,9 @@ pub use structure_interpret::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
-    InstanceProvenance, ModelSelection, SourceResidueId, SourceResiduePosition,
-    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretIssue,
-    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    EntityMetadataPolicy, InstanceProvenance, ModelSelection, SourceResidueId,
+    SourceResiduePosition, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 pub use write_error::UnrepresentablePolicy;

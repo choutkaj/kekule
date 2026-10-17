@@ -67,10 +67,7 @@ fn configuration(policy: &AltLocPolicy) -> AltLocSelection {
         AltLocPolicy::ErrorOnAlternateLocations => AltLocPreference::ErrorOnAlternateLocations,
         AltLocPolicy::Configured(selection) => return selection.clone(),
     };
-    AltLocSelection {
-        default,
-        ..Default::default()
-    }
+    AltLocSelection::default().with_default_preference(default)
 }
 
 fn selection_error(

@@ -38,10 +38,10 @@ pub(crate) use pdb::{
 pub(in crate::io) use types::structure_error;
 pub use types::{
     AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConflictingSelector,
-    ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
-    ModelSelection, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
-    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
-    StructureInterpretationReport,
+    ConnectionResolutionReason, ConnectivityOptions, EntityKind, EntityMetadataPolicy,
+    InstanceProvenance, ModelSelection, StructureEnsembleInterpretOptions,
+    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
+    StructureInterpretation, StructureInterpretationReport,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a
@@ -67,8 +67,8 @@ fn interpret_source(
     source: StructureSource,
     options: &StructureInterpretOptions,
 ) -> Result<StructureInterpretation, FormatError> {
-    let mut prepared = PreparedSource::new(source, &options.altloc_policy)?;
-    let model_id = match &options.model_selection {
+    let mut prepared = PreparedSource::new(source, options.altloc_policy())?;
+    let model_id = match &options.model_selection() {
         ModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
             prepared.model_sizes[0].0.clone()
         }

@@ -24,7 +24,7 @@ fn default_perception_matches_reference_aromaticity_regressions() {
         molecule
             .perceive()
             .unwrap_or_else(|error| panic!("{}: {error}", case.label));
-        let aromatic = |atom| molecule.atom_is_aromatic(atom).unwrap() == Some(true);
+        let aromatic = |atom| molecule.atom_is_aromatic(atom) == Some(true);
         let atoms = molecule
             .atom_ids()
             .filter(|&atom| aromatic(atom))
@@ -35,7 +35,7 @@ fn default_perception_matches_reference_aromaticity_regressions() {
             let endpoints = (bond.a().index(), bond.b().index());
             let endpoints = (endpoints.0.min(endpoints.1), endpoints.0.max(endpoints.1));
             let both_aromatic = aromatic(bond.a()) && aromatic(bond.b());
-            match molecule.bond_is_aromatic(id).unwrap() == Some(true) {
+            match molecule.bond_is_aromatic(id) == Some(true) {
                 true if !both_aromatic => failures.push(format!(
                     "{}: aromatic bond {endpoints:?} has a non-aromatic endpoint",
                     case.label
@@ -64,7 +64,7 @@ fn protonated_thiophene_with_inferred_hydrogen() -> Molecule {
         .map(|(index, symbol)| {
             let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
             if index == 0 {
-                atom.formal_charge = 1;
+                atom = atom.with_formal_charge(1);
             }
             editor.add_atom(atom).unwrap()
         })
@@ -98,10 +98,10 @@ fn standalone_aromaticity_uses_the_same_charged_hydrogen_rules_as_default_percep
     assert_eq!(complete.perception().inferred_hydrogens(sulfur), Some(1));
     assert!(complete
         .atoms()
-        .all(|(atom, _)| complete.atom_is_aromatic(atom).unwrap() == Some(true)));
+        .all(|(atom, _)| complete.atom_is_aromatic(atom) == Some(true)));
     assert!(complete
         .bonds()
-        .all(|(bond, _)| complete.bond_is_aromatic(bond).unwrap() == Some(true)));
+        .all(|(bond, _)| complete.bond_is_aromatic(bond) == Some(true)));
 
     perceive_aromaticity(
         &mut standalone,
@@ -142,10 +142,10 @@ fn standalone_aromaticity_preserves_partial_installed_hydrogen_assignments() {
     );
     assert!(molecule
         .atoms()
-        .all(|(atom, _)| molecule.atom_is_aromatic(atom).unwrap() == Some(false)));
+        .all(|(atom, _)| molecule.atom_is_aromatic(atom) == Some(false)));
     assert!(molecule
         .bonds()
-        .all(|(bond, _)| molecule.bond_is_aromatic(bond).unwrap() == Some(false)));
+        .all(|(bond, _)| molecule.bond_is_aromatic(bond) == Some(false)));
 }
 
 #[test]
@@ -160,10 +160,7 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
         // been installed and after aromaticity has replaced the old section.
         for max_total_work in (0..1_000).step_by(7) {
             let mut actual = original.clone();
-            let options = AromaticityOptions {
-                max_total_work,
-                ..Default::default()
-            };
+            let options = AromaticityOptions::default().with_max_total_work(max_total_work);
             match perceive_aromaticity(&mut actual, AromaticityModel::RdkitLike, options) {
                 Err(error) => {
                     assert!(matches!(
@@ -180,14 +177,14 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
                     assert_eq!(
                         actual
                             .atoms()
-                            .filter(|(id, _)| actual.atom_is_aromatic(*id).unwrap() == Some(true))
+                            .filter(|(id, _)| actual.atom_is_aromatic(*id) == Some(true))
                             .count(),
                         12
                     );
                     assert_eq!(
                         actual
                             .bonds()
-                            .filter(|(id, _)| actual.bond_is_aromatic(*id).unwrap() == Some(true))
+                            .filter(|(id, _)| actual.bond_is_aromatic(*id) == Some(true))
                             .count(),
                         12
                     );
@@ -204,26 +201,19 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
 fn installed_rings_skip_enumeration_limits_but_not_aromaticity_limits() {
     let mut actual = molecule("c1ccccc1");
     actual.perceive().unwrap();
-    let options = AromaticityOptions {
-        ring_options: RingPerceptionOptions {
-            max_atoms: 0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let options = AromaticityOptions::default()
+        .with_ring_options(RingPerceptionOptions::default().with_max_atoms(0));
     perceive_aromaticity(&mut actual, AromaticityModel::RdkitLike, options).unwrap();
     let before = actual.perception().clone();
     assert!(matches!(
-        perceive_aromaticity(
-            &mut actual,
-            AromaticityModel::RdkitLike,
-            AromaticityOptions {
-                max_total_work: 0,
-                ..options
-            }
-        ),
-        Err(AromaticityError::LimitExceeded(limit))
-            if limit.resource() == Resource::Work && limit.limit() == 0
-    ));
+            perceive_aromaticity(
+                &mut actual,
+                AromaticityModel::RdkitLike,
+                options
+    .with_max_total_work(0)
+            ),
+            Err(AromaticityError::LimitExceeded(limit))
+                if limit.resource() == Resource::Work && limit.limit() == 0
+        ));
     assert_eq!(actual.perception(), &before);
 }

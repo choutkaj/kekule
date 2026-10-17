@@ -41,10 +41,7 @@ fn selected(
     document: &MmcifDocument,
     policy: AltLocPolicy,
 ) -> Result<StructureInterpretation, FormatError> {
-    document.interpret(StructureInterpretOptions {
-        altloc_policy: policy,
-        ..Default::default()
-    })
+    document.interpret(StructureInterpretOptions::default().with_altloc_policy(policy))
 }
 
 fn choices(result: &StructureInterpretation) -> Vec<Vec<String>> {
@@ -125,8 +122,7 @@ fn mmcif_altloc_ties_and_unknown_occupancies_are_reported() {
     assert_eq!(
         result
             .model()
-            .occupancy(crate::topology::TopologyAtomIndex::new(0))
-            .unwrap(),
+            .occupancy(crate::topology::TopologyAtomIndex::new(0)),
         None
     );
 }
@@ -162,34 +158,30 @@ fn mmcif_altloc_local_overrides_and_linked_groups() {
     );
     let result = selected(
         &source,
-        AltLocPolicy::Configured(AltLocSelection {
-            default: AltLocPreference::SelectLabel("A".into()),
-            overrides: BTreeMap::from([(ids[1].clone(), "B".into())]),
-            ..Default::default()
-        }),
+        AltLocPolicy::Configured(
+            AltLocSelection::default()
+                .with_default_preference(AltLocPreference::SelectLabel("A".into()))
+                .with_overrides(BTreeMap::from([(ids[1].clone(), "B".into())])),
+        ),
     )
     .unwrap();
     assert_eq!(choices(&result), [vec!["A"], vec!["B"]]);
-    let group = AltLocSelection {
-        groups: vec![ids.clone()],
-        ..Default::default()
-    };
+    let group = AltLocSelection::default().with_groups(vec![ids.clone()]);
     assert_eq!(
         choices(&selected(&source, AltLocPolicy::Configured(group.clone())).unwrap()),
         [vec!["A"], vec!["A"]]
     );
-    let forced = AltLocSelection {
-        overrides: BTreeMap::from([(ids[1].clone(), "B".into())]),
-        ..group.clone()
-    };
+    let forced = group
+        .clone()
+        .with_overrides(BTreeMap::from([(ids[1].clone(), "B".into())]));
     assert_eq!(
         choices(&selected(&source, AltLocPolicy::Configured(forced)).unwrap()),
         [vec!["B"], vec!["B"]]
     );
-    let conflicting = AltLocSelection {
-        overrides: BTreeMap::from([(ids[0].clone(), "A".into()), (ids[1].clone(), "B".into())]),
-        ..group
-    };
+    let conflicting = group.with_overrides(BTreeMap::from([
+        (ids[0].clone(), "A".into()),
+        (ids[1].clone(), "B".into()),
+    ]));
     assert!(selected(&source, AltLocPolicy::Configured(conflicting)).is_err());
 }
 
@@ -205,26 +197,11 @@ fn mmcif_altloc_invalid_selectors_and_groups_fail() {
     let mut unknown = ids[0].clone();
     unknown.insertion_code = Some("A".into());
     for selection in [
-        AltLocSelection {
-            overrides: BTreeMap::from([(unknown.clone(), "A".into())]),
-            ..Default::default()
-        },
-        AltLocSelection {
-            groups: vec![vec![]],
-            ..Default::default()
-        },
-        AltLocSelection {
-            groups: vec![vec![ids[0].clone()]],
-            ..Default::default()
-        },
-        AltLocSelection {
-            groups: vec![vec![ids[0].clone(), ids[0].clone()]],
-            ..Default::default()
-        },
-        AltLocSelection {
-            groups: vec![vec![ids[0].clone(), unknown]],
-            ..Default::default()
-        },
+        AltLocSelection::default().with_overrides(BTreeMap::from([(unknown.clone(), "A".into())])),
+        AltLocSelection::default().with_groups(vec![vec![]]),
+        AltLocSelection::default().with_groups(vec![vec![ids[0].clone()]]),
+        AltLocSelection::default().with_groups(vec![vec![ids[0].clone(), ids[0].clone()]]),
+        AltLocSelection::default().with_groups(vec![vec![ids[0].clone(), unknown]]),
     ] {
         assert!(selected(&source, AltLocPolicy::Configured(selection)).is_err());
     }
@@ -323,22 +300,18 @@ fn mmcif_altloc_source_combinations_constrain_default_and_exact_selection() {
     );
     let second = selected(
         &source,
-        AltLocPolicy::Configured(AltLocSelection {
-            source_conformation: Some("second".into()),
-            ..Default::default()
-        }),
+        AltLocPolicy::Configured(
+            AltLocSelection::default().with_source_conformation(Some("second".into())),
+        ),
     )
     .unwrap();
     assert_eq!(choices(&second), [vec!["B"], vec!["D"]]);
     assert_eq!(source, original);
     let ids = source.blocks()[0].alternate_locations().unwrap();
-    let conflict = AltLocSelection {
-        overrides: BTreeMap::from([
-            (ids[0].residue.clone(), "A".into()),
-            (ids[1].residue.clone(), "D".into()),
-        ]),
-        ..Default::default()
-    };
+    let conflict = AltLocSelection::default().with_overrides(BTreeMap::from([
+        (ids[0].residue.clone(), "A".into()),
+        (ids[1].residue.clone(), "D".into()),
+    ]));
     assert!(selected(&source, AltLocPolicy::Configured(conflict)).is_err());
     assert_eq!(
         source
@@ -376,10 +349,9 @@ fn mmcif_altloc_invalid_source_combinations_fail() {
     }
     assert!(selected(
         &document(CROSSED),
-        AltLocPolicy::Configured(AltLocSelection {
-            source_conformation: Some("absent".into()),
-            ..Default::default()
-        })
+        AltLocPolicy::Configured(
+            AltLocSelection::default().with_source_conformation(Some("absent".into()))
+        )
     )
     .is_err());
 }
@@ -420,26 +392,25 @@ fn mmcif_altloc_ensemble_uses_source_models_and_stable_site_order() {
         .map(|residue| residue.residue)
         .collect::<Vec<_>>();
     let result = source
-        .interpret_ensemble(StructureEnsembleInterpretOptions {
-            altloc_policy: AltLocPolicy::Configured(AltLocSelection {
-                overrides: BTreeMap::from([(ids[1].clone(), "A".into())]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
+        .interpret_ensemble(
+            StructureEnsembleInterpretOptions::default().with_altloc_policy(
+                AltLocPolicy::Configured(
+                    AltLocSelection::default()
+                        .with_overrides(BTreeMap::from([(ids[1].clone(), "A".into())])),
+                ),
+            ),
+        )
         .unwrap();
     assert_eq!(
         result.reports()[1].alternate_locations()[0].selected_labels,
         ["A"]
     );
     assert!(source
-        .interpret_ensemble(StructureEnsembleInterpretOptions {
-            altloc_policy: AltLocPolicy::Configured(AltLocSelection {
-                groups: vec![ids],
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
+        .interpret_ensemble(
+            StructureEnsembleInterpretOptions::default().with_altloc_policy(
+                AltLocPolicy::Configured(AltLocSelection::default().with_groups(vec![ids]))
+            )
+        )
         .is_err());
 }
 
@@ -465,9 +436,9 @@ fn mmcif_altloc_ensemble_rejects_changed_chemistry_and_keeps_single_plain_model(
 #[test]
 fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() {
     let source = document(CROSSED);
-    let options = ["B", "A", "B"].map(|label| StructureInterpretOptions {
-        altloc_policy: AltLocPolicy::SelectLabel(label.into()),
-        ..Default::default()
+    let options = ["B", "A", "B"].map(|label| {
+        StructureInterpretOptions::default()
+            .with_altloc_policy(AltLocPolicy::SelectLabel(label.into()))
     });
     let result = source.interpret_conformations(&options).unwrap();
     assert_eq!(result.ensemble().len(), 3);
@@ -508,10 +479,8 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
         error_detail(source.interpret_conformations(&[])),
         Some(FormatErrorDetail::EmptyConformationSelection)
     ));
-    let bad = [StructureInterpretOptions {
-        altloc_policy: AltLocPolicy::SelectLabel("Z".into()),
-        ..Default::default()
-    }];
+    let bad = [StructureInterpretOptions::default()
+        .with_altloc_policy(AltLocPolicy::SelectLabel("Z".into()))];
     assert!(matches!(
         error_detail(source.interpret_conformations(&bad)),
         Some(FormatErrorDetail::Conformation { selection: 0, .. })
@@ -521,9 +490,9 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
 #[test]
 fn mmcif_altloc_explicit_conformer_ensemble_rejects_microheterogeneity() {
     let source = document("1 C CA GLY X 1 1 . A 0.4 0 0 0 1\n2 C CA ALA X 1 1 . B 0.6 5 0 0 1\n3 C CB ALA X 1 1 . B 0.6 6.5 0 0 1");
-    let options = ["A", "B"].map(|label| StructureInterpretOptions {
-        altloc_policy: AltLocPolicy::SelectLabel(label.into()),
-        ..Default::default()
+    let options = ["A", "B"].map(|label| {
+        StructureInterpretOptions::default()
+            .with_altloc_policy(AltLocPolicy::SelectLabel(label.into()))
     });
     assert!(matches!(
         error_detail(source.interpret_conformations(&options)),
@@ -535,10 +504,10 @@ fn mmcif_altloc_explicit_conformer_ensemble_rejects_microheterogeneity() {
 fn mmcif_altloc_unselected_models_still_validate_alternate_sites() {
     let source = document("1 C C1 LIG X 1 1 . . 1 0 0 0 1\n2 C C1 LIG X 1 1 . A 1 0 0 0 2\n3 C C1 LIG X 1 1 . A 1 1 0 0 2");
     let error = source
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::Select("1".into()),
-            ..Default::default()
-        })
+        .interpret(
+            StructureInterpretOptions::default()
+                .with_model_selection(ModelSelection::Select("1".into())),
+        )
         .unwrap_err();
     assert!(error.message().contains("duplicate"));
 }
@@ -564,10 +533,7 @@ fn mmcif_altloc_source_combinations_respect_user_group_constraints() {
         .collect();
     assert!(selected(
         &source,
-        AltLocPolicy::Configured(AltLocSelection {
-            groups: vec![ids],
-            ..Default::default()
-        })
+        AltLocPolicy::Configured(AltLocSelection::default().with_groups(vec![ids]))
     )
     .is_err());
 }
@@ -583,10 +549,9 @@ fn mmcif_altloc_overlapping_groups_are_transitive() {
         .collect::<Vec<_>>();
     let result = selected(
         &source,
-        AltLocPolicy::Configured(AltLocSelection {
-            groups: vec![ids[..2].to_vec(), ids[1..].to_vec()],
-            ..Default::default()
-        }),
+        AltLocPolicy::Configured(
+            AltLocSelection::default().with_groups(vec![ids[..2].to_vec(), ids[1..].to_vec()]),
+        ),
     )
     .unwrap();
     assert_eq!(choices(&result), [vec!["B"], vec!["B"], vec!["B"]]);
@@ -611,17 +576,14 @@ fn mmcif_altloc_rejected_source_combinations_are_reported() {
 fn mmcif_altloc_selection_does_not_change_first_source_model() {
     let source = document("1 C CA GLY X 1 1 . A 0.1 0 0 0 7\n2 C CA GLY X 1 1 . . 1 0 0 0 2\n3 C CA ALA X 1 1 . B 0.9 0 0 0 7");
     let result = source
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..Default::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap();
     assert_eq!(result.report().selected_model(), Some("7"));
     let other = source
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::Select("2".into()),
-            ..Default::default()
-        })
+        .interpret(
+            StructureInterpretOptions::default()
+                .with_model_selection(ModelSelection::Select("2".into())),
+        )
         .unwrap();
     assert!(other.report().issues().iter().any(|issue| matches!(issue, StructureInterpretIssue::CoordinateModelIgnored { model_id, atom_site_rows: 2 } if model_id == "7")));
 }

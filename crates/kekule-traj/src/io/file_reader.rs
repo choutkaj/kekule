@@ -155,7 +155,7 @@ impl TrajectoryReader for IndexedFileTrajectoryReader {
 }
 
 impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
-    fn frame_count(&self) -> Option<u64> {
+    fn frame_count(&self) -> Option<usize> {
         match &self.inner {
             IndexedReaderInner::Xyz(reader) => reader.frame_count(),
             IndexedReaderInner::Dcd(reader) => reader.frame_count(),
@@ -166,7 +166,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 
     fn read_frame(
         &mut self,
-        index: u64,
+        index: usize,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
         match &mut self.inner {

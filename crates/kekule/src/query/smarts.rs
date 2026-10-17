@@ -23,24 +23,173 @@ use stereo::{AtomStereo, BondSyntax, StereoSyntax};
 /// graph, branch, ring-closure, and expression complexity before allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SmartsParseOptions {
+    max_input_bytes: usize,
+    max_atoms: usize,
+    max_bonds: usize,
+    max_branch_depth: usize,
+    max_ring_closures: usize,
+    max_expression_nodes: usize,
+    max_expression_depth: usize,
+    max_recursive_depth: usize,
+    max_total_expression_nodes: usize,
+}
+
+impl SmartsParseOptions {
     /// Maximum UTF-8 byte length; the bounded grammar itself is ASCII.
-    pub max_input_bytes: usize,
+    pub const fn max_input_bytes(&self) -> usize {
+        self.max_input_bytes
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Result<Self, FormatError> {
+        nonzero_option("max_input_bytes", max_input_bytes)?;
+        self.max_input_bytes = max_input_bytes;
+        Ok(self)
+    }
+
     /// Maximum query atoms.
-    pub max_atoms: usize,
+    pub const fn max_atoms(&self) -> usize {
+        self.max_atoms
+    }
+
+    /// Sets [`Self::max_atoms`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_atoms(mut self, max_atoms: usize) -> Result<Self, FormatError> {
+        nonzero_option("max_atoms", max_atoms)?;
+        self.max_atoms = max_atoms;
+        Ok(self)
+    }
+
     /// Maximum query bonds, including ring closures.
-    pub max_bonds: usize,
+    pub const fn max_bonds(&self) -> usize {
+        self.max_bonds
+    }
+
+    /// Sets [`Self::max_bonds`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_bonds(mut self, max_bonds: usize) -> Result<Self, FormatError> {
+        nonzero_option("max_bonds", max_bonds)?;
+        self.max_bonds = max_bonds;
+        Ok(self)
+    }
+
     /// Maximum nested branch depth.
-    pub max_branch_depth: usize,
+    pub const fn max_branch_depth(&self) -> usize {
+        self.max_branch_depth
+    }
+
+    /// Sets [`Self::max_branch_depth`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_branch_depth(mut self, max_branch_depth: usize) -> Result<Self, FormatError> {
+        nonzero_option("max_branch_depth", max_branch_depth)?;
+        self.max_branch_depth = max_branch_depth;
+        Ok(self)
+    }
+
     /// Maximum simultaneously open and total completed ring closures.
-    pub max_ring_closures: usize,
+    pub const fn max_ring_closures(&self) -> usize {
+        self.max_ring_closures
+    }
+
+    /// Sets [`Self::max_ring_closures`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_ring_closures(mut self, max_ring_closures: usize) -> Result<Self, FormatError> {
+        nonzero_option("max_ring_closures", max_ring_closures)?;
+        self.max_ring_closures = max_ring_closures;
+        Ok(self)
+    }
+
     /// Maximum nodes in each atom expression after normalization.
-    pub max_expression_nodes: usize,
+    pub const fn max_expression_nodes(&self) -> usize {
+        self.max_expression_nodes
+    }
+
+    /// Sets [`Self::max_expression_nodes`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_expression_nodes(
+        mut self,
+        max_expression_nodes: usize,
+    ) -> Result<Self, FormatError> {
+        nonzero_option("max_expression_nodes", max_expression_nodes)?;
+        self.max_expression_nodes = max_expression_nodes;
+        Ok(self)
+    }
+
     /// Maximum depth of each atom expression after normalization.
-    pub max_expression_depth: usize,
+    pub const fn max_expression_depth(&self) -> usize {
+        self.max_expression_depth
+    }
+
+    /// Sets [`Self::max_expression_depth`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_expression_depth(
+        mut self,
+        max_expression_depth: usize,
+    ) -> Result<Self, FormatError> {
+        nonzero_option("max_expression_depth", max_expression_depth)?;
+        self.max_expression_depth = max_expression_depth;
+        Ok(self)
+    }
+
     /// Maximum nested recursive SMARTS depth (hard ceiling 32).
-    pub max_recursive_depth: usize,
+    pub const fn max_recursive_depth(&self) -> usize {
+        self.max_recursive_depth
+    }
+
+    /// Sets [`Self::max_recursive_depth`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_recursive_depth(
+        mut self,
+        max_recursive_depth: usize,
+    ) -> Result<Self, FormatError> {
+        nonzero_option("max_recursive_depth", max_recursive_depth)?;
+        self.max_recursive_depth = max_recursive_depth;
+        Ok(self)
+    }
+
     /// Aggregate atom and bond expression nodes, including recursive queries.
-    pub max_total_expression_nodes: usize,
+    pub const fn max_total_expression_nodes(&self) -> usize {
+        self.max_total_expression_nodes
+    }
+
+    /// Sets [`Self::max_total_expression_nodes`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound is zero.
+    pub fn with_max_total_expression_nodes(
+        mut self,
+        max_total_expression_nodes: usize,
+    ) -> Result<Self, FormatError> {
+        nonzero_option("max_total_expression_nodes", max_total_expression_nodes)?;
+        self.max_total_expression_nodes = max_total_expression_nodes;
+        Ok(self)
+    }
 }
 
 impl SmartsParseOptions {
@@ -134,7 +283,6 @@ fn limit_error(
 /// are rejected. Enhanced groups compare correlated configurations during matching.
 /// See the crate's SMARTS capability matrix for the complete dialect contract.
 pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph, FormatError> {
-    validate_options(options)?;
     if input.is_empty() {
         return Err(smarts_error(
             DiagnosticKind::Syntax,
@@ -268,28 +416,13 @@ fn install_cx_groups(
         .map_err(|e| syntax_error(span.clone(), "invalid query").with_source(e))
 }
 
-fn validate_options(options: SmartsParseOptions) -> Result<(), FormatError> {
-    for (name, value) in [
-        ("max_input_bytes", options.max_input_bytes),
-        ("max_atoms", options.max_atoms),
-        ("max_bonds", options.max_bonds),
-        ("max_branch_depth", options.max_branch_depth),
-        ("max_ring_closures", options.max_ring_closures),
-        ("max_expression_nodes", options.max_expression_nodes),
-        ("max_expression_depth", options.max_expression_depth),
-        ("max_recursive_depth", options.max_recursive_depth),
-        (
-            "max_total_expression_nodes",
-            options.max_total_expression_nodes,
-        ),
-    ] {
-        if value == 0 {
-            return Err(smarts_error(
-                DiagnosticKind::Limit,
-                0..0,
-                format!("SMARTS option {name} must be greater than zero"),
-            ));
-        }
+fn nonzero_option(name: &str, value: usize) -> Result<(), FormatError> {
+    if value == 0 {
+        return Err(smarts_error(
+            DiagnosticKind::Limit,
+            0..0,
+            format!("SMARTS option {name} must be greater than zero"),
+        ));
     }
     Ok(())
 }

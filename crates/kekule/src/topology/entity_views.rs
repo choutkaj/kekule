@@ -12,7 +12,7 @@ use super::{
 /// chemistry, with perception, connectivity, hierarchy, and static
 /// annotations of this occurrence.
 ///
-/// Atom fields read through `Deref` (`atom.element`, `atom.formal_charge`).
+/// Atom accessors read through `Deref` (`atom.element()`, `atom.formal_charge()`).
 #[derive(Clone, Copy)]
 pub struct AtomView<'a> {
     topology: &'a Topology,
@@ -44,7 +44,7 @@ impl<'a> AtomView<'a> {
     pub(super) fn new(topology: &'a Topology, index: TopologyAtomIndex) -> Self {
         let id = topology.atom_ids()[index.index()];
         let atom = topology
-            .definition_molecule(id.molecule())
+            .definition_molecule(id.instance())
             .atom(id.atom())
             .expect("published topology atoms are live");
         Self {
@@ -70,14 +70,14 @@ impl<'a> AtomView<'a> {
     }
 
     /// The molecule occurrence containing this atom.
-    pub fn molecule(self) -> InstanceView<'a> {
-        InstanceView::new(self.topology, self.id.molecule())
+    pub fn instance(self) -> InstanceView<'a> {
+        InstanceView::new(self.topology, self.id.instance())
     }
 
     /// Bonded neighbors in local adjacency order.
     pub fn neighbors(self) -> impl Iterator<Item = AtomView<'a>> + 'a {
         let topology = self.topology;
-        let molecule = self.id.molecule();
+        let molecule = self.id.instance();
         topology
             .definition_molecule(molecule)
             .neighbors(self.id.atom())
@@ -92,7 +92,7 @@ impl<'a> AtomView<'a> {
     /// Incident bonds in local adjacency order.
     pub fn bonds(self) -> impl Iterator<Item = BondView<'a>> + 'a {
         let topology = self.topology;
-        let molecule = self.id.molecule();
+        let molecule = self.id.instance();
         topology
             .definition_molecule(molecule)
             .incident_bonds(self.id.atom())
@@ -106,7 +106,7 @@ impl<'a> AtomView<'a> {
 
     /// Explicit graph hydrogen neighbors.
     pub fn explicit_hydrogens(self) -> usize {
-        self.molecule()
+        self.instance()
             .molecule()
             .explicit_hydrogens(self.id.atom())
             .expect("published topology atoms are live")
@@ -114,26 +114,19 @@ impl<'a> AtomView<'a> {
 
     /// Implicit hydrogens; see [`crate::molecule::Molecule::implicit_hydrogens`].
     pub fn implicit_hydrogens(self) -> Option<usize> {
-        self.molecule()
+        self.instance()
             .molecule()
             .implicit_hydrogens(self.id.atom())
-            .expect("published topology atoms are live")
     }
 
     /// Explicit plus implicit hydrogens; see [`crate::molecule::Molecule::total_hydrogens`].
     pub fn total_hydrogens(self) -> Option<usize> {
-        self.molecule()
-            .molecule()
-            .total_hydrogens(self.id.atom())
-            .expect("published topology atoms are live")
+        self.instance().molecule().total_hydrogens(self.id.atom())
     }
 
     /// Perceived aromaticity; `None` before perception.
     pub fn is_aromatic(self) -> Option<bool> {
-        self.molecule()
-            .molecule()
-            .atom_is_aromatic(self.id.atom())
-            .expect("published topology atoms are live")
+        self.instance().molecule().atom_is_aromatic(self.id.atom())
     }
 
     pub fn atom_site(self) -> Option<AtomSiteView<'a>> {
@@ -201,7 +194,7 @@ impl<'a> BondView<'a> {
     pub(super) fn new(topology: &'a Topology, index: TopologyBondIndex) -> Self {
         let id = topology.bond_ids()[index.index()];
         let bond = topology
-            .definition_molecule(id.molecule())
+            .definition_molecule(id.instance())
             .bond(id.bond())
             .expect("published topology bonds are live");
         Self {
@@ -226,14 +219,15 @@ impl<'a> BondView<'a> {
         self.bond
     }
 
-    pub fn molecule(self) -> InstanceView<'a> {
-        InstanceView::new(self.topology, self.id.molecule())
+    /// The molecule occurrence containing this bond.
+    pub fn instance(self) -> InstanceView<'a> {
+        InstanceView::new(self.topology, self.id.instance())
     }
 
     /// Both endpoint atoms in stored bond order.
     pub fn atoms(self) -> [AtomView<'a>; 2] {
         let (a, b) = self.bond.endpoints();
-        let molecule = self.id.molecule();
+        let molecule = self.id.instance();
         [a, b].map(|atom| {
             self.topology
                 .atom(InstanceAtomId::new(molecule, atom))
@@ -243,10 +237,7 @@ impl<'a> BondView<'a> {
 
     /// Perceived aromaticity; `None` before perception.
     pub fn is_aromatic(self) -> Option<bool> {
-        self.molecule()
-            .molecule()
-            .bond_is_aromatic(self.id.bond())
-            .expect("published topology bonds are live")
+        self.instance().molecule().bond_is_aromatic(self.id.bond())
     }
 
     /// One static topology annotation of this bond.

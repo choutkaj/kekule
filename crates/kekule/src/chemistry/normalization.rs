@@ -105,10 +105,10 @@ impl fmt::Display for NormalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAromaticRepresentation(atom) => {
-                write!(f, "invalid imported aromatic representation at atom {atom}")
+                write!(f, "invalid imported aromatic representation at {atom}")
             }
             Self::AromaticLocalizationLimit { atom, limit } => {
-                write!(f, "imported aromatic localization at atom {atom}: {limit}")
+                write!(f, "imported aromatic localization at {atom}: {limit}")
             }
             Self::SourceStereo(_) => f.write_str("source stereo cannot be represented canonically"),
         }
@@ -177,7 +177,6 @@ impl SourceStereoNormalizationError {
                 StereoValidationIssue::MissingStereoBond { bond, .. }
                 | StereoValidationIssue::InvalidDoubleBondOrder { bond, .. }
                 | StereoValidationIssue::DoubleBondFocusMismatch { bond, .. }
-                | StereoValidationIssue::InvalidAxisCarrierCount { axis: bond, .. }
                 | StereoValidationIssue::AxisCarrierIsFocusAtom { axis: bond, .. }
                 | StereoValidationIssue::AxisCarrierNotAdjacent { axis: bond, .. }
                 | StereoValidationIssue::UnsupportedAxisCarrier { axis: bond, .. },
@@ -233,7 +232,7 @@ pub(crate) fn localize_source_aromatic_bonds(
     }
     debug_assert!(aromatic_bonds.iter().all(|bond_id| molecule
         .bond(*bond_id)
-        .is_ok_and(|bond| matches!(bond.order, BondOrder::Single | BondOrder::Double))));
+        .is_some_and(|bond| matches!(bond.order, BondOrder::Single | BondOrder::Double))));
     Ok(())
 }
 
@@ -252,12 +251,11 @@ fn try_localize_aromatic_component_with_limit(
     let component_atoms = component.iter().copied().collect::<BTreeSet<_>>();
     let mut demand = BTreeSet::new();
     for atom_id in component {
-        let Ok(atom) = molecule.atom(*atom_id) else {
+        let Some(atom) = molecule.atom(*atom_id) else {
             return Ok(false);
         };
         let baseline_bond_valence = molecule
             .incident_bonds(*atom_id)
-            .ok()
             .into_iter()
             .flatten()
             .map(|(_, bond)| represented_bond_valence(bond.order))

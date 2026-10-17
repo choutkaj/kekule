@@ -142,16 +142,13 @@ struct AtomSignature {
 fn atom_signature(mol: &Molecule, atom_id: AtomId, atom: &Atom, degree: usize) -> AtomSignature {
     AtomSignature {
         atomic_number: atom.element.atomic_number(),
-        isotope: atom.isotope.unwrap_or(0),
+        isotope: atom.isotope.map_or(0, std::num::NonZero::get),
         formal_charge: atom.formal_charge,
         radical: atom
             .radical
             .map(|radical| (radical.electron_count(), radical.spin_multiplicity())),
-        implicit_hydrogens: mol
-            .implicit_hydrogens(atom_id)
-            .expect("live atom")
-            .unwrap_or(0),
-        atom_map: atom.atom_map.unwrap_or(0),
+        implicit_hydrogens: mol.implicit_hydrogens(atom_id).unwrap_or(0),
+        atom_map: atom.atom_map.map_or(0, std::num::NonZero::get),
         degree,
     }
 }
@@ -163,7 +160,7 @@ fn degree(mol: &Molecule, atom: AtomId) -> usize {
 }
 
 fn bond_code(mol: &Molecule, bond_id: BondId, bond: &Bond) -> (u8, bool) {
-    if mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true) {
+    if mol.bond_is_aromatic(bond_id) == Some(true) {
         return (5, true);
     }
     let order = match bond.order {

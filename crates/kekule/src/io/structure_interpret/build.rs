@@ -274,7 +274,7 @@ impl BuiltMolecule {
                 let atom = self
                     .editor
                     .working()
-                    .atom(source_atom)
+                    .require_atom(source_atom)
                     .map_err(graph_error)?
                     .clone();
                 let target_atom = editor.add_atom(atom).map_err(graph_error)?;
@@ -394,7 +394,7 @@ pub(super) fn build_molecule(
     }
     for (key, row) in &representative {
         let mut atom = Atom::new(row.element);
-        atom.isotope = row.isotope;
+        atom.isotope = row.isotope.and_then(std::num::NonZeroU16::new);
         atom.formal_charge = row.formal_charge.unwrap_or_default();
         atoms.insert(key.clone(), editor.add_atom(atom).map_err(graph_error)?);
     }
@@ -444,7 +444,7 @@ pub(super) fn build_molecule(
         record_evidence(&mut evidence, left, right, source);
         if editor
             .working()
-            .bond_between(left, right)
+            .require_bond_between(left, right)
             .map_err(graph_error)?
             .is_none()
         {
@@ -454,10 +454,16 @@ pub(super) fn build_molecule(
         } else {
             let existing = editor
                 .working()
-                .bond_between(left, right)
+                .require_bond_between(left, right)
                 .map_err(graph_error)?
                 .expect("existing bond was found");
-            if editor.working().bond(existing).map_err(graph_error)?.order != connection.order {
+            if editor
+                .working()
+                .require_bond(existing)
+                .map_err(graph_error)?
+                .order
+                != connection.order
+            {
                 return Err(structure_error(
                     DiagnosticKind::Inconsistent,
                     None,
@@ -582,7 +588,7 @@ fn count_bond_candidates(
                         }
 
                         if graph
-                            .bond_between(left, right)
+                            .require_bond_between(left, right)
                             .map_err(graph_error)?
                             .is_none()
                         {
@@ -775,13 +781,12 @@ pub(super) fn build_topology_hierarchy(
             .add_atom_site(
                 residue,
                 atom.atom,
-                AtomSiteMetadata {
-                    type_symbol: Some(atom.type_symbol.clone()),
-                    label_asym_id: atom.label_asym_id.clone(),
-                    auth_asym_id: atom.auth_asym_id.clone(),
-                    label_atom_id: atom.label_atom_name.clone(),
-                    auth_atom_id: atom.auth_atom_name.clone(),
-                },
+                AtomSiteMetadata::default()
+                    .with_type_symbol(Some(atom.type_symbol.clone()))
+                    .with_label_asym_id(atom.label_asym_id.clone())
+                    .with_auth_asym_id(atom.auth_asym_id.clone())
+                    .with_label_atom_id(atom.label_atom_name.clone())
+                    .with_auth_atom_id(atom.auth_atom_name.clone()),
             )
             .map_err(hierarchy_error)?;
     }

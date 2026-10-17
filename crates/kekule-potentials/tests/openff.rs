@@ -107,24 +107,24 @@ fn reference_energy(p: &ParameterizedTopology, model: &Model) -> [f64; 6] {
     let x = |atom| model.position(atom).unwrap().into_value();
     let mut e = [0.0; 6];
     for b in p.bonds() {
-        let r = norm(sub(x(b.atoms[0]), x(b.atoms[1])));
-        e[0] += 0.5 * b.parameter.k.value() * (r - b.parameter.length.value()).powi(2);
+        let r = norm(sub(x(b.atoms()[0]), x(b.atoms()[1])));
+        e[0] += 0.5 * b.parameter().k().value() * (r - b.parameter().length().value()).powi(2);
     }
     for a in p.angles() {
-        let u = sub(x(a.atoms[0]), x(a.atoms[1]));
-        let v = sub(x(a.atoms[2]), x(a.atoms[1]));
+        let u = sub(x(a.atoms()[0]), x(a.atoms()[1]));
+        let v = sub(x(a.atoms()[2]), x(a.atoms()[1]));
         let theta = (dot(u, v) / (norm(u) * norm(v))).acos();
-        e[1] += 0.5 * a.parameter.k.value() * (theta - a.parameter.angle.value()).powi(2);
+        e[1] += 0.5 * a.parameter().k().value() * (theta - a.parameter().angle().value()).powi(2);
     }
     for (slot, torsions) in [(2, p.proper_torsions()), (3, p.improper_torsions())] {
         for t in torsions {
-            let [a, b, c, d] = t.atoms.map(x);
+            let [a, b, c, d] = t.atoms().map(x);
             let (b1, b2, b3) = (sub(b, a), sub(c, b), sub(d, c));
             let (n1, n2) = (cross(b1, b2), cross(b2, b3));
             let phi = dot(cross(n1, n2), b2.map(|v| v / norm(b2))).atan2(dot(n1, n2));
-            for term in &t.parameter.terms {
-                e[slot] += term.k.value() / term.idivf
-                    * (1.0 + (f64::from(term.periodicity) * phi - term.phase.value()).cos());
+            for term in t.parameter().terms() {
+                e[slot] += term.k().value() / term.idivf()
+                    * (1.0 + (f64::from(term.periodicity()) * phi - term.phase().value()).cos());
             }
         }
     }
@@ -135,12 +135,13 @@ fn reference_energy(p: &ParameterizedTopology, model: &Model) -> [f64; 6] {
             let exception = p
                 .pair_exceptions()
                 .iter()
-                .find(|e| e.atoms == [ids[i], ids[j]] || e.atoms == [ids[j], ids[i]]);
-            let (vs, qs) = exception.map_or((1.0, 1.0), |e| (e.vdw_scale, e.electrostatics_scale));
+                .find(|e| e.atoms() == [ids[i], ids[j]] || e.atoms() == [ids[j], ids[i]]);
+            let (vs, qs) =
+                exception.map_or((1.0, 1.0), |e| (e.vdw_scale(), e.electrostatics_scale()));
             let r = norm(sub(x(ids[i]), x(ids[j])));
             let (a, b) = (&p.vdw()[i], &p.vdw()[j]);
-            let sigma = (a.sigma.value() + b.sigma.value()) / 2.0;
-            let epsilon = (a.epsilon.value() * b.epsilon.value()).sqrt();
+            let sigma = (a.sigma().value() + b.sigma().value()) / 2.0;
+            let epsilon = (a.epsilon().value() * b.epsilon().value()).sqrt();
             e[4] += vs * 4.0 * epsilon * ((sigma / r).powi(12) - (sigma / r).powi(6));
             e[5] += qs * 138.935_457_644_381_98 * charges[i] * charges[j] / r;
         }
@@ -169,7 +170,7 @@ fn energy_components_match_an_independent_smirnoff_reference() {
         energy
             .components()
             .iter()
-            .map(|c| c.kind)
+            .map(|c| c.kind())
             .collect::<Vec<_>>(),
         kinds
     );
@@ -186,7 +187,7 @@ fn energy_components_match_an_independent_smirnoff_reference() {
 
     let evaluation = potential.evaluate(model.as_model_view()).unwrap();
     assert_eq!(evaluation.energy(), &energy);
-    assert!(Arc::ptr_eq(evaluation.topology(), &topology));
+    assert!(Arc::ptr_eq(&evaluation.shared_topology(), &topology));
 }
 
 #[test]
@@ -235,7 +236,7 @@ fn gradient_differentiates_energy_and_components_add_up() {
     for (atom, total) in gradient.iter().enumerate() {
         let mut sum = Vector3::zero();
         for c in &components {
-            let g = c.gradient.value()[atom];
+            let g = c.gradient().value()[atom];
             sum = Vector3::new(sum.x + g.x, sum.y + g.y, sum.z + g.z);
         }
         assert!(
@@ -246,8 +247,8 @@ fn gradient_differentiates_energy_and_components_add_up() {
         );
     }
     for (component, reported) in components.iter().zip(evaluation.energy().components()) {
-        assert_eq!(component.kind, reported.kind);
-        assert_eq!(component.energy, reported.energy);
+        assert_eq!(component.kind(), reported.kind());
+        assert_eq!(component.energy(), reported.energy());
     }
 }
 
@@ -290,7 +291,7 @@ fn energy_is_rigid_motion_invariant_and_gradient_has_no_net_force() {
 fn potential_binds_its_layout_and_rejects_periodic_cells() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
-    assert!(Arc::ptr_eq(potential.topology(), &topology));
+    assert!(Arc::ptr_eq(&potential.shared_topology(), &topology));
     let model = model(&topology);
     // An independently published equal topology is a different layout.
     let other = self::model(&self::topology(1));
@@ -304,7 +305,7 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
     perceived.perceive().unwrap();
     let evaluation = potential.evaluate(perceived.as_model_view()).unwrap();
     assert!(Arc::ptr_eq(
-        evaluation.topology(),
+        &evaluation.shared_topology(),
         &perceived.shared_topology()
     ));
     assert_eq!(
@@ -400,12 +401,12 @@ fn replacement_charges_change_only_electrostatics() {
         neutral.energy(model.as_model_view()).unwrap(),
     );
     for c in a.components() {
-        let other = n.component(c.kind).unwrap();
-        if c.kind == ComponentKind::Electrostatics {
-            assert_ne!(c.energy, other);
+        let other = n.component(c.kind()).unwrap();
+        if c.kind() == ComponentKind::Electrostatics {
+            assert_ne!(c.energy(), other);
             assert_eq!(other.into_value(), 0.0);
         } else {
-            assert_eq!(c.energy, other);
+            assert_eq!(c.energy(), other);
         }
     }
     assert!(matches!(
@@ -455,11 +456,13 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let model = model(&topology);
     let original = model.clone();
-    let options = MinimizeOptions {
-        gradient_tolerance: Quantity::new(1e-3, kekule::units::KILOJOULE_PER_MOLE_PER_NANOMETER),
-        max_iterations: 5_000,
-        ..MinimizeOptions::default()
-    };
+    let options = MinimizeOptions::default()
+        .with_gradient_tolerance(Quantity::new(
+            1e-3,
+            kekule::units::KILOJOULE_PER_MOLE_PER_NANOMETER,
+        ))
+        .unwrap()
+        .with_max_iterations(5_000);
     let result = minimize(&potential, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
     assert_eq!(model, original);
@@ -478,8 +481,8 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
     // Bonds relax to their 0.11 nm equilibrium within a small strain.
     for b in parameterize(&topology).bonds() {
         let r = norm(sub(
-            minimized.position(b.atoms[0]).unwrap().into_value(),
-            minimized.position(b.atoms[1]).unwrap().into_value(),
+            minimized.position(b.atoms()[0]).unwrap().into_value(),
+            minimized.position(b.atoms()[1]).unwrap().into_value(),
         ));
         assert!((r - 0.11).abs() < 0.01, "bond length {r}");
     }
@@ -533,8 +536,11 @@ fn atom_parameters_follow_an_interleaved_dense_order() {
     let (source, target) = (parameterize(&ordered), parameterize(&interleaved));
     for (dense, &atom) in interleaved.atom_ids().iter().enumerate() {
         let original = ordered.atom_index(atom).unwrap().index();
-        assert_eq!(target.vdw()[dense].sigma, source.vdw()[original].sigma);
-        assert_eq!(target.vdw()[dense].epsilon, source.vdw()[original].epsilon);
+        assert_eq!(target.vdw()[dense].sigma(), source.vdw()[original].sigma());
+        assert_eq!(
+            target.vdw()[dense].epsilon(),
+            source.vdw()[original].epsilon()
+        );
         assert_eq!(
             target.charges().value()[dense],
             source.charges().value()[original]

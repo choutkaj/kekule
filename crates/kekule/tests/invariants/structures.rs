@@ -9,10 +9,7 @@ use crate::support::fixture;
 
 fn interpret(text: &str) -> (Model, macromolecular::StructureInterpretationReport) {
     (mmcif::parse_str(text, Default::default()).unwrap())
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap()
         .into_parts()
 }
@@ -38,7 +35,7 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
                 .iter()
                 .map(|&id| {
                     let atom = model.topology().atom(id).unwrap();
-                    (atom.element.symbol(), atom.formal_charge)
+                    (atom.element().symbol(), atom.formal_charge())
                 })
                 .collect::<Vec<_>>()
         };
@@ -51,7 +48,7 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
                 .map(|&id| {
                     let bond = model.topology().bond(id).unwrap();
                     let index = |atom| {
-                        let atom = kekule::topology::InstanceAtomId::new(id.molecule(), atom);
+                        let atom = kekule::topology::InstanceAtomId::new(id.instance(), atom);
                         model.topology().atom_index(atom).unwrap().index()
                     };
                     let (a, b) = (index(bond.a()), index(bond.b()));
@@ -71,7 +68,7 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
         };
         assert_eq!(residues(&reread), residues(&original), "{entry}: residues");
 
-        let digits = i32::try_from(MmcifWriteOptions::default().coordinate_precision).unwrap();
+        let digits = i32::try_from(MmcifWriteOptions::default().coordinate_precision()).unwrap();
         // Half a unit in the last written place, plus rounding slack.
         let precision = 0.5 * 10f64.powi(-digits) + 1e-12;
         for (left, right) in original

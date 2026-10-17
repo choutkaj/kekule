@@ -1,5 +1,6 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
+use std::num::{NonZeroU16, NonZeroU32};
 
 #[test]
 fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
@@ -14,7 +15,7 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
         let point = interpreted
             .model()
             .positions()
-            .position_at(0)
+            .get(0)
             .unwrap()
             .value_in(crate::units::ANGSTROM)
             .unwrap();
@@ -24,7 +25,7 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
         let molecule = interpreted.molecules().next().unwrap();
         let (_, atom) = molecule.atoms().next().unwrap();
         assert_eq!(atom.formal_charge, -1);
-        assert_eq!(atom.atom_map, Some(17));
+        assert_eq!(atom.atom_map, NonZeroU32::new(17));
         assert_eq!(atom.hydrogens, ImplicitHydrogens::Fixed(0));
     }
 }
@@ -40,9 +41,8 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
         SourceLocation::at_line(6),
     )];
     assert_eq!(document.unsupported(), unsupported);
-    let report = molfile::MolfileInterpretOptions {
-        unsupported: UnsupportedContent::Report,
-    };
+    let report =
+        molfile::MolfileInterpretOptions::default().with_unsupported(UnsupportedContent::Report);
     let interpretation = document.interpret(report).expect("Molfile interprets");
     let molecule = interpretation.molecule();
     assert!(molecule
@@ -219,10 +219,7 @@ M  END
 
     let molecules = read_sdf_molecules_with_options(
         input,
-        SdfParseOptions {
-            allow_missing_final_delimiter: true,
-            ..SdfParseOptions::default()
-        },
+        SdfParseOptions::default().with_allow_missing_final_delimiter(true),
     )
     .expect("record should parse");
 
@@ -258,10 +255,7 @@ M  END
 
     let document = sdf::parse_str(
         &input,
-        SdfParseOptions {
-            allow_missing_final_delimiter: true,
-            ..SdfParseOptions::default()
-        },
+        SdfParseOptions::default().with_allow_missing_final_delimiter(true),
     )
     .expect("the explicit permissive option accepts the final record");
     assert_eq!(document.records().len(), 2);
@@ -290,10 +284,7 @@ M  END
     let unterminated_field = format!("{molfile}>  <FIELD>\nvalue\n");
     let error = sdf::parse_str(
         &unterminated_field,
-        SdfParseOptions {
-            allow_missing_final_delimiter: true,
-            ..SdfParseOptions::default()
-        },
+        SdfParseOptions::default().with_allow_missing_final_delimiter(true),
     )
     .expect_err("a field at bare end-of-input still requires a blank terminator");
     assert!(error.message().contains("terminating blank line"));
@@ -314,33 +305,20 @@ $$$$
 
     let input_error = sdf::parse_str(
         record,
-        SdfParseOptions {
-            max_input_bytes: record.len() - 1,
-            ..SdfParseOptions::default()
-        },
+        SdfParseOptions::default().with_max_input_bytes(record.len() - 1),
     )
     .expect_err("input byte limit should apply before parsing");
     assert!(input_error.message().contains("input"));
 
-    let record_count_error = sdf::parse_str(
-        &two_records,
-        SdfParseOptions {
-            max_records: 1,
-            ..SdfParseOptions::default()
-        },
-    )
-    .expect_err("record count limit should reject the second record");
+    let record_count_error =
+        sdf::parse_str(&two_records, SdfParseOptions::default().with_max_records(1))
+            .expect_err("record count limit should reject the second record");
     assert_eq!(record_count_error.record(), Some(2));
     assert!(record_count_error.message().contains("record count"));
 
-    let record_size_error = sdf::parse_str(
-        record,
-        SdfParseOptions {
-            max_record_bytes: 1,
-            ..SdfParseOptions::default()
-        },
-    )
-    .expect_err("record byte limit should apply while scanning");
+    let record_size_error =
+        sdf::parse_str(record, SdfParseOptions::default().with_max_record_bytes(1))
+            .expect_err("record byte limit should apply while scanning");
     assert_eq!(record_size_error.record(), Some(1));
     assert!(record_size_error.message().contains("record exceeds"));
 }
@@ -474,8 +452,8 @@ M  END
     let atom1 = small.atom(AtomId::new(1)).expect("atom exists");
     assert_eq!(atom0.formal_charge, 1);
     assert_eq!(atom0.radical, AtomRadical::new(1, Some(2)));
-    assert_eq!(atom0.atom_map, Some(7));
-    assert_eq!(atom1.isotope, Some(13));
+    assert_eq!(atom0.atom_map, NonZeroU32::new(7));
+    assert_eq!(atom1.isotope, NonZeroU16::new(13));
     assert_eq!(small.atom_count(), 2);
 }
 
@@ -550,10 +528,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
     );
     let written = sdf::write(
         &[record],
-        sdf::SdfWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        },
+        sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
     .expect("representable field should write");
     let reparsed = read_sdf_records(&written).expect("written field should parse");
@@ -583,10 +558,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
         let record = SdfRecordInterpretation::new(title, test_model(&molecule), vec![field]);
         let error = sdf::write(
             &[record],
-            sdf::SdfWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            },
+            sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
         )
         .expect_err("unrepresentable SDF metadata must fail");
         assert!(error.to_string().contains(expected), "{expected}: {error}");
@@ -611,10 +583,8 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
 
         let written = molfile::write(
             &parsed,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
         )
         .expect("radical record should write");
         assert!(
@@ -699,10 +669,8 @@ fn v2000_declared_valence_defines_stereo_hydrogen_carriers() {
             assert_eq!(interpreted.report().created_stereo_elements().len(), 1);
             let written = molfile::write(
                 interpreted.model(),
-                molfile::MolfileWriteOptions {
-                    version: molfile::MolfileWriteVersion::V2000,
-                    ..Default::default()
-                },
+                molfile::MolfileWriteOptions::default()
+                    .with_version(molfile::MolfileWriteVersion::V2000),
             )
             .expect("canonical stereo should project with its drawing");
             let molecule = interpreted.into_molecule();
@@ -820,10 +788,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         .expect("double-bond stereo");
     assert!(molfile::write(
         molecule.working(),
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        }
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000)
     )
     .expect_err("specified double-bond stereo should be rejected")
     .message()
@@ -842,10 +807,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         .set_order(BondOrder::Quadruple);
     assert!(molfile::write(
         molecule.working(),
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        }
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000)
     )
     .expect_err("quadruple bond should be rejected")
     .message()
@@ -878,10 +840,7 @@ $$$$
     let records = read_sdf_records(input).expect("sdf should parse");
     let sdf = sdf::write(
         &records,
-        sdf::SdfWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        },
+        sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
     .expect("sdf should write");
     let reparsed = read_sdf_records(&sdf).expect("written sdf parses");
@@ -916,10 +875,8 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         );
         let written = molfile::write(
             &parsed,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
         )
         .expect("charge should write");
         let reparsed = read_molfile(&written).expect("charge should reparse");
@@ -934,9 +891,9 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
     for index in 0..9u32 {
         let mut atom = carbon();
         atom.formal_charge = 1;
-        atom.isotope = Some(13 + index as u16);
+        atom.isotope = NonZeroU16::new(13 + index as u16);
         atom.radical = AtomRadical::new(1, Some(2));
-        atom.atom_map = Some(index + 1);
+        atom.atom_map = NonZeroU32::new(index + 1);
         let atom_id = graph_builder
             .add_atom(atom)
             .expect("atom identifier capacity");
@@ -984,10 +941,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         .unwrap();
     let mol_text = molfile::write(
         &molecule,
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        },
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
     .expect("metadata molecule should write");
     assert_eq!(mol_text.lines().nth(1), Some("  kekule            2D"));
@@ -1002,10 +956,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
     ];
     let sdf_text = sdf::write(
         &records,
-        sdf::SdfWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        },
+        sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
     .expect("two records should write");
     assert_eq!(sdf_text.lines().nth(1), Some("  kekule            2D"));
@@ -1018,9 +969,9 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         for index in 0..9u32 {
             let atom = record.molecule().atom(AtomId::new(index)).expect("atom");
             assert_eq!(atom.formal_charge, 1);
-            assert_eq!(atom.isotope, Some(13 + index as u16));
+            assert_eq!(atom.isotope, NonZeroU16::new(13 + index as u16));
             assert_eq!(atom.radical, AtomRadical::new(1, Some(2)));
-            assert_eq!(atom.atom_map, Some(index + 1));
+            assert_eq!(atom.atom_map, NonZeroU32::new(index + 1));
         }
     }
 }
@@ -1050,17 +1001,15 @@ fn v2000_atom_fields_are_read_from_their_ctfile_columns() {
         let molecule = read_smiles(&format!("[CH4:{atom_map}]")).unwrap();
         let written = molfile::write(
             &molecule,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
         )
         .unwrap();
         let document = molfile::parse_str(&written, Default::default()).unwrap();
         assert_eq!(document.atoms()[0].atom_map(), Some(atom_map), "{written}");
         let reread = document.interpret(Default::default()).unwrap();
         let (_, atom) = reread.molecules().next().unwrap().atoms().next().unwrap();
-        assert_eq!(atom.atom_map, Some(atom_map));
+        assert_eq!(atom.atom_map, NonZeroU32::new(atom_map));
     }
 }
 
@@ -1218,9 +1167,8 @@ fn v2000_query_and_reaction_fields_are_unsupported_content() {
             document.interpret(Default::default()).unwrap_err().kind(),
             DiagnosticKind::Unsupported
         );
-        let report = molfile::MolfileInterpretOptions {
-            unsupported: UnsupportedContent::Report,
-        };
+        let report = molfile::MolfileInterpretOptions::default()
+            .with_unsupported(UnsupportedContent::Report);
         let interpretation = document.interpret(report).unwrap();
         assert_eq!(interpretation.omitted(), unsupported);
         let molecule = interpretation.molecules().next().unwrap();
@@ -1272,7 +1220,7 @@ fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
             .map(|interpretation| {
                 interpretation
                     .molecules()
-                    .flat_map(|molecule| molecule.atoms().map(|(_, atom)| atom.isotope))
+                    .flat_map(|molecule| molecule.atoms().map(|(_, atom)| atom.isotope.map(std::num::NonZero::get)))
                     .collect::<Vec<_>>()
             })
             .map_err(|error| (error.kind(), error.message().to_owned()));

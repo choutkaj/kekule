@@ -27,7 +27,7 @@
 //! let mut model = Model::new(topology, positions)?;
 //! let [a, b, c, d] = model.topology().atom_ids().try_into().unwrap();
 //! model.set_distance(b, c, Quantity::new(1.6, ANGSTROM))?;
-//! let edit = DihedralEdit::new(&model.shared_topology(), [a, b, c, d])?;
+//! let edit = DihedralEdit::new(model.shared_topology(), [a, b, c, d])?;
 //! for degrees in [-180.0, -60.0, 60.0, 180.0] {
 //!     let mut sample = model.clone();
 //!     edit.apply(&mut sample, Quantity::new(degrees, DEGREE))?;
@@ -43,8 +43,8 @@
 //! # fn example(model: &mut Model) -> Result<(), Box<dyn std::error::Error>> {
 //! let [a, b, c] = model.topology().atom_ids()[..3].try_into().unwrap();
 //! let topology = model.shared_topology();
-//! let moving = AtomSelection::from_atoms(&topology, [c])?;
-//! let edit = AngleEdit::with_moving_atoms(&topology, [a, b, c], &moving)?;
+//! let moving = AtomSelection::from_atoms(topology.clone(), [c])?;
+//! let edit = AngleEdit::with_moving_atoms(topology.clone(), [a, b, c], &moving)?;
 //! edit.apply(model, Quantity::new(120.0, DEGREE))?;
 //! // Only C moves; bonds to other unselected neighbors can deform.
 //! # Ok(())
@@ -81,8 +81,8 @@ pub use model_editor::{ModelAppend, ModelAppendReport, ModelEditError, ModelEdit
 pub use positions::{DenseArrayError, Positions};
 pub use state::StructureError;
 pub use trajectory::{
-    Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut, TrajectoryFrameView,
-    TrajectoryIter,
+    MissingTimePolicy, Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut,
+    TrajectoryFrameView, TrajectoryIter,
 };
 
 #[cfg(test)]

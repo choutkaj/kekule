@@ -84,7 +84,7 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
     let report = sequential.open_report();
     assert_eq!(report.selected_format(), TrajectoryFormat::Xyz);
     assert_eq!(
-        sequential.metadata().fields().positions,
+        sequential.metadata().fields().positions(),
         FieldAvailability::Required
     );
     assert_eq!(
@@ -150,10 +150,7 @@ fn path_options_enforce_global_limits_and_path_diagnostics() {
     fs::write(&path, b"1\nlimits\nC 1 2 3\n").unwrap();
     let topology = topology();
     let options = TrajectoryOpenOptions::default()
-        .with_limits(TrajectoryIoLimits {
-            max_atoms: 0,
-            ..TrajectoryIoLimits::default()
-        })
+        .with_limits(TrajectoryIoLimits::default().with_max_atoms(0))
         .with_xyz_options(XyzReadOptions::default().with_source_label("custom stream"));
     let errors = [
         open_trajectory(&path, Arc::clone(&topology), options.clone())

@@ -11,10 +11,34 @@ use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfWriteOptions {
-    pub version: MolfileWriteVersion,
+    version: MolfileWriteVersion,
+    cell: UnrepresentablePolicy,
+}
+
+impl SdfWriteOptions {
+    pub const fn version(&self) -> MolfileWriteVersion {
+        self.version
+    }
+
+    /// Sets [`Self::version`].
+    #[must_use]
+    pub const fn with_version(mut self, version: MolfileWriteVersion) -> Self {
+        self.version = version;
+        self
+    }
+
     /// A model's periodic cell, which an SDF record cannot carry: by default
     /// a record whose model has a cell fails to write.
-    pub cell: UnrepresentablePolicy,
+    pub const fn cell(&self) -> UnrepresentablePolicy {
+        self.cell
+    }
+
+    /// Sets [`Self::cell`].
+    #[must_use]
+    pub const fn with_cell(mut self, cell: UnrepresentablePolicy) -> Self {
+        self.cell = cell;
+        self
+    }
 }
 
 /// The data field an ensemble member's relative weight is written to and

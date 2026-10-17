@@ -43,7 +43,7 @@ pub(super) fn solvate(
         return Err(SolvationError::NotFullyPeriodic);
     }
     let geometry = PeriodicGeometry::new(cell)?;
-    let shortest = geometry.shortest_translation()?.norm();
+    let shortest = geometry.shortest_translation_canonical()?.norm();
     if shortest < WATER_RADIUS {
         return Err(SolvationError::NoSolventSpace);
     }
@@ -147,7 +147,7 @@ pub(super) fn solvate(
     let mut ion_sites = Neighbors::new(&geometry, ion_separation)?;
     // Existing monatomic ions participate in separation checks, but are never replaced.
     for (i, atom) in model.topology().atoms().enumerate() {
-        let m = atom.molecule();
+        let m = atom.instance();
         if m.molecule().atom_count() == 1
             && (atom.formal_charge != 0 || m.class() == MoleculeClass::Ion)
         {
@@ -311,7 +311,7 @@ fn pack(
                 );
                 for index in 0..895 {
                     let oxygen = template(index)[0] + shift;
-                    let fractional = geometry.fractional(oxygen - Point3::origin())?;
+                    let fractional = geometry.fractional_canonical(oxygen - Point3::origin())?;
                     if fractional.iter().any(|v| *v < -0.5 || *v >= 0.5) {
                         continue;
                     }
@@ -392,10 +392,7 @@ fn append(
         builder.hierarchy_mut().add_atom_site(
             residue,
             InstanceAtomId::new(instance, atom),
-            AtomSiteMetadata {
-                label_atom_id: Some(name.into()),
-                ..Default::default()
-            },
+            AtomSiteMetadata::default().with_label_atom_id(Some(name.into())),
         )?;
     }
     builder.set_residue_class(residue, class)?;

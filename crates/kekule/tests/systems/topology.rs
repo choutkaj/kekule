@@ -23,7 +23,7 @@ fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
     let local = molecule.atom_ids().next().unwrap();
     let source = Topology::from_molecule(molecule.clone()).unwrap();
     let original_pointer = source
-        .molecules()
+        .instances()
         .next()
         .unwrap()
         .molecule()
@@ -34,7 +34,7 @@ fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
     let result = editor.finish().unwrap();
     assert_eq!(
         result
-            .molecules()
+            .instances()
             .next()
             .unwrap()
             .molecule()
@@ -52,7 +52,7 @@ fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
     let edited = editor.finish().unwrap();
     assert_eq!(
         edited
-            .molecules()
+            .instances()
             .next()
             .unwrap()
             .molecule()
@@ -62,13 +62,13 @@ fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
     );
     assert_eq!(
         result
-            .molecules()
+            .instances()
             .next()
             .unwrap()
             .molecule()
             .atom(local)
             .unwrap()
-            .element,
+            .element(),
         Element::from_symbol("O").unwrap()
     );
 }

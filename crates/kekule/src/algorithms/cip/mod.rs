@@ -68,6 +68,11 @@ pub(crate) use ranking::bond_reference_atoms;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Explicit bounds on rooted ligand expansion.
 pub struct CipAssignmentOptions {
+    max_depth: usize,
+    max_nodes: usize,
+}
+
+impl CipAssignmentOptions {
     /// Maximum number of bonds explored beyond a carrier atom.
     ///
     /// Constitutional comparisons retain their digraphs and compare at
@@ -76,9 +81,28 @@ pub struct CipAssignmentOptions {
     /// complete digraph. A tied, truncated digraph cannot advance to
     /// later sequence rules or establish that a center is nonstereogenic.
     /// Defaults to 64; the independent node bound also applies.
-    pub max_depth: usize,
+    pub const fn max_depth(&self) -> usize {
+        self.max_depth
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub const fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
     /// Maximum nodes in one ligand expansion or shared auxiliary digraph.
-    pub max_nodes: usize,
+    pub const fn max_nodes(&self) -> usize {
+        self.max_nodes
+    }
+
+    /// Sets [`Self::max_nodes`].
+    #[must_use]
+    pub const fn with_max_nodes(mut self, max_nodes: usize) -> Self {
+        self.max_nodes = max_nodes;
+        self
+    }
 }
 
 impl CipAssignmentOptions {
@@ -97,10 +121,20 @@ impl Default for CipAssignmentOptions {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CipAssignmentReport {
-    pub assigned: Vec<CipAssignment>,
-    pub skipped: Vec<CipSkipped>,
+    pub(crate) assigned: Vec<CipAssignment>,
+    pub(crate) skipped: Vec<CipSkipped>,
+}
+
+impl CipAssignmentReport {
+    pub fn assigned(&self) -> &[CipAssignment] {
+        &self.assigned
+    }
+
+    pub fn skipped(&self) -> &[CipSkipped] {
+        &self.skipped
+    }
 }
 
 /// CIP descriptor assignment failed and left existing CIP perception unchanged.
@@ -124,17 +158,38 @@ impl std::error::Error for CipAssignmentError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CipAssignment {
-    pub element: StereoElementId,
-    pub descriptor: StereoDescriptor,
+    pub(crate) element: StereoElementId,
+    pub(crate) descriptor: StereoDescriptor,
+}
+
+impl CipAssignment {
+    pub const fn element(&self) -> StereoElementId {
+        self.element
+    }
+
+    pub const fn descriptor(&self) -> StereoDescriptor {
+        self.descriptor
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CipSkipped {
-    pub element: StereoElementId,
-    pub reason: CipSkippedReason,
+    pub(crate) element: StereoElementId,
+    pub(crate) reason: CipSkippedReason,
+}
+
+impl CipSkipped {
+    pub const fn element(&self) -> StereoElementId {
+        self.element
+    }
+
+    pub const fn reason(&self) -> CipSkippedReason {
+        self.reason
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CipSkippedReason {
     UnknownConfiguration,
     NotStereogenic,

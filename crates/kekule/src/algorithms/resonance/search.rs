@@ -528,7 +528,6 @@ fn prepare(
         let atom = mol.atom(id).expect("live group atom");
         let h = mol
             .implicit_hydrogens(id)
-            .expect("live atom")
             .ok_or(ResonanceError::UnknownHydrogens(id))?;
         let degree = mol
             .incident_bonds(id)

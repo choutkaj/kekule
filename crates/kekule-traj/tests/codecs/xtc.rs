@@ -4,7 +4,7 @@ use std::sync::Arc;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 use kekule_traj::io::xtc::{
     IndexedXtcReader, XtcCellPolicy, XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions,
     XtcWriter,
@@ -75,7 +75,7 @@ fn encoded(atom_count: usize, magic: XtcMagic) -> (Arc<Topology>, Vec<u8>) {
     let topology = topology(atom_count);
     let options = XtcWriteOptions::default()
         .with_magic(magic)
-        .with_precision(1000.0)
+        .with_precision(Quantity::new(1000.0, PER_NANOMETER))
         .unwrap();
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
@@ -100,7 +100,7 @@ fn encoded_frame(
 ) -> Vec<u8> {
     let options = XtcWriteOptions::default()
         .with_magic(magic)
-        .with_precision(precision)
+        .with_precision(Quantity::new(f64::from(precision), PER_NANOMETER))
         .unwrap();
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
@@ -230,10 +230,8 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             let first_total = dense_bytes + raw_sizes[0];
             let total = dense_bytes + raw_sizes.iter().max().unwrap();
             let options = |limit| {
-                XtcReadOptions::default().with_limits(TrajectoryIoLimits {
-                    max_scratch_bytes: limit,
-                    ..TrajectoryIoLimits::default()
-                })
+                XtcReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit))
             };
             let open = |limit| {
                 XtcReader::new(
@@ -295,7 +293,7 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             // capacity still counts. Random reads must not duplicate any array
             // or reuse cached coordinates for the wrong pending frame.
             for (random, next) in [(1, 0), (0, 1), (1, 2)] {
-                indexed.read_frame(random as u64, &mut destination).unwrap();
+                indexed.read_frame(random, &mut destination).unwrap();
                 assert_eq!(destination.frame_view().payload().clone(), expected[random]);
                 assert!(indexed.read_next(&mut destination).unwrap());
                 assert_eq!(destination.frame_view().payload().clone(), expected[next]);
@@ -438,7 +436,7 @@ fn xtc_round_trips_frames_whose_packed_integers_exceed_64_bits() {
     for magic in [XtcMagic::Xtc1995, XtcMagic::Xtc2023] {
         let options = XtcWriteOptions::default()
             .with_magic(magic)
-            .with_precision(16384.0)
+            .with_precision(Quantity::new(16384.0, PER_NANOMETER))
             .unwrap();
         let mut writer = XtcWriter::new(
             Cursor::new(Vec::new()),
@@ -468,12 +466,10 @@ fn xtc_round_trips_frames_whose_packed_integers_exceed_64_bits() {
 #[test]
 fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     let (topology, bytes) = encoded(12, XtcMagic::Xtc1995);
-    let limits = TrajectoryIoLimits {
-        max_frames: 2,
-        max_index_entries: 2,
-        max_index_bytes: 2 * std::mem::size_of::<u64>(),
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default()
+        .with_max_frames(2)
+        .with_max_index_entries(2)
+        .with_max_index_bytes(2 * std::mem::size_of::<u64>());
     let mut reader = XtcReader::new(
         Cursor::new(bytes.clone()),
         Arc::clone(&topology),
@@ -567,10 +563,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         Cursor::new(maximum_count),
         Arc::clone(&topology),
         XtcReadOptions::default()
-            .with_limits(TrajectoryIoLimits {
-                max_atoms: i32::MAX as usize,
-                ..TrajectoryIoLimits::default()
-            })
+            .with_limits(TrajectoryIoLimits::default().with_max_atoms(i32::MAX as usize))
             .with_source_label("maximum-count.xtc"),
     )
     .err()
@@ -649,7 +642,9 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
 #[test]
 fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let topology = topology(12);
-    let options = XtcWriteOptions::default().with_precision(1000.0).unwrap();
+    let options = XtcWriteOptions::default()
+        .with_precision(Quantity::new(1000.0, PER_NANOMETER))
+        .unwrap();
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
@@ -671,10 +666,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         stream,
         Arc::clone(&topology),
         XtcReadOptions::default()
-            .with_limits(TrajectoryIoLimits {
-                max_frames: 1,
-                ..TrajectoryIoLimits::default()
-            })
+            .with_limits(TrajectoryIoLimits::default().with_max_frames(1))
             .with_source_label("guarded-sequential.xtc"),
     )
     .unwrap();
@@ -688,18 +680,9 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     assert_eq!(control.probed_bytes(), 1);
 
     for limits in [
-        TrajectoryIoLimits {
-            max_frames: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_entries: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_bytes: std::mem::size_of::<u64>(),
-            ..TrajectoryIoLimits::default()
-        },
+        TrajectoryIoLimits::default().with_max_frames(1),
+        TrajectoryIoLimits::default().with_max_index_entries(1),
+        TrajectoryIoLimits::default().with_max_index_bytes(std::mem::size_of::<u64>()),
     ] {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
         let error = IndexedXtcReader::new(
@@ -818,10 +801,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
         Some(TrajectoryIoErrorKind::TruncatedRecord)
     );
 
-    let limits = TrajectoryIoLimits {
-        max_frame_bytes: 100,
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default().with_max_frame_bytes(100);
     let error = XtcReader::new(
         Cursor::new(valid),
         Arc::clone(&topology),
@@ -897,7 +877,8 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     let topology = topology(12);
     for precision in [0.0, -1.0, f32::NAN, f32::INFINITY] {
         assert_eq!(
-            XtcWriteOptions::default().with_precision(precision),
+            XtcWriteOptions::default()
+                .with_precision(Quantity::new(f64::from(precision), PER_NANOMETER)),
             Err(codec_error(
                 TrajectoryIoErrorKind::InvalidPrecision,
                 TrajectoryIoOperation::Open,
@@ -989,7 +970,9 @@ fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
         "XTC coordinate span along an axis exceeds the selected precision's integer range";
     const MAGNITUDE: &str = "XTC coordinate exceeds the selected precision's integer range";
     let topology = topology(10);
-    let options = XtcWriteOptions::default().with_precision(1.0e6).unwrap();
+    let options = XtcWriteOptions::default()
+        .with_precision(Quantity::new(1.0e6, PER_NANOMETER))
+        .unwrap();
     let frame_with_x = |first: f64, rest: f64| {
         let mut frame = source_frame(&topology, 0.0, 0);
         let positions = (0..topology.atom_count())

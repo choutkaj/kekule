@@ -30,10 +30,34 @@ pub enum MolfileWriteVersion {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MolfileWriteOptions {
-    pub version: MolfileWriteVersion,
+    version: MolfileWriteVersion,
+    cell: UnrepresentablePolicy,
+}
+
+impl MolfileWriteOptions {
+    pub const fn version(&self) -> MolfileWriteVersion {
+        self.version
+    }
+
+    /// Sets [`Self::version`].
+    #[must_use]
+    pub const fn with_version(mut self, version: MolfileWriteVersion) -> Self {
+        self.version = version;
+        self
+    }
+
     /// A model's periodic cell, which a Molfile cannot carry: by default a
     /// model with a cell fails to write.
-    pub cell: UnrepresentablePolicy,
+    pub const fn cell(&self) -> UnrepresentablePolicy {
+        self.cell
+    }
+
+    /// Sets [`Self::cell`].
+    #[must_use]
+    pub const fn with_cell(mut self, cell: UnrepresentablePolicy) -> Self {
+        self.cell = cell;
+        self
+    }
 }
 
 /// What one Molfile CTAB describes: a coordinate-free molecule written with
@@ -42,6 +66,7 @@ pub struct MolfileWriteOptions {
 /// Convert from `&Molecule`, `&Model`, or any borrowed model view through
 /// [`Self::model`]. Specified stereo requires coordinates.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum MolfileSource<'a> {
     Molecule(&'a Molecule),
     Model(ModelView<'a>),
@@ -143,7 +168,7 @@ pub(super) fn render_model(
                 topology.atom_count(),
                 topology.bond_count(),
                 topology
-                    .molecules()
+                    .instances()
                     .any(|occurrence| occurrence.molecule().stereo_groups().next().is_some()),
             );
             if fits.is_ok() {

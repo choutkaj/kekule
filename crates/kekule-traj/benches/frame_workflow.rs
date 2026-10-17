@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     frame.set_cell(model.cell().copied());
     let trajectory =
         Trajectory::from_items(model.shared_topology(), (0..64).map(|_| frame.clone()))?;
-    let atoms = AtomSelection::all(&trajectory.shared_topology());
+    let atoms = AtomSelection::all(trajectory.shared_topology());
     let iterations = 1_000_000;
     let start = Instant::now();
     for index in 0..iterations {

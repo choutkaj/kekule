@@ -32,10 +32,10 @@ impl Ensemble {
         distances: &DistanceMatrix,
         clusters: usize,
     ) -> Result<EnsemblePartition, ClusteringError> {
-        if distances.len() != self.len() {
+        if distances.member_count() != self.len() {
             return Err(ClusteringError::MatrixMismatch {
                 expected: self.len(),
-                actual: distances.len(),
+                actual: distances.member_count(),
             });
         }
         let members = self.len();
@@ -197,7 +197,7 @@ fn best_swap(
 /// Assigns members to their nearest medoid and numbers clusters by lowest
 /// member.
 fn partition(distances: &DistanceMatrix, medoids: &[usize]) -> EnsemblePartition {
-    let members = distances.len();
+    let members = distances.member_count();
     let mut slot_of = vec![usize::MAX; members];
     for (slot, medoid) in medoids.iter().enumerate() {
         slot_of[*medoid] = slot;

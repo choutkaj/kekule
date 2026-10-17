@@ -25,7 +25,7 @@ fn topology() -> Arc<Topology> {
 
 fn atoms(top: &Arc<Topology>, mask: u32) -> AtomSelection {
     AtomSelection::from_atoms(
-        top,
+        Arc::clone(top),
         top.atom_ids()
             .iter()
             .enumerate()
@@ -37,7 +37,7 @@ fn atoms(top: &Arc<Topology>, mask: u32) -> AtomSelection {
 
 fn bonds(top: &Arc<Topology>, mask: u32) -> BondSelection {
     BondSelection::from_bonds(
-        top,
+        Arc::clone(top),
         top.bond_ids()
             .iter()
             .enumerate()
@@ -89,8 +89,8 @@ fn construction_and_click_mutations_validate_sort_and_deduplicate() {
     let top = topology();
     let a = top.atom_ids();
     let b = top.bond_ids();
-    let mut selected = AtomSelection::empty(&top);
-    let mut selected_bonds = BondSelection::empty(&top);
+    let mut selected = AtomSelection::empty(Arc::clone(&top));
+    let mut selected_bonds = BondSelection::empty(Arc::clone(&top));
     assert!(selected.is_empty());
     assert!(selected_bonds.is_empty());
     for index in [2, 0, 1] {
@@ -103,15 +103,17 @@ fn construction_and_click_mutations_validate_sort_and_deduplicate() {
     assert_eq!(selected_bonds.bond_ids().collect::<Vec<_>>(), b[..3]);
     assert_eq!(selected_bonds.bond_ids().len(), 3);
     assert_eq!(
-        BondSelection::from_bonds(&top, [b[2], b[0], b[1], b[2]]).unwrap(),
+        BondSelection::from_bonds(Arc::clone(&top), [b[2], b[0], b[1], b[2]]).unwrap(),
         selected_bonds
     );
     assert_eq!(
-        BondSelection::from_indices(&top, [2, 0, 1, 2].map(TopologyBondIndex::new)).unwrap(),
+        BondSelection::from_indices(Arc::clone(&top), [2, 0, 1, 2].map(TopologyBondIndex::new))
+            .unwrap(),
         selected_bonds
     );
     assert_eq!(
-        AtomSelection::from_indices(&top, [2, 0, 1, 2].map(TopologyAtomIndex::new)).unwrap(),
+        AtomSelection::from_indices(Arc::clone(&top), [2, 0, 1, 2].map(TopologyAtomIndex::new))
+            .unwrap(),
         selected
     );
     assert!(selected.remove(a[1]).unwrap());
@@ -171,17 +173,17 @@ fn construction_and_click_mutations_validate_sort_and_deduplicate() {
     assert!(!selected.contains_index(TopologyAtomIndex::new(u32::MAX)));
     assert!(!selected_bonds.contains_index(TopologyBondIndex::new(u32::MAX)));
     assert_eq!(
-        BondSelection::from_bonds(&top, [b[0], invalid_bond]),
+        BondSelection::from_bonds(Arc::clone(&top), [b[0], invalid_bond]),
         Err(SelectionError::InvalidBondId(invalid_bond))
     );
     assert_eq!(
-        BondSelection::from_indices(&top, [TopologyBondIndex::new(4)]),
+        BondSelection::from_indices(Arc::clone(&top), [TopologyBondIndex::new(4)]),
         Err(SelectionError::InvalidBondIndex(TopologyBondIndex::new(4)))
     );
     selected.clear();
     selected_bonds.clear();
-    assert_eq!(selected, AtomSelection::empty(&top));
-    assert_eq!(selected_bonds, BondSelection::empty(&top));
+    assert_eq!(selected, AtomSelection::empty(Arc::clone(&top)));
+    assert_eq!(selected_bonds, BondSelection::empty(Arc::clone(&top)));
     assert!(Arc::ptr_eq(&selected.shared_topology(), &top));
     assert!(Arc::ptr_eq(&selected_bonds.shared_topology(), &top));
     assert!(std::ptr::eq(selected_bonds.topology(), top.as_ref()));
@@ -191,8 +193,11 @@ fn construction_and_click_mutations_validate_sort_and_deduplicate() {
 fn distinct_snapshots_are_rejected_even_when_empty_and_layout_equal() {
     let top = topology();
     let other = topology();
-    for selected in [AtomSelection::empty(&top), AtomSelection::all(&top)] {
-        let foreign = AtomSelection::empty(&other);
+    for selected in [
+        AtomSelection::empty(Arc::clone(&top)),
+        AtomSelection::all(Arc::clone(&top)),
+    ] {
+        let foreign = AtomSelection::empty(Arc::clone(&other));
         assert_ne!(selected, foreign);
         for result in [
             selected.union(&foreign),
@@ -211,8 +216,11 @@ fn distinct_snapshots_are_rejected_even_when_empty_and_layout_equal() {
             Err(SelectionError::TopologyMismatch)
         );
     }
-    for selected in [BondSelection::empty(&top), BondSelection::all(&top)] {
-        let foreign = BondSelection::empty(&other);
+    for selected in [
+        BondSelection::empty(Arc::clone(&top)),
+        BondSelection::all(Arc::clone(&top)),
+    ] {
+        let foreign = BondSelection::empty(Arc::clone(&other));
         assert_ne!(selected, foreign);
         for result in [
             selected.union(&foreign),
@@ -255,10 +263,13 @@ fn bond_endpoint_rules_keep_occurrences_distinct_and_cover_boundary_edges() {
         bonds(&top, 0b10)
     );
     assert_eq!(bonds(&top, 0b1010).to_atoms(), atoms(&top, 0b110110));
-    assert_eq!(BondSelection::all(&top).to_atoms(), atoms(&top, 0b111111));
     assert_eq!(
-        BondSelection::empty(&top).to_atoms(),
-        AtomSelection::empty(&top)
+        BondSelection::all(Arc::clone(&top)).to_atoms(),
+        atoms(&top, 0b111111)
+    );
+    assert_eq!(
+        BondSelection::empty(Arc::clone(&top)).to_atoms(),
+        AtomSelection::empty(Arc::clone(&top))
     );
     for mode in [
         BondSelectionMode::Internal,
@@ -266,35 +277,35 @@ fn bond_endpoint_rules_keep_occurrences_distinct_and_cover_boundary_edges() {
         BondSelectionMode::Boundary,
     ] {
         assert_eq!(
-            AtomSelection::empty(&top).to_bonds(mode),
-            BondSelection::empty(&top)
+            AtomSelection::empty(Arc::clone(&top)).to_bonds(mode),
+            BondSelection::empty(Arc::clone(&top))
         );
     }
     assert_eq!(
-        AtomSelection::all(&top).to_bonds(BondSelectionMode::Internal),
-        BondSelection::all(&top)
+        AtomSelection::all(Arc::clone(&top)).to_bonds(BondSelectionMode::Internal),
+        BondSelection::all(Arc::clone(&top))
     );
-    assert!(AtomSelection::all(&top)
+    assert!(AtomSelection::all(Arc::clone(&top))
         .to_bonds(BondSelectionMode::Boundary)
         .is_empty());
-    let instance = top.atom_ids()[3].molecule();
+    let instance = top.atom_ids()[3].instance();
     assert_eq!(
-        BondSelection::for_instances(&top, [instance, instance]).unwrap(),
+        BondSelection::for_instances(Arc::clone(&top), [instance, instance]).unwrap(),
         bonds(&top, 0b1100)
     );
-    let definition = top.molecule(instance).unwrap().definition_id();
+    let definition = top.instance(instance).unwrap().definition_id();
     assert_eq!(
-        BondSelection::for_definitions(&top, [definition]).unwrap(),
-        BondSelection::all(&top)
+        BondSelection::for_definitions(Arc::clone(&top), [definition]).unwrap(),
+        BondSelection::all(Arc::clone(&top))
     );
     assert_eq!(
-        BondSelection::for_instances(&top, [MoleculeInstanceId::new(u32::MAX)]),
+        BondSelection::for_instances(Arc::clone(&top), [MoleculeInstanceId::new(u32::MAX)]),
         Err(SelectionError::InvalidMoleculeInstanceId(
             MoleculeInstanceId::new(u32::MAX)
         ))
     );
     assert_eq!(
-        BondSelection::for_definitions(&top, [MoleculeDefinitionId::new(u32::MAX)]),
+        BondSelection::for_definitions(Arc::clone(&top), [MoleculeDefinitionId::new(u32::MAX)]),
         Err(SelectionError::InvalidMoleculeDefinitionId(
             MoleculeDefinitionId::new(u32::MAX)
         ))
@@ -304,7 +315,8 @@ fn bond_endpoint_rules_keep_occurrences_distinct_and_cover_boundary_edges() {
 #[test]
 fn bond_to_atom_round_trip_may_add_unselected_ring_bonds() {
     let top = smiles::to_topology("C1CC1").unwrap();
-    let selected = BondSelection::from_bonds(&top, top.bond_ids()[..2].iter().copied()).unwrap();
+    let selected =
+        BondSelection::from_bonds(Arc::clone(&top), top.bond_ids()[..2].iter().copied()).unwrap();
     assert_eq!(selected.len(), 2);
     assert_eq!(selected.to_atoms().len(), 3);
     assert_eq!(
@@ -315,9 +327,11 @@ fn bond_to_atom_round_trip_may_add_unselected_ring_bonds() {
         3
     );
     let isolated = smiles::to_topology("[Na+].[Cl-]").unwrap();
-    assert!(BondSelection::all(&isolated).is_empty());
-    assert!(BondSelection::all(&isolated).complement().is_empty());
-    assert!(AtomSelection::all(&isolated)
+    assert!(BondSelection::all(Arc::clone(&isolated)).is_empty());
+    assert!(BondSelection::all(Arc::clone(&isolated))
+        .complement()
+        .is_empty());
+    assert!(AtomSelection::all(Arc::clone(&isolated))
         .to_bonds(BondSelectionMode::Incident)
         .is_empty());
 }
@@ -325,16 +339,18 @@ fn bond_to_atom_round_trip_may_add_unselected_ring_bonds() {
 #[test]
 fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
     let top = topology();
-    let oxygen = AtomSelection::from_predicate(&top, |atom| atom.element.symbol() == "O");
+    let oxygen =
+        AtomSelection::from_predicate(Arc::clone(&top), |atom| atom.element().symbol() == "O");
     assert_eq!(oxygen, atoms(&top, 0b100100));
     assert_eq!(
-        oxygen.filter(|atom| atom.id().molecule() == top.atom_ids()[0].molecule()),
+        oxygen.filter(|atom| atom.id().instance() == top.atom_ids()[0].instance()),
         atoms(&top, 0b100)
     );
-    let doubles = BondSelection::from_predicate(&top, |bond| bond.order == BondOrder::Double);
+    let doubles =
+        BondSelection::from_predicate(Arc::clone(&top), |bond| bond.order == BondOrder::Double);
     assert_eq!(doubles, bonds(&top, 0b1010));
     assert_eq!(
-        doubles.filter(|bond| bond.id().molecule() == top.atom_ids()[0].molecule()),
+        doubles.filter(|bond| bond.id().instance() == top.atom_ids()[0].instance()),
         bonds(&top, 0b10)
     );
     assert_eq!(atoms(&top, 1).expand_bonded(0), atoms(&top, 1));
@@ -349,7 +365,7 @@ fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
         atoms(&top, 0b1000001).expand_to_instances(),
         atoms(&top, 0b1000111)
     );
-    let empty = AtomSelection::empty(&top);
+    let empty = AtomSelection::empty(Arc::clone(&top));
     assert_eq!(empty.expand_bonded(usize::MAX), empty);
     assert_eq!(empty.expand_to_instances(), empty);
     assert_eq!(
@@ -357,8 +373,8 @@ fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
         empty
     );
     assert_eq!(
-        BondSelection::empty(&top).filter(|_| panic!("empty predicate must not run")),
-        BondSelection::empty(&top)
+        BondSelection::empty(Arc::clone(&top)).filter(|_| panic!("empty predicate must not run")),
+        BondSelection::empty(Arc::clone(&top))
     );
 }
 
@@ -370,16 +386,16 @@ fn topology_query_match_conversion_checks_provenance_before_selecting() {
         .all(&query, SubstructureMatchOptions::default())
         .unwrap();
     assert_eq!(
-        AtomSelection::from_topology_query_matches(&top, &matches).unwrap(),
+        AtomSelection::from_topology_query_matches(Arc::clone(&top), &matches).unwrap(),
         atoms(&top, 0b110110)
     );
     assert_eq!(
-        AtomSelection::from_topology_query_matches(&top, &[]).unwrap(),
-        AtomSelection::empty(&top)
+        AtomSelection::from_topology_query_matches(Arc::clone(&top), &[]).unwrap(),
+        AtomSelection::empty(Arc::clone(&top))
     );
     let foreign = topology();
     assert_eq!(
-        AtomSelection::from_topology_query_matches(&foreign, &matches),
+        AtomSelection::from_topology_query_matches(Arc::clone(&foreign), &matches),
         Err(SelectionError::TopologyMismatch)
     );
 }
@@ -392,7 +408,7 @@ fn all_selects_dense_atoms_across_reused_definitions_and_binds_the_exact_topolog
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let topology = Arc::new(builder.build().unwrap());
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
     assert_eq!(
         all.indices()
             .iter()
@@ -402,7 +418,8 @@ fn all_selects_dense_atoms_across_reused_definitions_and_binds_the_exact_topolog
     );
     assert_eq!(
         all,
-        AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied()).unwrap()
+        AtomSelection::from_atoms(Arc::clone(&topology), topology.atom_ids().iter().copied())
+            .unwrap()
     );
     assert!(std::ptr::eq(all.topology(), topology.as_ref()));
     assert!(all.ensure_compatible(&topology).is_ok());

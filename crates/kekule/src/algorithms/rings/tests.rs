@@ -162,28 +162,19 @@ fn ring_limits_bound_compact_storage_after_deletions() {
     let previous = molecule.perception().clone();
     for (options, resource, observed, limit) in [
         (
-            RingPerceptionOptions {
-                max_atoms: 2,
-                ..Default::default()
-            },
+            RingPerceptionOptions::default().with_max_atoms(2),
             Resource::Atoms,
             3,
             2,
         ),
         (
-            RingPerceptionOptions {
-                max_bonds: 2,
-                ..Default::default()
-            },
+            RingPerceptionOptions::default().with_max_bonds(2),
             Resource::Bonds,
             3,
             2,
         ),
         (
-            RingPerceptionOptions {
-                max_total_work: 5,
-                ..Default::default()
-            },
+            RingPerceptionOptions::default().with_max_total_work(5),
             Resource::Work,
             6,
             5,
@@ -296,7 +287,7 @@ fn excluded_bonds_do_not_close_cycles_or_connect_ring_components() {
             .expect("membership perception cannot fail");
         let membership = molecule.ring_membership().expect("rings installed").clone();
         for (index, &(a, b)) in edges.iter().enumerate() {
-            let bond = molecule.bond_between(atoms[a], atoms[b]).unwrap().unwrap();
+            let bond = molecule.bond_between(atoms[a], atoms[b]).unwrap();
             assert_eq!(
                 membership.bond_in_ring(bond),
                 cyclic_edges & (1 << index) != 0
@@ -375,7 +366,6 @@ fn fallback_preserves_coverage_when_rdkit_selected_rings_omit_a_cyclic_bond() {
     for (left, right) in [(0, 3), (3, 4), (4, 5), (5, 6)] {
         assert!(molecule
             .bond_between(AtomId::new(left), AtomId::new(right))
-            .unwrap()
             .is_some());
     }
     perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
@@ -399,10 +389,7 @@ fn fallback_work_limit_preserves_installed_perception() {
     perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
         .expect("membership perception cannot fail");
     let before = molecule.perception().clone();
-    let options = RingPerceptionOptions {
-        max_total_work: 20,
-        ..RingPerceptionOptions::default()
-    };
+    let options = RingPerceptionOptions::default().with_max_total_work(20);
     assert!(matches!(
         perceive_rings(&mut molecule, options),
         Err(RingPerceptionError::LimitExceeded(limit)) if limit.resource() == Resource::Work
@@ -583,10 +570,7 @@ fn pruning_and_symmetrization_charge_comparison_work() {
             bonds: (index * 3..index * 3 + 3).map(BondId::new).collect(),
         })
         .collect::<Vec<_>>();
-    let options = RingPerceptionOptions {
-        max_total_work: 100,
-        ..RingPerceptionOptions::default()
-    };
+    let options = RingPerceptionOptions::default().with_max_total_work(100);
     let mut tracker = RingWorkTracker::new(options, 0, 0).unwrap();
     assert!(matches!(
         remove_extra_rings(rings.clone(), 60, &mut tracker),
@@ -609,10 +593,7 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
     let active = ActiveRingGraph::new(&molecule);
     let tracker_with_budget = |max_total_work| {
         RingWorkTracker::new(
-            RingPerceptionOptions {
-                max_total_work,
-                ..RingPerceptionOptions::default()
-            },
+            RingPerceptionOptions::default().with_max_total_work(max_total_work),
             0,
             0,
         )
@@ -767,8 +748,8 @@ fn default_profile_bounds_grow_linearly_with_the_graph() {
     assert_eq!(large.max_path_expansions, 4_100_000 * 64);
     assert_eq!(large.max_cycle_size, default.max_cycle_size);
     let aromaticity = crate::algorithms::AromaticityOptions::for_graph(2_000_000, 2_100_000);
-    assert_eq!(aromaticity.ring_options, large);
-    assert_eq!(aromaticity.max_total_work, 4_100_000_000);
+    assert_eq!(aromaticity.ring_options(), large);
+    assert_eq!(aromaticity.max_total_work(), 4_100_000_000);
 }
 
 #[test]

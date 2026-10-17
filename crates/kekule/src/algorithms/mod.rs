@@ -24,7 +24,7 @@ pub(crate) use hydrogens::{
     add_hydrogens_to_molecule, remove_hydrogens_from_molecule, remove_hydrogens_keeping,
 };
 pub use hydrogens::{
-    AddHydrogensOptions, AddHydrogensReport, AddedHydrogen, AddedHydrogenOrigin,
+    AddHydrogensOptions, AddHydrogensReport, AddHydrogensScope, AddedHydrogen, AddedHydrogenOrigin,
     HydrogenCountAdjustment, HydrogenTransformError, RemoveHydrogensReport, RemovedHydrogen,
     RetainedHydrogen, RetainedHydrogenReason,
 };
@@ -60,4 +60,5 @@ pub(crate) use valence::{
 };
 pub use valence::{
     perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,
+    ValenceValidation,
 };

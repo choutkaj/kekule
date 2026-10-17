@@ -38,16 +38,14 @@ fn topology() -> &'static Arc<Topology> {
 
 fuzz_target!(|data: &[u8]| {
     let topology = topology();
-    let limits = TrajectoryIoLimits {
-        max_atoms: 16,
-        max_frames: 8,
-        max_frame_bytes: 8192,
-        max_record_bytes: 8192,
-        max_scratch_bytes: 8192,
-        max_index_entries: 8,
-        max_index_bytes: 64,
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default()
+        .with_max_atoms(16)
+        .with_max_frames(8)
+        .with_max_frame_bytes(8192)
+        .with_max_record_bytes(8192)
+        .with_max_scratch_bytes(8192)
+        .with_max_index_entries(8)
+        .with_max_index_bytes(64);
     if let Ok(mut reader) = XtcReader::new(
         Cursor::new(data),
         Arc::clone(topology),

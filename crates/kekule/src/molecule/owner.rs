@@ -77,6 +77,38 @@ impl DerefMut for AtomMut<'_> {
     }
 }
 
+impl AtomMut<'_> {
+    /// Changes the element.
+    pub fn set_element(&mut self, element: Element) {
+        self.element = element;
+    }
+
+    /// Changes the mass number, or natural abundance for `None`.
+    pub fn set_isotope(&mut self, isotope: Option<NonZeroU16>) {
+        self.isotope = isotope;
+    }
+
+    /// Changes the formal charge.
+    pub fn set_formal_charge(&mut self, formal_charge: i8) {
+        self.formal_charge = formal_charge;
+    }
+
+    /// Changes the radical electrons, or removes them for `None`.
+    pub fn set_radical(&mut self, radical: Option<AtomRadical>) {
+        self.radical = radical;
+    }
+
+    /// Changes the implicit-hydrogen declaration.
+    pub fn set_hydrogens(&mut self, hydrogens: ImplicitHydrogens) {
+        self.hydrogens = hydrogens;
+    }
+
+    /// Changes the reaction atom map, or removes it for `None`.
+    pub fn set_atom_map(&mut self, atom_map: Option<NonZeroU32>) {
+        self.atom_map = atom_map;
+    }
+}
+
 pub struct BondMut<'a> {
     molecule: &'a mut Molecule,
     id: BondId,
@@ -166,7 +198,7 @@ impl Molecule {
     /// edit state, returning the stereo elements removed because they
     /// referenced the atom or no longer describe valid stereo.
     pub(crate) fn delete_atom(&mut self, id: AtomId) -> Result<(Atom, Vec<StereoElementId>)> {
-        self.atom(id)?;
+        self.require_atom(id)?;
         let mut pruned = Vec::new();
         let incident = self.graph.adjacency[id.index()].clone();
         for bond_id in incident {
@@ -191,9 +223,13 @@ impl Molecule {
         Ok((atom, pruned))
     }
 
-    pub(crate) fn atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
+    pub(crate) fn atom_mut(&mut self, id: AtomId) -> Option<AtomMut<'_>> {
         self.atom(id)?;
-        Ok(AtomMut { molecule: self, id })
+        Some(AtomMut { molecule: self, id })
+    }
+
+    pub(crate) fn require_atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
+        self.atom_mut(id).ok_or(MoleculeError::InvalidAtomId(id))
     }
 
     /// Inserts a bond into crate-private construction or editing staging.
@@ -202,12 +238,12 @@ impl Molecule {
     /// carriers of the new bond's endpoints themselves; the public
     /// [`MoleculeEditor::add_bond`] prunes what the bond invalidates.
     pub(crate) fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
-        self.atom(a)?;
-        self.atom(b)?;
+        self.require_atom(a)?;
+        self.require_atom(b)?;
         if a == b {
             return Err(MoleculeError::SelfBond(a));
         }
-        if self.bond_between(a, b)?.is_some() {
+        if self.require_bond_between(a, b)?.is_some() {
             return Err(MoleculeError::DuplicateBond { a, b });
         }
         let id = checked_molecule_id(self.graph.bonds.len(), MoleculeIdKind::Bond, BondId::new)?;
@@ -243,13 +279,17 @@ impl Molecule {
         Ok((bond, pruned))
     }
 
-    pub(crate) fn bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
+    pub(crate) fn bond_mut(&mut self, id: BondId) -> Option<BondMut<'_>> {
         self.bond(id)?;
-        Ok(BondMut {
+        Some(BondMut {
             molecule: self,
             id,
             pruned_stereo: None,
         })
+    }
+
+    pub(crate) fn require_bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
+        self.bond_mut(id).ok_or(MoleculeError::InvalidBondId(id))
     }
 
     /// Like [`Self::bond_mut`], recording stereo elements that an order change
@@ -258,9 +298,9 @@ impl Molecule {
         &'a mut self,
         id: BondId,
         pruned_stereo: &'a mut Vec<StereoElementId>,
-    ) -> Result<BondMut<'a>> {
+    ) -> Option<BondMut<'a>> {
         self.bond(id)?;
-        Ok(BondMut {
+        Some(BondMut {
             molecule: self,
             id,
             pruned_stereo: Some(pruned_stereo),
@@ -298,64 +338,74 @@ impl Molecule {
 
     /// Counts explicit hydrogen atoms among this atom's graph neighbors.
     /// Includes isotopic and charged hydrogen neighbors; requires no perception.
-    pub fn explicit_hydrogens(&self, atom: AtomId) -> Result<usize> {
-        Ok(self
-            .neighbors(atom)?
-            .filter(|neighbor| {
-                self.atom(*neighbor)
-                    .expect("live graph neighbor")
-                    .element
-                    .atomic_number()
-                    == 1
-            })
-            .count())
+    /// Returns `None` when `atom` names no atom of this molecule.
+    pub fn explicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
+        Some(
+            self.incident_bonds(atom)?
+                .filter(|(_, bond)| {
+                    self.atom(bond.other_atom(atom))
+                        .expect("bonds join live atoms")
+                        .element
+                        .atomic_number()
+                        == 1
+                })
+                .count(),
+        )
     }
 
     /// Counts implicit (non-graph) hydrogens, excluding graph H.
     /// Fixed counts are available without perception. For inferred counts,
     /// `None` means the count has not been perceived or was invalidated by a
-    /// chemical edit. This method never runs perception implicitly.
-    pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
-        Ok(self
-            .atom(atom)?
+    /// chemical edit; it also means `atom` names no atom of this molecule.
+    /// This method never runs perception implicitly.
+    pub fn implicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
+        self.atom(atom)?
             .hydrogens
-            .resolve(self.perception.inferred_hydrogens(atom)))
+            .resolve(self.perception.inferred_hydrogens(atom))
     }
 
     /// Counts explicit hydrogen neighbors plus all implicit hydrogens.
-    /// Returns `None` when the implicit count is unresolved.
-    pub fn total_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
+    /// Returns `None` when the implicit count is unresolved or `atom` names no
+    /// atom of this molecule.
+    pub fn total_hydrogens(&self, atom: AtomId) -> Option<usize> {
         let explicit = self.explicit_hydrogens(atom)?;
-        Ok(self
-            .implicit_hydrogens(atom)?
-            .map(|implicit| explicit + implicit))
+        self.implicit_hydrogens(atom)
+            .map(|implicit| explicit + implicit)
     }
 
-    pub fn atom_is_aromatic(&self, atom: AtomId) -> Result<Option<bool>> {
+    /// Reads installed aromaticity. `None` means it has not been computed or
+    /// `atom` names no atom of this molecule.
+    pub fn atom_is_aromatic(&self, atom: AtomId) -> Option<bool> {
         self.atom(atom)?;
-        Ok(self.perception.atom_is_aromatic(atom))
+        self.perception.atom_is_aromatic(atom)
     }
 
-    pub fn bond_is_aromatic(&self, bond: BondId) -> Result<Option<bool>> {
+    /// Reads installed aromaticity. `None` means it has not been computed or
+    /// `bond` names no bond of this molecule.
+    pub fn bond_is_aromatic(&self, bond: BondId) -> Option<bool> {
         self.bond(bond)?;
-        Ok(self.perception.bond_is_aromatic(bond))
+        self.perception.bond_is_aromatic(bond)
     }
 
-    /// Reads installed conjugation. `None` means it has not been computed.
-    pub fn atom_is_conjugated(&self, atom: AtomId) -> Result<Option<bool>> {
+    /// Reads installed conjugation. `None` means it has not been computed or
+    /// `atom` names no atom of this molecule.
+    pub fn atom_is_conjugated(&self, atom: AtomId) -> Option<bool> {
         self.atom(atom)?;
-        Ok(self.perception.atom_is_conjugated(atom))
+        self.perception.atom_is_conjugated(atom)
     }
 
-    /// Reads installed conjugation. Aromatic bonds are also conjugated.
-    pub fn bond_is_conjugated(&self, bond: BondId) -> Result<Option<bool>> {
+    /// Reads installed conjugation. Aromatic bonds are also conjugated. `None`
+    /// means it has not been computed or `bond` names no bond of this molecule.
+    pub fn bond_is_conjugated(&self, bond: BondId) -> Option<bool> {
         self.bond(bond)?;
-        Ok(self.perception.bond_is_conjugated(bond))
+        self.perception.bond_is_conjugated(bond)
     }
 
-    pub fn cip_descriptor(&self, element: StereoElementId) -> Result<Option<StereoDescriptor>> {
+    /// Reads an installed CIP descriptor. `None` means none is installed or
+    /// `element` names no stereo element of this molecule.
+    pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
         self.stereo_element(element)?;
-        Ok(self.perception.cip_descriptor(element))
+        self.perception.cip_descriptor(element)
     }
 
     pub fn ring_membership(&self) -> Option<&RingMembership> {
@@ -374,6 +424,27 @@ impl Molecule {
     /// Group membership must be established separately through
     /// [`Self::add_stereo_group`]. A pre-grouped element is rejected before
     /// slot allocation or perception invalidation.
+    /// The four carriers of a tetrahedral assertion read from a source, or the
+    /// error inserting an element with this many carriers reports.
+    pub(crate) fn tetrahedral_carriers(
+        &self,
+        center: AtomId,
+        carriers: Vec<StereoCarrier>,
+    ) -> Result<[StereoCarrier; 4]> {
+        let carrier_count = carriers.len();
+        carriers.try_into().map_err(|_| {
+            MoleculeError::InvalidStereoReference(
+                StereoValidationIssue::InvalidTetrahedralCarrierCount {
+                    element: StereoElementId::new(
+                        u32::try_from(self.graph.stereo_elements.len()).unwrap_or(u32::MAX),
+                    ),
+                    center,
+                    carrier_count,
+                },
+            )
+        })
+    }
+
     pub(crate) fn add_stereo_element(
         &mut self,
         mut element: StereoElement,
@@ -457,7 +528,7 @@ impl Molecule {
             StereoGroupId::new(u32::try_from(self.graph.stereo_groups.len()).unwrap_or(u32::MAX));
         validate_group_members(pending, &group)?;
         for &member in &group.members {
-            let element = self.stereo_element(member)?;
+            let element = self.require_stereo_element(member)?;
             if let Some(group) = element.group {
                 return Err(MoleculeError::InvalidStereoReference(
                     StereoValidationIssue::StereoElementAlreadyGrouped {
@@ -777,14 +848,7 @@ impl Molecule {
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => {
                 let center = stereo.center;
-                self.atom(center)?;
-                if stereo.carriers.len() != 4 {
-                    return invalid(StereoValidationIssue::InvalidTetrahedralCarrierCount {
-                        element: id,
-                        center,
-                        carrier_count: stereo.carriers.len(),
-                    });
-                }
+                self.require_atom(center)?;
                 for (index, &carrier) in stereo.carriers.iter().enumerate() {
                     if stereo.carriers[..index].contains(&carrier) {
                         return invalid(StereoValidationIssue::DuplicateTetrahedralCarrier {
@@ -805,7 +869,7 @@ impl Molecule {
                     }
                 }
                 if let Some(neighbor) = self
-                    .neighbors(center)?
+                    .require_neighbors(center)?
                     .find(|neighbor| !stereo.carriers.contains(&StereoCarrier::Atom(*neighbor)))
                 {
                     return invalid(StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
@@ -816,7 +880,7 @@ impl Molecule {
                 }
             }
             StereoElementKind::DoubleBond(stereo) => {
-                let bond = self.bond(stereo.bond)?;
+                let bond = self.require_bond(stereo.bond)?;
                 if bond.order != BondOrder::Double {
                     return invalid(StereoValidationIssue::InvalidDoubleBondOrder {
                         element: id,
@@ -867,7 +931,7 @@ impl Molecule {
                 for (endpoint, other) in [(stereo.left, stereo.right), (stereo.right, stereo.left)]
                 {
                     let substituent_count = self
-                        .neighbors(endpoint)?
+                        .require_neighbors(endpoint)?
                         .filter(|neighbor| *neighbor != other)
                         .count();
                     if substituent_count > 2 {
@@ -880,14 +944,7 @@ impl Molecule {
                 }
             }
             StereoElementKind::Axis(stereo) => {
-                let axis = self.bond(stereo.axis)?;
-                if stereo.carriers.len() != 2 {
-                    return invalid(StereoValidationIssue::InvalidAxisCarrierCount {
-                        element: id,
-                        axis: stereo.axis,
-                        carrier_count: stereo.carriers.len(),
-                    });
-                }
+                let axis = self.require_bond(stereo.axis)?;
                 self.validate_stereo_carriers(&stereo.carriers)?;
                 let mut endpoints = [false; 2];
                 for &carrier in &stereo.carriers {
@@ -899,8 +956,8 @@ impl Molecule {
                         });
                     };
                     let adjacent = [
-                        atom != axis.b() && self.bond_between(axis.a(), atom)?.is_some(),
-                        atom != axis.a() && self.bond_between(axis.b(), atom)?.is_some(),
+                        atom != axis.b() && self.require_bond_between(axis.a(), atom)?.is_some(),
+                        atom != axis.a() && self.require_bond_between(axis.b(), atom)?.is_some(),
                     ];
                     if adjacent[0] == adjacent[1] {
                         return invalid(StereoValidationIssue::AxisCarrierNotAdjacent {
@@ -920,7 +977,7 @@ impl Molecule {
                 }
                 for (endpoint, other) in [(axis.a(), axis.b()), (axis.b(), axis.a())] {
                     let substituent_count = self
-                        .neighbors(endpoint)?
+                        .require_neighbors(endpoint)?
                         .filter(|neighbor| *neighbor != other)
                         .count();
                     if substituent_count > 2 {
@@ -992,7 +1049,7 @@ impl Molecule {
     }
 
     fn canonicalize_double_bond_stereo(&self, stereo: &mut DoubleBondStereo) {
-        let Ok(bond) = self.bond(stereo.bond) else {
+        let Some(bond) = self.bond(stereo.bond) else {
             return;
         };
         if !bond.connects(stereo.left, stereo.right) {
@@ -1054,7 +1111,7 @@ impl Molecule {
         if stereo.carriers.len() != 2 {
             return;
         }
-        let Ok(axis) = self.bond(stereo.axis) else {
+        let Some(axis) = self.bond(stereo.axis) else {
             return;
         };
         // Reversing the axis exchanges both endpoint reference vectors as
@@ -1081,7 +1138,7 @@ impl Molecule {
             right_carrier = canonical;
         }
 
-        stereo.carriers = vec![left_carrier, right_carrier];
+        stereo.carriers = [left_carrier, right_carrier];
         if reference_changes % 2 == 1 {
             stereo.orientation = stereo.orientation.map(AxisOrientation::inverted);
         }
@@ -1097,7 +1154,7 @@ impl Molecule {
             .into_iter()
             .find(|carrier| {
                 matches!(carrier, StereoCarrier::Atom(atom)
-                if self.bond_between(other_endpoint, *atom).ok().flatten().is_none())
+                if self.bond_between(other_endpoint, *atom).is_none())
             })
     }
 
@@ -1129,7 +1186,6 @@ impl Molecule {
     ) -> Vec<StereoCarrier> {
         let mut references = self
             .incident_bonds(endpoint)
-            .ok()
             .into_iter()
             .flatten()
             .filter_map(|(bond_id, bond)| {
@@ -1144,7 +1200,7 @@ impl Molecule {
             StereoCarrier::Atom(atom) => {
                 let is_hydrogen = self
                     .atom(*atom)
-                    .is_ok_and(|atom| atom.element.atomic_number() == 1);
+                    .is_some_and(|atom| atom.element.atomic_number() == 1);
                 (u8::from(is_hydrogen), atom.raw())
             }
             StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
@@ -1158,7 +1214,7 @@ impl Molecule {
     fn validate_stereo_carriers(&self, carriers: &[StereoCarrier]) -> Result<()> {
         for carrier in carriers {
             if let StereoCarrier::Atom(atom) = carrier {
-                self.atom(*atom)?;
+                self.require_atom(*atom)?;
             }
         }
         Ok(())
@@ -1174,7 +1230,7 @@ impl Molecule {
     ) -> Result<bool> {
         Ok(match carrier {
             StereoCarrier::Atom(atom) => {
-                Some(atom) != excluded && self.bond_between(center, atom)?.is_some()
+                Some(atom) != excluded && self.require_bond_between(center, atom)?.is_some()
             }
             _ => true,
         })
@@ -1196,7 +1252,7 @@ impl Molecule {
             element.references_bond(bond)
                 || atoms.iter().any(|&atom| element.references_atom(atom))
                 || matches!(&element.kind, StereoElementKind::Axis(axis)
-                if self.bond(axis.axis).is_ok_and(|axis| {
+                if self.bond(axis.axis).is_some_and(|axis| {
                     atoms.iter().any(|&atom| axis.a() == atom || axis.b() == atom)
                 }))
         };
@@ -1275,7 +1331,7 @@ fn dense_slots<T, Id>(slots: &[Option<T>], id: impl Fn(u32) -> Id) -> Vec<Option
         .collect()
 }
 
-fn sort_stereo_carriers(carriers: &mut Vec<StereoCarrier>) -> bool {
+fn sort_stereo_carriers(carriers: &mut [StereoCarrier]) -> bool {
     let mut indexed = carriers.iter().copied().enumerate().collect::<Vec<_>>();
     indexed.sort_by_key(|(_, carrier)| carrier.canonical_order_key());
 
@@ -1289,7 +1345,9 @@ fn sort_stereo_carriers(carriers: &mut Vec<StereoCarrier>) -> bool {
             }
         }
     }
-    *carriers = indexed.into_iter().map(|(_, carrier)| carrier).collect();
+    for (slot, (_, carrier)) in carriers.iter_mut().zip(indexed) {
+        *slot = carrier;
+    }
     odd_permutation
 }
 
@@ -1380,7 +1438,7 @@ impl fmt::Display for MoleculeError {
             Self::InvalidStereoElementId(id) => write!(f, "invalid stereo element id: {id}"),
             Self::InvalidStereoGroupId(id) => write!(f, "invalid stereo group id: {id}"),
             Self::InvalidStereoReference(issue) => write!(f, "invalid stereo: {issue}"),
-            Self::SelfBond(id) => write!(f, "cannot create a bond from atom {id} to itself"),
+            Self::SelfBond(id) => write!(f, "cannot create a bond from {id} to itself"),
             Self::DuplicateBond { a, b } => write!(f, "duplicate bond between {a} and {b}"),
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(f, "{kind} identifier capacity exceeded")

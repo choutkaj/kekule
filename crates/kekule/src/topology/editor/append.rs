@@ -37,7 +37,7 @@ impl TopologyEditor {
         // Imported atoms keep the source dense order after existing rows.
         let bases = (self.properties.atoms().len(), self.properties.bonds().len());
         let (atom_handles, bond_handles) = GroupIdentity::source_handles(&source);
-        for (instance, value) in source.instances() {
+        for (instance, value) in source.instance_records() {
             let molecule = &definitions[&value.definition()];
             let group_index = self.groups.len();
             let identity =
@@ -110,7 +110,7 @@ impl TopologyEditor {
             target.class = Some(residue.class());
             target.class_explicit = source.residue_class_overrides.contains_key(&id);
         }
-        for (instance, value) in source.instances() {
+        for (instance, value) in source.instance_records() {
             let definition = source.definition(value.definition()).unwrap();
             let local = definition.molecule().atom_ids().next().unwrap();
             let handle = mapping.atoms[&InstanceAtomId::new(instance, local)];

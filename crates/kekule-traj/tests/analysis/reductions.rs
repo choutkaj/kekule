@@ -38,7 +38,7 @@ fn loaded_and_reused_streaming_buffers_agree_with_independent_statistics() {
     let top = linear_carbon_topology(3);
     let ids = top.atom_ids();
     let pairs = [(ids[0], ids[1]), (ids[1], ids[2])];
-    let all = AtomSelection::all(&top);
+    let all = AtomSelection::all(Arc::clone(&top));
     // Large common translation exposes cancellation in E[x²] - E[x]².
     let rows = [
         [1.0e9, 1.0e9 + 1.0, 1.0e9 + 20.0],
@@ -71,7 +71,7 @@ fn loaded_and_reused_streaming_buffers_agree_with_independent_statistics() {
     close(rmsf.values().value()[2], 0.0);
     let subset = analysis::rmsf(
         &t,
-        &AtomSelection::from_atoms(&top, [ids[2], ids[0]]).unwrap(),
+        &AtomSelection::from_atoms(Arc::clone(&top), [ids[2], ids[0]]).unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -90,8 +90,10 @@ fn loaded_and_reused_streaming_buffers_agree_with_independent_statistics() {
     let mut index = 0;
     for frame in t.iter() {
         buffer.copy_from(frame).unwrap();
-        online_rmsf.observe(index, &buffer).unwrap();
-        online_contacts.observe(index, &buffer).unwrap();
+        online_rmsf.observe(index, &buffer.as_model_view()).unwrap();
+        online_contacts
+            .observe(index, &buffer.as_model_view())
+            .unwrap();
         index += 1;
     }
     assert_eq!(index, 3);
@@ -119,7 +121,7 @@ fn failed_frames_are_atomic_and_retryable_for_both_accumulators() {
     // can fail after the first pending pair. Neither may publish that prefix.
     let bad = trajectory(&top, &[[0.5, 1.0e308, -1.0e308]]);
     let unrelated = trajectory(&linear_carbon_topology(3), &[[0.0, 1.0, 0.0]]);
-    let mut rmsf = RmsfAccumulator::new(&AtomSelection::all(&top)).unwrap();
+    let mut rmsf = RmsfAccumulator::new(&AtomSelection::all(Arc::clone(&top))).unwrap();
     let mut contacts =
         ContactOccupancyAccumulator::new(&top, pairs, Quantity::new(2.0, NANOMETER)).unwrap();
     rmsf.observe(10, &good.get(0).unwrap()).unwrap();
@@ -156,8 +158,8 @@ fn failed_frames_are_atomic_and_retryable_for_both_accumulators() {
 fn reducers_reject_empty_or_ambiguous_inputs_and_handle_single_frames() {
     let top = linear_carbon_topology(3);
     let ids = top.atom_ids();
-    let all = AtomSelection::all(&top);
-    let empty = AtomSelection::from_atoms(&top, []).unwrap();
+    let all = AtomSelection::all(Arc::clone(&top));
+    let empty = AtomSelection::from_atoms(Arc::clone(&top), []).unwrap();
     let cutoff = Quantity::new(1.0, NANOMETER);
     assert!(matches!(
         RmsfAccumulator::new(&empty),
@@ -185,7 +187,7 @@ fn reducers_reject_empty_or_ambiguous_inputs_and_handle_single_frames() {
         ContactOccupancyAccumulator::new(&top, [(ids[0], ids[1]), (ids[1], ids[0])], cutoff),
         Err(ReductionError::DuplicatePair { pair: 1 })
     ));
-    let invalid = InstanceAtomId::new(ids[0].molecule(), kekule::molecule::AtomId::new(99));
+    let invalid = InstanceAtomId::new(ids[0].instance(), kekule::molecule::AtomId::new(99));
     assert!(matches!(
         ContactOccupancyAccumulator::new(&top, [(ids[0], invalid)], cutoff),
         Err(ReductionError::Selection(SelectionError::InvalidAtomId(_)))
@@ -224,7 +226,7 @@ fn reducers_reject_empty_or_ambiguous_inputs_and_handle_single_frames() {
             .hit_counts(),
         &[1]
     );
-    let foreign = AtomSelection::all(&linear_carbon_topology(3));
+    let foreign = AtomSelection::all(Arc::clone(&linear_carbon_topology(3)));
     assert!(matches!(
         analysis::rmsf(&one, &foreign),
         Err(ReductionError::Selection(SelectionError::TopologyMismatch))
@@ -251,7 +253,7 @@ fn stored_coordinate_statistics_do_not_implicitly_image_or_align_periodic_frames
             .hit_counts(),
         &[0]
     );
-    for value in analysis::rmsf(&t, &AtomSelection::all(&top))
+    for value in analysis::rmsf(&t, &AtomSelection::all(Arc::clone(&top)))
         .unwrap()
         .values()
         .value()

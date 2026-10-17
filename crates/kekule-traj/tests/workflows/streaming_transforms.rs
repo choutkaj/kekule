@@ -63,7 +63,7 @@ fn whole(trajectory: &Trajectory) -> Trajectory {
 fn streaming_and_loaded_whole_image_and_unwrap_preserve_identical_complete_frames() {
     let trajectory = source();
     let topology = trajectory.shared_topology();
-    let anchors = AtomSelection::all(&topology);
+    let anchors = AtomSelection::all(Arc::clone(&topology));
     let imager = MoleculeImager::new(topology.clone());
     let expected_whole = whole(&trajectory);
     let mut expected_image = trajectory.clone();
@@ -209,7 +209,7 @@ fn ambiguous_crossings_and_changed_axes_do_not_advance_streaming_state() {
 fn superposition_streams_the_same_transforms_and_metadata_and_reports_source_indices() {
     let trajectory = whole(&source());
     let topology = trajectory.shared_topology();
-    let selection = AtomSelection::all(&topology);
+    let selection = AtomSelection::all(Arc::clone(&topology));
     let mut expected = trajectory.clone();
     let reports = expected
         .superpose(0, &selection, Default::default())
@@ -264,15 +264,12 @@ fn correspondence_streaming_matches_loaded_superposition_and_keeps_failed_buffer
     .unwrap();
     let reference_ids = reference.topology().atom_ids();
     let fit = AtomCorrespondence::from_pairs(
-        &moving,
-        &reference.shared_topology(),
+        Arc::clone(&moving),
+        reference.shared_topology(),
         [(0, 1), (1, 3), (2, 0)].map(|(a, b)| (moving.atom_ids()[a], reference_ids[b])),
     )
     .unwrap();
-    let options = AlignmentOptions {
-        weighting: Weighting::Explicit(&[4.0, 1.0, 2.0]),
-        ..AlignmentOptions::default()
-    };
+    let options = AlignmentOptions::default().with_weighting(Weighting::Explicit(&[4.0, 1.0, 2.0]));
     let mut loaded = trajectory.clone();
     loaded.superpose(&reference, &fit, options).unwrap();
     let superposer = FrameSuperposer::new(&reference, &fit, options);

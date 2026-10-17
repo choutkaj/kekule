@@ -149,7 +149,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return Err("reference dimensions differ or are empty".into());
     }
-    let anchors = AtomSelection::all(&topology);
+    let anchors = AtomSelection::all(Arc::clone(&topology));
     let mut whole = source.clone();
     periodic::make_molecules_whole(&mut whole)?;
     let mut imaged = source.clone();

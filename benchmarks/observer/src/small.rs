@@ -114,6 +114,7 @@ fn order(order: BondOrder) -> Value {
         BondOrder::Triple => json!(3),
         BondOrder::Quadruple => json!(4),
         BondOrder::Dative => json!("dative"),
+        other => unimplemented!("the observer does not report {other:?}"),
     }
 }
 
@@ -126,16 +127,14 @@ fn parse(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
         let molecule = &component.molecule;
         for (id, atom) in molecule.atoms() {
             let i = component.atom(id);
-            let hydrogens = molecule
-                .total_hydrogens(id)
-                .map_err(|e| Failure::new("perception", e))?;
-            let radicals = atom.radical.map(|r| r.electron_count()).unwrap_or(0);
-            facts.push(json!(["atom", i, "element", atom.element.symbol()]));
-            facts.push(json!(["atom", i, "isotope", atom.isotope]));
-            facts.push(json!(["atom", i, "charge", atom.formal_charge]));
+            let hydrogens = molecule.total_hydrogens(id);
+            let radicals = atom.radical().map(|r| r.electron_count()).unwrap_or(0);
+            facts.push(json!(["atom", i, "element", atom.element().symbol()]));
+            facts.push(json!(["atom", i, "isotope", atom.isotope()]));
+            facts.push(json!(["atom", i, "charge", atom.formal_charge()]));
             facts.push(json!(["atom", i, "radicals", radicals]));
             facts.push(json!(["atom", i, "hydrogens", hydrogens]));
-            facts.push(json!(["atom", i, "map", atom.atom_map]));
+            facts.push(json!(["atom", i, "map", atom.atom_map()]));
         }
         for (_, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
@@ -157,8 +156,8 @@ fn coordinates(components: &[Component], facts: &mut Facts) -> Result<(), Failur
         };
         for id in component.molecule.atom_ids() {
             let point = positions
-                .position_at(id.index())
-                .map_err(|e| Failure::new("parse", e))?
+                .get(id.index())
+                .expect("indices are within the positions")
                 .value_in(kekule::units::ANGSTROM)
                 .map_err(|e| Failure::new("parse", e))?;
             facts.push(json!([
@@ -192,7 +191,7 @@ fn reference_carrier(
     Ok(component
         .molecule
         .neighbors(center)
-        .map_err(|e| Failure::new("stereo", e))?
+        .ok_or_else(|| Failure::new("stereo", "missing atom"))?
         .filter(|id| *id != other)
         .map(|id| component.atom(id) as i64)
         .min()
@@ -207,6 +206,7 @@ fn stereo_facts(component: &Component, facts: &mut Facts) -> Result<(), Failure>
         StereoCarrier::Atom(id) => component.atom(*id) as i64,
         StereoCarrier::ImplicitHydrogen => -1,
         StereoCarrier::ImplicitLonePair => -2,
+        other => unimplemented!("the observer does not report {other:?}"),
     };
     let mut members: BTreeMap<StereoElementId, Value> = BTreeMap::new();
     for (id, element) in molecule.stereo_elements() {
@@ -246,7 +246,7 @@ fn stereo_facts(component: &Component, facts: &mut Facts) -> Result<(), Failure>
             StereoElementKind::Axis(s) => {
                 let bond = molecule
                     .bond(s.axis)
-                    .map_err(|e| Failure::new("stereo", e))?;
+                    .ok_or_else(|| Failure::new("stereo", "missing bond"))?;
                 let selected = s.carriers.iter().map(carrier).collect::<Vec<_>>();
                 let mut reference = [
                     reference_carrier(component, bond.a(), bond.b())?,
@@ -267,6 +267,7 @@ fn stereo_facts(component: &Component, facts: &mut Facts) -> Result<(), Failure>
                 }
                 ("axis", focus.to_vec(), reference.to_vec(), parity)
             }
+            other => unimplemented!("the observer does not report {other:?}"),
         };
         facts.push(json!(["stereo", kind, focus, "carriers", carriers]));
         facts.push(json!(["stereo", kind, focus, "parity", parity]));
@@ -296,6 +297,7 @@ fn group_kind(kind: StereoGroupKind) -> &'static str {
         StereoGroupKind::Racemic => "racemic",
         StereoGroupKind::And => "and",
         StereoGroupKind::Or => "or",
+        other => unimplemented!("the observer does not report {other:?}"),
     }
 }
 
@@ -366,12 +368,12 @@ fn aromaticity_facts(
         }
         let molecule = &component.molecule;
         for id in molecule.atom_ids() {
-            let aromatic = molecule.atom_is_aromatic(id).ok().flatten();
+            let aromatic = molecule.atom_is_aromatic(id);
             facts.push(json!(["atom", component.atom(id), "aromatic", aromatic]));
         }
         for (id, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
-            let aromatic = molecule.bond_is_aromatic(id).ok().flatten();
+            let aromatic = molecule.bond_is_aromatic(id);
             facts.push(json!(["bond", a, b, "aromatic", aromatic]));
         }
     }
@@ -383,7 +385,7 @@ fn conjugation(components: &[Component], facts: &mut Facts) -> Result<(), Failur
         let molecule = &component.molecule;
         for (id, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
-            let conjugated = molecule.bond_is_conjugated(id).ok().flatten();
+            let conjugated = molecule.bond_is_conjugated(id);
             facts.push(json!(["bond", a, b, "conjugated", conjugated]));
         }
     }
@@ -413,8 +415,8 @@ fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<()
                 .bonds
                 .iter()
                 .map(|&id| molecule.bond(id).map(|bond| ends(component, bond)))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Failure::new("resonance", e))?;
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| Failure::new("resonance", "missing bond"))?;
             bonds.sort_unstable();
             facts.push(json!(["resonance", "group", atoms[0], "atoms", atoms]));
             facts.push(json!(["resonance", "group", atoms[0], "bonds", bonds]));
@@ -434,7 +436,7 @@ fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<()
                 if bond_order != BondOrder::Single {
                     let bond = molecule
                         .bond(id)
-                        .map_err(|e| Failure::new("resonance", e))?;
+                        .ok_or_else(|| Failure::new("resonance", "missing bond"))?;
                     bonds.push((ends(component, bond), order(bond_order).to_string()));
                 }
             }
@@ -485,7 +487,9 @@ fn candidates(components: &[Component], facts: &mut Facts) -> Result<(), Failure
                     ]));
                 }
                 StereoCandidate::DoubleBond { bond, .. } => {
-                    let bond = molecule.bond(bond).map_err(|e| Failure::new("stereo", e))?;
+                    let bond = molecule
+                        .bond(bond)
+                        .ok_or_else(|| Failure::new("stereo", "missing bond"))?;
                     facts.push(json!([
                         "candidate",
                         "double_bond",
@@ -494,6 +498,7 @@ fn candidates(components: &[Component], facts: &mut Facts) -> Result<(), Failure
                         true
                     ]));
                 }
+                other => unimplemented!("the observer does not report {other:?}"),
             }
         }
     }
@@ -516,6 +521,7 @@ fn descriptor(descriptor: StereoDescriptor) -> &'static str {
         StereoDescriptor::P => "P",
         StereoDescriptor::LowerM => "m",
         StereoDescriptor::LowerP => "p",
+        other => unimplemented!("the observer does not report {other:?}"),
     }
 }
 
@@ -528,10 +534,7 @@ fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
         let component = &*component;
         let molecule = &component.molecule;
         for (id, element) in molecule.stereo_elements() {
-            let Some(label) = molecule
-                .cip_descriptor(id)
-                .map_err(|e| Failure::new("cip", e))?
-            else {
+            let Some(label) = molecule.cip_descriptor(id) else {
                 continue;
             };
             let (kind, focus) = match &element.kind {
@@ -542,9 +545,12 @@ fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
                     ("bond", focus)
                 }
                 StereoElementKind::Axis(s) => {
-                    let bond = molecule.bond(s.axis).map_err(|e| Failure::new("cip", e))?;
+                    let bond = molecule
+                        .bond(s.axis)
+                        .ok_or_else(|| Failure::new("cip", "missing bond"))?;
                     ("bond", ends(component, bond).to_vec())
                 }
+                other => unimplemented!("the observer does not report {other:?}"),
             };
             facts.push(json!(["cip", kind, focus, "label", descriptor(label)]));
         }
@@ -595,7 +601,7 @@ fn rotatable(components: &[Component], facts: &mut Facts) -> Result<(), Failure>
         for &id in detected.bond_ids() {
             let bond = molecule
                 .bond(id)
-                .map_err(|e| Failure::new("rotatable", e))?;
+                .ok_or_else(|| Failure::new("rotatable", "missing bond"))?;
             let [a, b] = ends(component, bond);
             facts.push(json!(["bond", a, b, "rotatable", true]));
         }
@@ -618,11 +624,10 @@ fn smarts(components: Vec<Component>, options: &Value, facts: &mut Facts) -> Res
             .map_err(|e| Failure::new("smarts", e))?,
     );
     let target = PreparedTopologyTarget::new(&topology);
-    let match_options = SubstructureMatchOptions {
-        max_matches: MAX_MATCHES,
-        uniquify: false,
-        ..Default::default()
-    };
+    let match_options = SubstructureMatchOptions::default()
+        .with_max_matches(MAX_MATCHES)
+        .unwrap()
+        .with_uniquify(false);
     for (index, smarts) in queries.iter().enumerate() {
         let smarts = smarts.as_str().unwrap_or_default();
         let graph = match kekule::smarts::parse_str(smarts, Default::default()) {
@@ -645,7 +650,7 @@ fn smarts(components: Vec<Component>, options: &Value, facts: &mut Facts) -> Res
                 found
                     .atoms()
                     .iter()
-                    .map(|atom| sources[atom.molecule().index()][atom.atom().index()])
+                    .map(|atom| sources[atom.instance().index()][atom.atom().index()])
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -672,8 +677,11 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
             } else {
                 smiles::SmilesWriteMode::Isomeric
             };
-            smiles::write(&topology, smiles::SmilesWriteOptions { mode })
-                .map_err(|e| Failure::new("write", e))?
+            smiles::write(
+                &topology,
+                smiles::SmilesWriteOptions::default().with_mode(mode),
+            )
+            .map_err(|e| Failure::new("write", e))?
         }
         "molfile-v2000" | "molfile-v3000" | "sdf" => {
             let model = match format {
@@ -704,10 +712,8 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 let record = sdf::SdfRecordInterpretation::new("", model, vec![]);
                 sdf::write(
                     &[record],
-                    sdf::SdfWriteOptions {
-                        version: molfile::MolfileWriteVersion::V2000,
-                        ..Default::default()
-                    },
+                    sdf::SdfWriteOptions::default()
+                        .with_version(molfile::MolfileWriteVersion::V2000),
                 )
                 .map_err(|e| Failure::new("write", e))?
             } else {
@@ -718,10 +724,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 };
                 molfile::write(
                     &model,
-                    molfile::MolfileWriteOptions {
-                        version,
-                        ..Default::default()
-                    },
+                    molfile::MolfileWriteOptions::default().with_version(version),
                 )
                 .map_err(|e| Failure::new("write", e))?
             }

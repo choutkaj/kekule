@@ -196,7 +196,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert!(owned_topology.same_layout(owned_model.topology()));
     assert_eq!(
         owned_topology
-            .molecules()
+            .instances()
             .map(|occurrence| occurrence.molecule())
             .collect::<Vec<_>>(),
         owned_molecules.iter().collect::<Vec<_>>()
@@ -268,8 +268,8 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert_eq!(provenance.atoms()[0].occurrence(), None);
     assert_eq!(provenance.atoms()[0].selected_alternate_location(), None);
     assert_eq!(
-        provenance.atoms()[0].atom().molecule(),
-        provenance.molecule()
+        provenance.atoms()[0].atom().instance(),
+        provenance.instance()
     );
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::model(interpreted.model())
@@ -281,21 +281,14 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let custom_written = mmcif::write(
         [mmcif::MmcifBlockSource::model(interpreted.model())
             .with_reports(std::slice::from_ref(interpreted.report()))],
-        MmcifWriteOptions {
-            block_name: "custom".to_owned(),
-            ..MmcifWriteOptions::default()
-        },
+        MmcifWriteOptions::default()
+            .with_block_name("custom".to_owned())
+            .unwrap(),
     )?;
     assert!(custom_written.starts_with("data_custom\n"));
-    let unnamed = mmcif::write(
-        [mmcif::MmcifBlockSource::model(interpreted.model())
-            .with_reports(std::slice::from_ref(interpreted.report()))],
-        MmcifWriteOptions {
-            block_name: String::new(),
-            ..MmcifWriteOptions::default()
-        },
-    )
-    .unwrap_err();
+    let unnamed = MmcifWriteOptions::default()
+        .with_block_name(String::new())
+        .unwrap_err();
     assert_eq!(
         unnamed.detail(),
         Some(&kekule::diagnostics::FormatErrorDetail::MmcifWrite(
@@ -305,7 +298,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let automatic = mmcif::write([interpreted.model()], MmcifWriteOptions::default())?;
     assert!(automatic.contains("1 non-polymer"));
     let mut classifications = MmcifEntityClassifications::new();
-    classifications.insert(provenance.molecule(), EntityKind::Polymer)?;
+    classifications.insert(provenance.instance(), EntityKind::Polymer)?;
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::model(interpreted.model())
             .with_classifications(&classifications)],
@@ -459,15 +452,15 @@ fn mmcif_connectivity_matches_an_independent_reference() {
                 .unwrap();
             let topology = interpreted.topology();
             let mut sizes = topology
-                .molecules()
+                .instances()
                 .map(|instance| instance.molecule().atom_count())
                 .collect::<Vec<_>>();
             sizes.sort_unstable_by(|a, b| b.cmp(a));
             let charges = topology
-                .molecules()
+                .instances()
                 .flat_map(|instance| instance.molecule().atoms())
-                .filter(|(_, atom)| atom.formal_charge != 0)
-                .map(|(_, atom)| atom.formal_charge)
+                .filter(|(_, atom)| atom.formal_charge() != 0)
+                .map(|(_, atom)| atom.formal_charge())
                 .collect::<Vec<_>>();
             let case = format!("{name} stripped={stripped}");
             assert_eq!(topology.atom_count(), atoms, "{case}");
@@ -478,7 +471,7 @@ fn mmcif_connectivity_matches_an_independent_reference() {
             assert!(interpreted.report().instances().iter().all(|instance| {
                 instance.bonds().len()
                     == topology
-                        .molecule(instance.molecule())
+                        .instance(instance.instance())
                         .unwrap()
                         .molecule()
                         .bond_count()
@@ -501,12 +494,12 @@ fn mmcif_connectivity_matches_an_independent_reference() {
                 .collect::<Vec<_>>();
             let ap5 = |asym: &str| {
                 (
-                    SourceResidueId {
-                        model_id: "1".to_owned(),
-                        asym_id: asym.to_owned(),
-                        position: SourceResiduePosition::Author("215".to_owned()),
-                        insertion_code: None,
-                    },
+                    SourceResidueId::from_parts(
+                        "1",
+                        asym,
+                        SourceResiduePosition::Author("215".to_owned()),
+                        None,
+                    ),
                     "AP5".to_owned(),
                     62,
                 )

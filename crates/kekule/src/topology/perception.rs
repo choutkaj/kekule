@@ -21,7 +21,7 @@ impl fmt::Display for TopologyPerceptionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "perception failed for molecule definition {}: {}",
+            "perception failed for {}: {}",
             self.definition, self.source
         )
     }
@@ -57,8 +57,8 @@ impl Topology {
     /// let source = Topology::from_molecules(molecules)?;
     /// let perceived = source.perceived()?;
     /// assert!(perceived.shares_layout(&source));
-    /// assert!(perceived.molecules().all(|m| m.molecule().perception().has_aromaticity()));
-    /// assert!(source.molecules().all(|m| !m.molecule().perception().has_aromaticity()));
+    /// assert!(perceived.instances().all(|m| m.molecule().perception().has_aromaticity()));
+    /// assert!(source.instances().all(|m| !m.molecule().perception().has_aromaticity()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceived(&self) -> Result<Self, TopologyPerceptionError> {

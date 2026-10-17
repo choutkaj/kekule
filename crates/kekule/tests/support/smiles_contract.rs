@@ -20,19 +20,16 @@ fn composition(molecule: &Molecule) -> BTreeMap<AtomIdentity, usize> {
     for (id, atom) in molecule.atoms() {
         *result
             .entry(AtomIdentity {
-                element: atom.element.symbol().to_owned(),
-                isotope: atom.isotope,
-                charge: atom.formal_charge,
+                element: atom.element().symbol().to_owned(),
+                isotope: atom.isotope().map(std::num::NonZero::get),
+                charge: atom.formal_charge(),
                 radical: atom
-                    .radical
+                    .radical()
                     .map(|r| (r.electron_count(), r.spin_multiplicity())),
-                map: atom.atom_map,
+                map: atom.atom_map().map(std::num::NonZero::get),
             })
             .or_default() += 1;
-        let hydrogens = molecule
-            .implicit_hydrogens(id)
-            .expect("live atom")
-            .expect("perceived H count");
+        let hydrogens = molecule.implicit_hydrogens(id).expect("perceived H count");
         if hydrogens != 0 {
             *result
                 .entry(AtomIdentity {

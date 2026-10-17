@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .filter(|frame| frame.cell().is_some())
             .count()
     );
-    trajectory.validate_monotonic_time(false)?;
+    trajectory.validate_monotonic_time(kekule::structure::MissingTimePolicy::Skip)?;
 
     if make_whole {
         periodic::make_molecules_whole(&mut trajectory)?;
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Fit all atoms; substitute a protein/backbone selection for a solvated system.
-    let fit = AtomSelection::all(&topology);
+    let fit = AtomSelection::all(topology.clone());
     trajectory.superpose(0, &fit, Default::default())?;
     let rmsd = trajectory
         .rmsd(0, &fit, Default::default())?

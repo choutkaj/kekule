@@ -22,7 +22,7 @@ pub(crate) fn select_format<R: Read + Seek>(
     let start = reader
         .stream_position()
         .map_err(|error| io_context(TrajectoryIoOperation::Detect, None, source_label, error))?;
-    let max = limits.max_detection_bytes;
+    let max = limits.max_detection_bytes();
     if max == 0 {
         return Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
@@ -32,7 +32,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             "detection requires at least one configured prefix byte",
         ));
     }
-    if max > limits.max_scratch_bytes {
+    if max > limits.max_scratch_bytes() {
         return Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::Detect,

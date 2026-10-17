@@ -61,7 +61,7 @@ fn native_charges_match_external_reference() {
         let p = ff.parameterize_molecule(m.clone(), &model).unwrap();
         let expected = &r["system"]["charges"];
         for (i, (_, a)) in m.atoms().enumerate() {
-            let q = expected[a.atom_map.unwrap() as usize - 1]["charge"]
+            let q = expected[a.atom_map().unwrap().get() as usize - 1]["charge"]
                 .as_f64()
                 .unwrap();
             assert!(

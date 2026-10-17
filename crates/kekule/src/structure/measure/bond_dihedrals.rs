@@ -77,7 +77,7 @@ impl std::error::Error for BondDihedralError {
 /// # fn example(model: &Model) -> Result<(), Box<dyn std::error::Error>> {
 /// let topology = model.shared_topology();
 /// let definitions = topology.bond_ids().iter()
-///     .map(|&bond| BondDihedral::new(&topology, bond, Default::default()))
+///     .map(|&bond| BondDihedral::new(topology.clone(), bond, Default::default()))
 ///     .collect::<Result<Vec<_>, _>>()?;
 /// for definition in &definitions {
 ///     let angle = definition.measure(model.as_model_view())?;
@@ -97,17 +97,18 @@ impl BondDihedral {
     /// Prepares references, ranking ligands within the CIP expansion bounds of
     /// `options`.
     pub fn new(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         bond: InstanceBondId,
         options: CipAssignmentOptions,
     ) -> Result<Self, BondDihedralError> {
+        let topology = &topology.into();
         let instance = topology
             .bond(bond)
             .ok_or(BondDihedralError::InvalidBondId(bond))?
-            .molecule();
+            .instance();
         let atoms = bond_reference_atoms(instance.molecule(), bond.bond(), options)
             .map_err(|error| BondDihedralError::Ranking { bond, error })?
-            .map(|atoms| atoms.map(|atom| InstanceAtomId::new(bond.molecule(), atom)));
+            .map(|atoms| atoms.map(|atom| InstanceAtomId::new(bond.instance(), atom)));
         Ok(Self {
             topology: Arc::clone(topology),
             bond,
@@ -152,7 +153,7 @@ pub fn bond_dihedral(
     bond: InstanceBondId,
 ) -> Result<Option<Quantity<f64>>, BondDihedralError> {
     BondDihedral::new(
-        &view.shared_topology(),
+        view.shared_topology(),
         bond,
         CipAssignmentOptions::default(),
     )?

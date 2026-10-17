@@ -65,8 +65,8 @@ use super::{
     AtomExpression, AtomPredicate, BondExpression, QueryStereoConstraint, QueryStereoGroup,
 };
 
-fixed_u32_id!(QueryAtomId, "qa");
-fixed_u32_id!(QueryBondId, "qb");
+fixed_u32_id!(QueryAtomId, "query atom");
+fixed_u32_id!(QueryBondId, "query bond");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryAtom {
@@ -230,16 +230,14 @@ impl QueryGraph {
         self.bonds.len()
     }
 
-    pub fn atom(&self, id: QueryAtomId) -> Result<&QueryAtom, QueryGraphError> {
-        self.atoms
-            .get(id.index())
-            .ok_or(QueryGraphError::InvalidAtomId(id))
+    /// One query atom, or `None` when `id` names no atom of this query.
+    pub fn atom(&self, id: QueryAtomId) -> Option<&QueryAtom> {
+        self.atoms.get(id.index())
     }
 
-    pub fn bond(&self, id: QueryBondId) -> Result<&QueryBond, QueryGraphError> {
-        self.bonds
-            .get(id.index())
-            .ok_or(QueryGraphError::InvalidBondId(id))
+    /// One query bond, or `None` when `id` names no bond of this query.
+    pub fn bond(&self, id: QueryBondId) -> Option<&QueryBond> {
+        self.bonds.get(id.index())
     }
 
     pub fn atom_ids(&self) -> impl Iterator<Item = QueryAtomId> + '_ {
@@ -250,36 +248,36 @@ impl QueryGraph {
         (0..=u32::MAX).take(self.bonds.len()).map(QueryBondId::new)
     }
 
+    /// Bonds incident to one query atom, or `None` when `atom` names no atom
+    /// of this query.
     pub fn incident_bonds(
         &self,
         atom: QueryAtomId,
-    ) -> Result<impl Iterator<Item = (QueryBondId, &QueryBond)> + '_, QueryGraphError> {
+    ) -> Option<impl Iterator<Item = (QueryBondId, &QueryBond)> + '_> {
         self.atom(atom)?;
-        Ok(self.adjacency[atom.index()]
-            .iter()
-            .map(|bond_id| (*bond_id, &self.bonds[bond_id.index()])))
+        Some(
+            self.adjacency[atom.index()]
+                .iter()
+                .map(|bond_id| (*bond_id, &self.bonds[bond_id.index()])),
+        )
     }
 
-    pub fn neighbors(
-        &self,
-        atom: QueryAtomId,
-    ) -> Result<impl Iterator<Item = QueryAtomId> + '_, QueryGraphError> {
-        Ok(self
-            .incident_bonds(atom)?
-            .map(move |(_, bond)| bond.other_atom(atom)))
+    /// Neighbours of one query atom, or `None` when `atom` names no atom of
+    /// this query.
+    pub fn neighbors(&self, atom: QueryAtomId) -> Option<impl Iterator<Item = QueryAtomId> + '_> {
+        Some(
+            self.incident_bonds(atom)?
+                .map(move |(_, bond)| bond.other_atom(atom)),
+        )
     }
 
-    pub fn bond_between(
-        &self,
-        a: QueryAtomId,
-        b: QueryAtomId,
-    ) -> Result<Option<QueryBondId>, QueryGraphError> {
-        self.atom(a)?;
+    /// The bond joining two query atoms, or `None` when they are not bonded or
+    /// either names no atom of this query.
+    pub fn bond_between(&self, a: QueryAtomId, b: QueryAtomId) -> Option<QueryBondId> {
         self.atom(b)?;
-        Ok(self.adjacency[a.index()]
-            .iter()
-            .copied()
-            .find(|bond_id| self.bonds[bond_id.index()].connects(a, b)))
+        self.incident_bonds(a)?
+            .find(|(_, bond)| bond.connects(a, b))
+            .map(|(id, _)| id)
     }
 }
 

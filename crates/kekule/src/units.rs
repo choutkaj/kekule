@@ -7,14 +7,16 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{Deref, DerefMut, Div, Mul, Neg};
+use std::ops::{Div, Mul, Neg};
 
 const DIMENSION_COUNT: usize = 7;
 
 /// Independent physical dimensions supported by [`Unit`].
+///
+/// This enum is closed: the base dimensions define the unit system, so a new
+/// variant would be a different system rather than an extension of this one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(usize)]
-#[non_exhaustive]
 pub enum BaseDimension {
     Length = 0,
     Mass = 1,
@@ -32,7 +34,7 @@ pub struct Dimension {
 }
 
 impl Dimension {
-    pub const DIMENSIONLESS: Self = Self::new([0; DIMENSION_COUNT]);
+    pub const DIMENSIONLESS: Self = Self::from_exponents([0; DIMENSION_COUNT]);
     pub const LENGTH: Self = Self::base(BaseDimension::Length);
     pub const MASS: Self = Self::base(BaseDimension::Mass);
     pub const TIME: Self = Self::base(BaseDimension::Time);
@@ -41,10 +43,25 @@ impl Dimension {
     pub const CHARGE: Self = Self::base(BaseDimension::Charge);
     pub const ANGLE: Self = Self::base(BaseDimension::Angle);
     /// Molar mass (`Mass / Amount`).
-    pub const MOLAR_MASS: Self = Self::new([0, 1, 0, 0, -1, 0, 0]);
+    pub const MOLAR_MASS: Self = Self::from_exponents([0, 1, 0, 0, -1, 0, 0]);
 
-    pub const fn new(exponents: [i32; DIMENSION_COUNT]) -> Self {
+    const fn from_exponents(exponents: [i32; DIMENSION_COUNT]) -> Self {
         Self { exponents }
+    }
+
+    /// This dimension with the power of one base dimension replaced, for
+    /// building composite dimensions:
+    ///
+    /// ```
+    /// use kekule::units::{BaseDimension, Dimension};
+    /// let velocity = Dimension::LENGTH.with_exponent(BaseDimension::Time, -1);
+    /// assert_eq!(velocity.exponent(BaseDimension::Length), 1);
+    /// assert_eq!(velocity.exponent(BaseDimension::Time), -1);
+    /// ```
+    #[must_use]
+    pub const fn with_exponent(mut self, dimension: BaseDimension, exponent: i32) -> Self {
+        self.exponents[dimension as usize] = exponent;
+        self
     }
 
     pub const fn base(dimension: BaseDimension) -> Self {
@@ -75,7 +92,7 @@ impl Dimension {
             result[index] = self.exponents[index].checked_add(other.exponents[index])?;
             index += 1;
         }
-        Some(Self::new(result))
+        Some(Self::from_exponents(result))
     }
 
     fn checked_divide(self, other: Self) -> Option<Self> {
@@ -85,7 +102,7 @@ impl Dimension {
             result[index] = self.exponents[index].checked_sub(other.exponents[index])?;
             index += 1;
         }
-        Some(Self::new(result))
+        Some(Self::from_exponents(result))
     }
 
     fn checked_powi(self, power: i32) -> Option<Self> {
@@ -93,7 +110,7 @@ impl Dimension {
         for (result, exponent) in result.iter_mut().zip(self.exponents) {
             *result = exponent.checked_mul(power)?;
         }
-        Some(Self::new(result))
+        Some(Self::from_exponents(result))
     }
 }
 
@@ -128,10 +145,9 @@ impl fmt::Display for Dimension {
 /// its dimensions. Quantity values are not normalized eagerly; the scale is
 /// used only for explicit conversions.
 ///
-/// Every unit has a finite, strictly positive scale. Use [`Self::try_mul`],
-/// [`Self::try_div`], and [`Self::try_powi`] for fallible composition of dynamic
-/// units. The `*`, `/`, and [`Self::powi`] conveniences panic if the scale or
-/// dimension exponents cannot be represented.
+/// Every unit has a finite, strictly positive scale. Compose units with
+/// [`Self::try_mul`], [`Self::try_div`], and [`Self::try_powi`], which reject
+/// a scale or dimension exponent that cannot be represented.
 #[derive(Debug, Clone, Copy)]
 pub struct Unit {
     dimension: Dimension,
@@ -236,17 +252,6 @@ impl Unit {
             .ok_or(UnitError::DimensionOverflow)?;
         Self::new(dimension, self.scale.powi(power), None)
     }
-
-    /// Raises a unit to an integer power.
-    ///
-    /// # Panics
-    ///
-    /// Panics on scale underflow/overflow or dimension exponent overflow. Use
-    /// [`Self::try_powi`] to handle these errors explicitly.
-    pub fn powi(self, power: i32) -> Self {
-        self.try_powi(power)
-            .expect("unit power is not representable")
-    }
 }
 
 impl PartialEq for Unit {
@@ -264,32 +269,6 @@ impl fmt::Display for Unit {
         } else {
             write!(formatter, "{} [{}]", self.scale, self.dimension)
         }
-    }
-}
-
-impl Mul for Unit {
-    type Output = Self;
-
-    /// # Panics
-    ///
-    /// Panics if the result is unrepresentable; use [`Unit::try_mul`] for
-    /// fallible unit composition.
-    fn mul(self, other: Self) -> Self::Output {
-        self.try_mul(other)
-            .expect("unit product is not representable")
-    }
-}
-
-impl Div for Unit {
-    type Output = Self;
-
-    /// # Panics
-    ///
-    /// Panics if the result is unrepresentable; use [`Unit::try_div`] for
-    /// fallible unit composition.
-    fn div(self, other: Self) -> Self::Output {
-        self.try_div(other)
-            .expect("unit quotient is not representable")
     }
 }
 
@@ -364,10 +343,6 @@ impl<T> Quantity<T> {
         &self.value
     }
 
-    pub fn value_mut(&mut self) -> &mut T {
-        &mut self.value
-    }
-
     /// Consumes the quantity and returns its stored value without converting units.
     pub fn into_value(self) -> T {
         self.value
@@ -383,20 +358,6 @@ impl<T> Quantity<T> {
 
     pub fn map<U>(self, map: impl FnOnce(T) -> U) -> Quantity<U> {
         Quantity::new(map(self.value), self.unit)
-    }
-}
-
-impl<T> Deref for Quantity<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-impl<T> DerefMut for Quantity<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.value
     }
 }
 
@@ -475,17 +436,19 @@ impl Quantity<f64> {
         Ok(Self::new(self.value - other_value, self.unit))
     }
 
-    /// Compares compatible scalar quantities with explicit numeric tolerances.
+    /// Compares compatible scalar quantities with explicit tolerances.
     ///
-    /// `absolute_tolerance` is expressed in this quantity's unit.
-    /// Invalid tolerances and non-finite values (including values made
-    /// non-finite by conversion) are never close, even to themselves.
+    /// `absolute_tolerance` is a quantity compatible with this one; the
+    /// relative tolerance is dimensionless. Invalid tolerances and non-finite
+    /// values (including values made non-finite by conversion) are never
+    /// close, even to themselves.
     pub fn is_close(
         &self,
         other: &Self,
         relative_tolerance: f64,
-        absolute_tolerance: f64,
+        absolute_tolerance: Quantity<f64>,
     ) -> Result<bool, UnitError> {
+        let absolute_tolerance = absolute_tolerance.value_in(self.unit)?;
         if !relative_tolerance.is_finite()
             || relative_tolerance < 0.0
             || !absolute_tolerance.is_finite()
@@ -538,32 +501,6 @@ impl Div<f64> for Quantity<f64> {
     }
 }
 
-impl Mul for Quantity<f64> {
-    type Output = Self;
-
-    /// # Panics
-    ///
-    /// Panics if the composed unit is unrepresentable; use
-    /// [`Quantity::try_mul`] for fallible unit composition.
-    fn mul(self, other: Self) -> Self::Output {
-        self.try_mul(other)
-            .expect("quantity product unit is not representable")
-    }
-}
-
-impl Div for Quantity<f64> {
-    type Output = Self;
-
-    /// # Panics
-    ///
-    /// Panics if the composed unit is unrepresentable; use
-    /// [`Quantity::try_div`] for fallible unit composition.
-    fn div(self, other: Self) -> Self::Output {
-        self.try_div(other)
-            .expect("quantity quotient unit is not representable")
-    }
-}
-
 impl Neg for Quantity<f64> {
     type Output = Self;
 
@@ -580,10 +517,24 @@ impl Mul<Unit> for f64 {
     }
 }
 
+pub(crate) mod sealed {
+    /// Restricts [`super::ScaleValue`] to the value types Kekule converts.
+    pub trait Sealed {}
+}
+
 /// Scaling operation used to convert complete [`Quantity`] values.
-pub trait ScaleValue: Sized {
+///
+/// This trait is sealed: it is implemented for `f64`, the geometry types, and
+/// arrays, `Option`s and `Vec`s of them, and cannot be implemented outside
+/// Kekule.
+pub trait ScaleValue: Sized + sealed::Sealed {
     fn scaled(self, factor: f64) -> Self;
 }
+
+impl sealed::Sealed for f64 {}
+impl<T: ScaleValue> sealed::Sealed for Option<T> {}
+impl<T: ScaleValue, const N: usize> sealed::Sealed for [T; N] {}
+impl<T: ScaleValue> sealed::Sealed for Vec<T> {}
 
 impl ScaleValue for f64 {
     fn scaled(self, factor: f64) -> Self {
@@ -624,10 +575,33 @@ pub const METER: Unit = Unit::named(Dimension::LENGTH, 1.0, "m");
 pub const NANOMETER: Unit = Unit::named(Dimension::LENGTH, 1.0e-9, "nm");
 pub const ANGSTROM: Unit = Unit::named(Dimension::LENGTH, 1.0e-10, "A");
 pub const BOHR: Unit = Unit::named(Dimension::LENGTH, 5.291_772_109_03e-11, "bohr");
-pub const SQUARE_ANGSTROM: Unit =
-    Unit::named(Dimension::new([2, 0, 0, 0, 0, 0, 0]), 1.0e-20, "A^2");
-pub const SQUARE_NANOMETER: Unit =
-    Unit::named(Dimension::new([2, 0, 0, 0, 0, 0, 0]), 1.0e-18, "nm^2");
+/// The atomic unit of polarizability volume.
+pub const CUBIC_BOHR: Unit = Unit::named(
+    Dimension::from_exponents([3, 0, 0, 0, 0, 0, 0]),
+    5.291_772_109_03e-11 * 5.291_772_109_03e-11 * 5.291_772_109_03e-11,
+    "bohr^3",
+);
+/// Inverse length, such as the XTC coordinate precision.
+pub const PER_NANOMETER: Unit = Unit::named(
+    Dimension::from_exponents([-1, 0, 0, 0, 0, 0, 0]),
+    1.0e9,
+    "1/nm",
+);
+pub const SQUARE_ANGSTROM: Unit = Unit::named(
+    Dimension::from_exponents([2, 0, 0, 0, 0, 0, 0]),
+    1.0e-20,
+    "A^2",
+);
+pub const CUBIC_NANOMETER: Unit = Unit::named(
+    Dimension::from_exponents([3, 0, 0, 0, 0, 0, 0]),
+    1.0e-27,
+    "nm^3",
+);
+pub const SQUARE_NANOMETER: Unit = Unit::named(
+    Dimension::from_exponents([2, 0, 0, 0, 0, 0, 0]),
+    1.0e-18,
+    "nm^2",
+);
 
 pub const KILOGRAM: Unit = Unit::named(Dimension::MASS, 1.0, "kg");
 /// Molecular-scale molar mass, coherent with `1 Da = 1 g/mol`.
@@ -639,7 +613,11 @@ pub const FEMTOSECOND: Unit = Unit::named(Dimension::TIME, 1.0e-15, "fs");
 
 pub const KELVIN: Unit = Unit::named(Dimension::TEMPERATURE, 1.0, "K");
 /// Amount concentration: one mole per liter (1000 mol/m^3).
-pub const MOLAR: Unit = Unit::named(Dimension::new([-3, 0, 0, 0, 1, 0, 0]), 1000.0, "M");
+pub const MOLAR: Unit = Unit::named(
+    Dimension::from_exponents([-3, 0, 0, 0, 1, 0, 0]),
+    1000.0,
+    "M",
+);
 pub const MOLE: Unit = Unit::named(Dimension::AMOUNT, 1.0, "mol");
 
 pub const COULOMB: Unit = Unit::named(Dimension::CHARGE, 1.0, "C");
@@ -648,33 +626,47 @@ pub const ELEMENTARY_CHARGE: Unit = Unit::named(Dimension::CHARGE, 1.602_176_634
 pub const RADIAN: Unit = Unit::named(Dimension::ANGLE, 1.0, "rad");
 pub const DEGREE: Unit = Unit::named(Dimension::ANGLE, std::f64::consts::PI / 180.0, "deg");
 
-pub const JOULE: Unit = Unit::named(Dimension::new([2, 1, -2, 0, 0, 0, 0]), 1.0, "J");
+pub const JOULE: Unit = Unit::named(Dimension::from_exponents([2, 1, -2, 0, 0, 0, 0]), 1.0, "J");
 pub const KILOJOULE: Unit = Unit::named(JOULE.dimension, 1.0e3, "kJ");
 pub const KILOCALORIE: Unit = Unit::named(JOULE.dimension, 4.184e3, "kcal");
-pub const KILOJOULE_PER_MOLE: Unit =
-    Unit::named(Dimension::new([2, 1, -2, 0, -1, 0, 0]), 1.0e3, "kJ/mol");
+pub const KILOJOULE_PER_MOLE: Unit = Unit::named(
+    Dimension::from_exponents([2, 1, -2, 0, -1, 0, 0]),
+    1.0e3,
+    "kJ/mol",
+);
 pub const KILOCALORIE_PER_MOLE: Unit =
     Unit::named(KILOJOULE_PER_MOLE.dimension, 4.184e3, "kcal/mol");
-pub const KILOJOULE_PER_MOLE_PER_ANGSTROM: Unit =
-    Unit::named(Dimension::new([1, 1, -2, 0, -1, 0, 0]), 1.0e13, "kJ/mol/A");
-pub const KILOJOULE_PER_MOLE_PER_NANOMETER: Unit =
-    Unit::named(Dimension::new([1, 1, -2, 0, -1, 0, 0]), 1.0e12, "kJ/mol/nm");
+pub const KILOJOULE_PER_MOLE_PER_ANGSTROM: Unit = Unit::named(
+    Dimension::from_exponents([1, 1, -2, 0, -1, 0, 0]),
+    1.0e13,
+    "kJ/mol/A",
+);
+pub const KILOJOULE_PER_MOLE_PER_NANOMETER: Unit = Unit::named(
+    Dimension::from_exponents([1, 1, -2, 0, -1, 0, 0]),
+    1.0e12,
+    "kJ/mol/nm",
+);
 pub const KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM: Unit = Unit::named(
-    Dimension::new([0, 1, -2, 0, -1, 0, 0]),
+    Dimension::from_exponents([0, 1, -2, 0, -1, 0, 0]),
     1.0e23,
     "kJ/mol/A^2",
 );
 pub const KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER: Unit = Unit::named(
-    Dimension::new([0, 1, -2, 0, -1, 0, 0]),
+    Dimension::from_exponents([0, 1, -2, 0, -1, 0, 0]),
     1.0e21,
     "kJ/mol/nm^2",
 );
-pub const NANOMETER_PER_PICOSECOND: Unit =
-    Unit::named(Dimension::new([1, 0, -1, 0, 0, 0, 0]), 1.0e3, "nm/ps");
+pub const NANOMETER_PER_PICOSECOND: Unit = Unit::named(
+    Dimension::from_exponents([1, 0, -1, 0, 0, 0, 0]),
+    1.0e3,
+    "nm/ps",
+);
 
 /// Library-wide canonical units used for normalized internal numerical storage.
 pub const CANONICAL_LENGTH_UNIT: Unit = NANOMETER;
-pub const CANONICAL_MASS_UNIT: Unit = DALTON;
+/// Canonical molar mass; atomic masses are molar masses in daltons.
+pub const CANONICAL_MOLAR_MASS_UNIT: Unit = DALTON;
+pub const CANONICAL_AREA_UNIT: Unit = SQUARE_NANOMETER;
 pub const CANONICAL_TIME_UNIT: Unit = PICOSECOND;
 pub const CANONICAL_ENERGY_UNIT: Unit = KILOJOULE_PER_MOLE;
 pub const CANONICAL_CHARGE_UNIT: Unit = ELEMENTARY_CHARGE;
@@ -684,6 +676,30 @@ pub const CANONICAL_VELOCITY_UNIT: Unit = NANOMETER_PER_PICOSECOND;
 pub const CANONICAL_FORCE_UNIT: Unit = KILOJOULE_PER_MOLE_PER_NANOMETER;
 pub const CANONICAL_GRADIENT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_NANOMETER;
 pub const CANONICAL_FORCE_CONSTANT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER;
+
+/// Exact physical constants of the 2019 SI, as quantities.
+pub mod constants {
+    use super::{BaseDimension, Dimension, Quantity, Unit};
+
+    const PER_MOLE: Unit = Unit::named(
+        Dimension::DIMENSIONLESS.with_exponent(BaseDimension::Amount, -1),
+        1.0,
+        "1/mol",
+    );
+    const JOULE_PER_MOLE_PER_KELVIN: Unit = Unit::named(
+        Dimension::from_exponents([2, 1, -2, -1, -1, 0, 0]),
+        1.0,
+        "J/(mol K)",
+    );
+
+    /// The Avogadro constant, `6.022 140 76e23 1/mol`.
+    pub const AVOGADRO: Quantity<f64> = Quantity::new(6.022_140_76e23, PER_MOLE);
+
+    /// The molar gas constant, the Avogadro constant times the Boltzmann
+    /// constant: `8.314 462 618 153 24 J/(mol K)`.
+    pub const MOLAR_GAS_CONSTANT: Quantity<f64> =
+        Quantity::new(8.314_462_618_153_24, JOULE_PER_MOLE_PER_KELVIN);
+}
 
 #[cfg(test)]
 mod tests {
@@ -709,7 +725,7 @@ mod tests {
 
     #[test]
     fn composes_and_checks_dimensions() {
-        let gradient = KILOJOULE_PER_MOLE / ANGSTROM;
+        let gradient = KILOJOULE_PER_MOLE.try_div(ANGSTROM).unwrap();
         assert!(gradient.is_compatible(CANONICAL_GRADIENT_UNIT));
         assert_eq!(
             gradient
@@ -728,8 +744,9 @@ mod tests {
         assert_eq!(sum, Quantity::new(1.5, NANOMETER));
 
         let energy = Quantity::new(2.0, CANONICAL_FORCE_CONSTANT_UNIT)
-            * Quantity::new(0.3, NANOMETER)
-            * Quantity::new(0.3, NANOMETER);
+            .try_mul(Quantity::new(0.3, NANOMETER))
+            .and_then(|partial| partial.try_mul(Quantity::new(0.3, NANOMETER)))
+            .unwrap();
         assert!(energy.unit().is_compatible(CANONICAL_ENERGY_UNIT));
         assert!((energy.value_in(CANONICAL_ENERGY_UNIT).unwrap() - 0.18).abs() < 1.0e-15);
     }
@@ -740,7 +757,11 @@ mod tests {
         assert_eq!(Quantity::new(100.0, picometer).value_in(ANGSTROM), Ok(1.0));
         assert!(Unit::new(Dimension::LENGTH, 0.0, None).is_err());
         assert!(Quantity::new(1.0, NANOMETER)
-            .is_close(&Quantity::new(10.0, ANGSTROM), 1.0e-12, 0.0)
+            .is_close(
+                &Quantity::new(10.0, ANGSTROM),
+                1.0e-12,
+                Quantity::new(0.0, NANOMETER)
+            )
             .unwrap());
     }
 
@@ -765,7 +786,8 @@ mod tests {
     #[test]
     fn canonical_units_match_the_library_wide_basis() {
         assert_eq!(CANONICAL_LENGTH_UNIT, NANOMETER);
-        assert_eq!(CANONICAL_MASS_UNIT, DALTON);
+        assert_eq!(CANONICAL_MOLAR_MASS_UNIT, DALTON);
+        assert_eq!(CANONICAL_AREA_UNIT, SQUARE_NANOMETER);
         assert_eq!(CANONICAL_TIME_UNIT, PICOSECOND);
         assert_eq!(CANONICAL_ENERGY_UNIT, KILOJOULE_PER_MOLE);
         assert_eq!(CANONICAL_CHARGE_UNIT, ELEMENTARY_CHARGE);
@@ -778,9 +800,16 @@ mod tests {
         assert_eq!(DALTON.dimension(), Dimension::MOLAR_MASS);
         assert_ne!(DALTON.dimension(), KILOGRAM.dimension());
 
-        let energy = DALTON * NANOMETER.powi(2) / PICOSECOND.powi(2);
-        let force = DALTON * NANOMETER / PICOSECOND.powi(2);
-        let force_constant = DALTON / PICOSECOND.powi(2);
+        let per_square_picosecond = PICOSECOND.try_powi(-2).unwrap();
+        let energy = DALTON
+            .try_mul(NANOMETER.try_powi(2).unwrap())
+            .and_then(|unit| unit.try_mul(per_square_picosecond))
+            .unwrap();
+        let force = DALTON
+            .try_mul(NANOMETER)
+            .and_then(|unit| unit.try_mul(per_square_picosecond))
+            .unwrap();
+        let force_constant = DALTON.try_mul(per_square_picosecond).unwrap();
 
         assert!(energy.is_compatible(KILOJOULE_PER_MOLE));
         assert!(force.is_compatible(CANONICAL_FORCE_UNIT));

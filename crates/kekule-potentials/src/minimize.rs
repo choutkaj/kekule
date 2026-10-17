@@ -34,16 +34,109 @@ const CURVATURE: f64 = 0.9;
 /// Controls [`minimize`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MinimizeOptions {
+    max_iterations: usize,
+    gradient_tolerance: Quantity<f64>,
+    max_step: Quantity<f64>,
+    memory: usize,
+    max_line_search_evaluations: usize,
+}
+
+impl MinimizeOptions {
     /// Maximum number of accepted coordinate updates.
-    pub max_iterations: usize,
+    pub const fn max_iterations(&self) -> usize {
+        self.max_iterations
+    }
+
+    /// Sets [`Self::max_iterations`].
+    #[must_use]
+    pub const fn with_max_iterations(mut self, max_iterations: usize) -> Self {
+        self.max_iterations = max_iterations;
+        self
+    }
+
     /// Convergence threshold for the largest per-atom gradient norm.
-    pub gradient_tolerance: Quantity<f64>,
+    pub const fn gradient_tolerance(&self) -> Quantity<f64> {
+        self.gradient_tolerance
+    }
+
+    /// Sets [`Self::gradient_tolerance`].
+    ///
+    /// # Errors
+    ///
+    /// [`MinimizationError::Unit`] for an incompatible unit and [`MinimizationError::InvalidOptions`] unless the value is finite and positive.
+    pub fn with_gradient_tolerance(
+        mut self,
+        gradient_tolerance: Quantity<f64>,
+    ) -> Result<Self, MinimizationError> {
+        let value = gradient_tolerance.value_in(CANONICAL_GRADIENT_UNIT)?;
+        if !(value.is_finite() && value > 0.0) {
+            return Err(MinimizationError::InvalidOptions(
+                MinimizeOption::GradientTolerance,
+            ));
+        }
+        self.gradient_tolerance = gradient_tolerance;
+        Ok(self)
+    }
+
     /// Largest displacement of any atom in one line search.
-    pub max_step: Quantity<f64>,
+    pub const fn max_step(&self) -> Quantity<f64> {
+        self.max_step
+    }
+
+    /// Sets [`Self::max_step`].
+    ///
+    /// # Errors
+    ///
+    /// [`MinimizationError::Unit`] for an incompatible unit and [`MinimizationError::InvalidOptions`] unless the value is finite and positive.
+    pub fn with_max_step(mut self, max_step: Quantity<f64>) -> Result<Self, MinimizationError> {
+        let value = max_step.value_in(CANONICAL_LENGTH_UNIT)?;
+        if !(value.is_finite() && value > 0.0) {
+            return Err(MinimizationError::InvalidOptions(MinimizeOption::MaxStep));
+        }
+        self.max_step = max_step;
+        Ok(self)
+    }
+
     /// Number of curvature pairs retained by L-BFGS.
-    pub memory: usize,
+    pub const fn memory(&self) -> usize {
+        self.memory
+    }
+
+    /// Sets [`Self::memory`].
+    ///
+    /// # Errors
+    ///
+    /// [`MinimizationError::InvalidOptions`] when the value is zero.
+    pub fn with_memory(mut self, memory: usize) -> Result<Self, MinimizationError> {
+        if memory == 0 {
+            return Err(MinimizationError::InvalidOptions(MinimizeOption::Memory));
+        }
+        self.memory = memory;
+        Ok(self)
+    }
+
     /// Potential evaluations allowed in one line search.
-    pub max_line_search_evaluations: usize,
+    pub const fn max_line_search_evaluations(&self) -> usize {
+        self.max_line_search_evaluations
+    }
+
+    /// Sets [`Self::max_line_search_evaluations`].
+    ///
+    /// # Errors
+    ///
+    /// [`MinimizationError::InvalidOptions`] when the value is zero.
+    pub fn with_max_line_search_evaluations(
+        mut self,
+        max_line_search_evaluations: usize,
+    ) -> Result<Self, MinimizationError> {
+        if max_line_search_evaluations == 0 {
+            return Err(MinimizationError::InvalidOptions(
+                MinimizeOption::MaxLineSearchEvaluations,
+            ));
+        }
+        self.max_line_search_evaluations = max_line_search_evaluations;
+        Ok(self)
+    }
 }
 
 impl Default for MinimizeOptions {
@@ -60,6 +153,7 @@ impl Default for MinimizeOptions {
 
 /// Terminal state of a minimization that did not fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MinimizationStatus {
     /// The largest per-atom gradient norm reached the tolerance.
     Converged,
@@ -73,11 +167,29 @@ pub enum MinimizationStatus {
 /// State after one accepted step, passed to a [`minimize_with_observer`] callback.
 #[derive(Debug, Clone, Copy)]
 pub struct MinimizationStep<'a> {
+    pub(crate) iteration: usize,
+    pub(crate) energy: &'a Energy,
+    pub(crate) max_gradient: Quantity<f64>,
+    pub(crate) positions: &'a Positions,
+}
+
+impl<'a> MinimizationStep<'a> {
     /// Number of accepted steps so far, starting at one.
-    pub iteration: usize,
-    pub energy: &'a Energy,
-    pub max_gradient: Quantity<f64>,
-    pub positions: &'a Positions,
+    pub const fn iteration(&self) -> usize {
+        self.iteration
+    }
+
+    pub const fn energy(&self) -> &'a Energy {
+        self.energy
+    }
+
+    pub const fn max_gradient(&self) -> Quantity<f64> {
+        self.max_gradient
+    }
+
+    pub const fn positions(&self) -> &'a Positions {
+        self.positions
+    }
 }
 
 /// Minimized coordinates and convergence diagnostics.

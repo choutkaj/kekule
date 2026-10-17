@@ -5,11 +5,11 @@ use crate::properties::{PropertyKey, PropertyValue};
 // Defensive algorithm validation must also handle invalid internal staging;
 // public insertion rejects these malformed assertions before allocating a slot.
 fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
-    molecule.atom_is_aromatic(atom).expect("atom exists") == Some(true)
+    molecule.atom_is_aromatic(atom) == Some(true)
 }
 
 fn aromatic_bond(molecule: &Molecule, bond: BondId) -> bool {
-    molecule.bond_is_aromatic(bond).expect("bond exists") == Some(true)
+    molecule.bond_is_aromatic(bond) == Some(true)
 }
 
 fn fully_perceived_aromatic_stereo_fixture() -> Molecule {
@@ -373,19 +373,19 @@ fn molecule_perception_queries_read_the_installed_state_directly() {
             graph.perception().inferred_hydrogens(atom)
         );
         assert_eq!(
-            graph.atom_is_aromatic(atom).expect("live atom"),
+            graph.atom_is_aromatic(atom),
             graph.perception().atom_is_aromatic(atom)
         );
     }
     for bond in graph.bond_ids() {
         assert_eq!(
-            graph.bond_is_aromatic(bond).expect("live bond"),
+            graph.bond_is_aromatic(bond),
             graph.perception().bond_is_aromatic(bond)
         );
     }
     for element in graph.stereo_element_ids() {
         assert_eq!(
-            graph.cip_descriptor(element).expect("live stereo element"),
+            graph.cip_descriptor(element),
             graph.perception().cip_descriptor(element)
         );
     }
@@ -1220,5 +1220,5 @@ fn aromaticity_becomes_stale_after_topology_mutation() {
     assert!(!mol.perception().has_aromaticity());
     assert!(atoms
         .iter()
-        .all(|atom| mol.atom_is_aromatic(*atom).expect("atom exists").is_none()));
+        .all(|atom| mol.atom_is_aromatic(*atom).is_none()));
 }

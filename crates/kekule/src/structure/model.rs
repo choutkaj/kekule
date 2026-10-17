@@ -50,7 +50,7 @@ pub struct Model {
 
 impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology)
+        self.topology.shares_layout(&other.topology)
             && self.positions == other.positions
             && self.cell == other.cell
             && self.occupancies == other.occupancies
@@ -191,7 +191,7 @@ impl Model {
     /// let topology = smiles::to_topology("c1ccccc1")?;
     /// let mut model = Model::new(topology, Positions::zeros(6))?;
     /// model.perceive()?;
-    /// assert!(model.topology().molecules().all(|m| m.molecule().perception().has_rings()));
+    /// assert!(model.topology().instances().all(|m| m.molecule().perception().has_rings()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
@@ -212,7 +212,7 @@ impl Model {
     /// Publishes an induced topology subset and projects structure state
     /// onto it. Structure owner properties are dropped.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, ModelError> {
-        let subset = self.topology.subset(selection)?;
+        let subset = crate::topology::Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
         let state = ModelState {
             positions: self.positions.select_indices(&atoms)?,
@@ -227,7 +227,8 @@ impl Model {
         Self::from_state(subset.shared_topology(), state)
     }
 
-    pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
+    /// The position of one atom, or `None` when `atom` is not in the topology.
+    pub fn position(&self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
         self.as_model_view().position(atom)
     }
 
@@ -301,14 +302,24 @@ pub(super) fn atom_index(
         .ok_or(ModelError::InvalidAtomId(atom))
 }
 
+pub(crate) mod sealed {
+    /// Restricts [`super::AsModelView`] to Kekule's structure owners and views.
+    pub trait Sealed {}
+}
+
 /// Anything that can be borrowed as a [`ModelView`] without copying: models,
-/// views, ensemble members, trajectory frames, and frame buffers.
+/// views, ensemble members and trajectory frames.
 ///
 /// Each implementor also has an inherent `as_model_view` method, so the trait
-/// only needs importing for generic code.
-pub trait AsModelView {
+/// only needs importing for generic code. This trait is sealed; other
+/// structure-like types, such as a `kekule-traj` frame buffer, are passed
+/// through their own `as_model_view()`.
+pub trait AsModelView: sealed::Sealed {
     fn as_model_view(&self) -> ModelView<'_>;
 }
+
+impl sealed::Sealed for Model {}
+impl sealed::Sealed for ModelView<'_> {}
 
 impl AsModelView for Model {
     fn as_model_view(&self) -> ModelView<'_> {
@@ -395,9 +406,9 @@ impl<'a> ModelView<'a> {
     }
 
     /// Occupancy of one atom; `None` when it was never recorded, which is
-    /// always the case for a trajectory frame.
-    pub fn occupancy(self, atom: TopologyAtomIndex) -> Result<Option<f64>, StructureError> {
-        self.occupancies.get(atom, self.positions.len())
+    /// always the case for a trajectory frame, or when `atom` is out of range.
+    pub fn occupancy(self, atom: TopologyAtomIndex) -> Option<f64> {
+        self.occupancies.get(atom)
     }
 
     /// Every occupancy in dense atom order, or `None` when none was recorded.
@@ -406,14 +417,10 @@ impl<'a> ModelView<'a> {
     }
 
     /// Isotropic B-factor of one atom; `None` when it was never recorded,
-    /// which is always the case for a trajectory frame.
-    pub fn b_factor(
-        self,
-        atom: TopologyAtomIndex,
-    ) -> Result<Option<Quantity<f64>>, StructureError> {
-        Ok(b_factor_quantity(
-            self.b_factors.get(atom, self.positions.len())?,
-        ))
+    /// which is always the case for a trajectory frame, or when `atom` is out
+    /// of range.
+    pub fn b_factor(self, atom: TopologyAtomIndex) -> Option<Quantity<f64>> {
+        b_factor_quantity(self.b_factors.get(atom))
     }
 
     /// Every B-factor in dense atom order and square nanometres, or `None`
@@ -430,9 +437,9 @@ impl<'a> ModelView<'a> {
         self.b_factors
     }
 
-    pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
-        let index = atom_index(self.topology, atom)?;
-        Ok(self.positions.position_at(index.index())?)
+    /// The position of one atom, or `None` when `atom` is not in the topology.
+    pub fn position(self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
+        self.positions.get(self.topology.atom_index(atom)?.index())
     }
 
     /// One atom with its topology identity and structure state.
@@ -474,7 +481,7 @@ impl<'a> ModelView<'a> {
 /// ```
 /// use kekule::{smiles, structure::{Model, Positions}};
 /// let model = Model::new(smiles::to_topology("CO")?, Positions::zeros(2))?;
-/// let oxygen = model.atoms().find(|atom| atom.element.symbol() == "O").unwrap();
+/// let oxygen = model.atoms().find(|atom| atom.element().symbol() == "O").unwrap();
 /// assert_eq!(oxygen.occupancy(), None);
 /// assert_eq!(oxygen.position().into_value(), kekule::geometry::Point3::origin());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -502,20 +509,16 @@ impl<'a> ModelAtomView<'a> {
     pub fn position(self) -> Quantity<Point3> {
         self.model
             .positions()
-            .position_at(self.atom.index().index())
+            .get(self.atom.index().index())
             .expect("bound structures cover every atom")
     }
 
     pub fn occupancy(self) -> Option<f64> {
-        self.model
-            .occupancy(self.atom.index())
-            .expect("bound structures cover every atom")
+        self.model.occupancy(self.atom.index())
     }
 
     pub fn b_factor(self) -> Option<Quantity<f64>> {
-        self.model
-            .b_factor(self.atom.index())
-            .expect("bound structures cover every atom")
+        self.model.b_factor(self.atom.index())
     }
 
     /// One structure annotation of this atom. Static annotations are
@@ -656,9 +659,10 @@ impl ModelBuilder {
             .map(|index| TopologyAtomIndex::new(index as u32))
     }
 
-    pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelBuildError> {
-        let index = self.checked_atom_index(atom)?;
-        Ok(self.state.positions.position_at(index.index())?)
+    /// The staged position of one atom, or `None` when `atom` is not in the
+    /// staged topology.
+    pub fn position(&self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
+        self.state.positions.get(self.atom_index(atom)?.index())
     }
 
     pub fn set_position(
@@ -752,7 +756,7 @@ impl ModelBuilder {
         definition: MoleculeDefinitionId,
         positions: &Positions,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        let molecule = self.topology.definition(definition)?.molecule();
+        let molecule = self.topology.require_definition(definition)?.molecule();
         let added_bonds = molecule.bond_count();
         validate_position_count(molecule.atom_count(), positions.len())?;
         self.reserve(positions.len())?;

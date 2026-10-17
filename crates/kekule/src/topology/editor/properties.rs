@@ -185,7 +185,7 @@ impl TopologyEditor {
             .properties
             .chains()
             .raw()
-            .value(key, self.chain(id)?.slot)?)
+            .value(key, self.require_chain(id)?.slot)?)
     }
     pub fn residue_property(
         &self,
@@ -196,7 +196,7 @@ impl TopologyEditor {
             .properties
             .residues()
             .raw()
-            .value(key, self.residue(id)?.slot)?)
+            .value(key, self.require_residue(id)?.slot)?)
     }
     pub fn atom_site_property(
         &self,
@@ -207,7 +207,7 @@ impl TopologyEditor {
             .properties
             .atom_sites()
             .raw()
-            .value(key, self.atom_site(id)?.slot)?)
+            .value(key, self.require_atom_site(id)?.slot)?)
     }
     pub fn set_chain_property(
         &mut self,
@@ -215,7 +215,7 @@ impl TopologyEditor {
         key: PropertyKey,
         value: Option<PropertyValue>,
     ) -> Result<(), TopologyEditError> {
-        let slot = self.chain(id)?.slot;
+        let slot = self.require_chain(id)?.slot;
         let previous = self.properties.chains().raw().value(&key, slot)?;
         self.properties
             .chains_mut()
@@ -231,7 +231,7 @@ impl TopologyEditor {
         key: PropertyKey,
         value: Option<PropertyValue>,
     ) -> Result<(), TopologyEditError> {
-        let slot = self.residue(id)?.slot;
+        let slot = self.require_residue(id)?.slot;
         let previous = self.properties.residues().raw().value(&key, slot)?;
         self.properties
             .residues_mut()
@@ -247,7 +247,7 @@ impl TopologyEditor {
         key: PropertyKey,
         value: Option<PropertyValue>,
     ) -> Result<(), TopologyEditError> {
-        let slot = self.atom_site(id)?.slot;
+        let slot = self.require_atom_site(id)?.slot;
         let previous = self.properties.atom_sites().raw().value(&key, slot)?;
         self.properties
             .atom_sites_mut()

@@ -1,5 +1,6 @@
 use super::*;
 use crate::diagnostics::Resource;
+use std::num::NonZeroU16;
 
 fn node_priority(atomic_number: u8, rule1b: u32, isotope: u16) -> NodePriority {
     NodePriority {
@@ -129,18 +130,16 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
     for (smiles, options, resolved) in [
         (
             "[C@H](F)(Cl)CCCC",
-            CipAssignmentOptions {
-                max_depth: 32,
-                max_nodes: 1,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(32)
+                .with_max_nodes(1),
             true,
         ),
         (
             "N[C@@H]([13CH2]CCC)CCCCO",
-            CipAssignmentOptions {
-                max_depth: 0,
-                max_nodes: 100_000,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(0)
+                .with_max_nodes(100_000),
             false,
         ),
     ] {
@@ -302,7 +301,7 @@ fn trogers_base_retains_the_published_bridged_nitrogen_configuration() {
         // 3D structure independently gives this orientation at both nitrogens.
         assert_eq!(
             stereo.carriers,
-            vec![aryl, benzyl, bridge, StereoCarrier::ImplicitLonePair]
+            [aryl, benzyl, bridge, StereoCarrier::ImplicitLonePair]
         );
         assert_eq!(stereo.orientation, Some(TetrahedralOrientation::Clockwise));
         let fractions = cip_atomic_number_fractions(&molecule);
@@ -963,7 +962,7 @@ fn ligand_tree_compares_immediate_sibling_list_before_recursing() {
 fn duplicate_nodes_have_no_isotope_priority() {
     let mut mol = crate::molecule::MoleculeEditor::new();
     let mut isotope = Atom::new(Element::from_symbol("C").expect("carbon"));
-    isotope.isotope = Some(13);
+    isotope.isotope = NonZeroU16::new(13);
     let atom = mol.add_atom(isotope).expect("atom identifier capacity");
 
     let normal = LigandNode::Atom {
@@ -1203,7 +1202,7 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
         let element = molecule
             .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
                 axis,
-                carriers: vec![StereoCarrier::Atom(fluorine), StereoCarrier::Atom(bromine)],
+                carriers: [StereoCarrier::Atom(fluorine), StereoCarrier::Atom(bromine)],
                 orientation: Some(orientation),
             })))
             .unwrap();

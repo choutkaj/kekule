@@ -4,13 +4,13 @@ use crate::molecule::*;
 /// Local tetrahedral carrier geometry. Bond multiplicity changes electron
 /// counting, not the number of ligand directions (for example a phosphoryl O).
 pub(super) fn tetrahedral_carriers(mol: &Molecule, center: AtomId) -> Option<Vec<StereoCarrier>> {
-    let atom = mol.atom(center).ok()?;
+    let atom = mol.atom(center)?;
     if atom.element.symbol() == "H" {
         return None;
     }
     let mut carriers = Vec::new();
     let mut valence = usize::from(atom_hydrogen_count(mol, center));
-    for (_, bond) in mol.incident_bonds(center).ok()? {
+    for (_, bond) in mol.incident_bonds(center)? {
         valence += match bond.order {
             BondOrder::Single => 1,
             BondOrder::Double => 2,
@@ -62,7 +62,7 @@ impl AtomIdentity {
     pub(super) fn of(atom: &Atom) -> Self {
         Self {
             element: atom.element.atomic_number(),
-            isotope: atom.isotope,
+            isotope: atom.isotope.map(std::num::NonZero::get),
             charge: atom.formal_charge,
             radical: atom
                 .radical
@@ -116,20 +116,20 @@ pub(super) fn has_repeated_terminal_ligands(
 }
 
 fn terminal_ligand(mol: &Molecule, center: AtomId, carrier: AtomId) -> Option<TerminalLigand> {
-    let atom = mol.atom(carrier).ok()?;
-    let count = mol.implicit_hydrogens(carrier).ok()??;
+    let atom = mol.atom(carrier)?;
+    let count = mol.implicit_hydrogens(carrier)?;
     let mut hydrogens: Vec<_> = (0..count).map(|_| AtomIdentity::hydrogen()).collect();
     let mut attachment = None;
-    for (_, bond) in mol.incident_bonds(carrier).ok()? {
+    for (_, bond) in mol.incident_bonds(carrier)? {
         let neighbor = bond.other_atom(carrier);
         if neighbor == center {
             attachment = Some(bond.order);
             continue;
         }
-        let hydrogen = mol.atom(neighbor).ok()?;
+        let hydrogen = mol.atom(neighbor)?;
         if hydrogen.element.symbol() != "H"
             || bond.order != BondOrder::Single
-            || mol.neighbors(neighbor).ok()?.count() != 1
+            || mol.neighbors(neighbor)?.count() != 1
             || atom_hydrogen_count(mol, neighbor) != 0
         {
             return None;

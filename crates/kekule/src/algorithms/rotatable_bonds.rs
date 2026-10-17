@@ -20,16 +20,65 @@ const BROMINE: u8 = 35;
 /// Options controlling which represented single bonds are returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RotatableBondOptions {
+    include_terminal_bonds: bool,
+    include_resonance_restricted_bonds: bool,
+    include_symmetric_bonds: bool,
+    include_ring_bonds: bool,
+}
+
+impl RotatableBondOptions {
     /// Includes bonds whose endpoint has no other covalently connected
     /// non-hydrogen neighbor.
-    pub include_terminal_bonds: bool,
+    pub const fn include_terminal_bonds(&self) -> bool {
+        self.include_terminal_bonds
+    }
+
+    /// Sets [`Self::include_terminal_bonds`].
+    #[must_use]
+    pub const fn with_include_terminal_bonds(mut self, include_terminal_bonds: bool) -> Self {
+        self.include_terminal_bonds = include_terminal_bonds;
+        self
+    }
+
     /// Includes resonance-restricted linkages such as amides and esters.
-    pub include_resonance_restricted_bonds: bool,
+    pub const fn include_resonance_restricted_bonds(&self) -> bool {
+        self.include_resonance_restricted_bonds
+    }
+
+    /// Sets [`Self::include_resonance_restricted_bonds`].
+    #[must_use]
+    pub const fn with_include_resonance_restricted_bonds(
+        mut self,
+        include_resonance_restricted_bonds: bool,
+    ) -> Self {
+        self.include_resonance_restricted_bonds = include_resonance_restricted_bonds;
+        self
+    }
+
     /// Includes axes involving symmetric groups such as trihalomethyl and
     /// tert-butyl-like centers.
-    pub include_symmetric_bonds: bool,
+    pub const fn include_symmetric_bonds(&self) -> bool {
+        self.include_symmetric_bonds
+    }
+
+    /// Sets [`Self::include_symmetric_bonds`].
+    #[must_use]
+    pub const fn with_include_symmetric_bonds(mut self, include_symmetric_bonds: bool) -> Self {
+        self.include_symmetric_bonds = include_symmetric_bonds;
+        self
+    }
+
     /// Includes represented single bonds that are members of graph cycles.
-    pub include_ring_bonds: bool,
+    pub const fn include_ring_bonds(&self) -> bool {
+        self.include_ring_bonds
+    }
+
+    /// Sets [`Self::include_ring_bonds`].
+    #[must_use]
+    pub const fn with_include_ring_bonds(mut self, include_ring_bonds: bool) -> Self {
+        self.include_ring_bonds = include_ring_bonds;
+        self
+    }
 }
 
 impl RotatableBondOptions {
@@ -117,9 +166,21 @@ pub fn rotatable_bonds(
 ) -> Result<RotatableBondSet, PerceptionError> {
     let mut perceived;
     let perception = molecule.perception();
-    let mut compatible = perception.valence_model() == Some(ValenceModel::RdkitLike)
-        && perception.ring_basis_model() == Some(RingBasisModel::FiguerasSssrLike)
-        && perception.aromaticity_model() == Some(AromaticityModel::RdkitLike);
+    // Cached state is reused only when it was produced by the models this
+    // descriptor would perceive itself.
+    let valence_matches = match perception.valence_model() {
+        Some(ValenceModel::RdkitLike) => true,
+        None => false,
+    };
+    let aromaticity_matches = match perception.aromaticity_model() {
+        Some(AromaticityModel::RdkitLike) => true,
+        Some(AromaticityModel::Mdl) | None => false,
+    };
+    let mut compatible = valence_matches
+        && perception
+            .ring_basis_model()
+            .is_some_and(RingBasisModel::is_sssr_like)
+        && aromaticity_matches;
     if !options.include_resonance_restricted_bonds && compatible {
         // Model provenance does not distinguish strict from permissive valence
         // installation. Revalidate before reuse so cached results cannot hide a
@@ -224,7 +285,7 @@ fn atom_profiles(
             let mut profile = AtomProfile {
                 is_hydrogen: molecule
                     .atom(atom)
-                    .is_ok_and(|atom| atom.element.atomic_number() == HYDROGEN),
+                    .is_some_and(|atom| atom.element.atomic_number() == HYDROGEN),
                 ..AtomProfile::default()
             };
             for (_, bond) in molecule
@@ -237,7 +298,7 @@ fn atom_profiles(
                 let neighbor = bond.other_atom(atom);
                 if molecule
                     .atom(neighbor)
-                    .is_ok_and(|neighbor| neighbor.element.atomic_number() != HYDROGEN)
+                    .is_some_and(|neighbor| neighbor.element.atomic_number() != HYDROGEN)
                 {
                     profile.heavy_degree += 1;
                 }
@@ -248,7 +309,7 @@ fn atom_profiles(
         .collect::<BTreeMap<_, _>>();
 
     for atom in molecule.atom_ids() {
-        let Some(value) = molecule.atom(atom).ok() else {
+        let Some(value) = molecule.atom(atom) else {
             continue;
         };
         if value.element.atomic_number() != CARBON {
@@ -295,7 +356,7 @@ fn is_trihalomethyl_center(molecule: &Molecule, atom: AtomId) -> bool {
         if bond.order != BondOrder::Single {
             continue;
         }
-        let Ok(neighbor) = molecule.atom(bond.other_atom(atom)) else {
+        let Some(neighbor) = molecule.atom(bond.other_atom(atom)) else {
             continue;
         };
         match neighbor.element.atomic_number() {
@@ -313,7 +374,7 @@ fn is_methyl_like(
     atom_id: AtomId,
     profiles: &BTreeMap<AtomId, AtomProfile>,
 ) -> bool {
-    let Ok(atom) = molecule.atom(atom_id) else {
+    let Some(atom) = molecule.atom(atom_id) else {
         return false;
     };
     if atom.element.atomic_number() != CARBON
@@ -335,7 +396,7 @@ fn is_methyl_like(
         if !is_ordinary_covalent(bond.order) {
             continue;
         }
-        let Ok(neighbor) = molecule.atom(bond.other_atom(atom_id)) else {
+        let Some(neighbor) = molecule.atom(bond.other_atom(atom_id)) else {
             continue;
         };
         if neighbor.element.atomic_number() == HYDROGEN {
@@ -367,7 +428,7 @@ fn resonance_restricted_atoms(
 ) -> BTreeSet<AtomId> {
     let mut restricted = BTreeSet::new();
     for center in molecule.atom_ids() {
-        let Ok(center_atom) = molecule.atom(center) else {
+        let Some(center_atom) = molecule.atom(center) else {
             continue;
         };
         if center_atom.element.atomic_number() != CARBON
@@ -386,7 +447,7 @@ fn resonance_restricted_atoms(
             .expect("live atoms have valid adjacency")
         {
             let neighbor_id = bond.other_atom(center);
-            let Ok(neighbor) = molecule.atom(neighbor_id) else {
+            let Some(neighbor) = molecule.atom(neighbor_id) else {
                 continue;
             };
             if bond.order == BondOrder::Double

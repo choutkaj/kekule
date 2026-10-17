@@ -63,10 +63,10 @@ pub(super) fn prepare_model(
 
     let mut atoms = Vec::new();
     let hierarchy = model.topology().hierarchy();
-    for (id, molecule) in model.topology().instances() {
+    for (id, molecule) in model.topology().instance_records() {
         let definition = model
             .topology()
-            .molecule(id)
+            .instance(id)
             .expect("listed instances are topology molecules")
             .definition();
         validate_graph_chemistry(molecule, definition)?;
@@ -132,7 +132,9 @@ fn validate_graph_chemistry(
     }
     for (atom_id, atom) in molecule_definition.atoms() {
         let atom_id = molecule.qualify_atom(atom_id);
-        if structure_element_symbol(atom.element, atom.isotope).is_none() {
+        if structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
+            .is_none()
+        {
             return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
                 atom: atom_id,
                 field: MmcifAtomField::Isotope,
@@ -180,10 +182,10 @@ fn collect_macro_rows(
             .atom_site_for_atom(qualified)
             .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
         let residue = hierarchy
-            .residue(site.residue)
+            .require_residue(site.residue)
             .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
         let chain = hierarchy
-            .chain(residue.chain)
+            .require_chain(residue.chain)
             .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
         let assignment = assignments
             .get(&qualified)
@@ -236,15 +238,12 @@ fn collect_macro_rows(
             insertion_code: residue.insertion_code.clone(),
             position: model
                 .position(qualified)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
+                .ok_or_else(|| invalid_model("inconsistent source model"))?
                 .value_in(ANGSTROM)
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
-            occupancy: model
-                .occupancy(dense_index(model, qualified)?)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
+            occupancy: model.occupancy(dense_index(model, qualified)?),
             b_factor: model
                 .b_factor(dense_index(model, qualified)?)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
@@ -302,15 +301,12 @@ fn collect_small_rows(
             insertion_code: None,
             position: model
                 .position(qualified)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
+                .ok_or_else(|| invalid_model("inconsistent source model"))?
                 .value_in(ANGSTROM)
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
-            occupancy: model
-                .occupancy(dense_index(model, qualified)?)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
+            occupancy: model.occupancy(dense_index(model, qualified)?),
             b_factor: model
                 .b_factor(dense_index(model, qualified)?)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
@@ -339,7 +335,7 @@ fn water_atom_name(molecule: &crate::molecule::Molecule, atom: AtomId) -> String
 /// The atom's `type_symbol`; validation has already rejected isotopes the
 /// format cannot name.
 fn type_symbol(atom: &Atom) -> &'static str {
-    structure_element_symbol(atom.element, atom.isotope)
+    structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
         .expect("validated atoms have a structure element symbol")
 }
 

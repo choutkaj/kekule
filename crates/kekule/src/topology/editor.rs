@@ -87,7 +87,7 @@ impl GroupIdentity {
         bases: (usize, usize),
     ) -> Self {
         let molecule = source
-            .molecule(instance)
+            .instance(instance)
             .expect("registered source instance exists")
             .molecule();
         let atom = |local| {
@@ -150,7 +150,7 @@ impl GroupIdentity {
 /// let topology = Topology::from_molecule(molecule)?;
 /// let source_bond = topology.bond_ids()[0];
 /// let mut editor = TopologyEditor::from_topology(topology);
-/// editor.delete_bond(editor.bond_handle(source_bond)?)?;
+/// editor.delete_bond(editor.bond_handle(source_bond).expect("source bond"))?;
 /// let edited = editor.finish()?;
 /// assert_eq!(edited.instance_count(), 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -171,15 +171,14 @@ pub struct TopologyEditor {
 }
 
 impl Topology {
-    /// Starts a detached draft from a shared topology, retaining its exact snapshot.
+    /// Starts a detached draft from a copy of this topology.
     ///
-    /// This method borrows an `Arc<Topology>` so no-op publication can return
-    /// that same allocation. For an owned `Topology`, use [`Self::into_editor`]
-    /// to transfer ownership, or [`TopologyEditor::from_topology`] with either
-    /// an owned value or an `Arc`. Clone the `Arc` when another owner must retain
-    /// the original snapshot; molecular data is copied only when edited.
-    pub fn to_editor(self: &Arc<Self>) -> TopologyEditor {
-        TopologyEditor::from_topology(Arc::clone(self))
+    /// To edit a shared snapshot without copying it, pass the `Arc` to
+    /// [`TopologyEditor::from_topology`]: molecular data is then copied only
+    /// when edited, and a no-op publication returns that same allocation. Use
+    /// [`Self::into_editor`] to transfer an owned topology.
+    pub fn to_editor(&self) -> TopologyEditor {
+        TopologyEditor::from_topology(self.clone())
     }
     /// Transfers an owned topology into a structural draft. Successful consuming
     /// publication can move its unchanged molecular definitions into the result.
@@ -220,7 +219,7 @@ impl TopologyEditor {
         // Source slots are source dense indices, so an unedited draft
         // republishes the source order exactly.
         let (atom_handles, bond_handles) = GroupIdentity::source_handles(&source);
-        for (instance, value) in source.instances() {
+        for (instance, value) in source.instance_records() {
             let molecule = source
                 .definition(value.definition())
                 .expect("published definition")
@@ -275,33 +274,53 @@ impl TopologyEditor {
         self.bond_ids()
             .map(|id| (id, self.bond(id).expect("live draft bond")))
     }
-    pub fn atom_handle(&self, source: InstanceAtomId) -> Result<EditAtomId, TopologyEditError> {
+    /// The draft handle of a source atom, or `None` when the atom is not in the
+    /// source or was deleted.
+    pub fn atom_handle(&self, source: InstanceAtomId) -> Option<EditAtomId> {
         self.source_atoms
             .get(&source)
             .copied()
             .filter(|id| self.atoms.contains_key(id))
-            .ok_or(TopologyEditError::InvalidSourceAtom(source))
     }
-    pub fn bond_handle(&self, source: InstanceBondId) -> Result<EditBondId, TopologyEditError> {
+    /// The draft handle of a source bond, or `None` when the bond is not in the
+    /// source or was deleted.
+    pub fn bond_handle(&self, source: InstanceBondId) -> Option<EditBondId> {
         self.source_bonds
             .get(&source)
             .copied()
             .filter(|id| self.bonds.contains_key(id))
-            .ok_or(TopologyEditError::InvalidSourceBond(source))
     }
-    pub fn atom(&self, id: EditAtomId) -> Result<&Atom, TopologyEditError> {
-        let loc = self.atom_location(id)?;
-        Ok(self.molecule(loc.group).atom(loc.local)?)
+    /// One draft atom, or `None` when `id` names no live atom of this draft.
+    pub fn atom(&self, id: EditAtomId) -> Option<&Atom> {
+        let loc = self.atoms.get(&id)?;
+        self.molecule(loc.group).atom(loc.local)
     }
-    pub fn bond(&self, id: EditBondId) -> Result<EditBond, TopologyEditError> {
-        let loc = self.bond_location(id)?;
-        let group = self.groups[loc.group].as_ref().unwrap();
+    /// One draft bond with handle endpoints, or `None` when `id` names no live
+    /// bond of this draft.
+    pub fn bond(&self, id: EditBondId) -> Option<EditBond> {
+        let loc = self.bonds.get(&id)?;
+        let group = self.groups[loc.group]
+            .as_ref()
+            .expect("bond locations name live groups");
         let bond = self.molecule(loc.group).bond(loc.local)?;
-        Ok(EditBond {
+        Some(EditBond {
             a: group.atoms[&bond.a()],
             b: group.atoms[&bond.b()],
             order: bond.order,
         })
+    }
+    pub(crate) fn require_atom_handle(
+        &self,
+        source: InstanceAtomId,
+    ) -> Result<EditAtomId, TopologyEditError> {
+        self.atom_handle(source)
+            .ok_or(TopologyEditError::InvalidSourceAtom(source))
+    }
+    pub(crate) fn require_atom(&self, id: EditAtomId) -> Result<&Atom, TopologyEditError> {
+        self.atom(id).ok_or(TopologyEditError::InvalidAtom(id))
+    }
+    pub(crate) fn require_bond(&self, id: EditBondId) -> Result<EditBond, TopologyEditError> {
+        self.bond(id).ok_or(TopologyEditError::InvalidBond(id))
     }
     pub fn neighbors(
         &self,
@@ -311,7 +330,7 @@ impl TopologyEditor {
         let group = self.groups[loc.group].as_ref().unwrap();
         Ok(self
             .molecule(loc.group)
-            .neighbors(loc.local)?
+            .require_neighbors(loc.local)?
             .map(|id| group.atoms[&id]))
     }
     pub fn incident_bonds(
@@ -322,7 +341,7 @@ impl TopologyEditor {
         let group = self.groups[loc.group].as_ref().unwrap();
         Ok(self
             .molecule(loc.group)
-            .incident_bonds(loc.local)?
+            .require_incident_bonds(loc.local)?
             .map(|(id, _)| group.bonds[&id]))
     }
     pub fn bond_between(
@@ -337,7 +356,7 @@ impl TopologyEditor {
         }
         Ok(self
             .molecule(left.group)
-            .bond_between(left.local, right.local)?
+            .require_bond_between(left.local, right.local)?
             .map(|id| self.groups[left.group].as_ref().unwrap().bonds[&id]))
     }
     pub fn connected_components(&self) -> Vec<Vec<EditAtomId>> {
@@ -415,7 +434,7 @@ impl TopologyEditor {
 
     pub fn replace_atom(&mut self, id: EditAtomId, atom: Atom) -> Result<Atom, TopologyEditError> {
         let loc = self.atom_location(id)?;
-        if self.atom(id)? == &atom {
+        if self.require_atom(id)? == &atom {
             return Ok(atom);
         }
         let previous = self.draft_mut(loc.group).replace_atom(loc.local, atom)?;
@@ -493,14 +512,14 @@ impl TopologyEditor {
         if self
             .source
             .as_ref()
-            .is_none_or(|t| t.instance(source).is_none())
+            .is_none_or(|t| t.instance_record(source).is_none())
         {
             return Err(TopologyEditError::InvalidSourceInstance(source));
         }
         let ids = self
             .source_atoms
             .iter()
-            .filter(|(id, handle)| id.molecule() == source && self.atoms.contains_key(handle))
+            .filter(|(id, handle)| id.instance() == source && self.atoms.contains_key(handle))
             .map(|(_, &h)| h)
             .collect::<Vec<_>>();
         self.delete_atoms(ids)
@@ -553,7 +572,7 @@ impl TopologyEditor {
     }
 
     pub fn delete_bond(&mut self, id: EditBondId) -> Result<EditBond, TopologyEditError> {
-        let previous = self.bond(id)?;
+        let previous = self.require_bond(id)?;
         let loc = self.bond_location(id)?;
         self.draft_mut(loc.group).delete_bond(loc.local)?;
         self.bonds.remove(&id);
@@ -589,7 +608,7 @@ impl TopologyEditor {
         id: EditBondId,
         order: BondOrder,
     ) -> Result<(), TopologyEditError> {
-        let previous = self.bond(id)?;
+        let previous = self.require_bond(id)?;
         if previous.order == order {
             return Ok(());
         }
@@ -611,7 +630,7 @@ impl TopologyEditor {
         a: EditAtomId,
         b: EditAtomId,
     ) -> Result<(), TopologyEditError> {
-        let old = self.bond(id)?;
+        let old = self.require_bond(id)?;
         self.atom_location(a)?;
         self.atom_location(b)?;
         if (old.a == a && old.b == b) || (old.a == b && old.b == a) {
@@ -630,7 +649,7 @@ impl TopologyEditor {
         a: EditAtomId,
         b: EditAtomId,
     ) -> Result<(), TopologyEditError> {
-        let old = self.bond(id)?;
+        let old = self.require_bond(id)?;
         self.atom_location(a)?;
         self.atom_location(b)?;
         if (old.a == a && old.b == b) || (old.a == b && old.b == a) {
@@ -670,7 +689,7 @@ impl TopologyEditor {
         id: EditBondId,
         replacement: EditBond,
     ) -> Result<EditBond, TopologyEditError> {
-        let previous = self.bond(id)?;
+        let previous = self.require_bond(id)?;
         let mut staged = self.clone();
         staged.set_bond_endpoints_staged(id, replacement.a, replacement.b)?;
         staged.set_bond_order(id, replacement.order)?;
@@ -731,10 +750,10 @@ impl TopologyEditor {
             .as_ref()
             .ok_or(TopologyEditError::InvalidSourceInstance(instance))?;
         let molecule = source
-            .molecule(instance)
+            .instance(instance)
             .ok_or(TopologyEditError::InvalidSourceInstance(instance))?;
         let atom = molecule.atoms().next().unwrap().id();
-        let handle = self.atom_handle(atom)?;
+        let handle = self.require_atom_handle(atom)?;
         let group = self.atom_location(handle)?.group;
         let stored = self.groups[group].as_ref().unwrap();
         if stored.changed || stored.atoms.len() != molecule.molecule().atom_count() {

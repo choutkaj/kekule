@@ -86,7 +86,7 @@ fn canonical_model_constructors_accept_owned_and_shared_topology() {
 #[test]
 fn model_builder_rejects_instance_position_mismatch_before_mutation() {
     let topology = single_atom_topology();
-    let molecule = topology.molecules().next().unwrap();
+    let molecule = topology.instances().next().unwrap();
     let mut builder = ModelBuilder::new();
     let definition = builder
         .add_molecule_definition(molecule.molecule().clone())
@@ -109,7 +109,7 @@ fn model_builder_rejects_instance_position_mismatch_before_mutation() {
 #[test]
 fn model_builder_rejects_excess_replacement_positions_before_mutation() {
     let topology = single_atom_topology();
-    let molecule = topology.molecules().next().unwrap();
+    let molecule = topology.instances().next().unwrap();
     let mut builder = ModelBuilder::new();
     builder
         .add_molecule(molecule.molecule().clone(), &single_position(1.0))
@@ -141,13 +141,13 @@ fn structures_reject_rows_of_other_dimensions() {
     let two_atoms = Arc::new(
         crate::topology::Topology::from_molecules([
             single_atom_topology()
-                .molecules()
+                .instances()
                 .next()
                 .unwrap()
                 .molecule()
                 .clone(),
             single_atom_topology()
-                .molecules()
+                .instances()
                 .next()
                 .unwrap()
                 .molecule()
@@ -358,7 +358,7 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
     let mut bound_elsewhere = Ensemble::from_items(
         crate::topology::Topology::from_molecules([other
             .topology()
-            .molecules()
+            .instances()
             .next()
             .unwrap()
             .molecule()
@@ -561,9 +561,9 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
         .atoms_mut()
         .set_value(key("occupancy"), ATOM0, Some(PropertyValue::Int(1)))
         .unwrap();
-    assert_eq!(model.occupancy(ATOM0).unwrap(), Some(0.75));
+    assert_eq!(model.occupancy(ATOM0), Some(0.75));
     assert_eq!(model.occupancies(), Some([Some(0.75), None].as_slice()));
-    let b_factor = model.b_factor(ATOM0).unwrap().unwrap();
+    let b_factor = model.b_factor(ATOM0).unwrap();
     assert_eq!(b_factor.unit(), SQUARE_NANOMETER);
     assert!((b_factor.into_value() - 0.125).abs() < 1.0e-12);
     assert_eq!(
@@ -631,7 +631,7 @@ fn model_subset_projects_entity_state_and_drops_owner_properties() {
         )
         .unwrap();
     let selection =
-        crate::topology::AtomSelection::from_atoms(&model.shared_topology(), [atom]).unwrap();
+        crate::topology::AtomSelection::from_atoms(model.shared_topology(), [atom]).unwrap();
     let subset = model.subset(&selection).unwrap();
     assert!(subset.properties().owner().is_empty());
     assert_eq!(subset.occupancies(), Some([Some(0.5)].as_slice()));
@@ -644,7 +644,7 @@ fn model_subset_projects_entity_state_and_drops_owner_properties() {
         Some(PropertyValue::Bool(true))
     );
     assert!(subset.properties().bonds().is_empty());
-    let all_selection = crate::topology::AtomSelection::all(&model.shared_topology());
+    let all_selection = crate::topology::AtomSelection::all(model.shared_topology());
     let fully_retained = model.subset(&all_selection).unwrap();
     let bond_index = fully_retained.topology().bond_ids()[0];
     assert_eq!(bond_index.bond(), bond.bond());
@@ -705,7 +705,7 @@ fn ensemble_collection_and_member_properties_are_separate() {
     let cloned = ensemble.clone();
     assert_eq!(cloned.properties(), ensemble.properties());
     let selection =
-        crate::topology::AtomSelection::from_atoms(&ensemble.shared_topology(), [atom]).unwrap();
+        crate::topology::AtomSelection::from_atoms(ensemble.shared_topology(), [atom]).unwrap();
     let subset = ensemble.subset(&selection).unwrap();
     assert!(subset.properties().is_empty());
     assert!(subset.get(0).unwrap().properties().owner().is_empty());
@@ -757,7 +757,7 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
         model.b_factors().unwrap().value()
     );
     assert_eq!(member.cell(), Some(&cell()));
-    assert_eq!(member.as_model_view().occupancy(ATOM0), Ok(Some(0.5)));
+    assert_eq!(member.as_model_view().occupancy(ATOM0), Some(0.5));
     assert_eq!(member.to_model(), model);
 
     // Frame views report no occupancies or B-factors but still check indices.
@@ -771,15 +771,9 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
     let view = trajectory.get(0).unwrap().as_model_view();
     assert_eq!(view.occupancies(), None);
     assert!(view.b_factors().is_none());
-    assert_eq!(view.occupancy(ATOM0), Ok(None));
-    assert_eq!(view.b_factor(ATOM0), Ok(None));
-    assert_eq!(
-        view.occupancy(TopologyAtomIndex::new(2)),
-        Err(StructureError::Array(DenseArrayError::IndexOutOfRange {
-            index: 2,
-            len: 2
-        }))
-    );
+    assert_eq!(view.occupancy(ATOM0), None);
+    assert_eq!(view.b_factor(ATOM0), None);
+    assert_eq!(view.occupancy(TopologyAtomIndex::new(2)), None);
     assert_eq!(view.to_model().occupancies(), None);
 
     // Frames reinterpreted as members keep their cell and rows only.
@@ -835,7 +829,7 @@ fn model_atom_views_join_topology_identity_with_structure_state() {
     );
     assert!(model.atom_at(TopologyAtomIndex::new(2)).is_none());
     let missing =
-        crate::topology::InstanceAtomId::new(carbon.molecule(), crate::molecule::AtomId::new(9));
+        crate::topology::InstanceAtomId::new(carbon.instance(), crate::molecule::AtomId::new(9));
     assert!(model.atom(missing).is_none());
     let view = model.as_model_view();
     assert_eq!(view.atom(carbon).unwrap().position(), atom.position());
@@ -964,7 +958,7 @@ fn ensemble_member_energies_are_canonical_finite_and_follow_the_sampled_structur
         .unwrap();
     let expected = Some(Quantity::new(-3.0, KILOJOULE_PER_MOLE));
     assert_eq!(energies(&ensemble.select([0, 0]).unwrap()), [expected; 2]);
-    let all = crate::topology::AtomSelection::all(&ensemble.shared_topology());
+    let all = crate::topology::AtomSelection::all(ensemble.shared_topology());
     assert_eq!(energies(&ensemble.subset(&all).unwrap()), [expected]);
     ensemble.get_mut(0).unwrap().set_energy(None).unwrap();
     assert_eq!(energies(&ensemble), [None]);

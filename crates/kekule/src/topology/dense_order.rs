@@ -10,7 +10,7 @@ pub(super) trait QualifiedId: Copy + Eq {
 
 impl QualifiedId for InstanceAtomId {
     fn instance(self) -> MoleculeInstanceId {
-        self.molecule()
+        self.instance()
     }
     fn local(self) -> usize {
         self.atom().index()
@@ -19,7 +19,7 @@ impl QualifiedId for InstanceAtomId {
 
 impl QualifiedId for InstanceBondId {
     fn instance(self) -> MoleculeInstanceId {
-        self.molecule()
+        self.instance()
     }
     fn local(self) -> usize {
         self.bond().index()

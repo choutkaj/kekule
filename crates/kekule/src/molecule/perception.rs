@@ -11,6 +11,7 @@ static EMPTY_CIP_DESCRIPTORS: BTreeMap<StereoElementId, StereoDescriptor> = BTre
 
 /// The valence model used to produce installed valence state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ValenceModel {
     /// RDKit-like allowed valences and hydrogen inference on localized chemistry.
     ///
@@ -21,6 +22,7 @@ pub enum ValenceModel {
 
 /// The aromaticity model used to produce installed aromaticity state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AromaticityModel {
     RdkitLike,
     /// MDL model as implemented by RDKit (the OpenFF OEAroModel_MDL profile).
@@ -29,6 +31,7 @@ pub enum AromaticityModel {
 
 /// The algorithm used to select an installed ring set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RingBasisModel {
     /// RDKit-like Figueras selection and symmetrization, with a deterministic
     /// depth-first cycle fallback when the candidate search is incomplete.
@@ -38,6 +41,27 @@ pub enum RingBasisModel {
     FiguerasSssrLike,
     /// Deterministic cycle fallback; unsuitable for exact SMARTS R/r predicates.
     DepthFirstFallback,
+}
+
+impl RingBasisModel {
+    /// Whether the selected rings follow the SSSR-like selection that MDL
+    /// aromaticity and SMARTS ring counts require.
+    pub(crate) const fn is_sssr_like(self) -> bool {
+        match self {
+            Self::FiguerasSssrLike => true,
+            Self::DepthFirstFallback => false,
+        }
+    }
+}
+
+impl AromaticityModel {
+    /// Whether the model applies the MDL candidate and electron-count rules.
+    pub(crate) const fn is_mdl(self) -> bool {
+        match self {
+            Self::RdkitLike => false,
+            Self::Mdl => true,
+        }
+    }
 }
 
 /// Cycle membership indexed by a molecule's atom and bond IDs.
@@ -823,7 +847,7 @@ impl fmt::Display for PerceptionInstallError {
             Self::InvalidAtomId(atom) => write!(formatter, "invalid perception atom id: {atom}"),
             Self::InferredHydrogensOnFixedAtom(atom) => write!(
                 formatter,
-                "perception infers hydrogens on atom {atom}, whose implicit count is fixed"
+                "perception infers hydrogens on {atom}, whose implicit count is fixed"
             ),
             Self::InvalidBondId(bond) => write!(formatter, "invalid perception bond id: {bond}"),
             Self::InvalidStereoElementId(element) => {
@@ -834,7 +858,7 @@ impl fmt::Display for PerceptionInstallError {
                 descriptor,
             } => write!(
                 formatter,
-                "CIP descriptor {descriptor:?} is incompatible with stereo element {element}"
+                "CIP descriptor {descriptor:?} is incompatible with {element}"
             ),
             Self::RingAtomSlotCountMismatch { expected, actual } => write!(
                 formatter,
@@ -850,25 +874,25 @@ impl fmt::Display for PerceptionInstallError {
             Self::InconsistentRingAtomMembership(atom) => {
                 write!(
                     formatter,
-                    "installed ring atom {atom} is not marked in membership"
+                    "installed ring {atom} is not marked in membership"
                 )
             }
             Self::InconsistentRingBondMembership(bond) => {
                 write!(
                     formatter,
-                    "installed ring bond {bond} is not marked in membership"
+                    "installed ring {bond} is not marked in membership"
                 )
             }
             Self::RingAtomMissingFromBasis(atom) => {
                 write!(
                     formatter,
-                    "ring membership atom {atom} is absent from the ring basis"
+                    "ring membership {atom} is absent from the ring basis"
                 )
             }
             Self::RingBondMissingFromBasis(bond) => {
                 write!(
                     formatter,
-                    "ring membership bond {bond} is absent from the ring basis"
+                    "ring membership {bond} is absent from the ring basis"
                 )
             }
         }
@@ -1003,12 +1027,12 @@ fn validate_delocalization(
     let mut endpoints = BTreeSet::new();
     for &atom in &conjugation.atoms {
         mol.atom(atom)
-            .map_err(|_| PerceptionInstallError::InvalidAtomId(atom))?;
+            .ok_or(PerceptionInstallError::InvalidAtomId(atom))?;
     }
     for &id in &conjugation.bonds {
         let bond = mol
             .bond(id)
-            .map_err(|_| PerceptionInstallError::InvalidBondId(id))?;
+            .ok_or(PerceptionInstallError::InvalidBondId(id))?;
         endpoints.extend([bond.a(), bond.b()]);
     }
     if endpoints != conjugation.atoms {
@@ -1033,7 +1057,7 @@ fn validate_delocalization(
                 }
                 let bond = mol
                     .bond(id)
-                    .map_err(|_| PerceptionInstallError::InvalidBondId(id))?;
+                    .ok_or(PerceptionInstallError::InvalidBondId(id))?;
                 group_ends.extend([bond.a(), bond.b()]);
             }
             for &id in &group.atoms {

@@ -71,9 +71,9 @@ pub mod edit {
 }
 
 fixed_u32_id!(MoleculeDefinitionId, "definition");
-fixed_u32_id!(MoleculeInstanceId, "molecule");
-fixed_u32_id!(TopologyAtomIndex, "atom-index");
-fixed_u32_id!(TopologyBondIndex, "bond-index");
+fixed_u32_id!(MoleculeInstanceId, "instance");
+fixed_u32_id!(TopologyAtomIndex, "atom index");
+fixed_u32_id!(TopologyBondIndex, "bond index");
 
 /// Broad intrinsic classification of one reusable topology molecule definition.
 ///
@@ -82,6 +82,7 @@ fixed_u32_id!(TopologyBondIndex, "bond-index");
 /// from contextual roles such as ligand or receptor and from format-specific
 /// categories such as mmCIF entity kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum MoleculeClass {
     Protein,
     Dna,
@@ -99,6 +100,7 @@ pub enum MoleculeClass {
 /// explicitly overridden through [`TopologyBuilder`]. They describe component
 /// identity rather than contextual roles or source-format entity semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum ResidueClass {
     AminoAcid,
     DnaNucleotide,
@@ -121,7 +123,8 @@ impl InstanceAtomId {
         Self { molecule, atom }
     }
 
-    pub const fn molecule(self) -> MoleculeInstanceId {
+    /// The molecule occurrence containing the atom.
+    pub const fn instance(self) -> MoleculeInstanceId {
         self.molecule
     }
 
@@ -148,7 +151,8 @@ impl InstanceBondId {
         Self { molecule, bond }
     }
 
-    pub const fn molecule(self) -> MoleculeInstanceId {
+    /// The molecule occurrence containing the bond.
+    pub const fn instance(self) -> MoleculeInstanceId {
         self.molecule
     }
 
@@ -723,7 +727,7 @@ impl Topology {
     /// use kekule::{smiles, topology::{AtomSelection, Topology}};
     ///
     /// let source = smiles::to_topology("c1ccccc1")?;
-    /// let selection = AtomSelection::all(&source);
+    /// let selection = AtomSelection::all(source.clone());
     /// let perceived = Arc::new(source.perceived()?);
     /// assert!(perceived.shares_layout(&source));
     /// // Selections stay usable with the perceived snapshot.
@@ -755,12 +759,12 @@ impl Topology {
     }
 
     /// One instance-qualified molecule occurrence.
-    pub fn molecule(&self, id: MoleculeInstanceId) -> Option<InstanceView<'_>> {
+    pub fn instance(&self, id: MoleculeInstanceId) -> Option<InstanceView<'_>> {
         (id.index() < self.instances.len()).then(|| InstanceView::new(self, id))
     }
 
     /// Molecule occurrences in authoritative instance order.
-    pub fn molecules(
+    pub fn instances(
         &self,
     ) -> impl ExactSizeIterator<Item = InstanceView<'_>> + DoubleEndedIterator {
         self.instances
@@ -773,7 +777,7 @@ impl Topology {
         &self,
         definition: MoleculeDefinitionId,
     ) -> impl Iterator<Item = InstanceView<'_>> {
-        self.molecules()
+        self.instances()
             .filter(move |molecule| molecule.definition_id() == definition)
     }
 
@@ -801,7 +805,7 @@ impl Topology {
     /// use kekule::{properties::{PropertyKey, PropertyValue}, smiles, topology::AtomSelection};
     ///
     /// let mut topology = smiles::to_topology("CCO")?;
-    /// let selection = AtomSelection::all(&topology);
+    /// let selection = AtomSelection::all(topology.clone());
     /// let key = PropertyKey::new("source")?;
     /// Arc::make_mut(&mut topology)
     ///     .properties_mut()
@@ -843,23 +847,18 @@ impl Topology {
     }
 
     pub fn chain(&self, id: ChainId) -> Option<ChainView<'_>> {
-        self.hierarchy
-            .chain(id)
-            .ok()
-            .map(|_| ChainView::new(self, id))
+        self.hierarchy.chain(id).map(|_| ChainView::new(self, id))
     }
 
     pub fn residue(&self, id: ResidueId) -> Option<ResidueView<'_>> {
         self.hierarchy
             .residue(id)
-            .ok()
             .map(|_| ResidueView::new(self, id))
     }
 
     pub fn atom_site(&self, id: AtomSiteId) -> Option<AtomSiteView<'_>> {
         self.hierarchy
             .atom_site(id)
-            .ok()
             .map(|_| AtomSiteView::new(self, id))
     }
 
@@ -934,7 +933,7 @@ impl Topology {
     }
 
     /// Stored instance records in instance order.
-    pub(crate) fn instances(
+    pub(crate) fn instance_records(
         &self,
     ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
         self.instances
@@ -942,7 +941,7 @@ impl Topology {
             .map(|instance| (instance.id, instance))
     }
 
-    pub(crate) fn instance(&self, id: MoleculeInstanceId) -> Option<&MoleculeInstance> {
+    pub(crate) fn instance_record(&self, id: MoleculeInstanceId) -> Option<&MoleculeInstance> {
         self.instances.get(id.index())
     }
 

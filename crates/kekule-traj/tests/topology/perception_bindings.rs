@@ -37,7 +37,7 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
     let mut trajectory =
         Trajectory::from_items(Arc::clone(&topology), [ring_frame(0.0), ring_frame(0.5)]).unwrap();
-    let selection = AtomSelection::all(&topology);
+    let selection = AtomSelection::all(Arc::clone(&topology));
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let mut rmsf = RmsfAccumulator::new(&selection).unwrap();
 

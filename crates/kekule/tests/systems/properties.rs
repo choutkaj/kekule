@@ -110,7 +110,7 @@ fn topology_only_domains_are_typed_and_stay_out_of_structures() {
         .unwrap();
     let topology = Arc::new(builder.build().unwrap());
     let properties = topology.properties();
-    let instance = topology.molecules().next().unwrap().id();
+    let instance = topology.instances().next().unwrap().id();
     let chain = topology.hierarchy().chains().next().unwrap().0;
     let residue = topology.hierarchy().residues().next().unwrap().0;
     let site = topology.hierarchy().atom_sites().next().unwrap().0;
@@ -201,7 +201,7 @@ fn structures_reject_mismatched_property_rows_transactionally() {
 #[test]
 fn owner_topology_property_edits_keep_layout_without_touching_other_holders() {
     let topology = kekule::smiles::to_topology("CCO").unwrap();
-    let selection = AtomSelection::all(&topology);
+    let selection = AtomSelection::all(Arc::clone(&topology));
 
     let mut model = Model::new(Arc::clone(&topology), Positions::zeros(3)).unwrap();
     model

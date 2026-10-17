@@ -215,20 +215,16 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
         TrrReader::new(
             Cursor::new(combined.clone()),
             Arc::clone(&topology),
-            TrrReadOptions::default().with_limits(TrajectoryIoLimits {
-                max_scratch_bytes: limit,
-                ..TrajectoryIoLimits::default()
-            }),
+            TrrReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit)),
         )
     };
     let open_indexed = |limit| {
         IndexedTrrReader::new(
             Cursor::new(combined.clone()),
             Arc::clone(&topology),
-            TrrReadOptions::default().with_limits(TrajectoryIoLimits {
-                max_scratch_bytes: limit,
-                ..TrajectoryIoLimits::default()
-            }),
+            TrrReadOptions::default()
+                .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit)),
         )
     };
     let dense_bytes = topology.atom_count() * std::mem::size_of::<Vector3>() * 3;
@@ -275,7 +271,7 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
     // Indexing retained the largest raw capacity. Mixing reads must not need
     // duplicate scratch, nor publish fields left over from the last read.
     for (random, next) in [(1, 0), (0, 1), (1, 2)] {
-        indexed.read_frame(random as u64, &mut destination).unwrap();
+        indexed.read_frame(random, &mut destination).unwrap();
         assert_eq!(destination.frame_view().payload().clone(), expected[random]);
         assert!(indexed.read_next(&mut destination).unwrap());
         assert_eq!(destination.frame_view().payload().clone(), expected[next]);
@@ -426,12 +422,10 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
         .write_frame(populated_frame(&topology, 1.0, 5).frame_view())
         .unwrap();
     let bytes = writer.finish().unwrap().into_inner();
-    let limits = TrajectoryIoLimits {
-        max_frames: 2,
-        max_index_entries: 2,
-        max_index_bytes: 2 * std::mem::size_of::<u64>(),
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default()
+        .with_max_frames(2)
+        .with_max_index_entries(2)
+        .with_max_index_bytes(2 * std::mem::size_of::<u64>());
     let mut reader = TrrReader::new(
         Cursor::new(bytes.clone()),
         Arc::clone(&topology),
@@ -522,10 +516,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         stream,
         Arc::clone(&topology),
         TrrReadOptions::default()
-            .with_limits(TrajectoryIoLimits {
-                max_frames: 1,
-                ..TrajectoryIoLimits::default()
-            })
+            .with_limits(TrajectoryIoLimits::default().with_max_frames(1))
             .with_source_label("guarded-sequential.trr"),
     )
     .unwrap();
@@ -539,18 +530,9 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     assert_eq!(control.probed_bytes(), 1);
 
     for limits in [
-        TrajectoryIoLimits {
-            max_frames: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_entries: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_bytes: std::mem::size_of::<u64>(),
-            ..TrajectoryIoLimits::default()
-        },
+        TrajectoryIoLimits::default().with_max_frames(1),
+        TrajectoryIoLimits::default().with_max_index_entries(1),
+        TrajectoryIoLimits::default().with_max_index_bytes(std::mem::size_of::<u64>()),
     ] {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
         let error = IndexedTrrReader::new(
@@ -666,10 +648,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     assert!(context.byte_offset().is_some());
     assert_eq!(xs(&destination), before);
 
-    let limits = TrajectoryIoLimits {
-        max_frame_bytes: 128,
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default().with_max_frame_bytes(128);
     let mut reader = TrrReader::new(
         Cursor::new(valid),
         Arc::clone(&topology),

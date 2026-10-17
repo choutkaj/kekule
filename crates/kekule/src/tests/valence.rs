@@ -150,7 +150,8 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
         valence_api::perceive_valence(
             &mut molecule,
             ValenceModel::RdkitLike,
-            ValenceOptions { strict: false },
+            ValenceOptions::default()
+                .with_validation(crate::algorithms::ValenceValidation::Permissive),
         )
         .unwrap();
         assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
@@ -188,7 +189,8 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
         valence_api::perceive_valence(
             &mut molecule,
             ValenceModel::RdkitLike,
-            ValenceOptions { strict: false },
+            ValenceOptions::default()
+                .with_validation(crate::algorithms::ValenceValidation::Permissive),
         )
         .unwrap();
         assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
@@ -241,7 +243,8 @@ fn hydride_explicit_valence_compatibility_does_not_override_implicit_valence_rul
         valence_api::perceive_valence(
             &mut molecule,
             ValenceModel::RdkitLike,
-            ValenceOptions { strict: false },
+            ValenceOptions::default()
+                .with_validation(crate::algorithms::ValenceValidation::Permissive),
         )
         .unwrap();
         assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
@@ -297,7 +300,7 @@ fn localized_aromatic_valence_replaces_previous_valence_transactionally() {
     valence_api::perceive_valence(
         &mut molecule,
         ValenceModel::RdkitLike,
-        ValenceOptions { strict: false },
+        ValenceOptions::default().with_validation(crate::algorithms::ValenceValidation::Permissive),
     )
     .expect("localized aromatic valence can be recomputed");
 
@@ -370,7 +373,7 @@ fn assert_aromatic_valence_pipeline_for_molecule(
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
             .count(),
         expected_aromatic_atoms,
         "{smiles}"
@@ -443,7 +446,7 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
             .count(),
         5
     );
@@ -555,7 +558,7 @@ fn fused_aromatic_valence_comes_from_localized_bond_orders() {
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
             .count(),
         10
     );

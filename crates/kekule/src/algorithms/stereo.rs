@@ -46,46 +46,88 @@ impl<'a> MoleculePositions<'a> {
 impl AtomPositionSource for MoleculePositions<'_> {
     fn position_value(&self, atom: AtomId) -> Option<Point3> {
         let index = self.atom_to_dense.get(atom.index()).copied().flatten()?;
-        self.positions
-            .position_at(index)
-            .ok()
-            .map(|point| point.into_value())
+        self.positions.get(index).map(|point| point.into_value())
     }
 }
 
 /// Options for read-only coordinate-derived stereo inference.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CoordinateStereoOptions {
+    infer_axes: bool,
+    perception: StereoSearchOptions,
+}
+
+impl CoordinateStereoOptions {
     /// Infer the conservative coordinate-axis subset in addition to
     /// tetrahedral and double-bond stereo.
-    pub infer_axes: bool,
+    pub const fn infer_axes(&self) -> bool {
+        self.infer_axes
+    }
+
+    /// Sets [`Self::infer_axes`].
+    #[must_use]
+    pub const fn with_infer_axes(mut self, infer_axes: bool) -> Self {
+        self.infer_axes = infer_axes;
+        self
+    }
+
     /// Bounds for chemical candidate perception before coordinate inference.
-    pub perception: StereoSearchOptions,
+    pub const fn perception(&self) -> StereoSearchOptions {
+        self.perception
+    }
+
+    /// Sets [`Self::perception`].
+    #[must_use]
+    pub const fn with_perception(mut self, perception: StereoSearchOptions) -> Self {
+        self.perception = perception;
+        self
+    }
 }
 
 /// Coordinate-derived stereo for the foci the molecule leaves unasserted, and
 /// the asserted stereo the coordinates contradict.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordinateStereoResult {
+    pub(crate) elements: Vec<StereoElement>,
+    pub(crate) disagreements: Vec<StereoElementId>,
+}
+
+impl CoordinateStereoResult {
     /// New elements for stereocenters, double bonds, and (when enabled) axes
     /// without a stereo element, ready to materialize.
-    pub elements: Vec<StereoElement>,
+    pub fn elements(&self) -> &[StereoElement] {
+        &self.elements
+    }
+
     /// Existing specified elements whose configuration is the opposite of the
     /// one their carriers have in the coordinates, in element order. Unknown
     /// configurations and degenerate or flat geometry are never contradictions.
-    pub disagreements: Vec<StereoElementId>,
+    pub fn disagreements(&self) -> &[StereoElementId] {
+        &self.disagreements
+    }
 }
 
 /// Stereo elements created by an explicit coordinate-stereo materialization.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordinateStereoMaterializationReport {
-    pub created_elements: Vec<StereoElementId>,
+    pub(crate) created_elements: Vec<StereoElementId>,
+    pub(crate) disagreements: Vec<StereoElementId>,
+}
+
+impl CoordinateStereoMaterializationReport {
+    pub fn created_elements(&self) -> &[StereoElementId] {
+        &self.created_elements
+    }
+
     /// Existing elements the coordinates contradict; materialization leaves
     /// them unchanged. See [`CoordinateStereoResult::disagreements`].
-    pub disagreements: Vec<StereoElementId>,
+    pub fn disagreements(&self) -> &[StereoElementId] {
+        &self.disagreements
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StereoCandidate {
     Tetrahedral {
         center: AtomId,
@@ -220,15 +262,6 @@ pub enum StereoValidationIssue {
         endpoint: AtomId,
         /// Its substituents, excluding the other endpoint.
         substituent_count: usize,
-    },
-    /// An axis does not have two carriers.
-    InvalidAxisCarrierCount {
-        /// The element.
-        element: StereoElementId,
-        /// The axis bond.
-        axis: BondId,
-        /// The number of carriers.
-        carrier_count: usize,
     },
     /// An axis carrier is an endpoint of the axis.
     AxisCarrierIsFocusAtom {
@@ -402,11 +435,6 @@ impl fmt::Display for StereoValidationIssue {
                 f,
                 "{element} endpoint {endpoint} has {substituent_count} substituents, more than two"
             ),
-            Self::InvalidAxisCarrierCount {
-                element,
-                axis,
-                carrier_count,
-            } => write!(f, "{element} on {axis} has {carrier_count} carriers, not two"),
             Self::AxisCarrierIsFocusAtom {
                 element,
                 axis,
@@ -643,19 +671,12 @@ fn validate_tetrahedral(
     stereo: &TetrahedralStereo,
     issues: &mut Vec<StereoValidationIssue>,
 ) {
-    if mol.atom(stereo.center).is_err() {
+    if mol.atom(stereo.center).is_none() {
         issues.push(StereoValidationIssue::MissingStereoAtom {
             element,
             atom: stereo.center,
         });
         return;
-    }
-    if stereo.carriers.len() != 4 {
-        issues.push(StereoValidationIssue::InvalidTetrahedralCarrierCount {
-            element,
-            center: stereo.center,
-            carrier_count: stereo.carriers.len(),
-        });
     }
     let mut seen = Vec::<StereoCarrier>::new();
     for carrier in &stereo.carriers {
@@ -670,17 +691,12 @@ fn validate_tetrahedral(
         }
         match carrier {
             StereoCarrier::Atom(atom) => {
-                if mol.atom(*atom).is_err() {
+                if mol.atom(*atom).is_none() {
                     issues.push(StereoValidationIssue::MissingStereoAtom {
                         element,
                         atom: *atom,
                     });
-                } else if mol
-                    .bond_between(stereo.center, *atom)
-                    .ok()
-                    .flatten()
-                    .is_none()
-                {
+                } else if mol.bond_between(stereo.center, *atom).is_none() {
                     issues.push(StereoValidationIssue::TetrahedralCarrierNotAdjacent {
                         element,
                         center: stereo.center,
@@ -708,7 +724,7 @@ fn validate_double_bond(
     stereo: &DoubleBondStereo,
     issues: &mut Vec<StereoValidationIssue>,
 ) {
-    let Ok(bond) = mol.bond(stereo.bond) else {
+    let Some(bond) = mol.bond(stereo.bond) else {
         issues.push(StereoValidationIssue::MissingStereoBond {
             element,
             bond: stereo.bond,
@@ -779,9 +795,9 @@ fn validate_double_bond_carrier(
                     endpoint,
                     carrier: atom,
                 });
-            } else if mol.atom(atom).is_err() {
+            } else if mol.atom(atom).is_none() {
                 issues.push(StereoValidationIssue::MissingStereoAtom { element, atom });
-            } else if mol.bond_between(endpoint, atom).ok().flatten().is_none() {
+            } else if mol.bond_between(endpoint, atom).is_none() {
                 issues.push(StereoValidationIssue::DoubleBondCarrierNotAdjacent {
                     element,
                     endpoint,
@@ -806,20 +822,13 @@ fn validate_axis(
     stereo: &AxisStereo,
     issues: &mut Vec<StereoValidationIssue>,
 ) {
-    let Ok(bond) = mol.bond(stereo.axis) else {
+    let Some(bond) = mol.bond(stereo.axis) else {
         issues.push(StereoValidationIssue::MissingStereoBond {
             element,
             bond: stereo.axis,
         });
         return;
     };
-    if stereo.carriers.len() != 2 {
-        issues.push(StereoValidationIssue::InvalidAxisCarrierCount {
-            element,
-            axis: stereo.axis,
-            carrier_count: stereo.carriers.len(),
-        });
-    }
     let (left, right) = bond.endpoints();
     for (endpoint, other) in [(left, right), (right, left)] {
         let substituent_count = mol
@@ -839,11 +848,10 @@ fn validate_axis(
     for carrier in &stereo.carriers {
         validate_axis_carrier(mol, element, stereo.axis, left, right, *carrier, issues);
     }
-    if stereo.carriers.len() == 2
-        && stereo
-            .carriers
-            .iter()
-            .all(|carrier| matches!(carrier, StereoCarrier::Atom(_)))
+    if stereo
+        .carriers
+        .iter()
+        .all(|carrier| matches!(carrier, StereoCarrier::Atom(_)))
     {
         let endpoint_counts = [left, right].map(|endpoint| {
             stereo
@@ -851,7 +859,7 @@ fn validate_axis(
                 .iter()
                 .filter(|carrier| {
                     matches!(carrier, StereoCarrier::Atom(atom)
-                    if mol.bond_between(endpoint, *atom).ok().flatten().is_some())
+                    if mol.bond_between(endpoint, *atom).is_some())
                 })
                 .count()
         });
@@ -881,11 +889,11 @@ fn validate_axis_carrier(
                     axis,
                     carrier: atom,
                 });
-            } else if mol.atom(atom).is_err() {
+            } else if mol.atom(atom).is_none() {
                 issues.push(StereoValidationIssue::MissingStereoAtom { element, atom });
             } else {
-                let adjacent_left = mol.bond_between(left, atom).ok().flatten().is_some();
-                let adjacent_right = mol.bond_between(right, atom).ok().flatten().is_some();
+                let adjacent_left = mol.bond_between(left, atom).is_some();
+                let adjacent_right = mol.bond_between(right, atom).is_some();
                 if adjacent_left == adjacent_right {
                     issues.push(StereoValidationIssue::AxisCarrierNotAdjacent {
                         element,
@@ -926,7 +934,7 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = Vec::new();
     for (bond_id, bond) in mol.bonds() {
         if !double_bond_geometry_is_supported(mol, bond_id, bond)
-            || mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
+            || mol.bond_is_aromatic(bond_id) == Some(true)
         {
             continue;
         }
@@ -992,7 +1000,7 @@ pub(crate) fn double_bond_endpoint_carriers(
     focus_bond: BondId,
 ) -> Vec<StereoCarrier> {
     let mut carriers = Vec::new();
-    if let Ok(incident) = mol.incident_bonds(endpoint) {
+    if let Some(incident) = mol.incident_bonds(endpoint) {
         for (bond_id, bond) in incident {
             if bond_id == focus_bond || bond.order != BondOrder::Single {
                 continue;
@@ -1016,7 +1024,7 @@ pub(crate) fn atom_axis_carriers(
     axis: BondId,
 ) -> Option<Vec<AtomId>> {
     let mut carriers = Vec::new();
-    for (bond_id, bond) in mol.incident_bonds(endpoint).ok()? {
+    for (bond_id, bond) in mol.incident_bonds(endpoint)? {
         if bond_id != axis {
             carriers.push(bond.other_atom(endpoint));
         }
@@ -1059,7 +1067,9 @@ fn infer_coordinate_tetrahedral(
         assigned.push(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers,
+                carriers: carriers
+                    .try_into()
+                    .expect("tetrahedral candidates have four carriers"),
                 orientation: Some(orientation),
             },
         )));
@@ -1151,7 +1161,7 @@ fn infer_coordinate_axes(
         };
         assigned.push(StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis,
-            carriers: vec![
+            carriers: [
                 StereoCarrier::Atom(left_reference),
                 StereoCarrier::Atom(right_reference),
             ],
@@ -1227,8 +1237,7 @@ fn double_bond_orientation_at(
         StereoCarrier::Atom(atom) => Some((atom, false)),
         StereoCarrier::ImplicitHydrogen => {
             let mut substituents = mol
-                .neighbors(endpoint)
-                .ok()?
+                .neighbors(endpoint)?
                 .filter(|neighbor| *neighbor != other);
             let substituent = substituents.next()?;
             substituents.next().is_none().then_some((substituent, true))
@@ -1262,9 +1271,9 @@ fn axis_orientation_at(
     let [StereoCarrier::Atom(first), StereoCarrier::Atom(second)] = stereo.carriers[..] else {
         return None;
     };
-    let bond = mol.bond(stereo.axis).ok()?;
+    let bond = mol.bond(stereo.axis)?;
     let (start, _) = bond.endpoints();
-    let first_on_start = mol.bond_between(start, first).ok()?.is_some();
+    let first_on_start = mol.bond_between(start, first).is_some();
     let (left_reference, right_reference) = if first_on_start {
         (first, second)
     } else {
@@ -1379,12 +1388,12 @@ fn normalized_direction(vector: Vector3) -> Option<Vector3> {
 /// copy; a graph outside the valence model has no such nitrogen.
 pub(crate) fn nitrogen_lone_pair_is_stereogenic(mol: &Molecule, center: AtomId) -> bool {
     mol.atom(center)
-        .is_ok_and(|atom| atom.element.symbol() == "N")
+        .is_some_and(|atom| atom.element.symbol() == "N")
         && prepared(mol).is_ok_and(|mol| nitrogen::lone_pair_is_stereogenic(&mol, center))
 }
 
 pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
-    let count = mol.implicit_hydrogens(atom).ok().flatten().unwrap_or(0);
+    let count = mol.implicit_hydrogens(atom).unwrap_or(0);
     // Stereo eligibility only needs small ligand counts. Preserve the existing
     // saturation for oversized expert-supplied perception assignments.
     u8::try_from(count).unwrap_or(u8::MAX)

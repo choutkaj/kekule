@@ -4,8 +4,8 @@ use std::sync::Arc;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{OwnerProperties, StructureProperties};
 use kekule::structure::{
-    AsModelView, Forces, ModelView, Positions, StructureError, Trajectory, TrajectoryFrame,
-    TrajectoryFrameMut, TrajectoryFrameView, Velocities,
+    Forces, ModelView, Positions, StructureError, Trajectory, TrajectoryFrame, TrajectoryFrameMut,
+    TrajectoryFrameView, Velocities,
 };
 use kekule::topology::Topology;
 use kekule::units::Quantity;
@@ -116,14 +116,9 @@ impl std::ops::Deref for FrameBuffer {
     }
 }
 
-impl AsModelView for FrameBuffer {
-    fn as_model_view(&self) -> ModelView<'_> {
-        FrameBuffer::as_model_view(self)
-    }
-}
-
 impl FrameBuffer {
-    pub fn new(topology: Arc<Topology>) -> Self {
+    pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
+        let topology = topology.into();
         let frame = TrajectoryFrame::new(Positions::zeros(topology.atom_count()));
         let storage = Trajectory::from_items(topology, [frame])
             .expect("zero positions match the topology atom count");

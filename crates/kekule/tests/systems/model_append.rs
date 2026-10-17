@@ -16,10 +16,10 @@ fn index(model: &Model, atom: InstanceAtomId) -> TopologyAtomIndex {
     model.topology().atom_index(atom).unwrap()
 }
 fn occupancy(model: &Model, atom: InstanceAtomId) -> Option<f64> {
-    model.occupancy(index(model, atom)).unwrap()
+    model.occupancy(index(model, atom))
 }
 fn b_factor(model: &Model, atom: InstanceAtomId) -> Option<Quantity<f64>> {
-    model.b_factor(index(model, atom)).unwrap()
+    model.b_factor(index(model, atom))
 }
 fn atom_value(model: &Model, atom: InstanceAtomId, name: &PropertyKey) -> Option<PropertyValue> {
     model
@@ -143,13 +143,12 @@ fn annotated(conflict: Option<&str>) -> Model {
                 .add_atom_site(
                     residue,
                     InstanceAtomId::new(instance, id),
-                    AtomSiteMetadata {
-                        type_symbol: Some(value.element.symbol().into()),
-                        label_asym_id: Some("A".into()),
-                        auth_asym_id: Some("source-A".into()),
-                        label_atom_id: Some(format!("L{}", id.index())),
-                        auth_atom_id: Some(format!("X{}", id.index())),
-                    },
+                    AtomSiteMetadata::default()
+                        .with_type_symbol(Some(value.element().symbol().into()))
+                        .with_label_asym_id(Some("A".into()))
+                        .with_auth_asym_id(Some("source-A".into()))
+                        .with_label_atom_id(Some(format!("L{}", id.index())))
+                        .with_auth_atom_id(Some(format!("X{}", id.index()))),
                 )
                 .unwrap();
         }
@@ -274,7 +273,7 @@ fn assert_same_rows<R>(source: &PropertyTable<R>, target: &PropertyTable<R>) {
 fn assert_import(source: &Model, target: &Model, first_instance: usize) {
     let instance =
         |id: MoleculeInstanceId| MoleculeInstanceId::new((first_instance + id.index()) as u32);
-    let atom = |id: InstanceAtomId| InstanceAtomId::new(instance(id.molecule()), id.atom());
+    let atom = |id: InstanceAtomId| InstanceAtomId::new(instance(id.instance()), id.atom());
     let atoms = source
         .topology()
         .atom_ids()
@@ -356,17 +355,17 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
         .bond_ids()
         .iter()
         .map(|&id| {
-            let other = InstanceBondId::new(instance(id.molecule()), id.bond());
+            let other = InstanceBondId::new(instance(id.instance()), id.bond());
             let before = source.topology().bond(id).unwrap();
             let after = target.topology().bond(other).unwrap();
             assert_eq!(before.order, after.order);
             assert_eq!(
-                atom(InstanceAtomId::new(id.molecule(), before.a())),
-                InstanceAtomId::new(other.molecule(), after.a())
+                atom(InstanceAtomId::new(id.instance(), before.a())),
+                InstanceAtomId::new(other.instance(), after.a())
             );
             assert_eq!(
-                atom(InstanceAtomId::new(id.molecule(), before.b())),
-                InstanceAtomId::new(other.molecule(), after.b())
+                atom(InstanceAtomId::new(id.instance(), before.b())),
+                InstanceAtomId::new(other.instance(), after.b())
             );
             (
                 source.topology().bond_index(id).unwrap().index(),
@@ -384,11 +383,11 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
         target.topology().properties().bonds(),
         &bonds,
     );
-    for molecule in source.topology().molecules() {
+    for molecule in source.topology().instances() {
         let id = molecule.id();
         let other = instance(id);
         let before = molecule.definition();
-        let after = target.topology().molecule(other).unwrap().definition();
+        let after = target.topology().instance(other).unwrap().definition();
         assert_eq!(before.class(), after.class());
         assert_eq!(before.molecule(), after.molecule());
         assert_eq!(
@@ -414,18 +413,24 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     let mut editor = source.to_editor();
     let first = editor.append_model(&source).unwrap();
     assert_eq!(
-        first.report().cleared_topology_properties,
+        first.report().cleared_topology_properties(),
         vec![key("system_note")]
     );
-    assert_eq!(first.report().cleared_model_properties, vec![key("energy")]);
     assert_eq!(
-        first.report().omitted_topology_properties,
+        first.report().cleared_model_properties(),
+        vec![key("energy")]
+    );
+    assert_eq!(
+        first.report().omitted_topology_properties(),
         vec![key("system_note")]
     );
-    assert_eq!(first.report().omitted_model_properties, vec![key("energy")]);
+    assert_eq!(
+        first.report().omitted_model_properties(),
+        vec![key("energy")]
+    );
     let second = editor.append_model(&source.as_model_view()).unwrap();
-    assert!(second.report().cleared_model_properties.is_empty());
-    assert!(second.report().cleared_topology_properties.is_empty());
+    assert!(second.report().cleared_model_properties().is_empty());
+    assert!(second.report().cleared_topology_properties().is_empty());
     let result = editor.finish().unwrap();
     let target = &result;
     assert_eq!(target.atom_count(), source.atom_count() * 3);
@@ -461,11 +466,11 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     for first_instance in [3, 6] {
         let defs = source
             .topology()
-            .molecules()
+            .instances()
             .map(|molecule| {
                 target
                     .topology()
-                    .molecule(MoleculeInstanceId::new(
+                    .instance(MoleculeInstanceId::new(
                         first_instance + molecule.id().index() as u32,
                     ))
                     .unwrap()
@@ -522,7 +527,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     let oxygen = linked
         .topology()
         .atoms()
-        .find(|a| a.element.symbol() == "O")
+        .find(|a| a.element().symbol() == "O")
         .unwrap()
         .id();
     assert_eq!(
@@ -532,7 +537,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     let h = linked
         .topology()
         .atoms()
-        .find(|a| a.element.symbol() == "H")
+        .find(|a| a.element().symbol() == "H")
         .unwrap()
         .id();
     assert_eq!(
@@ -543,7 +548,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     );
     let removed = imported.bond(source_bond).unwrap();
     editor.delete_bond(removed).unwrap();
-    assert!(editor.bond(removed).is_err());
+    assert!(editor.bond(removed).is_none());
     let split = editor.clone().finish().unwrap();
     assert_eq!(split.topology().instance_count(), 2);
     assert_eq!(split.atom_count(), 4);
@@ -551,12 +556,12 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     let oxygen = split
         .topology()
         .atoms()
-        .find(|a| a.element.symbol() == "O")
+        .find(|a| a.element().symbol() == "O")
         .unwrap()
         .id();
     let oxygen_molecule = split
         .topology()
-        .molecule(oxygen.molecule())
+        .instance(oxygen.instance())
         .unwrap()
         .molecule();
     assert_eq!(oxygen_molecule.atom_count(), 1);
@@ -566,8 +571,8 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     );
     editor.delete_atom(left).unwrap();
     editor.delete_atom(right).unwrap();
-    assert!(editor.atom(left).is_err());
-    assert!(editor.atom(right).is_err());
+    assert!(editor.atom(left).is_none());
+    assert!(editor.atom(right).is_none());
     let deleted = editor.finish().unwrap();
     assert_eq!(deleted.atom_count(), 2);
     assert_eq!(deleted.topology().instance_count(), 2);
@@ -576,7 +581,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
         deleted
             .topology()
             .atoms()
-            .map(|a| a.element.symbol())
+            .map(|a| a.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "H"]
     );
@@ -598,17 +603,17 @@ fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recov
     let mut foreign = source.to_editor();
     foreign.append_model(&source).unwrap();
     let imported_atom = imported.atom(source.topology().atom_ids()[0]).unwrap();
-    assert!(foreign.position(imported_atom).is_err());
+    assert!(foreign.position(imported_atom).is_none());
     assert!(foreign.delete_atom(imported_atom).is_err());
     let invalid = InstanceAtomId::new(MoleculeInstanceId::new(999), AtomId::new(0));
-    assert!(imported.atom(invalid).is_err());
+    assert!(imported.atom(invalid).is_none());
     editor.clear();
     let failure = editor.try_finish().unwrap_err();
     let mut editor = failure.into_draft();
     editor
         .add_atom(atom("Na"), Quantity::new(Point3::origin(), NANOMETER))
         .unwrap();
-    assert!(editor.position(imported_atom).is_err());
+    assert!(editor.position(imported_atom).is_none());
     assert!(editor.delete_atom(imported_atom).is_err());
     let result = editor.finish().unwrap();
     assert_eq!(result.atom_count(), 1);
@@ -618,7 +623,7 @@ fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recov
             .topology()
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .element
+            .element()
             .symbol(),
         "Na"
     );
@@ -844,8 +849,13 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
     let mut editor = ModelEditor::new();
     let imported = editor.append_model(&source).unwrap();
     let source_atom = source.topology().atom_ids()[0];
-    let mut replacement = source.topology().atom(source_atom).unwrap().atom().clone();
-    replacement.formal_charge = 1;
+    let replacement = source
+        .topology()
+        .atom(source_atom)
+        .unwrap()
+        .atom()
+        .clone()
+        .with_formal_charge(1);
     editor
         .replace_atom(imported.atom(source_atom).unwrap(), replacement)
         .unwrap();
@@ -853,15 +863,15 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
     assert_eq!(result.topology().definition_count(), 3);
     assert_eq!(result.positions(), source.positions());
     assert_eq!(
-        result.topology().atom(source_atom).unwrap().formal_charge,
+        result.topology().atom(source_atom).unwrap().formal_charge(),
         1
     );
-    for molecule in source.topology().molecules() {
+    for molecule in source.topology().instances() {
         let id = molecule.id();
         let target = id; // No membership change: occurrences retain their input order.
         let before = molecule.molecule();
-        let after = result.topology().molecule(target).unwrap().molecule();
-        if id == source_atom.molecule() {
+        let after = result.topology().instance(target).unwrap().molecule();
+        if id == source_atom.instance() {
             assert_eq!(
                 result
                     .topology()

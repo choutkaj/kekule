@@ -105,7 +105,7 @@ fn frame_selection_retains_exact_state_order_duplicates_and_empty_topology_bindi
         assert_eq!(actual.payload(), original.get(index).unwrap().payload());
     }
     assert_eq!(
-        selected.validate_monotonic_time(true),
+        selected.validate_monotonic_time(kekule::structure::MissingTimePolicy::Reject),
         Err(TrajectoryError::NonMonotonicTime { frame: 1 })
     );
     let strided = original.select((0..4).step_by(2)).unwrap();
@@ -126,7 +126,7 @@ fn frame_selection_retains_exact_state_order_duplicates_and_empty_topology_bindi
         TrajectoryError::IndexOutOfRange { index: 4, len: 4 }
     );
     assert_eq!(format!("{original:?}"), before);
-    let atoms = AtomSelection::all(&original.shared_topology());
+    let atoms = AtomSelection::all(original.shared_topology());
     assert_eq!(original.subset(&atoms).unwrap().len(), 4);
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use std::num::{NonZeroU16, NonZeroU32};
 
 fn assigned_descriptors(molecule: &mut Molecule) -> Vec<StereoDescriptor> {
     stereo_api::cip::assign_cip_descriptors(molecule, Default::default())
@@ -32,11 +33,12 @@ fn smiles_accepts_zero_counts_and_explicit_tetrahedral_classes() {
                 .collect::<Vec<_>>()
         );
     }
-    let mapped = read_smiles("[CH4:0]").unwrap();
-    assert_eq!(mapped.atoms().next().unwrap().1.atom_map, Some(0));
+    // OpenSMILES gives an atom without a class the class 0, so `:0` is no map.
+    let unmapped = read_smiles("[CH4:0]").unwrap();
+    assert_eq!(unmapped.atoms().next().unwrap().1.atom_map, None);
     assert_eq!(
-        smiles_api::write(&mapped, smiles_api::SmilesWriteOptions::isomeric()).unwrap(),
-        "[CH4:0]"
+        smiles_api::write(&unmapped, smiles_api::SmilesWriteOptions::isomeric()).unwrap(),
+        "[CH4]"
     );
 }
 
@@ -158,11 +160,11 @@ fn phosphine_smiles_preserve_bracket_hydrogen_and_lone_pair() {
 }
 
 fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
-    molecule.atom_is_aromatic(atom).expect("atom exists") == Some(true)
+    molecule.atom_is_aromatic(atom) == Some(true)
 }
 
 fn aromatic_bond(molecule: &Molecule, bond: BondId) -> bool {
-    molecule.bond_is_aromatic(bond).expect("bond exists") == Some(true)
+    molecule.bond_is_aromatic(bond) == Some(true)
 }
 
 fn inferred_hydrogens(molecule: &Molecule, atom: AtomId) -> Option<u8> {
@@ -185,32 +187,21 @@ fn aromatic_bond_count(molecule: &Molecule) -> usize {
 
 #[test]
 fn smiles_parse_options_bound_input_atoms_and_bonds() {
-    let input_error = smiles_api::parse_str(
-        "CC",
-        SmilesParseOptions {
-            max_input_bytes: 1,
-            ..SmilesParseOptions::default()
-        },
-    )
-    .expect_err("SMILES input byte limit should apply");
+    let input_error =
+        smiles_api::parse_str("CC", SmilesParseOptions::default().with_max_input_bytes(1))
+            .expect_err("SMILES input byte limit should apply");
     assert!(input_error.message().contains("input"));
 
     let atom_error = smiles_api::parse_str(
         "CC",
-        SmilesParseOptions {
-            max_atoms: 1,
-            ..SmilesParseOptions::default()
-        },
+        SmilesParseOptions::default().with_max_atoms(1).unwrap(),
     )
     .expect_err("SMILES atom limit should apply");
     assert!(atom_error.message().contains("atom count"));
 
     let bond_error = smiles_api::parse_str(
         "CC",
-        SmilesParseOptions {
-            max_bonds: 0,
-            ..SmilesParseOptions::default()
-        },
+        SmilesParseOptions::default().with_max_bonds(0).unwrap(),
     )
     .expect_err("SMILES bond limit should apply");
     assert!(bond_error.message().contains("bond count"));
@@ -548,7 +539,10 @@ fn cxsmiles_stereo_references_use_source_indices_and_respect_component_ownership
         panic!("tetrahedral member")
     };
     assert_eq!(stereo.center, AtomId::new(1));
-    assert_eq!(molecule.atom(stereo.center).unwrap().atom_map, Some(17));
+    assert_eq!(
+        molecule.atom(stereo.center).unwrap().atom_map,
+        NonZeroU32::new(17)
+    );
     assert_eq!(
         interpreted.components()[1]
             .molecule()
@@ -667,9 +661,7 @@ fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
     assert_eq!(error.location(), Some(SourceLocation::at_column(1, 19)));
     assert_eq!(error.message(), "unsupported CXSMILES field `c:1`");
 
-    let report = SmilesInterpretOptions {
-        unsupported: UnsupportedContent::Report,
-    };
+    let report = SmilesInterpretOptions::default().with_unsupported(UnsupportedContent::Report);
     let interpretation = document.interpret(report).unwrap();
     let omitted = interpretation
         .omitted_cx_fields()
@@ -728,10 +720,7 @@ fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
         )
     );
 
-    let options = SmilesParseOptions {
-        max_input_bytes: 8,
-        ..SmilesParseOptions::default()
-    };
+    let options = SmilesParseOptions::default().with_max_input_bytes(8);
     let limited = smiles_api::records(b"CCO\nCCCCCCCCCCCC\nO\n".as_slice(), options)
         .map(|record| record.map(|document| document.base_smiles().to_owned()))
         .map(|record| record.map_err(|error| (error.kind(), error.location())))
@@ -769,34 +758,17 @@ fn smiles_record_rejects_malformed_framing_and_multiple_records() {
 #[test]
 fn smiles_record_limits_cover_metadata_and_syntax_errors_point_into_base() {
     let source = "\tCC |unknown:999| molecule";
-    let options = SmilesParseOptions {
-        max_input_bytes: source.len(),
-        max_atoms: 2,
-        max_bonds: 1,
-    };
+    let options = SmilesParseOptions::default()
+        .with_max_input_bytes(source.len())
+        .with_max_atoms(2)
+        .unwrap()
+        .with_max_bonds(1)
+        .unwrap();
     assert!(smiles_api::parse_str(source, options).is_ok());
     for (options, message) in [
-        (
-            SmilesParseOptions {
-                max_input_bytes: source.len() - 1,
-                ..options
-            },
-            "byte limit",
-        ),
-        (
-            SmilesParseOptions {
-                max_atoms: 1,
-                ..options
-            },
-            "atom count",
-        ),
-        (
-            SmilesParseOptions {
-                max_bonds: 0,
-                ..options
-            },
-            "bond count",
-        ),
+        (options.with_max_input_bytes(source.len() - 1), "byte limit"),
+        (options.with_max_atoms(1).unwrap(), "atom count"),
+        (options.with_max_bonds(0).unwrap(), "bond count"),
     ] {
         assert!(smiles_api::parse_str(source, options)
             .unwrap_err()
@@ -875,10 +847,10 @@ fn smiles_interprets_branches_rings_brackets_and_fragments_canonically_without_p
         assert_all_stale(molecule);
     }
     let bracket_atom = components[2].atom(AtomId::new(0)).expect("bracket atom");
-    assert_eq!(bracket_atom.isotope, Some(13));
+    assert_eq!(bracket_atom.isotope, NonZeroU16::new(13));
     assert_eq!(bracket_atom.hydrogens, ImplicitHydrogens::Fixed(4));
     assert_eq!(bracket_atom.formal_charge, 1);
-    assert_eq!(bracket_atom.atom_map, Some(7));
+    assert_eq!(bracket_atom.atom_map, NonZeroU32::new(7));
     let chiral_atom = components[3]
         .atom(AtomId::new(1))
         .expect("chiral bracket atom");
@@ -968,11 +940,11 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
         .atoms()
         .find_map(|(id, atom)| {
             (atom.element.symbol() == "C"
-                && aryl_mercury.incident_bonds(id).is_ok_and(|bonds| {
+                && aryl_mercury.incident_bonds(id).is_some_and(|bonds| {
                     bonds.into_iter().any(|(_, bond)| {
                         aryl_mercury
                             .atom(bond.other_atom(id))
-                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
+                            .is_some_and(|neighbor| neighbor.element.symbol() == "Hg")
                     })
                 }))
             .then_some((id, atom))
@@ -1412,7 +1384,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: a,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(b),
                     StereoCarrier::Atom(c),
                     StereoCarrier::Atom(d),
@@ -1439,8 +1411,8 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .expect("remove atom stereo");
     {
         let mut atom = molecule.atom_mut(a).expect("atom");
-        atom.radical = AtomRadical::new(1, Some(2));
-        atom.hydrogens = ImplicitHydrogens::Fixed(2);
+        atom.radical = AtomRadical::new(2, Some(3));
+        atom.hydrogens = ImplicitHydrogens::Fixed(1);
     }
     assert!(smiles_api::write(
         molecule.working(),
@@ -1511,7 +1483,7 @@ fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
 fn all_smiles_writers_require_perception_for_bracketed_inferred_hydrogens() {
     // The isotope forces a bracket, which must spell out the inferred count.
     let mut atom = carbon();
-    atom.isotope = Some(13);
+    atom.isotope = NonZeroU16::new(13);
     let mut graph = crate::molecule::MoleculeEditor::new();
     graph.add_atom(atom).expect("carbon");
     let molecule = graph.finish().expect("single atom molecule");
@@ -1560,7 +1532,7 @@ fn all_smiles_writers_preserve_implicit_hydrogen_counts() {
         let id = editor.add_atom(atom).unwrap();
         let mut molecule = editor.finish().unwrap();
         perceive(&mut molecule).unwrap();
-        assert_eq!(molecule.implicit_hydrogens(id), Ok(Some(total)));
+        assert_eq!(molecule.implicit_hydrogens(id), Some(total));
         let before = molecule.clone();
         for written in [
             smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default()),
@@ -1573,7 +1545,7 @@ fn all_smiles_writers_preserve_implicit_hydrogen_counts() {
             let (id, atom) = reparsed.atoms().next().unwrap();
             assert_eq!(
                 reparsed.implicit_hydrogens(id),
-                Ok(Some(total)),
+                Some(total),
                 "{symbol}: {written}"
             );
             assert_eq!(atom.element.symbol(), symbol);
@@ -1761,7 +1733,7 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
             );
             assert_eq!(
                 tetrahedral.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(0)),
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
@@ -1787,7 +1759,7 @@ fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_s
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(AtomId::new(0)),
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
@@ -1828,7 +1800,7 @@ fn isomeric_smiles_flips_tetrahedral_marker_for_odd_writer_carrier_order() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: AtomId::new(1),
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(AtomId::new(0)),
                     StereoCarrier::ImplicitHydrogen,
                     StereoCarrier::Atom(AtomId::new(3)),

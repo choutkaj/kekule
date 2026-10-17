@@ -2,17 +2,41 @@ use crate::molecule::*;
 use std::collections::BTreeMap;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ValenceOptions {
-    /// Reject valence and implicit-hydrogen states that RDKit's strict property
-    /// cache calculation rejects. With `false`, excess valence implies zero
+/// How valence perception treats states RDKit's strict property cache rejects.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ValenceValidation {
+    /// Reject invalid valence and implicit-hydrogen states.
+    #[default]
+    Strict,
+    /// Follow RDKit's permissive rules: excess valence implies zero
     /// additional hydrogens instead of an error.
-    pub strict: bool,
+    Permissive,
 }
 
-impl Default for ValenceOptions {
-    fn default() -> Self {
-        Self { strict: true }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValenceOptions {
+    validation: ValenceValidation,
+}
+
+impl ValenceOptions {
+    /// How invalid valence states are treated; strict by default.
+    pub const fn validation(&self) -> ValenceValidation {
+        self.validation
+    }
+
+    /// Sets [`Self::validation`].
+    #[must_use]
+    pub const fn with_validation(mut self, validation: ValenceValidation) -> Self {
+        self.validation = validation;
+        self
+    }
+
+    const fn strict(&self) -> bool {
+        match self.validation {
+            ValenceValidation::Strict => true,
+            ValenceValidation::Permissive => false,
+        }
     }
 }
 
@@ -75,8 +99,8 @@ impl std::error::Error for ValenceError {}
 /// Installs inferred-hydrogen assignments from localized bonds and represented
 /// atom state using the selected model's valence rules.
 ///
-/// The default options apply strict validation. With `options.strict ==
-/// false`, RDKit's permissive property-cache rules assign zero additional
+/// The default options apply strict validation. With
+/// [`ValenceValidation::Permissive`], RDKit's permissive property-cache rules assign zero additional
 /// hydrogens to excess occupancy. Success replaces installed valence and clears
 /// dependent aromaticity and CIP assignments while retaining ring perception.
 /// Failure preserves all previously installed perception. Neither outcome
@@ -100,16 +124,16 @@ pub(crate) fn rdkit_valence_assignments(
     let mut assignments = BTreeMap::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
-        let implicit = match rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, options.strict)
-        {
-            Ok(implicit) => implicit,
-            Err(issue) => {
-                if options.strict {
-                    issues.push(issue);
+        let implicit =
+            match rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, options.strict()) {
+                Ok(implicit) => implicit,
+                Err(issue) => {
+                    if options.strict() {
+                        issues.push(issue);
+                    }
+                    0
                 }
-                0
-            }
-        };
+            };
         assignments.insert(atom_id, implicit);
     }
     if !issues.is_empty() {
@@ -362,13 +386,12 @@ fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> b
 ///
 /// Returns an error if `atom` is not live in `mol`.
 pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize> {
-    let declaration = mol.atom(atom)?.hydrogens.represented_count();
+    let declaration = mol.require_atom(atom)?.hydrogens.represented_count();
     Ok(explicit_valence(mol, atom) + usize::from(declaration))
 }
 
 pub(crate) fn explicit_valence(mol: &Molecule, atom: AtomId) -> usize {
     mol.incident_bonds(atom)
-        .ok()
         .into_iter()
         .flatten()
         .map(|(_, bond)| bond_order_valence(bond.order))

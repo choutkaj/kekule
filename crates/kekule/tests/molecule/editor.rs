@@ -36,10 +36,13 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
     assert_eq!(editor.bonds().count(), 1);
     assert_eq!(editor.neighbors(a).unwrap().collect::<Vec<_>>(), vec![b]);
     assert_eq!(editor.incident_bonds(b).unwrap().next().unwrap().0, bond);
-    assert_eq!(editor.bond_between(a, b).unwrap(), Some(bond));
-    editor.atom_mut(a).unwrap().formal_charge = 1;
+    assert_eq!(editor.bond_between(a, b), Some(bond));
+    editor.atom_mut(a).unwrap().set_formal_charge(1);
     assert_eq!(editor.formal_charge(), 1);
-    assert_eq!(editor.replace_atom(a, atom("N")).unwrap().formal_charge, 1);
+    assert_eq!(
+        editor.replace_atom(a, atom("N")).unwrap().formal_charge(),
+        1
+    );
     editor.bond_mut(bond).unwrap().set_order(BondOrder::Double);
     assert_eq!(editor.bond(bond).unwrap().order, BondOrder::Double);
     editor
@@ -50,8 +53,8 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
     editor.validate().unwrap();
     let published = editor.finish().unwrap();
     let mut edited = published.to_editor();
-    edited.atom_mut(a).unwrap().formal_charge = 1;
-    assert_eq!(published.atom(a).unwrap().formal_charge, 0);
+    edited.atom_mut(a).unwrap().set_formal_charge(1);
+    assert_eq!(published.atom(a).unwrap().formal_charge(), 0);
     assert!(edited.properties().owner().get(&key("label")).is_none());
     let atom_pointer = published.atom(a).unwrap() as *const Atom;
     let moved = published.into_editor();
@@ -83,8 +86,8 @@ fn rewiring_retains_ids_properties_and_checks_every_endpoint_before_mutation() {
         assert_eq!(snapshot(&editor), before);
     }
     editor.set_bond_endpoints(bonds[0], ids[0], ids[3]).unwrap();
-    assert_eq!(editor.bond_between(ids[0], ids[1]).unwrap(), None);
-    assert_eq!(editor.bond_between(ids[0], ids[3]).unwrap(), Some(bonds[0]));
+    assert_eq!(editor.bond_between(ids[0], ids[1]), None);
+    assert_eq!(editor.bond_between(ids[0], ids[3]), Some(bonds[0]));
     assert_eq!(
         editor.neighbors(ids[0]).unwrap().collect::<Vec<_>>(),
         vec![ids[3]]
@@ -337,9 +340,9 @@ fn append_preserves_fragment_stereo_groups_and_entity_properties() {
     let new_element = editor
         .stereo_element(map.stereo_elements()[&old_id])
         .unwrap();
-    let old_group = old_element.group.unwrap();
+    let old_group = old_element.group().unwrap();
     let new_group = map.stereo_groups()[&old_group];
-    assert_eq!(new_element.group, Some(new_group));
+    assert_eq!(new_element.group(), Some(new_group));
     assert_eq!(
         editor.stereo_group(new_group).unwrap().members,
         vec![map.stereo_elements()[&old_id]]
@@ -353,7 +356,7 @@ fn append_preserves_fragment_stereo_groups_and_entity_properties() {
     assert_eq!(new.center, map.atoms()[&old.center]);
     assert_eq!(new.orientation, old.orientation);
     assert_eq!(
-        new.carriers,
+        new.carriers.to_vec(),
         old.carriers
             .iter()
             .map(|c| match c {
@@ -393,12 +396,12 @@ fn append_conflicts_roll_back_graph_properties_and_id_allocation() {
 fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
     let mut source = molecule("F/C=C/C=C").into_editor();
     let atoms = source.atom_ids().collect::<Vec<_>>();
-    let focus = source.bond_between(atoms[2], atoms[3]).unwrap().unwrap();
+    let focus = source.bond_between(atoms[2], atoms[3]).unwrap();
     let double = source.stereo_element_ids().next().unwrap();
     let axis = source
         .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis: focus,
-            carriers: vec![StereoCarrier::Atom(atoms[1]), StereoCarrier::Atom(atoms[4])],
+            carriers: [StereoCarrier::Atom(atoms[1]), StereoCarrier::Atom(atoms[4])],
             orientation: Some(AxisOrientation::Clockwise),
         })))
         .unwrap();
@@ -435,7 +438,7 @@ fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
                 assert_eq!(new.axis, map.bonds()[&old.axis]);
                 assert_eq!(
                     new.carriers,
-                    vec![
+                    [
                         StereoCarrier::Atom(map.atoms()[&atoms[1]]),
                         StereoCarrier::Atom(map.atoms()[&atoms[4]])
                     ]
@@ -503,7 +506,7 @@ fn forgetting_mutation_guards_cannot_preserve_stale_annotations() {
         if change_atom {
             let id = editor.atom_ids().next().unwrap();
             let mut guard = editor.atom_mut(id).unwrap();
-            guard.element = Element::from_symbol("N").unwrap();
+            guard.set_element(Element::from_symbol("N").unwrap());
             std::mem::forget(guard);
         } else {
             let id = editor.bond_ids().next().unwrap();
@@ -547,7 +550,7 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
         .unwrap();
     assert_eq!(editor.stereo_group(id).unwrap().kind, StereoGroupKind::Or);
     assert_eq!(
-        editor.stereo_element(group.members[0]).unwrap().group,
+        editor.stereo_element(group.members[0]).unwrap().group(),
         Some(id)
     );
     let StereoElementKind::Tetrahedral(original) = editor
@@ -572,7 +575,7 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers,
+                carriers: carriers.try_into().unwrap(),
                 orientation: original.orientation,
             },
         )))
@@ -597,12 +600,12 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
             },
         )
         .unwrap();
-    assert_eq!(editor.stereo_element(group.members[0]).unwrap().group, None);
-    assert_eq!(editor.stereo_element(added).unwrap().group, Some(id));
-    let bond = editor
-        .bond_between(original.center, center)
-        .unwrap()
-        .unwrap();
+    assert_eq!(
+        editor.stereo_element(group.members[0]).unwrap().group(),
+        None
+    );
+    assert_eq!(editor.stereo_element(added).unwrap().group(), Some(id));
+    let bond = editor.bond_between(original.center, center).unwrap();
     let other = editor.add_atom(atom("C")).unwrap();
     editor
         .set_bond_endpoints(bond, original.center, other)
@@ -696,7 +699,7 @@ fn publication_compacts_every_id_space_and_carries_annotations() {
         .carriers
         .contains(&StereoCarrier::Atom(AtomId::new(0))));
     assert_eq!(
-        published.stereo_element(element).unwrap().group,
+        published.stereo_element(element).unwrap().group(),
         Some(StereoGroupId::new(0))
     );
     let groups = published.stereo_groups().collect::<Vec<_>>();

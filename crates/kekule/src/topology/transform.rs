@@ -92,15 +92,16 @@ impl Topology {
     /// reconstructed definitions. Complete molecules and residues retain their
     /// classifications; changed entities are reclassified. The selection may
     /// come from any snapshot sharing this layout; the subset and its
-    /// correspondence always use this receiver snapshot.
+    /// correspondence always use the `source` snapshot, which they retain.
     pub fn subset(
-        self: &Arc<Self>,
+        source: impl Into<Arc<Self>>,
         selection: &AtomSelection,
     ) -> Result<TopologySubset, TopologySubsetError> {
-        if !self.shares_layout(selection.topology()) {
+        let source: Arc<Self> = source.into();
+        let this = &source;
+        if !this.shares_layout(selection.topology()) {
             return Err(SelectionError::TopologyMismatch.into());
         }
-        let source = Arc::clone(self);
         if selection.indices().is_empty() {
             return Err(TopologySubsetError::EmptySelection);
         }
@@ -108,7 +109,7 @@ impl Topology {
             .indices()
             .iter()
             .map(|index| {
-                self.atom_id(*index)
+                this.atom_id(*index)
                     .expect("validated atom selection references a live dense atom")
             })
             .collect::<BTreeSet<_>>();
@@ -118,7 +119,7 @@ impl Topology {
         let mut instance_sources = Vec::new();
         let mut definition_subsets = BTreeMap::new();
 
-        for molecule_view in self.molecules() {
+        for molecule_view in this.instances() {
             let source_molecule = molecule_view.molecule();
             let selected_local = source_molecule
                 .atom_ids()
@@ -137,7 +138,7 @@ impl Topology {
                             &entry.key().1,
                             Some((
                                 molecule_view.class(),
-                                self.molecule_class_overrides
+                                this.molecule_class_overrides
                                     .contains_key(&molecule_view.definition_id()),
                             )),
                             &mut builder,
@@ -166,18 +167,18 @@ impl Topology {
 
         // Selected atoms keep their relative source dense order.
         builder.set_atom_order(selection.indices().iter().map(|&index| {
-            atom_targets[&self
+            atom_targets[&this
                 .atom_id(index)
                 .expect("validated atom selection references a live dense atom")]
         }))?;
         let hierarchy_projection =
-            copy_filtered_hierarchy(self, builder.hierarchy_mut(), &atom_targets)?;
+            copy_filtered_hierarchy(this, builder.hierarchy_mut(), &atom_targets)?;
         for (target_index, &source_index) in hierarchy_projection.residues.iter().enumerate() {
-            let residue = self
+            let residue = this
                 .hierarchy()
-                .residue(ResidueId::new(source_index as u32))?;
+                .require_residue(ResidueId::new(source_index as u32))?;
             let complete = residue.atom_sites().iter().all(|site| {
-                let atom = self
+                let atom = this
                     .hierarchy()
                     .atom_site(*site)
                     .expect("published residue references a live atom site")
@@ -188,13 +189,13 @@ impl Topology {
                 builder.preserve_residue_class(
                     ResidueId::new(target_index as u32),
                     residue.class(),
-                    self.residue_class_overrides.contains_key(&residue.id()),
+                    this.residue_class_overrides.contains_key(&residue.id()),
                 )?;
             }
         }
         let mut target = builder.build()?;
         target.properties = Arc::new(project_topology_properties(
-            self,
+            this,
             &target,
             &instance_sources,
             &atom_targets,
@@ -215,7 +216,7 @@ impl Topology {
             .iter()
             .map(|target_atom| {
                 let source_atom = atom_sources[target_atom];
-                self.atom_index(source_atom)
+                this.atom_index(source_atom)
                     .expect("source subset atom has dense index")
             })
             .collect();
@@ -224,7 +225,7 @@ impl Topology {
             .iter()
             .map(|target_bond| {
                 let source_bond = bond_sources[target_bond];
-                self.bond_index(source_bond)
+                this.bond_index(source_bond)
                     .expect("source subset bond has dense index")
             })
             .collect();
@@ -299,7 +300,7 @@ fn copy_filtered_hierarchy(
                 source_residue.author_comp_id().map(str::to_owned),
             )?;
             for source_site_id in source_residue.atom_sites() {
-                let source_site = source.hierarchy().atom_site(*source_site_id)?;
+                let source_site = source.hierarchy().require_atom_site(*source_site_id)?;
                 let Some(target_atom) = atom_targets.get(&source_site.atom()).copied() else {
                     continue;
                 };

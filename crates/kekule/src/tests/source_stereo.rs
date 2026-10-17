@@ -225,7 +225,7 @@ M  END
             assert_eq!(stereo.center, AtomId::new(0));
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(1)),
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
@@ -255,18 +255,14 @@ fn canonical_tetrahedral_stereo_is_identical_across_smiles_molfile_and_manual_so
     for written in [
         molfile::write(
             &model,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
         )
         .expect("canonical stereo should project to V2000"),
         molfile::write(
             &model,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V3000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V3000),
         )
         .expect("canonical stereo should project to V3000"),
     ] {
@@ -302,7 +298,7 @@ fn canonical_tetrahedral_stereo_is_identical_across_smiles_molfile_and_manual_so
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: vec![
+                carriers: [
                     StereoCarrier::Atom(fluorine),
                     StereoCarrier::Atom(chlorine),
                     StereoCarrier::Atom(bromine),
@@ -328,7 +324,7 @@ fn interpretation_uses_source_declared_h_for_molfile_wedge_geometry() {
             assert_eq!(stereo.center, AtomId::new(0));
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(1)),
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
@@ -659,7 +655,7 @@ fn interpretation_assembles_molfile_atropisomeric_axis() {
             assert_eq!(stereo.axis, BondId::new(3));
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(6)),
                     StereoCarrier::Atom(AtomId::new(11)),
                 ]
@@ -687,18 +683,14 @@ fn molfile_writers_project_tetrahedral_stereo_independent_of_bond_endpoint_stora
         for written in [
             molfile::write(
                 &model,
-                molfile::MolfileWriteOptions {
-                    version: molfile::MolfileWriteVersion::V2000,
-                    ..Default::default()
-                },
+                molfile::MolfileWriteOptions::default()
+                    .with_version(molfile::MolfileWriteVersion::V2000),
             )
             .expect("V2000 projects tetrahedral stereo"),
             molfile::write(
                 &model,
-                molfile::MolfileWriteOptions {
-                    version: molfile::MolfileWriteVersion::V3000,
-                    ..Default::default()
-                },
+                molfile::MolfileWriteOptions::default()
+                    .with_version(molfile::MolfileWriteVersion::V3000),
             )
             .expect("V3000 projects tetrahedral stereo"),
         ] {
@@ -731,18 +723,14 @@ fn geometry_free_molfile_writers_reject_axis_stereo_without_mutating_the_molecul
         let before = molecule.clone();
         assert!(molfile::write(
             molecule,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            }
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000)
         )
         .is_err());
         assert!(molfile::write(
             molecule,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V3000,
-                ..Default::default()
-            }
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V3000)
         )
         .is_err());
         assert_eq!(*molecule, before);
@@ -762,7 +750,7 @@ fn interpretation_prefers_exocyclic_molfile_atropisomeric_axis() {
             assert_eq!(stereo.axis, BondId::new(3));
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(6)),
                     StereoCarrier::Atom(AtomId::new(11)),
                 ]
@@ -860,7 +848,12 @@ fn canonical_tetrahedral_molecule() -> Molecule {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: carriers.into_iter().map(StereoCarrier::Atom).collect(),
+                carriers: carriers
+                    .into_iter()
+                    .map(StereoCarrier::Atom)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap(),
                 orientation: Some(TetrahedralOrientation::CounterClockwise),
             },
         )))
@@ -1062,18 +1055,14 @@ fn molfile_writers_preserve_unasserted_3d_tetrahedra_as_unknown() {
         for source in [
             molfile::write(
                 &model,
-                molfile::MolfileWriteOptions {
-                    version: molfile::MolfileWriteVersion::V2000,
-                    ..Default::default()
-                },
+                molfile::MolfileWriteOptions::default()
+                    .with_version(molfile::MolfileWriteVersion::V2000),
             )
             .unwrap(),
             molfile::write(
                 &model,
-                molfile::MolfileWriteOptions {
-                    version: molfile::MolfileWriteVersion::V3000,
-                    ..Default::default()
-                },
+                molfile::MolfileWriteOptions::default()
+                    .with_version(molfile::MolfileWriteVersion::V3000),
             )
             .unwrap(),
         ] {
@@ -1181,17 +1170,13 @@ fn molfile_specified_tetrahedral_export_requires_a_drawing() {
     for result in [
         molfile::write(
             &molecule,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
         ),
         molfile::write(
             &molecule,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V3000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V3000),
         ),
     ] {
         assert!(
@@ -1203,17 +1188,13 @@ fn molfile_specified_tetrahedral_export_requires_a_drawing() {
     for result in [
         molfile::write(
             &model,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
         ),
         molfile::write(
             &model,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V3000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V3000),
         ),
     ] {
         assert!(
@@ -1408,10 +1389,7 @@ fn molfile_wedges_decode_and_write_stereogenic_nitrogen_lone_pairs() {
         ] {
             let written = molfile::write(
                 interpretation.model(),
-                molfile::MolfileWriteOptions {
-                    version,
-                    ..Default::default()
-                },
+                molfile::MolfileWriteOptions::default().with_version(version),
             )
             .expect("nitrogen wedge writes");
             let reread = read_molfile(&written).expect("written drawing interprets");
@@ -1443,18 +1421,14 @@ fn molfile_model_writing_preserves_tetrahedral_drawing_orientation() {
             for written in [
                 molfile::write(
                     interpreted.model(),
-                    molfile::MolfileWriteOptions {
-                        version: molfile::MolfileWriteVersion::V2000,
-                        ..Default::default()
-                    },
+                    molfile::MolfileWriteOptions::default()
+                        .with_version(molfile::MolfileWriteVersion::V2000),
                 )
                 .expect("V2000 model writes"),
                 molfile::write(
                     interpreted.model(),
-                    molfile::MolfileWriteOptions {
-                        version: molfile::MolfileWriteVersion::V3000,
-                        ..Default::default()
-                    },
+                    molfile::MolfileWriteOptions::default()
+                        .with_version(molfile::MolfileWriteVersion::V3000),
                 )
                 .expect("V3000 model writes"),
             ] {
@@ -1525,10 +1499,7 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
     let interpreted = document.interpret(Default::default()).unwrap();
     let source = molfile::write(
         interpreted.model(),
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V3000,
-            ..Default::default()
-        },
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
     .unwrap();
     for (group, expected) in [
@@ -1586,10 +1557,8 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
         );
         assert!(molfile::write(
             interpreted.model(),
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V2000,
-                ..Default::default()
-            }
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000)
         )
         .unwrap_err()
         .message()
@@ -1603,10 +1572,7 @@ fn v3000_round_trips_atropisomeric_bond_group_members() {
     let interpreted = document.interpret(Default::default()).unwrap();
     let source = molfile::write(
         interpreted.model(),
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V3000,
-            ..Default::default()
-        },
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
     .unwrap();
     // RDKit represents enhanced axis membership using either endpoint atom,
@@ -1631,10 +1597,8 @@ fn v3000_round_trips_atropisomeric_bond_group_members() {
             );
             let output = molfile::write(
                 interpretation.model(),
-                molfile::MolfileWriteOptions {
-                    version: molfile::MolfileWriteVersion::V3000,
-                    ..Default::default()
-                },
+                molfile::MolfileWriteOptions::default()
+                    .with_version(molfile::MolfileWriteVersion::V3000),
             )
             .unwrap();
             assert!(!output.contains("BONDS="));
@@ -1696,18 +1660,14 @@ M  V30 7 1 7 8\nM  V30 8 2 8 9\nM  V30 9 1 9 4\nM  V30 END BOND\nM  V30 END CTAB
             for output in [
                 molfile::write(
                     interpretation.model(),
-                    molfile::MolfileWriteOptions {
-                        version: molfile::MolfileWriteVersion::V2000,
-                        ..Default::default()
-                    },
+                    molfile::MolfileWriteOptions::default()
+                        .with_version(molfile::MolfileWriteVersion::V2000),
                 )
                 .unwrap(),
                 molfile::write(
                     interpretation.model(),
-                    molfile::MolfileWriteOptions {
-                        version: molfile::MolfileWriteVersion::V3000,
-                        ..Default::default()
-                    },
+                    molfile::MolfileWriteOptions::default()
+                        .with_version(molfile::MolfileWriteVersion::V3000),
                 )
                 .unwrap(),
             ] {
@@ -1779,10 +1739,7 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         .unwrap();
     let v3000 = molfile::write(
         model.model(),
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V3000,
-            ..Default::default()
-        },
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
     .unwrap();
     let unmarked_v3000 = read_molfile(&v3000).unwrap();
@@ -1840,10 +1797,8 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         );
         assert!(molfile::write(
             &molecule,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V3000,
-                ..Default::default()
-            }
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V3000)
         )
         .unwrap_err()
         .message()
@@ -1858,10 +1813,7 @@ fn v3000_stereo_groups_validate_members_and_preserve_source_ids_and_continuation
     let interpreted = document.interpret(Default::default()).unwrap();
     let source = molfile::write(
         interpreted.model(),
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V3000,
-            ..Default::default()
-        },
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
     .unwrap()
     .replace("M  V30 1 C", "M  V30 101 C")
@@ -1925,10 +1877,7 @@ fn v3000_repeated_group_ids_preserve_one_relation() {
     .unwrap();
     let source = molfile::write(
         &model,
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V3000,
-            ..Default::default()
-        },
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
     .unwrap();
     for kind in ["STEREL", "STERAC"] {
@@ -1949,7 +1898,8 @@ fn v3000_rejects_relative_groups_across_components_and_preserves_absolute_member
     let document =
         molfile::parse_str(&wedged_tetrahedron("C", 0, false), Default::default()).unwrap();
     let interpreted = document.interpret(Default::default()).unwrap();
-    let source = molfile::write(interpreted.model(), molfile::MolfileWriteOptions { version: molfile::MolfileWriteVersion::V3000, ..Default::default() }).unwrap()
+    let source = molfile::write(interpreted.model(), molfile::MolfileWriteOptions::default()
+.with_version(molfile::MolfileWriteVersion::V3000)).unwrap()
         .replace("COUNTS 4 3", "COUNTS 8 6")
         .replace("M  V30 END ATOM", "M  V30 5 C 5 0 0 0\nM  V30 6 F 6 0 0 0\nM  V30 7 Cl 4 0 0 0\nM  V30 8 Br 5 1 0 0\nM  V30 END ATOM")
         .replace("M  V30 END BOND", "M  V30 4 1 5 6 CFG=1\nM  V30 5 1 5 7\nM  V30 6 1 5 8\nM  V30 END BOND");
@@ -1964,10 +1914,8 @@ fn v3000_rejects_relative_groups_across_components_and_preserves_absolute_member
                 .all(|molecule| molecule.stereo_groups().count() == 1));
             let output = molfile::write(
                 interpreted.model(),
-                molfile::MolfileWriteOptions {
-                    version: molfile::MolfileWriteVersion::V3000,
-                    ..Default::default()
-                },
+                molfile::MolfileWriteOptions::default()
+                    .with_version(molfile::MolfileWriteVersion::V3000),
             )
             .unwrap();
             assert_eq!(output.matches("MDLV30/STEABS").count(), 1);

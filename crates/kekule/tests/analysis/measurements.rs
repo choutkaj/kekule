@@ -333,7 +333,7 @@ fn connectivity_checks_reject_invalid_ids_before_missing_bonds() {
     let model = model(right_angle(), NANOMETER);
     let [a, b, c, _] = <[InstanceAtomId; 4]>::try_from(model.topology().atom_ids()).unwrap();
     for invalid in [
-        InstanceAtomId::new(a.molecule(), kekule::molecule::AtomId::new(99)),
+        InstanceAtomId::new(a.instance(), kekule::molecule::AtomId::new(99)),
         InstanceAtomId::new(kekule::topology::MoleculeInstanceId::new(99), a.atom()),
     ] {
         let error = Err(MeasurementError::InvalidAtomId(invalid));
@@ -538,7 +538,7 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
         ),
         Err(MeasurementError::DegenerateGeometry)
     );
-    let invalid = InstanceAtomId::new(a[0].molecule(), kekule::molecule::AtomId::new(99));
+    let invalid = InstanceAtomId::new(a[0].instance(), kekule::molecule::AtomId::new(99));
     assert!(matches!(
         measure::distance(
             line.as_model_view(),
@@ -597,8 +597,8 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
     let mut model = model(right_angle(), NANOMETER);
     let top = model.shared_topology();
     let ids = top.atom_ids();
-    let all = AtomSelection::all(&top);
-    let reference = AtomSelection::from_atoms(&top, [ids[1]]).unwrap();
+    let all = AtomSelection::all(top.clone());
+    let reference = AtomSelection::from_atoms(top.clone(), [ids[1]]).unwrap();
     // Test exact inclusion in canonical units, separately from conversion:
     // 10 * the floating-point Angstrom scale can round just below 1 nm.
     let selected = measure::within(
@@ -645,7 +645,7 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
         .unwrap(),
         reference
     );
-    let empty = AtomSelection::from_atoms(&top, []).unwrap();
+    let empty = AtomSelection::from_atoms(top.clone(), []).unwrap();
     assert_eq!(
         measure::within(
             model.as_model_view(),
@@ -687,7 +687,7 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
         Err(MeasurementError::Unit(_))
     ));
     // A perceived snapshot shares the layout, so its selections stay usable.
-    let perceived = AtomSelection::all(&std::sync::Arc::new(top.perceived().unwrap()));
+    let perceived = AtomSelection::all(top.perceived().unwrap());
     assert_eq!(
         measure::within(
             model.as_model_view(),
@@ -698,7 +698,7 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
         Ok(selected.clone())
     );
     // An independently published equal topology does not.
-    let foreign = AtomSelection::all(&smiles::to_topology("CCCC").unwrap());
+    let foreign = AtomSelection::all(smiles::to_topology("CCCC").unwrap());
     assert_eq!(
         measure::within(
             model.as_model_view(),

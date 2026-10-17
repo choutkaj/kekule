@@ -31,7 +31,7 @@ fn default_perception_installs_one_ring_basis_for_aromaticity() {
     assert_eq!(
         molecule
             .atoms()
-            .filter(|(atom, _)| molecule.atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|(atom, _)| molecule.atom_is_aromatic(*atom) == Some(true))
             .count(),
         6
     );
@@ -256,7 +256,7 @@ fn direct_aromaticity_perception_accepts_localized_aromatic_input() {
 
     assert!(molecule
         .bond_ids()
-        .all(|bond| molecule.bond_is_aromatic(bond) == Ok(Some(true))));
+        .all(|bond| molecule.bond_is_aromatic(bond) == Some(true)));
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn valence_reports_excess_common_valence() {
     valence_api::perceive_valence(
         mol.working_mut(),
         ValenceModel::RdkitLike,
-        ValenceOptions { strict: false },
+        ValenceOptions::default().with_validation(crate::algorithms::ValenceValidation::Permissive),
     )
     .expect("permissive valence inspection should succeed");
     assert_eq!(mol.perception().inferred_hydrogens(c), Some(0));
@@ -412,7 +412,7 @@ fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
     valence_api::perceive_valence(
         molecule.working_mut(),
         ValenceModel::RdkitLike,
-        ValenceOptions { strict: false },
+        ValenceOptions::default().with_validation(crate::algorithms::ValenceValidation::Permissive),
     )
     .expect("permissive inspection should install");
     assert!(molecule.perception().has_valence());

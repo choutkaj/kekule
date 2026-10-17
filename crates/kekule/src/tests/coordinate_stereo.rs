@@ -28,7 +28,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
         StereoElementKind::Tetrahedral(stereo) => {
             assert_eq!(stereo.center, center);
             assert_eq!(
-                stereo.carriers,
+                stereo.carriers.to_vec(),
                 carriers
                     .iter()
                     .copied()
@@ -96,7 +96,7 @@ fn coordinate_stereo_resolves_tombstoned_atom_ids_to_dense_positions() {
         &inferred.elements[0].kind,
         StereoElementKind::Tetrahedral(stereo)
             if stereo.center == center
-                && stereo.carriers
+                && stereo.carriers.to_vec()
                     == carriers
                         .iter()
                         .copied()
@@ -175,10 +175,7 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
     let inferred = stereo_api::coordinates::infer_coordinate_stereo(
         &mol,
         &positions,
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .expect("3D axis stereo should be inferred");
     assert_eq!(mol, before);
@@ -189,7 +186,7 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
             assert_eq!(stereo.axis, axis);
             assert_eq!(
                 stereo.carriers,
-                vec![
+                [
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(4)),
                 ]
@@ -207,10 +204,7 @@ fn coordinate_stereo_inference_skips_axis_without_3d_handedness() {
     let result = stereo_api::coordinates::infer_coordinate_stereo(
         &mol,
         &positions,
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .expect("flat coordinates should be a successful non-assignment");
     assert!(result.elements.is_empty());
@@ -230,7 +224,13 @@ fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
     mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
         TetrahedralStereo {
             center,
-            carriers: carriers.iter().copied().map(StereoCarrier::Atom).collect(),
+            carriers: carriers
+                .iter()
+                .copied()
+                .map(StereoCarrier::Atom)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
             orientation: Some(TetrahedralOrientation::CounterClockwise),
         },
     )))
@@ -260,10 +260,11 @@ fn coordinate_stereo_materialization_is_transactional_on_invalid_representation(
         &mut mol,
         StereoElement::new(StereoElementKind::Tetrahedral(TetrahedralStereo {
             center,
-            carriers: vec![
+            carriers: [
                 StereoCarrier::Atom(carriers[0]),
                 StereoCarrier::Atom(carriers[0]),
                 StereoCarrier::Atom(carriers[1]),
+                StereoCarrier::Atom(carriers[2]),
             ],
             orientation: Some(TetrahedralOrientation::Clockwise),
         })),
@@ -447,10 +448,7 @@ fn coordinate_axis_inference_respects_pyramidal_lone_pair_endpoints() {
         let result = stereo_api::coordinates::infer_coordinate_stereo(
             &molecule,
             &test_positions(points),
-            CoordinateStereoOptions {
-                infer_axes: true,
-                ..Default::default()
-            },
+            CoordinateStereoOptions::default().with_infer_axes(true),
         )
         .unwrap();
         assert!(result.elements.iter().any(|element| matches!(
@@ -480,10 +478,7 @@ fn coordinate_axis_inference_does_not_treat_saturated_rings_as_sp2() {
     let result = stereo_api::coordinates::infer_coordinate_stereo(
         &molecule,
         &test_positions(points),
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .unwrap();
     assert!(result
@@ -498,7 +493,7 @@ fn coordinate_axis_handedness_is_scale_and_rotation_invariant() {
     for scale in [1.0e-100, 1.0, 1.0e100] {
         let points = (0..positions.len())
             .map(|index| {
-                let point = positions.position_at(index).unwrap().into_value();
+                let point = positions.get(index).unwrap().into_value();
                 // A cyclic permutation is a proper rotation.
                 Point3::new(point.y * scale, point.z * scale, point.x * scale)
             })
@@ -506,10 +501,7 @@ fn coordinate_axis_handedness_is_scale_and_rotation_invariant() {
         let result = stereo_api::coordinates::infer_coordinate_stereo(
             &molecule,
             &test_positions(points),
-            CoordinateStereoOptions {
-                infer_axes: true,
-                ..Default::default()
-            },
+            CoordinateStereoOptions::default().with_infer_axes(true),
         )
         .unwrap();
         assert_eq!(result.elements.len(), 1);
@@ -584,10 +576,8 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
         Point3::new(1.0, -1.0, 0.0),
     ]);
     let (axis, axis_positions, _) = coordinate_axis_graph(true);
-    let axis_options = stereo_api::coordinates::CoordinateStereoOptions {
-        infer_axes: true,
-        ..stereo_api::coordinates::CoordinateStereoOptions::default()
-    };
+    let axis_options =
+        stereo_api::coordinates::CoordinateStereoOptions::default().with_infer_axes(true);
 
     for (label, mut molecule, positions, options) in [
         (
@@ -625,7 +615,10 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
         };
         assert_eq!(
             infer(&molecule),
-            stereo_api::coordinates::CoordinateStereoResult::default(),
+            stereo_api::coordinates::CoordinateStereoResult {
+                elements: Vec::new(),
+                disagreements: Vec::new(),
+            },
             "{label}: an asserted focus is not re-inferred"
         );
 
@@ -646,7 +639,10 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
             .unwrap();
         assert_eq!(
             infer(&molecule),
-            stereo_api::coordinates::CoordinateStereoResult::default(),
+            stereo_api::coordinates::CoordinateStereoResult {
+                elements: Vec::new(),
+                disagreements: Vec::new(),
+            },
             "{label}: an unknown configuration never contradicts"
         );
     }
@@ -709,7 +705,12 @@ fn coordinate_stereo_compares_implicit_hydrogen_carriers_and_ignores_flat_center
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: carriers.into_iter().map(StereoCarrier::Atom).collect(),
+                carriers: carriers
+                    .into_iter()
+                    .map(StereoCarrier::Atom)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap(),
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
         )))

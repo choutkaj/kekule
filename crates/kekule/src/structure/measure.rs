@@ -38,11 +38,11 @@
 //! # fn pocket(model: &Model) -> Result<Model, Box<dyn std::error::Error>> {
 //! let topology = model.shared_topology();
 //! let ligand = topology.residue_by_author("A", "215", None)?;
-//! let reference = AtomSelection::for_residues(&topology, [ligand.id()])?;
+//! let reference = AtomSelection::for_residues(topology.clone(), [ligand.id()])?;
 //! let hydrogen = AtomSelection::for_elements(
-//!     &topology, [Element::from_symbol("H").unwrap()],
+//!     topology.clone(), [Element::from_symbol("H").unwrap()],
 //! )?;
-//! let candidates = AtomSelection::all(&topology).difference(&hydrogen)?;
+//! let candidates = AtomSelection::all(topology.clone()).difference(&hydrogen)?;
 //! let atoms = measure::within(
 //!     model.as_model_view(), &candidates, &reference, Quantity::new(5.0, ANGSTROM),
 //! )?.expand_to_residues();
@@ -64,6 +64,7 @@ pub use bond_dihedrals::{bond_dihedral, bond_dihedrals, BondDihedral, BondDihedr
 
 /// Optional topology validation for Cartesian measurements.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectivityCheck {
     /// Allow arbitrary atoms, without requiring bonds. This is the default.
     #[default]
@@ -320,5 +321,5 @@ pub fn within(
             }
         }
     }
-    AtomSelection::from_atoms(&topology, selected).map_err(MeasurementError::Selection)
+    AtomSelection::from_atoms(topology.clone(), selected).map_err(MeasurementError::Selection)
 }

@@ -87,7 +87,7 @@ impl ModelEditor {
         self.slots = ModelState::default();
     }
     /// The coordinate-free structural draft, also reachable through `Deref`.
-    pub fn topology(&self) -> &TopologyEditor {
+    pub fn topology_editor(&self) -> &TopologyEditor {
         &self.topology
     }
     /// Replaces represented stereo for an intact source occurrence; see
@@ -217,11 +217,9 @@ impl ModelEditor {
             .select_indices(&self.atom_slots())
             .expect("live atoms have position slots")
     }
-    pub fn position(&self, id: EditAtomId) -> Result<Quantity<Point3>, ModelEditError> {
-        Ok(self
-            .slots
-            .positions
-            .position_at(self.topology.atom_slot(id)?)?)
+    /// The draft position of one atom, or `None` when `id` names no live atom.
+    pub fn position(&self, id: EditAtomId) -> Option<Quantity<Point3>> {
+        self.slots.positions.get(self.topology.atom_slot(id).ok()?)
     }
     pub fn set_position(
         &mut self,
@@ -402,9 +400,11 @@ impl ModelEditor {
         self.slots.properties_mut().bonds_mut().remove(key);
         previous
     }
-    pub fn occupancy(&self, id: EditAtomId) -> Result<Option<f64>, ModelEditError> {
-        let slot = self.topology.atom_slot(id)?;
-        Ok(self.slots.occupancy(atom_row(slot))?)
+    /// The draft occupancy of one atom; `None` when it is unset or `id` names
+    /// no live atom.
+    pub fn occupancy(&self, id: EditAtomId) -> Option<f64> {
+        self.slots
+            .occupancy(atom_row(self.topology.atom_slot(id).ok()?))
     }
     pub fn set_occupancy(
         &mut self,
@@ -414,9 +414,11 @@ impl ModelEditor {
         let slot = self.topology.atom_slot(id)?;
         Ok(self.slots.set_occupancy(atom_row(slot), value)?)
     }
-    pub fn b_factor(&self, id: EditAtomId) -> Result<Option<Quantity<f64>>, ModelEditError> {
-        let slot = self.topology.atom_slot(id)?;
-        Ok(self.slots.b_factor(atom_row(slot))?)
+    /// The draft B-factor of one atom; `None` when it is unset or `id` names
+    /// no live atom.
+    pub fn b_factor(&self, id: EditAtomId) -> Option<Quantity<f64>> {
+        self.slots
+            .b_factor(atom_row(self.topology.atom_slot(id).ok()?))
     }
     pub fn set_b_factor(
         &mut self,

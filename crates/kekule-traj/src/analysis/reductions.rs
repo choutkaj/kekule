@@ -69,7 +69,7 @@ impl fmt::Display for ReductionError {
             }
             Self::NumericalFailure { frame, atom } => write!(
                 f,
-                "frame {frame} reduction exceeds finite numerical range at atom {atom}"
+                "frame {frame} reduction exceeds finite numerical range at {atom}"
             ),
             Self::FrameCountOverflow => {
                 f.write_str("frame count exceeds exact reduction arithmetic")
@@ -122,7 +122,7 @@ struct Moments {
 /// let mut index = 0;
 /// while reader.read_next(&mut buffer)? {
 ///     // Apply any intended periodic preprocessing and fitting here.
-///     rmsf.observe(index, &buffer)?;
+///     rmsf.observe(index, &buffer.as_model_view())?;
 ///     index += 1;
 /// }
 /// let result = rmsf.finish()?;

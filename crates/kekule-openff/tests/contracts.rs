@@ -8,18 +8,18 @@ fn molecule(s: &str) -> Molecule {
 fn rosemary_compiles_and_last_rule_wins() {
     let ff = ForceField::rosemary().unwrap();
     let labels = ff.label_molecule(&molecule("[H]C([H])([H])O[H]")).unwrap();
-    assert_eq!(labels.bonds.len(), 5);
-    assert_eq!(labels.angles.len(), 7);
-    assert_eq!(labels.constraints.len(), 4);
-    assert_eq!(labels.vdw.len(), 6);
+    assert_eq!(labels.bonds().len(), 5);
+    assert_eq!(labels.angles().len(), 7);
+    assert_eq!(labels.constraints().len(), 4);
+    assert_eq!(labels.vdw().len(), 6);
     let xml = include_str!("../data/rosemary.offxml").replace("</Bonds>",
         "<Bond id=\"override\" smirks=\"[*:1]~[*:2]\" length=\"1 * angstrom\" k=\"1 * kilocalorie_per_mole * angstrom ** -2\"/></Bonds>");
     let overridden = ForceField::from_offxml(&xml)
         .unwrap()
         .label_molecule(&molecule("[H]C([H])([H])O[H]"))
         .unwrap();
-    assert_eq!(overridden.bonds.len(), 5);
-    assert!(overridden.bonds.values().all(|p| p.id == "override"));
+    assert_eq!(overridden.bonds().len(), 5);
+    assert!(overridden.bonds().values().all(|p| p.id() == "override"));
     let error = ff.label_molecule(&molecule("CO")).unwrap_err();
     assert_eq!(error.kind(), kekule_openff::ErrorKind::UnsupportedMolecule);
     assert!(error.to_string().contains("implicit hydrogens"));
@@ -101,15 +101,15 @@ fn all_reference_rule_labels_match_in_atom_map_space() {
                 check(
                     $handler,
                     labels
-                        .$field
+                        .$field()
                         .iter()
                         .map(|(a, p)| {
                             (
                                 a.iter()
-                                    .map(|&a| m.atom(a).unwrap().atom_map.unwrap())
+                                    .map(|&a| m.atom(a).unwrap().atom_map().unwrap().get())
                                     .collect(),
-                                p.id.clone(),
-                                p.smirks.clone(),
+                                p.id().to_owned(),
+                                p.smirks().to_owned(),
                             )
                         })
                         .collect(),

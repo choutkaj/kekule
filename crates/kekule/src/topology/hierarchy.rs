@@ -5,7 +5,7 @@ use super::{InstanceAtomId, ResidueClass};
 
 fixed_u32_id!(ChainId, "chain");
 fixed_u32_id!(ResidueId, "residue");
-fixed_u32_id!(AtomSiteId, "atom-site");
+fixed_u32_id!(AtomSiteId, "atom site");
 
 /// Coordinate-independent residue, chain, polymer, and atom-site organization.
 ///
@@ -68,7 +68,7 @@ impl Hierarchy {
         author_seq_id: Option<String>,
         insertion_code: Option<String>,
     ) -> std::result::Result<ResidueId, HierarchyError> {
-        self.chain(chain)?;
+        self.require_chain(chain)?;
         let name = name.into();
         let id = checked_hierarchy_id(
             self.residues.len(),
@@ -98,7 +98,7 @@ impl Hierarchy {
         atom: InstanceAtomId,
         metadata: AtomSiteMetadata,
     ) -> std::result::Result<AtomSiteId, HierarchyError> {
-        self.residue(residue)?;
+        self.require_residue(residue)?;
         if self.atom_lookup.contains_key(&atom) {
             return Err(HierarchyError::DuplicateAtomPlacement(atom));
         }
@@ -124,21 +124,40 @@ impl Hierarchy {
         &mut self.chains[chain.index()].residues
     }
 
-    pub fn chain(&self, id: ChainId) -> std::result::Result<&Chain, HierarchyError> {
-        self.chains
-            .get(id.index())
-            .ok_or(HierarchyError::InvalidChainId(id))
+    /// One chain, or `None` when `id` names no chain of this hierarchy.
+    pub fn chain(&self, id: ChainId) -> Option<&Chain> {
+        self.chains.get(id.index())
     }
 
-    pub fn residue(&self, id: ResidueId) -> std::result::Result<&Residue, HierarchyError> {
-        self.residues
-            .get(id.index())
-            .ok_or(HierarchyError::InvalidResidueId(id))
+    /// One residue, or `None` when `id` names no residue of this hierarchy.
+    pub fn residue(&self, id: ResidueId) -> Option<&Residue> {
+        self.residues.get(id.index())
     }
 
-    pub fn atom_site(&self, id: AtomSiteId) -> std::result::Result<&AtomSite, HierarchyError> {
-        self.atom_sites
-            .get(id.index())
+    /// One atom site, or `None` when `id` names no site of this hierarchy.
+    pub fn atom_site(&self, id: AtomSiteId) -> Option<&AtomSite> {
+        self.atom_sites.get(id.index())
+    }
+
+    /// [`Self::chain`] for staging code that reports a missing chain.
+    pub(crate) fn require_chain(&self, id: ChainId) -> std::result::Result<&Chain, HierarchyError> {
+        self.chain(id).ok_or(HierarchyError::InvalidChainId(id))
+    }
+
+    /// [`Self::residue`] for staging code that reports a missing residue.
+    pub(crate) fn require_residue(
+        &self,
+        id: ResidueId,
+    ) -> std::result::Result<&Residue, HierarchyError> {
+        self.residue(id).ok_or(HierarchyError::InvalidResidueId(id))
+    }
+
+    /// [`Self::atom_site`] for staging code that reports a missing site.
+    pub(crate) fn require_atom_site(
+        &self,
+        id: AtomSiteId,
+    ) -> std::result::Result<&AtomSite, HierarchyError> {
+        self.atom_site(id)
             .ok_or(HierarchyError::InvalidAtomSiteId(id))
     }
 
@@ -294,11 +313,68 @@ impl AtomSite {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AtomSiteMetadata {
-    pub type_symbol: Option<String>,
-    pub label_asym_id: Option<String>,
-    pub auth_asym_id: Option<String>,
-    pub label_atom_id: Option<String>,
-    pub auth_atom_id: Option<String>,
+    pub(crate) type_symbol: Option<String>,
+    pub(crate) label_asym_id: Option<String>,
+    pub(crate) auth_asym_id: Option<String>,
+    pub(crate) label_atom_id: Option<String>,
+    pub(crate) auth_atom_id: Option<String>,
+}
+
+impl AtomSiteMetadata {
+    pub fn type_symbol(&self) -> Option<&str> {
+        self.type_symbol.as_deref()
+    }
+
+    /// Sets [`Self::type_symbol`].
+    #[must_use]
+    pub fn with_type_symbol(mut self, type_symbol: Option<String>) -> Self {
+        self.type_symbol = type_symbol;
+        self
+    }
+
+    pub fn label_asym_id(&self) -> Option<&str> {
+        self.label_asym_id.as_deref()
+    }
+
+    /// Sets [`Self::label_asym_id`].
+    #[must_use]
+    pub fn with_label_asym_id(mut self, label_asym_id: Option<String>) -> Self {
+        self.label_asym_id = label_asym_id;
+        self
+    }
+
+    pub fn auth_asym_id(&self) -> Option<&str> {
+        self.auth_asym_id.as_deref()
+    }
+
+    /// Sets [`Self::auth_asym_id`].
+    #[must_use]
+    pub fn with_auth_asym_id(mut self, auth_asym_id: Option<String>) -> Self {
+        self.auth_asym_id = auth_asym_id;
+        self
+    }
+
+    pub fn label_atom_id(&self) -> Option<&str> {
+        self.label_atom_id.as_deref()
+    }
+
+    /// Sets [`Self::label_atom_id`].
+    #[must_use]
+    pub fn with_label_atom_id(mut self, label_atom_id: Option<String>) -> Self {
+        self.label_atom_id = label_atom_id;
+        self
+    }
+
+    pub fn auth_atom_id(&self) -> Option<&str> {
+        self.auth_atom_id.as_deref()
+    }
+
+    /// Sets [`Self::auth_atom_id`].
+    #[must_use]
+    pub fn with_auth_atom_id(mut self, auth_atom_id: Option<String>) -> Self {
+        self.auth_atom_id = auth_atom_id;
+        self
+    }
 }
 
 /// Fixed-width identifier spaces owned by [`Hierarchy`].

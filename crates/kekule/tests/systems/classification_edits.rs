@@ -13,8 +13,8 @@ fn instance_subset(
     source: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
 ) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
-    let selection = AtomSelection::for_instances(source, instances)?;
-    Ok(source.subset(&selection)?.shared_topology())
+    let selection = AtomSelection::for_instances(Arc::clone(source), instances)?;
+    Ok(kekule::topology::Topology::subset(source.clone(), &selection)?.shared_topology())
 }
 
 /// The topology of every instance except `instances`.
@@ -22,8 +22,8 @@ fn instance_complement(
     source: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
 ) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
-    let selection = AtomSelection::for_instances(source, instances)?.complement();
-    Ok(source.subset(&selection)?.shared_topology())
+    let selection = AtomSelection::for_instances(Arc::clone(source), instances)?.complement();
+    Ok(kekule::topology::Topology::subset(source.clone(), &selection)?.shared_topology())
 }
 
 fn atom(symbol: &str) -> Atom {
@@ -41,7 +41,7 @@ fn single_atom(symbol: &str) -> Molecule {
 }
 
 fn classes(topology: &Topology) -> Vec<MoleculeClass> {
-    topology.molecules().map(|m| m.class()).collect()
+    topology.instances().map(|m| m.class()).collect()
 }
 
 fn split_editor() -> (TopologyEditor, Vec<EditAtomId>) {
@@ -300,12 +300,14 @@ fn instance_filters_reclassify_partial_residues_and_preserve_complete_assignment
             source.residues().next().unwrap().class(),
             ResidueClass::Water
         );
-        let retained = instance_subset(&source, [atoms[0].molecule(), instance]).unwrap();
+        let retained = instance_subset(&source, [atoms[0].instance(), instance]).unwrap();
         let removed =
-            instance_complement(&source, [atoms[1].molecule(), atoms[2].molecule()]).unwrap();
-        let subset = source
-            .subset(&AtomSelection::from_atoms(&source, [atoms[0], nitrogen_atom]).unwrap())
-            .unwrap();
+            instance_complement(&source, [atoms[1].instance(), atoms[2].instance()]).unwrap();
+        let subset = kekule::topology::Topology::subset(
+            Arc::clone(&source),
+            &AtomSelection::from_atoms(Arc::clone(&source), [atoms[0], nitrogen_atom]).unwrap(),
+        )
+        .unwrap();
         for result in [&*retained, &*removed, subset.topology()] {
             assert_eq!(
                 result.residues().map(|r| r.class()).collect::<Vec<_>>(),
@@ -493,7 +495,7 @@ fn water_builder(label: &str) -> (TopologyBuilder, ResidueId) {
 
 fn water_classes(topology: &Topology) -> (MoleculeClass, ResidueClass) {
     (
-        topology.molecules().next().unwrap().class(),
+        topology.instances().next().unwrap().class(),
         topology.residues().next().unwrap().class(),
     )
 }
@@ -562,13 +564,18 @@ fn explicit_classes_survive_changed_component_evidence_and_rebuilding() {
 #[test]
 fn no_op_and_append_preserve_untouched_classes_and_explicit_intent() {
     let source = Arc::new(water_builder("HOH").0.build().unwrap());
-    assert!(Arc::ptr_eq(&source, &source.to_editor().finish().unwrap()));
+    assert!(Arc::ptr_eq(
+        &source,
+        &TopologyEditor::from_topology(Arc::clone(&source))
+            .finish()
+            .unwrap()
+    ));
     let mut editor = source.to_editor();
     editor.add_molecule(oxygen().clone()).unwrap();
     let appended = editor.finish().unwrap();
     assert_eq!(water_classes(&appended), water_classes(&source));
     assert_eq!(
-        appended.molecules().nth(1).unwrap().class(),
+        appended.instances().nth(1).unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     let mut builder = Arc::try_unwrap(source).unwrap().into_builder();
@@ -593,7 +600,7 @@ fn hierarchy_edits_reinfer_source_molecule_classes_and_preserve_shared_snapshot(
         (MoleculeClass::Water, ResidueClass::Water)
     );
     assert_eq!(
-        source.molecules().next().unwrap().class(),
+        source.instances().next().unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     assert!(source.hierarchy().is_empty());
@@ -611,7 +618,11 @@ fn hierarchy_edits_reinfer_source_molecule_classes_and_preserve_shared_snapshot(
 #[test]
 fn transformations_do_not_promote_inferred_classes_to_explicit_overrides() {
     let source = Arc::new(water_builder("HOH").0.build().unwrap());
-    let subset = source.subset(&AtomSelection::all(&source)).unwrap();
+    let subset = kekule::topology::Topology::subset(
+        source.clone(),
+        &AtomSelection::all(Arc::clone(&source)),
+    )
+    .unwrap();
     let (target, _) = subset.into_parts();
     let mut editor = target.to_editor();
     let residue = editor.residues().next().unwrap().0;
@@ -653,7 +664,7 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
     builder.set_residue_class(ion, ResidueClass::Ion).unwrap();
     let source = Arc::new(builder.build().unwrap());
     assert_eq!(
-        source.molecules().next().unwrap().class(),
+        source.instances().next().unwrap().class(),
         MoleculeClass::Other
     );
     let retained = instance_subset(&source, [first]).unwrap();
@@ -671,8 +682,12 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
     );
     let mut editor = retained.to_editor();
     let site = editor.atom_sites().next().unwrap().0;
-    let mut metadata = editor.atom_site(site).unwrap().metadata().clone();
-    metadata.type_symbol = Some("O".into());
+    let metadata = editor
+        .atom_site(site)
+        .unwrap()
+        .metadata()
+        .clone()
+        .with_type_symbol(Some("O".into()));
     editor.set_atom_site_metadata(site, metadata).unwrap();
     let residue_handle = editor.residues().next().unwrap().0;
     editor

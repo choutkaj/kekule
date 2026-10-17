@@ -91,7 +91,7 @@ fn positions_convert_source_units_before_model_construction() {
         model.position(qualified).unwrap().unit(),
         CANONICAL_LENGTH_UNIT
     );
-    assert_eq!(model.position(qualified).unwrap().x, 0.15);
+    assert_eq!(model.position(qualified).unwrap().value().x, 0.15);
     assert_eq!(positions.values().unit(), CANONICAL_LENGTH_UNIT);
     assert_eq!(source[0].x, 0.15);
 }
@@ -155,10 +155,10 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
     let model = builder.build().unwrap();
     assert_ne!(small_id, macro_id);
     assert!(std::ptr::eq(
-        model.topology().molecule(small_id).unwrap().molecule(),
+        model.topology().instance(small_id).unwrap().molecule(),
         model
             .topology()
-            .molecule(small_id)
+            .instance(small_id)
             .unwrap()
             .definition()
             .molecule()
@@ -195,7 +195,7 @@ fn construction_copies_positions_and_preserves_sources() {
         .unwrap();
     assert_eq!(small, source);
     assert_eq!(
-        positions.position_at(0).unwrap(),
+        positions.get(0).unwrap(),
         Quantity::new(Point3::new(0.0, 0.0, 0.0), CANONICAL_LENGTH_UNIT)
     );
     assert_eq!(model.topology().definition_count(), 1);

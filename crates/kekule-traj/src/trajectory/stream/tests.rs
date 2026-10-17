@@ -55,21 +55,19 @@ impl TrajectoryReader for MemoryTrajectoryReader<'_> {
 }
 
 impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
-    fn frame_count(&self) -> Option<u64> {
-        u64::try_from(self.trajectory.len()).ok()
+    fn frame_count(&self) -> Option<usize> {
+        Some(self.trajectory.len())
     }
 
     fn read_frame(
         &mut self,
-        index: u64,
+        index: usize,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
-        let index = usize::try_from(index)
-            .map_err(|_| TrajectoryIoError::frame_index_out_of_range(index))?;
         let frame = self
             .trajectory
             .get(index)
-            .ok_or(TrajectoryIoError::frame_index_out_of_range(index as u64))?;
+            .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
         destination.copy_from(frame)?;
         Ok(())
     }

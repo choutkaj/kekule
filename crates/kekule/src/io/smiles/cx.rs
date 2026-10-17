@@ -13,6 +13,7 @@ use crate::diagnostics::FormatError;
 
 /// Kind and number of a CXSMILES enhanced stereo group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum SmilesCxStereoGroupKind {
     /// `a:`.
     Absolute,

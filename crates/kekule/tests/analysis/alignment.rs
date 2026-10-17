@@ -37,7 +37,7 @@ fn chain(atoms: usize) -> Arc<Topology> {
 
 fn selection(topology: &Arc<Topology>, indices: &[usize]) -> AtomSelection {
     AtomSelection::from_atoms(
-        topology,
+        Arc::clone(topology),
         indices.iter().map(|index| topology.atom_ids()[*index]),
     )
     .unwrap()
@@ -54,7 +54,7 @@ fn quarter_turn() -> RigidTransform {
             Vector3::new(-1.0, 0.0, 0.0),
             Vector3::new(0.0, 0.0, 1.0),
         ),
-        Vector3::new(4.0, -2.0, 1.0),
+        Quantity::new(Vector3::new(4.0, -2.0, 1.0), NANOMETER),
     )
     .unwrap()
 }
@@ -120,7 +120,7 @@ fn direct_rmsd_does_not_fit_and_explicit_weights_follow_pair_order() {
     let moving = [Point3::new(1.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)];
     let trajectory =
         Trajectory::from_items(Arc::clone(&topology), [frame(&reference), frame(&moving)]).unwrap();
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
 
     let uniform = trajectory.rmsd(0, &all, Default::default()).unwrap();
     assert_eq!(uniform.unit(), CANONICAL_LENGTH_UNIT);
@@ -131,10 +131,7 @@ fn direct_rmsd_does_not_fit_and_explicit_weights_follow_pair_order() {
         .rmsd(
             0,
             &all,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&[3.0, 1.0]),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&[3.0, 1.0])),
         )
         .unwrap();
     assert_close(weighted.value()[1], 3.0_f64.sqrt(), 1.0e-14);
@@ -142,10 +139,7 @@ fn direct_rmsd_does_not_fit_and_explicit_weights_follow_pair_order() {
         .rmsd(
             0,
             &all,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&[30.0, 10.0]),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&[30.0, 10.0])),
         )
         .unwrap();
     assert_eq!(scaled, weighted);
@@ -266,7 +260,11 @@ fn superposition_rotates_complete_geometric_state_and_preserves_metadata() {
     let expected_properties = trajectory.get(1).unwrap().properties().clone();
 
     let report = trajectory
-        .superpose(0, &AtomSelection::all(&topology), Default::default())
+        .superpose(
+            0,
+            &AtomSelection::all(Arc::clone(&topology)),
+            Default::default(),
+        )
         .unwrap();
     assert_eq!(report.alignments().len(), 2);
     let aligned = trajectory.get(1).unwrap();
@@ -315,7 +313,7 @@ fn superposition_failure_leaves_the_complete_collection_unchanged() {
     )
     .unwrap();
     let before = payloads(&trajectory);
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
 
     assert_eq!(
         trajectory.superpose(3, &all, Default::default()),
@@ -353,7 +351,7 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
     let mut periodic = frame(&points);
     periodic.set_cell(Some(periodic_cell(1.0)));
     let trajectory = Trajectory::from_items(Arc::clone(&topology), [periodic]).unwrap();
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
 
     assert_eq!(
         trajectory.rmsd(1, &all, Default::default()),
@@ -365,17 +363,18 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
         Err(AlignmentError::EmptySelection)
     );
     assert_eq!(
-        trajectory.rmsd(0, &AtomSelection::all(&chain(4)), Default::default()),
+        trajectory.rmsd(
+            0,
+            &AtomSelection::all(Arc::clone(&chain(4))),
+            Default::default()
+        ),
         Err(AlignmentError::SelectionTopologyMismatch)
     );
     let with_weights = |weights: &[f64]| {
         trajectory.rmsd(
             0,
             &all,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(weights),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(weights)),
         )
     };
     assert_eq!(
@@ -397,10 +396,7 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
         trajectory.rmsd(
             0,
             &all,
-            AlignmentOptions {
-                periodic_policy: PeriodicPolicy::RejectPeriodic,
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic),
         ),
         Err(AlignmentError::Item {
             index: 0,
@@ -428,7 +424,7 @@ fn aligned_rmsd_reports_the_failing_item_without_mutating_input() {
     )
     .unwrap();
     let before = payloads(&trajectory);
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
     assert_eq!(
         trajectory.aligned_rmsd(0, &all, &all, Default::default()),
         Err(AlignmentError::Item {
@@ -465,11 +461,8 @@ fn split_and_fused_workflows_keep_collection_and_item_properties() {
         .unwrap();
     let owner_properties = trajectory.properties().clone();
     let item_properties = trajectory.get(1).unwrap().properties().clone();
-    let all = AtomSelection::all(&topology);
-    let reject = AlignmentOptions {
-        periodic_policy: PeriodicPolicy::RejectPeriodic,
-        ..AlignmentOptions::default()
-    };
+    let all = AtomSelection::all(Arc::clone(&topology));
+    let reject = AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic);
 
     assert!(trajectory.rmsd(0, &all, reject).unwrap().value()[1] > 0.4);
     let fused = trajectory
@@ -477,10 +470,7 @@ fn split_and_fused_workflows_keep_collection_and_item_properties() {
             0,
             &all,
             &all,
-            AlignedRmsdOptions {
-                fit: reject,
-                ..AlignedRmsdOptions::default()
-            },
+            AlignedRmsdOptions::default().with_fit(reject),
         )
         .unwrap();
     assert!(fused.value()[1] < 1.0e-12);
@@ -511,7 +501,7 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
     reference.set_cell(Some(periodic_cell(1.0)));
     moving.set_cell(Some(periodic_cell(1.0)));
     let original = Trajectory::from_items(Arc::clone(&topology), [reference, moving]).unwrap();
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
     assert!(original.rmsd(0, &all, Default::default()).unwrap().value()[1] > 0.3);
 
     let mut weighted = original.clone();
@@ -519,10 +509,7 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
         .superpose(
             0,
             &all,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&[1.0, 2.0, 3.0]),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&[1.0, 2.0, 3.0])),
         )
         .unwrap();
     assert!(weighted.rmsd(0, &all, Default::default()).unwrap().value()[1] < 1.0e-12);
@@ -532,10 +519,7 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
         .superpose(
             0,
             &all,
-            AlignmentOptions {
-                periodic_policy: PeriodicPolicy::RejectPeriodic,
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic),
         )
         .is_err());
     assert_eq!(payloads(&rejected), payloads(&original));
@@ -583,7 +567,7 @@ fn ensembles_share_the_collection_contract_and_keep_weights() {
         Positions::new(Quantity::new(reference, NANOMETER)).unwrap(),
     )
     .unwrap();
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
     assert!(
         ensemble
             .rmsd(&model, &all, Default::default())
@@ -652,14 +636,14 @@ fn correspondence_fixture() -> (Trajectory, Model, AtomCorrespondence, AtomCorre
     let topology = chain(points.len());
     let reference_ids = reference.topology().atom_ids();
     let fit = AtomCorrespondence::from_pairs(
-        &topology,
-        &reference.shared_topology(),
+        Arc::clone(&topology),
+        reference.shared_topology(),
         [(3, 2), (0, 1), (2, 0), (1, 3)].map(|(a, b)| (topology.atom_ids()[a], reference_ids[b])),
     )
     .unwrap();
     let measurement = AtomCorrespondence::from_pairs(
-        &topology,
-        &reference.shared_topology(),
+        Arc::clone(&topology),
+        reference.shared_topology(),
         [(topology.atom_ids()[4], reference_ids[4])],
     )
     .unwrap();
@@ -729,10 +713,7 @@ fn correspondence_superposition_keeps_identity_and_transforms_every_vector_field
         .superpose(
             &reference,
             &fit,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&weights),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&weights)),
         )
         .unwrap();
     assert_eq!(report.reference_index(), None);
@@ -793,8 +774,8 @@ fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order
     let top = trajectory.shared_topology();
     let reference_ids = reference.topology().atom_ids();
     let measured = AtomCorrespondence::from_pairs(
-        &top,
-        &reference.shared_topology(),
+        Arc::clone(&top),
+        reference.shared_topology(),
         [
             (top.atom_ids()[4], reference_ids[4]),
             (top.atom_ids()[0], reference_ids[1]),
@@ -806,10 +787,8 @@ fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order
             &reference,
             &fit,
             &measured,
-            AlignedRmsdOptions {
-                measurement_weighting: Weighting::Explicit(&[3.0, 1.0]),
-                ..AlignedRmsdOptions::default()
-            },
+            AlignedRmsdOptions::default()
+                .with_measurement_weighting(Weighting::Explicit(&[3.0, 1.0])),
         )
         .unwrap();
     assert!((weighted.value()[1] - 0.75_f64.sqrt()).abs() < 1.0e-12);
@@ -818,10 +797,7 @@ fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order
         reference.as_model_view(),
         &fit,
         &measured,
-        AlignedRmsdOptions {
-            measurement_weighting: Weighting::Explicit(&[3.0, 1.0]),
-            ..AlignedRmsdOptions::default()
-        },
+        AlignedRmsdOptions::default().with_measurement_weighting(Weighting::Explicit(&[3.0, 1.0])),
     )
     .unwrap();
     assert_eq!(single.into_value(), weighted.value()[1]);
@@ -886,8 +862,8 @@ fn correspondence_failures_preserve_whole_collections() {
 fn correspondence_measurement_validates_weights_empty_pairs_and_periodic_policy() {
     let (trajectory, reference, fit, measurement) = correspondence_fixture();
     let empty = AtomCorrespondence::from_pairs(
-        &trajectory.shared_topology(),
-        &reference.shared_topology(),
+        trajectory.shared_topology(),
+        reference.shared_topology(),
         [],
     )
     .unwrap();
@@ -899,35 +875,27 @@ fn correspondence_measurement_validates_weights_empty_pairs_and_periodic_policy(
         trajectory.rmsd(
             &reference,
             &measurement,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&[]),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&[])),
         ),
         Err(AlignmentError::WeightCountMismatch { .. })
     ));
-    let reject = AlignmentOptions {
-        periodic_policy: PeriodicPolicy::RejectPeriodic,
-        ..AlignmentOptions::default()
-    };
+    let reject = AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic);
     assert!(matches!(
         trajectory.rmsd(&reference, &measurement, reject),
         Err(AlignmentError::Item { index: 0, source })
             if matches!(*source, AlignmentError::PeriodicCoordinates { moving: true, reference: false })
     ));
     assert!(matches!(
-        trajectory.aligned_rmsd(
-            &reference,
-            &fit,
-            &measurement,
-            AlignedRmsdOptions {
-                fit: reject,
-                ..AlignedRmsdOptions::default()
-            },
-        ),
-        Err(AlignmentError::Item { index: 0, source })
-            if matches!(*source, AlignmentError::PeriodicCoordinates { .. })
-    ));
+            trajectory.aligned_rmsd(
+                &reference,
+                &fit,
+                &measurement,
+                AlignedRmsdOptions::default()
+    .with_fit(reject),
+            ),
+            Err(AlignmentError::Item { index: 0, source })
+                if matches!(*source, AlignmentError::PeriodicCoordinates { .. })
+        ));
 }
 
 /// Acetate (C0, C1, O2, O3) with its oxygens mirrored across the xz plane
@@ -956,7 +924,7 @@ fn acetate_model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
 
 fn nanometers(positions: &Positions) -> Vec<Point3> {
     (0..positions.len())
-        .map(|index| positions.position_at(index).unwrap().into_value())
+        .map(|index| positions.get(index).unwrap().into_value())
         .collect()
 }
 
@@ -965,7 +933,7 @@ fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
     let topology = kekule::smiles::to_topology("CC(=O)[O-]").unwrap();
     let reference = acetate_model(&topology, &acetate_points(false));
     let swapped = acetate_model(&topology, &acetate_points(true));
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
     let symmetric = SymmetricSelection::new(&all).unwrap();
     assert_eq!(symmetric.permutation_count(), 2);
 
@@ -999,7 +967,7 @@ fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
     assert_eq!(fit.selected_atom_count(), 4);
 
     let foreign = SymmetricSelection::new(&AtomSelection::all(
-        &kekule::smiles::to_topology("CC(=O)[O-]").unwrap(),
+        kekule::smiles::to_topology("CC(=O)[O-]").unwrap(),
     ))
     .unwrap();
     assert_eq!(
@@ -1026,7 +994,7 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
         .unwrap()
     });
     let mut ensemble = Ensemble::from_items(Arc::clone(&topology), members).unwrap();
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
     let symmetric = SymmetricSelection::new(&all).unwrap();
     let oxygens = selection(&topology, &[2, 3]);
     let symmetric_oxygens = SymmetricSelection::new(&oxygens).unwrap();
@@ -1072,7 +1040,7 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
 
     // An empty collection still validates the selection binding.
     let foreign = kekule::smiles::to_topology("CC(=O)[O-]").unwrap();
-    let foreign = SymmetricSelection::new(&AtomSelection::all(&foreign)).unwrap();
+    let foreign = SymmetricSelection::new(&AtomSelection::all(Arc::clone(&foreign))).unwrap();
     let model = acetate_model(&topology, &reference);
     assert_eq!(
         Ensemble::new(Arc::clone(&topology)).rmsd(&model, &foreign, Default::default()),

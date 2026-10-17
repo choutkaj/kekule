@@ -33,7 +33,7 @@ pub use reductions::{
 /// let mut buffer = reader.frame_buffer();
 /// reader.read_next(&mut buffer)?;
 /// let reference = buffer.frame_view().to_model();
-/// let atoms = AtomSelection::all(&reference.shared_topology());
+/// let atoms = AtomSelection::all(reference.shared_topology());
 /// let superposer = FrameSuperposer::new(&reference, &atoms, Default::default());
 /// let mut index = 1;
 /// while reader.read_next(&mut buffer)? {

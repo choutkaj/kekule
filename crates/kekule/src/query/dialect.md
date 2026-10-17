@@ -109,9 +109,10 @@ aromaticity::perceive_aromaticity(&mut molecule, AromaticityModel::Mdl, Default:
 let target = PreparedTarget::new(&molecule);
 let query = smarts::parse_str("[#6:1]-[#8:2]", Default::default())?;
 let tagged = TaggedQuery::new(&query)?;
-let matches = tagged.find_matches(&target, SubstructureMatchOptions {
-    max_matches: 100_000, uniquify: false, ..Default::default()
-}, TupleMode::Distinct)?;
+let matches = tagged.find_matches(&target, SubstructureMatchOptions::default()
+.with_max_matches(100_000)
+.unwrap()
+.with_uniquify(false), TupleMode::Distinct)?;
 assert_eq!(matches.len(), 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```

@@ -39,15 +39,15 @@ fn library_only_repeated_definitions_retain_exact_binding_and_nonbonded_constrai
             kekule_openff::ChargeMethod::LibraryOnly,
         )
         .unwrap();
-    assert!(Arc::ptr_eq(p.topology(), &topology));
+    assert!(Arc::ptr_eq(&p.shared_topology(), &topology));
     assert_eq!(
         p.charges().value_in(ELEMENTARY_CHARGE).unwrap(),
         [-0.8, 0.4, 0.4, -0.8, 0.4, 0.4]
     );
     assert_eq!(p.constraints().len(), 2);
-    assert_ne!(p.constraints()[0].atoms, p.constraints()[1].atoms);
+    assert_ne!(p.constraints()[0].atoms(), p.constraints()[1].atoms());
     for c in p.constraints() {
-        assert_eq!(c.parameter.distance.value_in(NANOMETER).unwrap(), 0.15);
+        assert_eq!(c.parameter().distance().value_in(NANOMETER).unwrap(), 0.15);
     }
     assert!(p.charge_sources().iter().all(|s| matches!(s, ChargeSource::Library { parameter_ids } if parameter_ids == &["water-charge"])));
 }
@@ -63,8 +63,11 @@ fn composition_is_ordered_and_keeps_rosemary_model_and_unrelated_parameters() {
     let water = ForceField::from_offxml(&xml).unwrap();
     ff.append(&water).unwrap();
     assert_eq!(ff.charge_model(), model.as_ref());
-    assert_eq!(ff.label_molecule(&organic).unwrap().bonds, original.bonds);
-    assert_eq!(ff.label_molecule(&organic).unwrap().vdw, original.vdw);
+    assert_eq!(
+        ff.label_molecule(&organic).unwrap().bonds(),
+        original.bonds()
+    );
+    assert_eq!(ff.label_molecule(&organic).unwrap().vdw(), original.vdw());
     let topology = Arc::new(Topology::from_molecule((molecule("O")).clone()).unwrap());
     let p = ff
         .parameterize(
@@ -75,7 +78,7 @@ fn composition_is_ordered_and_keeps_rosemary_model_and_unrelated_parameters() {
     assert!(p
         .bonds()
         .iter()
-        .all(|t| t.parameter.source.id == "water-bond"));
+        .all(|t| t.parameter().source().id() == "water-bond"));
     assert_eq!(p.charges().value()[0], -0.8);
     let newer = ForceField::from_offxml(
         &xml.replace("water-charge", "new-charge")
@@ -97,9 +100,9 @@ fn composition_is_ordered_and_keeps_rosemary_model_and_unrelated_parameters() {
     assert!(reversed
         .label_molecule(&molecule("O"))
         .unwrap()
-        .bonds
+        .bonds()
         .values()
-        .all(|p| p.id != "water-bond"));
+        .all(|p| p.id() != "water-bond"));
 }
 
 #[test]
@@ -121,8 +124,8 @@ fn failed_composition_is_atomic_for_settings_and_model_conflicts() {
     assert_eq!(error.kind(), kekule_openff::ErrorKind::Composition);
     assert!(error.to_string().contains("NAGL models"));
     assert_eq!(
-        ff.label_molecule(&molecule("O")).unwrap().bonds,
-        original.bonds
+        ff.label_molecule(&molecule("O")).unwrap().bonds(),
+        original.bonds()
     );
     assert_eq!(
         ff.charge_model().unwrap().model_file(),
@@ -201,19 +204,19 @@ fn interactions_from_one_rule_share_one_parameter_allocation() {
     assert!(p
         .bonds()
         .iter()
-        .all(|b| Arc::ptr_eq(&b.parameter, &first.parameter)));
+        .all(|b| Arc::ptr_eq(b.parameter(), first.parameter())));
     assert!(p
         .bonds()
         .iter()
-        .any(|b| b.atoms[0].molecule() != first.atoms[0].molecule()));
+        .any(|b| b.atoms()[0].instance() != first.atoms()[0].instance()));
     assert!(p
         .angles()
         .iter()
-        .all(|a| Arc::ptr_eq(&a.parameter, &p.angles()[0].parameter)));
+        .all(|a| Arc::ptr_eq(a.parameter(), p.angles()[0].parameter())));
     assert!(p
         .constraints()
         .iter()
-        .all(|c| Arc::ptr_eq(&c.parameter, &p.constraints()[0].parameter)));
+        .all(|c| Arc::ptr_eq(c.parameter(), p.constraints()[0].parameter())));
     assert!(p.vdw().iter().all(|v| Arc::ptr_eq(v, &p.vdw()[0])));
 }
 
@@ -228,14 +231,14 @@ fn nonbonded_methods_are_typed_and_keep_smirnoff_spelling() {
             .clone()
     };
     let defaults = settings(WATER);
-    assert_eq!(defaults.vdw_periodic_method, VdwMethod::Cutoff);
-    assert_eq!(defaults.vdw_nonperiodic_method, VdwMethod::NoCutoff);
+    assert_eq!(defaults.vdw_periodic_method(), VdwMethod::Cutoff);
+    assert_eq!(defaults.vdw_nonperiodic_method(), VdwMethod::NoCutoff);
     assert_eq!(
-        defaults.electrostatics_periodic_method,
+        defaults.electrostatics_periodic_method(),
         ElectrostaticsMethod::Ewald3DConductingBoundary
     );
     assert_eq!(
-        defaults.electrostatics_nonperiodic_method,
+        defaults.electrostatics_nonperiodic_method(),
         ElectrostaticsMethod::Coulomb
     );
     assert_eq!(VdwMethod::NoCutoff.smirnoff_name(), "no-cutoff");
@@ -254,10 +257,10 @@ fn nonbonded_methods_are_typed_and_keep_smirnoff_spelling() {
                 r#"<Electrostatics version="0.4" periodic_potential="Coulomb""#,
             ),
     );
-    assert_eq!(changed.vdw_periodic_method, VdwMethod::NoCutoff);
-    assert_eq!(changed.vdw_nonperiodic_method, VdwMethod::Cutoff);
+    assert_eq!(changed.vdw_periodic_method(), VdwMethod::NoCutoff);
+    assert_eq!(changed.vdw_nonperiodic_method(), VdwMethod::Cutoff);
     assert_eq!(
-        changed.electrostatics_periodic_method,
+        changed.electrostatics_periodic_method(),
         ElectrostaticsMethod::Coulomb
     );
     let pme = settings(&WATER.replace(
@@ -265,7 +268,7 @@ fn nonbonded_methods_are_typed_and_keep_smirnoff_spelling() {
         r#"<Electrostatics version="0.4" periodic_potential="PME""#,
     ));
     assert_eq!(
-        pme.electrostatics_periodic_method,
+        pme.electrostatics_periodic_method(),
         ElectrostaticsMethod::Ewald3DConductingBoundary
     );
 }

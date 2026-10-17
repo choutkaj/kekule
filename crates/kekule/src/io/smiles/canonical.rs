@@ -154,7 +154,7 @@ fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, For
 fn double_bond_reference_hydrogens(mol: &Molecule) -> BTreeSet<AtomId> {
     let is_hydrogen = |atom: AtomId| {
         mol.atom(atom)
-            .is_ok_and(|atom| atom.element.atomic_number() == 1)
+            .is_some_and(|atom| atom.element.atomic_number() == 1)
     };
     let mut keep = BTreeSet::new();
     for (_, element) in mol.stereo_elements() {
@@ -168,7 +168,7 @@ fn double_bond_reference_hydrogens(mol: &Molecule) -> BTreeSet<AtomId> {
             let StereoCarrier::Atom(carrier) = carrier else {
                 continue;
             };
-            let only_hydrogens = mol.incident_bonds(endpoint).is_ok_and(|mut bonds| {
+            let only_hydrogens = mol.incident_bonds(endpoint).is_some_and(|mut bonds| {
                 bonds.all(|(_, bond)| {
                     let neighbor = bond.other_atom(endpoint);
                     neighbor == other || bond.order != BondOrder::Single || is_hydrogen(neighbor)
@@ -273,12 +273,12 @@ fn restore_projection_aromaticity(
     if let Some(aromaticity) = original.aromaticity_state() {
         projected.begin_aromaticity(aromaticity.model());
         for atom in aromaticity.atoms().filter_map(&atom_id) {
-            if projected.atom(atom).is_ok() {
+            if projected.atom(atom).is_some() {
                 projected.set_atom_aromatic(atom, true);
             }
         }
         for bond in aromaticity.bonds().filter_map(&bond_id) {
-            if projected.bond(bond).is_ok() {
+            if projected.bond(bond).is_some() {
                 projected.set_bond_aromatic(bond, true);
             }
         }
@@ -291,9 +291,9 @@ fn canonical_atom_style(mol: &Molecule) -> CanonicalAtomStyle {
         .any(|(_, element)| match &element.kind {
             StereoElementKind::DoubleBond(value) => [value.left, value.right]
                 .iter()
-                .any(|atom| mol.atom_is_aromatic(*atom).ok().flatten() == Some(true)),
+                .any(|atom| mol.atom_is_aromatic(*atom) == Some(true)),
             StereoElementKind::Tetrahedral(value) => {
-                mol.atom_is_aromatic(value.center).ok().flatten() == Some(true)
+                mol.atom_is_aromatic(value.center) == Some(true)
             }
             StereoElementKind::Axis(_) => false,
         })
@@ -395,7 +395,7 @@ fn canonical_smiles_atom_representation(
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<(Atom, bool, u8), FormatError> {
-    let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
+    let aromatic = mol.atom_is_aromatic(atom_id) == Some(true);
     let perceived_hydrogens = mol.perception().inferred_hydrogens(atom_id);
     let inferred_hydrogens = perceived_hydrogens.unwrap_or(0);
     let aromatic = aromatic && !matches!(atom_style, CanonicalAtomStyle::StoredKekule);
@@ -410,7 +410,7 @@ fn canonical_smiles_atom_representation(
     if smiles_atom_requires_brackets(&payload, aromatic, inferred_hydrogens) {
         if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() {
             return Err(SMILES_WRITE.missing_perception(format!(
-                "canonical SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
+                "canonical SMILES bracket {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
             )));
         }
         payload.hydrogens = ImplicitHydrogens::Fixed(
@@ -694,7 +694,7 @@ fn smiles_bond_valence_sum(mol: &Molecule, atom_id: AtomId, stored_kekule: bool)
     mol.incident_bonds(atom_id)
         .expect("the writer visits live atoms")
         .map(|(bond_id, bond)| {
-            if mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true) && !stored_kekule {
+            if mol.bond_is_aromatic(bond_id) == Some(true) && !stored_kekule {
                 return 1;
             }
             match bond.order {

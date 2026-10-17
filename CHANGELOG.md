@@ -105,6 +105,214 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `Atom` has private fields. Build one with `Atom::new` and
+  `with_element`, `with_isotope`, `with_formal_charge`, `with_radical`,
+  `with_hydrogens` and `with_atom_map`; read it with the same-named getters;
+  change an atom in a molecule through the `AtomMut` setters (`set_element`,
+  `set_isotope`, …).
+  - The isotope is `Option<NonZeroU16>` and the atom map
+    `Option<NonZeroU32>`, so mass number 0 and atom map 0 are not
+    representable. SMILES `[0C]` and `[CH4:0]` and Molfile atom map 0 read
+    as no isotope and no atom map, as isotope 0 already did, so `[CH4:0]`
+    now writes `[CH4]`; Molfile writers no longer have an atom-map-0 error.
+- **Breaking:** Stereo carriers have a fixed count:
+  `TetrahedralStereo::carriers` is `[StereoCarrier; 4]` and
+  `AxisStereo::carriers` is `[StereoCarrier; 2]`, so
+  `StereoValidationIssue::InvalidAxisCarrierCount` is gone.
+  `InvalidTetrahedralCarrierCount` remains for source readers that resolve
+  the wrong number of neighbours. `StereoElement::group` is private behind
+  `group()`; set it through the editor's stereo-group operations.
+- **Breaking:** `AtomRadical::new(1, None)` records a doublet: one radical
+  electron always has spin multiplicity 2, so it equals
+  `AtomRadical::new(1, Some(2))`, and Molfile writers encode it as radical
+  code 2 instead of rejecting it.
+- **Breaking:** `Element` has a constant per element (`Element::H` …
+  `Element::OG`), implements `FromStr` and `TryFrom<u8>`, and the new
+  `ElementError` reports an unknown symbol or atomic number.
+- **Breaking:** Topology handles follow one convention (ARCHITECTURE.md,
+  "Units, topology handles, and traits"): `topology()` returns `&Topology`
+  and `shared_topology()` returns `Arc<Topology>`.
+  - `TopologyQueryMatch`, `ParameterizedTopology` and potentials
+    `Evaluation` return `&Topology` from `topology()` and gain
+    `shared_topology()`; `Potential::topology` returns `&Topology`, and
+    `OpenFfPotential::shared_topology` returns the handle.
+    `ModelEditor::topology()` is `topology_editor()`.
+  - Constructors that store the topology take `impl Into<Arc<Topology>>`
+    instead of `&Arc<Topology>`: every `AtomSelection` and `BondSelection`
+    constructor, `AtomCorrespondence::{from_pairs, from_same_layout}`,
+    `BondDihedral::new`, `{Distance,Angle,Dihedral}Edit::{new,
+    with_moving_atoms}`, `SolvationRadii::new`, `FrameBuffer::new`,
+    `MemoryTrajectoryWriter::new` and the `kekule-traj` writers; pass
+    `Arc::clone(&topology)` or an owned topology. `ensure_compatible` and
+    `semantic_ids` take `&Topology`.
+  - `Topology::subset(self: &Arc<Self>, ..)` is the associated function
+    `Topology::subset(source, selection)`, and `Topology::to_editor` takes
+    `&self` and copies the topology; edit a shared snapshot without copying
+    through `TopologyEditor::from_topology(Arc::clone(&topology))`.
+  - `Model` and `Evaluation` equality compare topologies with
+    `shares_layout` instead of `Arc` pointer identity.
+- **Breaking:** `AsModelView` and `ScaleValue` are sealed. `FrameBuffer` no
+  longer implements `AsModelView`; pass `buffer.as_model_view()`. The
+  extension traits `TrajectoryReader`, `SeekableTrajectoryReader`,
+  `TrajectoryWriter` and `Potential` document the contract implementors
+  keep.
+- **Breaking:** Frame indices and counts are `usize`:
+  `SeekableTrajectoryReader::{frame_count, read_frame}`,
+  `TrajectoryIoError::{frame, with_frame, frame_index_out_of_range}`,
+  `FileTrajectoryMetadata::{declared_frame_count, indexed_frame_count}` and
+  `TrajectoryIoLimits::max_frames`; `u64` remains for byte offsets.
+- **Breaking:** Identifiers display in one style, `<kind> <number>`:
+  `atom 5`, `bond 5`, `stereo element 5`, `stereo group 5`, `query atom 5`,
+  `query bond 5`, `chain 5`, `residue 5`, `atom site 5`, `definition 5`,
+  `instance 5`, `atom index 5`, `bond index 5`, `instance 2:atom 5`, and
+  `edit atom 5` and so on for editor handles (were `a5`, `molecule2:a5`,
+  `atom-index5`, `edit-atom5`, …).
+- **Breaking:** Names follow the instance and definition vocabulary, and
+  counts are `*_count()`: `Topology::{molecule, molecules}` are
+  `Topology::{instance, instances}`, `AtomView::molecule` and
+  `BondView::molecule` are `instance` (they return an `InstanceView`), and
+  `InstanceAtomId::molecule`, `InstanceBondId::molecule` and
+  `InstanceProvenance::molecule` are `instance`. `FitAtoms::len` is
+  `pair_count` and `DistanceMatrix::len` is `member_count`.
+- **Breaking:** Every public value with a physical dimension is a `Quantity`,
+  and no public name carries a unit (ARCHITECTURE.md, "Units, topology
+  handles, and traits").
+  - `Element::{covalent_radius_angstrom, van_der_waals_radius_bohr,
+    van_der_waals_radius_angstrom, dipole_polarizability_bohr3}` become
+    `covalent_radius()`, `van_der_waals_radius(source)` and
+    `dipole_polarizability()`, each `Option<Quantity<f64>>` in the tabulated
+    unit (ångström, bohr, cubic bohr). `ElementReferenceData` and
+    `Element::reference_data` are removed; the citations moved to the
+    accessors.
+  - `DsspResidue::{phi, psi, omega, alpha, kappa}` (were `*_degrees`) return
+    `Option<Quantity<f64>>` in degrees, and `DsspHydrogenBond::energy()`
+    (was `energy_kcal_per_mol`) returns kJ/mol.
+  - `RigidTransform::new` takes the translation as a `Quantity<Vector3>` and
+    `translation()` returns one; `RigidTransformError` gains `Unit` and is
+    no longer `Copy` or `Eq`.
+  - `PeriodicGeometry::{fractional, minimum_image, nearest_image}` take and
+    `cartesian`, `minimum_image`, `nearest_image` and `shortest_translation`
+    return length quantities; `PeriodicGeometryError` gains `Unit` and is no
+    longer `Copy` or `Eq`. `PeriodicCell::signed_volume` returns a volume quantity.
+  - `Quantity::is_close` takes its absolute tolerance as a quantity.
+  - `kekule-traj`: `XtcWriteOptions::with_precision` takes and `precision()`
+    returns an inverse length (`units::PER_NANOMETER`);
+    `DcdWriteOptions::with_header_delta` takes `DELTA` as a time quantity,
+    stored in the time policy's unit (the canonical time unit for
+    `DcdTimePolicy::Absent`), and returns `Result`; `delta()` returns a
+    quantity; `CoordinateEncoding::Lossy` carries `resolution` as a length
+    quantity and loses `unit`.
+  - `Quantity` no longer implements `Deref` or `DerefMut` and has no
+    `value_mut`; read the stored value with `value()` or `into_value()`.
+  - The panicking `Mul` and `Div` between units, between scalar quantities,
+    and `Unit::powi` are removed; `try_mul`, `try_div` and `try_powi`
+    remain, so unit composition never panics.
+  - `Dimension::new([i32; 7])` is replaced by `Dimension::with_exponent`,
+    which does not depend on the number of base dimensions.
+  - `CANONICAL_MASS_UNIT` is `CANONICAL_MOLAR_MASS_UNIT`. New:
+    `CANONICAL_AREA_UNIT`, `CUBIC_BOHR`, `CUBIC_NANOMETER`, `PER_NANOMETER`
+    and `units::constants::{AVOGADRO, MOLAR_GAS_CONSTANT}`.
+- **Breaking:** Every public enum is `#[non_exhaustive]` (ARCHITECTURE.md,
+  "Options, results, and enums"), so matches outside the crate need a
+  wildcard arm. This now includes `BondOrder`, `StereoElementKind`,
+  `StereoCarrier`, `StereoDescriptor`, `StereoGroupKind`,
+  `ImplicitHydrogens`, the perception model enums, `MoleculeClass`,
+  `ResidueClass`, `EntityKind`, `ModelSelection`, `AltLocPolicy`,
+  `FitAtoms`, `Weighting`, `Reference`, `ConnectivityCheck`,
+  `MatchCompletion`, `QueryPerception`, the property value enums, the
+  solvation enums, the Molfile, PDB and SMILES document enums,
+  `ChargeSource`, `VdwMethod`, `ElectrostaticsMethod` and
+  `MinimizationStatus`. Six enums are closed, and their documentation says
+  why: `TetrahedralOrientation`, `DoubleBondOrientation`, `AxisOrientation`,
+  `CorrespondenceSide`, `BaseDimension` and `DcdEndian` (the last two lose
+  `#[non_exhaustive]`).
+- **Breaking:** `bool` parameters and fields that select a mode are enums:
+  `AddHydrogensOptions::with_fixed_only(bool)` is
+  `with_scope(AddHydrogensScope::{All, FixedOnly})`,
+  `ValenceOptions::with_strict(bool)` is
+  `with_validation(ValenceValidation::{Strict, Permissive})`,
+  `StructureInterpretOptions` and `StructureEnsembleInterpretOptions`
+  `with_strict_entity_metadata(bool)` is
+  `with_entity_metadata(EntityMetadataPolicy::{InferMissing, RequireDeclared})`,
+  `Trajectory::validate_monotonic_time(bool)` takes
+  `MissingTimePolicy::{Skip, Reject}`, and `DsspBetaPartner::parallel()` is
+  `direction()` (`DsspBridgeDirection::{Parallel, Antiparallel}`). Feature
+  switches such as `RotatableBondOptions::with_include_ring_bonds` stay
+  `bool`.
+- **Breaking:** Results, reports and their records have private fields with
+  accessors and no `Default` (ARCHITECTURE.md, "Options, results, and
+  enums"); a field `report.added` is now `report.added()`, and collections
+  are returned as slices. This covers `AddHydrogensReport`,
+  `AddedHydrogen`, `RemoveHydrogensReport`, `RemovedHydrogen`,
+  `RetainedHydrogen`, `HydrogenCountAdjustment`, `CipAssignmentReport`,
+  `CipAssignment`, `CipSkipped`, `CoordinateStereoResult`,
+  `CoordinateStereoMaterializationReport`, `StereoCleanupReport`,
+  `ModelAppendReport`, `SolvationReport`, `DsspResidueSource`,
+  `DsspHydrogenBond`, `DsspBetaPartner`, `DsspSkippedResidue`,
+  `SourceResidueId`, `AltLocResidue`, `AltLocDecision`, the `kekule-openff`
+  parameter types (`ParameterIdentity`, `BondParameter`, `AngleParameter`,
+  `TorsionTerm`, `TorsionParameter`, `VdwParameter`, `ConstraintParameter`,
+  `Interaction`, `PairException`, `NonbondedSettings`, `MoleculeLabels`,
+  `ChargeAssignment`), `kekule-potentials` `EnergyComponent`,
+  `MinimizationStep` and `ComponentEvaluation`, and `kekule-traj`
+  `TrajectoryFieldAvailability`.
+  - `SourceResidueId::from_parts` builds a residue identity, for example to
+    name an override.
+  - `AltLocSelection` and `AtomSiteMetadata` are inputs and follow the
+    options style: getters and `with_*` setters, keeping `Default`.
+    `AltLocSelection::default` is `default_preference()` /
+    `with_default_preference`, and `with_override(residue, label)` adds one
+    override.
+- **Breaking:** Options structs have private fields, `Default`, getters and
+  `#[must_use]` chainable `with_*` setters (ARCHITECTURE.md, "Options,
+  results, and enums"); struct literals such as
+  `SubstructureMatchOptions { max_matches: 5, ..Default::default() }` become
+  `SubstructureMatchOptions::default().with_max_matches(5)?`. Presets stay:
+  `RotatableBondOptions::{STRICT, GENERAL}`, `SmilesWriteOptions::{ordinary,
+  isomeric, canonical}`, `RingPerceptionOptions::{membership_only, for_graph,
+  for_molecule}` and `AromaticityOptions::{for_graph, for_molecule}`. This
+  covers every `kekule` options and limits struct, `MinimizeOptions` in
+  `kekule-potentials` and `TrajectoryIoLimits` in `kekule-traj`.
+  - Setters that can receive an invalid value return `Result` with the error
+    the operation used to report, so an invalid options value cannot be
+    built: `StereoSearchOptions::{with_max_atoms, with_max_search_states}`
+    (`StereoSearchError::InvalidLimit`), `SubstructureMatchOptions::{with_max_matches,
+    with_max_search_states, with_max_query_atoms, with_max_candidate_pairs}`
+    (`SubstructureMatchError::InvalidLimit`),
+    `DsspOptions::with_min_polyproline_stretch`
+    (`DsspError::InvalidPolyprolineStretch`),
+    `MmcifWriteOptions::{with_block_name, with_coordinate_precision}`,
+    `SmilesParseOptions::{with_max_atoms, with_max_bonds}`, every
+    `SmartsParseOptions` bound, and
+    `StructureEnsembleInterpretOptions::with_model_ids` (all `FormatError`
+    with the former kind and detail), and
+    `MinimizeOptions::{with_gradient_tolerance, with_max_step, with_memory,
+    with_max_line_search_evaluations}` (`MinimizationError`).
+  - The `kekule-traj` options gain getters for every setting, and
+    `DcdWriteOptions::with_cells(bool)` becomes
+    `with_cell_policy(DcdCellPolicy::{Omit, Write})`.
+- **Breaking:** Identity lookups return `Option` (ARCHITECTURE.md, "Lookups,
+  errors, and panics"); `None` means the ID names nothing in the owner.
+  Searches by label or name keep `Result`.
+  - `Graph::{atom, bond, neighbors, incident_bonds, bond_between,
+    stereo_element, stereo_group}` and the same `QueryGraph` lookups.
+    `bond_between` returns `Option<BondId>`, `None` also when either atom is
+    missing.
+  - `Hierarchy::{chain, residue, atom_site}`, `TopologyBuilder::definition`,
+    `TopologyEditor::{atom, bond, atom_handle, bond_handle, chain, residue,
+    atom_site, chain_handle, residue_handle}`, `ModelAppend::{atom, bond,
+    chain, residue, atom_site}` and `MoleculeEditor::{atom_mut, bond_mut}`.
+  - `Model::position`, `ModelView::position`, `ModelBuilder::position` and
+    `ModelEditor::position` return `Option<Quantity<Point3>>`.
+    `Positions::position_at` is now `Positions::get`, and
+    `Positions::set_position_at` is `Positions::set`.
+  - Per-atom reads no longer return `Result<Option<_>>`:
+    `Molecule`/`MoleculeEditor::{explicit_hydrogens, implicit_hydrogens,
+    total_hydrogens, atom_is_aromatic, bond_is_aromatic, atom_is_conjugated,
+    bond_is_conjugated, cip_descriptor}` return `Option`, as do
+    `occupancy` and `b_factor` on models, views, members and
+    `ModelEditor`. `None` covers both an unset value and an ID or index that
+    names nothing.
 - **Breaking:** Errors follow one policy (ARCHITECTURE.md, "Lookups, errors,
   and panics"). Which inputs fail is unchanged; callers update the error
   types they name and match.

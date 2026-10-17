@@ -41,15 +41,15 @@ impl ModelState {
         atom: TopologyAtomIndex,
         position: Quantity<Point3>,
     ) -> Result<(), StructureError> {
-        Ok(self.positions.set_position_at(atom.index(), position)?)
+        Ok(self.positions.set(atom.index(), position)?)
     }
 
     pub(crate) fn properties_mut(&mut self) -> StructurePropertiesMut<'_> {
         StructurePropertiesMut::new(&mut self.properties)
     }
 
-    pub(crate) fn occupancy(&self, atom: TopologyAtomIndex) -> Result<Option<f64>, StructureError> {
-        self.occupancies.get(atom, self.positions.len())
+    pub(crate) fn occupancy(&self, atom: TopologyAtomIndex) -> Option<f64> {
+        self.occupancies.get(atom)
     }
 
     pub(crate) fn set_occupancy(
@@ -61,13 +61,8 @@ impl ModelState {
         self.occupancies.set(atom, len, value)
     }
 
-    pub(crate) fn b_factor(
-        &self,
-        atom: TopologyAtomIndex,
-    ) -> Result<Option<Quantity<f64>>, StructureError> {
-        Ok(b_factor_quantity(
-            self.b_factors.get(atom, self.positions.len())?,
-        ))
+    pub(crate) fn b_factor(&self, atom: TopologyAtomIndex) -> Option<Quantity<f64>> {
+        b_factor_quantity(self.b_factors.get(atom))
     }
 
     pub(crate) fn set_b_factor(

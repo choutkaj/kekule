@@ -306,7 +306,7 @@ fn imaging_expands_anchor_atoms_to_molecules_and_centers_complete_groups() {
     );
     let mut trajectory = Trajectory::from_items(topology.clone(), [source]).unwrap();
     let anchors = AtomSelection::from_indices(
-        &topology,
+        Arc::clone(&topology),
         [TopologyAtomIndex::new(0), TopologyAtomIndex::new(3)],
     )
     .unwrap();
@@ -341,17 +341,17 @@ fn imaging_rejects_empty_or_foreign_anchors_and_preserves_nonperiodic_coordinate
         [frame(&[[0.9, 2.0, 3.0], [0.1, 2.1, 3.2]], Some(cell))],
     )
     .unwrap();
-    let empty = AtomSelection::from_atoms(&topology, []).unwrap();
+    let empty = AtomSelection::from_atoms(Arc::clone(&topology), []).unwrap();
     assert!(matches!(
         imaged(&trajectory, &empty),
         Err(PeriodicError::EmptyAnchors)
     ));
-    let foreign = AtomSelection::all(&linear_carbon_topology(2));
+    let foreign = AtomSelection::all(Arc::clone(&linear_carbon_topology(2)));
     assert!(matches!(
         imaged(&trajectory, &foreign),
         Err(PeriodicError::SelectionTopologyMismatch)
     ));
-    let imaged = imaged(&trajectory, &AtomSelection::all(&topology)).unwrap();
+    let imaged = imaged(&trajectory, &AtomSelection::all(Arc::clone(&topology))).unwrap();
     close(xyz(&imaged, 0)[0], [0.4, 2.0, 3.0]);
     close(xyz(&imaged, 0)[1], [0.6, 2.1, 3.2]);
 }
@@ -436,7 +436,7 @@ fn periodic_failures_are_transactional_and_include_frame_context() {
         Err(PeriodicError::MissingCell { frame: 1 })
     ));
     assert!(matches!(
-        periodic::image_molecules(&mut missing, &AtomSelection::all(&topology)),
+        periodic::image_molecules(&mut missing, &AtomSelection::all(Arc::clone(&topology))),
         Err(PeriodicError::MissingCell { frame: 1 })
     ));
     assert_eq!(format!("{missing:?}"), before);
@@ -484,7 +484,7 @@ fn empty_trajectories_and_single_atom_molecules_need_no_special_cases() {
     let topology = linear_carbon_topology(1);
     let empty = Trajectory::new(topology.clone());
     assert!(whole(&empty).unwrap().is_empty());
-    assert!(imaged(&empty, &AtomSelection::all(&topology))
+    assert!(imaged(&empty, &AtomSelection::all(Arc::clone(&topology)))
         .unwrap()
         .is_empty());
     assert!(unwrapped(&empty).unwrap().is_empty());

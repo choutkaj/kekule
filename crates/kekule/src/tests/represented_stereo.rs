@@ -17,11 +17,7 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
         StereoElement {
             kind: StereoElementKind::Tetrahedral(TetrahedralStereo {
                 center,
-                carriers: vec![
-                    StereoCarrier::Atom(a),
-                    StereoCarrier::Atom(a),
-                    StereoCarrier::Atom(a),
-                ],
+                carriers: [StereoCarrier::Atom(a); 4],
                 orientation: None,
             }),
             group: None,
@@ -41,13 +37,6 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
     let error = stereo_api::validate_stereo(mol.working()).expect_err("invalid stored stereo");
 
     assert!(mol.stereo_elements().next().is_some());
-    assert!(error
-        .issues
-        .contains(&StereoValidationIssue::InvalidTetrahedralCarrierCount {
-            element,
-            center,
-            carrier_count: 3,
-        }));
     assert!(error
         .issues
         .contains(&StereoValidationIssue::DuplicateTetrahedralCarrier {
@@ -90,7 +79,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers,
+                carriers: carriers.try_into().unwrap(),
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
         )))
@@ -107,7 +96,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
-                carriers: atom_carriers,
+                carriers: atom_carriers.try_into().unwrap(),
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
         )))
@@ -158,7 +147,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         &mut axis,
         StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis: axis_bond,
-            carriers: vec![
+            carriers: [
                 StereoCarrier::ImplicitHydrogen,
                 StereoCarrier::ImplicitLonePair,
             ],
@@ -342,10 +331,7 @@ fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() 
     stereo_api::coordinates::materialize_coordinate_stereo(
         &mut editor,
         &positions,
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .unwrap();
     let axis = editor.finish().unwrap();
@@ -406,7 +392,7 @@ fn stereo_validation_accepts_structural_axis_elements() {
     let valid_axis = mol
         .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis,
-            carriers: vec![
+            carriers: [
                 StereoCarrier::Atom(left_carrier),
                 StereoCarrier::Atom(right_carrier),
             ],
@@ -422,7 +408,10 @@ fn stereo_validation_accepts_structural_axis_elements() {
         &mut mol,
         StereoElement::new(StereoElementKind::Axis(AxisStereo {
             axis,
-            carriers: vec![StereoCarrier::Atom(left_carrier)],
+            carriers: [
+                StereoCarrier::Atom(left),
+                StereoCarrier::Atom(right_carrier),
+            ],
             orientation: Some(AxisOrientation::CounterClockwise),
         })),
     );
@@ -431,10 +420,16 @@ fn stereo_validation_accepts_structural_axis_elements() {
 
     assert_eq!(
         error.issues,
-        vec![StereoValidationIssue::InvalidAxisCarrierCount {
-            element: invalid_axis,
-            axis,
-            carrier_count: 1,
-        }]
+        vec![
+            StereoValidationIssue::AxisCarrierIsFocusAtom {
+                element: invalid_axis,
+                axis,
+                carrier: left,
+            },
+            StereoValidationIssue::AxisCarrierEndpointMismatch {
+                element: invalid_axis,
+                axis,
+            },
+        ]
     );
 }

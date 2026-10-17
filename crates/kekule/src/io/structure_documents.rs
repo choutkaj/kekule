@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::chemistry::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
@@ -27,10 +28,23 @@ use super::staged_coordinates::StagedCoordinates;
 /// Policy for Molfile and SDF record interpretation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MolfileInterpretOptions {
+    unsupported: UnsupportedContent,
+}
+
+impl MolfileInterpretOptions {
     /// What to do with [`MolfileDocument::unsupported`] content. It fails
     /// interpretation by default; [`UnsupportedContent::Report`] omits it and
     /// lists it in [`MolfileInterpretation::omitted`].
-    pub unsupported: UnsupportedContent,
+    pub const fn unsupported(&self) -> UnsupportedContent {
+        self.unsupported
+    }
+
+    /// Sets [`Self::unsupported`].
+    #[must_use]
+    pub const fn with_unsupported(mut self, unsupported: UnsupportedContent) -> Self {
+        self.unsupported = unsupported;
+        self
+    }
 }
 
 /// A Molfile interpretation failure, located at the source line it concerns
@@ -69,7 +83,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
     let mut value = Atom::new(element);
     value.formal_charge = i8::try_from(atom.formal_charge)
         .map_err(|_| invalid("formal charge is outside i8 range".to_owned()))?;
-    value.isotope = atom.isotope;
+    value.isotope = atom.isotope.and_then(NonZeroU16::new);
     if let Some(difference) = atom.mass_difference {
         let nominal = crate::descriptors::mass_difference_reference(element).ok_or_else(|| {
             interpret_error_at(
@@ -84,7 +98,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
         value.isotope = Some(
             nominal
                 .checked_add_signed(i16::from(difference))
-                .filter(|&mass| mass > 0)
+                .and_then(std::num::NonZeroU16::new)
                 .ok_or_else(|| {
                     invalid(format!(
                         "V2000 mass difference {difference} gives no mass number for {}",
@@ -105,7 +119,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
     } else {
         ImplicitHydrogens::Inferred
     };
-    value.atom_map = atom.atom_map;
+    value.atom_map = atom.atom_map.and_then(NonZeroU32::new);
     Ok(value)
 }
 
@@ -129,7 +143,7 @@ fn apply_molfile_declared_valence(
         )
     };
     let represented_valence = molecule
-        .incident_bonds(atom)
+        .require_incident_bonds(atom)
         .map_err(|error| {
             interpret_error_at(DiagnosticKind::Chemistry, location, "invalid graph atom")
                 .with_source(error)
@@ -399,7 +413,7 @@ impl MolfileInterpretation {
 
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.topology()
-            .molecules()
+            .instances()
             .map(|instance| instance.molecule())
     }
 
@@ -754,7 +768,7 @@ fn install_v3000_atom_cfg(
         let is_hydrogen = |carrier: &crate::stereo::StereoCarrier| match carrier {
             crate::stereo::StereoCarrier::Atom(atom) => molecule
                 .atom(*atom)
-                .is_ok_and(|atom| atom.element.symbol() == "H"),
+                .is_some_and(|atom| atom.element.symbol() == "H"),
             crate::stereo::StereoCarrier::ImplicitHydrogen => true,
             crate::stereo::StereoCarrier::ImplicitLonePair => false,
         };
@@ -815,7 +829,9 @@ fn install_v3000_atom_cfg(
                 .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
                     TetrahedralStereo {
                         center,
-                        carriers,
+                        carriers: carriers
+                            .try_into()
+                            .expect("source tetrahedral carriers number four"),
                         orientation,
                     },
                 )))
@@ -907,7 +923,7 @@ pub(super) fn molfile_stereo_group_members_at_atom(
                 StereoElementKind::Tetrahedral(stereo) => stereo.center == atom,
                 StereoElementKind::Axis(stereo) => molecule
                     .bond(stereo.axis)
-                    .is_ok_and(|bond| bond.a() == atom || bond.b() == atom),
+                    .is_some_and(|bond| bond.a() == atom || bond.b() == atom),
                 StereoElementKind::DoubleBond(_) => false,
             };
             matches.then_some(id)
@@ -920,7 +936,7 @@ pub(super) fn materialize_molfile_stereo_hydrogens(
     centers: impl IntoIterator<Item = AtomId>,
 ) {
     for center in centers {
-        let Ok(atom) = molecule.atom(center) else {
+        let Some(atom) = molecule.atom(center) else {
             continue;
         };
         // Molfile's omitted fourth substituent is an implicit hydrogen when
@@ -928,7 +944,7 @@ pub(super) fn materialize_molfile_stereo_hydrogens(
         // fixed carrier before the represented-only normalization kernel runs.
         // No installed perception or unmarked coordinate inference is involved.
         if !atom.hydrogens.is_inferred()
-            || molecule.incident_bonds(center).ok().map(Iterator::count) != Some(3)
+            || molecule.incident_bonds(center).map(Iterator::count) != Some(3)
             || crate::algorithms::rdkit_inferred_hydrogen_count(molecule, center, atom) != 1
         {
             continue;
@@ -1060,7 +1076,7 @@ fn partition_molfile_staging(
             StagedCoordinates::with_atom_capacity(old_atoms.len(), geometry.unit())
                 .map_err(chemistry)?;
         for old in &old_atoms {
-            let atom = graph.atom(*old).map_err(chemistry)?;
+            let atom = graph.require_atom(*old).map_err(chemistry)?;
             let new = editor.add_atom(atom.clone()).map_err(chemistry)?;
             if let Some(point) = geometry.position(*old) {
                 component_geometry
@@ -1165,7 +1181,7 @@ mod stereo_group_tests {
                 editor
                     .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
                         axis: bond,
-                        carriers: vec![StereoCarrier::Atom(left), StereoCarrier::Atom(right)],
+                        carriers: [StereoCarrier::Atom(left), StereoCarrier::Atom(right)],
                         orientation: Some(AxisOrientation::Clockwise),
                     })))
                     .unwrap(),

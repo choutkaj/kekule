@@ -143,7 +143,7 @@ pub(super) fn matches_constraint(
             let bond = query.bond(*bond).expect("validated query stereo bond");
             let a = mapping[bond.a().index()];
             let b = mapping[bond.b().index()];
-            let Ok(Some(target_bond)) = target.bond_between(a, b) else {
+            let Some(target_bond) = target.bond_between(a, b) else {
                 return false;
             };
             let stereo = target

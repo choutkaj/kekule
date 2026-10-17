@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 
-use kekule::units::Unit;
+use kekule::units::Quantity;
 
 use crate::{TrajectoryFormat, TrajectoryIoError};
 
@@ -27,13 +27,43 @@ pub enum FieldAvailability {
 /// Field-presence contract reported by a selected codec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrajectoryFieldAvailability {
-    pub positions: FieldAvailability,
-    pub cell: FieldAvailability,
-    pub velocities: FieldAvailability,
-    pub forces: FieldAvailability,
-    pub time: FieldAvailability,
-    pub step: FieldAvailability,
-    pub properties: FieldAvailability,
+    pub(crate) positions: FieldAvailability,
+    pub(crate) cell: FieldAvailability,
+    pub(crate) velocities: FieldAvailability,
+    pub(crate) forces: FieldAvailability,
+    pub(crate) time: FieldAvailability,
+    pub(crate) step: FieldAvailability,
+    pub(crate) properties: FieldAvailability,
+}
+
+impl TrajectoryFieldAvailability {
+    pub const fn positions(&self) -> FieldAvailability {
+        self.positions
+    }
+
+    pub const fn cell(&self) -> FieldAvailability {
+        self.cell
+    }
+
+    pub const fn velocities(&self) -> FieldAvailability {
+        self.velocities
+    }
+
+    pub const fn forces(&self) -> FieldAvailability {
+        self.forces
+    }
+
+    pub const fn time(&self) -> FieldAvailability {
+        self.time
+    }
+
+    pub const fn step(&self) -> FieldAvailability {
+        self.step
+    }
+
+    pub const fn properties(&self) -> FieldAvailability {
+        self.properties
+    }
 }
 
 /// Scalar representation used by native coordinate payloads.
@@ -55,8 +85,8 @@ pub enum CoordinateEncoding {
     },
     Lossy {
         precision: ScalarPrecision,
-        resolution: f64,
-        unit: Unit,
+        /// The nominal coordinate resolution, a length.
+        resolution: Quantity<f64>,
     },
 }
 
@@ -78,8 +108,8 @@ pub enum RandomAccessCapability {
 pub struct FileTrajectoryMetadata {
     format: TrajectoryFormat,
     atom_count: usize,
-    declared_frame_count: Option<u64>,
-    indexed_frame_count: Option<u64>,
+    declared_frame_count: Option<usize>,
+    indexed_frame_count: Option<usize>,
     fields: TrajectoryFieldAvailability,
     coordinate_encoding: CoordinateEncoding,
     random_access: RandomAccessCapability,
@@ -95,11 +125,11 @@ impl FileTrajectoryMetadata {
         self.atom_count
     }
 
-    pub const fn declared_frame_count(&self) -> Option<u64> {
+    pub const fn declared_frame_count(&self) -> Option<usize> {
         self.declared_frame_count
     }
 
-    pub const fn indexed_frame_count(&self) -> Option<u64> {
+    pub const fn indexed_frame_count(&self) -> Option<usize> {
         self.indexed_frame_count
     }
 
@@ -119,7 +149,7 @@ impl FileTrajectoryMetadata {
         self.variant.as_deref()
     }
 
-    pub(super) fn xyz(atom_count: usize, indexed_frame_count: Option<u64>) -> Self {
+    pub(super) fn xyz(atom_count: usize, indexed_frame_count: Option<usize>) -> Self {
         Self {
             format: TrajectoryFormat::Xyz,
             atom_count,
@@ -146,7 +176,7 @@ impl FileTrajectoryMetadata {
         }
     }
 
-    pub(super) fn dcd(header: &dcd::DcdHeader, indexed_frame_count: Option<u64>) -> Self {
+    pub(super) fn dcd(header: &dcd::DcdHeader, indexed_frame_count: Option<usize>) -> Self {
         Self {
             format: TrajectoryFormat::Dcd,
             atom_count: header.atom_count(),
@@ -179,7 +209,7 @@ impl FileTrajectoryMetadata {
 
     pub(super) fn trr(
         header: &trr::TrrFrameHeader,
-        indexed_frame_count: Option<u64>,
+        indexed_frame_count: Option<usize>,
         precision_mixed: bool,
     ) -> Self {
         let precision = if precision_mixed {
@@ -244,13 +274,12 @@ impl FileTrajectoryMetadata {
     pub(super) fn xtc(
         info: &xtc::XtcFrameInfo,
         cell_policy: xtc::XtcCellPolicy,
-        indexed_frame_count: Option<u64>,
+        indexed_frame_count: Option<usize>,
     ) -> Self {
         let coordinate_encoding = match info.precision() {
             Some(precision) => CoordinateEncoding::Lossy {
                 precision: ScalarPrecision::Float32,
-                resolution: 1.0 / f64::from(precision),
-                unit: kekule::units::NANOMETER,
+                resolution: Quantity::new(1.0 / f64::from(precision), kekule::units::NANOMETER),
             },
             None => CoordinateEncoding::Lossless {
                 precision: ScalarPrecision::Float32,
@@ -386,33 +415,64 @@ impl Default for TrajectoryOpenOptions {
 }
 
 impl TrajectoryOpenOptions {
+    #[must_use]
     pub fn with_format_hint(mut self, format_hint: TrajectoryFormatHint) -> Self {
         self.format_hint = format_hint;
         self
     }
 
+    #[must_use]
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
     }
 
+    #[must_use]
     pub fn with_xyz_options(mut self, options: xyz::XyzReadOptions) -> Self {
         self.xyz = options;
         self
     }
 
+    #[must_use]
     pub fn with_dcd_options(mut self, options: dcd::DcdReadOptions) -> Self {
         self.dcd = options;
         self
     }
 
+    #[must_use]
     pub fn with_trr_options(mut self, options: trr::TrrReadOptions) -> Self {
         self.trr = options;
         self
     }
 
+    #[must_use]
     pub fn with_xtc_options(mut self, options: xtc::XtcReadOptions) -> Self {
         self.xtc = options;
         self
+    }
+
+    pub const fn format_hint(&self) -> TrajectoryFormatHint {
+        self.format_hint
+    }
+
+    /// Limits for path readers, which override those of the format options.
+    pub const fn limits(&self) -> &TrajectoryIoLimits {
+        &self.limits
+    }
+
+    pub const fn xyz_options(&self) -> &xyz::XyzReadOptions {
+        &self.xyz
+    }
+
+    pub const fn dcd_options(&self) -> &dcd::DcdReadOptions {
+        &self.dcd
+    }
+
+    pub const fn trr_options(&self) -> &trr::TrrReadOptions {
+        &self.trr
+    }
+
+    pub const fn xtc_options(&self) -> &xtc::XtcReadOptions {
+        &self.xtc
     }
 }

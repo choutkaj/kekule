@@ -5,6 +5,7 @@ use super::{AtomId, BondId};
 
 /// Rules used to assign conjugation, independently of aromaticity's model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConjugationModel {
     /// RDKit 2026.03.3 bond-conjugation rules.
     RdkitLike,

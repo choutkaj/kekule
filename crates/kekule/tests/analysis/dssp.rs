@@ -5,6 +5,7 @@ use kekule::dssp::{
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
 use kekule::topology::ResidueId;
+use kekule::units::{DEGREE, KILOCALORIE_PER_MOLE};
 
 const CRAMBIN_MMCIF: &str = include_str!("../fixtures/mmcif/1CRN.cif");
 
@@ -12,10 +13,7 @@ fn crambin_model() -> kekule::structure::Model {
     let document = mmcif::parse_str(CRAMBIN_MMCIF, Default::default())
         .expect("checked-in RCSB 1CRN fixture parses");
     document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .expect("checked-in RCSB 1CRN fixture interprets")
         .into_model()
 }
@@ -40,30 +38,64 @@ fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
         residues[1].secondary_structure(),
         DsspSecondaryStructure::ExtendedStrand
     );
-    assert!((residues[1].phi_degrees().expect("defined phi") - -107.8).abs() < 0.15);
-    assert!((residues[1].psi_degrees().expect("defined psi") - 144.3).abs() < 0.15);
+    assert!(
+        (residues[1]
+            .phi()
+            .expect("defined phi")
+            .value_in(DEGREE)
+            .unwrap()
+            - -107.8)
+            .abs()
+            < 0.15
+    );
+    assert!(
+        (residues[1]
+            .psi()
+            .expect("defined psi")
+            .value_in(DEGREE)
+            .unwrap()
+            - 144.3)
+            .abs()
+            < 0.15
+    );
 
     let residue_three = residues[2];
     let strongest_acceptor = residue_three.acceptors()[0].expect("reference acceptor");
     let strongest_donor = residue_three.donors()[0].expect("reference donor");
     assert_eq!(
         result
-            .get(strongest_acceptor.partner)
+            .get(strongest_acceptor.partner())
             .expect("acceptor partner is in the result")
             .source()
-            .label_sequence_id,
+            .label_sequence_id(),
         Some(33)
     );
-    assert!((strongest_acceptor.energy_kcal_per_mol - -2.4).abs() < 0.05);
+    assert!(
+        (strongest_acceptor
+            .energy()
+            .value_in(KILOCALORIE_PER_MOLE)
+            .unwrap()
+            - -2.4)
+            .abs()
+            < 0.05
+    );
     assert_eq!(
         result
-            .get(strongest_donor.partner)
+            .get(strongest_donor.partner())
             .expect("donor partner is in the result")
             .source()
-            .label_sequence_id,
+            .label_sequence_id(),
         Some(33)
     );
-    assert!((strongest_donor.energy_kcal_per_mol - -2.8).abs() < 0.05);
+    assert!(
+        (strongest_donor
+            .energy()
+            .value_in(KILOCALORIE_PER_MOLE)
+            .unwrap()
+            - -2.8)
+            .abs()
+            < 0.05
+    );
 }
 
 #[test]
@@ -74,8 +106,13 @@ fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_model() {
     assert_eq!(model, before);
 
     let first_atom = model.topology().atom_ids()[0];
-    let mut position = model.position(first_atom).expect("first position");
-    position.x += 0.25;
+    let position = model
+        .position(first_atom)
+        .expect("first position")
+        .map(|mut point| {
+            point.x += 0.25;
+            point
+        });
     model
         .set_position(first_atom, position)
         .expect("finite coordinate update");
@@ -87,22 +124,12 @@ fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_model() {
 #[test]
 fn dssp_rejects_invalid_options_and_residue_limits() {
     let model = crambin_model();
-    let options = DsspOptions {
-        min_polyproline_stretch: 4,
-        ..DsspOptions::default()
-    };
     assert_eq!(
-        dssp::assign(&model, options),
+        DsspOptions::default().with_min_polyproline_stretch(4),
         Err(DsspError::InvalidPolyprolineStretch { value: 4 })
     );
 
-    let options = DsspOptions {
-        limits: DsspLimits {
-            max_residues: 2,
-            ..DsspLimits::default()
-        },
-        ..DsspOptions::default()
-    };
+    let options = DsspOptions::default().with_limits(DsspLimits::default().with_max_residues(2));
     assert_eq!(
         dssp::assign(&model, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
@@ -111,13 +138,8 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         )))
     );
 
-    let options = DsspOptions {
-        limits: DsspLimits {
-            max_candidate_pairs: 0,
-            ..DsspLimits::default()
-        },
-        ..DsspOptions::default()
-    };
+    let options =
+        DsspOptions::default().with_limits(DsspLimits::default().with_max_candidate_pairs(0));
     assert_eq!(
         dssp::assign(&model, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
@@ -126,13 +148,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         )))
     );
 
-    let options = DsspOptions {
-        limits: DsspLimits {
-            max_ladders: 0,
-            ..DsspLimits::default()
-        },
-        ..DsspOptions::default()
-    };
+    let options = DsspOptions::default().with_limits(DsspLimits::default().with_max_ladders(0));
     assert_eq!(
         dssp::assign(&model, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
@@ -146,8 +162,13 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
 fn dssp_rejects_coordinates_outside_its_spatial_index_range_without_panicking() {
     let mut model = crambin_model();
     let first_atom = model.topology().atom_ids()[0];
-    let mut position = model.position(first_atom).expect("first position");
-    position.x = f32::MAX as f64;
+    let position = model
+        .position(first_atom)
+        .expect("first position")
+        .map(|mut point| {
+            point.x = f32::MAX as f64;
+            point
+        });
     model
         .set_position(first_atom, position)
         .expect("coordinate remains finite in the model");
@@ -181,10 +202,7 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
     let source = CRAMBIN_MMCIF.replace("_atom_site.label_seq_id", "_atom_site.audit_sequence");
     let document = mmcif::parse_str(&source, Default::default()).unwrap();
     let model = document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap()
         .into_model();
     assert!(model
@@ -196,13 +214,13 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
     assert_eq!(assigned.statistics(), reference.statistics());
     for (actual, expected) in assigned.residues().zip(reference.residues()) {
         assert_eq!(
-            actual.source().author_sequence_id,
-            expected.source().author_sequence_id
+            actual.source().author_sequence_id(),
+            expected.source().author_sequence_id()
         );
         assert_eq!(actual.secondary_structure(), expected.secondary_structure());
-        assert_eq!(actual.phi_degrees(), expected.phi_degrees());
-        assert_eq!(actual.psi_degrees(), expected.psi_degrees());
-        assert_eq!(actual.kappa_degrees(), expected.kappa_degrees());
+        assert_eq!(actual.phi(), expected.phi());
+        assert_eq!(actual.psi(), expected.psi());
+        assert_eq!(actual.kappa(), expected.kappa());
     }
 }
 
@@ -288,10 +306,7 @@ fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
                     .add_atom_site(
                         residue,
                         InstanceAtomId::new(instance, atom),
-                        AtomSiteMetadata {
-                            label_atom_id: Some(name.to_owned()),
-                            ..AtomSiteMetadata::default()
-                        },
+                        AtomSiteMetadata::default().with_label_atom_id(Some(name.to_owned())),
                     )
                     .unwrap();
             }

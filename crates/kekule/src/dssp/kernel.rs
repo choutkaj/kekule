@@ -187,12 +187,6 @@ struct BetaCounts {
 }
 
 pub(super) fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspResult, DsspError> {
-    if !matches!(options.min_polyproline_stretch, 2 | 3) {
-        return Err(DsspError::InvalidPolyprolineStretch {
-            value: options.min_polyproline_stretch,
-        });
-    }
-
     let (mut residues, mut report, chain_segments) = extract_backbones(model, options.limits)?;
     if residues.is_empty() {
         return Err(DsspError::NoAnalyzableProteinResidues);
@@ -269,9 +263,9 @@ fn extract_backbones(
     let hierarchy = model.topology().hierarchy();
     let represented_instances = hierarchy
         .atom_sites()
-        .map(|(_, site)| site.atom().molecule())
+        .map(|(_, site)| site.atom().instance())
         .collect::<BTreeSet<_>>();
-    for molecule_id in model.topology().molecules().map(|molecule| molecule.id()) {
+    for molecule_id in model.topology().instances().map(|molecule| molecule.id()) {
         if !represented_instances.contains(&molecule_id) {
             report.ignored_instances.push(molecule_id);
         }
@@ -326,35 +320,41 @@ fn extract_backbones(
             .residues
             .iter()
             .filter(|entry| {
-                entry.hierarchy.residue(entry.residue).is_ok_and(|residue| {
-                    residue.class() == ResidueClass::AminoAcid
-                        || residue.class() == ResidueClass::Other
-                            && residue.atom_sites().iter().any(|site| {
-                                entry.hierarchy.atom_site(*site).is_ok_and(|site| {
-                                    site.metadata()
-                                        .label_atom_id
-                                        .as_deref()
-                                        .or(site.metadata().auth_atom_id.as_deref())
-                                        .and_then(|name| backbone_index(name.trim()))
-                                        .is_some()
+                entry
+                    .hierarchy
+                    .residue(entry.residue)
+                    .is_some_and(|residue| {
+                        residue.class() == ResidueClass::AminoAcid
+                            || residue.class() == ResidueClass::Other
+                                && residue.atom_sites().iter().any(|site| {
+                                    entry.hierarchy.atom_site(*site).is_some_and(|site| {
+                                        site.metadata()
+                                            .label_atom_id
+                                            .as_deref()
+                                            .or(site.metadata().auth_atom_id.as_deref())
+                                            .and_then(|name| backbone_index(name.trim()))
+                                            .is_some()
+                                    })
                                 })
-                            })
-                })
+                    })
             })
             .collect::<Vec<_>>();
         let label_numbered = ordering_residues.iter().all(|entry| {
             entry
                 .hierarchy
                 .residue(entry.residue)
-                .is_ok_and(|residue| residue.label_seq_id().is_some())
+                .is_some_and(|residue| residue.label_seq_id().is_some())
         });
         let author_numbered = ordering_residues.iter().all(|entry| {
-            entry.hierarchy.residue(entry.residue).is_ok_and(|residue| {
-                residue
-                    .author_seq_id()
-                    .and_then(|value| value.parse::<i64>().ok())
-                    .is_some()
-            })
+            entry
+                .hierarchy
+                .residue(entry.residue)
+                .is_some_and(|residue| {
+                    residue
+                        .author_seq_id()
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .is_some()
+                })
         });
         logical.residues.sort_by(|left, right| {
             let left_residue = left
@@ -1251,7 +1251,11 @@ fn public_residue(residue: &BackboneResidue, all: &[BackboneResidue]) -> DsspRes
         partner.map(|partner| DsspBetaPartner {
             partner: all[partner.partner].key,
             ladder: partner.ladder,
-            parallel: partner.parallel,
+            direction: if partner.parallel {
+                DsspBridgeDirection::Parallel
+            } else {
+                DsspBridgeDirection::Antiparallel
+            },
         })
     };
     DsspResidue {
@@ -1259,11 +1263,11 @@ fn public_residue(residue: &BackboneResidue, all: &[BackboneResidue]) -> DsspRes
         source: residue.source.clone(),
         secondary_structure: residue.secondary_structure,
         chain_break: residue.chain_break,
-        phi_degrees: residue.phi,
-        psi_degrees: residue.psi,
-        omega_degrees: residue.omega,
-        alpha_degrees: residue.alpha,
-        kappa_degrees: residue.kappa,
+        phi: residue.phi,
+        psi: residue.psi,
+        omega: residue.omega,
+        alpha: residue.alpha,
+        kappa: residue.kappa,
         tco: residue.tco,
         acceptors: residue.acceptors.map(convert_bond),
         donors: residue.donors.map(convert_bond),

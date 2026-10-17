@@ -14,11 +14,7 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoElement {
     pub kind: StereoElementKind,
-    /// Owning relation group, assigned only by [`MoleculeEditor::add_stereo_group`].
-    ///
-    /// [`MoleculeEditor::add_stereo_element`] rejects values with this field set, and
-    /// [`MoleculeEditor::remove_stereo_element`] clears it on the returned value.
-    pub group: Option<StereoGroupId>,
+    pub(crate) group: Option<StereoGroupId>,
 }
 
 impl StereoElement {
@@ -28,6 +24,15 @@ impl StereoElement {
     /// conventions before storing it.
     pub fn new(kind: StereoElementKind) -> Self {
         Self { kind, group: None }
+    }
+
+    /// Owning relation group, assigned only by [`MoleculeEditor::add_stereo_group`].
+    ///
+    /// An element read from a molecule reports its group;
+    /// [`MoleculeEditor::add_stereo_element`] rejects a grouped element, and
+    /// [`MoleculeEditor::remove_stereo_element`] returns the element ungrouped.
+    pub const fn group(&self) -> Option<StereoGroupId> {
+        self.group
     }
 
     /// Whether this element asserts a concrete local configuration.
@@ -50,6 +55,7 @@ impl StereoElement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StereoElementKind {
     Tetrahedral(TetrahedralStereo),
     DoubleBond(DoubleBondStereo),
@@ -115,7 +121,7 @@ pub struct TetrahedralStereo {
     pub center: AtomId,
     /// Four distinct carriers in the order used by `orientation`. The explicit
     /// atom carriers are exactly the center's bonded neighbors.
-    pub carriers: Vec<StereoCarrier>,
+    pub carriers: [StereoCarrier; 4],
     /// `None` represents an explicit assertion of unknown configuration.
     pub orientation: Option<TetrahedralOrientation>,
 }
@@ -136,12 +142,13 @@ pub struct AxisStereo {
     pub axis: BondId,
     /// Two explicit atom references, one bonded exclusively to each axis
     /// endpoint. Checked insertion canonicalizes endpoint and reference order.
-    pub carriers: Vec<StereoCarrier>,
+    pub carriers: [StereoCarrier; 2],
     /// `None` represents an explicit assertion of unknown configuration.
     pub orientation: Option<AxisOrientation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StereoCarrier {
     Atom(AtomId),
     ImplicitHydrogen,
@@ -158,6 +165,10 @@ impl StereoCarrier {
     }
 }
 
+/// The handedness of four tetrahedral carriers in their stored order.
+///
+/// This enum is closed: a tetrahedral arrangement has exactly two
+/// handednesses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TetrahedralOrientation {
     /// Positive signed volume `(p0 - p3) × (p1 - p3) · (p2 - p3)`
@@ -176,6 +187,9 @@ impl TetrahedralOrientation {
     }
 }
 
+/// Whether two double-bond reference carriers lie on the same side.
+///
+/// This enum is closed: two references are either together or opposite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoubleBondOrientation {
     Together,
@@ -191,6 +205,9 @@ impl DoubleBondOrientation {
     }
 }
 
+/// The handedness of an axis and its endpoint references.
+///
+/// This enum is closed: the signed triple product has two signs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AxisOrientation {
     /// Positive `(right - left) · ((left_reference - left) ×
@@ -238,6 +255,7 @@ pub(crate) fn has_axis_stereo(molecule: &Molecule, axis: BondId) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StereoDescriptor {
     R,
     S,
@@ -268,6 +286,7 @@ pub struct StereoGroup {
 /// make independent choices. The kinds remain distinct even when they admit the
 /// same pair of configurations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StereoGroupKind {
     /// Every member has the specified absolute configuration.
     Absolute,

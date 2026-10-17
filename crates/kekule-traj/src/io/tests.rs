@@ -5,12 +5,10 @@ use crate::TrajectoryFormat;
 #[test]
 fn bounded_index_reservation_grows_logarithmically() {
     let entry_count = 100_000;
-    let limits = TrajectoryIoLimits {
-        max_frames: entry_count as u64,
-        max_index_entries: entry_count,
-        max_index_bytes: entry_count * std::mem::size_of::<u64>(),
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default()
+        .with_max_frames(entry_count)
+        .with_max_index_entries(entry_count)
+        .with_max_index_bytes(entry_count * std::mem::size_of::<u64>());
     let mut offsets = Vec::new();
     let mut growth_events = 0;
     for frame in 0..entry_count {
@@ -21,7 +19,7 @@ fn bounded_index_reservation_grows_logarithmically() {
             &limits,
             TrajectoryFormat::Xyz,
             "capacity-test.xyz",
-            frame as u64,
+            frame,
         )
         .unwrap();
         growth_events += usize::from(offsets.capacity() != previous_capacity);
@@ -36,12 +34,10 @@ fn bounded_index_reservation_grows_logarithmically() {
 
 #[test]
 fn index_hard_capacity_uses_the_smallest_configured_bound() {
-    let limits = TrajectoryIoLimits {
-        max_frames: 200,
-        max_index_entries: 150,
-        max_index_bytes: 125 * std::mem::size_of::<u64>(),
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default()
+        .with_max_frames(200)
+        .with_max_index_entries(150)
+        .with_max_index_bytes(125 * std::mem::size_of::<u64>());
     assert_eq!(index_hard_capacity(&limits), 125);
     assert_eq!(next_index_capacity(64, 64, 125), Some(125));
     assert_eq!(next_index_capacity(125, 125, 125), None);

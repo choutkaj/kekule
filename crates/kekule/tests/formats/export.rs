@@ -5,6 +5,7 @@ use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles;
 use kekule::structure::{Model, Positions};
 use kekule::topology::TopologyBuilder;
+use std::num::NonZeroU32;
 
 fn molecule(source: &str) -> Molecule {
     smiles::to_molecules(source).unwrap().pop().unwrap()
@@ -23,11 +24,11 @@ fn isomeric_export_preserves_aromatic_carbon_and_nitrogen_isotopes() {
             assert_eq!(
                 original
                     .atoms()
-                    .filter_map(|(_, atom)| atom.isotope)
+                    .filter_map(|(_, atom)| atom.isotope())
                     .collect::<Vec<_>>(),
                 restored
                     .atoms()
-                    .filter_map(|(_, atom)| atom.isotope)
+                    .filter_map(|(_, atom)| atom.isotope())
                     .collect::<Vec<_>>(),
                 "{source} -> {written}"
             );
@@ -50,10 +51,10 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
         ("N", None, None, 1),
         ("O", Some(3), Some(18), 0),
     ] {
-        let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
-        atom.atom_map = map;
-        atom.isotope = isotope;
-        atom.formal_charge = charge;
+        let atom = Atom::new(Element::from_symbol(symbol).unwrap())
+            .with_atom_map(map.and_then(NonZeroU32::new))
+            .with_isotope(isotope.and_then(std::num::NonZeroU16::new))
+            .with_formal_charge(charge);
         let mut editor = MoleculeEditor::new();
         editor.add_atom(atom).unwrap();
         let mut original = editor.finish().unwrap();
@@ -88,7 +89,16 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
                 molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap(),
                 "{symbol} -> {written}"
             );
-            assert_eq!(restored.atoms().next().unwrap().1.atom_map, map);
+            assert_eq!(
+                restored
+                    .atoms()
+                    .next()
+                    .unwrap()
+                    .1
+                    .atom_map()
+                    .map(NonZeroU32::get),
+                map
+            );
         }
     }
 }
@@ -127,8 +137,7 @@ fn canonical_hydrogen_collapse_requires_a_known_parent_count() {
 #[test]
 fn canonical_bracket_hydrogens_are_materialized_after_explicit_perception() {
     let mut editor = MoleculeEditor::new();
-    let mut carbon = Atom::new(Element::from_symbol("C").unwrap());
-    carbon.atom_map = Some(7);
+    let carbon = Atom::new(Element::from_symbol("C").unwrap()).with_atom_map(NonZeroU32::new(7));
     editor.add_atom(carbon).unwrap();
     let mut methane = editor.finish().unwrap();
     assert!(smiles::write(&methane, smiles::SmilesWriteOptions::canonical()).is_err());
@@ -170,9 +179,9 @@ fn unperceived_organic_and_fixed_bracket_atoms_remain_writeable() {
 #[test]
 fn minimum_formal_charge_round_trips_without_overflow() {
     let parsed = molecule("[C-128]");
-    let mut atom = Atom::new(Element::from_symbol("C").unwrap());
-    atom.formal_charge = i8::MIN;
-    atom.hydrogens = ImplicitHydrogens::Fixed(0);
+    let atom = Atom::new(Element::from_symbol("C").unwrap())
+        .with_formal_charge(i8::MIN)
+        .with_hydrogens(ImplicitHydrogens::Fixed(0));
     let mut editor = MoleculeEditor::new();
     editor.add_atom(atom).unwrap();
     let constructed = editor.finish().unwrap();
@@ -194,10 +203,7 @@ fn molfile_control_text_in_positional_headers_is_not_a_terminator() {
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         let written = molfile::write(
             &original,
-            MolfileWriteOptions {
-                version,
-                ..Default::default()
-            },
+            MolfileWriteOptions::default().with_version(version),
         )
         .unwrap();
         for header in 0..3 {
@@ -222,10 +228,7 @@ fn molfile_control_text_in_positional_headers_is_not_a_terminator() {
 fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
     let mol = molfile::write(
         &molecule("CO"),
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        },
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
     .unwrap();
     let model = molfile::parse_str(&mol, Default::default())
@@ -234,10 +237,7 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
         .unwrap()
         .into_model();
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
-        let options = SdfWriteOptions {
-            version,
-            ..Default::default()
-        };
+        let options = SdfWriteOptions::default().with_version(version);
         let record = SdfRecordInterpretation::new("M  END", model.clone(), Vec::new());
         let written = sdf::write(&[record], options).unwrap();
         let document = sdf::parse_str(&written, Default::default()).unwrap();
@@ -273,15 +273,13 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
         let ids = original.atom_ids().collect::<Vec<_>>();
         let mut editor = original.to_editor();
         for id in ids {
-            editor.atom_mut(id).unwrap().radical = None;
+            editor.atom_mut(id).unwrap().set_radical(None);
         }
         let mut original = editor.finish().unwrap();
         let written = molfile::write(
             &original,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V3000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V3000),
         )
         .unwrap();
         let mut restored = molfile::parse_str(&written, Default::default())
@@ -305,8 +303,8 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
 #[test]
 fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instances() {
     let mut builder = TopologyBuilder::new();
-    let mut atom = Atom::new(Element::from_symbol("C").unwrap());
-    atom.hydrogens = ImplicitHydrogens::Fixed(0);
+    let atom =
+        Atom::new(Element::from_symbol("C").unwrap()).with_hydrogens(ImplicitHydrogens::Fixed(0));
     let mut editor = MoleculeEditor::new();
     editor.add_atom(atom).unwrap();
     let definition = builder
@@ -334,9 +332,9 @@ fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instanc
         assert!(restored
             .topology()
             .atoms()
-            .all(|atom| atom.hydrogens == ImplicitHydrogens::Fixed(0)));
+            .all(|atom| atom.hydrogens() == ImplicitHydrogens::Fixed(0)));
         restored.perceive().unwrap();
-        for instance in restored.topology().molecules() {
+        for instance in restored.topology().instances() {
             let molecule = instance.molecule();
             let atom = molecule.atom_ids().next().unwrap();
             assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));

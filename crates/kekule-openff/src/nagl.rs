@@ -43,13 +43,16 @@ impl ModelIdentity {
 // NAGL lookup selection and graph correspondence must use that same
 // representation, while the caller's Kekule graph retains them.
 pub(crate) fn lookup_molecule(input: &Molecule) -> Result<Molecule> {
-    if !input.atoms().any(|(_, a)| a.isotope.is_some()) {
+    if !input.atoms().any(|(_, a)| a.isotope().is_some()) {
         return explicit(input);
     }
     let mut editor = input.to_editor();
     for (id, atom) in input.atoms() {
-        if atom.isotope.is_some() {
-            editor.atom_mut(id).map_err(Error::chemistry)?.isotope = None;
+        if atom.isotope().is_some() {
+            editor
+                .atom_mut(id)
+                .expect("atom IDs come from this molecule")
+                .set_isotope(None);
         }
     }
     explicit(&editor.finish().map_err(Error::chemistry)?)
@@ -61,6 +64,7 @@ fn model_error(detail: impl std::fmt::Display) -> Error {
 
 /// Provenance of one molecule's assigned charges.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ChargeSource {
     Library { parameter_ids: Vec<String> },
     Lookup { inchi: String, model: ModelIdentity },
@@ -68,8 +72,18 @@ pub enum ChargeSource {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChargeAssignment {
-    pub charges: Quantity<Vec<f64>>,
-    pub source: ChargeSource,
+    pub(crate) charges: Quantity<Vec<f64>>,
+    pub(crate) source: ChargeSource,
+}
+
+impl ChargeAssignment {
+    pub fn charges(&self) -> &Quantity<Vec<f64>> {
+        &self.charges
+    }
+
+    pub fn source(&self) -> &ChargeSource {
+        &self.source
+    }
 }
 /// Native CPU inference for a supported NAGL model configuration.
 ///
@@ -221,7 +235,7 @@ impl NaglModel {
             let reference = explicit(&components.remove(0))?;
             let tags = reference
                 .atoms()
-                .filter_map(|(_, a)| a.atom_map)
+                .filter_map(|(_, a)| a.atom_map().map(std::num::NonZeroU32::get))
                 .collect::<BTreeSet<_>>();
             if reference.atom_count() != entry.charges.len()
                 || tags != (1..=entry.charges.len() as u32).collect()
@@ -235,16 +249,12 @@ impl NaglModel {
             for atom in mapping {
                 let map = reference
                     .atom(atom)
-                    .map_err(Error::chemistry)?
-                    .atom_map
+                    .expect("atom IDs come from this molecule")
+                    .atom_map()
                     .ok_or_else(|| model_error("unmapped lookup atom"))?;
                 let q = entry
                     .charges
-                    .get(
-                        map.checked_sub(1)
-                            .ok_or_else(|| model_error("zero lookup map"))?
-                            as usize,
-                    )
+                    .get(map.get() as usize - 1)
                     .ok_or_else(|| model_error("lookup charge array mismatch"))?;
                 values.push(f64::from(*q));
             }
@@ -265,10 +275,11 @@ impl NaglModel {
     }
     fn check_domain(&self, molecule: &Molecule) -> Result<()> {
         for (_, atom) in molecule.atoms() {
-            if !self.elements.is_empty() && !self.elements.contains(&atom.element.atomic_number()) {
+            if !self.elements.is_empty() && !self.elements.contains(&atom.element().atomic_number())
+            {
                 return Err(Error::new(
                     ErrorKind::UnsupportedMolecule,
-                    format!("element {} is outside the model domain", atom.element),
+                    format!("element {} is outside the model domain", atom.element()),
                 ));
             }
         }
@@ -338,7 +349,7 @@ mod tests {
         input.add_hydrogens(Default::default()).unwrap();
         let before = input.clone();
         let prepared = lookup_molecule(&input).unwrap();
-        assert!(prepared.atoms().all(|(_, a)| a.isotope.is_none()));
+        assert!(prepared.atoms().all(|(_, a)| a.isotope().is_none()));
         assert_eq!(input, before);
         assert_eq!(
             prepared.atom_ids().collect::<Vec<_>>(),

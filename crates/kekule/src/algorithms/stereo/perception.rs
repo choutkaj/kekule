@@ -6,10 +6,55 @@ use std::result::Result;
 /// Bounds for exact graph-symmetry searches used by stereo perception.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StereoSearchOptions {
+    max_atoms: usize,
+    max_search_states: usize,
+}
+
+impl StereoSearchOptions {
     /// Maximum analysis vertices, including non-graph hydrogens.
-    pub max_atoms: usize,
+    pub const fn max_atoms(&self) -> usize {
+        self.max_atoms
+    }
+
+    /// Sets [`Self::max_atoms`].
+    ///
+    /// # Errors
+    ///
+    /// [`StereoSearchError::InvalidLimit`] when `max_atoms` is zero.
+    pub fn with_max_atoms(mut self, max_atoms: usize) -> Result<Self, StereoSearchError> {
+        if max_atoms == 0 {
+            return Err(StereoSearchError::InvalidLimit {
+                resource: Resource::Atoms,
+                limit: max_atoms,
+            });
+        }
+        self.max_atoms = max_atoms;
+        Ok(self)
+    }
+
     /// Maximum trial atom mappings across all sites and refinement rounds.
-    pub max_search_states: usize,
+    pub const fn max_search_states(&self) -> usize {
+        self.max_search_states
+    }
+
+    /// Sets [`Self::max_search_states`].
+    ///
+    /// # Errors
+    ///
+    /// [`StereoSearchError::InvalidLimit`] when `max_search_states` is zero.
+    pub fn with_max_search_states(
+        mut self,
+        max_search_states: usize,
+    ) -> Result<Self, StereoSearchError> {
+        if max_search_states == 0 {
+            return Err(StereoSearchError::InvalidLimit {
+                resource: Resource::SearchStates,
+                limit: max_search_states,
+            });
+        }
+        self.max_search_states = max_search_states;
+        Ok(self)
+    }
 }
 
 impl StereoSearchOptions {
@@ -116,14 +161,6 @@ pub fn detect_stereo_candidates(
     mol: &Molecule,
     options: StereoSearchOptions,
 ) -> Result<Vec<StereoCandidate>, StereoSearchError> {
-    if options.max_atoms == 0 || options.max_search_states == 0 {
-        let (resource, limit) = if options.max_atoms == 0 {
-            (Resource::Atoms, options.max_atoms)
-        } else {
-            (Resource::SearchStates, options.max_search_states)
-        };
-        return Err(StereoSearchError::InvalidLimit { resource, limit });
-    }
     if mol.atom_count() > options.max_atoms {
         return Err(StereoSearchError::LimitExceeded(LimitExceeded::new(
             Resource::Atoms,
@@ -140,13 +177,23 @@ pub fn detect_stereo_candidates(
 }
 
 /// Stereo assertions removed by explicit chemical cleanup.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoCleanupReport {
-    pub removed_elements: Vec<StereoElementId>,
+    pub(crate) removed_elements: Vec<StereoElementId>,
+    pub(crate) unclassified_elements: Vec<StereoElementId>,
+}
+
+impl StereoCleanupReport {
+    pub fn removed_elements(&self) -> &[StereoElementId] {
+        &self.removed_elements
+    }
+
     /// Assertions whose local geometry is outside this cleanup model. These
     /// are preserved, not classified as chemically invalid from their absence
     /// in the candidate set.
-    pub unclassified_elements: Vec<StereoElementId>,
+    pub fn unclassified_elements(&self) -> &[StereoElementId] {
+        &self.unclassified_elements
+    }
 }
 
 /// Removes chemically ineligible or symmetry-degenerate tetrahedral/double-bond

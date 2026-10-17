@@ -125,10 +125,34 @@ impl SymmetricSelection {
 /// Bounds on the symmetry search of a [`SymmetricSelection`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SymmetryLimits {
+    max_permutations: usize,
+    max_search_steps: usize,
+}
+
+impl SymmetryLimits {
     /// Most admitted permutations, including the identity.
-    pub max_permutations: usize,
+    pub const fn max_permutations(&self) -> usize {
+        self.max_permutations
+    }
+
+    /// Sets [`Self::max_permutations`].
+    #[must_use]
+    pub const fn with_max_permutations(mut self, max_permutations: usize) -> Self {
+        self.max_permutations = max_permutations;
+        self
+    }
+
     /// Most candidate atom mappings examined by the search.
-    pub max_search_steps: usize,
+    pub const fn max_search_steps(&self) -> usize {
+        self.max_search_steps
+    }
+
+    /// Sets [`Self::max_search_steps`].
+    #[must_use]
+    pub const fn with_max_search_steps(mut self, max_search_steps: usize) -> Self {
+        self.max_search_steps = max_search_steps;
+        self
+    }
 }
 
 impl SymmetryLimits {
@@ -169,7 +193,7 @@ impl fmt::Display for SymmetryError {
         match self {
             Self::Perception(_) => formatter.write_str("cannot perceive hydrogen counts"),
             Self::UnknownHydrogenCount { atom } => {
-                write!(formatter, "hydrogen count of atom {atom} is unknown")
+                write!(formatter, "hydrogen count of {atom} is unknown")
             }
             Self::LimitExceeded(limit) => write!(formatter, "symmetry search {limit}"),
         }
@@ -225,7 +249,7 @@ impl Search {
                     .atom_at(*index)
                     .expect("selection is bound to this topology")
                     .id()
-                    .molecule()
+                    .instance()
             })
             .collect::<Vec<_>>();
         instances.sort_unstable();
@@ -236,7 +260,7 @@ impl Search {
         let mut keys = Vec::new();
         for instance in &instances {
             let molecule = topology
-                .molecule(*instance)
+                .instance(*instance)
                 .expect("selected atom has an instance");
             for atom in molecule.atoms() {
                 local[atom.index().index()] = atoms.len();
@@ -245,7 +269,7 @@ impl Search {
                     instance: instance.index(),
                     selected: false,
                     element: atom.atom().element,
-                    isotope: atom.atom().isotope,
+                    isotope: atom.atom().isotope.map(std::num::NonZero::get),
                     hydrogens: atom.total_hydrogens().ok_or(atom.index())?,
                 });
             }
@@ -258,7 +282,7 @@ impl Search {
         }
         let mut adjacency = vec![Vec::new(); atoms.len()];
         for instance in &instances {
-            let molecule = topology.molecule(*instance).expect("collected instance");
+            let molecule = topology.instance(*instance).expect("collected instance");
             for bond in molecule.bonds() {
                 let [a, b] = bond.atoms().map(|atom| local[atom.index().index()]);
                 adjacency[a].push(b);

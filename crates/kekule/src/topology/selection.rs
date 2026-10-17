@@ -50,7 +50,7 @@ pub use bonds::{BondSelection, BondSelectionMode};
 /// use kekule::{smiles, topology::{AtomSelection, BondSelectionMode}};
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let topology = smiles::to_topology("CCO")?;
-/// let mut selected = AtomSelection::empty(&topology);
+/// let mut selected = AtomSelection::empty(topology.clone());
 /// selected.toggle(topology.atom_ids()[0])?; // e.g. a picked atom
 /// let neighborhood = selected.expand_bonded(1);
 /// selected = selected.union(&neighborhood)?;
@@ -90,7 +90,8 @@ impl Eq for AtomSelection {}
 
 impl AtomSelection {
     /// An empty selection bound to this exact snapshot.
-    pub fn empty(topology: &Arc<Topology>) -> Self {
+    pub fn empty(topology: impl Into<Arc<Topology>>) -> Self {
+        let topology = &topology.into();
         Self {
             topology: Arc::clone(topology),
             indices: Vec::new(),
@@ -156,11 +157,12 @@ impl AtomSelection {
     /// The [`AtomView`] exposes chemistry, hierarchy, properties, and stored
     /// perception. No perception is computed implicitly.
     pub fn from_predicate(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         mut predicate: impl FnMut(AtomView<'_>) -> bool,
     ) -> Self {
+        let topology = &topology.into();
         Self::from_atoms(
-            topology,
+            Arc::clone(topology),
             topology
                 .atoms()
                 .filter(|atom| predicate(*atom))
@@ -172,7 +174,7 @@ impl AtomSelection {
     /// Keeps selected atoms satisfying a predicate, preserving dense order.
     pub fn filter(&self, mut predicate: impl FnMut(AtomView<'_>) -> bool) -> Self {
         Self::from_atoms(
-            &self.topology,
+            Arc::clone(&self.topology),
             self.indices
                 .iter()
                 .map(|index| self.topology.atom_at(*index).expect("validated atom"))
@@ -184,7 +186,7 @@ impl AtomSelection {
 
     /// Inverts membership within this exact topology.
     pub fn complement(&self) -> Self {
-        Self::all(&self.topology)
+        Self::all(Arc::clone(&self.topology))
             .difference(self)
             .expect("same snapshot")
     }
@@ -270,15 +272,15 @@ impl AtomSelection {
             .atom_sites()
             .filter(|site| residues.contains(&site.residue().id()))
             .map(|site| site.atom().id());
-        Self::from_atoms(&self.topology, self.atom_ids().chain(added))
+        Self::from_atoms(Arc::clone(&self.topology), self.atom_ids().chain(added))
             .expect("residue expansion uses validated topology atoms")
     }
 
     /// Adds all atoms in each touched molecule instance (connected component).
     pub fn expand_to_instances(&self) -> Self {
         Self::for_instances(
-            &self.topology,
-            self.atom_ids().map(InstanceAtomId::molecule),
+            Arc::clone(&self.topology),
+            self.atom_ids().map(InstanceAtomId::instance),
         )
         .expect("selected atoms have valid instances")
     }
@@ -293,7 +295,7 @@ impl AtomSelection {
                 .chain()
                 .map(|chain| chain.id())
         });
-        self.union(&Self::for_chains(&self.topology, chains).expect("valid chains"))
+        self.union(&Self::for_chains(Arc::clone(&self.topology), chains).expect("valid chains"))
             .expect("same snapshot")
     }
 
@@ -341,7 +343,7 @@ impl AtomSelection {
     /// Selects bonds according to explicit endpoint membership. This does not
     /// modify atom membership or perform a structural subset operation.
     pub fn to_bonds(&self, mode: BondSelectionMode) -> BondSelection {
-        BondSelection::from_predicate(&self.topology, |bond| {
+        BondSelection::from_predicate(Arc::clone(&self.topology), |bond| {
             let [a, b] = bond.atoms();
             let a = self.indices.binary_search(&a.index()).is_ok();
             let b = self.indices.binary_search(&b.index()).is_ok();
@@ -356,12 +358,13 @@ impl AtomSelection {
     /// Selects sites with one of these exact label atom names. Missing names
     /// do not match. Compose with residue-class selections for biological roles.
     pub fn for_label_atom_names<'a>(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         names: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let names = names.into_iter().collect::<BTreeSet<_>>();
         Self::from_atoms(
-            topology,
+            Arc::clone(topology),
             topology
                 .atom_sites()
                 .filter(|site| {
@@ -377,12 +380,13 @@ impl AtomSelection {
     /// Selects sites with one of these exact author atom names; never falls
     /// back to label names. Missing names do not match.
     pub fn for_author_atom_names<'a>(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         names: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let names = names.into_iter().collect::<BTreeSet<_>>();
         Self::from_atoms(
-            topology,
+            Arc::clone(topology),
             topology
                 .atom_sites()
                 .filter(|site| {
@@ -398,7 +402,8 @@ impl AtomSelection {
     /// Selects every atom in authoritative dense order, sharing this exact topology.
     ///
     /// This is infallible because the topology has already validated its layout.
-    pub fn all(topology: &Arc<Topology>) -> Self {
+    pub fn all(topology: impl Into<Arc<Topology>>) -> Self {
+        let topology = &topology.into();
         Self {
             topology: Arc::clone(topology),
             indices: (0..topology.atom_count())
@@ -408,9 +413,10 @@ impl AtomSelection {
     }
 
     pub fn from_atoms(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         atoms: impl IntoIterator<Item = InstanceAtomId>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let mut indices = atoms
             .into_iter()
             .map(|atom| {
@@ -428,9 +434,10 @@ impl AtomSelection {
     }
 
     pub fn from_indices(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         indices: impl IntoIterator<Item = TopologyAtomIndex>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let atoms = indices
             .into_iter()
             .map(|index| {
@@ -439,33 +446,35 @@ impl AtomSelection {
                     .ok_or(SelectionError::InvalidAtomIndex(index))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Self::from_atoms(topology, atoms)
+        Self::from_atoms(Arc::clone(topology), atoms)
     }
 
     pub fn for_instances(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         instances: impl IntoIterator<Item = MoleculeInstanceId>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let instances = instances.into_iter().collect::<BTreeSet<_>>();
         for instance in &instances {
             topology
-                .molecule(*instance)
+                .instance(*instance)
                 .ok_or(SelectionError::InvalidMoleculeInstanceId(*instance))?;
         }
         Self::from_atoms(
-            topology,
+            Arc::clone(topology),
             topology
                 .atom_ids()
                 .iter()
                 .copied()
-                .filter(|atom| instances.contains(&atom.molecule())),
+                .filter(|atom| instances.contains(&atom.instance())),
         )
     }
 
     pub fn for_definitions(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         definitions: impl IntoIterator<Item = MoleculeDefinitionId>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let definitions = definitions.into_iter().collect::<BTreeSet<_>>();
         for definition in &definitions {
             topology
@@ -473,34 +482,36 @@ impl AtomSelection {
                 .ok_or(SelectionError::InvalidMoleculeDefinitionId(*definition))?;
         }
         let instances = topology
-            .molecules()
+            .instances()
             .filter(|molecule| definitions.contains(&molecule.definition_id()))
             .map(|molecule| molecule.id());
-        Self::for_instances(topology, instances)
+        Self::for_instances(Arc::clone(topology), instances)
     }
 
     /// Selects all atoms in molecule instances having one of `classes`.
     pub fn for_molecule_classes(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         classes: impl IntoIterator<Item = MoleculeClass>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let classes = classes.into_iter().collect::<BTreeSet<_>>();
         Self::for_instances(
-            topology,
+            Arc::clone(topology),
             topology
-                .molecules()
+                .instances()
                 .filter(|molecule| classes.contains(&molecule.class()))
                 .map(|molecule| molecule.id()),
         )
     }
 
     pub fn for_elements(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         elements: impl IntoIterator<Item = Element>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let elements = elements.into_iter().collect::<BTreeSet<_>>();
         Self::from_atoms(
-            topology,
+            Arc::clone(topology),
             topology
                 .atoms()
                 .filter(|atom| elements.contains(&atom.element))
@@ -509,9 +520,10 @@ impl AtomSelection {
     }
 
     pub fn for_atom_sites(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         atom_sites: impl IntoIterator<Item = AtomSiteId>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let atom_sites = atom_sites.into_iter().collect::<BTreeSet<_>>();
         let atoms = atom_sites
             .into_iter()
@@ -522,13 +534,14 @@ impl AtomSelection {
                     .ok_or(SelectionError::InvalidAtomSiteId(site))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Self::from_atoms(topology, atoms)
+        Self::from_atoms(Arc::clone(topology), atoms)
     }
 
     pub fn for_residues(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         residues: impl IntoIterator<Item = ResidueId>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let residues = residues.into_iter().collect::<BTreeSet<_>>();
         for residue in &residues {
             topology
@@ -536,7 +549,7 @@ impl AtomSelection {
                 .ok_or(SelectionError::InvalidResidueId(*residue))?;
         }
         Self::for_atom_sites(
-            topology,
+            Arc::clone(topology),
             topology
                 .atom_sites()
                 .filter(|site| residues.contains(&site.residue().id()))
@@ -546,12 +559,13 @@ impl AtomSelection {
 
     /// Selects all atoms in residues having one of `classes`.
     pub fn for_residue_classes(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         classes: impl IntoIterator<Item = ResidueClass>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let classes = classes.into_iter().collect::<BTreeSet<_>>();
         Self::for_residues(
-            topology,
+            Arc::clone(topology),
             topology
                 .residues()
                 .filter(|residue| classes.contains(&residue.class()))
@@ -560,9 +574,10 @@ impl AtomSelection {
     }
 
     pub fn for_chains(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         chains: impl IntoIterator<Item = ChainId>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let chains = chains.into_iter().collect::<BTreeSet<_>>();
         for chain in &chains {
             topology
@@ -570,7 +585,7 @@ impl AtomSelection {
                 .ok_or(SelectionError::InvalidChainId(*chain))?;
         }
         Self::for_residues(
-            topology,
+            Arc::clone(topology),
             topology
                 .residues()
                 .filter(|residue| chains.contains(&residue.chain().id()))
@@ -578,9 +593,13 @@ impl AtomSelection {
         )
     }
 
-    pub fn for_chain_label(topology: &Arc<Topology>, label: &str) -> Result<Self, SelectionError> {
+    pub fn for_chain_label(
+        topology: impl Into<Arc<Topology>>,
+        label: &str,
+    ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         Self::for_chains(
-            topology,
+            Arc::clone(topology),
             topology
                 .chains()
                 .filter(|chain| chain.label_id() == label)
@@ -593,15 +612,16 @@ impl AtomSelection {
     /// carries local IDs, so target provenance cannot be checked here.
     /// Use [`Self::from_topology_query_matches`] for snapshot-checked matches.
     pub fn from_query_matches(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         instance: MoleculeInstanceId,
         matches: &[QueryMatch],
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         topology
-            .molecule(instance)
+            .instance(instance)
             .ok_or(SelectionError::InvalidMoleculeInstanceId(instance))?;
         Self::from_atoms(
-            topology,
+            Arc::clone(topology),
             matches.iter().flat_map(|query_match| {
                 query_match
                     .atoms()
@@ -617,23 +637,24 @@ impl AtomSelection {
     /// Query ordering, tags, and individual match boundaries are intentionally
     /// discarded; retain the original matches when those associations matter.
     pub fn from_topology_query_matches(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         matches: &[TopologyQueryMatch],
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         for matched in matches {
             if !topology.shares_layout(matched.topology()) {
                 return Err(SelectionError::TopologyMismatch);
             }
         }
         Self::from_atoms(
-            topology,
+            Arc::clone(topology),
             matches
                 .iter()
                 .flat_map(|matched| matched.atoms().iter().copied()),
         )
     }
 
-    pub fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), SelectionError> {
+    pub fn ensure_compatible(&self, topology: &Topology) -> Result<(), SelectionError> {
         if !self.topology.shares_layout(topology) {
             return Err(SelectionError::TopologyMismatch);
         }
@@ -653,10 +674,7 @@ impl AtomSelection {
         &self.indices
     }
 
-    pub fn semantic_ids(
-        &self,
-        topology: &Arc<Topology>,
-    ) -> Result<Vec<InstanceAtomId>, SelectionError> {
+    pub fn semantic_ids(&self, topology: &Topology) -> Result<Vec<InstanceAtomId>, SelectionError> {
         self.ensure_compatible(topology)?;
         Ok(self
             .indices

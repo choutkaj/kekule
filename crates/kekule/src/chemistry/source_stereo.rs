@@ -202,7 +202,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
                 unreachable!("only double-bond stereo is conformation-dependent");
             };
             return Err(MOLFILE_WRITE.unsupported(format!(
-                "cannot encode specified double-bond stereo at bond {}: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands",
+                "cannot encode specified double-bond stereo at {}: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands",
                 stereo.bond
             )));
         }
@@ -223,7 +223,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
             if !report.warnings.is_empty() || report.created_stereo_elements.len() != 1 {
                 continue;
             }
-            let Ok(decoded) = staged.stereo_element(report.created_stereo_elements[0]) else {
+            let Some(decoded) = staged.stereo_element(report.created_stereo_elements[0]) else {
                 continue;
             };
             if decoded.kind == target.kind {
@@ -237,13 +237,13 @@ pub(crate) fn project_molfile_stereo_bond_marks(
             }) {
                 let focus = match &target.kind {
                     StereoElementKind::Tetrahedral(stereo) => {
-                        format!("tetrahedral stereo at atom {}", stereo.center)
+                        format!("tetrahedral stereo at {}", stereo.center)
                     }
                     StereoElementKind::DoubleBond(stereo) => {
-                        format!("double-bond stereo at bond {}", stereo.bond)
+                        format!("double-bond stereo at {}", stereo.bond)
                     }
                     StereoElementKind::Axis(stereo) => {
-                        format!("axial stereo at bond {}", stereo.axis)
+                        format!("axial stereo at {}", stereo.axis)
                     }
                 };
                 return Err(MOLFILE_WRITE.unsupported(format!(
@@ -332,7 +332,7 @@ fn molfile_projection_candidates(
                 None => vec![SourceStereoBondMarkKind::WedgeEither],
             };
             Ok(molecule
-                .incident_bonds(stereo.center)
+                .require_incident_bonds(stereo.center)
                 .map_err(|error| {
                     MOLFILE_WRITE
                         .invalid_model("inconsistent source model")
@@ -362,7 +362,7 @@ fn molfile_projection_candidates(
                 SourceStereoBondMarkKind::WedgeUp,
                 SourceStereoBondMarkKind::WedgeDown,
             ];
-            let axis = molecule.bond(stereo.axis).map_err(|error| {
+            let axis = molecule.require_bond(stereo.axis).map_err(|error| {
                 MOLFILE_WRITE
                     .invalid_model("inconsistent source model")
                     .with_source(error)
@@ -372,7 +372,6 @@ fn molfile_projection_candidates(
                 .flat_map(|endpoint| {
                     molecule
                         .incident_bonds(endpoint)
-                        .ok()
                         .into_iter()
                         .flatten()
                         .map(move |(bond, value)| (endpoint, bond, value))
@@ -410,16 +409,14 @@ fn validate_source_stereo_marks(
     let issues = source_marks
         .iter()
         .filter_map(|mark| match molecule.bond(mark.bond) {
-            Err(_) => {
-                Some(SourceStereoNormalizationIssue::MissingSourceBondMark { bond: mark.bond })
-            }
-            Ok(bond) if ![bond.a(), bond.b()].contains(&mark.from) => Some(
+            None => Some(SourceStereoNormalizationIssue::MissingSourceBondMark { bond: mark.bond }),
+            Some(bond) if ![bond.a(), bond.b()].contains(&mark.from) => Some(
                 SourceStereoNormalizationIssue::InvalidSourceBondMarkEndpoint {
                     bond: mark.bond,
                     from: mark.from,
                 },
             ),
-            Ok(_) => None,
+            Some(_) => None,
         })
         .collect::<Vec<_>>();
     if issues.is_empty() {
@@ -457,7 +454,7 @@ fn assemble_tetrahedral_wedges(
         {
             continue;
         }
-        let Ok(bond) = molecule.bond(mark.bond) else {
+        let Some(bond) = molecule.bond(mark.bond) else {
             continue;
         };
         if bond.order != BondOrder::Single {
@@ -548,12 +545,12 @@ pub(crate) fn source_tetrahedral_carriers(
     molecule: &Molecule,
     center: AtomId,
 ) -> Option<Vec<StereoCarrier>> {
-    let atom = molecule.atom(center).ok()?;
+    let atom = molecule.atom(center)?;
     if atom.element.symbol() == "H" {
         return None;
     }
     let mut carriers = Vec::new();
-    for (_, bond) in molecule.incident_bonds(center).ok()? {
+    for (_, bond) in molecule.incident_bonds(center)? {
         if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
             return None;
         }
@@ -613,7 +610,7 @@ fn tetrahedral_element_from_wedge(
     Some(StereoElement::new(StereoElementKind::Tetrahedral(
         TetrahedralStereo {
             center,
-            carriers,
+            carriers: carriers.try_into().ok()?,
             orientation,
         },
     )))
@@ -851,7 +848,7 @@ fn atropisomeric_axis_candidates(
     ring_membership: &RingMembership,
     mark: &SourceStereoBondMark,
 ) -> Vec<(BondId, StereoElement)> {
-    let Ok(marked_bond) = molecule.bond(mark.bond) else {
+    let Some(marked_bond) = molecule.bond(mark.bond) else {
         return Vec::new();
     };
     if marked_bond.order != BondOrder::Single {
@@ -861,7 +858,6 @@ fn atropisomeric_axis_candidates(
     let marked_carrier = marked_bond.other_atom(mark.from);
     let mut candidates = molecule
         .incident_bonds(near)
-        .ok()
         .into_iter()
         .flatten()
         .filter_map(|(axis, bond)| {
@@ -948,7 +944,7 @@ fn atropisomeric_axis_candidate(
     };
     Some(StereoElement::new(StereoElementKind::Axis(AxisStereo {
         axis,
-        carriers: vec![
+        carriers: [
             StereoCarrier::Atom(left_reference),
             StereoCarrier::Atom(right_reference),
         ],
@@ -1105,7 +1101,7 @@ fn assemble_unknown_double_bonds(
         if mark.kind != SourceStereoBondMarkKind::DoubleBondEither {
             continue;
         }
-        let Ok(bond) = molecule.bond(mark.bond) else {
+        let Some(bond) = molecule.bond(mark.bond) else {
             continue;
         };
         if bond.order != BondOrder::Double {
@@ -1169,7 +1165,7 @@ fn assemble_molfile_double_bonds(
         .filter(|mark| mark.kind == SourceStereoBondMarkKind::MolfileDoubleBondGeometry)
     {
         used_marks.push(mark.bond);
-        let Ok(bond) = molecule.bond(mark.bond) else {
+        let Some(bond) = molecule.bond(mark.bond) else {
             continue;
         };
         if !double_bond_geometry_is_supported(molecule, mark.bond, bond)
@@ -1181,8 +1177,7 @@ fn assemble_molfile_double_bonds(
         let (left, right) = bond.endpoints();
         let explicit_carrier = |endpoint, other| {
             let neighbors = molecule
-                .incident_bonds(endpoint)
-                .ok()?
+                .incident_bonds(endpoint)?
                 .filter(|(id, _)| *id != mark.bond)
                 .collect::<Vec<_>>();
             if neighbors.len() > 2
@@ -1207,7 +1202,7 @@ fn assemble_molfile_double_bonds(
         let unknown_marks = wavy
             .iter()
             .filter(|other| {
-                molecule.bond(other.bond).is_ok_and(|bond| {
+                molecule.bond(other.bond).is_some_and(|bond| {
                     [bond.a(), bond.b()]
                         .iter()
                         .any(|atom| *atom == left || *atom == right)
@@ -1254,7 +1249,7 @@ fn source_double_bond_endpoint_carriers(
     focus_bond: BondId,
 ) -> Vec<StereoCarrier> {
     let mut carriers = Vec::new();
-    if let Ok(incident) = molecule.incident_bonds(endpoint) {
+    if let Some(incident) = molecule.incident_bonds(endpoint) {
         for (bond_id, bond) in incident {
             if bond_id == focus_bond || bond.order != BondOrder::Single {
                 continue;
@@ -1270,7 +1265,7 @@ fn source_double_bond_endpoint_carriers(
     // explicitly declares exactly one hydrogen.
     if molecule
         .atom(endpoint)
-        .is_ok_and(|atom| atom.hydrogens.represented_count() == 1)
+        .is_some_and(|atom| atom.hydrogens.represented_count() == 1)
     {
         carriers.push(StereoCarrier::ImplicitHydrogen);
     }
@@ -1393,7 +1388,7 @@ fn directional_marks_for_endpoint(
     focus_bond: BondId,
 ) -> Vec<EndpointMark> {
     let mut marks = Vec::new();
-    let Ok(incident) = molecule.incident_bonds(endpoint) else {
+    let Some(incident) = molecule.incident_bonds(endpoint) else {
         return marks;
     };
     for (bond_id, bond) in incident {

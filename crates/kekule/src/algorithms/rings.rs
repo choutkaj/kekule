@@ -49,7 +49,7 @@ pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
 }
 
 pub(crate) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
-    let Ok(bond) = mol.bond(bond_id) else {
+    let Some(bond) = mol.bond(bond_id) else {
         return false;
     };
     if ring_size <= 1 || matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
@@ -66,7 +66,7 @@ pub(crate) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_si
         if depth == max_path_edges {
             continue;
         }
-        let Ok(incident) = mol.incident_bonds(atom) else {
+        let Some(incident) = mol.incident_bonds(atom) else {
             continue;
         };
         for (next_bond, next) in incident
@@ -144,6 +144,7 @@ fn ring_dfs_iterative(
 
 /// The ring state [`perceive_rings`] derives and installs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RingPerceptionScope {
     /// Graph-theoretic cycle membership only, excluding zero and dative bonds.
     ///
@@ -168,17 +169,110 @@ pub enum RingPerceptionScope {
 /// [`Molecule::perceive`] installs, uses [`Self::for_molecule`], whose bounds
 /// grow with the molecule.
 pub struct RingPerceptionOptions {
+    scope: RingPerceptionScope,
+    max_atoms: usize,
+    max_bonds: usize,
+    max_candidates: usize,
+    max_path_expansions: usize,
+    max_equivalent_shortest_paths: usize,
+    max_cycle_size: usize,
+    max_total_work: usize,
+}
+
+impl RingPerceptionOptions {
     /// The ring state to install.
-    pub scope: RingPerceptionScope,
+    pub const fn scope(&self) -> RingPerceptionScope {
+        self.scope
+    }
+
+    /// Sets [`Self::scope`].
+    #[must_use]
+    pub fn with_scope(mut self, scope: RingPerceptionScope) -> Self {
+        self.scope = scope;
+        self
+    }
+
     /// Maximum atom storage slots, including deleted atoms.
-    pub max_atoms: usize,
+    pub const fn max_atoms(&self) -> usize {
+        self.max_atoms
+    }
+
+    /// Sets [`Self::max_atoms`].
+    #[must_use]
+    pub fn with_max_atoms(mut self, max_atoms: usize) -> Self {
+        self.max_atoms = max_atoms;
+        self
+    }
+
     /// Maximum bond storage slots, including deleted bonds.
-    pub max_bonds: usize,
-    pub max_candidates: usize,
-    pub max_path_expansions: usize,
-    pub max_equivalent_shortest_paths: usize,
-    pub max_cycle_size: usize,
-    pub max_total_work: usize,
+    pub const fn max_bonds(&self) -> usize {
+        self.max_bonds
+    }
+
+    /// Sets [`Self::max_bonds`].
+    #[must_use]
+    pub fn with_max_bonds(mut self, max_bonds: usize) -> Self {
+        self.max_bonds = max_bonds;
+        self
+    }
+
+    pub const fn max_candidates(&self) -> usize {
+        self.max_candidates
+    }
+
+    /// Sets [`Self::max_candidates`].
+    #[must_use]
+    pub fn with_max_candidates(mut self, max_candidates: usize) -> Self {
+        self.max_candidates = max_candidates;
+        self
+    }
+
+    pub const fn max_path_expansions(&self) -> usize {
+        self.max_path_expansions
+    }
+
+    /// Sets [`Self::max_path_expansions`].
+    #[must_use]
+    pub fn with_max_path_expansions(mut self, max_path_expansions: usize) -> Self {
+        self.max_path_expansions = max_path_expansions;
+        self
+    }
+
+    pub const fn max_equivalent_shortest_paths(&self) -> usize {
+        self.max_equivalent_shortest_paths
+    }
+
+    /// Sets [`Self::max_equivalent_shortest_paths`].
+    #[must_use]
+    pub fn with_max_equivalent_shortest_paths(
+        mut self,
+        max_equivalent_shortest_paths: usize,
+    ) -> Self {
+        self.max_equivalent_shortest_paths = max_equivalent_shortest_paths;
+        self
+    }
+
+    pub const fn max_cycle_size(&self) -> usize {
+        self.max_cycle_size
+    }
+
+    /// Sets [`Self::max_cycle_size`].
+    #[must_use]
+    pub fn with_max_cycle_size(mut self, max_cycle_size: usize) -> Self {
+        self.max_cycle_size = max_cycle_size;
+        self
+    }
+
+    pub const fn max_total_work(&self) -> usize {
+        self.max_total_work
+    }
+
+    /// Sets [`Self::max_total_work`].
+    #[must_use]
+    pub fn with_max_total_work(mut self, max_total_work: usize) -> Self {
+        self.max_total_work = max_total_work;
+        self
+    }
 }
 
 impl RingPerceptionOptions {

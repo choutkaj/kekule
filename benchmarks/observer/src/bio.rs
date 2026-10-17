@@ -8,7 +8,7 @@ use kekule::macromolecular::{self, ModelSelection, StructureInterpretOptions};
 use kekule::mmcif::{self, MmcifDocument, MmcifEntry, MmcifValue};
 use kekule::molecule::BondOrder;
 use kekule::topology::{AtomSelection, InstanceAtomId, ResidueClass, ResidueId};
-use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
+use kekule::units::{ANGSTROM, DEGREE, KILOCALORIE_PER_MOLE, SQUARE_ANGSTROM};
 use serde_json::{json, Value};
 
 use crate::{Facts, Failure};
@@ -86,6 +86,7 @@ fn syntax(document: &MmcifDocument) -> Result<Facts, Failure> {
                         ]));
                     }
                 }
+                other => unimplemented!("the observer does not report {other:?}"),
             }
         }
     }
@@ -96,10 +97,7 @@ fn first_model(
     document: &MmcifDocument,
 ) -> Result<macromolecular::StructureInterpretation, Failure> {
     document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..Default::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .map_err(|e| Failure::new("interpret", e))
 }
 
@@ -147,7 +145,7 @@ fn hierarchy(document: &MmcifDocument) -> Result<Facts, Failure> {
                     atom.insertion_code(),
                     atom.label_component_id(),
                     atom.label_atom_name(),
-                    view.atom().element.symbol().to_ascii_uppercase(),
+                    view.atom().element().symbol().to_ascii_uppercase(),
                     atom.selected_alternate_location(),
                     view.occupancy(),
                     b_factor,
@@ -165,7 +163,7 @@ fn connectivity(document: &MmcifDocument) -> Result<Facts, Failure> {
     let ids = site_ids(&interpretation);
     let topology = interpretation.topology();
     let mut facts = Facts::new();
-    for instance in topology.molecules() {
+    for instance in topology.instances() {
         let molecule = instance.molecule();
         let id = |atom| ids[&InstanceAtomId::new(instance.id(), atom)].clone();
         for (_, bond) in molecule.bonds() {
@@ -180,6 +178,7 @@ fn connectivity(document: &MmcifDocument) -> Result<Facts, Failure> {
                 BondOrder::Triple => json!(3),
                 BondOrder::Quadruple => json!(4),
                 BondOrder::Dative => json!("dative"),
+                other => unimplemented!("the observer does not report {other:?}"),
             };
             facts.push(json!(["bond", ends[0], ends[1], "order", order]));
         }
@@ -247,16 +246,16 @@ fn partner(
 ) -> (Value, Value) {
     match bond {
         Some(bond) => {
-            let source = residues[&bond.partner].source();
+            let source = residues[&bond.partner()].source();
             (
                 json!(format!(
                     "{}:{}",
-                    source.chain_label_id,
+                    source.chain_label_id(),
                     source
-                        .label_sequence_id
+                        .label_sequence_id()
                         .map_or("?".to_owned(), |s| s.to_string())
                 )),
-                json!(bond.energy_kcal_per_mol),
+                json!(bond.energy().value_in(KILOCALORIE_PER_MOLE).ok()),
             )
         }
         None => (Value::Null, Value::Null),
@@ -284,18 +283,22 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
         let [donor_1, donor_2] = residue.donors().map(|b| partner(b, &residues));
         facts.push(json!([
             "dssp",
-            source.chain_label_id,
-            source.label_sequence_id,
+            source.chain_label_id(),
+            source.label_sequence_id(),
             [
                 if code == ' ' {
                     ".".to_owned()
                 } else {
                     code.to_string()
                 },
-                residue.phi_degrees(),
-                residue.psi_degrees(),
-                residue.kappa_degrees(),
-                residue.alpha_degrees(),
+                residue.phi().and_then(|angle| angle.value_in(DEGREE).ok()),
+                residue.psi().and_then(|angle| angle.value_in(DEGREE).ok()),
+                residue
+                    .kappa()
+                    .and_then(|angle| angle.value_in(DEGREE).ok()),
+                residue
+                    .alpha()
+                    .and_then(|angle| angle.value_in(DEGREE).ok()),
                 residue.tco(),
                 acceptor_1.0,
                 acceptor_1.1,
@@ -327,13 +330,13 @@ fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
         .filter(|atom| {
             topology
                 .atom(atom.atom())
-                .is_some_and(|view| view.atom().element.symbol() == "C")
+                .is_some_and(|view| view.atom().element().symbol() == "C")
         })
         .map(|atom| atom.atom())
         .collect::<Vec<_>>();
     let count = alpha.len();
-    let selection =
-        AtomSelection::from_atoms(&topology, alpha).map_err(|e| Failure::new("selection", e))?;
+    let selection = AtomSelection::from_atoms(Arc::clone(&topology), alpha)
+        .map_err(|e| Failure::new("selection", e))?;
     let rmsd = ensemble
         .aligned_rmsd(0usize, &selection, &selection, Default::default())
         .map_err(|e| Failure::new("superposition", e))?

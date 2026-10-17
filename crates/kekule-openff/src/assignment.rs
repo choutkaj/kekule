@@ -66,13 +66,14 @@ pub(crate) fn matching(error: TaggedMatchError) -> Error {
 /// to parameterize; the floors and per-atom factors only stop a pathological
 /// pattern whose matches grow faster than the molecule.
 pub(crate) fn options(atoms: usize) -> SubstructureMatchOptions {
-    SubstructureMatchOptions {
-        max_matches: 1_000_000_usize.max(atoms.saturating_mul(64)),
-        max_search_states: 10_000_000_usize.max(atoms.saturating_mul(1_000)),
-        max_candidate_pairs: 16_000_000_usize.max(atoms.saturating_mul(64)),
-        uniquify: false,
-        ..Default::default()
-    }
+    SubstructureMatchOptions::default()
+        .with_max_matches(1_000_000_usize.max(atoms.saturating_mul(64)))
+        .expect("parameterization bounds are positive")
+        .with_max_search_states(10_000_000_usize.max(atoms.saturating_mul(1_000)))
+        .expect("parameterization bounds are positive")
+        .with_max_candidate_pairs(16_000_000_usize.max(atoms.saturating_mul(64)))
+        .expect("parameterization bounds are positive")
+        .with_uniquify(false)
 }
 fn ordered<const N: usize>(mut a: [AtomId; N]) -> [AtomId; N] {
     let mut reverse = a;
@@ -147,7 +148,7 @@ impl ForceField {
         for center in m.atom_ids() {
             let neighbors = m
                 .neighbors(center)
-                .map_err(Error::chemistry)?
+                .expect("atom IDs come from this molecule")
                 .collect::<Vec<_>>();
             for i in 0..neighbors.len() {
                 for j in i + 1..neighbors.len() {
@@ -158,12 +159,12 @@ impl ForceField {
         for (_, b) in m.bonds() {
             for a in m
                 .neighbors(b.a())
-                .map_err(Error::chemistry)?
+                .expect("atom IDs come from this molecule")
                 .filter(|a| *a != b.b())
             {
                 for d in m
                     .neighbors(b.b())
-                    .map_err(Error::chemistry)?
+                    .expect("atom IDs come from this molecule")
                     .filter(|d| *d != b.a() && *d != a)
                 {
                     propers.insert(ordered([a, b.a(), b.b(), d]));
@@ -176,10 +177,7 @@ impl ForceField {
         complete("vdW", &m.atom_ids().map(|a| [a]).collect(), &assigned.vdw)?;
         for atoms in assigned.impropers.keys() {
             for i in [0, 2, 3] {
-                if m.bond_between(atoms[1], atoms[i])
-                    .map_err(Error::chemistry)?
-                    .is_none()
-                {
+                if m.bond_between(atoms[1], atoms[i]).is_none() {
                     return Err(Error::new(
                         ErrorKind::ForceField,
                         "improper parameter has invalid connectivity",
@@ -337,7 +335,7 @@ impl ForceField {
         // Atom parameters follow dense order, which need not keep instances contiguous.
         let mut atom_vdw = vec![None; topology.atom_count()];
         let mut atom_charges = vec![0.0; topology.atom_count()];
-        for instance in topology.molecules() {
+        for instance in topology.instances() {
             let (a, charges) = &definitions[&instance.definition_id()];
             let qualify = |atom| InstanceAtomId::new(instance.id(), atom);
             for (atoms, &i) in &a.bonds {
@@ -417,7 +415,11 @@ impl ForceField {
                     if depth == 3 {
                         continue;
                     }
-                    for next in a.molecule.neighbors(at).map_err(Error::chemistry)? {
+                    for next in a
+                        .molecule
+                        .neighbors(at)
+                        .expect("atom IDs come from this molecule")
+                    {
                         if visited.insert(next) {
                             queue.push_back((next, depth + 1));
                             if start < next {
@@ -444,7 +446,7 @@ impl ForceField {
                 })
             })
             .collect::<Result<_>>()?;
-        *result.charges.value_mut() = atom_charges;
+        result.charges = Quantity::new(atom_charges, result.charges.unit());
         Ok(result)
     }
     fn charges(
@@ -562,7 +564,7 @@ mod tests {
         molecule.add_hydrogens(Default::default()).unwrap();
         let carbons = molecule
             .atoms()
-            .filter(|(_, a)| a.element.atomic_number() == 6)
+            .filter(|(_, a)| a.element().atomic_number() == 6)
             .map(|(a, _)| a)
             .collect::<Vec<_>>();
         let topology = Arc::new(Topology::from_molecule(molecule.clone()).unwrap());
@@ -608,14 +610,14 @@ mod tests {
             })
             .unwrap();
         assert_eq!(calls, 1);
-        assert!(Arc::ptr_eq(p.topology(), &topology));
+        assert!(Arc::ptr_eq(&p.shared_topology(), &topology));
         assert_eq!(p.charges().value(), &[0.0; 8]);
         assert_eq!(p.bonds().len(), 6);
         assert_eq!(p.angles().len(), 6);
         assert_eq!(p.improper_torsions().len(), 6);
         for t in p.improper_torsions() {
             let center = topology.atom(t.atoms[0]).unwrap();
-            assert_eq!(center.element.atomic_number(), 6);
+            assert_eq!(center.element().atomic_number(), 6);
             assert!(t.parameter.terms.iter().all(|term| term.idivf == 3.0));
         }
         assert_eq!(p.constraints().len(), 4);

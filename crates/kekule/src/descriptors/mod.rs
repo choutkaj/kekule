@@ -51,6 +51,7 @@ use data::{exact_isotope_mass, most_abundant_isotope, standard_atomic_weight};
 
 /// Selects which non-atom hydrogen counts contribute to a descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum HydrogenCountPolicy {
     /// Count explicit graph hydrogens and fixed implicit counts only.
     /// Inferred counts are omitted, so this can describe a partial composition.
@@ -200,7 +201,7 @@ impl fmt::Display for MolecularDescriptorError {
         match self {
             Self::MissingImplicitHydrogens { atom } => write!(
                 formatter,
-                "implicit-hydrogen state is not installed for atom {atom}"
+                "implicit-hydrogen state is not installed for {atom}"
             ),
             Self::UnknownIsotope {
                 atom,
@@ -208,15 +209,15 @@ impl fmt::Display for MolecularDescriptorError {
                 mass_number,
             } => write!(
                 formatter,
-                "AME 2020 has no atomic mass for [{mass_number}{element}] at atom {atom}"
+                "AME 2020 has no atomic mass for [{mass_number}{element}] at {atom}"
             ),
             Self::MissingStandardAtomicWeight { atom, element } => write!(
                 formatter,
-                "CIAAW 2024 has no abridged standard atomic weight for {element} at atom {atom}"
+                "CIAAW 2024 has no abridged standard atomic weight for {element} at {atom}"
             ),
             Self::MissingNaturalIsotope { atom, element } => write!(
                 formatter,
-                "CIAAW 2024 has no naturally occurring isotope for {element} at atom {atom}"
+                "CIAAW 2024 has no naturally occurring isotope for {element} at {atom}"
             ),
             Self::CountOverflow {
                 element,
@@ -321,12 +322,16 @@ fn visit_constituents(
     let graph = molecule;
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a supported element");
     for (atom_id, atom) in graph.atoms() {
-        visit(atom_id, atom.element, atom.isotope, 1)?;
+        visit(
+            atom_id,
+            atom.element,
+            atom.isotope.map(std::num::NonZero::get),
+            1,
+        )?;
         let implicit = match hydrogen_policy {
             HydrogenCountPolicy::StoredOnly => usize::from(atom.hydrogens.represented_count()),
             HydrogenCountPolicy::IncludePerceived => graph
                 .implicit_hydrogens(atom_id)
-                .expect("a live atom identifier remains valid during read-only traversal")
                 .ok_or(MolecularDescriptorError::MissingImplicitHydrogens { atom: atom_id })?,
         };
         if implicit != 0 {
@@ -456,9 +461,9 @@ mod tests {
     fn hill_order_isotope_order_and_accessors_are_stable() {
         let mut graph = crate::molecule::MoleculeEditor::new();
         let mut carbon_13_atom = Atom::new(element("C"));
-        carbon_13_atom.isotope = Some(13);
+        carbon_13_atom.isotope = std::num::NonZeroU16::new(13);
         let mut carbon_12_atom = carbon_13_atom.clone();
-        carbon_12_atom.isotope = Some(12);
+        carbon_12_atom.isotope = std::num::NonZeroU16::new(12);
         let carbon_13 = graph
             .add_atom(carbon_13_atom)
             .expect("atom identifier capacity");
@@ -642,7 +647,7 @@ mod tests {
 
         let mut graph = crate::molecule::MoleculeEditor::new();
         let mut impossible = Atom::new(element("C"));
-        impossible.isotope = Some(999);
+        impossible.isotope = std::num::NonZeroU16::new(999);
         graph
             .add_atom(impossible)
             .expect("atom identifier capacity");

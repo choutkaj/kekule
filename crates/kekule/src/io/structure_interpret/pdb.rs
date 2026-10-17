@@ -37,8 +37,8 @@ pub(crate) fn interpret_pdb(
 ) -> Result<StructureInterpretation, FormatError> {
     let source = pdb_source(
         document,
-        options.strict_entity_metadata,
-        &options.connectivity,
+        options.requires_entity_metadata(),
+        options.connectivity(),
     )?;
     interpret_source(source, &options)
 }
@@ -60,8 +60,8 @@ pub(crate) fn interpret_pdb_ensemble(
     interpret_ensemble(available, options, |options| {
         pdb_source(
             document,
-            options.strict_entity_metadata,
-            &options.connectivity,
+            options.requires_entity_metadata(),
+            options.connectivity(),
         )
     })
 }

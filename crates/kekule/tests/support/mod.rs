@@ -152,7 +152,7 @@ pub(crate) fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomI
         match &mut kind {
             StereoElementKind::Tetrahedral(value) => {
                 value.center = atoms[&value.center];
-                value.carriers = value.carriers.iter().copied().map(carrier).collect();
+                value.carriers = value.carriers.map(carrier);
             }
             StereoElementKind::DoubleBond(value) => {
                 value.bond = bonds[&value.bond];
@@ -163,8 +163,9 @@ pub(crate) fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomI
             }
             StereoElementKind::Axis(value) => {
                 value.axis = bonds[&value.axis];
-                value.carriers = value.carriers.iter().copied().map(carrier).collect();
+                value.carriers = value.carriers.map(carrier);
             }
+            other => unimplemented!("support cannot remap {other:?}"),
         }
         let new = editor.add_stereo_element(StereoElement::new(kind)).unwrap();
         elements.insert(old, new);
@@ -223,10 +224,10 @@ pub(crate) fn try_cip_labels(
     let report = stereo::cip::assign_cip_descriptors(molecule, Default::default())
         .map_err(|error| format!("{error:?}"))?;
     Ok(report
-        .assigned
+        .assigned()
         .iter()
         .map(|assignment| {
-            let element = molecule.stereo_element(assignment.element).unwrap();
+            let element = molecule.stereo_element(assignment.element()).unwrap();
             let focus = match &element.kind {
                 StereoElementKind::Tetrahedral(value) => StereoFocus::Atom(value.center.index()),
                 StereoElementKind::DoubleBond(value) => {
@@ -236,8 +237,9 @@ pub(crate) fn try_cip_labels(
                     let axis = molecule.bond(value.axis).unwrap();
                     StereoFocus::bond(axis.a().index(), axis.b().index())
                 }
+                other => unimplemented!("support cannot focus {other:?}"),
             };
-            (focus, format!("{:?}", assignment.descriptor))
+            (focus, format!("{:?}", assignment.descriptor()))
         })
         .collect())
 }

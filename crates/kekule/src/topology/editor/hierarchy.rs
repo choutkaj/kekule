@@ -99,40 +99,54 @@ impl TopologyEditor {
     pub fn atom_sites(&self) -> impl ExactSizeIterator<Item = (EditAtomSiteId, &EditAtomSite)> {
         self.hierarchy.sites.iter().map(|(&id, s)| (id, s))
     }
-    pub fn chain(&self, id: EditChainId) -> Result<&EditChain, TopologyEditError> {
-        self.hierarchy
-            .chains
-            .get(&id)
-            .ok_or(TopologyEditError::InvalidChain(id))
+    /// One draft chain, or `None` when `id` names no live chain of this draft.
+    pub fn chain(&self, id: EditChainId) -> Option<&EditChain> {
+        self.hierarchy.chains.get(&id)
     }
-    pub fn residue(&self, id: EditResidueId) -> Result<&EditResidue, TopologyEditError> {
-        self.hierarchy
-            .residues
-            .get(&id)
-            .ok_or(TopologyEditError::InvalidResidue(id))
+    /// One draft residue, or `None` when `id` names no live residue of this draft.
+    pub fn residue(&self, id: EditResidueId) -> Option<&EditResidue> {
+        self.hierarchy.residues.get(&id)
     }
-    pub fn atom_site(&self, id: EditAtomSiteId) -> Result<&EditAtomSite, TopologyEditError> {
-        self.hierarchy
-            .sites
-            .get(&id)
-            .ok_or(TopologyEditError::InvalidAtomSite(id))
+    /// One draft atom site, or `None` when `id` names no live site of this draft.
+    pub fn atom_site(&self, id: EditAtomSiteId) -> Option<&EditAtomSite> {
+        self.hierarchy.sites.get(&id)
     }
-    pub fn chain_handle(&self, source: ChainId) -> Result<EditChainId, TopologyEditError> {
+    /// The draft handle of a source chain, or `None` when the chain is not in
+    /// the source or was deleted.
+    pub fn chain_handle(&self, source: ChainId) -> Option<EditChainId> {
         self.hierarchy
             .source_chains
             .get(&source)
             .copied()
             .filter(|id| self.hierarchy.chains.contains_key(id))
-            .ok_or(TopologyEditError::InvalidSourceChain(source))
     }
-    pub fn residue_handle(&self, source: ResidueId) -> Result<EditResidueId, TopologyEditError> {
+    /// The draft handle of a source residue, or `None` when the residue is not
+    /// in the source or was deleted.
+    pub fn residue_handle(&self, source: ResidueId) -> Option<EditResidueId> {
         self.hierarchy
             .source_residues
             .get(&source)
             .copied()
             .filter(|id| self.hierarchy.residues.contains_key(id))
-            .ok_or(TopologyEditError::InvalidSourceResidue(source))
     }
+    pub(crate) fn require_chain(&self, id: EditChainId) -> Result<&EditChain, TopologyEditError> {
+        self.chain(id).ok_or(TopologyEditError::InvalidChain(id))
+    }
+    pub(crate) fn require_residue(
+        &self,
+        id: EditResidueId,
+    ) -> Result<&EditResidue, TopologyEditError> {
+        self.residue(id)
+            .ok_or(TopologyEditError::InvalidResidue(id))
+    }
+    pub(crate) fn require_atom_site(
+        &self,
+        id: EditAtomSiteId,
+    ) -> Result<&EditAtomSite, TopologyEditError> {
+        self.atom_site(id)
+            .ok_or(TopologyEditError::InvalidAtomSite(id))
+    }
+
     pub fn atom_site_handle(
         &self,
         source: AtomSiteId,
@@ -178,7 +192,7 @@ impl TopologyEditor {
         author_seq: Option<String>,
         insertion: Option<String>,
     ) -> Result<EditResidueId, TopologyEditError> {
-        self.chain(chain)?;
+        self.require_chain(chain)?;
         let id = EditResidueId::new();
         let name = name.into();
         let slot = self.properties.residues().len();
@@ -208,7 +222,7 @@ impl TopologyEditor {
         atom: EditAtomId,
         metadata: AtomSiteMetadata,
     ) -> Result<EditAtomSiteId, TopologyEditError> {
-        self.residue(residue)?;
+        self.require_residue(residue)?;
         self.atom_location(atom)?;
         if self.hierarchy.atom_sites.contains_key(&atom) {
             return Err(TopologyEditError::DuplicateAtomPlacement(atom));
@@ -242,7 +256,7 @@ impl TopologyEditor {
         label: impl Into<String>,
         author: Option<String>,
     ) -> Result<(), TopologyEditError> {
-        self.chain(id)?;
+        self.require_chain(id)?;
         let label = label.into();
         let chain = self.hierarchy.chains.get_mut(&id).unwrap();
         if chain.label == label && chain.author == author {
@@ -259,7 +273,7 @@ impl TopologyEditor {
         label: Option<String>,
         author: Option<String>,
     ) -> Result<(), TopologyEditError> {
-        self.residue(id)?;
+        self.require_residue(id)?;
         let residue = self.hierarchy.residues.get_mut(&id).unwrap();
         if residue.label_comp == label && residue.author_comp == author {
             return Ok(());
@@ -275,8 +289,10 @@ impl TopologyEditor {
         id: EditResidueId,
         class: ResidueClass,
     ) -> Result<(), TopologyEditError> {
-        let previous = self.residue(id)?.class;
-        if self.residue(id)?.class == Some(class) && self.residue(id)?.class_explicit {
+        let previous = self.require_residue(id)?.class;
+        if self.require_residue(id)?.class == Some(class)
+            && self.require_residue(id)?.class_explicit
+        {
             return Ok(());
         }
         self.hierarchy.residues.get_mut(&id).unwrap().class = Some(class);
@@ -292,10 +308,10 @@ impl TopologyEditor {
         id: EditAtomSiteId,
         metadata: AtomSiteMetadata,
     ) -> Result<(), TopologyEditError> {
-        if self.atom_site(id)?.metadata == metadata {
+        if self.require_atom_site(id)?.metadata == metadata {
             return Ok(());
         }
-        let previous = &self.atom_site(id)?.metadata;
+        let previous = &self.require_atom_site(id)?.metadata;
         let names_changed = previous.label_atom_id != metadata.label_atom_id
             || previous.auth_atom_id != metadata.auth_atom_id;
         self.hierarchy.sites.get_mut(&id).unwrap().metadata = metadata;
@@ -310,8 +326,8 @@ impl TopologyEditor {
         id: EditAtomSiteId,
         residue: EditResidueId,
     ) -> Result<(), TopologyEditError> {
-        self.residue(residue)?;
-        let previous = self.atom_site(id)?.residue;
+        self.require_residue(residue)?;
+        let previous = self.require_atom_site(id)?.residue;
         if previous == residue {
             return Ok(());
         }
@@ -339,7 +355,7 @@ impl TopologyEditor {
         &mut self,
         id: EditAtomSiteId,
     ) -> Result<EditAtomSite, TopologyEditError> {
-        self.atom_site(id)?;
+        self.require_atom_site(id)?;
         let site = self.hierarchy.sites.remove(&id).unwrap();
         self.hierarchy.atom_sites.remove(&site.atom);
         self.hierarchy
@@ -356,7 +372,7 @@ impl TopologyEditor {
     }
     /// Removes a residue and its sites, retaining all chemical atoms.
     pub fn delete_residue(&mut self, id: EditResidueId) -> Result<EditResidue, TopologyEditError> {
-        let previous = self.residue(id)?.clone();
+        let previous = self.require_residue(id)?.clone();
         let sites = self
             .atom_sites()
             .filter(|(_, s)| s.residue == id)
@@ -374,7 +390,7 @@ impl TopologyEditor {
     }
     /// Removes a chain and its organization, retaining all chemical atoms.
     pub fn delete_chain(&mut self, id: EditChainId) -> Result<EditChain, TopologyEditError> {
-        let previous = self.chain(id)?.clone();
+        let previous = self.require_chain(id)?.clone();
         let residues = self
             .residues()
             .filter(|(_, r)| r.chain == id)

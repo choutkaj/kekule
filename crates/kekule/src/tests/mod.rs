@@ -188,7 +188,7 @@ pub(super) fn read_molfile_with_report(
     }
     let molecule = model
         .topology()
-        .molecules()
+        .instances()
         .next()
         .expect("one component")
         .molecule()
@@ -458,11 +458,11 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
             .map(|atom| {
                 atom.as_ref().map(|atom| RepresentedAtomSnapshot {
                     element: atom.element,
-                    isotope: atom.isotope,
+                    isotope: atom.isotope.map(std::num::NonZero::get),
                     formal_charge: atom.formal_charge,
                     radical: atom.radical,
                     hydrogens: atom.hydrogens,
-                    atom_map: atom.atom_map,
+                    atom_map: atom.atom_map.map(std::num::NonZero::get),
                 })
             })
             .collect(),

@@ -60,7 +60,7 @@ pub(super) fn build_component_definitions(
         let mut component = Vec::new();
         while let Some(atom) = queue.pop_front() {
             component.push(atom);
-            for neighbor in source_molecule.neighbors(atom)? {
+            for neighbor in source_molecule.require_neighbors(atom)? {
                 if selected_local.contains(&neighbor) && visited.insert(neighbor) {
                     queue.push_back(neighbor);
                 }
@@ -69,7 +69,7 @@ pub(super) fn build_component_definitions(
         component.sort_unstable();
         let mut editor = MoleculeEditor::new();
         for &atom in &component {
-            let target_atom = editor.add_atom(source_molecule.atom(atom)?.clone())?;
+            let target_atom = editor.add_atom(source_molecule.require_atom(atom)?.clone())?;
             local_atoms.insert(atom, (components.len(), target_atom));
         }
         components.push(ComponentDraft {

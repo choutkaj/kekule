@@ -24,13 +24,28 @@ use kekule::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIE
 ///
 /// Accepting a [`ModelView`] does not imply support for every structure
 /// field. Implementations document capabilities such as periodic-cell support
-/// and return a structured [`EvaluationError`] for unsupported state. Every
-/// evaluation of a view from a different topology snapshot, including an
-/// independently equal one, returns [`EvaluationError::IncompatibleTopology`].
+/// and return a structured [`EvaluationError`] for unsupported state.
+///
+/// # Implementing this trait
+///
+/// This trait is the extension point for energy backends. An implementation
+/// must keep this contract:
+///
+/// - [`Self::topology`] returns the snapshot the potential was prepared for,
+///   unchanged for the potential's whole life.
+/// - [`Self::evaluate`] and [`Self::energy`] accept every view whose topology
+///   shares that layout, including perceived snapshots, and return
+///   [`EvaluationError::IncompatibleTopology`] for any other view, including
+///   one of an independently equal topology.
+/// - State the potential cannot evaluate, such as an unsupported periodic
+///   cell, is rejected with an error rather than ignored.
+/// - Results are built with [`Evaluation::new`] and [`Energy`], so they are
+///   finite and in canonical units; gradients are exact derivatives.
+/// - Evaluation does not mutate the potential, which is `Send + Sync`.
 pub trait Potential: Send + Sync {
     /// The topology snapshot this potential was prepared for. Evaluation
     /// accepts any snapshot sharing its layout.
-    fn topology(&self) -> &Arc<Topology>;
+    fn topology(&self) -> &Topology;
 
     /// Evaluates the energy and its Cartesian gradient.
     fn evaluate(&self, model: ModelView<'_>) -> Result<Evaluation, EvaluationError>;
@@ -80,8 +95,18 @@ impl fmt::Display for ComponentKind {
 /// One component of an [`Energy`], in the canonical energy unit.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EnergyComponent {
-    pub kind: ComponentKind,
-    pub energy: Quantity<f64>,
+    pub(crate) kind: ComponentKind,
+    pub(crate) energy: Quantity<f64>,
+}
+
+impl EnergyComponent {
+    pub const fn kind(&self) -> ComponentKind {
+        self.kind
+    }
+
+    pub const fn energy(&self) -> Quantity<f64> {
+        self.energy
+    }
 }
 
 /// A validated finite energy, optionally decomposed into components.
@@ -165,7 +190,7 @@ pub struct Evaluation {
 
 impl PartialEq for Evaluation {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology)
+        self.topology.shares_layout(&other.topology)
             && self.energy == other.energy
             && self.gradient == other.gradient
     }
@@ -197,8 +222,14 @@ impl Evaluation {
     }
 
     /// The exact topology snapshot of the evaluated structure.
-    pub fn topology(&self) -> &Arc<Topology> {
+    pub fn topology(&self) -> &Topology {
         &self.topology
+    }
+
+    /// Clones the handle to the evaluated snapshot, without copying topology
+    /// data.
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
     }
 
     pub fn energy(&self) -> &Energy {
@@ -417,10 +448,7 @@ impl fmt::Display for EvaluationError {
                 "potential produced {actual} gradients for a model with {expected} atoms"
             ),
             Self::NonFiniteGradient { atom } => {
-                write!(
-                    f,
-                    "potential produced a non-finite gradient for atom {atom}"
-                )
+                write!(f, "potential produced a non-finite gradient for {atom}")
             }
             Self::Unit(_) => f.write_str("invalid potential quantity unit"),
             Self::Backend(_) => f.write_str("potential backend evaluation failed"),

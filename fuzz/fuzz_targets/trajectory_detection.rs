@@ -6,9 +6,9 @@ use kekule_traj::io::{detect_trajectory_format, TrajectoryFormatHint, Trajectory
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let mut limits = TrajectoryIoLimits::default();
-    limits.max_detection_bytes = 512;
-    limits.max_scratch_bytes = 512;
+    let limits = TrajectoryIoLimits::default()
+        .with_max_detection_bytes(512)
+        .with_max_scratch_bytes(512);
     let mut cursor = Cursor::new(data);
     let start = cursor.position();
     let _ = detect_trajectory_format(

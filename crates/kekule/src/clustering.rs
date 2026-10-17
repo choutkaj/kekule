@@ -52,7 +52,7 @@
 //! )?;
 //! ensemble.assign_boltzmann_weights(Quantity::new(298.15, KELVIN))?;
 //!
-//! let atoms = SymmetricSelection::new(&AtomSelection::all(&topology))?;
+//! let atoms = SymmetricSelection::new(&AtomSelection::all(topology.clone()))?;
 //! let rotamers = ensemble.cluster_by_radius(Quantity::new(0.125, ANGSTROM), &atoms, Default::default())?;
 //! assert_eq!(rotamers.assignments(), [0, 0, 1]);
 //!
@@ -172,10 +172,34 @@ pub enum ClusterOrder {
 /// Options for [`Ensemble::cluster_by_radius`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClusteringOptions<'a> {
+    alignment: AlignmentOptions<'a>,
+    order: ClusterOrder,
+}
+
+impl<'a> ClusteringOptions<'a> {
     /// Fit weighting and periodic policy of every pairwise fit.
-    pub alignment: AlignmentOptions<'a>,
+    pub const fn alignment(&self) -> AlignmentOptions<'a> {
+        self.alignment
+    }
+
+    /// Sets [`Self::alignment`].
+    #[must_use]
+    pub const fn with_alignment(mut self, alignment: AlignmentOptions<'a>) -> Self {
+        self.alignment = alignment;
+        self
+    }
+
     /// The order in which members are visited.
-    pub order: ClusterOrder,
+    pub const fn order(&self) -> ClusterOrder {
+        self.order
+    }
+
+    /// Sets [`Self::order`].
+    #[must_use]
+    pub const fn with_order(mut self, order: ClusterOrder) -> Self {
+        self.order = order;
+        self
+    }
 }
 
 impl Ensemble {
@@ -226,9 +250,9 @@ impl Ensemble {
             });
         };
         let sets = atoms.pair_sets(*first, *first)?;
-        check_fit_count(atoms.len())?;
-        let weights = NormalizedWeights::new(options.alignment.weighting, atoms.len())?;
-        let policy = options.alignment.periodic_policy;
+        check_fit_count(atoms.pair_count())?;
+        let weights = NormalizedWeights::new(options.alignment.weighting(), atoms.pair_count())?;
+        let policy = options.alignment.periodic_policy();
 
         let mut assignments = vec![0; views.len()];
         let mut representatives: Vec<usize> = Vec::new();

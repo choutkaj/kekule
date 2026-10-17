@@ -8,7 +8,7 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::topology::TopologyBuilder;
 use kekule::units::{Quantity, ANGSTROM};
-use kekule_traj::io::dcd::DcdWriteOptions;
+use kekule_traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule_traj::io::{create_trajectory_writer, OverwritePolicy, TrajectoryWriteOptions};
 use kekule_traj::{FrameBuffer, TrajectoryFormat, TrajectoryWriter};
 
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_overwrite_policy(OverwritePolicy::Replace)
         .with_dcd_options(
             DcdWriteOptions::default()
-                .with_cells(true)
+                .with_cell_policy(DcdCellPolicy::Write)
                 .with_step_sequence(0, 1),
         );
     let mut writer = create_trajectory_writer(&output, Arc::clone(&topology), options)?;

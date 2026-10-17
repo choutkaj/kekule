@@ -72,7 +72,7 @@ pub(crate) fn codec_error(
     operation: TrajectoryIoOperation,
     format: TrajectoryFormat,
     source_label: &str,
-    frame: Option<u64>,
+    frame: Option<usize>,
     detail: &str,
 ) -> TrajectoryIoError {
     let mut error = TrajectoryIoError::codec(kind, operation, Some(format))
@@ -118,11 +118,11 @@ pub(crate) fn assert_indexes_every_frame_from_its_start(
     expected: &[TrajectoryFrame],
 ) {
     let mut destination = FrameBuffer::new(reader.shared_topology());
-    assert_eq!(reader.frame_count(), Some(expected.len() as u64));
+    assert_eq!(reader.frame_count(), Some(expected.len()));
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(destination.frame_view().payload(), &expected[0]);
     for index in (0..expected.len()).rev() {
-        reader.read_frame(index as u64, &mut destination).unwrap();
+        reader.read_frame(index, &mut destination).unwrap();
         assert_eq!(destination.frame_view().payload(), &expected[index]);
     }
     for frame in &expected[1..] {

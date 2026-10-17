@@ -49,10 +49,7 @@ impl<'a> TargetData<'a> {
                     .or_insert_with(|| {
                         // Unperceived targets retain the existing partial-facts
                         // policy: an unresolved inferred count counts as zero.
-                        let nongraph_hydrogens = molecule
-                            .implicit_hydrogens(local)
-                            .expect("valid atom")
-                            .unwrap_or(0);
+                        let nongraph_hydrogens = molecule.implicit_hydrogens(local).unwrap_or(0);
                         let neighbors = molecule
                             .neighbors(local)
                             .expect("valid atom")
@@ -128,7 +125,6 @@ pub(super) fn visit_with_work(
     visitor: &mut dyn FnMut(&[usize]) -> bool,
     work: &mut SubstructureMatchWork,
 ) -> Result<MatchCompletion, SubstructureMatchError> {
-    validate_options(options)?;
     let mut context = Context {
         data,
         options,
@@ -292,7 +288,7 @@ impl Context<'_, '_> {
         let f = &target.facts;
         Ok(match p {
             AtomPredicate::Element(e) => atom.element == *e,
-            AtomPredicate::Isotope(i) => atom.isotope.unwrap_or(0) == *i,
+            AtomPredicate::Isotope(i) => atom.isotope.map_or(0, std::num::NonZero::get) == *i,
             AtomPredicate::FormalCharge(c) => atom.formal_charge == *c,
             AtomPredicate::Aromatic(a) => m.perception().atom_is_aromatic(id) == Some(*a),
             AtomPredicate::Degree(n) => f.degree == usize::from(*n),
@@ -458,7 +454,6 @@ impl Context<'_, '_> {
             let target_bond = target
                 .molecule
                 .bond_between(target.local, locals[bond.b().index()])
-                .expect("valid atoms")
                 .expect("mapped bond");
             let mut domain = Vec::new();
             for direction in [None, Some(false), Some(true)] {
@@ -727,7 +722,10 @@ fn require_atom_perception(m: &Molecule, p: &AtomPredicate) -> Result<(), Substr
         }
         AtomPredicate::RingCount(_) | AtomPredicate::SmallestRingSize(_) => {
             if m.ring_set().is_some()
-                && m.perception().ring_basis_model() != Some(RingBasisModel::FiguerasSssrLike)
+                && !m
+                    .perception()
+                    .ring_basis_model()
+                    .is_some_and(RingBasisModel::is_sssr_like)
             {
                 return Err(SubstructureMatchError::IncompatiblePerception(
                     QueryPerception::RingBasis,

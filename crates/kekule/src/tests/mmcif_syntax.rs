@@ -89,10 +89,7 @@ fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
             .positions(),
         expected.model().positions()
     );
-    let options = MmcifParseOptions {
-        max_atom_site_rows: 0,
-        ..Default::default()
-    };
+    let options = MmcifParseOptions::default().with_max_atom_site_rows(0);
     for input in [
         SINGLE_SITE.to_owned(),
         singleton_loops_as_scalars(SINGLE_SITE),
@@ -258,7 +255,7 @@ fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
     assert_eq!(a.model().positions(), b.model().positions());
     assert_eq!(a.model().properties(), b.model().properties());
     let protein = crate::topology::AtomSelection::for_molecule_classes(
-        &a.model().shared_topology(),
+        a.model().shared_topology(),
         [crate::topology::MoleculeClass::Protein],
     )
     .unwrap();
@@ -379,10 +376,7 @@ fn mmcif_semicolon_closing_line_preserves_following_tokens() {
 
 #[test]
 fn mmcif_semicolon_size_limit_counts_opening_line_and_newlines() {
-    let options = MmcifParseOptions {
-        max_token_bytes: 8,
-        ..Default::default()
-    };
+    let options = MmcifParseOptions::default().with_max_token_bytes(8);
     for field in [";12345678\n;", ";1234\n678\n;"] {
         let doc = mmcif::parse_str(&format!("data_x\n_x.v\n{field}\n"), options).unwrap();
         assert_eq!(doc.blocks()[0].item("_x.v").unwrap().text().len(), 8);
@@ -412,10 +406,7 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
             "{input:?}: {error}"
         );
     }
-    let limited = MmcifParseOptions {
-        max_tokens: 2,
-        ..MmcifParseOptions::default()
-    };
+    let limited = MmcifParseOptions::default().with_max_tokens(2);
     let error = mmcif::parse_str("data_x\n_a.b 1\n_a.c 2\n", limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
@@ -444,10 +435,11 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
     );
     let error = mmcif::parse_str(SINGLE_SITE, Default::default())
         .unwrap()
-        .interpret_ensemble(macromolecular::StructureEnsembleInterpretOptions {
-            model_ids: Some(vec!["9".into()]),
-            ..Default::default()
-        })
+        .interpret_ensemble(
+            macromolecular::StructureEnsembleInterpretOptions::default()
+                .with_model_ids(Some(vec!["9".into()]))
+                .unwrap(),
+        )
         .unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
@@ -458,9 +450,8 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
 #[test]
 fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
     use crate::diagnostics::{DiagnosticKind, SourceLocation};
-    let options = |max_atom_site_rows| MmcifParseOptions {
-        max_atom_site_rows,
-        ..MmcifParseOptions::default()
+    let options = |max_atom_site_rows| {
+        MmcifParseOptions::default().with_max_atom_site_rows(max_atom_site_rows)
     };
     // Each unterminated quote follows the excess row and is never tokenized.
     for (input, max_rows, line) in [
@@ -516,10 +507,7 @@ fn mmcif_readers_enforce_limits_while_reading_and_match_string_parsing() {
         mmcif::parse_reader(SINGLE_SITE.as_bytes(), Default::default()).unwrap(),
         mmcif::parse_str(SINGLE_SITE, Default::default()).unwrap()
     );
-    let limited = MmcifParseOptions {
-        max_input_bytes: 8,
-        ..MmcifParseOptions::default()
-    };
+    let limited = MmcifParseOptions::default().with_max_input_bytes(8);
     let error = mmcif::parse_reader(SINGLE_SITE.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),

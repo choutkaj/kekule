@@ -112,10 +112,7 @@ fn stereo_mapping_filter_precedes_uniqueness_and_match_limit() {
         let all = PreparedTarget::new(&target)
             .all(
                 &query,
-                SubstructureMatchOptions {
-                    uniquify: false,
-                    ..SubstructureMatchOptions::default()
-                },
+                SubstructureMatchOptions::default().with_uniquify(false),
             )
             .unwrap();
         assert_eq!(
@@ -260,6 +257,33 @@ fn double_bond_query_builder_requires_live_adjacent_carriers() {
 }
 
 #[test]
+fn query_graph_builder_bounds_total_atoms() {
+    let graph = |atoms: usize| {
+        let mut builder = QueryGraphBuilder::with_capacity(atoms, 0);
+        for _ in 0..atoms {
+            builder
+                .add_atom(AtomExpression::predicate(AtomPredicate::Element(
+                    Element::C,
+                )))
+                .unwrap();
+        }
+        builder.build()
+    };
+    assert_eq!(
+        graph(MAX_QUERY_TOTAL_ATOMS).map(|graph| graph.atom_count()),
+        Ok(4_096)
+    );
+    assert_eq!(
+        graph(MAX_QUERY_TOTAL_ATOMS + 1).map(|graph| graph.atom_count()),
+        Err(QueryGraphError::LimitExceeded(LimitExceeded::new(
+            Resource::Atoms,
+            4_096,
+            4_097
+        )))
+    );
+}
+
+#[test]
 fn query_graph_is_distinct_from_the_concrete_molecule_kernel() {
     let mut builder = QueryGraphBuilder::with_capacity(2, 1);
     let carbon = builder
@@ -293,7 +317,7 @@ fn query_graph_is_distinct_from_the_concrete_molecule_kernel() {
 
     let graph = builder.build().unwrap();
     assert_eq!((graph.atom_count(), graph.bond_count()), (2, 1));
-    assert_eq!(graph.bond_between(carbon, hetero).unwrap(), Some(bond));
+    assert_eq!(graph.bond_between(carbon, hetero), Some(bond));
     assert_eq!(
         graph.neighbors(carbon).unwrap().collect::<Vec<_>>(),
         vec![hetero]
@@ -493,20 +517,16 @@ fn smarts_parser_is_total_over_deterministic_text_mutations() {
 fn smarts_limits_cover_input_topology_and_expressions() {
     let input_error = smarts::parse_str(
         "CC",
-        SmartsParseOptions {
-            max_input_bytes: 1,
-            ..SmartsParseOptions::default()
-        },
+        SmartsParseOptions::default()
+            .with_max_input_bytes(1)
+            .unwrap(),
     )
     .unwrap_err();
     assert_eq!(input_error.kind(), DiagnosticKind::Limit);
 
     let atom_error = smarts::parse_str(
         "CC",
-        SmartsParseOptions {
-            max_atoms: 1,
-            ..SmartsParseOptions::default()
-        },
+        SmartsParseOptions::default().with_max_atoms(1).unwrap(),
     )
     .unwrap_err();
     assert_eq!(atom_error.kind(), DiagnosticKind::Limit);
@@ -517,10 +537,9 @@ fn smarts_limits_cover_input_topology_and_expressions() {
 
     let branch_error = smarts::parse_str(
         "C(C(C))",
-        SmartsParseOptions {
-            max_branch_depth: 1,
-            ..SmartsParseOptions::default()
-        },
+        SmartsParseOptions::default()
+            .with_max_branch_depth(1)
+            .unwrap(),
     )
     .unwrap_err();
     assert_eq!(branch_error.kind(), DiagnosticKind::Limit);
@@ -531,10 +550,9 @@ fn smarts_limits_cover_input_topology_and_expressions() {
 
     let expression_error = smarts::parse_str(
         "[!C]",
-        SmartsParseOptions {
-            max_expression_depth: 2,
-            ..SmartsParseOptions::default()
-        },
+        SmartsParseOptions::default()
+            .with_max_expression_depth(2)
+            .unwrap(),
     )
     .unwrap_err();
     assert_eq!(expression_error.kind(), DiagnosticKind::Limit);
@@ -549,10 +567,9 @@ fn smarts_limits_cover_input_topology_and_expressions() {
     // reports the depth bound.
     let bond_depth_error = smarts::parse_str(
         "C!-C",
-        SmartsParseOptions {
-            max_expression_depth: 1,
-            ..SmartsParseOptions::default()
-        },
+        SmartsParseOptions::default()
+            .with_max_expression_depth(1)
+            .unwrap(),
     )
     .unwrap_err();
     assert_eq!(
@@ -762,10 +779,7 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
     let embeddings = substructure::PreparedTarget::new(&benzene)
         .all(
             &query,
-            SubstructureMatchOptions {
-                uniquify: false,
-                ..SubstructureMatchOptions::default()
-            },
+            SubstructureMatchOptions::default().with_uniquify(false),
         )
         .unwrap();
     assert_eq!(embeddings.len(), 12);
@@ -827,10 +841,7 @@ fn smarts_bonds_distinguish_aromatic_types_from_localized_orders() {
             let matches = PreparedTarget::new(&target)
                 .all(
                     &query,
-                    SubstructureMatchOptions {
-                        uniquify: false,
-                        ..Default::default()
-                    },
+                    SubstructureMatchOptions::default().with_uniquify(false),
                 )
                 .unwrap();
             assert_eq!(matches.len(), count, "{source}: {smarts}");
@@ -967,10 +978,9 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
     let candidate_error = substructure::PreparedTarget::new(&target)
         .all(
             &query,
-            SubstructureMatchOptions {
-                max_candidate_pairs: 3,
-                ..SubstructureMatchOptions::default()
-            },
+            SubstructureMatchOptions::default()
+                .with_max_candidate_pairs(3)
+                .unwrap(),
         )
         .unwrap_err();
     assert!(matches!(
@@ -981,11 +991,11 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
     let state_error = substructure::PreparedTarget::new(&target)
         .all(
             &query,
-            SubstructureMatchOptions {
-                max_search_states: 1,
-                max_matches: 4,
-                ..SubstructureMatchOptions::default()
-            },
+            SubstructureMatchOptions::default()
+                .with_max_search_states(1)
+                .unwrap()
+                .with_max_matches(4)
+                .unwrap(),
         )
         .unwrap_err();
     assert!(matches!(
@@ -994,13 +1004,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
     ));
 
     assert_eq!(
-        substructure::PreparedTarget::new(&target).all(
-            &query,
-            SubstructureMatchOptions {
-                max_query_atoms: MAX_SUBSTRUCTURE_QUERY_ATOMS + 1,
-                ..SubstructureMatchOptions::default()
-            }
-        ),
+        SubstructureMatchOptions::default().with_max_query_atoms(MAX_SUBSTRUCTURE_QUERY_ATOMS + 1),
         Err(SubstructureMatchError::InvalidLimit {
             resource: Resource::Atoms,
             limit: MAX_SUBSTRUCTURE_QUERY_ATOMS + 1,

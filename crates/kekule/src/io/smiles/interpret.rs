@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::{NonZeroU16, NonZeroU32};
 use std::ops::Range;
 
 use crate::chemistry::{
@@ -27,12 +28,25 @@ use super::parse::{
 /// Policy for SMILES interpretation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SmilesInterpretOptions {
+    unsupported: UnsupportedContent,
+}
+
+impl SmilesInterpretOptions {
     /// What to do with [`SmilesCxFieldKind::Unsupported`] fields. They fail
     /// interpretation by default; [`UnsupportedContent::Report`] omits them and
     /// lists them in [`SmilesInterpretation::omitted_cx_fields`].
     ///
     /// [`SmilesCxFieldKind::Unsupported`]: super::cx::SmilesCxFieldKind::Unsupported
-    pub unsupported: UnsupportedContent,
+    pub const fn unsupported(&self) -> UnsupportedContent {
+        self.unsupported
+    }
+
+    /// Sets [`Self::unsupported`].
+    #[must_use]
+    pub const fn with_unsupported(mut self, unsupported: UnsupportedContent) -> Self {
+        self.unsupported = unsupported;
+        self
+    }
 }
 
 /// A SMILES interpretation failure concerning byte `offset` of a record.
@@ -703,14 +717,14 @@ fn interpret_smiles_atom(
         )
     })?;
     let mut atom = Atom::new(element);
-    atom.isotope = syntax.isotope;
+    atom.isotope = syntax.isotope.and_then(NonZeroU16::new);
     atom.formal_charge = syntax.formal_charge;
     atom.hydrogens = if syntax.bracketed {
         ImplicitHydrogens::Fixed(syntax.specified_hydrogens)
     } else {
         ImplicitHydrogens::Inferred
     };
-    atom.atom_map = syntax.atom_map;
+    atom.atom_map = syntax.atom_map.and_then(NonZeroU32::new);
     Ok(atom)
 }
 
@@ -764,6 +778,17 @@ fn add_smiles_tetrahedral_elements(
                 .unwrap_or_default(),
             offset,
         )?;
+        let carriers = editor
+            .working()
+            .tetrahedral_carriers(center, carriers)
+            .map_err(|error| {
+                interpret_error(
+                    DiagnosticKind::Chemistry,
+                    offset,
+                    "cannot add stereo center",
+                )
+                .with_source(error)
+            })?;
         editor
             .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
                 TetrahedralStereo {

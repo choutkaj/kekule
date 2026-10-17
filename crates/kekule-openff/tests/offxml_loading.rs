@@ -140,7 +140,7 @@ fn rule_metadata_is_optional_but_smirks_and_parameter_values_are_required() {
         .unwrap()
         .label_molecule(&molecule)
         .unwrap();
-    assert!(labels.bonds.values().all(|p| p.id.is_empty()));
+    assert!(labels.bonds().values().all(|p| p.id().is_empty()));
     assert_eq!(
         ff.nonbonded_settings(),
         ForceField::rosemary().unwrap().nonbonded_settings()

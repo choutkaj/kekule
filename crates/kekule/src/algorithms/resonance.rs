@@ -51,14 +51,49 @@ impl std::ops::BitOr for ResonanceFlags {
 /// Bounds and contributor policy for explicit enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResonanceOptions {
-    pub flags: ResonanceFlags,
+    flags: ResonanceFlags,
+    max_structures: usize,
+    max_total_work: usize,
+}
+
+impl ResonanceOptions {
+    pub const fn flags(&self) -> ResonanceFlags {
+        self.flags
+    }
+
+    /// Sets [`Self::flags`].
+    #[must_use]
+    pub const fn with_flags(mut self, flags: ResonanceFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
     /// Maximum returned contributors, clamped to RDKit's ceiling of 1,000,000.
     /// Zero returns an empty collection. The pinned reference cannot produce a
     /// valid conjugated contributor at a limit of one; use at least two.
-    pub max_structures: usize,
+    pub const fn max_structures(&self) -> usize {
+        self.max_structures
+    }
+
+    /// Sets [`Self::max_structures`].
+    #[must_use]
+    pub const fn with_max_structures(mut self, max_structures: usize) -> Self {
+        self.max_structures = max_structures;
+        self
+    }
+
     /// Bounds search visits, copied state, and permutation construction/sorting.
     /// Exhaustion returns an error without a partial result.
-    pub max_total_work: usize,
+    pub const fn max_total_work(&self) -> usize {
+        self.max_total_work
+    }
+
+    /// Sets [`Self::max_total_work`].
+    #[must_use]
+    pub const fn with_max_total_work(mut self, max_total_work: usize) -> Self {
+        self.max_total_work = max_total_work;
+        self
+    }
 }
 impl ResonanceOptions {
     /// The [`Default`] bound of [`Self::max_structures`].
@@ -113,7 +148,7 @@ impl fmt::Display for ResonanceError {
         match self {
             Self::MissingConjugation => f.write_str("resonance requires installed conjugation"),
             Self::UnknownHydrogens(a) => write!(f, "resonance requires known hydrogens at {a}"),
-            Self::UnsupportedBond(b) => write!(f, "resonance group contains unsupported bond {b}"),
+            Self::UnsupportedBond(b) => write!(f, "resonance group contains unsupported {b}"),
             Self::InvalidElectronCount => f.write_str("invalid electron count in resonance search"),
             Self::InvalidStructureLimit => f.write_str("RDKit-compatible conjugated enumeration requires a structure limit of zero or at least two"),
             Self::LimitExceeded(limit) => write!(f, "resonance {limit}"),
@@ -234,9 +269,10 @@ impl ResonanceStructures<'_> {
             let h = self
                 .source
                 .implicit_hydrogens(id)
-                .expect("live atom")
                 .ok_or(ResonanceError::UnknownHydrogens(id))?;
-            let mut atom = editor.atom_mut(id).map_err(ResonanceError::Molecule)?;
+            let mut atom = editor
+                .require_atom_mut(id)
+                .map_err(ResonanceError::Molecule)?;
             atom.formal_charge = contributor.charges[&id];
             atom.hydrogens = ImplicitHydrogens::Fixed(
                 u8::try_from(h).map_err(|_| ResonanceError::InvalidElectronCount)?,
@@ -284,7 +320,7 @@ pub fn enumerate_resonance(
         return Err(ResonanceError::InvalidStructureLimit);
     }
     for id in mol.atom_ids() {
-        if mol.implicit_hydrogens(id).expect("live atom").is_none() {
+        if mol.implicit_hydrogens(id).is_none() {
             return Err(ResonanceError::UnknownHydrogens(id));
         }
     }

@@ -28,16 +28,84 @@ const MAX_COORDINATE_PRECISION: usize = 15;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifWriteOptions {
-    pub block_name: String,
-    pub coordinate_precision: usize,
+    block_name: String,
+    coordinate_precision: usize,
+    ensemble_metadata: UnrepresentablePolicy,
+    cell: UnrepresentablePolicy,
+}
+
+impl MmcifWriteOptions {
+    pub fn block_name(&self) -> &str {
+        &self.block_name
+    }
+
+    /// Sets [`Self::block_name`].
+    ///
+    /// # Errors
+    ///
+    /// A write [`FormatError`] with [`MmcifWriteIssue::InvalidBlockName`] unless the name is a nonempty run of ASCII letters, digits, `_`, `-` and `.`.
+    pub fn with_block_name(mut self, block_name: impl Into<String>) -> Result<Self, FormatError> {
+        let block_name = block_name.into();
+        if block_name.is_empty()
+            || !block_name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "_-.".contains(character))
+        {
+            return Err(fail(MmcifWriteIssue::InvalidBlockName(block_name)));
+        }
+        self.block_name = block_name;
+        Ok(self)
+    }
+
+    pub const fn coordinate_precision(&self) -> usize {
+        self.coordinate_precision
+    }
+
+    /// Sets [`Self::coordinate_precision`].
+    ///
+    /// # Errors
+    ///
+    /// A write [`FormatError`] with [`MmcifWriteIssue::CoordinatePrecisionTooLarge`] above 15 digits.
+    pub fn with_coordinate_precision(
+        mut self,
+        coordinate_precision: usize,
+    ) -> Result<Self, FormatError> {
+        if coordinate_precision > MAX_COORDINATE_PRECISION {
+            return Err(fail(MmcifWriteIssue::CoordinatePrecisionTooLarge(
+                coordinate_precision,
+            )));
+        }
+        self.coordinate_precision = coordinate_precision;
+        Ok(self)
+    }
+
     /// Ensemble member weights and energies, which mmCIF cannot carry: by
     /// default an ensemble with unequal weights or any energy fails to write.
-    pub ensemble_metadata: UnrepresentablePolicy,
+    pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
+        self.ensemble_metadata
+    }
+
+    /// Sets [`Self::ensemble_metadata`].
+    #[must_use]
+    pub fn with_ensemble_metadata(mut self, ensemble_metadata: UnrepresentablePolicy) -> Self {
+        self.ensemble_metadata = ensemble_metadata;
+        self
+    }
+
     /// A periodic cell mmCIF cannot carry: one not periodic along all three
     /// axes, not in the standard crystallographic orientation, or differing
     /// between ensemble members. By default such a cell fails to write;
     /// representable cells are always written as `_cell` in space group P 1.
-    pub cell: UnrepresentablePolicy,
+    pub const fn cell(&self) -> UnrepresentablePolicy {
+        self.cell
+    }
+
+    /// Sets [`Self::cell`].
+    #[must_use]
+    pub fn with_cell(mut self, cell: UnrepresentablePolicy) -> Self {
+        self.cell = cell;
+        self
+    }
 }
 
 impl Default for MmcifWriteOptions {
@@ -647,7 +715,6 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,
 ) -> Result<(), FormatError> {
-    validate_options(&options)?;
     let blocks = blocks.into_iter().map(Into::into).collect::<Vec<_>>();
     let numbered = blocks.len() > 1;
     for (index, block) in blocks.into_iter().enumerate() {
@@ -801,25 +868,6 @@ fn write_ensemble_block_to(
         )?;
     }
     write_block_end(writer, &first)
-}
-
-fn validate_options(options: &MmcifWriteOptions) -> Result<(), FormatError> {
-    if options.block_name.is_empty()
-        || !options
-            .block_name
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "_-.".contains(character))
-    {
-        return Err(fail(MmcifWriteIssue::InvalidBlockName(
-            options.block_name.clone(),
-        )));
-    }
-    if options.coordinate_precision > MAX_COORDINATE_PRECISION {
-        return Err(fail(MmcifWriteIssue::CoordinatePrecisionTooLarge(
-            options.coordinate_precision,
-        )));
-    }
-    Ok(())
 }
 
 fn one_based_serial(raw: u32) -> u64 {

@@ -43,7 +43,7 @@ pub(super) fn assign_cip_descriptors(
     // valence perception is not zero H.
     let unknown_hydrogens = mol
         .atom_ids()
-        .filter(|&atom| mol.implicit_hydrogens(atom).expect("live atom").is_none())
+        .filter(|&atom| mol.implicit_hydrogens(atom).is_none())
         .map(|atom| CipAssignmentIssue::UnknownHydrogenCount { atom })
         .collect::<Vec<_>>();
     if !unknown_hydrogens.is_empty() {
@@ -52,7 +52,10 @@ pub(super) fn assign_cip_descriptors(
         });
     }
 
-    let mut report = CipAssignmentReport::default();
+    let mut report = CipAssignmentReport {
+        assigned: Vec::new(),
+        skipped: Vec::new(),
+    };
     let mut issues = Vec::new();
 
     for (id, element) in mol.stereo_elements() {
@@ -1012,7 +1015,6 @@ impl LigandNode {
             } => *atomic_number,
             Self::Atom { atom, .. } => mol
                 .atom(*atom)
-                .ok()
                 .map(|atom| AtomicNumberFraction::element(atom.element.atomic_number()))
                 .unwrap_or(AtomicNumberFraction::ZERO),
             Self::Hydrogen => AtomicNumberFraction::HYDROGEN,
@@ -1038,12 +1040,12 @@ impl LigandNode {
                 if duplicate.is_some() {
                     Rule2Mass::ZERO
                 } else {
-                    let Ok(atom) = mol.atom(*atom) else {
+                    let Some(atom) = mol.atom(*atom) else {
                         return Rule2Mass::ZERO;
                     };
                     atom.isotope.map_or_else(
                         || Rule2Mass::natural(atom.element.atomic_number()),
-                        |isotope| Rule2Mass::isotope(atom.element.atomic_number(), isotope),
+                        |isotope| Rule2Mass::isotope(atom.element.atomic_number(), isotope.get()),
                     )
                 }
             }
@@ -1092,13 +1094,13 @@ impl LigandNode {
         if *terminal {
             return;
         }
-        let Ok(payload) = mol.atom(*atom) else {
+        let Some(payload) = mol.atom(*atom) else {
             return;
         };
         for _ in 0..atom_hydrogen_count(mol, *atom) {
             next.push(LigandNode::Hydrogen);
         }
-        let Ok(incident) = mol.incident_bonds(*atom) else {
+        let Some(incident) = mol.incident_bonds(*atom) else {
             return;
         };
         for (_, bond) in incident {
@@ -1211,7 +1213,7 @@ fn seed_mancude_atom_types(
     for (atom_id, atom) in mol.atoms() {
         let mut bond_types = u32::from(atom_hydrogen_count(mol, atom_id));
         let mut in_ring = false;
-        if let Ok(incident) = mol.incident_bonds(atom_id) {
+        if let Some(incident) = mol.incident_bonds(atom_id) {
             for (bond_id, bond) in incident {
                 bond_types += match cip_bond_order(bond.order) {
                     1 => 0x0000_0001,
@@ -1301,7 +1303,7 @@ fn mancude_parts(
         parts[atom_id.index()] = part;
         let mut stack = vec![atom_id];
         while let Some(current) = stack.pop() {
-            if let Ok(incident) = mol.incident_bonds(current) {
+            if let Some(incident) = mol.incident_bonds(current) {
                 for (bond_id, bond) in incident {
                     if !ring_membership.bond_in_ring(bond_id) {
                         continue;
@@ -1344,7 +1346,7 @@ fn apply_mancude_neighbor_averages(
         let mut denominator = 0u32;
         for neighbor in atom_neighbors(mol, atom_id) {
             if parts[neighbor.index()] == part {
-                if let Ok(atom) = mol.atom(neighbor) {
+                if let Some(atom) = mol.atom(neighbor) {
                     numerator += u32::from(atom.element.atomic_number());
                     denominator += 1;
                 }
@@ -1361,13 +1363,13 @@ fn apply_mancude_neighbor_averages(
                 continue;
             }
             denominator += 1;
-            if let Ok(incident) = mol.incident_bonds(atom_id) {
+            if let Some(incident) = mol.incident_bonds(atom_id) {
                 for (_, bond) in incident {
                     let neighbor = bond.other_atom(atom_id);
                     if parts[neighbor.index()] == part {
                         let bond_order = cip_bond_order(bond.order);
                         if bond_order > 1 {
-                            if let Ok(neighbor_atom) = mol.atom(neighbor) {
+                            if let Some(neighbor_atom) = mol.atom(neighbor) {
                                 numerator += u32::from(bond_order.saturating_sub(1))
                                     * u32::from(neighbor_atom.element.atomic_number());
                             }
@@ -1387,7 +1389,6 @@ fn apply_mancude_neighbor_averages(
 
 fn atom_neighbors(mol: &Molecule, atom_id: AtomId) -> Vec<AtomId> {
     mol.incident_bonds(atom_id)
-        .ok()
         .into_iter()
         .flatten()
         .map(|(_, bond)| bond.other_atom(atom_id))
@@ -1492,7 +1493,7 @@ fn collect_auxiliary_occurrences_from_molecule(
                     auxiliary_bond_occurrence(graph, node_index, stereo.left, stereo.right)
                 }
                 StereoElementKind::Axis(stereo) => {
-                    let Ok(bond) = mol.bond(stereo.axis) else {
+                    let Some(bond) = mol.bond(stereo.axis) else {
                         continue;
                     };
                     auxiliary_bond_occurrence(graph, node_index, bond.a(), bond.b())
@@ -1618,14 +1619,11 @@ fn auxiliary_descriptor_for_occurrence(
     atomic_number_fractions: &[AtomicNumberFraction],
     atropisomer_mode: bool,
 ) -> Option<StereoDescriptor> {
-    let element = mol.stereo_element(occurrence.key.element).ok()?;
+    let element = mol.stereo_element(occurrence.key.element)?;
     let aux_context = LigandBuildContext {
         mol,
         descriptor_context,
-        options: CipAssignmentOptions {
-            max_depth: graph.nodes.len(),
-            ..options
-        },
+        options: options.with_max_depth(graph.nodes.len()),
         atomic_number_fractions,
         atropisomer_mode,
     };
@@ -1671,7 +1669,7 @@ fn auxiliary_bond_descriptor(
             let bond = context
                 .mol
                 .bond(stereo.axis)
-                .map_err(|_| CipAssignmentIssue::UnresolvedPriority { element })?;
+                .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
             let (left, right) = bond.endpoints();
             let (left_reference, right_reference) =
                 axis_reference_carriers(context.mol, element, stereo, left, right)?;

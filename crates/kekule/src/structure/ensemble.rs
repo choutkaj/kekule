@@ -258,7 +258,7 @@ impl Ensemble {
     /// it. Ensemble and per-member owner properties are dropped; weights and
     /// energies describe the sampled structure and are kept.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, EnsembleError> {
-        let subset = self.topology.subset(selection)?;
+        let subset = crate::topology::Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
         let members = self
             .members
@@ -786,6 +786,8 @@ impl<'a> EnsembleMemberView<'a> {
         self.as_model_view().to_model()
     }
 }
+
+impl super::model::sealed::Sealed for EnsembleMemberView<'_> {}
 
 impl AsModelView for EnsembleMemberView<'_> {
     fn as_model_view(&self) -> ModelView<'_> {

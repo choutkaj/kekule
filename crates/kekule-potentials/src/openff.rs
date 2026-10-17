@@ -67,9 +67,23 @@ pub struct OpenFfPotential {
 /// The energy and gradient of one OpenFF component.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComponentEvaluation {
-    pub kind: ComponentKind,
-    pub energy: Quantity<f64>,
-    pub gradient: Quantity<Vec<Vector3>>,
+    pub(crate) kind: ComponentKind,
+    pub(crate) energy: Quantity<f64>,
+    pub(crate) gradient: Quantity<Vec<Vector3>>,
+}
+
+impl ComponentEvaluation {
+    pub const fn kind(&self) -> ComponentKind {
+        self.kind
+    }
+
+    pub const fn energy(&self) -> Quantity<f64> {
+        self.energy
+    }
+
+    pub fn gradient(&self) -> &Quantity<Vec<Vector3>> {
+        &self.gradient
+    }
 }
 
 impl OpenFfPotential {
@@ -78,29 +92,31 @@ impl OpenFfPotential {
     /// The potential binds `parameters.topology()`; it does not copy rule
     /// identities, constraints, or charge provenance.
     pub fn new(parameters: &ParameterizedTopology) -> Result<Self, OpenFfPotentialError> {
-        let topology = Arc::clone(parameters.topology());
+        let topology = parameters.shared_topology();
         let settings = parameters.nonbonded_settings();
-        if settings.vdw_nonperiodic_method != VdwMethod::NoCutoff {
+        if settings.vdw_nonperiodic_method() != VdwMethod::NoCutoff {
             return Err(OpenFfPotentialError::UnsupportedVdwMethod(
-                settings.vdw_nonperiodic_method,
+                settings.vdw_nonperiodic_method(),
             ));
         }
-        if settings.electrostatics_nonperiodic_method != ElectrostaticsMethod::Coulomb {
+        if settings.electrostatics_nonperiodic_method() != ElectrostaticsMethod::Coulomb {
             return Err(OpenFfPotentialError::UnsupportedElectrostaticsMethod(
-                settings.electrostatics_nonperiodic_method,
+                settings.electrostatics_nonperiodic_method(),
             ));
         }
         let mut bonds = Vec::with_capacity(parameters.bonds().len());
         for term in parameters.bonds() {
             bonds.push(HarmonicBond {
-                atoms: dense(&topology, term.atoms)?,
+                atoms: dense(&topology, term.atoms())?,
                 k: finite(
                     OpenFfParameter::BondK,
-                    term.parameter.k.value_in(CANONICAL_FORCE_CONSTANT_UNIT)?,
+                    term.parameter()
+                        .k()
+                        .value_in(CANONICAL_FORCE_CONSTANT_UNIT)?,
                 )?,
                 length: finite(
                     OpenFfParameter::BondLength,
-                    term.parameter.length.value_in(CANONICAL_LENGTH_UNIT)?,
+                    term.parameter().length().value_in(CANONICAL_LENGTH_UNIT)?,
                 )?,
             });
         }
@@ -108,11 +124,14 @@ impl OpenFfPotential {
         let angle_k = CANONICAL_ENERGY_UNIT.try_div(CANONICAL_ANGLE_UNIT.try_powi(2)?)?;
         for term in parameters.angles() {
             angles.push(HarmonicAngle {
-                atoms: dense(&topology, term.atoms)?,
-                k: finite(OpenFfParameter::AngleK, term.parameter.k.value_in(angle_k)?)?,
+                atoms: dense(&topology, term.atoms())?,
+                k: finite(
+                    OpenFfParameter::AngleK,
+                    term.parameter().k().value_in(angle_k)?,
+                )?,
                 angle: finite(
                     OpenFfParameter::Angle,
-                    term.parameter.angle.value_in(CANONICAL_ANGLE_UNIT)?,
+                    term.parameter().angle().value_in(CANONICAL_ANGLE_UNIT)?,
                 )?,
             });
         }
@@ -132,26 +151,26 @@ impl OpenFfPotential {
         for vdw in parameters.vdw() {
             sigma.push(non_negative(
                 OpenFfParameter::Sigma,
-                vdw.sigma.value_in(CANONICAL_LENGTH_UNIT)?,
+                vdw.sigma().value_in(CANONICAL_LENGTH_UNIT)?,
             )?);
             epsilon.push(non_negative(
                 OpenFfParameter::Epsilon,
-                vdw.epsilon.value_in(CANONICAL_ENERGY_UNIT)?,
+                vdw.epsilon().value_in(CANONICAL_ENERGY_UNIT)?,
             )?);
         }
         let mut exceptions = vec![Vec::new(); n];
         for exception in parameters.pair_exceptions() {
-            let mut pair = dense(&topology, exception.atoms)?;
+            let mut pair = dense(&topology, exception.atoms())?;
             pair.sort_unstable();
             if pair[0] == pair[1] {
                 return Err(OpenFfPotentialError::SelfPairException);
             }
             exceptions[pair[0]].push((
                 pair[1],
-                finite(OpenFfParameter::VdwExceptionScale, exception.vdw_scale)?,
+                finite(OpenFfParameter::VdwExceptionScale, exception.vdw_scale())?,
                 finite(
                     OpenFfParameter::ElectrostaticsExceptionScale,
-                    exception.electrostatics_scale,
+                    exception.electrostatics_scale(),
                 )?,
             ));
         }
@@ -301,8 +320,15 @@ impl OpenFfPotential {
     }
 }
 
+impl OpenFfPotential {
+    /// Clones the handle to the bound snapshot, without copying topology data.
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+}
+
 impl Potential for OpenFfPotential {
-    fn topology(&self) -> &Arc<Topology> {
+    fn topology(&self) -> &Topology {
         &self.topology
     }
 
@@ -347,26 +373,26 @@ fn torsions(
 ) -> Result<Vec<PeriodicTorsion>, OpenFfPotentialError> {
     let mut result = Vec::with_capacity(interactions.len());
     for term in interactions {
-        let mut terms = Vec::with_capacity(term.parameter.terms.len());
-        for t in &term.parameter.terms {
-            let idivf = finite(OpenFfParameter::TorsionIdivf, t.idivf)?;
+        let mut terms = Vec::with_capacity(term.parameter().terms().len());
+        for t in term.parameter().terms() {
+            let idivf = finite(OpenFfParameter::TorsionIdivf, t.idivf())?;
             if idivf == 0.0 {
                 return Err(OpenFfPotentialError::ZeroTorsionDivisor);
             }
             terms.push(FourierTerm {
                 k: finite(
                     OpenFfParameter::TorsionK,
-                    t.k.value_in(CANONICAL_ENERGY_UNIT)? / idivf,
+                    t.k().value_in(CANONICAL_ENERGY_UNIT)? / idivf,
                 )?,
-                periodicity: f64::from(t.periodicity),
+                periodicity: f64::from(t.periodicity()),
                 phase: finite(
                     OpenFfParameter::TorsionPhase,
-                    t.phase.value_in(CANONICAL_ANGLE_UNIT)?,
+                    t.phase().value_in(CANONICAL_ANGLE_UNIT)?,
                 )?,
             });
         }
         result.push(PeriodicTorsion {
-            atoms: dense(topology, term.atoms)?,
+            atoms: dense(topology, term.atoms())?,
             terms: terms.into_boxed_slice(),
         });
     }
@@ -509,7 +535,7 @@ impl fmt::Display for OpenFfPotentialError {
                 "unsupported nonperiodic Electrostatics method {:?}; only no-cutoff vdW and Coulomb electrostatics are implemented",
                 method.smirnoff_name()
             ),
-            Self::InvalidAtom(atom) => write!(f, "interaction refers to unknown atom {atom}"),
+            Self::InvalidAtom(atom) => write!(f, "interaction refers to unknown {atom}"),
             Self::AtomCountMismatch {
                 array,
                 expected,

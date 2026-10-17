@@ -112,7 +112,7 @@ macro_rules! fixed_u32_id {
 
         impl std::fmt::Display for $name {
             fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(formatter, concat!($display, "{}"), self.0)
+                write!(formatter, concat!($display, " {}"), self.0)
             }
         }
     };
@@ -238,7 +238,20 @@ pub mod smiles {
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     pub struct SmilesWriteOptions {
-        pub mode: SmilesWriteMode,
+        mode: SmilesWriteMode,
+    }
+
+    impl SmilesWriteOptions {
+        pub const fn mode(&self) -> SmilesWriteMode {
+            self.mode
+        }
+
+        /// Sets [`Self::mode`].
+        #[must_use]
+        pub const fn with_mode(mut self, mode: SmilesWriteMode) -> Self {
+            self.mode = mode;
+            self
+        }
     }
 
     impl SmilesWriteOptions {
@@ -333,6 +346,7 @@ pub mod smiles {
     /// What one SMILES record describes: one connected molecule, or every
     /// molecule occurrence of a topology joined with `.`.
     #[derive(Debug, Clone, Copy)]
+    #[non_exhaustive]
     pub enum SmilesSource<'a> {
         Molecule(&'a Molecule),
         Topology(&'a Topology),
@@ -600,8 +614,8 @@ pub mod macromolecular {
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
         AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
         ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
-        InstanceProvenance, ModelSelection, SourceResidueId, SourceResiduePosition,
-        StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+        EntityMetadataPolicy, InstanceProvenance, ModelSelection, SourceResidueId,
+        SourceResiduePosition, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
         StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
         StructureInterpretationReport,
     };
@@ -773,6 +787,7 @@ pub mod perception {
     pub mod valence {
         pub use crate::algorithms::{
             perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,
+            ValenceValidation,
         };
         pub use crate::molecule::perception::{ValenceModel, ValencePerception};
     }
@@ -866,17 +881,17 @@ pub mod stereo {
 /// without losing chemical information. These operations do not change
 /// protonation states.
 ///
-/// Addition requires current inference for inferred counts, unless `fixed_only`
-/// is selected. Fixed counts need no perception. Removal needs current inference
+/// Addition requires current inference for inferred counts, unless
+/// [`AddHydrogensScope::FixedOnly`](hydrogens::AddHydrogensScope::FixedOnly) is selected. Fixed counts need no perception. Removal needs current inference
 /// on affected parents whose counts are inferred, and keeps a parent inferred
 /// only when inference reproduces its collapsed count; otherwise it fixes it.
 /// Successful topology changes invalidate perception state; recompute it before
 /// reading inferred counts.
 pub mod hydrogens {
     pub use crate::algorithms::{
-        AddHydrogensOptions, AddHydrogensReport, AddedHydrogen, AddedHydrogenOrigin,
-        HydrogenCountAdjustment, HydrogenTransformError, RemoveHydrogensReport, RemovedHydrogen,
-        RetainedHydrogen, RetainedHydrogenReason,
+        AddHydrogensOptions, AddHydrogensReport, AddHydrogensScope, AddedHydrogen,
+        AddedHydrogenOrigin, HydrogenCountAdjustment, HydrogenTransformError,
+        RemoveHydrogensReport, RemovedHydrogen, RetainedHydrogen, RetainedHydrogenReason,
     };
 }
 
@@ -893,8 +908,7 @@ pub mod hydrogens {
 ///
 /// let mut editor = MoleculeEditor::new();
 /// let carbon = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
-/// let mut oxygen = Atom::new(Element::from_symbol("O").unwrap());
-/// oxygen.hydrogens = ImplicitHydrogens::Fixed(1);
+/// let oxygen = Atom::new(Element::O).with_hydrogens(ImplicitHydrogens::Fixed(1));
 /// let oxygen = editor.add_atom(oxygen)?;
 /// editor.add_bond(carbon, oxygen, BondOrder::Single)?;
 /// let molecule: Molecule = editor.finish()?;

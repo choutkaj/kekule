@@ -20,10 +20,10 @@ fn chemistry(molecule: &Molecule) -> String {
             let hydrogens = molecule.total_hydrogens(id).unwrap();
             format!(
                 "{}:{:?}:{}:{:?}:{hydrogens:?}",
-                atom.element.symbol(),
-                atom.isotope,
-                atom.formal_charge,
-                atom.radical
+                atom.element().symbol(),
+                atom.isotope(),
+                atom.formal_charge(),
+                atom.radical()
             )
         })
         .collect::<Vec<_>>();
@@ -59,7 +59,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
             None => continue,
         };
         let unspecified_spin = sample.molecule.atoms().any(|(_, atom)| {
-            atom.radical
+            atom.radical()
                 .is_some_and(|r| r.spin_multiplicity().is_none())
         });
         // Molfiles store angstroms in `%10.4f` columns.
@@ -80,10 +80,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
                 "V2000",
                 molfile::write(
                     &model,
-                    MolfileWriteOptions {
-                        version: MolfileWriteVersion::V2000,
-                        ..Default::default()
-                    },
+                    MolfileWriteOptions::default().with_version(MolfileWriteVersion::V2000),
                 )
                 .map_err(|error| error.to_string()),
             ),
@@ -91,10 +88,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
                 "V3000",
                 molfile::write(
                     &model,
-                    MolfileWriteOptions {
-                        version: MolfileWriteVersion::V3000,
-                        ..Default::default()
-                    },
+                    MolfileWriteOptions::default().with_version(MolfileWriteVersion::V3000),
                 )
                 .map_err(|error| error.to_string()),
             ),
@@ -147,7 +141,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
             };
             let mut molecules = reread
                 .topology()
-                .molecules()
+                .instances()
                 .map(|instance| instance.molecule().clone())
                 .collect::<Vec<_>>();
             if molecules.len() != 1 {

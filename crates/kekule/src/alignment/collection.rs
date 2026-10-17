@@ -18,6 +18,7 @@ use super::{
 /// reference. Pair atoms of an independent topology with an
 /// [`super::AtomCorrespondence`].
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum Reference<'a> {
     /// An item of the collection being measured.
     Index(usize),
@@ -40,10 +41,37 @@ impl<'a, T: AsModelView + ?Sized> From<&'a T> for Reference<'a> {
 /// Options for fitting on one set of pairs and measuring another.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlignedRmsdOptions<'a> {
+    fit: AlignmentOptions<'a>,
+    measurement_weighting: Weighting<'a>,
+}
+
+impl<'a> AlignedRmsdOptions<'a> {
     /// Fit weighting and the periodic policy applied to both steps.
-    pub fit: AlignmentOptions<'a>,
+    pub const fn fit(&self) -> AlignmentOptions<'a> {
+        self.fit
+    }
+
+    /// Sets [`Self::fit`].
+    #[must_use]
+    pub const fn with_fit(mut self, fit: AlignmentOptions<'a>) -> Self {
+        self.fit = fit;
+        self
+    }
+
     /// Weights of the measured pairs, in pair order.
-    pub measurement_weighting: Weighting<'a>,
+    pub const fn measurement_weighting(&self) -> Weighting<'a> {
+        self.measurement_weighting
+    }
+
+    /// Sets [`Self::measurement_weighting`].
+    #[must_use]
+    pub const fn with_measurement_weighting(
+        mut self,
+        measurement_weighting: Weighting<'a>,
+    ) -> Self {
+        self.measurement_weighting = measurement_weighting;
+        self
+    }
 }
 
 /// Complete record of one successful collection superposition.
@@ -94,8 +122,8 @@ fn fit_items<'a>(
     };
     let reference = reference_view(items, reference)?;
     let sets = item_pair_sets(topology, items, reference, atoms)?;
-    check_fit_count(atoms.len())?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    check_fit_count(atoms.pair_count())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     let alignments = items
         .iter()
         .enumerate()
@@ -120,8 +148,8 @@ fn item_rmsd<'a>(
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let reference = reference_view(items, reference)?;
     let sets = item_pair_sets(topology, items, reference, atoms)?;
-    check_measurement_count(atoms.len())?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    check_measurement_count(atoms.pair_count())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     let values = items
         .iter()
         .enumerate()
@@ -152,11 +180,11 @@ fn item_aligned_rmsd<'a>(
     let reference = reference_view(items, reference)?;
     let fit_sets = item_pair_sets(topology, items, reference, fit)?;
     let measurement_sets = item_pair_sets(topology, items, reference, measurement)?;
-    check_fit_count(fit.len())?;
-    check_measurement_count(measurement.len())?;
-    let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.len())?;
+    check_fit_count(fit.pair_count())?;
+    check_measurement_count(measurement.pair_count())?;
+    let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.pair_count())?;
     let measurement_weights =
-        NormalizedWeights::new(options.measurement_weighting, measurement.len())?;
+        NormalizedWeights::new(options.measurement_weighting, measurement.pair_count())?;
     let policy = options.fit.periodic_policy;
     // The best fit fixes the transform; the measurement then takes its own
     // best permutation under that transform.

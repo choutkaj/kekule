@@ -1,6 +1,7 @@
 use kekule::diagnostics::DiagnosticKind;
 use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::smiles;
+use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::support::renumbered;
 
@@ -48,9 +49,7 @@ fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
             let topology = kekule::topology::Topology::from_molecules(molecules.clone()).unwrap();
             smiles::write(
                 &topology,
-                smiles::SmilesWriteOptions {
-                    mode: smiles::SmilesWriteMode::Canonical,
-                },
+                smiles::SmilesWriteOptions::default().with_mode(smiles::SmilesWriteMode::Canonical),
             )
             .unwrap()
         };
@@ -99,8 +98,8 @@ fn cx_radical_emission_preserves_occupancy_and_rejects_explicit_spin() {
                     .atoms()
                     .map(|(_, a)| {
                         (
-                            a.element.atomic_number(),
-                            a.radical
+                            a.element().atomic_number(),
+                            a.radical()
                                 .map(|r| (r.electron_count(), r.spin_multiplicity())),
                         )
                     })
@@ -171,8 +170,8 @@ fn canonical_smiles_retains_charged_and_mapped_hydrogen_atoms() {
         let asserted_hydrogens = |molecule: &Molecule| {
             molecule
                 .atoms()
-                .filter(|(_, atom)| atom.element.symbol() == "H")
-                .map(|(_, atom)| (atom.formal_charge, atom.atom_map))
+                .filter(|(_, atom)| atom.element().symbol() == "H")
+                .map(|(_, atom)| (atom.formal_charge(), atom.atom_map()))
                 .collect::<Vec<_>>()
         };
         assert_eq!(
@@ -380,7 +379,9 @@ fn canonical_hydrogen_normalization_preserves_isotope_vertices() {
     let mut restored = smiles::to_molecules(&written).unwrap().pop().unwrap();
     restored.perceive().unwrap();
     assert_eq!(restored.atom_count(), 4);
-    assert!(restored.atoms().any(|(_, atom)| atom.isotope == Some(3)));
+    assert!(restored
+        .atoms()
+        .any(|(_, atom)| atom.isotope() == NonZeroU16::new(3)));
     assert_eq!(
         smiles::write(&restored, smiles::SmilesWriteOptions::canonical()).unwrap(),
         written
@@ -389,8 +390,8 @@ fn canonical_hydrogen_normalization_preserves_isotope_vertices() {
         molecule
             .atoms()
             .map(|(id, atom)| {
-                usize::from(atom.element.symbol() == "H")
-                    + usize::from(atom.hydrogens.represented_count())
+                usize::from(atom.element().symbol() == "H")
+                    + usize::from(atom.hydrogens().represented_count())
                     + usize::from(molecule.perception().inferred_hydrogens(id).unwrap_or(0))
             })
             .sum::<usize>()
@@ -404,8 +405,8 @@ fn canonical_input_complexity_is_bounded_before_export() {
     let mut editor = MoleculeEditor::new();
     let mut previous = None;
     for index in 0..4096 {
-        let mut atom = Atom::new(Element::from_symbol("C").unwrap());
-        atom.atom_map = Some(index + 1);
+        let atom =
+            Atom::new(Element::from_symbol("C").unwrap()).with_atom_map(NonZeroU32::new(index + 1));
         let atom = editor.add_atom(atom).unwrap();
         if let Some(previous) = previous {
             editor.add_bond(previous, atom, BondOrder::Single).unwrap();
@@ -488,9 +489,8 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
 
 #[test]
 fn canonical_topology_sorts_components_without_collapsing_instances() {
-    let options = smiles::SmilesWriteOptions {
-        mode: smiles::SmilesWriteMode::Canonical,
-    };
+    let options =
+        smiles::SmilesWriteOptions::default().with_mode(smiles::SmilesWriteMode::Canonical);
     let canonical = |source: &str| {
         let mut molecules = smiles::to_molecules(source).unwrap();
         for molecule in &mut molecules {

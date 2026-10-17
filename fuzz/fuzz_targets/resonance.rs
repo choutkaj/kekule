@@ -19,11 +19,10 @@ fuzz_target!(|data: &[u8]| {
         let source = mol.clone();
         perceive_resonance(&mut mol).expect("default perception supplies conjugation");
         let before = mol.perception().clone();
-        let options = ResonanceOptions {
-            flags: ResonanceFlags::from_bits(mask).unwrap(),
-            max_structures: 16,
-            max_total_work: 10_000,
-        };
+        let options = ResonanceOptions::default()
+            .with_flags(ResonanceFlags::from_bits(mask).unwrap())
+            .with_max_structures(16)
+            .with_max_total_work(10_000);
         if let Ok(forms) = enumerate_resonance(&mol, options) {
             for i in 0..forms.contributors().len() {
                 let form = forms

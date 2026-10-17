@@ -3,19 +3,131 @@ use crate::{TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, Trajecto
 /// Limits applied before attacker-controlled allocation, scanning, or seeking.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrajectoryIoLimits {
-    pub max_atoms: usize,
-    pub max_frames: u64,
-    pub max_frame_bytes: u64,
-    pub max_record_bytes: u64,
+    max_atoms: usize,
+    max_frames: usize,
+    max_frame_bytes: u64,
+    max_record_bytes: u64,
+    max_scratch_bytes: usize,
+    max_index_entries: usize,
+    max_index_bytes: usize,
+    max_text_line_bytes: usize,
+    max_comment_bytes: usize,
+    max_detection_bytes: usize,
+}
+
+impl TrajectoryIoLimits {
+    pub const fn max_atoms(&self) -> usize {
+        self.max_atoms
+    }
+
+    /// Sets [`Self::max_atoms`].
+    #[must_use]
+    pub const fn with_max_atoms(mut self, max_atoms: usize) -> Self {
+        self.max_atoms = max_atoms;
+        self
+    }
+
+    pub const fn max_frames(&self) -> usize {
+        self.max_frames
+    }
+
+    /// Sets [`Self::max_frames`].
+    #[must_use]
+    pub const fn with_max_frames(mut self, max_frames: usize) -> Self {
+        self.max_frames = max_frames;
+        self
+    }
+
+    pub const fn max_frame_bytes(&self) -> u64 {
+        self.max_frame_bytes
+    }
+
+    /// Sets [`Self::max_frame_bytes`].
+    #[must_use]
+    pub const fn with_max_frame_bytes(mut self, max_frame_bytes: u64) -> Self {
+        self.max_frame_bytes = max_frame_bytes;
+        self
+    }
+
+    pub const fn max_record_bytes(&self) -> u64 {
+        self.max_record_bytes
+    }
+
+    /// Sets [`Self::max_record_bytes`].
+    #[must_use]
+    pub const fn with_max_record_bytes(mut self, max_record_bytes: u64) -> Self {
+        self.max_record_bytes = max_record_bytes;
+        self
+    }
+
     /// Combined retained capacities of private decode and validation buffers.
     /// Sequential and indexed access share this budget; index offsets are
     /// bounded separately by `max_index_entries` and `max_index_bytes`.
-    pub max_scratch_bytes: usize,
-    pub max_index_entries: usize,
-    pub max_index_bytes: usize,
-    pub max_text_line_bytes: usize,
-    pub max_comment_bytes: usize,
-    pub max_detection_bytes: usize,
+    pub const fn max_scratch_bytes(&self) -> usize {
+        self.max_scratch_bytes
+    }
+
+    /// Sets [`Self::max_scratch_bytes`].
+    #[must_use]
+    pub const fn with_max_scratch_bytes(mut self, max_scratch_bytes: usize) -> Self {
+        self.max_scratch_bytes = max_scratch_bytes;
+        self
+    }
+
+    pub const fn max_index_entries(&self) -> usize {
+        self.max_index_entries
+    }
+
+    /// Sets [`Self::max_index_entries`].
+    #[must_use]
+    pub const fn with_max_index_entries(mut self, max_index_entries: usize) -> Self {
+        self.max_index_entries = max_index_entries;
+        self
+    }
+
+    pub const fn max_index_bytes(&self) -> usize {
+        self.max_index_bytes
+    }
+
+    /// Sets [`Self::max_index_bytes`].
+    #[must_use]
+    pub const fn with_max_index_bytes(mut self, max_index_bytes: usize) -> Self {
+        self.max_index_bytes = max_index_bytes;
+        self
+    }
+
+    pub const fn max_text_line_bytes(&self) -> usize {
+        self.max_text_line_bytes
+    }
+
+    /// Sets [`Self::max_text_line_bytes`].
+    #[must_use]
+    pub const fn with_max_text_line_bytes(mut self, max_text_line_bytes: usize) -> Self {
+        self.max_text_line_bytes = max_text_line_bytes;
+        self
+    }
+
+    pub const fn max_comment_bytes(&self) -> usize {
+        self.max_comment_bytes
+    }
+
+    /// Sets [`Self::max_comment_bytes`].
+    #[must_use]
+    pub const fn with_max_comment_bytes(mut self, max_comment_bytes: usize) -> Self {
+        self.max_comment_bytes = max_comment_bytes;
+        self
+    }
+
+    pub const fn max_detection_bytes(&self) -> usize {
+        self.max_detection_bytes
+    }
+
+    /// Sets [`Self::max_detection_bytes`].
+    #[must_use]
+    pub const fn with_max_detection_bytes(mut self, max_detection_bytes: usize) -> Self {
+        self.max_detection_bytes = max_detection_bytes;
+        self
+    }
 }
 
 /// Retained vector storage, including spare capacity.
@@ -79,7 +191,7 @@ pub(crate) fn projected_index_limit(
     current_entries: usize,
     limits: &TrajectoryIoLimits,
 ) -> Option<&'static str> {
-    if u64::try_from(current_entries).map_or(true, |entries| entries >= limits.max_frames) {
+    if current_entries >= limits.max_frames {
         return Some("frame count");
     }
     let Some(projected_entries) = current_entries.checked_add(1) else {
@@ -98,8 +210,8 @@ pub(crate) fn projected_index_limit(
 }
 
 pub(super) fn index_hard_capacity(limits: &TrajectoryIoLimits) -> usize {
-    usize::try_from(limits.max_frames)
-        .unwrap_or(usize::MAX)
+    limits
+        .max_frames
         .min(limits.max_index_entries)
         .min(limits.max_index_bytes / std::mem::size_of::<u64>())
 }
@@ -129,7 +241,7 @@ pub(crate) fn reserve_index_for_push(
     limits: &TrajectoryIoLimits,
     format: TrajectoryFormat,
     source_label: &str,
-    frame: u64,
+    frame: usize,
 ) -> Result<(), TrajectoryIoError> {
     if offsets.len() < offsets.capacity() {
         return Ok(());

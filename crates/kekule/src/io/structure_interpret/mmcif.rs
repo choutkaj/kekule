@@ -19,9 +19,7 @@ use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, LabelConnectionSelector, PartnerSpec,
 };
-use super::ensemble::{
-    empty_model_selection, interpret_conformations, interpret_ensemble, no_coordinate_models,
-};
+use super::ensemble::{interpret_conformations, interpret_ensemble, no_coordinate_models};
 use super::types::{
     ensemble_error, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason,
     ConnectivityOptions, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
@@ -60,7 +58,11 @@ pub(crate) fn interpret_mmcif_block(
     block: &MmcifBlock,
     options: StructureInterpretOptions,
 ) -> Result<StructureInterpretation, FormatError> {
-    let source = mmcif_source(block, options.strict_entity_metadata, &options.connectivity)?;
+    let source = mmcif_source(
+        block,
+        options.requires_entity_metadata(),
+        options.connectivity(),
+    )?;
     interpret_source(source, &options)
 }
 
@@ -79,15 +81,16 @@ pub(crate) fn interpret_mmcif_ensemble_block(
     block: &MmcifBlock,
     options: StructureEnsembleInterpretOptions,
 ) -> Result<StructureEnsembleInterpretation, FormatError> {
-    if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
-        return Err(empty_model_selection());
-    }
     if !block.has_category("_atom_site") {
         return Err(no_coordinate_models());
     }
     let available = coordinate_model_ids(block)?;
     interpret_ensemble(available, options, |options| {
-        mmcif_source(block, options.strict_entity_metadata, &options.connectivity)
+        mmcif_source(
+            block,
+            options.requires_entity_metadata(),
+            options.connectivity(),
+        )
     })
 }
 

@@ -40,8 +40,8 @@ impl ModelEditor {
     /// let mut editor = ligand.to_editor();
     /// let appended = editor.append_model(&ligand)?;
     /// let source_atom = ligand.topology().atom_ids()[0];
-    /// let draft_atom = appended.atom(source_atom)?;
-    /// assert_eq!(editor.position(draft_atom)?, ligand.position(source_atom)?);
+    /// let draft_atom = appended.atom(source_atom).expect("appended atom");
+    /// assert_eq!(editor.position(draft_atom), ligand.position(source_atom));
     /// let model = editor.finish()?;
     /// assert_eq!(model.atom_count(), 4);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -136,16 +136,34 @@ fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
 
 /// Owner annotations excluded by one successful append, in property-key order.
 /// Entity properties are transferred under [`ModelEditor::append_model`]'s contract.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelAppendReport {
+    pub(crate) cleared_topology_properties: Vec<PropertyKey>,
+    pub(crate) cleared_model_properties: Vec<PropertyKey>,
+    pub(crate) omitted_topology_properties: Vec<PropertyKey>,
+    pub(crate) omitted_model_properties: Vec<PropertyKey>,
+}
+
+impl ModelAppendReport {
     /// Destination topology owner keys cleared because the system changed.
-    pub cleared_topology_properties: Vec<PropertyKey>,
+    pub fn cleared_topology_properties(&self) -> &[PropertyKey] {
+        &self.cleared_topology_properties
+    }
+
     /// Destination structure owner keys cleared because the model changed.
-    pub cleared_model_properties: Vec<PropertyKey>,
+    pub fn cleared_model_properties(&self) -> &[PropertyKey] {
+        &self.cleared_model_properties
+    }
+
     /// Source topology owner keys that do not describe the combined system.
-    pub omitted_topology_properties: Vec<PropertyKey>,
+    pub fn omitted_topology_properties(&self) -> &[PropertyKey] {
+        &self.omitted_topology_properties
+    }
+
     /// Source structure owner keys that do not describe the combined model.
-    pub omitted_model_properties: Vec<PropertyKey>,
+    pub fn omitted_model_properties(&self) -> &[PropertyKey] {
+        &self.omitted_model_properties
+    }
 }
 
 /// One import's source-to-draft identities and retention report.
@@ -168,39 +186,29 @@ impl ModelAppend {
     pub fn report(&self) -> &ModelAppendReport {
         &self.report
     }
-    pub fn atom(&self, source: InstanceAtomId) -> Result<EditAtomId, ModelEditError> {
-        self.mapping
-            .atoms
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceAtom(source).into())
+    /// The draft handle of an appended source atom, or `None` when the source
+    /// has no such atom.
+    pub fn atom(&self, source: InstanceAtomId) -> Option<EditAtomId> {
+        self.mapping.atoms.get(&source).copied()
     }
-    pub fn bond(&self, source: InstanceBondId) -> Result<EditBondId, ModelEditError> {
-        self.mapping
-            .bonds
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceBond(source).into())
+    /// The draft handle of an appended source bond, or `None` when the source
+    /// has no such bond.
+    pub fn bond(&self, source: InstanceBondId) -> Option<EditBondId> {
+        self.mapping.bonds.get(&source).copied()
     }
-    pub fn chain(&self, source: ChainId) -> Result<EditChainId, ModelEditError> {
-        self.mapping
-            .chains
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceChain(source).into())
+    /// The draft handle of an appended source chain, or `None` when the source
+    /// has no such chain.
+    pub fn chain(&self, source: ChainId) -> Option<EditChainId> {
+        self.mapping.chains.get(&source).copied()
     }
-    pub fn residue(&self, source: ResidueId) -> Result<EditResidueId, ModelEditError> {
-        self.mapping
-            .residues
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceResidue(source).into())
+    /// The draft handle of an appended source residue, or `None` when the
+    /// source has no such residue.
+    pub fn residue(&self, source: ResidueId) -> Option<EditResidueId> {
+        self.mapping.residues.get(&source).copied()
     }
-    pub fn atom_site(&self, source: AtomSiteId) -> Result<EditAtomSiteId, ModelEditError> {
-        self.mapping
-            .sites
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceAtomSite(source).into())
+    /// The draft handle of an appended source atom site, or `None` when the
+    /// source has no such site.
+    pub fn atom_site(&self, source: AtomSiteId) -> Option<EditAtomSiteId> {
+        self.mapping.sites.get(&source).copied()
     }
 }

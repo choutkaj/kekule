@@ -6,6 +6,7 @@ use kekule::{
     },
     smiles,
 };
+use std::num::NonZeroU16;
 
 fn molecule(smi: &str) -> Molecule {
     let mut m = smiles::to_molecules(smi).unwrap().remove(0);
@@ -63,10 +64,7 @@ fn default_contributors_and_all_kekule_forms() {
     let m = molecule("c1ccccc1");
     let all = enumerate_resonance(
         &m,
-        ResonanceOptions {
-            flags: ResonanceFlags::KEKULE_ALL,
-            ..Default::default()
-        },
+        ResonanceOptions::default().with_flags(ResonanceFlags::KEKULE_ALL),
     )
     .unwrap();
     assert_eq!(all.contributors().len(), 2);
@@ -81,13 +79,7 @@ fn group_preparation_is_separate_and_transactional() {
     assert_eq!(m, original);
     let before = m.perception().clone();
     assert!(matches!(
-        enumerate_resonance(
-            &m,
-            ResonanceOptions {
-                max_total_work: 0,
-                ..Default::default()
-            }
-        ),
+        enumerate_resonance(&m, ResonanceOptions::default().with_max_total_work(0)),
         Err(ResonanceError::LimitExceeded(_))
     ));
     assert_eq!(m.perception(), &before);
@@ -156,10 +148,8 @@ fn all_flag_combinations_match_pinned_reference_counts() {
         for (mask, count) in counts.into_iter().enumerate() {
             let forms = enumerate_resonance(
                 &m,
-                ResonanceOptions {
-                    flags: ResonanceFlags::from_bits(mask as u8).unwrap(),
-                    ..Default::default()
-                },
+                ResonanceOptions::default()
+                    .with_flags(ResonanceFlags::from_bits(mask as u8).unwrap()),
             )
             .unwrap();
             assert_eq!(forms.contributors().len(), count, "{smi}, flags {mask}");
@@ -222,7 +212,7 @@ fn canonical_aromatic_seed_retains_aryne_triple_bonds() {
         .find(|(_, b)| b.order == BondOrder::Triple)
         .unwrap()
         .0;
-    assert_eq!(m.bond_is_aromatic(triple).unwrap(), Some(true));
+    assert_eq!(m.bond_is_aromatic(triple), Some(true));
     let result = enumerate_resonance(&m, Default::default()).unwrap();
     assert_eq!(result.contributors().len(), 1);
     let orders: std::collections::BTreeMap<_, _> = result.contributors()[0].bond_orders().collect();
@@ -278,11 +268,11 @@ fn present_empty_sections_and_prerequisite_invalidation() {
     assert!(!m.perception().has_resonance());
     let a = m.atom_ids().next().unwrap();
     assert_eq!(m.perception().atom_is_conjugated(a), Some(false));
-    assert_eq!(m.atom_is_conjugated(a).unwrap(), Some(false));
-    assert!(m.atom_is_conjugated(AtomId::new(999)).is_err());
+    assert_eq!(m.atom_is_conjugated(a), Some(false));
+    assert!(m.atom_is_conjugated(AtomId::new(999)).is_none());
     let bond = m.bond_ids().next().unwrap();
-    assert_eq!(m.bond_is_conjugated(bond).unwrap(), Some(false));
-    assert!(m.bond_is_conjugated(BondId::new(999)).is_err());
+    assert_eq!(m.bond_is_conjugated(bond), Some(false));
+    assert!(m.bond_is_conjugated(BondId::new(999)).is_none());
     perceive_resonance(&mut m).unwrap();
     assert!(m
         .perception()
@@ -297,7 +287,7 @@ fn present_empty_sections_and_prerequisite_invalidation() {
     m.perceive().unwrap();
     perceive_resonance(&mut m).unwrap();
     let mut edit = m.to_editor();
-    edit.atom_mut(a).unwrap().isotope = Some(13);
+    edit.atom_mut(a).unwrap().set_isotope(NonZeroU16::new(13));
     let edited = edit.finish().unwrap();
     assert!(!edited.perception().has_conjugation());
     assert!(!edited.perception().has_resonance());
@@ -393,8 +383,8 @@ fn explicit_hydrogens_and_atom_renumbering_preserve_membership() {
             .map(|id| {
                 let b = m.bond(id).unwrap();
                 let mut ends = [
-                    m.atom(b.a()).unwrap().atom_map.unwrap(),
-                    m.atom(b.b()).unwrap().atom_map.unwrap(),
+                    m.atom(b.a()).unwrap().atom_map().unwrap().get(),
+                    m.atom(b.b()).unwrap().atom_map().unwrap().get(),
                 ];
                 ends.sort();
                 ends
@@ -522,35 +512,21 @@ fn structure_caps_and_unknown_hydrogens_are_explicit() {
     let m = molecule("CC(=O)[O-]");
     assert!(enumerate_resonance(
         &m,
-        ResonanceOptions {
-            max_structures: 0,
-            max_total_work: 0,
-            ..Default::default()
-        }
+        ResonanceOptions::default()
+            .with_max_structures(0)
+            .with_max_total_work(0)
     )
     .unwrap()
     .contributors()
     .is_empty());
     for (cap, count, reached) in [(0, 0, true), (2, 2, true), (3, 2, false)] {
-        let forms = enumerate_resonance(
-            &m,
-            ResonanceOptions {
-                max_structures: cap,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let forms =
+            enumerate_resonance(&m, ResonanceOptions::default().with_max_structures(cap)).unwrap();
         assert_eq!(forms.contributors().len(), count);
         assert_eq!(forms.limit_reached(), reached);
     }
     assert!(matches!(
-        enumerate_resonance(
-            &m,
-            ResonanceOptions {
-                max_structures: 1,
-                ..Default::default()
-            }
-        ),
+        enumerate_resonance(&m, ResonanceOptions::default().with_max_structures(1)),
         Err(ResonanceError::InvalidStructureLimit)
     ));
     let mut m = smiles::to_molecules("CC").unwrap().remove(0);

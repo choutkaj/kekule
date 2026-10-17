@@ -1,7 +1,7 @@
 use kekule::geometry::Point3;
 use kekule::structure::{DenseArrayError, Positions};
 use kekule::units::{
-    Dimension, Quantity, Unit, UnitError, ANGSTROM, DIMENSIONLESS, METER, NANOMETER,
+    BaseDimension, Dimension, Quantity, Unit, UnitError, ANGSTROM, DIMENSIONLESS, METER, NANOMETER,
 };
 
 fn unit(dimension: Dimension, scale: f64) -> Unit {
@@ -49,8 +49,14 @@ fn dynamic_unit_composition_rejects_unrepresentable_scales() {
 
 #[test]
 fn dimension_composition_never_wraps_in_any_build_profile() {
-    let max = unit(Dimension::new([i32::MAX, 0, 0, 0, 0, 0, 0]), 1.0);
-    let min = unit(Dimension::new([i32::MIN, 0, 0, 0, 0, 0, 0]), 1.0);
+    let max = unit(
+        Dimension::LENGTH.with_exponent(BaseDimension::Length, i32::MAX),
+        1.0,
+    );
+    let min = unit(
+        Dimension::LENGTH.with_exponent(BaseDimension::Length, i32::MIN),
+        1.0,
+    );
     for result in [
         max.try_mul(METER),
         min.try_div(METER),
@@ -64,22 +70,25 @@ fn dimension_composition_never_wraps_in_any_build_profile() {
 }
 
 #[test]
-fn convenience_operators_fail_instead_of_constructing_invalid_units() {
+fn composition_rejects_unrepresentable_scales() {
     let tiny = unit(Dimension::LENGTH, 1e-200);
     let huge = unit(Dimension::LENGTH, 1e200);
-    assert!(std::panic::catch_unwind(|| tiny * tiny).is_err());
-    assert!(std::panic::catch_unwind(|| tiny / huge).is_err());
-    assert!(std::panic::catch_unwind(|| tiny.powi(2)).is_err());
-    assert!(
-        std::panic::catch_unwind(|| { Quantity::new(1.0, tiny) * Quantity::new(1.0, tiny) })
-            .is_err()
+    assert_eq!(tiny.try_mul(tiny), Err(UnitError::InvalidScale(0.0)));
+    assert_eq!(tiny.try_div(huge), Err(UnitError::InvalidScale(0.0)));
+    assert_eq!(tiny.try_powi(2), Err(UnitError::InvalidScale(0.0)));
+    assert_eq!(
+        Quantity::new(1.0, tiny).try_mul(Quantity::new(1.0, tiny)),
+        Err(UnitError::InvalidScale(0.0))
     );
-    assert!(
-        std::panic::catch_unwind(|| { Quantity::new(1.0, tiny) / Quantity::new(1.0, huge) })
-            .is_err()
+    assert_eq!(
+        Quantity::new(1.0, tiny).try_div(Quantity::new(1.0, huge)),
+        Err(UnitError::InvalidScale(0.0))
     );
-    let max = unit(Dimension::new([i32::MAX, 0, 0, 0, 0, 0, 0]), 1.0);
-    assert!(std::panic::catch_unwind(|| max * METER).is_err());
+    let max = unit(
+        Dimension::LENGTH.with_exponent(BaseDimension::Length, i32::MAX),
+        1.0,
+    );
+    assert_eq!(max.try_mul(METER), Err(UnitError::DimensionOverflow));
 }
 
 #[test]
@@ -115,7 +124,7 @@ fn conversions_reject_zero_and_infinite_intermediate_factors() {
     let mut positions = Positions::zeros(1);
     let before = positions.clone();
     assert!(matches!(
-        positions.set_position_at(0, Quantity::new(Point3::new(1.0, 0.0, 0.0), too_large)),
+        positions.set(0, Quantity::new(Point3::new(1.0, 0.0, 0.0), too_large)),
         Err(DenseArrayError::Unit(
             UnitError::UnrepresentableConversion { .. }
         ))
@@ -127,27 +136,46 @@ fn conversions_reject_zero_and_infinite_intermediate_factors() {
 fn approximate_comparison_rejects_nonfinite_values_before_tolerance_arithmetic() {
     let finite = Quantity::new(1.0, DIMENSIONLESS);
     for tolerance in [-1.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
-        assert_eq!(finite.is_close(&finite, tolerance, 0.0), Ok(false));
-        assert_eq!(finite.is_close(&finite, 0.0, tolerance), Ok(false));
+        assert_eq!(
+            finite.is_close(&finite, tolerance, Quantity::new(0.0, DIMENSIONLESS)),
+            Ok(false)
+        );
+        assert_eq!(
+            finite.is_close(&finite, 0.0, Quantity::new(tolerance, DIMENSIONLESS)),
+            Ok(false)
+        );
     }
     for invalid in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
         let invalid = Quantity::new(invalid, DIMENSIONLESS);
         let finite = Quantity::new(1.0, DIMENSIONLESS);
         for tolerance in [0.0, 1e-6, 1.0, f64::MAX] {
-            assert_eq!(finite.is_close(&invalid, tolerance, 0.0), Ok(false));
-            assert_eq!(invalid.is_close(&finite, tolerance, 0.0), Ok(false));
-            assert_eq!(invalid.is_close(&invalid, tolerance, 0.0), Ok(false));
+            assert_eq!(
+                finite.is_close(&invalid, tolerance, Quantity::new(0.0, DIMENSIONLESS)),
+                Ok(false)
+            );
+            assert_eq!(
+                invalid.is_close(&finite, tolerance, Quantity::new(0.0, DIMENSIONLESS)),
+                Ok(false)
+            );
+            assert_eq!(
+                invalid.is_close(&invalid, tolerance, Quantity::new(0.0, DIMENSIONLESS)),
+                Ok(false)
+            );
         }
     }
     assert_eq!(
-        Quantity::new(1.0, NANOMETER).is_close(&Quantity::new(f64::MAX, METER), 1e-6, 0.0),
+        Quantity::new(1.0, NANOMETER).is_close(
+            &Quantity::new(f64::MAX, METER),
+            1e-6,
+            Quantity::new(0.0, NANOMETER)
+        ),
         Ok(false)
     );
     assert!(matches!(
         Quantity::new(1.0, NANOMETER).is_close(
             &Quantity::new(1.0, unit(Dimension::LENGTH, 1e300)),
             1e-6,
-            0.0
+            Quantity::new(0.0, NANOMETER)
         ),
         Err(UnitError::UnrepresentableConversion { .. })
     ));
@@ -157,12 +185,28 @@ fn approximate_comparison_rejects_nonfinite_values_before_tolerance_arithmetic()
 fn approximate_comparison_handles_finite_extremes_without_overflow() {
     let positive = Quantity::new(f64::MAX, DIMENSIONLESS);
     let negative = Quantity::new(-f64::MAX, DIMENSIONLESS);
-    assert_eq!(positive.is_close(&negative, 1.0, 0.0), Ok(false));
-    assert_eq!(positive.is_close(&negative, 0.75, f64::MAX), Ok(false));
-    assert_eq!(positive.is_close(&negative, 1.0, f64::MAX), Ok(true));
-    assert_eq!(positive.is_close(&positive, 0.0, 0.0), Ok(true));
     assert_eq!(
-        Quantity::new(0.0, DIMENSIONLESS).is_close(&Quantity::new(-0.0, DIMENSIONLESS), 0.0, 0.0),
+        positive.is_close(&negative, 1.0, Quantity::new(0.0, DIMENSIONLESS)),
+        Ok(false)
+    );
+    assert_eq!(
+        positive.is_close(&negative, 0.75, Quantity::new(f64::MAX, DIMENSIONLESS)),
+        Ok(false)
+    );
+    assert_eq!(
+        positive.is_close(&negative, 1.0, Quantity::new(f64::MAX, DIMENSIONLESS)),
+        Ok(true)
+    );
+    assert_eq!(
+        positive.is_close(&positive, 0.0, Quantity::new(0.0, DIMENSIONLESS)),
+        Ok(true)
+    );
+    assert_eq!(
+        Quantity::new(0.0, DIMENSIONLESS).is_close(
+            &Quantity::new(-0.0, DIMENSIONLESS),
+            0.0,
+            Quantity::new(0.0, DIMENSIONLESS)
+        ),
         Ok(true)
     );
     let subnormal = f64::from_bits(1);
@@ -170,12 +214,16 @@ fn approximate_comparison_handles_finite_extremes_without_overflow() {
         Quantity::new(subnormal, DIMENSIONLESS).is_close(
             &Quantity::new(0.0, DIMENSIONLESS),
             0.0,
-            subnormal
+            Quantity::new(subnormal, DIMENSIONLESS)
         ),
         Ok(true)
     );
     assert_eq!(
-        Quantity::new(1.0, NANOMETER).is_close(&Quantity::new(10.0, ANGSTROM), 1e-12, 0.0),
+        Quantity::new(1.0, NANOMETER).is_close(
+            &Quantity::new(10.0, ANGSTROM),
+            1e-12,
+            Quantity::new(0.0, NANOMETER)
+        ),
         Ok(true)
     );
 }

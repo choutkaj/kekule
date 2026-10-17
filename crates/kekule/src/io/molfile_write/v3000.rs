@@ -36,7 +36,7 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
             point.x,
             point.y,
             point.z,
-            atom.atom_map.unwrap_or(0)
+            atom.atom_map.map_or(0, std::num::NonZero::get)
         );
         if atom.formal_charge != 0 {
             line.push_str(&format!(" CHG={}", atom.formal_charge));

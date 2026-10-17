@@ -80,14 +80,14 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     let instances = topology
         .atom_ids()
         .iter()
-        .map(|atom| atom.molecule())
+        .map(|atom| atom.instance())
         .collect::<Vec<_>>();
     assert_eq!(instances[0], instances[2]);
     assert_ne!(instances[0], instances[1]);
     assert_eq!(
         topology
             .atoms()
-            .map(|atom| atom.element.symbol())
+            .map(|atom| atom.element().symbol())
             .collect::<Vec<_>>(),
         ROW_ELEMENTS
     );
@@ -117,7 +117,7 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     assert_eq!(row_x(frame.positions().values().value()), ROW_X);
     for (atom, element) in topology.atom_ids().iter().zip(ROW_ELEMENTS) {
         assert_eq!(
-            frame.topology().atom(*atom).unwrap().element.symbol(),
+            frame.topology().atom(*atom).unwrap().element().symbol(),
             element
         );
     }

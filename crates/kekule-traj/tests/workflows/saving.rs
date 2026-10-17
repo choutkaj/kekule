@@ -7,7 +7,7 @@ use std::{
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::Positions;
 use kekule::structure::{Forces, Trajectory, TrajectoryFrame, TrajectoryFrameView, Velocities};
-use kekule_traj::io::dcd::DcdWriteOptions;
+use kekule_traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule_traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule_traj::io::{
     create_trajectory_writer, read_trajectory, write_trajectory, OverwritePolicy,
@@ -150,8 +150,9 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
             "dcd",
             topology(&["C", "H", "O"], &[(0, 1), (0, 2)]),
             Some(
-                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
-                    .with_dcd_options(DcdWriteOptions::default().with_cells(true)),
+                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_dcd_options(
+                    DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write),
+                ),
             ),
         ),
     ] {
@@ -495,7 +496,9 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
         frame.set_forces(Some(Forces::zeros(3))).unwrap();
     }
     // Atom slicing produces a new topology, while frame selection retains it.
-    let sliced = source.subset(&AtomSelection::all(&topology)).unwrap();
+    let sliced = source
+        .subset(&AtomSelection::all(topology.clone()))
+        .unwrap();
     let mut selected = sliced.select([0, 1, 1]).unwrap();
     assert!(std::sync::Arc::ptr_eq(
         &sliced.shared_topology(),
@@ -523,7 +526,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));
     write_trajectory(&input, &selected, options.clone()).unwrap();
     let loaded = read_trajectory(&input, topology.clone(), Default::default()).unwrap();
-    let atoms = AtomSelection::all(&topology);
+    let atoms = AtomSelection::all(topology.clone());
     let mut expected = loaded;
     periodic::make_molecules_whole(&mut expected).unwrap();
     periodic::unwrap_trajectory(&mut expected).unwrap();

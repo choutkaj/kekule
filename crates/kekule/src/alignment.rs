@@ -58,7 +58,7 @@
 //!     topology.clone(),
 //!     Positions::new(Quantity::new(reference_points, ANGSTROM))?,
 //! )?;
-//! let selection = AtomSelection::all(&topology);
+//! let selection = AtomSelection::all(topology.clone());
 //!
 //! let result = fit(
 //!     moving.as_model_view(),
@@ -66,8 +66,8 @@
 //!     &selection,
 //!     Default::default(),
 //! )?;
-//! let canonical_moving = moving.positions().position_at(1)?.into_value();
-//! let canonical_reference = reference.positions().position_at(1)?.into_value();
+//! let canonical_moving = moving.positions().get(1).expect("atom 1").into_value();
+//! let canonical_reference = reference.positions().get(1).expect("atom 1").into_value();
 //! let aligned = result.transform().transform_point(canonical_moving);
 //! assert!((aligned.x - canonical_reference.x).abs() < 1.0e-12);
 //! assert!(result.rmsd().into_value() < 1.0e-12);
@@ -108,6 +108,7 @@ const JACOBI_MAX_SWEEPS: usize = 24;
 
 /// The atoms paired between a moving and a reference view.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum FitAtoms<'a> {
     /// Each selected atom pairs with itself; both views and the selection share
     /// one topology layout. Pairs follow sorted selection order.
@@ -141,7 +142,7 @@ impl<'a> From<&'a SymmetricSelection> for FitAtoms<'a> {
 
 impl FitAtoms<'_> {
     /// Number of atom pairs.
-    pub fn len(self) -> usize {
+    pub fn pair_count(self) -> usize {
         match self {
             Self::Selection(selection) => selection.indices().len(),
             Self::Correspondence(correspondence) => correspondence.len(),
@@ -150,7 +151,7 @@ impl FitAtoms<'_> {
     }
 
     pub fn is_empty(self) -> bool {
-        self.len() == 0
+        self.pair_count() == 0
     }
 
     /// Validates the pairing against both views and returns its candidate
@@ -213,7 +214,7 @@ pub fn fit<'a>(
 ) -> Result<RigidAlignment, AlignmentError> {
     let atoms = atoms.into();
     let sets = atoms.pair_sets(moving, reference)?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     best_kabsch(moving, reference, &sets, weights, options.periodic_policy)
 }
 
@@ -229,7 +230,7 @@ pub fn rmsd<'a>(
 ) -> Result<Quantity<f64>, AlignmentError> {
     let atoms = atoms.into();
     let sets = atoms.pair_sets(moving, reference)?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     let value = best_measure(
         moving,
         reference,
@@ -260,12 +261,12 @@ pub fn aligned_rmsd<'a>(
     let measurement = measurement.into();
     let fit_sets = fit.pair_sets(moving, reference)?;
     let measurement_sets = measurement.pair_sets(moving, reference)?;
-    check_fit_count(fit.len())?;
-    check_measurement_count(measurement.len())?;
-    let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.len())?;
+    check_fit_count(fit.pair_count())?;
+    check_measurement_count(measurement.pair_count())?;
+    let fit_weights = NormalizedWeights::new(options.fit().weighting, fit.pair_count())?;
     let measurement_weights =
-        NormalizedWeights::new(options.measurement_weighting, measurement.len())?;
-    let policy = options.fit.periodic_policy;
+        NormalizedWeights::new(options.measurement_weighting(), measurement.pair_count())?;
+    let policy = options.fit().periodic_policy;
     let alignment = best_kabsch(moving, reference, &fit_sets, fit_weights, policy)?;
     let value = best_measure(
         moving,
@@ -424,7 +425,7 @@ pub(crate) fn kabsch_pairs(
     let moving_centroid = components_vector(moments.moving_centroid);
     let reference_centroid = components_vector(moments.reference_centroid);
     let translation = reference_centroid - rotation.transform_vector(moving_centroid);
-    let transform = RigidTransform::new(rotation, translation)
+    let transform = RigidTransform::from_canonical(rotation, translation)
         .map_err(AlignmentError::InvalidRigidTransform)?;
 
     let mut weighted_squared_residual = CompensatedSum::default();
@@ -452,14 +453,39 @@ pub(crate) fn kabsch_pairs(
 /// Options shared by fitting and RMSD measurement.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlignmentOptions<'a> {
+    weighting: Weighting<'a>,
+    periodic_policy: PeriodicPolicy,
+}
+
+impl<'a> AlignmentOptions<'a> {
     /// Per-pair weighting.
-    pub weighting: Weighting<'a>,
+    pub const fn weighting(&self) -> Weighting<'a> {
+        self.weighting
+    }
+
+    /// Sets [`Self::weighting`].
+    #[must_use]
+    pub const fn with_weighting(mut self, weighting: Weighting<'a>) -> Self {
+        self.weighting = weighting;
+        self
+    }
+
     /// Handling of views carrying periodic cells.
-    pub periodic_policy: PeriodicPolicy,
+    pub const fn periodic_policy(&self) -> PeriodicPolicy {
+        self.periodic_policy
+    }
+
+    /// Sets [`Self::periodic_policy`].
+    #[must_use]
+    pub const fn with_periodic_policy(mut self, periodic_policy: PeriodicPolicy) -> Self {
+        self.periodic_policy = periodic_policy;
+        self
+    }
 }
 
 /// Per-pair weighting for fitting and RMSD.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub enum Weighting<'a> {
     /// Give every pair equal weight.
     #[default]
@@ -1145,7 +1171,7 @@ mod tests {
     }
 
     fn all(topology: &Arc<Topology>) -> AtomSelection {
-        AtomSelection::from_atoms(topology, topology.atom_ids().iter().copied()).unwrap()
+        AtomSelection::from_atoms(topology.clone(), topology.atom_ids().iter().copied()).unwrap()
     }
 
     fn fixture_points() -> [Point3; 5] {
@@ -1182,7 +1208,7 @@ mod tests {
                 cosine + axis.z * axis.z * one_minus_cosine,
             ),
         );
-        RigidTransform::new(rotation, Vector3::new(2.3, -4.1, 0.8)).unwrap()
+        RigidTransform::from_canonical(rotation, Vector3::new(2.3, -4.1, 0.8)).unwrap()
     }
 
     fn transform_points(points: &[Point3], transform: RigidTransform) -> Vec<Point3> {
@@ -1217,8 +1243,8 @@ mod tests {
             assert_close(left.y, right.y, tolerance);
             assert_close(left.z, right.z, tolerance);
         }
-        let left = left.translation();
-        let right = right.translation();
+        let left = left.translation().into_value();
+        let right = right.translation().into_value();
         assert_close(left.x, right.x, tolerance);
         assert_close(left.y, right.y, tolerance);
         assert_close(left.z, right.z, tolerance);
@@ -1260,7 +1286,8 @@ mod tests {
     fn translation_fit_maps_moving_to_reference_not_the_inverse() {
         let moving = fixture_points();
         let expected =
-            RigidTransform::new(Matrix3::identity(), Vector3::new(3.2, -1.7, 4.4)).unwrap();
+            RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(3.2, -1.7, 4.4))
+                .unwrap();
         let reference = transform_points(&moving, expected);
         let (topology, moving_model, reference_model) = models(&moving, &reference);
 
@@ -1311,7 +1338,8 @@ mod tests {
         reference[4] = Point3::new(-70.0, 60.0, -30.0);
         let (topology, moving_model, reference_model) = models(&moving, &reference);
         let selection =
-            AtomSelection::from_atoms(&topology, topology.atom_ids()[..3].iter().copied()).unwrap();
+            AtomSelection::from_atoms(topology.clone(), topology.atom_ids()[..3].iter().copied())
+                .unwrap();
 
         let result = crate::alignment::fit(
             moving_model.as_model_view(),
@@ -1422,7 +1450,7 @@ mod tests {
         let (topology, moving_model, reference_model) = models(&moving, &reference);
         let atom_ids = topology.atom_ids();
         let selection = AtomSelection::from_atoms(
-            &topology,
+            topology.clone(),
             [atom_ids[4], atom_ids[1], atom_ids[3], atom_ids[0]],
         )
         .unwrap();
@@ -1499,7 +1527,7 @@ mod tests {
         // weighted centroids/cross-covariance and its general SVD, followed by
         // V * diag(1, 1, det(V * U^T)) * U^T. The 3e-12 transform and 5e-14
         // RMSD tolerances cover only f64 rounding relative to that reference.
-        let expected = RigidTransform::new(
+        let expected = RigidTransform::from_canonical(
             Matrix3::from_columns(
                 Vector3::new(
                     -0.23369675064066617,
@@ -1615,9 +1643,11 @@ mod tests {
         let points = fixture_points();
         let (topology, moving, reference) = models(&points, &points);
         for count in 0..3 {
-            let selection =
-                AtomSelection::from_atoms(&topology, topology.atom_ids()[..count].iter().copied())
-                    .unwrap();
+            let selection = AtomSelection::from_atoms(
+                topology.clone(),
+                topology.atom_ids()[..count].iter().copied(),
+            )
+            .unwrap();
             assert_eq!(
                 crate::alignment::fit(
                     moving.as_model_view(),
@@ -1840,7 +1870,8 @@ mod tests {
         let moving = fixture_points().map(|point| point + offset);
         let rotation = non_axis_transform().rotation();
         let expected =
-            RigidTransform::new(rotation, Vector3::new(-4.0e11, 7.0e11, 2.0e11)).unwrap();
+            RigidTransform::from_canonical(rotation, Vector3::new(-4.0e11, 7.0e11, 2.0e11))
+                .unwrap();
         let reference = transform_points(&moving, expected);
         let (topology, moving, reference_model) = models(&moving, &reference);
 

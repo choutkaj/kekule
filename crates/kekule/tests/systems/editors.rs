@@ -7,6 +7,7 @@ use kekule::topology::{
     TopologyBuilder,
 };
 use kekule::units::{Quantity, ANGSTROM, BOHR, NANOMETER};
+use std::num::NonZeroU16;
 use std::sync::Arc;
 
 fn molecule(text: &str) -> Molecule {
@@ -18,9 +19,8 @@ fn atom(symbol: &str) -> Atom {
 /// An atom whose hydrogen count is fixed at zero, so publication needs no
 /// perception.
 fn bare_atom(atomic_number: u8) -> Atom {
-    let mut atom = Atom::new(Element::from_atomic_number(atomic_number).unwrap());
-    atom.hydrogens = kekule::molecule::ImplicitHydrogens::Fixed(0);
-    atom
+    Atom::new(Element::from_atomic_number(atomic_number).unwrap())
+        .with_hydrogens(kekule::molecule::ImplicitHydrogens::Fixed(0))
 }
 fn key(name: &str) -> PropertyKey {
     PropertyKey::new(name).unwrap()
@@ -158,7 +158,7 @@ fn merging_fragments_of_two_split_occurrences_keeps_their_annotations() {
     let edited = editor.finish().unwrap();
 
     let mut occurrences = edited
-        .molecules()
+        .instances()
         .map(|instance| {
             let molecule = instance.molecule();
             let mut tags = molecule
@@ -248,8 +248,8 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
             result.position(after.atom()).unwrap()
         );
         assert_eq!(
-            after.atom().molecule(),
-            result.topology().atom_ids()[0].molecule()
+            after.atom().instance(),
+            result.topology().atom_ids()[0].instance()
         );
     }
 }
@@ -273,19 +273,19 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
     let untouched = [result.atom_ids()[0], result.atom_ids()[2]];
     assert_eq!(
         result
-            .molecule(untouched[0].molecule())
+            .instance(untouched[0].instance())
             .unwrap()
             .definition_id(),
         result
-            .molecule(untouched[1].molecule())
+            .instance(untouched[1].instance())
             .unwrap()
             .definition_id()
     );
     for atom in untouched {
-        assert_eq!(result.atom(atom).unwrap().element.symbol(), "O");
+        assert_eq!(result.atom(atom).unwrap().element().symbol(), "O");
         assert_eq!(
             result
-                .molecule(atom.molecule())
+                .instance(atom.instance())
                 .unwrap()
                 .molecule()
                 .perception(),
@@ -293,14 +293,14 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
         );
     }
     let changed = result.atom_ids()[1];
-    assert_eq!(result.atom(changed).unwrap().element.symbol(), "N");
+    assert_eq!(result.atom(changed).unwrap().element().symbol(), "N");
     assert_ne!(
-        result.molecule(changed.molecule()).unwrap().class(),
+        result.instance(changed.instance()).unwrap().class(),
         MoleculeClass::Water
     );
     assert_eq!(topology.definition_count(), 1);
     assert_eq!(
-        topology.atom(source_atoms[1]).unwrap().element.symbol(),
+        topology.atom(source_atoms[1]).unwrap().element().symbol(),
         "O"
     );
 }
@@ -380,7 +380,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
     let mut editor = source.to_editor();
     let removed = editor.atom_handle(source_atoms[0]).unwrap();
     editor.delete_atom(removed).unwrap();
-    assert!(editor.position(removed).is_err());
+    assert!(editor.position(removed).is_none());
     editor
         .add_atom(
             atom("O"),
@@ -405,9 +405,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         source.position(source_atoms[1]).unwrap()
     );
     assert_eq!(
-        result
-            .occupancy(result.topology().atom_index(retained).unwrap())
-            .unwrap(),
+        result.occupancy(result.topology().atom_index(retained).unwrap()),
         Some(0.7)
     );
     assert_eq!(
@@ -420,9 +418,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
     );
     let new = result.topology().atom_ids()[1];
     assert_eq!(
-        result
-            .occupancy(result.topology().atom_index(new).unwrap())
-            .unwrap(),
+        result.occupancy(result.topology().atom_index(new).unwrap()),
         None
     );
     assert_eq!(
@@ -430,7 +426,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         Some(PropertyValue::Int(8))
     );
     assert_eq!(result.atom_count(), 2);
-    assert_eq!(result.topology().atom(new).unwrap().element.symbol(), "O");
+    assert_eq!(result.topology().atom(new).unwrap().element().symbol(), "O");
     assert_eq!(result.positions(), &positions(&[9.0, 5.0]));
     assert_eq!(
         result
@@ -454,7 +450,7 @@ fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
         .set_topology_bond_property(bonds[1], key("static"), Some(PropertyValue::Int(23)))
         .unwrap();
     editor.delete_bond(bonds[0]).unwrap();
-    let structural = editor.topology().clone();
+    let structural = editor.topology_editor().clone();
     let finished_topology: Arc<Topology> = structural.clone().finish().unwrap();
     let recovered_topology: Arc<Topology> = structural.try_finish().unwrap();
     assert!(finished_topology.same_layout(&recovered_topology));
@@ -571,7 +567,7 @@ fn append_preserves_sparse_local_ids_dense_order_and_definition_order() {
             .topology()
             .atom(result.topology().atom_ids()[2])
             .unwrap()
-            .element
+            .element()
             .symbol(),
         "O"
     );
@@ -690,7 +686,7 @@ fn classification_overrides_are_occurrence_and_component_local() {
     let classified = editor.clone().finish().unwrap();
     let class = |result: &Topology, row: usize| {
         result
-            .molecule(result.atom_ids()[row].molecule())
+            .instance(result.atom_ids()[row].instance())
             .unwrap()
             .class()
     };
@@ -744,8 +740,8 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
     let actual = result.topology().bond(target).unwrap();
     // Survivors keep source dense order: C0, the now-isolated C1, then O.
     let [a, isolated, b] = [0, 1, 2].map(|index| result.topology().atom_ids()[index]);
-    assert_eq!(a.molecule(), b.molecule());
-    assert_ne!(a.molecule(), isolated.molecule());
+    assert_eq!(a.instance(), b.instance());
+    assert_ne!(a.instance(), isolated.instance());
     assert_eq!(actual.endpoints(), (a.atom(), b.atom()));
     assert_eq!(
         result
@@ -769,7 +765,7 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
     assert_eq!(
         result
             .topology()
-            .molecule(target.molecule())
+            .instance(target.instance())
             .unwrap()
             .molecule()
             .properties()
@@ -786,7 +782,7 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
         result
             .topology()
             .atoms()
-            .map(|a| a.element.symbol())
+            .map(|a| a.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "C", "O"]
     );
@@ -1002,7 +998,7 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
     editor
         .set_atom_properties(key("occupancy"), [(atom, Some(PropertyValue::Int(1)))])
         .unwrap();
-    assert_eq!(editor.occupancy(atom).unwrap(), None);
+    assert_eq!(editor.occupancy(atom), None);
     editor.finish().unwrap();
 }
 
@@ -1036,7 +1032,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         4.0
     );
     assert_eq!(
-        builder.occupancy(builder.atom_index(id).unwrap()).unwrap(),
+        builder.occupancy(builder.atom_index(id).unwrap()),
         Some(0.5)
     );
     let row = builder.atom_index(id).unwrap();
@@ -1066,7 +1062,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         .add_atom(atom("N"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(handle, replacement);
-    assert!(editor.atom(handle).is_err());
+    assert!(editor.atom(handle).is_none());
     let result = editor.finish().unwrap();
     assert_eq!(result.atom_count(), 1);
     assert_eq!(result.topology().instance_count(), 1);
@@ -1075,20 +1071,18 @@ fn recovery_keeps_builder_state_and_editor_handles() {
             .topology()
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .element
+            .element()
             .symbol(),
         "N"
     );
     assert_eq!(result.positions(), &positions(&[0.0]));
     assert_eq!(
-        result
-            .occupancy(
-                result
-                    .topology()
-                    .atom_index(result.topology().atom_ids()[0])
-                    .unwrap()
-            )
-            .unwrap(),
+        result.occupancy(
+            result
+                .topology()
+                .atom_index(result.topology().atom_ids()[0])
+                .unwrap()
+        ),
         None
     );
     assert_eq!(
@@ -1300,7 +1294,7 @@ fn unchanged_setters_keep_topology_snapshot_and_perception() {
         carbon.perception()
     );
     let source = Arc::new(Topology::from_molecule(carbon.clone()).unwrap());
-    let mut editor = source.to_editor();
+    let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
     let a = editor.atom_ids().next().unwrap();
     let b = editor.bond_ids().next().unwrap();
     editor
@@ -1323,7 +1317,7 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
     let mut editor = source.to_editor();
     let terminal = editor
         .atoms()
-        .find(|(id, a)| a.element.symbol() == "C" && editor.neighbors(*id).unwrap().count() == 1)
+        .find(|(id, a)| a.element().symbol() == "C" && editor.neighbors(*id).unwrap().count() == 1)
         .unwrap()
         .0;
     let cut = editor.incident_bonds(terminal).unwrap().next().unwrap();
@@ -1339,7 +1333,7 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
     );
     let fluorine = editor
         .atoms()
-        .find(|(_, a)| a.element.symbol() == "F")
+        .find(|(_, a)| a.element().symbol() == "F")
         .unwrap()
         .0;
     editor.delete_atom(fluorine).unwrap();
@@ -1372,13 +1366,13 @@ fn independently_created_or_cleared_drafts_never_accept_foreign_handles() {
         .add_atom(atom("N"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(c, d);
-    assert!(branch.atom(c).is_err());
+    assert!(branch.atom(c).is_none());
     first.clear();
     let e = first
         .add_atom(atom("C"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(a, e);
-    assert!(first.atom(a).is_err());
+    assert!(first.atom(a).is_none());
 }
 
 #[test]
@@ -1449,7 +1443,7 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
     let original = builder.build().unwrap();
     let instances = original
         .topology()
-        .molecules()
+        .instances()
         .map(|m| m.id())
         .collect::<Vec<_>>();
     let mut editor = original.to_editor();
@@ -1459,20 +1453,23 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
     let result = editor.finish().unwrap();
     let counts = result
         .topology()
-        .molecules()
+        .instances()
         .map(|m| m.molecule().stereo_elements().count())
         .collect::<Vec<_>>();
     assert_eq!(counts, vec![0, 1]);
     assert!(original
         .topology()
-        .molecules()
+        .instances()
         .all(|m| m.molecule().stereo_elements().count() == 1));
     let mut changed = original.to_editor();
     let id = changed
         .atom_handle(original.topology().atom_ids()[0])
         .unwrap();
-    let mut a = changed.atom(id).unwrap().clone();
-    a.isotope = Some(19);
+    let a = changed
+        .atom(id)
+        .unwrap()
+        .clone()
+        .with_isotope(NonZeroU16::new(19));
     changed.replace_atom(id, a).unwrap();
     assert!(changed
         .replace_source_instance_stereo(instances[0], &[])

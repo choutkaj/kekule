@@ -187,7 +187,7 @@ impl<const N: usize> Prepared<N> {
                     }
                 }
             }
-            AtomSelection::from_atoms(topology, visited)
+            AtomSelection::from_atoms(Arc::clone(topology), visited)
                 .map_err(|_| GeometryEditError::NumericalFailure)?
         };
         Ok(Self {
@@ -310,21 +310,21 @@ macro_rules! prepared_edit {
             /// that connect it to fixed references return `InseparableFragment`.
             /// Bond order does not restrict editing.
             pub fn new(
-                topology: &Arc<Topology>,
+                topology: impl Into<Arc<Topology>>,
                 atoms: [InstanceAtomId; $n],
             ) -> Result<Self, GeometryEditError> {
-                Prepared::new(topology, atoms, None).map(Self)
+                Prepared::new(&topology.into(), atoms, None).map(Self)
             }
 
             /// Moves exactly this selection (except defining pivots, which stay
             /// fixed). Select the last reference and exclude the first. Bonds
             /// are not required; boundary bonds and rings may deliberately deform.
             pub fn with_moving_atoms(
-                topology: &Arc<Topology>,
+                topology: impl Into<Arc<Topology>>,
                 atoms: [InstanceAtomId; $n],
                 moving: &AtomSelection,
             ) -> Result<Self, GeometryEditError> {
-                Prepared::new(topology, atoms, Some(moving)).map(Self)
+                Prepared::new(&topology.into(), atoms, Some(moving)).map(Self)
             }
 
             pub fn atoms(&self) -> [InstanceAtomId; $n] {
@@ -479,7 +479,7 @@ impl Model {
         b: InstanceAtomId,
         target: Quantity<f64>,
     ) -> Result<(), GeometryEditError> {
-        DistanceEdit::new(&self.shared_topology(), [a, b])?.apply(self, target)
+        DistanceEdit::new(self.shared_topology(), [a, b])?.apply(self, target)
     }
 
     /// Sets A–B–C by rotating C's connected fragment. See [`AngleEdit`].
@@ -490,7 +490,7 @@ impl Model {
         c: InstanceAtomId,
         target: Quantity<f64>,
     ) -> Result<(), GeometryEditError> {
-        AngleEdit::new(&self.shared_topology(), [a, b, c])?.apply(self, target)
+        AngleEdit::new(self.shared_topology(), [a, b, c])?.apply(self, target)
     }
 
     /// Sets A–B–C–D around B→C. See [`DihedralEdit`] for sign and moving atoms.
@@ -502,7 +502,7 @@ impl Model {
         d: InstanceAtomId,
         target: Quantity<f64>,
     ) -> Result<(), GeometryEditError> {
-        DihedralEdit::new(&self.shared_topology(), [a, b, c, d])?.apply(self, target)
+        DihedralEdit::new(self.shared_topology(), [a, b, c, d])?.apply(self, target)
     }
 
     /// Translates selected Cartesian coordinates atomically, preserving the cell,

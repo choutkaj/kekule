@@ -13,6 +13,7 @@ use std::fmt;
 
 use crate::structure::AsModelView;
 use crate::topology::{MoleculeInstanceId, ResidueId};
+use crate::units::{Quantity, DEGREE, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE};
 
 mod kernel;
 
@@ -121,12 +122,38 @@ impl std::error::Error for DsspCodeError {}
 /// Source hierarchy labels retained as metadata, not result identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DsspResidueSource {
-    pub residue_name: String,
-    pub chain_label_id: String,
-    pub chain_author_id: Option<String>,
-    pub label_sequence_id: Option<i32>,
-    pub author_sequence_id: Option<String>,
-    pub insertion_code: Option<String>,
+    pub(crate) residue_name: String,
+    pub(crate) chain_label_id: String,
+    pub(crate) chain_author_id: Option<String>,
+    pub(crate) label_sequence_id: Option<i32>,
+    pub(crate) author_sequence_id: Option<String>,
+    pub(crate) insertion_code: Option<String>,
+}
+
+impl DsspResidueSource {
+    pub fn residue_name(&self) -> &str {
+        &self.residue_name
+    }
+
+    pub fn chain_label_id(&self) -> &str {
+        &self.chain_label_id
+    }
+
+    pub fn chain_author_id(&self) -> Option<&str> {
+        self.chain_author_id.as_deref()
+    }
+
+    pub const fn label_sequence_id(&self) -> Option<i32> {
+        self.label_sequence_id
+    }
+
+    pub fn author_sequence_id(&self) -> Option<&str> {
+        self.author_sequence_id.as_deref()
+    }
+
+    pub fn insertion_code(&self) -> Option<&str> {
+        self.insertion_code.as_deref()
+    }
 }
 
 /// Whether a residue starts a chain segment in the analyzed snapshot.
@@ -156,18 +183,53 @@ pub enum DsspHelixPosition {
 /// cutoff.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DsspHydrogenBond {
-    pub partner: ResidueId,
-    /// DSSP electrostatic energy in kcal/mol.
-    pub energy_kcal_per_mol: f64,
+    pub(crate) partner: ResidueId,
+    /// DSSP electrostatic energy in kcal/mol, the unit DSSP computes in.
+    pub(crate) energy_kcal_per_mol: f64,
+}
+
+impl DsspHydrogenBond {
+    pub const fn partner(&self) -> ResidueId {
+        self.partner
+    }
+
+    /// DSSP electrostatic energy, in the canonical kJ/mol.
+    pub fn energy(&self) -> Quantity<f64> {
+        Quantity::new(self.energy_kcal_per_mol, KILOCALORIE_PER_MOLE)
+            .into_unit(KILOJOULE_PER_MOLE)
+            .expect("kcal/mol converts to kJ/mol")
+    }
+}
+
+/// Whether a beta bridge pairs strands running the same way or opposite ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DsspBridgeDirection {
+    Parallel,
+    Antiparallel,
 }
 
 /// One beta partner produced by DSSP bridge/ladder construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspBetaPartner {
-    pub partner: ResidueId,
+    pub(crate) partner: ResidueId,
+    pub(crate) ladder: usize,
+    pub(crate) direction: DsspBridgeDirection,
+}
+
+impl DsspBetaPartner {
+    pub const fn partner(&self) -> ResidueId {
+        self.partner
+    }
+
     /// Zero-based deterministic ladder identifier.
-    pub ladder: usize,
-    pub parallel: bool,
+    pub const fn ladder(&self) -> usize {
+        self.ladder
+    }
+
+    pub const fn direction(&self) -> DsspBridgeDirection {
+        self.direction
+    }
 }
 
 /// DSSP values for one analyzed residue.
@@ -177,11 +239,11 @@ pub struct DsspResidue {
     source: DsspResidueSource,
     secondary_structure: DsspSecondaryStructure,
     chain_break: DsspChainBreak,
-    phi_degrees: Option<f64>,
-    psi_degrees: Option<f64>,
-    omega_degrees: Option<f64>,
-    alpha_degrees: Option<f64>,
-    kappa_degrees: Option<f64>,
+    phi: Option<f64>,
+    psi: Option<f64>,
+    omega: Option<f64>,
+    alpha: Option<f64>,
+    kappa: Option<f64>,
     tco: Option<f64>,
     acceptors: [Option<DsspHydrogenBond>; 2],
     donors: [Option<DsspHydrogenBond>; 2],
@@ -208,24 +270,24 @@ impl DsspResidue {
         self.chain_break
     }
 
-    pub const fn phi_degrees(&self) -> Option<f64> {
-        self.phi_degrees
+    pub fn phi(&self) -> Option<Quantity<f64>> {
+        self.phi.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    pub const fn psi_degrees(&self) -> Option<f64> {
-        self.psi_degrees
+    pub fn psi(&self) -> Option<Quantity<f64>> {
+        self.psi.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    pub const fn omega_degrees(&self) -> Option<f64> {
-        self.omega_degrees
+    pub fn omega(&self) -> Option<Quantity<f64>> {
+        self.omega.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    pub const fn alpha_degrees(&self) -> Option<f64> {
-        self.alpha_degrees
+    pub fn alpha(&self) -> Option<Quantity<f64>> {
+        self.alpha.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    pub const fn kappa_degrees(&self) -> Option<f64> {
-        self.kappa_degrees
+    pub fn kappa(&self) -> Option<Quantity<f64>> {
+        self.kappa.map(|angle| Quantity::new(angle, DEGREE))
     }
 
     /// Cosine of the angle between consecutive peptide carbonyl vectors.
@@ -314,6 +376,7 @@ impl DsspStatistics {
 
 /// One of the four backbone atoms DSSP reads from a residue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum DsspBackboneAtom {
     /// The amide nitrogen, `N`.
     N,
@@ -359,9 +422,23 @@ pub enum DsspSkipReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DsspSkippedResidue {
-    pub key: ResidueId,
-    pub source: DsspResidueSource,
-    pub reason: DsspSkipReason,
+    pub(crate) key: ResidueId,
+    pub(crate) source: DsspResidueSource,
+    pub(crate) reason: DsspSkipReason,
+}
+
+impl DsspSkippedResidue {
+    pub const fn key(&self) -> ResidueId {
+        self.key
+    }
+
+    pub fn source(&self) -> &DsspResidueSource {
+        &self.source
+    }
+
+    pub fn reason(&self) -> &DsspSkipReason {
+        &self.reason
+    }
 }
 
 /// Non-fatal extraction and work accounting for one assignment.
@@ -409,10 +486,45 @@ impl DsspReport {
 /// Bounded work limits for DSSP analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspLimits {
-    pub max_residues: usize,
-    pub max_candidate_pairs: usize,
+    max_residues: usize,
+    max_candidate_pairs: usize,
+    max_ladders: usize,
+}
+
+impl DsspLimits {
+    pub const fn max_residues(&self) -> usize {
+        self.max_residues
+    }
+
+    /// Sets [`Self::max_residues`].
+    #[must_use]
+    pub const fn with_max_residues(mut self, max_residues: usize) -> Self {
+        self.max_residues = max_residues;
+        self
+    }
+
+    pub const fn max_candidate_pairs(&self) -> usize {
+        self.max_candidate_pairs
+    }
+
+    /// Sets [`Self::max_candidate_pairs`].
+    #[must_use]
+    pub const fn with_max_candidate_pairs(mut self, max_candidate_pairs: usize) -> Self {
+        self.max_candidate_pairs = max_candidate_pairs;
+        self
+    }
+
     /// Maximum provisional ladders retained before DSSP bulge merging.
-    pub max_ladders: usize,
+    pub const fn max_ladders(&self) -> usize {
+        self.max_ladders
+    }
+
+    /// Sets [`Self::max_ladders`].
+    #[must_use]
+    pub const fn with_max_ladders(mut self, max_ladders: usize) -> Self {
+        self.max_ladders = max_ladders;
+        self
+    }
 }
 
 impl DsspLimits {
@@ -437,9 +549,44 @@ impl Default for DsspLimits {
 /// DSSP 4 assignment options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspOptions {
+    min_polyproline_stretch: usize,
+    limits: DsspLimits,
+}
+
+impl DsspOptions {
     /// DSSP4 accepts two or three qualifying residues; the reference default is three.
-    pub min_polyproline_stretch: usize,
-    pub limits: DsspLimits,
+    pub const fn min_polyproline_stretch(&self) -> usize {
+        self.min_polyproline_stretch
+    }
+
+    /// Sets [`Self::min_polyproline_stretch`].
+    ///
+    /// # Errors
+    ///
+    /// [`DsspError::InvalidPolyprolineStretch`] unless the stretch is 2 or 3.
+    pub fn with_min_polyproline_stretch(
+        mut self,
+        min_polyproline_stretch: usize,
+    ) -> Result<Self, DsspError> {
+        if !matches!(min_polyproline_stretch, 2 | 3) {
+            return Err(DsspError::InvalidPolyprolineStretch {
+                value: min_polyproline_stretch,
+            });
+        }
+        self.min_polyproline_stretch = min_polyproline_stretch;
+        Ok(self)
+    }
+
+    pub const fn limits(&self) -> DsspLimits {
+        self.limits
+    }
+
+    /// Sets [`Self::limits`].
+    #[must_use]
+    pub const fn with_limits(mut self, limits: DsspLimits) -> Self {
+        self.limits = limits;
+        self
+    }
 }
 
 impl Default for DsspOptions {

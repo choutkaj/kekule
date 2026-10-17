@@ -1,15 +1,18 @@
-//! Exact lattice geometry. Inputs and Cartesian outputs use canonical length units.
+//! Exact lattice geometry. Cartesian inputs and outputs are length quantities.
 use super::{PeriodicCell, Vector3};
 use crate::diagnostics::{LimitExceeded, Resource};
+use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 use std::fmt;
 
 /// Maximum lattice images an exact nearest-image search examines.
 pub const MAX_LATTICE_IMAGES: usize = 1_000_000;
 
 /// A nonfinite, unrepresentable, or excessively expensive periodic calculation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PeriodicGeometryError {
+    /// A Cartesian input is not a length; see the source.
+    Unit(Box<UnitError>),
     /// The calculation exceeds numerical precision or range.
     NumericalFailure,
     /// More than [`MAX_LATTICE_IMAGES`] lattice images would need examination.
@@ -18,6 +21,7 @@ pub enum PeriodicGeometryError {
 impl fmt::Display for PeriodicGeometryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Unit(_) => f.write_str("periodic calculation input is not a length"),
             Self::NumericalFailure => {
                 f.write_str("periodic calculation exceeds numerical precision or range")
             }
@@ -38,13 +42,31 @@ fn image_limit(images: Option<u64>) -> PeriodicGeometryError {
         observed.max(MAX_LATTICE_IMAGES + 1),
     ))
 }
-impl std::error::Error for PeriodicGeometryError {}
+impl std::error::Error for PeriodicGeometryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unit(error) => Some(error.as_ref()),
+            Self::NumericalFailure | Self::LimitExceeded(_) => None,
+        }
+    }
+}
+
+impl From<UnitError> for PeriodicGeometryError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(Box::new(error))
+    }
+}
+
+fn canonical(vector: Quantity<Vector3>) -> Result<Vector3, PeriodicGeometryError> {
+    Ok(vector.value_in(CANONICAL_LENGTH_UNIT)?)
+}
 
 /// Prepared reciprocal basis and exact bounded nearest-image search.
 ///
 /// Supports rotated, skewed, left-handed, and partially periodic cells. Ties are
-/// deterministic. Cartesian quantities use canonical length units (nm); fractional
-/// coordinates and image indices are dimensionless. No approximate image fallback
+/// deterministic. Cartesian inputs accept any length unit and outputs use the
+/// canonical length unit (nm); fractional coordinates and image indices are
+/// dimensionless. No approximate image fallback
 /// is used when the one-million-candidate bound is exceeded.
 #[derive(Debug, Clone)]
 pub struct PeriodicGeometry {
@@ -72,7 +94,46 @@ impl PeriodicGeometry {
         })
     }
 
-    pub fn fractional(&self, vector: Vector3) -> Result<[f64; 3], PeriodicGeometryError> {
+    /// Fractional coordinates of a Cartesian vector.
+    pub fn fractional(&self, vector: Quantity<Vector3>) -> Result<[f64; 3], PeriodicGeometryError> {
+        self.fractional_canonical(canonical(vector)?)
+    }
+
+    /// The Cartesian vector of fractional coordinates.
+    pub fn cartesian(&self, fractional: [f64; 3]) -> Quantity<Vector3> {
+        Quantity::new(self.cartesian_canonical(fractional), CANONICAL_LENGTH_UNIT)
+    }
+
+    /// The shortest lattice image of a displacement.
+    pub fn minimum_image(
+        &self,
+        delta: Quantity<Vector3>,
+    ) -> Result<Quantity<Vector3>, PeriodicGeometryError> {
+        self.minimum_image_canonical(canonical(delta)?)
+            .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))
+    }
+
+    /// The shortest lattice image of a displacement and the lattice
+    /// translation, in cell vectors, subtracted to reach it.
+    pub fn nearest_image(
+        &self,
+        delta: Quantity<Vector3>,
+    ) -> Result<(Quantity<Vector3>, [i64; 3]), PeriodicGeometryError> {
+        self.nearest_image_canonical(canonical(delta)?)
+            .map(|(vector, images)| (Quantity::new(vector, CANONICAL_LENGTH_UNIT), images))
+    }
+
+    /// Shortest nonzero lattice translation along periodic axes.
+    /// Rejects searches requiring more than one million integer candidates.
+    pub fn shortest_translation(&self) -> Result<Quantity<Vector3>, PeriodicGeometryError> {
+        self.shortest_translation_canonical()
+            .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))
+    }
+
+    pub(crate) fn fractional_canonical(
+        &self,
+        vector: Vector3,
+    ) -> Result<[f64; 3], PeriodicGeometryError> {
         let fractional = self.reciprocal.map(|dual| dual.dot(vector));
         if !fractional.iter().all(|v| v.is_finite()) {
             return Err(PeriodicGeometryError::NumericalFailure);
@@ -80,28 +141,32 @@ impl PeriodicGeometry {
         Ok(fractional)
     }
 
-    pub fn cartesian(&self, fractional: [f64; 3]) -> Vector3 {
+    pub(crate) fn cartesian_canonical(&self, fractional: [f64; 3]) -> Vector3 {
         self.basis[0] * fractional[0]
             + self.basis[1] * fractional[1]
             + self.basis[2] * fractional[2]
     }
 
-    pub fn minimum_image(&self, delta: Vector3) -> Result<Vector3, PeriodicGeometryError> {
-        self.nearest_image(delta).map(|(vector, _)| vector)
+    pub(crate) fn minimum_image_canonical(
+        &self,
+        delta: Vector3,
+    ) -> Result<Vector3, PeriodicGeometryError> {
+        self.nearest_image_canonical(delta)
+            .map(|(vector, _)| vector)
     }
 
-    pub fn nearest_image(
+    pub(crate) fn nearest_image_canonical(
         &self,
         delta: Vector3,
     ) -> Result<(Vector3, [i64; 3]), PeriodicGeometryError> {
-        let fractional = self.fractional(delta)?;
+        let fractional = self.fractional_canonical(delta)?;
         let mut images = [0.0; 3];
         for axis in 0..3 {
             if self.periodic[axis] {
                 images[axis] = checked_image(fractional[axis])?;
             }
         }
-        let mut best = delta - self.cartesian(images);
+        let mut best = delta - self.cartesian_canonical(images);
         let mut best_images = images.map(|n| n as i64);
         let mut best_squared = best.norm_squared();
         if !best_squared.is_finite() {
@@ -146,7 +211,7 @@ impl PeriodicGeometry {
         for a in bounds[0].0..=bounds[0].1 {
             for b in bounds[1].0..=bounds[1].1 {
                 for c in bounds[2].0..=bounds[2].1 {
-                    let residual = delta - self.cartesian([a as f64, b as f64, c as f64]);
+                    let residual = delta - self.cartesian_canonical([a as f64, b as f64, c as f64]);
                     let squared = residual.norm_squared();
                     if squared < best_squared {
                         best = residual;
@@ -174,9 +239,7 @@ impl PeriodicGeometry {
     }
 }
 impl PeriodicGeometry {
-    /// Shortest nonzero lattice translation along periodic axes, in canonical units.
-    /// Rejects searches requiring more than one million integer candidates.
-    pub fn shortest_translation(&self) -> Result<Vector3, PeriodicGeometryError> {
+    pub(crate) fn shortest_translation_canonical(&self) -> Result<Vector3, PeriodicGeometryError> {
         let mut best = self
             .basis
             .iter()
@@ -216,7 +279,7 @@ impl PeriodicGeometry {
                     if [a, b, c] == [0; 3] {
                         continue;
                     }
-                    let candidate = self.cartesian([a as f64, b as f64, c as f64]);
+                    let candidate = self.cartesian_canonical([a as f64, b as f64, c as f64]);
                     if candidate.norm() < best.norm() {
                         best = candidate;
                     }

@@ -1,7 +1,7 @@
 use kekule::diagnostics::{DiagnosticKind, SourceLocation};
 use kekule::macromolecular::{
-    AltLocPolicy, AltLocResidue, BondEvidence, CellOmissionReason, ConnectionResolutionReason,
-    EntityKind, ModelSelection, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
+    AltLocPolicy, BondEvidence, CellOmissionReason, ConnectionResolutionReason, EntityKind,
+    ModelSelection, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
 use kekule::molecule::BondOrder;
@@ -219,8 +219,8 @@ fn bonds(result: &StructureInterpretation) -> Vec<(String, String, BondOrder, Bo
         .flat_map(|instance| instance.bonds())
         .map(|bond| {
             let [a, b] = bond.atoms();
-            let molecule = result.topology().molecule(a.molecule()).unwrap().molecule();
-            let id = molecule.bond_between(a.atom(), b.atom()).unwrap().unwrap();
+            let molecule = result.topology().instance(a.instance()).unwrap().molecule();
+            let id = molecule.bond_between(a.atom(), b.atom()).unwrap();
             let (a, b) = (name(a), name(b));
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
             (
@@ -245,10 +245,10 @@ fn charges(result: &StructureInterpretation) -> Vec<(String, i8)> {
         .filter_map(|atom| {
             let molecule = result
                 .topology()
-                .molecule(atom.atom().molecule())
+                .instance(atom.atom().instance())
                 .unwrap()
                 .molecule();
-            let charge = molecule.atom(atom.atom().atom()).unwrap().formal_charge;
+            let charge = molecule.atom(atom.atom().atom()).unwrap().formal_charge();
             (charge != 0).then(|| (atom.atom_name().to_owned(), charge))
         })
         .collect()
@@ -262,12 +262,7 @@ fn connection(id: Option<&str>, kind: &str) -> BondEvidence {
 }
 
 fn residue(asym: &str, position: SourceResiduePosition) -> SourceResidueId {
-    SourceResidueId {
-        model_id: "1".to_owned(),
-        asym_id: asym.to_owned(),
-        position,
-        insertion_code: None,
-    }
+    SourceResidueId::from_parts("1", asym, position, None)
 }
 
 #[test]
@@ -868,10 +863,10 @@ fn coordinate_models_become_ensemble_members() {
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
 
     let second = document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::Select("2".to_owned()),
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(
+            StructureInterpretOptions::default()
+                .with_model_selection(ModelSelection::Select("2".to_owned())),
+        )
         .unwrap();
     assert_eq!(second.report().selected_model(), Some("2"));
     assert_eq!(second.report().ignored_coordinate_models(), ["1"]);
@@ -925,13 +920,12 @@ fn recurring_numbers_and_alternate_locations_identify_residues() {
             repeat: 1,
         },
     );
-    assert_eq!(
-        document.alternate_locations().unwrap(),
-        [AltLocResidue {
-            residue: repeated.clone(),
-            labels: vec!["A".to_owned(), "B".to_owned()],
-        }]
-    );
+    let alternatives = document.alternate_locations().unwrap();
+    let [alternative] = alternatives.as_slice() else {
+        panic!("one residue with alternate locations");
+    };
+    assert_eq!(alternative.residue(), &repeated);
+    assert_eq!(alternative.labels(), ["A", "B"]);
 
     let cases = [
         (
@@ -946,16 +940,13 @@ fn recurring_numbers_and_alternate_locations_identify_residues() {
     ];
     for (policy, label, unresolved, bonds) in cases {
         let interpreted = document
-            .interpret(StructureInterpretOptions {
-                altloc_policy: policy,
-                ..StructureInterpretOptions::default()
-            })
+            .interpret(StructureInterpretOptions::default().with_altloc_policy(policy))
             .unwrap();
         let [decision] = interpreted.report().alternate_locations() else {
             panic!("one alternate-location decision");
         };
-        assert_eq!(decision.residue, repeated);
-        assert_eq!(decision.selected_labels, [label]);
+        assert_eq!(decision.residue(), &repeated);
+        assert_eq!(decision.selected_labels(), [label]);
         let mut residues = interpreted
             .report()
             .instances()
@@ -1150,10 +1141,14 @@ fn atom_names_imply_elements_without_element_columns() {
         .map(|atom| {
             let molecule = interpreted
                 .topology()
-                .molecule(atom.atom().molecule())
+                .instance(atom.atom().instance())
                 .unwrap()
                 .molecule();
-            molecule.atom(atom.atom().atom()).unwrap().element.symbol()
+            molecule
+                .atom(atom.atom().atom())
+                .unwrap()
+                .element()
+                .symbol()
         })
         .collect::<Vec<_>>();
     assert_eq!(elements, ["C", "Ca", "Zn"]);
@@ -1175,14 +1170,14 @@ fn isotopes(result: &StructureInterpretation) -> Vec<(String, &'static str, Opti
         .map(|atom| {
             let molecule = result
                 .topology()
-                .molecule(atom.atom().molecule())
+                .instance(atom.atom().instance())
                 .unwrap()
                 .molecule();
             let element = molecule.atom(atom.atom().atom()).unwrap();
             (
                 atom.atom_name().to_owned(),
-                element.element.symbol(),
-                element.isotope,
+                element.element().symbol(),
+                element.isotope().map(std::num::NonZero::get),
             )
         })
         .collect()
@@ -1435,10 +1430,7 @@ fn pdb_parse_errors_locate_the_record() {
 
     let limited = pdb::parse_str(
         &format!("{water}\n{water}"),
-        PdbParseOptions {
-            max_atom_records: 1,
-            ..PdbParseOptions::default()
-        },
+        PdbParseOptions::default().with_max_atom_records(1),
     )
     .unwrap_err();
     assert_eq!(
@@ -1472,10 +1464,9 @@ fn pdb_interpretation_rejects_contradictory_records() {
         ),
         (
             water.clone(),
-            StructureInterpretOptions {
-                strict_entity_metadata: true,
-                ..StructureInterpretOptions::default()
-            },
+            StructureInterpretOptions::default().with_entity_metadata(
+                kekule::macromolecular::EntityMetadataPolicy::RequireDeclared,
+            ),
             DiagnosticKind::Inconsistent,
             None,
         ),
@@ -1603,12 +1594,10 @@ fn force_field_libraries_interpret_their_residue_names() {
         (" HT2", "H", [-2.256, 0.622, 0.572]),
         (" HT3", "H", [-2.300, 0.950, -1.100]),
     ];
-    let with = |library: ComponentLibrary| StructureInterpretOptions {
-        connectivity: ConnectivityOptions {
-            components: Some(Arc::new(library)),
-            ..ConnectivityOptions::default()
-        },
-        ..StructureInterpretOptions::default()
+    let with = |library: ComponentLibrary| {
+        StructureInterpretOptions::default().with_connectivity(
+            ConnectivityOptions::default().with_components(Some(Arc::new(library))),
+        )
     };
 
     // AMBER: the NE2-protonated histidine, an aspartate without hydrogens,
@@ -1815,13 +1804,9 @@ fn force_field_termini_carry_their_charges() {
     for (library, lines, expected_charges, expected_attached) in cases {
         let document = pdb::parse_str(&entry(&lines), Default::default()).unwrap();
         let interpreted = document
-            .interpret(StructureInterpretOptions {
-                connectivity: ConnectivityOptions {
-                    components: Some(Arc::new(library)),
-                    ..ConnectivityOptions::default()
-                },
-                ..StructureInterpretOptions::default()
-            })
+            .interpret(StructureInterpretOptions::default().with_connectivity(
+                ConnectivityOptions::default().with_components(Some(Arc::new(library))),
+            ))
             .unwrap();
         let attached = interpreted
             .report()
@@ -1876,7 +1861,7 @@ fn pdb_connectivity_matches_an_independent_reference() {
         let interpreted = interpret(text);
         let topology = interpreted.topology();
         let mut sizes = topology
-            .molecules()
+            .instances()
             .map(|instance| instance.molecule().atom_count())
             .collect::<Vec<_>>();
         sizes.sort_unstable_by(|a, b| b.cmp(a));

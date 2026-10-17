@@ -291,8 +291,9 @@ values. Exact units, tolerances, and conversion policies belong with
 A model, ensemble, or trajectory owns its shared topology once. Members and frames
 store flat payloads, not nested models; a detached payload has
 atom rows only and acquires bond rows when its collection binds it. Borrowed
-`ModelView` access, obtained through `AsModelView`, lets coordinate algorithms
-and writers share kernels across models, members, frames, and buffers. Owned
+`ModelView` access, obtained through the sealed `AsModelView` (or a frame
+buffer's `as_model_view`), lets coordinate algorithms and writers share
+kernels across models, members, frames, and buffers. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
 one shared layout; there is no special single-member ownership model.

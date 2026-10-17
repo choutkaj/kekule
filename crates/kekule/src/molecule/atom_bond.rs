@@ -1,16 +1,22 @@
 use super::*;
 
+/// The represented chemistry of one atom.
+///
+/// Construct an atom with [`Atom::new`] and the `with_*` builders; change an
+/// atom in a molecule through [`AtomMut`](super::AtomMut).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Atom {
-    pub element: Element,
-    pub isotope: Option<u16>,
-    pub formal_charge: i8,
-    pub radical: Option<AtomRadical>,
-    pub hydrogens: ImplicitHydrogens,
-    pub atom_map: Option<u32>,
+    pub(crate) element: Element,
+    pub(crate) isotope: Option<NonZeroU16>,
+    pub(crate) formal_charge: i8,
+    pub(crate) radical: Option<AtomRadical>,
+    pub(crate) hydrogens: ImplicitHydrogens,
+    pub(crate) atom_map: Option<NonZeroU32>,
 }
 
 impl Atom {
+    /// A neutral atom of `element` at natural isotopic abundance, without
+    /// radical electrons or atom map, whose implicit hydrogens are inferred.
     pub fn new(element: Element) -> Self {
         Self {
             element,
@@ -20,6 +26,78 @@ impl Atom {
             hydrogens: ImplicitHydrogens::Inferred,
             atom_map: None,
         }
+    }
+
+    /// Returns a copy with this element.
+    #[must_use]
+    pub fn with_element(mut self, element: Element) -> Self {
+        self.element = element;
+        self
+    }
+
+    /// Returns a copy with this mass number, or natural abundance for `None`.
+    #[must_use]
+    pub fn with_isotope(mut self, isotope: Option<NonZeroU16>) -> Self {
+        self.isotope = isotope;
+        self
+    }
+
+    /// Returns a copy with this formal charge.
+    #[must_use]
+    pub fn with_formal_charge(mut self, formal_charge: i8) -> Self {
+        self.formal_charge = formal_charge;
+        self
+    }
+
+    /// Returns a copy with these radical electrons, or none for `None`.
+    #[must_use]
+    pub fn with_radical(mut self, radical: Option<AtomRadical>) -> Self {
+        self.radical = radical;
+        self
+    }
+
+    /// Returns a copy with this implicit-hydrogen declaration.
+    #[must_use]
+    pub fn with_hydrogens(mut self, hydrogens: ImplicitHydrogens) -> Self {
+        self.hydrogens = hydrogens;
+        self
+    }
+
+    /// Returns a copy with this reaction atom map, or none for `None`.
+    #[must_use]
+    pub fn with_atom_map(mut self, atom_map: Option<NonZeroU32>) -> Self {
+        self.atom_map = atom_map;
+        self
+    }
+
+    /// The element.
+    pub const fn element(&self) -> Element {
+        self.element
+    }
+
+    /// The mass number, or `None` for natural isotopic abundance.
+    pub const fn isotope(&self) -> Option<NonZeroU16> {
+        self.isotope
+    }
+
+    /// The formal charge.
+    pub const fn formal_charge(&self) -> i8 {
+        self.formal_charge
+    }
+
+    /// The radical electrons, or `None` without radical occupancy.
+    pub const fn radical(&self) -> Option<AtomRadical> {
+        self.radical
+    }
+
+    /// How the implicit-hydrogen count is determined.
+    pub const fn hydrogens(&self) -> ImplicitHydrogens {
+        self.hydrogens
+    }
+
+    /// The reaction atom map, or `None` for an unmapped atom.
+    pub const fn atom_map(&self) -> Option<NonZeroU32> {
+        self.atom_map
     }
 }
 
@@ -37,6 +115,7 @@ impl Atom {
 /// [`Molecule::implicit_hydrogens`]: super::Molecule::implicit_hydrogens
 /// [`Molecule::total_hydrogens`]: super::Molecule::total_hydrogens
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum ImplicitHydrogens {
     /// The valence model supplies the complete implicit count. It is unknown
     /// until valence perception is installed.
@@ -98,12 +177,17 @@ impl AtomRadical {
     ///
     /// Returns `None` for zero electrons or a multiplicity incompatible with
     /// coupling that many spin-one-half electrons. An atom without radical
-    /// occupancy uses `Atom::radical = None`; an unspecified spin uses
-    /// `AtomRadical::new(electrons, None)`.
+    /// occupancy has no `AtomRadical`; an unspecified spin uses
+    /// `AtomRadical::new(electrons, None)`. A single electron is always a
+    /// doublet, so `new(1, None)` records multiplicity 2.
     pub const fn new(electron_count: u8, spin_multiplicity: Option<u8>) -> Option<Self> {
         if electron_count == 0 {
             return None;
         }
+        let spin_multiplicity = match (electron_count, spin_multiplicity) {
+            (1, None) => Some(2),
+            (_, multiplicity) => multiplicity,
+        };
         if let Some(multiplicity) = spin_multiplicity {
             if multiplicity == 0
                 || multiplicity as u16 > electron_count as u16 + 1
@@ -125,8 +209,15 @@ impl AtomRadical {
     }
 
     /// Explicit atom-local spin multiplicity, or `None` when not specified.
+    /// A single electron always reports a doublet.
     pub const fn spin_multiplicity(self) -> Option<u8> {
         self.spin_multiplicity
+    }
+
+    /// Whether the multiplicity says more than the electron count does: a
+    /// single electron's doublet is implied, any other assertion is not.
+    pub(crate) const fn has_explicit_spin(self) -> bool {
+        self.spin_multiplicity.is_some() && self.electron_count != 1
     }
 }
 
@@ -159,6 +250,7 @@ impl Bond {
 ///
 /// Aromaticity is perceived state, not a represented bond order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum BondOrder {
     Zero,
     Single,

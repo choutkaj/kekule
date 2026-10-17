@@ -159,8 +159,8 @@ impl ConnectivityCatalog {
     /// A catalog of templates alone, for sources without block-level evidence.
     pub(crate) fn new(options: &raw::ConnectivityOptions) -> Self {
         Self {
-            components: options.components.clone(),
-            infer_bonds_from_distance: options.infer_bonds_from_distance,
+            components: options.components().cloned(),
+            infer_bonds_from_distance: options.infer_bonds_from_distance(),
             ..Self::default()
         }
     }
@@ -524,7 +524,7 @@ impl<'r> Resolver<'r, '_> {
         for site in &residue.sites {
             if self
                 .graph
-                .neighbors(site.atom)
+                .require_neighbors(site.atom)
                 .map_err(interpret_error)?
                 .any(|neighbor| residue.site(neighbor).is_some())
             {
@@ -553,7 +553,7 @@ impl<'r> Resolver<'r, '_> {
             let [left, right] = bond.atoms;
             if self
                 .graph
-                .bond_between(left, right)
+                .require_bond_between(left, right)
                 .map_err(interpret_error)?
                 .is_some()
             {
@@ -583,7 +583,7 @@ impl<'r> Resolver<'r, '_> {
             };
             if self
                 .graph
-                .bond_between(left, right)
+                .require_bond_between(left, right)
                 .map_err(interpret_error)?
                 .is_some()
             {
@@ -621,7 +621,7 @@ impl<'r> Resolver<'r, '_> {
                 if within_bonding_distance((left.element, left.point), (right.element, right.point))
                     && self
                         .graph
-                        .bond_between(left.atom, right.atom)
+                        .require_bond_between(left.atom, right.atom)
                         .map_err(interpret_error)?
                         .is_none()
                 {
@@ -828,7 +828,7 @@ impl<'r> Resolver<'r, '_> {
                 .expect("stray hydrogen is a residue site");
             if self
                 .graph
-                .incident_bonds(hydrogen)
+                .require_incident_bonds(hydrogen)
                 .map_err(interpret_error)?
                 .next()
                 .is_some()
@@ -919,7 +919,7 @@ impl<'r> Resolver<'r, '_> {
                 .expect("charged atom is a residue site");
             let value = site.stated_charge.unwrap_or(charge.value);
             self.graph
-                .atom_mut(charge.atom)
+                .require_atom_mut(charge.atom)
                 .map_err(interpret_error)?
                 .formal_charge = value;
             if charge.delta != 0 {
@@ -968,12 +968,12 @@ impl<'r> Resolver<'r, '_> {
                     expected_hydrogens(candidate, index, self.links_outside(atom, residue)?);
                 let present = self
                     .graph
-                    .neighbors(atom)
+                    .require_neighbors(atom)
                     .map_err(interpret_error)?
                     .filter(|&neighbor| {
                         self.graph
                             .atom(neighbor)
-                            .is_ok_and(|neighbor| is_hydrogen(neighbor.element))
+                            .is_some_and(|neighbor| is_hydrogen(neighbor.element))
                     })
                     .count();
                 if present != expected {
@@ -1014,7 +1014,7 @@ impl<'r> Resolver<'r, '_> {
     fn links_outside(&self, atom: AtomId, residue: &ResidueAtoms) -> Result<bool, FormatError> {
         Ok(self
             .graph
-            .neighbors(atom)
+            .require_neighbors(atom)
             .map_err(interpret_error)?
             .any(|neighbor| residue.site(neighbor).is_none()))
     }
@@ -1039,13 +1039,13 @@ impl<'r> Resolver<'r, '_> {
             };
             let Some(existing) = self
                 .graph
-                .bond_between(left, right)
+                .require_bond_between(left, right)
                 .map_err(interpret_error)?
             else {
                 continue;
             };
             self.graph
-                .bond_mut(existing)
+                .require_bond_mut(existing)
                 .map_err(interpret_error)?
                 .set_order(SourceBondOrder::of_template(bond).staged_order());
             self.evidence.insert(
@@ -1233,7 +1233,9 @@ fn add_bond_if_missing(
     source_order: SourceBondOrder,
     source_aromatic_bonds: &mut BTreeSet<crate::molecule::BondId>,
 ) -> Result<(), FormatError> {
-    let existing = graph.bond_between(left, right).map_err(interpret_error)?;
+    let existing = graph
+        .require_bond_between(left, right)
+        .map_err(interpret_error)?;
     let Some(existing) = existing else {
         let bond = graph
             .add_bond(left, right, source_order.staged_order())
@@ -1243,7 +1245,7 @@ fn add_bond_if_missing(
         }
         return Ok(());
     };
-    let existing_order = graph.bond(existing).map_err(interpret_error)?.order;
+    let existing_order = graph.require_bond(existing).map_err(interpret_error)?.order;
     let consistent = match source_order {
         SourceBondOrder::Aromatic => source_aromatic_bonds.contains(&existing),
         SourceBondOrder::Localized(order) => {
@@ -1541,7 +1543,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 .expect("interpret peptide");
         let graph = interpretation
             .topology()
-            .molecule(MoleculeInstanceId::new(0))
+            .instance(MoleculeInstanceId::new(0))
             .expect("peptide instance")
             .molecule();
         assert_eq!(graph.bond_count(), 7);
@@ -1581,10 +1583,10 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(interpretation.topology().instance_count(), 2);
         assert!(interpretation
             .topology()
-            .instances()
+            .instance_records()
             .all(|(instance, _)| interpretation
                 .topology()
-                .molecule(instance)
+                .instance(instance)
                 .expect("partitioned peptide instance")
                 .molecule()
                 .is_connected()));
@@ -1602,7 +1604,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 .expect("interpret branch");
         let graph = interpretation
             .topology()
-            .molecule(MoleculeInstanceId::new(0))
+            .instance(MoleculeInstanceId::new(0))
             .expect("branch instance")
             .molecule();
         assert_eq!(graph.bond_count(), 3);
@@ -1789,15 +1791,14 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 let [a, b] = bond.atoms();
                 let order = result
                     .topology()
-                    .molecule(a.molecule())
+                    .instance(a.instance())
                     .unwrap()
                     .molecule()
                     .bond_between(a.atom(), b.atom())
-                    .unwrap()
                     .map(|id| {
                         result
                             .topology()
-                            .molecule(a.molecule())
+                            .instance(a.instance())
                             .unwrap()
                             .molecule()
                             .bond(id)
@@ -1828,7 +1829,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .filter_map(|atom| {
                 let charge = result
                     .topology()
-                    .molecule(atom.atom().molecule())
+                    .instance(atom.atom().instance())
                     .unwrap()
                     .molecule()
                     .atom(atom.atom().atom())
@@ -2155,13 +2156,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             }]
         );
 
-        let strict = StructureInterpretOptions {
-            connectivity: ConnectivityOptions {
-                infer_bonds_from_distance: false,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let strict = StructureInterpretOptions::default().with_connectivity(
+            ConnectivityOptions::default().with_infer_bonds_from_distance(false),
+        );
         let error = crate::mmcif::parse_str(&text, Default::default())
             .unwrap()
             .interpret(strict.clone())
@@ -2181,13 +2178,12 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .unwrap(),
         )
         .unwrap();
-        let with_library = StructureInterpretOptions {
-            connectivity: ConnectivityOptions {
-                components: Some(std::sync::Arc::new(library)),
-                ..strict.connectivity
-            },
-            ..strict
-        };
+        let with_library = strict.clone().with_connectivity(
+            strict
+                .connectivity()
+                .clone()
+                .with_components(Some(std::sync::Arc::new(library))),
+        );
         let templated = crate::mmcif::parse_str(&text, Default::default())
             .unwrap()
             .interpret(with_library)

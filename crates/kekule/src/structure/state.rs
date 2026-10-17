@@ -153,13 +153,10 @@ pub(crate) use structure_readers;
 /// Occupancy and B-factor readers of models and ensemble members.
 macro_rules! site_readers {
     () => {
-        /// Occupancy of one atom; `None` when it was never recorded.
-        pub fn occupancy(
-            &self,
-            atom: $crate::topology::TopologyAtomIndex,
-        ) -> Result<Option<f64>, $crate::structure::StructureError> {
-            let storage = self.storage_ref();
-            storage.occupancies.get(atom, storage.positions.len())
+        /// Occupancy of one atom; `None` when it was never recorded or `atom`
+        /// is out of range.
+        pub fn occupancy(&self, atom: $crate::topology::TopologyAtomIndex) -> Option<f64> {
+            self.storage_ref().occupancies.get(atom)
         }
 
         /// Every occupancy in dense atom order, or `None` when none was
@@ -168,15 +165,13 @@ macro_rules! site_readers {
             self.storage_ref().occupancies.values()
         }
 
-        /// Isotropic B-factor of one atom; `None` when it was never recorded.
+        /// Isotropic B-factor of one atom; `None` when it was never recorded or
+        /// `atom` is out of range.
         pub fn b_factor(
             &self,
             atom: $crate::topology::TopologyAtomIndex,
-        ) -> Result<Option<$crate::units::Quantity<f64>>, $crate::structure::StructureError> {
-            let storage = self.storage_ref();
-            Ok($crate::structure::scalars::b_factor_quantity(
-                storage.b_factors.get(atom, storage.positions.len())?,
-            ))
+        ) -> Option<$crate::units::Quantity<f64>> {
+            $crate::structure::scalars::b_factor_quantity(self.storage_ref().b_factors.get(atom))
         }
 
         /// Every B-factor in dense atom order and square nanometres, or `None`
@@ -206,10 +201,7 @@ macro_rules! structure_mutators {
             atom: $crate::topology::TopologyAtomIndex,
             position: $crate::units::Quantity<$crate::geometry::Point3>,
         ) -> Result<(), $crate::structure::StructureError> {
-            Ok(self
-                .storage()
-                .positions
-                .set_position_at(atom.index(), position)?)
+            Ok(self.storage().positions.set(atom.index(), position)?)
         }
 
         pub fn set_cell(&mut self, cell: Option<$crate::geometry::PeriodicCell>) {
