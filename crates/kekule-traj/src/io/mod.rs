@@ -11,8 +11,41 @@
 //! Use [`open_trajectory`] for sequential processing with
 //! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access, or
 //! [`create_trajectory_writer`] for atomic path-backed writing. Each operation
-//! takes a topology directly or from its trajectory. Readers expose opening diagnostics through `open_report()`
-//! and verified format metadata through `metadata()`.
+//! takes a topology directly or from its trajectory. Path readers expose opening
+//! diagnostics through `open_report()` and verified format metadata through
+//! `metadata()`. The [`xyz`], [`dcd`], [`trr`] and [`xtc`] modules hold the
+//! codec-level readers and writers over caller-supplied streams.
+//!
+//! # Examples
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::Point3;
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::units::{Quantity, ANGSTROM};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule_traj::io::{read_trajectory, write_trajectory};
+//!
+//! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let points = vec![Point3::new(1.5, 0.0, 0.0)];
+//! let frame = TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, ANGSTROM))?);
+//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
+//!
+//! let path = std::env::temp_dir().join(format!("kekule-traj-io-{}.xyz", std::process::id()));
+//! # let _ = std::fs::remove_file(&path);
+//! // The `.xyz` extension selects the codec; an existing file is never replaced.
+//! write_trajectory(&path, &trajectory, Default::default())?;
+//! let loaded = read_trajectory(&path, Arc::clone(&topology), Default::default());
+//! std::fs::remove_file(&path)?;
+//! let loaded = loaded?;
+//!
+//! assert_eq!(loaded.len(), 1);
+//! let position = loaded.get(0).unwrap().positions().get(0).unwrap().value_in(ANGSTROM)?;
+//! assert_eq!(position, Point3::new(1.5, 0.0, 0.0));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 //!
 //! # Supported profiles
 //!
@@ -32,8 +65,8 @@
 //! nominally `1 / precision` nanometres.
 //!
 //! Sequential readers retain one file handle and avoid a whole-file scan.
-//! Indexed readers are opened directly, such as with [`xtc::IndexedXtcReader::new`],
-//! and take the stream position at opening as frame 0. They retain one handle,
+//! Codec-level indexed readers, such as [`xtc::IndexedXtcReader::new`], take
+//! the stream position at opening as frame 0. Indexed readers retain one handle,
 //! fully verify every frame from there during an
 //! O(file-size) index build, store bounded checked offsets with capped geometric
 //! growth, and then decode one complete frame per random read. Decoding

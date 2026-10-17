@@ -120,6 +120,7 @@ impl IndexedFileTrajectoryReader {
         &self.open_report
     }
 
+    /// Metadata verified for the whole file while building the index.
     pub fn metadata(&self) -> &FileTrajectoryMetadata {
         &self.metadata
     }
@@ -196,6 +197,13 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 /// resident-memory budget for the loaded trajectory. No random-access index is
 /// built.
 ///
+/// # Errors
+///
+/// Returns the errors of [`open_trajectory`] and the first decoding,
+/// validation or [`TrajectoryIoErrorKind::Io`] error of any frame.
+///
+/// [`TrajectoryIoErrorKind::Io`]: crate::TrajectoryIoErrorKind::Io
+///
 /// ```no_run
 /// use kekule::mmcif;
 /// use kekule_traj::io::read_trajectory;
@@ -227,6 +235,18 @@ pub fn read_trajectory(
 /// automatically. Matching counts alone cannot establish atom identity.
 /// `options` sets the format policies and limits. For a fully loaded in-memory
 /// trajectory, use [`read_trajectory`] instead.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::Io`] when the file cannot be opened or
+/// read, the detection errors of [`super::detect_trajectory_format`], and the
+/// header errors of the selected codec's reader, such as
+/// [`TrajectoryIoErrorKind::InconsistentAtomCount`] when the file's atom count
+/// differs from the topology's.
+///
+/// [`TrajectoryIoErrorKind::Io`]: crate::TrajectoryIoErrorKind::Io
+/// [`TrajectoryIoErrorKind::InconsistentAtomCount`]:
+///     crate::TrajectoryIoErrorKind::InconsistentAtomCount
 ///
 /// ```no_run
 /// use kekule::{smiles, topology::Topology};
@@ -354,6 +374,14 @@ pub fn open_trajectory(
 /// available metadata, including XYZ element order. Opening scans and validates
 /// the entire file and stores bounded frame offsets for random access.
 /// `options` sets the format policies and limits.
+///
+/// # Errors
+///
+/// Returns the errors of [`open_trajectory`], the decoding error of the first
+/// invalid frame, and [`TrajectoryIoErrorKind::LimitExceeded`] when the index
+/// outgrows the limits.
+///
+/// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::TrajectoryIoErrorKind::LimitExceeded
 pub fn open_indexed_trajectory(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,

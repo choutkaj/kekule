@@ -1,5 +1,6 @@
-//! Streaming trajectory I/O, reusable frame buffers, periodic preprocessing,
-//! and trajectory reductions built on [`kekule`].
+//! Trajectory file codecs, streaming reader and writer contracts, reusable
+//! frame buffers, periodic preprocessing, and streaming analysis built on
+//! [`kekule`].
 //!
 //! # Data model
 //!
@@ -12,9 +13,14 @@
 //! Frame order is temporal. [`kekule::structure::Ensemble`] is the distinct
 //! type for weighted, unordered samples; both offer superposition and RMSD.
 //!
-//! This crate adds what needs files or bounded memory: format codecs, the
-//! [`TrajectoryReader`] and [`TrajectoryWriter`] contracts, and the reusable,
-//! topology-bound [`FrameBuffer`]. A buffer reads frame state through `Deref`
+//! This crate adds what needs files or bounded memory: pure-Rust XYZ, DCD,
+//! TRR and XTC codecs in [`io`]; the [`TrajectoryReader`],
+//! [`SeekableTrajectoryReader`] and [`TrajectoryWriter`] contracts, with
+//! [`MemoryTrajectoryWriter`] collecting frames into a
+//! [`kekule::structure::Trajectory`]; the reusable, topology-bound
+//! [`FrameBuffer`], filled transactionally from [`FrameData`]; and
+//! [`TrajectoryIoError`], the error of every I/O operation, classified by
+//! [`TrajectoryIoErrorKind`]. A buffer reads frame state through `Deref`
 //! and lends a [`kekule::structure::ModelView`] through
 //! [`FrameBuffer::as_model_view`], so analyses and prepared potentials operate
 //! on models, ensemble members, trajectory frames, and buffered frames through

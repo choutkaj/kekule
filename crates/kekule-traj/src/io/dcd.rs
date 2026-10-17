@@ -1,4 +1,59 @@
 //! Strict common-profile CHARMM/NAMD/OpenMM DCD trajectory I/O.
+//!
+//! [`DcdReader`] and [`IndexedDcdReader`] read 32-bit-record `CORD` files in
+//! either byte order, with optional unit cells and fixed atoms. [`DcdWriter`]
+//! writes canonical all-atom files. DCD stores f32 coordinates in angstrom and
+//! one step per frame on the `ISTART`/`NSAVC` sequence; time is derived from
+//! the header `DELTA` only under an explicit [`DcdTimePolicy`].
+//!
+//! # Examples
+//!
+//! ```
+//! use std::io::Cursor;
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::Point3;
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::units::{Quantity, ANGSTROM};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule_traj::io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
+//! use kekule_traj::{TrajectoryReader, TrajectoryWriter};
+//!
+//! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let mut trajectory = Trajectory::new(Arc::clone(&topology));
+//! for step in [10, 20] {
+//!     let x = step as f64;
+//!     let points = vec![Point3::new(x, 0.0, 0.0)];
+//!     let positions = Positions::from_vec(Quantity::new(points, ANGSTROM))?;
+//!     let mut frame = TrajectoryFrame::new(positions);
+//!     frame.set_step(Some(step));
+//!     trajectory.push(frame)?;
+//! }
+//!
+//! // Frame steps must follow the writer's step sequence exactly.
+//! let options = DcdWriteOptions::default().with_step_sequence(10, 10);
+//! let stream = Cursor::new(Vec::new());
+//! let mut writer = DcdWriter::new(stream, Arc::clone(&topology), options, "memory")?;
+//! for frame in &trajectory {
+//!     writer.write_frame(frame)?;
+//! }
+//! let mut stream = writer.finish()?;
+//! stream.set_position(0);
+//!
+//! let mut reader = DcdReader::new(stream, topology, DcdReadOptions::default())?;
+//! let mut frame = reader.frame_buffer();
+//! assert!(reader.read_next(&mut frame)?);
+//! assert_eq!(frame.step(), Some(10));
+//! assert_eq!(frame.time(), None);
+//! assert!(reader.read_next(&mut frame)?);
+//! assert_eq!(frame.step(), Some(20));
+//! // DCD stores f32 angstrom; compare at that precision.
+//! let position = frame.positions().get(0).unwrap().value_in(ANGSTROM)?;
+//! assert_eq!([position.x as f32, position.y as f32, position.z as f32], [20.0, 0.0, 0.0]);
+//! assert!(!reader.read_next(&mut frame)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use crate::TrajectoryField;
 use std::fmt;
@@ -29,7 +84,9 @@ const CELL_BYTES: usize = 48;
 /// This enum is closed: a DCD file is either little- or big-endian.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DcdEndian {
+    /// Little-endian, the common default.
     Little,
+    /// Big-endian.
     Big,
 }
 
@@ -92,7 +149,10 @@ pub enum DcdTimePolicy {
     /// Preserve steps but do not synthesize per-frame time.
     Absent,
     /// Treat `DELTA` as the duration of one integration step in this unit.
-    HeaderDelta { unit: Unit },
+    HeaderDelta {
+        /// The time unit of `DELTA`.
+        unit: Unit,
+    },
 }
 
 /// Whether a DCD writer stores periodic cells.
@@ -143,12 +203,14 @@ impl DcdReadOptions {
         self
     }
 
+    /// Sets [`Self::time_policy`].
     #[must_use]
     pub const fn with_time_policy(mut self, time_policy: DcdTimePolicy) -> Self {
         self.time_policy = time_policy;
         self
     }
 
+    /// How frame times are derived; [`DcdTimePolicy::Absent`] by default.
     pub const fn time_policy(&self) -> DcdTimePolicy {
         self.time_policy
     }
@@ -189,6 +251,7 @@ impl Default for DcdWriteOptions {
 }
 
 impl DcdWriteOptions {
+    /// Sets [`Self::endian`].
     #[must_use]
     pub const fn with_endian(mut self, endian: DcdEndian) -> Self {
         self.endian = endian;
@@ -206,6 +269,9 @@ impl DcdWriteOptions {
         self
     }
 
+    /// Sets the header step sequence: frame `n` must carry step
+    /// `start_step + n * step_interval`. Both must fit an `i32`, and the
+    /// interval must be positive; [`DcdWriter::new`] checks them.
     #[must_use]
     pub const fn with_step_sequence(mut self, start_step: u64, step_interval: u64) -> Self {
         self.start_step = start_step;
@@ -218,6 +284,11 @@ impl DcdWriteOptions {
     /// for [`DcdTimePolicy::Absent`]. With `HeaderDelta`, every frame time
     /// must equal its step times `DELTA` to f32 precision, the precision
     /// `DELTA` has in the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when `delta`
+    /// is not a time.
     pub fn with_header_delta(
         mut self,
         delta: Quantity<f64>,
@@ -238,18 +309,22 @@ impl DcdWriteOptions {
         Ok(self)
     }
 
+    /// The byte order written; [`DcdEndian::Little`] by default.
     pub const fn endian(&self) -> DcdEndian {
         self.endian
     }
 
+    /// Whether unit cells are written; [`DcdCellPolicy::Omit`] by default.
     pub const fn cell_policy(&self) -> DcdCellPolicy {
         self.cell_policy
     }
 
+    /// The step of the first frame (`ISTART`); 0 by default.
     pub const fn start_step(&self) -> u64 {
         self.start_step
     }
 
+    /// The step increment between frames (`NSAVC`); 1 by default.
     pub const fn step_interval(&self) -> u64 {
         self.step_interval
     }
@@ -259,6 +334,8 @@ impl DcdWriteOptions {
         Quantity::new(f64::from(self.delta), header_delta_unit(self.time_policy))
     }
 
+    /// How frame times relate to `DELTA`; [`DcdTimePolicy::Absent`], which
+    /// rejects frames carrying a time, by default.
     pub const fn time_policy(&self) -> DcdTimePolicy {
         self.time_policy
     }
@@ -351,6 +428,17 @@ impl<R: Read + Seek> DcdReader<R> {
     /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
     /// format metadata are checked automatically; matching counts alone cannot
     /// establish atom identity. Limits and diagnostic labels are set in `options`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidHeader`],
+    /// [`TrajectoryIoErrorKind::UnsupportedVariant`],
+    /// [`TrajectoryIoErrorKind::TruncatedRecord`] or
+    /// [`TrajectoryIoErrorKind::RecordMarkerMismatch`] for a malformed or
+    /// unsupported header, [`TrajectoryIoErrorKind::InconsistentAtomCount`]
+    /// when its atom count differs from the topology's,
+    /// [`TrajectoryIoErrorKind::LimitExceeded`] when it exceeds the limits, and
+    /// [`TrajectoryIoErrorKind::Io`] when reading fails.
     pub fn new(
         mut reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -629,6 +717,7 @@ impl<R: Read + Seek> DcdReader<R> {
         })
     }
 
+    /// The topology every frame belongs to.
     pub fn topology(&self) -> &Topology {
         self.topology.as_ref()
     }
@@ -1055,6 +1144,15 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
     /// the end is decoded and verified before the reader is returned, and both
     /// sequential and indexed reads then address frames from that start. Topology,
     /// limits, and diagnostic labels follow [`DcdReader::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`DcdReader::new`], the decoding error of the
+    /// first invalid frame, [`TrajectoryIoErrorKind::InconsistentMetadata`]
+    /// when the frame count differs from the header `NSET` count,
+    /// [`TrajectoryIoErrorKind::LimitExceeded`] when the index outgrows the
+    /// limits, and [`TrajectoryIoErrorKind::Io`] when reading or seeking
+    /// fails.
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -1063,6 +1161,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         DcdReader::new(reader, topology, options)?.index_frames()
     }
 
+    /// The topology every frame belongs to.
     pub fn topology(&self) -> &Topology {
         self.inner.topology()
     }
@@ -1183,6 +1282,16 @@ impl<W> fmt::Debug for DcdWriter<W> {
 }
 
 impl<W: Write + Seek> DcdWriter<W> {
+    /// A writer of `topology` frames that writes the header at the stream's
+    /// current position; `source_label` names the destination in errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the step
+    /// sequence or `DELTA` does not fit the i32/f32 header or the time-policy
+    /// unit is not a time, [`TrajectoryIoErrorKind::LimitExceeded`] when the
+    /// atom count is zero or exceeds `i32::MAX` or scratch cannot be reserved,
+    /// and [`TrajectoryIoErrorKind::Io`] when writing the header fails.
     pub fn new(
         mut writer: W,
         topology: impl Into<Arc<Topology>>,
@@ -1274,18 +1383,35 @@ impl<W: Write + Seek> DcdWriter<W> {
         })
     }
 
+    /// The topology every written frame must share.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
+    /// The underlying stream.
     pub fn writer(&self) -> &W {
         &self.writer
     }
 
+    /// Flushes the underlying stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the stream's flush error.
     pub fn flush(&mut self) -> std::io::Result<()> {
         self.writer.flush()
     }
 
+    /// Patches the header frame count, leaving the stream at its end; later
+    /// calls do nothing. No frame can be written afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] when no frame was
+    /// written or an earlier write left a partial frame,
+    /// [`TrajectoryIoErrorKind::LimitExceeded`] when the frame count exceeds
+    /// `i32::MAX`, and [`TrajectoryIoErrorKind::Io`] when seeking or writing
+    /// fails.
     pub fn finalize(&mut self) -> Result<(), TrajectoryIoError> {
         if self.finalized {
             return Ok(());
@@ -1349,6 +1475,11 @@ impl<W: Write + Seek> DcdWriter<W> {
     }
 
     /// Finalizes the frame count, flushes, and returns the nonempty DCD stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::finalize`] and
+    /// [`TrajectoryIoErrorKind::Io`] when flushing fails.
     pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.finalize()?;
         self.writer.flush().map_err(|error| {

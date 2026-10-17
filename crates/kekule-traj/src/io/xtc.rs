@@ -1,4 +1,55 @@
 //! Bounded GROMACS XTC trajectories with a checked reader and writer.
+//!
+//! [`XtcReader`] and [`IndexedXtcReader`] read GROMACS magic 1995 and 2023
+//! frames; [`XtcWriter`] writes them at an explicit lossy precision. XTC
+//! stores positions, a box, a step and a time in picoseconds; frames of more
+//! than nine atoms are compressed with nominal resolution `1 / precision`
+//! nanometres, smaller frames are stored as plain f32. The box follows an
+//! [`XtcCellPolicy`].
+//!
+//! # Examples
+//!
+//! ```
+//! use std::io::Cursor;
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::Point3;
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule_traj::io::xtc::{
+//!     XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
+//! };
+//! use kekule_traj::{TrajectoryReader, TrajectoryWriter};
+//!
+//! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let points = vec![Point3::new(0.25, 0.5, 0.0)];
+//! let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
+//! let mut frame = TrajectoryFrame::new(positions);
+//! frame.set_step(Some(100));
+//! frame.set_time(Some(Quantity::new(0.5, PICOSECOND)))?;
+//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
+//!
+//! // A frame without a cell is written as the GROMACS zero box.
+//! let options = XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
+//! let mut writer = XtcWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
+//! writer.write_frame(trajectory.get(0).unwrap())?;
+//! let bytes = writer.finish()?;
+//!
+//! let read_options =
+//!     XtcReadOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
+//! let mut reader = XtcReader::new(Cursor::new(bytes), topology, read_options)?;
+//! let mut buffer = reader.frame_buffer();
+//! assert!(reader.read_next(&mut buffer)?);
+//! assert_eq!(buffer.step(), Some(100));
+//! assert_eq!(buffer.time().unwrap().value_in(PICOSECOND)?, 0.5);
+//! assert!(buffer.cell().is_none());
+//! let position = buffer.positions().get(0).unwrap().value_in(NANOMETER)?;
+//! assert_eq!(position, Point3::new(0.25, 0.5, 0.0));
+//! assert!(!reader.read_next(&mut buffer)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use crate::TrajectoryField;
 use std::fmt;
@@ -44,7 +95,11 @@ mod encode;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum XtcMagic {
+    /// Magic 1995 with a 32-bit compressed byte count, readable by every
+    /// GROMACS version.
     Xtc1995,
+    /// Magic 2023 with a 64-bit compressed byte count, for frames too large
+    /// for 1995.
     Xtc2023,
 }
 
@@ -111,12 +166,15 @@ impl XtcReadOptions {
         self
     }
 
+    /// Sets [`Self::cell_policy`].
     #[must_use]
     pub const fn with_cell_policy(mut self, cell_policy: XtcCellPolicy) -> Self {
         self.cell_policy = cell_policy;
         self
     }
 
+    /// How the box matrix is interpreted; [`XtcCellPolicy::RequirePeriodic`]
+    /// by default.
     pub const fn cell_policy(&self) -> XtcCellPolicy {
         self.cell_policy
     }
@@ -154,6 +212,7 @@ impl Default for XtcWriteOptions {
 }
 
 impl XtcWriteOptions {
+    /// Sets [`Self::magic`].
     #[must_use]
     pub const fn with_magic(mut self, magic: XtcMagic) -> Self {
         self.magic = magic;
@@ -164,6 +223,11 @@ impl XtcWriteOptions {
     ///
     /// Compressed coordinates have nominal resolution `1 / precision`. The
     /// scale is stored as an `f32` in inverse nanometres, as XTC records it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidPrecision`] when `precision` is
+    /// not an inverse length or is not finite and positive as an `f32`.
     pub fn with_precision(mut self, precision: Quantity<f64>) -> Result<Self, TrajectoryIoError> {
         let invalid = || {
             codec_context(
@@ -190,15 +254,18 @@ impl XtcWriteOptions {
         self
     }
 
+    /// The magic written; [`XtcMagic::Xtc1995`] by default.
     pub const fn magic(self) -> XtcMagic {
         self.magic
     }
 
-    /// The coordinate scale, in inverse nanometres.
+    /// The coordinate scale, in inverse nanometres; 1000 by default.
     pub fn precision(self) -> Quantity<f64> {
         Quantity::new(f64::from(self.precision), PER_NANOMETER)
     }
 
+    /// How frames without a cell are written;
+    /// [`XtcCellPolicy::RequirePeriodic`] by default.
     pub const fn cell_policy(self) -> XtcCellPolicy {
         self.cell_policy
     }
@@ -708,6 +775,17 @@ impl<R: Read + Seek> XtcReader<R> {
     /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
     /// format metadata are checked automatically; matching counts alone cannot
     /// establish atom identity. Limits and diagnostic labels are set in `options`.
+    /// The first frame is checked here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidHeader`] for an empty stream or
+    /// malformed header, [`TrajectoryIoErrorKind::UnsupportedVariant`] for an
+    /// unsupported magic, [`TrajectoryIoErrorKind::InconsistentAtomCount`] when
+    /// its atom count differs from the topology's, a decoding error when the
+    /// first frame is invalid, [`TrajectoryIoErrorKind::LimitExceeded`] when
+    /// the limits are exceeded, and [`TrajectoryIoErrorKind::Io`] when reading
+    /// fails.
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -752,6 +830,7 @@ impl<R: Read + Seek> XtcReader<R> {
         })
     }
 
+    /// The topology every frame belongs to.
     pub fn topology(&self) -> &Topology {
         self.topology.as_ref()
     }
@@ -1043,6 +1122,13 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
     /// the end is decoded and verified before the reader is returned, and both
     /// sequential and indexed reads then address frames from that start. Topology,
     /// limits, and diagnostic labels follow [`XtcReader::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`XtcReader::new`], the decoding error of the
+    /// first invalid frame, [`TrajectoryIoErrorKind::LimitExceeded`] when the
+    /// index outgrows the limits, and [`TrajectoryIoErrorKind::Io`] when
+    /// reading or seeking fails.
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -1051,6 +1137,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         XtcReader::new(reader, topology, options)?.index_frames()
     }
 
+    /// The topology every frame belongs to.
     pub fn topology(&self) -> &Topology {
         self.inner.topology()
     }
@@ -1187,6 +1274,15 @@ impl<W> fmt::Debug for XtcWriter<W> {
 }
 
 impl<W: Write> XtcWriter<W> {
+    /// A writer of `topology` frames to `writer`; `source_label` names the
+    /// destination in errors. Nothing is written until the first frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidPrecision`] for a precision that
+    /// is not finite and positive, and [`TrajectoryIoErrorKind::LimitExceeded`]
+    /// when the topology has no atoms or more than the magic's byte count
+    /// allows.
     pub fn new(
         writer: W,
         topology: impl Into<Arc<Topology>>,
@@ -1224,14 +1320,21 @@ impl<W: Write> XtcWriter<W> {
         })
     }
 
+    /// The topology every written frame must share.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
+    /// The underlying stream.
     pub fn writer(&self) -> &W {
         &self.writer
     }
 
+    /// Flushes the underlying stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the stream's flush error.
     pub fn flush(&mut self) -> std::io::Result<()> {
         self.writer.flush()
     }
@@ -1247,6 +1350,12 @@ impl<W: Write> XtcWriter<W> {
     }
 
     /// Flushes and returns the completed nonempty XTC stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] when no frame was
+    /// written or an earlier write left a partial frame, and
+    /// [`TrajectoryIoErrorKind::Io`] when flushing fails.
     pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.validate_finish()?;
         self.writer.flush().map_err(|error| {

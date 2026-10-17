@@ -16,6 +16,7 @@ pub struct TrajectoryIoLimits {
 }
 
 impl TrajectoryIoLimits {
+    /// Largest atom count a file header or frame may declare; default 10 000 000.
     pub const fn max_atoms(&self) -> usize {
         self.max_atoms
     }
@@ -27,6 +28,8 @@ impl TrajectoryIoLimits {
         self
     }
 
+    /// Largest number of frames read or indexed from one stream; default
+    /// 100 000 000.
     pub const fn max_frames(&self) -> usize {
         self.max_frames
     }
@@ -38,6 +41,7 @@ impl TrajectoryIoLimits {
         self
     }
 
+    /// Largest encoded size of one frame in bytes; default 4 GiB.
     pub const fn max_frame_bytes(&self) -> u64 {
         self.max_frame_bytes
     }
@@ -49,6 +53,8 @@ impl TrajectoryIoLimits {
         self
     }
 
+    /// Largest declared size of one header or data record in bytes; default
+    /// 4 GiB.
     pub const fn max_record_bytes(&self) -> u64 {
         self.max_record_bytes
     }
@@ -74,6 +80,8 @@ impl TrajectoryIoLimits {
         self
     }
 
+    /// Largest number of frame offsets an indexed reader stores; default
+    /// 100 000 000.
     pub const fn max_index_entries(&self) -> usize {
         self.max_index_entries
     }
@@ -85,6 +93,8 @@ impl TrajectoryIoLimits {
         self
     }
 
+    /// Largest memory in bytes an indexed reader's offset table may occupy;
+    /// default 800 000 000.
     pub const fn max_index_bytes(&self) -> usize {
         self.max_index_bytes
     }
@@ -96,6 +106,8 @@ impl TrajectoryIoLimits {
         self
     }
 
+    /// Longest text line, such as an XYZ atom line or TRR version string, in
+    /// bytes; default 1 MiB.
     pub const fn max_text_line_bytes(&self) -> usize {
         self.max_text_line_bytes
     }
@@ -107,6 +119,7 @@ impl TrajectoryIoLimits {
         self
     }
 
+    /// Longest XYZ comment line in bytes; default 1 MiB.
     pub const fn max_comment_bytes(&self) -> usize {
         self.max_comment_bytes
     }
@@ -118,6 +131,7 @@ impl TrajectoryIoLimits {
         self
     }
 
+    /// Bytes inspected when detecting a format from content; default 4096.
     pub const fn max_detection_bytes(&self) -> usize {
         self.max_detection_bytes
     }

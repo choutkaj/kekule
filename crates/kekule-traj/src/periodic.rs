@@ -13,6 +13,44 @@
 //! search permits up to one million candidates per displacement and fails explicitly
 //! for cells requiring more; it never substitutes an approximate image silently.
 //!
+//! Collection functions operate on an in-memory [`Trajectory`];
+//! [`MoleculeImager`] and
+//! [`TrajectoryUnwrapper`] apply the same operations to streamed
+//! [`FrameBuffer`](crate::FrameBuffer)s.
+//!
+//! # Examples
+//!
+//! An ethane C–C bond split across a 1 nm periodic boundary is made whole:
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::{PeriodicCell, Point3, Vector3};
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::units::{Quantity, NANOMETER};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule_traj::periodic;
+//!
+//! let molecule = smiles::to_molecules("CC")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let lengths = Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER);
+//! let cell = PeriodicCell::orthorhombic(lengths, [true; 3])?;
+//! let points = vec![Point3::new(0.125, 0.0, 0.0), Point3::new(0.875, 0.0, 0.0)];
+//! let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
+//! let frame = TrajectoryFrame::new(positions).with_cell(cell);
+//! let mut trajectory = Trajectory::from_items(topology, [frame])?;
+//!
+//! periodic::make_molecules_whole(&mut trajectory)?;
+//! let frame = trajectory.get(0).unwrap();
+//! let moved = frame.positions().get(1).unwrap().value_in(NANOMETER)?;
+//! assert_eq!(moved, Point3::new(-0.125, 0.0, 0.0));
+//! let anchor = frame.positions().get(0).unwrap().value_in(NANOMETER)?;
+//! assert_eq!(anchor, Point3::new(0.125, 0.0, 0.0));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Reading a file, then reconstructing, unwrapping and imaging:
+//!
 //! ```no_run
 //! use kekule::{mmcif, topology::AtomSelection};
 //! use kekule_traj::{io::read_trajectory, periodic};
@@ -180,6 +218,15 @@ impl std::error::Error for PeriodicError {
 /// are placed using shortest Cartesian bond images. All bonds, including ring
 /// closures, must agree with the reconstruction. Molecules are neither centered
 /// nor joined to other molecules. This does not establish continuity across time.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::MissingCell`] for a frame without a cell,
+/// [`PeriodicError::InconsistentBondImages`] when bond images disagree,
+/// [`PeriodicError::LimitExceeded`] or [`PeriodicError::NumericalFailure`] for
+/// an ill-conditioned cell or out-of-range coordinates, and
+/// [`PeriodicError::Position`] or [`PeriodicError::Publication`] when the
+/// result cannot be stored. On error the trajectory is unchanged.
 pub fn make_molecules_whole(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
     let positions = whole_positions(trajectory, None)?;
     publish(trajectory, positions)
@@ -197,6 +244,13 @@ pub fn make_molecules_whole(trajectory: &mut Trajectory) -> Result<(), PeriodicE
 /// This includes making molecules whole. It is a per-frame centering operation,
 /// not temporal unwrapping. Coordinates along nonperiodic fractional axes remain
 /// unchanged; a molecule may extend outside the primary cell.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::SelectionTopologyMismatch`] when `anchors`
+/// belongs to another layout, [`PeriodicError::EmptyAnchors`] when it selects
+/// no atom, and the errors of [`make_molecules_whole`]. On error the
+/// trajectory is unchanged.
 pub fn image_molecules(
     trajectory: &mut Trajectory,
     anchors: &AtomSelection,
@@ -221,6 +275,16 @@ pub fn image_molecules(
 /// [`make_molecules_whole`] first when necessary. Apply before frame-dependent
 /// alignment. This convention is not a universal prescription for diffusion
 /// analysis under a fluctuating simulation cell.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::MissingCell`] for a frame without a cell,
+/// [`PeriodicError::PeriodicAxesChanged`] when the periodic axes change,
+/// [`PeriodicError::NonMonotonicTime`] when an available time decreases,
+/// [`PeriodicError::AmbiguousDisplacement`] for an exact half-cell move,
+/// [`PeriodicError::NumericalFailure`] for out-of-range coordinates, and
+/// [`PeriodicError::Position`] or [`PeriodicError::Publication`] when the
+/// result cannot be stored. On error the trajectory is unchanged.
 pub fn unwrap_trajectory(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
     let mut unwrapper = TrajectoryUnwrapper::new(trajectory.shared_topology());
     let positions = trajectory
