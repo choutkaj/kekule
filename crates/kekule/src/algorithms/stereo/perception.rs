@@ -172,7 +172,7 @@ pub fn detect_stereo_candidates(
             mol.atom_count(),
         )));
     }
-    validate_stereo(mol).map_err(StereoSearchError::InvalidStereo)?;
+    crate::molecule::validate_represented_stereo(mol).map_err(StereoSearchError::InvalidStereo)?;
     let perceived = prepared(mol)?;
     let mol = perceived.as_ref();
     let mut candidates = tetrahedral_candidates(mol);

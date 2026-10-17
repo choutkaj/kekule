@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::algorithms::{
     atom_axis_carriers, atom_is_atropisomeric_sp2_endpoint, compute_ring_membership,
     coordinates_are_planar, double_bond_geometry_is_supported, double_bond_orientation_from_points,
-    tetrahedral_orientation_from_points, validate_stereo, RingMembership, StereoValidationError,
+    tetrahedral_orientation_from_points, RingMembership, StereoValidationError,
 };
 use crate::geometry::{Point3, Vector3};
 use crate::molecule::*;
@@ -55,7 +55,7 @@ pub(crate) fn normalize_source_stereo(
     geometry: Option<&dyn AtomPositionSource>,
     source_marks: &[SourceStereoBondMark],
 ) -> std::result::Result<NormalizationReport, SourceStereoNormalizationError> {
-    validate_stereo(molecule).map_err(source_validation_error)?;
+    crate::molecule::validate_represented_stereo(molecule).map_err(source_validation_error)?;
     validate_source_stereo_marks(molecule, source_marks)?;
 
     let ring_membership = compute_ring_membership(molecule);
@@ -113,7 +113,7 @@ pub(crate) fn normalize_source_stereo(
             }
         }
     }
-    validate_stereo(molecule).map_err(source_validation_error)?;
+    crate::molecule::validate_represented_stereo(molecule).map_err(source_validation_error)?;
 
     Ok(NormalizationReport {
         created_stereo_elements,

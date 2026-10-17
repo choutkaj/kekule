@@ -760,7 +760,7 @@ fn axis_stereo_rejects_duplicate_and_same_endpoint_references() {
             .graph
             .stereo_elements
             .push(Some(invalid));
-        assert!(stereo_api::validate_stereo(editor.working()).is_err());
+        assert!(crate::molecule::validate_represented_stereo(editor.working()).is_err());
         assert!(matches!(
             editor.finish(),
             Err(MoleculePublicationError::InvalidStereo(_))
@@ -814,10 +814,12 @@ fn stereo_focus_is_unique_and_rejection_preserves_groups_and_perception() {
             element: ids[1],
             previous: ids[0],
         };
-        assert!(stereo_api::validate_stereo(unchecked.working())
-            .unwrap_err()
-            .issues
-            .contains(&issue));
+        assert!(
+            crate::molecule::validate_represented_stereo(unchecked.working())
+                .unwrap_err()
+                .issues
+                .contains(&issue)
+        );
         assert_eq!(
             unchecked.finish().unwrap_err(),
             MoleculePublicationError::InvalidStereo(issue)
@@ -883,7 +885,7 @@ fn axis_reference_canonicalization_preserves_exclusive_endpoint_adjacency() {
     }));
     let id = editor.add_stereo_element(element.clone()).unwrap();
     assert_eq!(editor.stereo_element(id).unwrap(), &element);
-    stereo_api::validate_stereo(editor.working()).unwrap();
+    crate::molecule::validate_represented_stereo(editor.working()).unwrap();
     editor.finish().unwrap();
 }
 
@@ -919,14 +921,16 @@ fn tetrahedral_stereo_requires_complete_explicit_neighbor_coverage() {
         Err(MoleculeError::InvalidStereoReference(_))
     ));
     assert_eq!(editor, before);
-    assert!(stereo_api::validate_stereo(editor.working())
-        .unwrap_err()
-        .issues
-        .contains(&StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
-            element: id,
-            center,
-            neighbor: extra
-        }));
+    assert!(
+        crate::molecule::validate_represented_stereo(editor.working())
+            .unwrap_err()
+            .issues
+            .contains(&StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
+                element: id,
+                center,
+                neighbor: extra
+            })
+    );
     assert!(matches!(
         editor.clone().finish(),
         Err(MoleculePublicationError::InvalidStereo(_))
@@ -940,7 +944,7 @@ fn tetrahedral_stereo_requires_complete_explicit_neighbor_coverage() {
     // The multiple bond is one spatial ligand; a sulfoxide's fourth carrier
     // is its lone pair, and all three explicit neighbors remain represented.
     let sulfoxide = read_smiles("C[S@](=O)CC").unwrap();
-    stereo_api::validate_stereo(&sulfoxide).unwrap();
+    crate::molecule::validate_represented_stereo(&sulfoxide).unwrap();
     sulfoxide.into_editor().finish().unwrap();
 }
 
@@ -987,7 +991,7 @@ fn stereo_bond_endpoints_reject_more_than_two_explicit_substituents() {
             .graph
             .stereo_elements
             .push(Some(element));
-        let issues = stereo_api::validate_stereo(editor.working())
+        let issues = crate::molecule::validate_represented_stereo(editor.working())
             .unwrap_err()
             .issues;
         assert!(issues.iter().any(|issue| matches!(issue,

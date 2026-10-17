@@ -818,7 +818,10 @@ pub mod perception {
 /// Represented stereochemistry, its validation, and stereo algorithms.
 ///
 /// The root holds the stereo elements and groups a [`Molecule`](crate::molecule::Molecule)
-/// represents, their validation, and the shared symmetry-search bounds.
+/// represents, the issues their validation reports, and the shared
+/// symmetry-search bounds. Edits, publication, and
+/// [`MoleculeEditor::validate`](crate::molecule::MoleculeEditor::validate)
+/// share one validator.
 /// Expert algorithms live in submodules: [`cip`](crate::stereo::cip) assigns
 /// opt-in CIP descriptors, [`coordinates`](crate::stereo::coordinates) infers
 /// and materializes stereo from coordinates, and
@@ -828,8 +831,7 @@ pub mod perception {
 /// transform.
 pub mod stereo {
     pub use crate::algorithms::{
-        validate_stereo, StereoSearchError, StereoSearchOptions, StereoValidationError,
-        StereoValidationIssue,
+        StereoSearchError, StereoSearchOptions, StereoValidationError, StereoValidationIssue,
     };
     pub use crate::molecule::ids::{StereoElementId, StereoGroupId};
     pub use crate::molecule::stereo::{

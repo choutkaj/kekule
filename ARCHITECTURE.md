@@ -79,8 +79,12 @@ Bonds carry localized orders. Aromaticity is perceived state, not a bond order.
 Source aromatic and stereo syntax is normalized during interpretation.
 
 Represented stereo must refer to valid focuses and adjacent carriers, with the
-required focus bond order and consistent assertions and groups. Validate these
-conditions before canonicalization. Changing a focus order, adding a bond to a
+required focus bond order and consistent assertions and groups, and an
+implicit-hydrogen carrier must agree with a fixed hydrogen declaration. One
+validator checks these conditions for explicit stereo edits, publication, and
+`MoleculeEditor::validate`, before canonicalization; graph-edit pruning checks
+references alone, since hydrogen transforms change a carrier and its
+declaration in separate steps. Changing a focus order, adding a bond to a
 focus, or deleting a carrier bond prunes the stereo and group membership it
 invalidates, even if an alternate graph path keeps the molecule connected.
 Pruning is local to the edited atoms and bonds, so unaffected assertions

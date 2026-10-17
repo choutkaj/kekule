@@ -440,7 +440,9 @@ fn publish_molecule(
         "editors keep graph storage consistent"
     );
     molecule.validate_connected()?;
-    validate_stereo(&molecule).map_err(MoleculePublicationError::InvalidStereo)?;
+    if let Some(issue) = stereo_validation_issues(&molecule).into_iter().next() {
+        return Err(MoleculePublicationError::InvalidStereo(issue));
+    }
     if let Some(atom) = unnormalized_oxohalogens(&molecule).first() {
         return Err(MoleculePublicationError::UnnormalizedOxohalogen { atom: *atom });
     }
@@ -516,18 +518,23 @@ fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidatio
     Ok(())
 }
 
-fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoValidationIssue> {
+/// The one validator of represented stereo: every element's references and
+/// hydrogen declarations, unique foci, and consistent groups. Each element or
+/// group reports at most its first issue; the result lists every failing one
+/// in element order, then group order.
+pub(crate) fn stereo_validation_issues(molecule: &Molecule) -> Vec<StereoValidationIssue> {
+    let mut issues = Vec::new();
     let mut foci = std::collections::BTreeMap::new();
     for (element_id, element) in molecule.stereo_elements() {
         if let Some(previous) = foci.insert(element.kind.focus(), element_id) {
-            return Err(StereoValidationIssue::DuplicateStereoFocus {
+            issues.push(StereoValidationIssue::DuplicateStereoFocus {
                 element: element_id,
                 previous,
             });
+            continue;
         }
-        molecule
-            .validate_stereo_element_refs(element_id, element)
-            .map_err(|error| match error {
+        if let Err(error) = molecule.validate_stereo_element(element_id, element) {
+            issues.push(match error {
                 MoleculeError::InvalidStereoReference(issue) => issue,
                 MoleculeError::InvalidBondId(bond) => StereoValidationIssue::MissingStereoBond {
                     element: element_id,
@@ -538,49 +545,76 @@ fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoValidat
                     atom,
                 },
                 error => unreachable!("stereo references fail only on atoms and bonds: {error}"),
-            })?;
+            });
+            continue;
+        }
         if let Some(group_id) = element.group {
-            let group = molecule.stereo_group(group_id).ok_or({
-                StereoValidationIssue::MissingStereoGroup {
+            match molecule.stereo_group(group_id) {
+                None => issues.push(StereoValidationIssue::MissingStereoGroup {
                     element: element_id,
                     group: group_id,
+                }),
+                Some(group) if !group.members.contains(&element_id) => {
+                    issues.push(StereoValidationIssue::InconsistentStereoGroupMembership {
+                        group: group_id,
+                        element: element_id,
+                    });
                 }
-            })?;
-            if !group.members.contains(&element_id) {
-                return Err(StereoValidationIssue::InconsistentStereoGroupMembership {
-                    group: group_id,
-                    element: element_id,
-                });
+                Some(_) => {}
             }
         }
     }
     for (group_id, group) in molecule.stereo_groups() {
-        if group.members.is_empty() {
-            return Err(StereoValidationIssue::EmptyStereoGroup { group: group_id });
+        if let Err(issue) = validate_stereo_group(molecule, group_id, group) {
+            issues.push(issue);
         }
-        let mut seen = std::collections::BTreeSet::new();
-        for &element_id in &group.members {
-            if !seen.insert(element_id) {
-                return Err(StereoValidationIssue::DuplicateStereoGroupMember {
-                    group: group_id,
-                    element: element_id,
-                });
+    }
+    issues
+}
+
+fn validate_stereo_group(
+    molecule: &Molecule,
+    group_id: StereoGroupId,
+    group: &StereoGroup,
+) -> std::result::Result<(), StereoValidationIssue> {
+    if group.members.is_empty() {
+        return Err(StereoValidationIssue::EmptyStereoGroup { group: group_id });
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for &element_id in &group.members {
+        if !seen.insert(element_id) {
+            return Err(StereoValidationIssue::DuplicateStereoGroupMember {
+                group: group_id,
+                element: element_id,
+            });
+        }
+        let element = molecule.stereo_element(element_id).ok_or({
+            StereoValidationIssue::MissingStereoGroupMember {
+                group: group_id,
+                element: element_id,
             }
-            let element = molecule.stereo_element(element_id).ok_or({
-                StereoValidationIssue::MissingStereoGroupMember {
-                    group: group_id,
-                    element: element_id,
-                }
-            })?;
-            if element.group != Some(group_id) {
-                return Err(StereoValidationIssue::InconsistentStereoGroupMembership {
-                    group: group_id,
-                    element: element_id,
-                });
-            }
+        })?;
+        if element.group != Some(group_id) {
+            return Err(StereoValidationIssue::InconsistentStereoGroupMembership {
+                group: group_id,
+                element: element_id,
+            });
         }
     }
     Ok(())
+}
+
+/// [`stereo_validation_issues`] as a result for callers that need valid
+/// represented stereo.
+pub(crate) fn validate_represented_stereo(
+    molecule: &Molecule,
+) -> std::result::Result<(), crate::algorithms::StereoValidationError> {
+    let issues = stereo_validation_issues(molecule);
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::algorithms::StereoValidationError { issues })
+    }
 }
 
 /// Rewrites every in-model neutral oxohalogen and canonicalizes stored stereo.

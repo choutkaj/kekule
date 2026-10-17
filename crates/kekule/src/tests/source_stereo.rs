@@ -628,7 +628,8 @@ fn failed_source_stereo_canonicalization_reports_the_unpaired_mark() {
     let cip = stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
         .expect("CIP assignment should succeed");
     assert_eq!(cip.assigned.len(), 1);
-    stereo_api::validate_stereo(&molecule).expect("stored-state validation should succeed");
+    crate::molecule::validate_represented_stereo(&molecule)
+        .expect("stored-state validation should succeed");
     let error = molecule
         .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect_err("unpaired directional mark should fail canonicalization");

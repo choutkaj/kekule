@@ -33,7 +33,7 @@ pub use graph::Graph;
 pub(crate) use ids::{checked_fixed_id_collection_len, checked_raw_id};
 pub use ids::{AtomId, BondId};
 pub(crate) use ids::{StereoElementId, StereoGroupId};
-pub(crate) use molecule_edit::canonicalize_represented_chemistry;
+pub(crate) use molecule_edit::{canonicalize_represented_chemistry, validate_represented_stereo};
 pub use molecule_edit::{MoleculeEditor, MoleculePublicationError};
 pub use molecule_editor_ops::MoleculeCorrespondence;
 pub use owner::{AtomMut, BondMut, Molecule, MoleculeError, MoleculeIdKind};

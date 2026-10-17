@@ -417,7 +417,7 @@ impl Molecule {
                 StereoValidationIssue::GroupMembershipOutsideGroupEdit { element: pending },
             ));
         }
-        self.validate_stereo_element_refs(pending, &element)?;
+        self.validate_stereo_element(pending, &element)?;
         self.validate_unique_stereo_focus(pending, &element, None)?;
         self.canonicalize_stereo_element(&mut element);
         let id = checked_molecule_id(
@@ -451,7 +451,7 @@ impl Molecule {
                 StereoValidationIssue::GroupMembershipOutsideGroupEdit { element: id },
             ));
         }
-        self.validate_stereo_element_refs(id, &replacement)?;
+        self.validate_stereo_element(id, &replacement)?;
         self.validate_unique_stereo_focus(id, &replacement, Some(id))?;
         self.canonicalize_stereo_element(&mut replacement);
         let previous = std::mem::replace(
@@ -795,6 +795,59 @@ impl Molecule {
         state: Option<CipPerception>,
     ) -> Option<CipPerception> {
         std::mem::replace(&mut self.perception.stereo, state)
+    }
+
+    /// Checks `element`, which has or receives ID `id`, completely: its
+    /// graph references and the hydrogen declarations its implicit-hydrogen
+    /// carriers rely on. Explicit stereo edits and publication use this;
+    /// graph-edit pruning checks references alone, because hydrogen
+    /// transforms change a carrier and its declaration in separate steps.
+    pub(crate) fn validate_stereo_element(
+        &self,
+        id: StereoElementId,
+        element: &StereoElement,
+    ) -> Result<()> {
+        self.validate_stereo_element_refs(id, element)?;
+        let invalid = |issue| Err(MoleculeError::InvalidStereoReference(issue));
+        match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => {
+                let center = stereo.center;
+                let carried = stereo
+                    .carriers
+                    .iter()
+                    .filter(|carrier| **carrier == StereoCarrier::ImplicitHydrogen)
+                    .count();
+                if let ImplicitHydrogens::Fixed(fixed_hydrogens) =
+                    self.require_atom(center)?.hydrogens()
+                {
+                    if usize::from(fixed_hydrogens) != carried {
+                        return invalid(StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                            element: id,
+                            atom: center,
+                            fixed_hydrogens,
+                        });
+                    }
+                }
+            }
+            StereoElementKind::DoubleBond(stereo) => {
+                for (endpoint, carrier) in [
+                    (stereo.left, stereo.left_carrier),
+                    (stereo.right, stereo.right_carrier),
+                ] {
+                    if carrier == StereoCarrier::ImplicitHydrogen
+                        && self.require_atom(endpoint)?.hydrogens() == ImplicitHydrogens::Fixed(0)
+                    {
+                        return invalid(StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                            element: id,
+                            atom: endpoint,
+                            fixed_hydrogens: 0,
+                        });
+                    }
+                }
+            }
+            StereoElementKind::Axis(_) => {}
+        }
+        Ok(())
     }
 
     /// Checks the references of `element`, which has or receives ID `id`,

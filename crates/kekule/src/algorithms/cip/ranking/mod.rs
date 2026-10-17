@@ -2,7 +2,8 @@ use crate::diagnostics::{LimitExceeded, Resource};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-use crate::algorithms::{validate_stereo, RingMembership};
+use crate::algorithms::RingMembership;
+use crate::molecule::validate_represented_stereo;
 use crate::molecule::*;
 
 use super::super::rings::compute_ring_membership;
@@ -30,7 +31,7 @@ pub(super) fn assign_cip_descriptors(
     mol: &mut Molecule,
     options: CipAssignmentOptions,
 ) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
-    if let Err(error) = validate_stereo(mol) {
+    if let Err(error) = validate_represented_stereo(mol) {
         return Err(CipAssignmentError {
             issues: error
                 .issues

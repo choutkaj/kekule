@@ -34,23 +34,19 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
     stereo.carriers[2] = StereoCarrier::Atom(b);
     mark_all_fresh(mol.working_mut());
 
-    let error = stereo_api::validate_stereo(mol.working()).expect_err("invalid stored stereo");
+    let error = crate::molecule::validate_represented_stereo(mol.working())
+        .expect_err("invalid stored stereo");
 
     assert!(mol.stereo_elements().next().is_some());
-    assert!(error
-        .issues
-        .contains(&StereoValidationIssue::DuplicateTetrahedralCarrier {
+    // The one validator reports each element's first issue.
+    assert_eq!(
+        error.issues,
+        [StereoValidationIssue::DuplicateTetrahedralCarrier {
             element,
             center,
             carrier: StereoCarrier::Atom(a),
-        }));
-    assert!(error
-        .issues
-        .contains(&StereoValidationIssue::TetrahedralCarrierNotAdjacent {
-            element,
-            center,
-            carrier: StereoCarrier::Atom(b),
-        }));
+        }]
+    );
     assert!(mol
         .stereo_element(element)
         .expect("element")
@@ -85,7 +81,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         )))
         .expect("tetrahedral stereo element");
 
-    stereo_api::validate_stereo(tetrahedral.working())
+    crate::molecule::validate_represented_stereo(tetrahedral.working())
         .expect("implicit hydrogen availability is chemically interpretive");
 
     tetrahedral
@@ -101,7 +97,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
             },
         )))
         .expect("tetrahedral stereo element");
-    stereo_api::validate_stereo(tetrahedral.working())
+    crate::molecule::validate_represented_stereo(tetrahedral.working())
         .expect("implicit lone-pair availability is chemically interpretive");
 
     let mut double_bond = crate::molecule::MoleculeEditor::new();
@@ -126,7 +122,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         })),
     );
 
-    let error = stereo_api::validate_stereo(double_bond.working())
+    let error = crate::molecule::validate_represented_stereo(double_bond.working())
         .expect_err("unavailable double-bond carriers should be reported");
     assert_eq!(
         error.issues,
@@ -155,22 +151,15 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         })),
     );
 
-    let error = stereo_api::validate_stereo(axis.working())
+    let error = crate::molecule::validate_represented_stereo(axis.working())
         .expect_err("implicit axis carriers should be unsupported");
     assert_eq!(
         error.issues,
-        vec![
-            StereoValidationIssue::UnsupportedAxisCarrier {
-                element: axis_element,
-                axis: axis_bond,
-                carrier: StereoCarrier::ImplicitHydrogen,
-            },
-            StereoValidationIssue::UnsupportedAxisCarrier {
-                element: axis_element,
-                axis: axis_bond,
-                carrier: StereoCarrier::ImplicitLonePair,
-            },
-        ]
+        vec![StereoValidationIssue::UnsupportedAxisCarrier {
+            element: axis_element,
+            axis: axis_bond,
+            carrier: StereoCarrier::ImplicitHydrogen,
+        },]
     );
 }
 
@@ -179,7 +168,7 @@ fn stereo_candidates_use_normalized_and_perceived_hydrogen_state_without_cip_ass
     let mut molecule = read_smiles("CC(F)(Cl)Br").expect("smiles should parse");
     perceive(&mut molecule).expect("molecule should perceive");
 
-    stereo_api::validate_stereo(&molecule).expect("stored stereo should be valid");
+    crate::molecule::validate_represented_stereo(&molecule).expect("stored stereo should be valid");
     let candidates =
         stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default()).unwrap();
 
@@ -400,7 +389,8 @@ fn stereo_validation_accepts_structural_axis_elements() {
         })))
         .expect("axis element");
 
-    stereo_api::validate_stereo(mol.working()).expect("axis should be structurally valid");
+    crate::molecule::validate_represented_stereo(mol.working())
+        .expect("axis should be structurally valid");
 
     mol.remove_stereo_element(valid_axis)
         .expect("remove valid axis");
@@ -416,20 +406,85 @@ fn stereo_validation_accepts_structural_axis_elements() {
         })),
     );
 
-    let error = stereo_api::validate_stereo(mol.working()).expect_err("axis should be invalid");
+    let error = crate::molecule::validate_represented_stereo(mol.working())
+        .expect_err("axis should be invalid");
 
     assert_eq!(
         error.issues,
-        vec![
-            StereoValidationIssue::AxisCarrierIsFocusAtom {
-                element: invalid_axis,
-                axis,
-                carrier: left,
-            },
-            StereoValidationIssue::AxisCarrierEndpointMismatch {
-                element: invalid_axis,
-                axis,
-            },
-        ]
+        vec![StereoValidationIssue::AxisCarrierNotAdjacent {
+            element: invalid_axis,
+            axis,
+            carrier: StereoCarrier::Atom(left),
+        },]
     );
+}
+
+#[test]
+fn implicit_hydrogen_carriers_must_match_fixed_hydrogen_declarations() {
+    let mut editor = crate::molecule::MoleculeEditor::new();
+    let center = editor
+        .add_atom(carbon().with_hydrogens(ImplicitHydrogens::Fixed(1)))
+        .expect("atom identifier capacity");
+    let mut carriers = [StereoCarrier::ImplicitHydrogen; 4];
+    for (slot, symbol) in ["F", "Cl", "Br"].into_iter().enumerate() {
+        let atom = editor
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
+        editor
+            .add_bond(center, atom, BondOrder::Single)
+            .expect("bond");
+        carriers[slot + 1] = StereoCarrier::Atom(atom);
+    }
+    let element = StereoElement::new(StereoElementKind::Tetrahedral(TetrahedralStereo {
+        center,
+        carriers,
+        orientation: Some(TetrahedralOrientation::Clockwise),
+    }));
+    let id = editor
+        .add_stereo_element(element.clone())
+        .expect("one implicit hydrogen carrier matches Fixed(1)");
+    editor.validate().expect("consistent declaration");
+
+    // A fixed count the carriers disagree with fails validation and
+    // publication with the typed issue.
+    editor
+        .atom_mut(center)
+        .unwrap()
+        .set_hydrogens(ImplicitHydrogens::Fixed(0));
+    let mismatch = StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+        element: id,
+        atom: center,
+        fixed_hydrogens: 0,
+    };
+    assert_eq!(
+        editor.validate(),
+        Err(MoleculePublicationError::InvalidStereo(mismatch.clone()))
+    );
+    assert_eq!(
+        crate::molecule::validate_represented_stereo(editor.working())
+            .unwrap_err()
+            .issues,
+        [mismatch]
+    );
+
+    // Explicit edits apply the same check; the draft names the element by
+    // the ID it would receive after the removed slot.
+    editor.remove_stereo_element(id).expect("remove element");
+    assert_eq!(
+        editor.add_stereo_element(element),
+        Err(MoleculeError::InvalidStereoReference(
+            StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                element: StereoElementId::new(1),
+                atom: center,
+                fixed_hydrogens: 0,
+            }
+        ))
+    );
+
+    // Inferred counts are unknown until perception and are not checked.
+    editor
+        .atom_mut(center)
+        .unwrap()
+        .set_hydrogens(ImplicitHydrogens::Inferred);
+    editor.validate().expect("inferred counts are not checked");
 }

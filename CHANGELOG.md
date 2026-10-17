@@ -105,6 +105,13 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Represented stereo has one validator (ARCHITECTURE.md,
+  "Represented and derived chemistry"), used by explicit stereo edits,
+  publication and `MoleculeEditor::validate`. The public
+  `stereo::validate_stereo`, a second validator that always passed on a
+  published molecule, is removed; `StereoValidationError` remains as the
+  payload of `CoordinateStereoError` and `StereoSearchError`, now listing the
+  first issue of each failing element or group.
 - **Breaking:** `Perception` exposes only its sections (ARCHITECTURE.md,
   "Represented and derived chemistry"): `valence()`, `rings()`,
   `aromaticity()`, `conjugation()`, `resonance()` and `cip()`.
@@ -992,6 +999,14 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Represented stereo is checked against the hydrogen declaration it relies
+  on. A tetrahedral center needs exactly one implicit-hydrogen carrier per
+  fixed implicit hydrogen, and a double-bond endpoint may name an implicit
+  hydrogen only when its fixed count is not zero. Before, `[C@H](F)(Cl)Br`
+  with its center's count changed to `Fixed(0)` published a center whose
+  fourth ligand did not exist. The failure is the new
+  `StereoValidationIssue::ImplicitHydrogenCarrierMismatch`; inferred counts,
+  unknown before perception, are not checked.
 - Structure writers no longer silently drop what an item is. `ModelView`
   gains `kind()`, a `StructureKind` of `Model`, `Member { weight, energy }`
   or `Frame { time, step, velocities, forces }`. Before, `sdf::write(&trajectory, …)`
