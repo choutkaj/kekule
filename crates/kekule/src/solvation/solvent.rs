@@ -246,15 +246,49 @@ pub enum SolvationChargeBasis {
 /// Optional diagnostics from a successful operation. It is fine to discard this value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SolvationReport {
-    pub waters_added: usize,
-    pub positive_ions_added: usize,
-    pub negative_ions_added: usize,
+    pub(crate) waters_added: usize,
+    pub(crate) positive_ions_added: usize,
+    pub(crate) negative_ions_added: usize,
+    pub(crate) solute_charge: i64,
+    pub(crate) charge_basis: SolvationChargeBasis,
+    pub(crate) seed: u64,
+    pub(crate) cleared_topology_properties: Vec<PropertyKey>,
+    pub(crate) cleared_model_properties: Vec<PropertyKey>,
+}
+
+impl SolvationReport {
+    pub const fn waters_added(&self) -> usize {
+        self.waters_added
+    }
+
+    pub const fn positive_ions_added(&self) -> usize {
+        self.positive_ions_added
+    }
+
+    pub const fn negative_ions_added(&self) -> usize {
+        self.negative_ions_added
+    }
+
     /// Charge used for ion counting, in elementary-charge units.
-    pub solute_charge: i64,
-    pub charge_basis: SolvationChargeBasis,
-    pub seed: u64,
-    pub cleared_topology_properties: Vec<PropertyKey>,
-    pub cleared_model_properties: Vec<PropertyKey>,
+    pub const fn solute_charge(&self) -> i64 {
+        self.solute_charge
+    }
+
+    pub const fn charge_basis(&self) -> SolvationChargeBasis {
+        self.charge_basis
+    }
+
+    pub const fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    pub fn cleared_topology_properties(&self) -> &[PropertyKey] {
+        &self.cleared_topology_properties
+    }
+
+    pub fn cleared_model_properties(&self) -> &[PropertyKey] {
+        &self.cleared_model_properties
+    }
 }
 
 /// Solvation options or the model prevent filling the cell with solvent.

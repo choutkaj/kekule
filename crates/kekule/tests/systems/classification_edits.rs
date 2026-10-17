@@ -671,8 +671,12 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
     );
     let mut editor = retained.to_editor();
     let site = editor.atom_sites().next().unwrap().0;
-    let mut metadata = editor.atom_site(site).unwrap().metadata().clone();
-    metadata.type_symbol = Some("O".into());
+    let metadata = editor
+        .atom_site(site)
+        .unwrap()
+        .metadata()
+        .clone()
+        .with_type_symbol(Some("O".into()));
     editor.set_atom_site_metadata(site, metadata).unwrap();
     let residue_handle = editor.residues().next().unwrap().0;
     editor

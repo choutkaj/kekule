@@ -129,7 +129,7 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
             molecule
                 .add_hydrogens(Default::default())
                 .unwrap()
-                .added
+                .added()
                 .len(),
             original_implicit
         );
@@ -138,11 +138,11 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
         assert_eq!(molecule.implicit_hydrogens(c), Some(0));
         let report = molecule.remove_hydrogens().unwrap();
         let retained = usize::from(source.contains("2H") || source.contains(":7"));
-        assert_eq!(report.retained.len(), retained);
-        assert_eq!(report.adjustments[0].explicit_hydrogens, retained);
-        assert_eq!(report.adjustments[0].implicit_hydrogens, 4 - retained);
+        assert_eq!(report.retained().len(), retained);
+        assert_eq!(report.adjustments()[0].explicit_hydrogens(), retained);
+        assert_eq!(report.adjustments()[0].implicit_hydrogens(), 4 - retained);
         // Removal renumbers atoms that followed a removed hydrogen.
-        let c = report.correspondence.atom(c).unwrap();
+        let c = report.correspondence().atom(c).unwrap();
         molecule.perceive().unwrap();
         assert_eq!(molecule.total_hydrogens(c), Some(4));
         assert_eq!(
@@ -156,7 +156,11 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
 fn fixed_counts_materialize_without_perception_but_unresolved_counts_fail_atomically() {
     let mut fixed = parse("[CH4]");
     assert_eq!(
-        fixed.add_hydrogens(Default::default()).unwrap().added.len(),
+        fixed
+            .add_hydrogens(Default::default())
+            .unwrap()
+            .added()
+            .len(),
         4
     );
     let mut inferred = parse("C");
@@ -179,7 +183,8 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
         let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
         let cip = stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())
             .unwrap()
-            .assigned;
+            .assigned()
+            .to_vec();
         molecule.add_hydrogens(Default::default()).unwrap();
         molecule.perceive().unwrap();
         molecule.remove_hydrogens().unwrap();
@@ -187,7 +192,7 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
         assert_eq!(
             stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())
                 .unwrap()
-                .assigned,
+                .assigned(),
             cip
         );
         for options in [

@@ -608,7 +608,10 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
         };
         assert_eq!(
             infer(&molecule),
-            stereo_api::coordinates::CoordinateStereoResult::default(),
+            stereo_api::coordinates::CoordinateStereoResult {
+                elements: Vec::new(),
+                disagreements: Vec::new(),
+            },
             "{label}: an asserted focus is not re-inferred"
         );
 
@@ -629,7 +632,10 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
             .unwrap();
         assert_eq!(
             infer(&molecule),
-            stereo_api::coordinates::CoordinateStereoResult::default(),
+            stereo_api::coordinates::CoordinateStereoResult {
+                elements: Vec::new(),
+                disagreements: Vec::new(),
+            },
             "{label}: an unknown configuration never contradicts"
         );
     }

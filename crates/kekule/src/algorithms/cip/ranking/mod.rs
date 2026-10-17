@@ -52,7 +52,10 @@ pub(super) fn assign_cip_descriptors(
         });
     }
 
-    let mut report = CipAssignmentReport::default();
+    let mut report = CipAssignmentReport {
+        assigned: Vec::new(),
+        skipped: Vec::new(),
+    };
     let mut issues = Vec::new();
 
     for (id, element) in mol.stereo_elements() {

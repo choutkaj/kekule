@@ -244,16 +244,16 @@ fn partner(
 ) -> (Value, Value) {
     match bond {
         Some(bond) => {
-            let source = residues[&bond.partner].source();
+            let source = residues[&bond.partner()].source();
             (
                 json!(format!(
                     "{}:{}",
-                    source.chain_label_id,
+                    source.chain_label_id(),
                     source
-                        .label_sequence_id
+                        .label_sequence_id()
                         .map_or("?".to_owned(), |s| s.to_string())
                 )),
-                json!(bond.energy_kcal_per_mol),
+                json!(bond.energy_kcal_per_mol()),
             )
         }
         None => (Value::Null, Value::Null),
@@ -281,8 +281,8 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
         let [donor_1, donor_2] = residue.donors().map(|b| partner(b, &residues));
         facts.push(json!([
             "dssp",
-            source.chain_label_id,
-            source.label_sequence_id,
+            source.chain_label_id(),
+            source.label_sequence_id(),
             [
                 if code == ' ' {
                     ".".to_owned()

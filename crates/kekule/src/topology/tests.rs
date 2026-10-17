@@ -257,10 +257,7 @@ fn annotated_topology() -> Topology {
         .add_atom_site(
             residue,
             InstanceAtomId::new(first, carbon),
-            AtomSiteMetadata {
-                label_atom_id: Some("C1".into()),
-                ..AtomSiteMetadata::default()
-            },
+            AtomSiteMetadata::default().with_label_atom_id(Some("C1".into())),
         )
         .unwrap();
 
@@ -571,10 +568,7 @@ fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
         .add_atom_site(
             residue,
             InstanceAtomId::new(instance, carbon),
-            AtomSiteMetadata {
-                label_atom_id: Some("C1".into()),
-                ..AtomSiteMetadata::default()
-            },
+            AtomSiteMetadata::default().with_label_atom_id(Some("C1".into())),
         )
         .unwrap();
 
@@ -645,10 +639,7 @@ fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
         .add_atom_site(
             residue,
             InstanceAtomId::new(instance, carbon),
-            AtomSiteMetadata {
-                label_atom_id: Some("C1".into()),
-                ..AtomSiteMetadata::default()
-            },
+            AtomSiteMetadata::default().with_label_atom_id(Some("C1".into())),
         )
         .unwrap();
     let plain = plain_builder.build().unwrap();

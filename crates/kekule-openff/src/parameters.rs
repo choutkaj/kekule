@@ -8,50 +8,140 @@ use std::{collections::BTreeMap, sync::Arc};
 /// Source rule retained for reproducibility and inspection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParameterIdentity {
+    pub(crate) id: String,
+    pub(crate) smirks: String,
+}
+
+impl ParameterIdentity {
     /// OFFXML rule ID, or an empty string when the optional `id` was omitted.
     /// IDs are metadata; ordered SMIRKS rules determine assignment precedence.
-    pub id: String,
-    pub smirks: String,
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn smirks(&self) -> &str {
+        &self.smirks
+    }
 }
 
 /// Harmonic bond: `k / 2 * (r - length)^2`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BondParameter {
-    pub source: ParameterIdentity,
-    pub length: Quantity<f64>,
-    pub k: Quantity<f64>,
+    pub(crate) source: ParameterIdentity,
+    pub(crate) length: Quantity<f64>,
+    pub(crate) k: Quantity<f64>,
+}
+
+impl BondParameter {
+    pub fn source(&self) -> &ParameterIdentity {
+        &self.source
+    }
+
+    pub const fn length(&self) -> Quantity<f64> {
+        self.length
+    }
+
+    pub const fn k(&self) -> Quantity<f64> {
+        self.k
+    }
 }
 /// Harmonic angle: `k / 2 * (theta - angle)^2`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AngleParameter {
-    pub source: ParameterIdentity,
-    pub angle: Quantity<f64>,
-    pub k: Quantity<f64>,
+    pub(crate) source: ParameterIdentity,
+    pub(crate) angle: Quantity<f64>,
+    pub(crate) k: Quantity<f64>,
+}
+
+impl AngleParameter {
+    pub fn source(&self) -> &ParameterIdentity {
+        &self.source
+    }
+
+    pub const fn angle(&self) -> Quantity<f64> {
+        self.angle
+    }
+
+    pub const fn k(&self) -> Quantity<f64> {
+        self.k
+    }
 }
 /// One Fourier term: `k / idivf * (1 + cos(periodicity * theta - phase))`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TorsionTerm {
-    pub periodicity: u32,
-    pub phase: Quantity<f64>,
-    pub k: Quantity<f64>,
-    pub idivf: f64,
+    pub(crate) periodicity: u32,
+    pub(crate) phase: Quantity<f64>,
+    pub(crate) k: Quantity<f64>,
+    pub(crate) idivf: f64,
+}
+
+impl TorsionTerm {
+    pub const fn periodicity(&self) -> u32 {
+        self.periodicity
+    }
+
+    pub const fn phase(&self) -> Quantity<f64> {
+        self.phase
+    }
+
+    pub const fn k(&self) -> Quantity<f64> {
+        self.k
+    }
+
+    pub const fn idivf(&self) -> f64 {
+        self.idivf
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct TorsionParameter {
-    pub source: ParameterIdentity,
-    pub terms: Vec<TorsionTerm>,
+    pub(crate) source: ParameterIdentity,
+    pub(crate) terms: Vec<TorsionTerm>,
+}
+
+impl TorsionParameter {
+    pub fn source(&self) -> &ParameterIdentity {
+        &self.source
+    }
+
+    pub fn terms(&self) -> &[TorsionTerm] {
+        &self.terms
+    }
 }
 /// Lennard-Jones 12-6 parameters. Combine sigma arithmetically and epsilon geometrically.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VdwParameter {
-    pub source: ParameterIdentity,
-    pub sigma: Quantity<f64>,
-    pub epsilon: Quantity<f64>,
+    pub(crate) source: ParameterIdentity,
+    pub(crate) sigma: Quantity<f64>,
+    pub(crate) epsilon: Quantity<f64>,
+}
+
+impl VdwParameter {
+    pub fn source(&self) -> &ParameterIdentity {
+        &self.source
+    }
+
+    pub const fn sigma(&self) -> Quantity<f64> {
+        self.sigma
+    }
+
+    pub const fn epsilon(&self) -> Quantity<f64> {
+        self.epsilon
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstraintParameter {
-    pub source: ParameterIdentity,
-    pub distance: Quantity<f64>,
+    pub(crate) source: ParameterIdentity,
+    pub(crate) distance: Quantity<f64>,
+}
+
+impl ConstraintParameter {
+    pub fn source(&self) -> &ParameterIdentity {
+        &self.source
+    }
+
+    pub const fn distance(&self) -> Quantity<f64> {
+        self.distance
+    }
 }
 /// Parameter assignment on atoms qualified by an instance in the owning topology.
 ///
@@ -59,15 +149,41 @@ pub struct ConstraintParameter {
 /// rule identities are not copied for every interaction of a large system.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interaction<const N: usize, P> {
-    pub atoms: [InstanceAtomId; N],
-    pub parameter: Arc<P>,
+    pub(crate) atoms: [InstanceAtomId; N],
+    pub(crate) parameter: Arc<P>,
+}
+
+impl<const N: usize, P> Interaction<N, P> {
+    /// The interacting atoms, in the order the parameter's functional form uses.
+    pub const fn atoms(&self) -> [InstanceAtomId; N] {
+        self.atoms
+    }
+
+    /// The assigned parameter, shared by every interaction of the same rule.
+    pub fn parameter(&self) -> &Arc<P> {
+        &self.parameter
+    }
 }
 /// Explicit pair exceptions for graph distances 1, 2, and 3 (1-2/1-3/1-4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PairException {
-    pub atoms: [InstanceAtomId; 2],
-    pub vdw_scale: f64,
-    pub electrostatics_scale: f64,
+    pub(crate) atoms: [InstanceAtomId; 2],
+    pub(crate) vdw_scale: f64,
+    pub(crate) electrostatics_scale: f64,
+}
+
+impl PairException {
+    pub const fn atoms(&self) -> [InstanceAtomId; 2] {
+        self.atoms
+    }
+
+    pub const fn vdw_scale(&self) -> f64 {
+        self.vdw_scale
+    }
+
+    pub const fn electrostatics_scale(&self) -> f64 {
+        self.electrostatics_scale
+    }
 }
 /// SMIRNOFF vdW treatment for one boundary condition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -113,16 +229,58 @@ impl ElectrostaticsMethod {
 /// Scales are indexed by graph distance: 1-2, 1-3, 1-4, and 1-5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NonbondedSettings {
-    pub vdw_cutoff: Quantity<f64>,
-    pub vdw_switch_width: Quantity<f64>,
-    pub electrostatics_cutoff: Quantity<f64>,
-    pub electrostatics_switch_width: Quantity<f64>,
-    pub vdw_scales: [f64; 4],
-    pub electrostatics_scales: [f64; 4],
-    pub vdw_periodic_method: VdwMethod,
-    pub vdw_nonperiodic_method: VdwMethod,
-    pub electrostatics_periodic_method: ElectrostaticsMethod,
-    pub electrostatics_nonperiodic_method: ElectrostaticsMethod,
+    pub(crate) vdw_cutoff: Quantity<f64>,
+    pub(crate) vdw_switch_width: Quantity<f64>,
+    pub(crate) electrostatics_cutoff: Quantity<f64>,
+    pub(crate) electrostatics_switch_width: Quantity<f64>,
+    pub(crate) vdw_scales: [f64; 4],
+    pub(crate) electrostatics_scales: [f64; 4],
+    pub(crate) vdw_periodic_method: VdwMethod,
+    pub(crate) vdw_nonperiodic_method: VdwMethod,
+    pub(crate) electrostatics_periodic_method: ElectrostaticsMethod,
+    pub(crate) electrostatics_nonperiodic_method: ElectrostaticsMethod,
+}
+
+impl NonbondedSettings {
+    pub const fn vdw_cutoff(&self) -> Quantity<f64> {
+        self.vdw_cutoff
+    }
+
+    pub const fn vdw_switch_width(&self) -> Quantity<f64> {
+        self.vdw_switch_width
+    }
+
+    pub const fn electrostatics_cutoff(&self) -> Quantity<f64> {
+        self.electrostatics_cutoff
+    }
+
+    pub const fn electrostatics_switch_width(&self) -> Quantity<f64> {
+        self.electrostatics_switch_width
+    }
+
+    pub const fn vdw_scales(&self) -> [f64; 4] {
+        self.vdw_scales
+    }
+
+    pub const fn electrostatics_scales(&self) -> [f64; 4] {
+        self.electrostatics_scales
+    }
+
+    pub const fn vdw_periodic_method(&self) -> VdwMethod {
+        self.vdw_periodic_method
+    }
+
+    pub const fn vdw_nonperiodic_method(&self) -> VdwMethod {
+        self.vdw_nonperiodic_method
+    }
+
+    pub const fn electrostatics_periodic_method(&self) -> ElectrostaticsMethod {
+        self.electrostatics_periodic_method
+    }
+
+    pub const fn electrostatics_nonperiodic_method(&self) -> ElectrostaticsMethod {
+        self.electrostatics_nonperiodic_method
+    }
 }
 /// Complete parameterization tied to one exact topology snapshot.
 ///
@@ -186,12 +344,38 @@ impl ParameterizedTopology {
 
 /// Rule labels before numerical assignment; keys use molecule-local identities.
 /// Improper keys retain the center in position 1 and sort the three outer atoms.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoleculeLabels {
-    pub bonds: BTreeMap<[AtomId; 2], ParameterIdentity>,
-    pub angles: BTreeMap<[AtomId; 3], ParameterIdentity>,
-    pub proper_torsions: BTreeMap<[AtomId; 4], ParameterIdentity>,
-    pub improper_torsions: BTreeMap<[AtomId; 4], ParameterIdentity>,
-    pub constraints: BTreeMap<[AtomId; 2], ParameterIdentity>,
-    pub vdw: BTreeMap<[AtomId; 1], ParameterIdentity>,
+    pub(crate) bonds: BTreeMap<[AtomId; 2], ParameterIdentity>,
+    pub(crate) angles: BTreeMap<[AtomId; 3], ParameterIdentity>,
+    pub(crate) proper_torsions: BTreeMap<[AtomId; 4], ParameterIdentity>,
+    pub(crate) improper_torsions: BTreeMap<[AtomId; 4], ParameterIdentity>,
+    pub(crate) constraints: BTreeMap<[AtomId; 2], ParameterIdentity>,
+    pub(crate) vdw: BTreeMap<[AtomId; 1], ParameterIdentity>,
+}
+
+impl MoleculeLabels {
+    pub fn bonds(&self) -> &BTreeMap<[AtomId; 2], ParameterIdentity> {
+        &self.bonds
+    }
+
+    pub fn angles(&self) -> &BTreeMap<[AtomId; 3], ParameterIdentity> {
+        &self.angles
+    }
+
+    pub fn proper_torsions(&self) -> &BTreeMap<[AtomId; 4], ParameterIdentity> {
+        &self.proper_torsions
+    }
+
+    pub fn improper_torsions(&self) -> &BTreeMap<[AtomId; 4], ParameterIdentity> {
+        &self.improper_torsions
+    }
+
+    pub fn constraints(&self) -> &BTreeMap<[AtomId; 2], ParameterIdentity> {
+        &self.constraints
+    }
+
+    pub fn vdw(&self) -> &BTreeMap<[AtomId; 1], ParameterIdentity> {
+        &self.vdw
+    }
 }

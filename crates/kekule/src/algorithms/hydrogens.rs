@@ -70,25 +70,55 @@ pub enum AddedHydrogenOrigin {
 /// Stable-ID mapping for one materialized hydrogen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddedHydrogen {
-    pub hydrogen: AtomId,
-    pub parent: AtomId,
-    pub origin: AddedHydrogenOrigin,
+    pub(crate) hydrogen: AtomId,
+    pub(crate) parent: AtomId,
+    pub(crate) origin: AddedHydrogenOrigin,
+}
+
+impl AddedHydrogen {
+    pub const fn hydrogen(&self) -> AtomId {
+        self.hydrogen
+    }
+
+    pub const fn parent(&self) -> AtomId {
+        self.parent
+    }
+
+    pub const fn origin(&self) -> AddedHydrogenOrigin {
+        self.origin
+    }
 }
 
 /// Complete mapping produced by a successful addition.
 ///
 /// Addition deletes nothing: existing atom IDs are unchanged and each added
 /// hydrogen receives a new ID after them.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddHydrogensReport {
-    pub added: Vec<AddedHydrogen>,
+    pub(crate) added: Vec<AddedHydrogen>,
+}
+
+impl AddHydrogensReport {
+    pub fn added(&self) -> &[AddedHydrogen] {
+        &self.added
+    }
 }
 
 /// Stable-ID mapping for one collapsed hydrogen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemovedHydrogen {
-    pub hydrogen: AtomId,
-    pub parent: AtomId,
+    pub(crate) hydrogen: AtomId,
+    pub(crate) parent: AtomId,
+}
+
+impl RemovedHydrogen {
+    pub const fn hydrogen(&self) -> AtomId {
+        self.hydrogen
+    }
+
+    pub const fn parent(&self) -> AtomId {
+        self.parent
+    }
 }
 
 /// Explains why a graph hydrogen could not be collapsed losslessly.
@@ -111,22 +141,54 @@ pub enum RetainedHydrogenReason {
 /// A hydrogen deliberately retained by conservative removal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetainedHydrogen {
-    pub hydrogen: AtomId,
-    pub reason: RetainedHydrogenReason,
+    pub(crate) hydrogen: AtomId,
+    pub(crate) reason: RetainedHydrogenReason,
+}
+
+impl RetainedHydrogen {
+    pub const fn hydrogen(&self) -> AtomId {
+        self.hydrogen
+    }
+
+    pub const fn reason(&self) -> RetainedHydrogenReason {
+        self.reason
+    }
 }
 
 /// Implicit hydrogens chosen for a parent after graph-hydrogen collapse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HydrogenCountAdjustment {
-    pub parent: AtomId,
-    pub removed_graph_hydrogens: usize,
+    pub(crate) parent: AtomId,
+    pub(crate) removed_graph_hydrogens: usize,
+    pub(crate) explicit_hydrogens: usize,
+    pub(crate) implicit_hydrogens: usize,
+    pub(crate) hydrogens: ImplicitHydrogens,
+}
+
+impl HydrogenCountAdjustment {
+    pub const fn parent(&self) -> AtomId {
+        self.parent
+    }
+
+    pub const fn removed_graph_hydrogens(&self) -> usize {
+        self.removed_graph_hydrogens
+    }
+
     /// Explicit graph hydrogen neighbors retained on the parent.
-    pub explicit_hydrogens: usize,
+    pub const fn explicit_hydrogens(&self) -> usize {
+        self.explicit_hydrogens
+    }
+
     /// Complete implicit count after suppression.
-    pub implicit_hydrogens: usize,
+    pub const fn implicit_hydrogens(&self) -> usize {
+        self.implicit_hydrogens
+    }
+
     /// The parent's resulting declaration. Inference is kept only when it
     /// reproduces the complete implicit count; otherwise the count is fixed.
-    pub hydrogens: ImplicitHydrogens,
+    pub const fn hydrogens(&self) -> ImplicitHydrogens {
+        self.hydrogens
+    }
 }
 
 /// Complete topology mapping and count reconstruction from removal.
@@ -135,12 +197,30 @@ pub struct HydrogenCountAdjustment {
 /// The transformed molecule is published with dense IDs, so surviving atoms
 /// after a removed hydrogen are renumbered; `correspondence` maps every
 /// surviving input ID to its ID in the transformed molecule.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoveHydrogensReport {
-    pub removed: Vec<RemovedHydrogen>,
-    pub retained: Vec<RetainedHydrogen>,
-    pub adjustments: Vec<HydrogenCountAdjustment>,
-    pub correspondence: MoleculeCorrespondence,
+    pub(crate) removed: Vec<RemovedHydrogen>,
+    pub(crate) retained: Vec<RetainedHydrogen>,
+    pub(crate) adjustments: Vec<HydrogenCountAdjustment>,
+    pub(crate) correspondence: MoleculeCorrespondence,
+}
+
+impl RemoveHydrogensReport {
+    pub fn removed(&self) -> &[RemovedHydrogen] {
+        &self.removed
+    }
+
+    pub fn retained(&self) -> &[RetainedHydrogen] {
+        &self.retained
+    }
+
+    pub fn adjustments(&self) -> &[HydrogenCountAdjustment] {
+        &self.adjustments
+    }
+
+    pub fn correspondence(&self) -> &MoleculeCorrespondence {
+        &self.correspondence
+    }
 }
 
 /// Failure from planning or committing a transactional hydrogen transform.
@@ -262,7 +342,7 @@ pub(crate) fn add_hydrogens_to_molecule(
 
     let mut editor = molecule.to_editor();
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a periodic-table element");
-    let mut report = AddHydrogensReport::default();
+    let mut report = AddHydrogensReport { added: Vec::new() };
     let mut added_by_parent = BTreeMap::<AtomId, Vec<AtomId>>::new();
 
     for (parent, count, origin) in plan {
@@ -304,7 +384,12 @@ pub(crate) fn remove_hydrogens_keeping(
     molecule: &mut Molecule,
     keep: &BTreeSet<AtomId>,
 ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-    let mut report = RemoveHydrogensReport::default();
+    let mut report = RemoveHydrogensReport {
+        removed: Vec::new(),
+        retained: Vec::new(),
+        adjustments: Vec::new(),
+        correspondence: MoleculeCorrespondence::default(),
+    };
     let mut candidates = Vec::<(AtomId, AtomId, BondId)>::new();
     for (hydrogen, atom) in molecule
         .atoms()

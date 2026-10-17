@@ -313,11 +313,68 @@ impl AtomSite {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AtomSiteMetadata {
-    pub type_symbol: Option<String>,
-    pub label_asym_id: Option<String>,
-    pub auth_asym_id: Option<String>,
-    pub label_atom_id: Option<String>,
-    pub auth_atom_id: Option<String>,
+    pub(crate) type_symbol: Option<String>,
+    pub(crate) label_asym_id: Option<String>,
+    pub(crate) auth_asym_id: Option<String>,
+    pub(crate) label_atom_id: Option<String>,
+    pub(crate) auth_atom_id: Option<String>,
+}
+
+impl AtomSiteMetadata {
+    pub fn type_symbol(&self) -> Option<&str> {
+        self.type_symbol.as_deref()
+    }
+
+    /// Sets [`Self::type_symbol`].
+    #[must_use]
+    pub fn with_type_symbol(mut self, type_symbol: Option<String>) -> Self {
+        self.type_symbol = type_symbol;
+        self
+    }
+
+    pub fn label_asym_id(&self) -> Option<&str> {
+        self.label_asym_id.as_deref()
+    }
+
+    /// Sets [`Self::label_asym_id`].
+    #[must_use]
+    pub fn with_label_asym_id(mut self, label_asym_id: Option<String>) -> Self {
+        self.label_asym_id = label_asym_id;
+        self
+    }
+
+    pub fn auth_asym_id(&self) -> Option<&str> {
+        self.auth_asym_id.as_deref()
+    }
+
+    /// Sets [`Self::auth_asym_id`].
+    #[must_use]
+    pub fn with_auth_asym_id(mut self, auth_asym_id: Option<String>) -> Self {
+        self.auth_asym_id = auth_asym_id;
+        self
+    }
+
+    pub fn label_atom_id(&self) -> Option<&str> {
+        self.label_atom_id.as_deref()
+    }
+
+    /// Sets [`Self::label_atom_id`].
+    #[must_use]
+    pub fn with_label_atom_id(mut self, label_atom_id: Option<String>) -> Self {
+        self.label_atom_id = label_atom_id;
+        self
+    }
+
+    pub fn auth_atom_id(&self) -> Option<&str> {
+        self.auth_atom_id.as_deref()
+    }
+
+    /// Sets [`Self::auth_atom_id`].
+    #[must_use]
+    pub fn with_auth_atom_id(mut self, auth_atom_id: Option<String>) -> Self {
+        self.auth_atom_id = auth_atom_id;
+        self
+    }
 }
 
 /// Fixed-width identifier spaces owned by [`Hierarchy`].

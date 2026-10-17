@@ -80,8 +80,18 @@ impl fmt::Display for ComponentKind {
 /// One component of an [`Energy`], in the canonical energy unit.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EnergyComponent {
-    pub kind: ComponentKind,
-    pub energy: Quantity<f64>,
+    pub(crate) kind: ComponentKind,
+    pub(crate) energy: Quantity<f64>,
+}
+
+impl EnergyComponent {
+    pub const fn kind(&self) -> ComponentKind {
+        self.kind
+    }
+
+    pub const fn energy(&self) -> Quantity<f64> {
+        self.energy
+    }
 }
 
 /// A validated finite energy, optionally decomposed into components.

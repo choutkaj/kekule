@@ -781,13 +781,12 @@ pub(super) fn build_topology_hierarchy(
             .add_atom_site(
                 residue,
                 atom.atom,
-                AtomSiteMetadata {
-                    type_symbol: Some(atom.type_symbol.clone()),
-                    label_asym_id: atom.label_asym_id.clone(),
-                    auth_asym_id: atom.auth_asym_id.clone(),
-                    label_atom_id: atom.label_atom_name.clone(),
-                    auth_atom_id: atom.auth_atom_name.clone(),
-                },
+                AtomSiteMetadata::default()
+                    .with_type_symbol(Some(atom.type_symbol.clone()))
+                    .with_label_asym_id(atom.label_asym_id.clone())
+                    .with_auth_asym_id(atom.auth_asym_id.clone())
+                    .with_label_atom_id(atom.label_atom_name.clone())
+                    .with_auth_atom_id(atom.auth_atom_name.clone()),
             )
             .map_err(hierarchy_error)?;
     }

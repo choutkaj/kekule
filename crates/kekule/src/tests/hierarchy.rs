@@ -15,13 +15,12 @@ fn hierarchy_adds_chains_residues_and_atom_sites_in_order() {
             Some("A".to_owned()),
         )
         .unwrap();
-    let metadata = AtomSiteMetadata {
-        type_symbol: Some("C".to_owned()),
-        label_asym_id: Some("A".to_owned()),
-        auth_asym_id: Some("authA".to_owned()),
-        label_atom_id: Some("CA".to_owned()),
-        auth_atom_id: Some("CAY".to_owned()),
-    };
+    let metadata = AtomSiteMetadata::default()
+        .with_type_symbol(Some("C".to_owned()))
+        .with_label_asym_id(Some("A".to_owned()))
+        .with_auth_asym_id(Some("authA".to_owned()))
+        .with_label_atom_id(Some("CA".to_owned()))
+        .with_auth_atom_id(Some("CAY".to_owned()));
     let atom = InstanceAtomId::new(MoleculeInstanceId::new(3), AtomId::new(7));
     let site = hierarchy
         .add_atom_site(residue, atom, metadata.clone())

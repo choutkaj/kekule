@@ -223,10 +223,10 @@ pub(crate) fn try_cip_labels(
     let report = stereo::cip::assign_cip_descriptors(molecule, Default::default())
         .map_err(|error| format!("{error:?}"))?;
     Ok(report
-        .assigned
+        .assigned()
         .iter()
         .map(|assignment| {
-            let element = molecule.stereo_element(assignment.element).unwrap();
+            let element = molecule.stereo_element(assignment.element()).unwrap();
             let focus = match &element.kind {
                 StereoElementKind::Tetrahedral(value) => StereoFocus::Atom(value.center.index()),
                 StereoElementKind::DoubleBond(value) => {
@@ -237,7 +237,7 @@ pub(crate) fn try_cip_labels(
                     StereoFocus::bond(axis.a().index(), axis.b().index())
                 }
             };
-            (focus, format!("{:?}", assignment.descriptor))
+            (focus, format!("{:?}", assignment.descriptor()))
         })
         .collect())
 }

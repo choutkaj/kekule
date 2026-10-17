@@ -139,10 +139,10 @@ fn every_accepted_step_is_observed_and_observers_can_stop() {
     let bowl = Bowl::new(&model, centers());
     let mut energies = Vec::new();
     let result = minimize_with_observer(&bowl, model.as_model_view(), &tight(1e-6), |step| {
-        energies.push(step.energy.total().into_value());
-        assert_eq!(step.iteration, energies.len());
-        assert_eq!(step.positions.len(), 3);
-        if step.iteration == 3 {
+        energies.push(step.energy().total().into_value());
+        assert_eq!(step.iteration(), energies.len());
+        assert_eq!(step.positions().len(), 3);
+        if step.iteration() == 3 {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())

@@ -121,10 +121,20 @@ impl Default for CipAssignmentOptions {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CipAssignmentReport {
-    pub assigned: Vec<CipAssignment>,
-    pub skipped: Vec<CipSkipped>,
+    pub(crate) assigned: Vec<CipAssignment>,
+    pub(crate) skipped: Vec<CipSkipped>,
+}
+
+impl CipAssignmentReport {
+    pub fn assigned(&self) -> &[CipAssignment] {
+        &self.assigned
+    }
+
+    pub fn skipped(&self) -> &[CipSkipped] {
+        &self.skipped
+    }
 }
 
 /// CIP descriptor assignment failed and left existing CIP perception unchanged.
@@ -148,14 +158,34 @@ impl std::error::Error for CipAssignmentError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CipAssignment {
-    pub element: StereoElementId,
-    pub descriptor: StereoDescriptor,
+    pub(crate) element: StereoElementId,
+    pub(crate) descriptor: StereoDescriptor,
+}
+
+impl CipAssignment {
+    pub const fn element(&self) -> StereoElementId {
+        self.element
+    }
+
+    pub const fn descriptor(&self) -> StereoDescriptor {
+        self.descriptor
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CipSkipped {
-    pub element: StereoElementId,
-    pub reason: CipSkippedReason,
+    pub(crate) element: StereoElementId,
+    pub(crate) reason: CipSkippedReason,
+}
+
+impl CipSkipped {
+    pub const fn element(&self) -> StereoElementId {
+        self.element
+    }
+
+    pub const fn reason(&self) -> CipSkippedReason {
+        self.reason
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

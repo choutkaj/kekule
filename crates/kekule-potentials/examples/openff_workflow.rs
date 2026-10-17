@@ -40,8 +40,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     for component in energy.components() {
         println!(
             "  {:<18} {:>12.4}",
-            component.kind,
-            component.energy.into_value()
+            component.kind(),
+            component.energy().into_value()
         );
     }
 

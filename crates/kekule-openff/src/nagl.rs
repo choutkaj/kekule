@@ -71,8 +71,18 @@ pub enum ChargeSource {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChargeAssignment {
-    pub charges: Quantity<Vec<f64>>,
-    pub source: ChargeSource,
+    pub(crate) charges: Quantity<Vec<f64>>,
+    pub(crate) source: ChargeSource,
+}
+
+impl ChargeAssignment {
+    pub fn charges(&self) -> &Quantity<Vec<f64>> {
+        &self.charges
+    }
+
+    pub fn source(&self) -> &ChargeSource {
+        &self.source
+    }
 }
 /// Native CPU inference for a supported NAGL model configuration.
 ///

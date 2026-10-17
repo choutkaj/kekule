@@ -45,22 +45,22 @@ fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
     let strongest_donor = residue_three.donors()[0].expect("reference donor");
     assert_eq!(
         result
-            .get(strongest_acceptor.partner)
+            .get(strongest_acceptor.partner())
             .expect("acceptor partner is in the result")
             .source()
-            .label_sequence_id,
+            .label_sequence_id(),
         Some(33)
     );
-    assert!((strongest_acceptor.energy_kcal_per_mol - -2.4).abs() < 0.05);
+    assert!((strongest_acceptor.energy_kcal_per_mol() - -2.4).abs() < 0.05);
     assert_eq!(
         result
-            .get(strongest_donor.partner)
+            .get(strongest_donor.partner())
             .expect("donor partner is in the result")
             .source()
-            .label_sequence_id,
+            .label_sequence_id(),
         Some(33)
     );
-    assert!((strongest_donor.energy_kcal_per_mol - -2.8).abs() < 0.05);
+    assert!((strongest_donor.energy_kcal_per_mol() - -2.8).abs() < 0.05);
 }
 
 #[test]
@@ -169,8 +169,8 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
     assert_eq!(assigned.statistics(), reference.statistics());
     for (actual, expected) in assigned.residues().zip(reference.residues()) {
         assert_eq!(
-            actual.source().author_sequence_id,
-            expected.source().author_sequence_id
+            actual.source().author_sequence_id(),
+            expected.source().author_sequence_id()
         );
         assert_eq!(actual.secondary_structure(), expected.secondary_structure());
         assert_eq!(actual.phi_degrees(), expected.phi_degrees());
@@ -261,10 +261,7 @@ fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
                     .add_atom_site(
                         residue,
                         InstanceAtomId::new(instance, atom),
-                        AtomSiteMetadata {
-                            label_atom_id: Some(name.to_owned()),
-                            ..AtomSiteMetadata::default()
-                        },
+                        AtomSiteMetadata::default().with_label_atom_id(Some(name.to_owned())),
                     )
                     .unwrap();
             }

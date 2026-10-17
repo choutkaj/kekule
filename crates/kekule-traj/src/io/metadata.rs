@@ -27,13 +27,43 @@ pub enum FieldAvailability {
 /// Field-presence contract reported by a selected codec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrajectoryFieldAvailability {
-    pub positions: FieldAvailability,
-    pub cell: FieldAvailability,
-    pub velocities: FieldAvailability,
-    pub forces: FieldAvailability,
-    pub time: FieldAvailability,
-    pub step: FieldAvailability,
-    pub properties: FieldAvailability,
+    pub(crate) positions: FieldAvailability,
+    pub(crate) cell: FieldAvailability,
+    pub(crate) velocities: FieldAvailability,
+    pub(crate) forces: FieldAvailability,
+    pub(crate) time: FieldAvailability,
+    pub(crate) step: FieldAvailability,
+    pub(crate) properties: FieldAvailability,
+}
+
+impl TrajectoryFieldAvailability {
+    pub const fn positions(&self) -> FieldAvailability {
+        self.positions
+    }
+
+    pub const fn cell(&self) -> FieldAvailability {
+        self.cell
+    }
+
+    pub const fn velocities(&self) -> FieldAvailability {
+        self.velocities
+    }
+
+    pub const fn forces(&self) -> FieldAvailability {
+        self.forces
+    }
+
+    pub const fn time(&self) -> FieldAvailability {
+        self.time
+    }
+
+    pub const fn step(&self) -> FieldAvailability {
+        self.step
+    }
+
+    pub const fn properties(&self) -> FieldAvailability {
+        self.properties
+    }
 }
 
 /// Scalar representation used by native coordinate payloads.

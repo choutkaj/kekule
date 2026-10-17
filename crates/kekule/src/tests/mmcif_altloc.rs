@@ -158,34 +158,30 @@ fn mmcif_altloc_local_overrides_and_linked_groups() {
     );
     let result = selected(
         &source,
-        AltLocPolicy::Configured(AltLocSelection {
-            default: AltLocPreference::SelectLabel("A".into()),
-            overrides: BTreeMap::from([(ids[1].clone(), "B".into())]),
-            ..Default::default()
-        }),
+        AltLocPolicy::Configured(
+            AltLocSelection::default()
+                .with_default_preference(AltLocPreference::SelectLabel("A".into()))
+                .with_overrides(BTreeMap::from([(ids[1].clone(), "B".into())])),
+        ),
     )
     .unwrap();
     assert_eq!(choices(&result), [vec!["A"], vec!["B"]]);
-    let group = AltLocSelection {
-        groups: vec![ids.clone()],
-        ..Default::default()
-    };
+    let group = AltLocSelection::default().with_groups(vec![ids.clone()]);
     assert_eq!(
         choices(&selected(&source, AltLocPolicy::Configured(group.clone())).unwrap()),
         [vec!["A"], vec!["A"]]
     );
-    let forced = AltLocSelection {
-        overrides: BTreeMap::from([(ids[1].clone(), "B".into())]),
-        ..group.clone()
-    };
+    let forced = group
+        .clone()
+        .with_overrides(BTreeMap::from([(ids[1].clone(), "B".into())]));
     assert_eq!(
         choices(&selected(&source, AltLocPolicy::Configured(forced)).unwrap()),
         [vec!["B"], vec!["B"]]
     );
-    let conflicting = AltLocSelection {
-        overrides: BTreeMap::from([(ids[0].clone(), "A".into()), (ids[1].clone(), "B".into())]),
-        ..group
-    };
+    let conflicting = group.with_overrides(BTreeMap::from([
+        (ids[0].clone(), "A".into()),
+        (ids[1].clone(), "B".into()),
+    ]));
     assert!(selected(&source, AltLocPolicy::Configured(conflicting)).is_err());
 }
 
@@ -201,26 +197,11 @@ fn mmcif_altloc_invalid_selectors_and_groups_fail() {
     let mut unknown = ids[0].clone();
     unknown.insertion_code = Some("A".into());
     for selection in [
-        AltLocSelection {
-            overrides: BTreeMap::from([(unknown.clone(), "A".into())]),
-            ..Default::default()
-        },
-        AltLocSelection {
-            groups: vec![vec![]],
-            ..Default::default()
-        },
-        AltLocSelection {
-            groups: vec![vec![ids[0].clone()]],
-            ..Default::default()
-        },
-        AltLocSelection {
-            groups: vec![vec![ids[0].clone(), ids[0].clone()]],
-            ..Default::default()
-        },
-        AltLocSelection {
-            groups: vec![vec![ids[0].clone(), unknown]],
-            ..Default::default()
-        },
+        AltLocSelection::default().with_overrides(BTreeMap::from([(unknown.clone(), "A".into())])),
+        AltLocSelection::default().with_groups(vec![vec![]]),
+        AltLocSelection::default().with_groups(vec![vec![ids[0].clone()]]),
+        AltLocSelection::default().with_groups(vec![vec![ids[0].clone(), ids[0].clone()]]),
+        AltLocSelection::default().with_groups(vec![vec![ids[0].clone(), unknown]]),
     ] {
         assert!(selected(&source, AltLocPolicy::Configured(selection)).is_err());
     }
@@ -319,22 +300,18 @@ fn mmcif_altloc_source_combinations_constrain_default_and_exact_selection() {
     );
     let second = selected(
         &source,
-        AltLocPolicy::Configured(AltLocSelection {
-            source_conformation: Some("second".into()),
-            ..Default::default()
-        }),
+        AltLocPolicy::Configured(
+            AltLocSelection::default().with_source_conformation(Some("second".into())),
+        ),
     )
     .unwrap();
     assert_eq!(choices(&second), [vec!["B"], vec!["D"]]);
     assert_eq!(source, original);
     let ids = source.blocks()[0].alternate_locations().unwrap();
-    let conflict = AltLocSelection {
-        overrides: BTreeMap::from([
-            (ids[0].residue.clone(), "A".into()),
-            (ids[1].residue.clone(), "D".into()),
-        ]),
-        ..Default::default()
-    };
+    let conflict = AltLocSelection::default().with_overrides(BTreeMap::from([
+        (ids[0].residue.clone(), "A".into()),
+        (ids[1].residue.clone(), "D".into()),
+    ]));
     assert!(selected(&source, AltLocPolicy::Configured(conflict)).is_err());
     assert_eq!(
         source
@@ -372,10 +349,9 @@ fn mmcif_altloc_invalid_source_combinations_fail() {
     }
     assert!(selected(
         &document(CROSSED),
-        AltLocPolicy::Configured(AltLocSelection {
-            source_conformation: Some("absent".into()),
-            ..Default::default()
-        })
+        AltLocPolicy::Configured(
+            AltLocSelection::default().with_source_conformation(Some("absent".into()))
+        )
     )
     .is_err());
 }
@@ -418,10 +394,10 @@ fn mmcif_altloc_ensemble_uses_source_models_and_stable_site_order() {
     let result = source
         .interpret_ensemble(
             StructureEnsembleInterpretOptions::default().with_altloc_policy(
-                AltLocPolicy::Configured(AltLocSelection {
-                    overrides: BTreeMap::from([(ids[1].clone(), "A".into())]),
-                    ..Default::default()
-                }),
+                AltLocPolicy::Configured(
+                    AltLocSelection::default()
+                        .with_overrides(BTreeMap::from([(ids[1].clone(), "A".into())])),
+                ),
             ),
         )
         .unwrap();
@@ -432,10 +408,7 @@ fn mmcif_altloc_ensemble_uses_source_models_and_stable_site_order() {
     assert!(source
         .interpret_ensemble(
             StructureEnsembleInterpretOptions::default().with_altloc_policy(
-                AltLocPolicy::Configured(AltLocSelection {
-                    groups: vec![ids],
-                    ..Default::default()
-                })
+                AltLocPolicy::Configured(AltLocSelection::default().with_groups(vec![ids]))
             )
         )
         .is_err());
@@ -560,10 +533,7 @@ fn mmcif_altloc_source_combinations_respect_user_group_constraints() {
         .collect();
     assert!(selected(
         &source,
-        AltLocPolicy::Configured(AltLocSelection {
-            groups: vec![ids],
-            ..Default::default()
-        })
+        AltLocPolicy::Configured(AltLocSelection::default().with_groups(vec![ids]))
     )
     .is_err());
 }
@@ -579,10 +549,9 @@ fn mmcif_altloc_overlapping_groups_are_transitive() {
         .collect::<Vec<_>>();
     let result = selected(
         &source,
-        AltLocPolicy::Configured(AltLocSelection {
-            groups: vec![ids[..2].to_vec(), ids[1..].to_vec()],
-            ..Default::default()
-        }),
+        AltLocPolicy::Configured(
+            AltLocSelection::default().with_groups(vec![ids[..2].to_vec(), ids[1..].to_vec()]),
+        ),
     )
     .unwrap();
     assert_eq!(choices(&result), [vec!["B"], vec!["B"], vec!["B"]]);

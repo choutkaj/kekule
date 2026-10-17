@@ -392,10 +392,7 @@ fn append(
         builder.hierarchy_mut().add_atom_site(
             residue,
             InstanceAtomId::new(instance, atom),
-            AtomSiteMetadata {
-                label_atom_id: Some(name.into()),
-                ..Default::default()
-            },
+            AtomSiteMetadata::default().with_label_atom_id(Some(name.into())),
         )?;
     }
     builder.set_residue_class(residue, class)?;

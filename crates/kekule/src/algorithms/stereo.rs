@@ -86,24 +86,44 @@ impl CoordinateStereoOptions {
 
 /// Coordinate-derived stereo for the foci the molecule leaves unasserted, and
 /// the asserted stereo the coordinates contradict.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordinateStereoResult {
+    pub(crate) elements: Vec<StereoElement>,
+    pub(crate) disagreements: Vec<StereoElementId>,
+}
+
+impl CoordinateStereoResult {
     /// New elements for stereocenters, double bonds, and (when enabled) axes
     /// without a stereo element, ready to materialize.
-    pub elements: Vec<StereoElement>,
+    pub fn elements(&self) -> &[StereoElement] {
+        &self.elements
+    }
+
     /// Existing specified elements whose configuration is the opposite of the
     /// one their carriers have in the coordinates, in element order. Unknown
     /// configurations and degenerate or flat geometry are never contradictions.
-    pub disagreements: Vec<StereoElementId>,
+    pub fn disagreements(&self) -> &[StereoElementId] {
+        &self.disagreements
+    }
 }
 
 /// Stereo elements created by an explicit coordinate-stereo materialization.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordinateStereoMaterializationReport {
-    pub created_elements: Vec<StereoElementId>,
+    pub(crate) created_elements: Vec<StereoElementId>,
+    pub(crate) disagreements: Vec<StereoElementId>,
+}
+
+impl CoordinateStereoMaterializationReport {
+    pub fn created_elements(&self) -> &[StereoElementId] {
+        &self.created_elements
+    }
+
     /// Existing elements the coordinates contradict; materialization leaves
     /// them unchanged. See [`CoordinateStereoResult::disagreements`].
-    pub disagreements: Vec<StereoElementId>,
+    pub fn disagreements(&self) -> &[StereoElementId] {
+        &self.disagreements
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

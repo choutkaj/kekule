@@ -84,7 +84,7 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
     let report = sequential.open_report();
     assert_eq!(report.selected_format(), TrajectoryFormat::Xyz);
     assert_eq!(
-        sequential.metadata().fields().positions,
+        sequential.metadata().fields().positions(),
         FieldAvailability::Required
     );
     assert_eq!(

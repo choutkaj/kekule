@@ -494,12 +494,12 @@ fn mmcif_connectivity_matches_an_independent_reference() {
                 .collect::<Vec<_>>();
             let ap5 = |asym: &str| {
                 (
-                    SourceResidueId {
-                        model_id: "1".to_owned(),
-                        asym_id: asym.to_owned(),
-                        position: SourceResiduePosition::Author("215".to_owned()),
-                        insertion_code: None,
-                    },
+                    SourceResidueId::from_parts(
+                        "1",
+                        asym,
+                        SourceResiduePosition::Author("215".to_owned()),
+                        None,
+                    ),
                     "AP5".to_owned(),
                     62,
                 )

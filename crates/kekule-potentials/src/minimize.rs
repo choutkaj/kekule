@@ -166,11 +166,29 @@ pub enum MinimizationStatus {
 /// State after one accepted step, passed to a [`minimize_with_observer`] callback.
 #[derive(Debug, Clone, Copy)]
 pub struct MinimizationStep<'a> {
+    pub(crate) iteration: usize,
+    pub(crate) energy: &'a Energy,
+    pub(crate) max_gradient: Quantity<f64>,
+    pub(crate) positions: &'a Positions,
+}
+
+impl<'a> MinimizationStep<'a> {
     /// Number of accepted steps so far, starting at one.
-    pub iteration: usize,
-    pub energy: &'a Energy,
-    pub max_gradient: Quantity<f64>,
-    pub positions: &'a Positions,
+    pub const fn iteration(&self) -> usize {
+        self.iteration
+    }
+
+    pub const fn energy(&self) -> &'a Energy {
+        self.energy
+    }
+
+    pub const fn max_gradient(&self) -> Quantity<f64> {
+        self.max_gradient
+    }
+
+    pub const fn positions(&self) -> &'a Positions {
+        self.positions
+    }
 }
 
 /// Minimized coordinates and convergence diagnostics.

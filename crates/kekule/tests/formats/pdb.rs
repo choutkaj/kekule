@@ -1,7 +1,7 @@
 use kekule::diagnostics::{DiagnosticKind, SourceLocation};
 use kekule::macromolecular::{
-    AltLocPolicy, AltLocResidue, BondEvidence, CellOmissionReason, ConnectionResolutionReason,
-    EntityKind, ModelSelection, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
+    AltLocPolicy, BondEvidence, CellOmissionReason, ConnectionResolutionReason, EntityKind,
+    ModelSelection, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
 use kekule::molecule::BondOrder;
@@ -262,12 +262,7 @@ fn connection(id: Option<&str>, kind: &str) -> BondEvidence {
 }
 
 fn residue(asym: &str, position: SourceResiduePosition) -> SourceResidueId {
-    SourceResidueId {
-        model_id: "1".to_owned(),
-        asym_id: asym.to_owned(),
-        position,
-        insertion_code: None,
-    }
+    SourceResidueId::from_parts("1", asym, position, None)
 }
 
 #[test]
@@ -925,13 +920,12 @@ fn recurring_numbers_and_alternate_locations_identify_residues() {
             repeat: 1,
         },
     );
-    assert_eq!(
-        document.alternate_locations().unwrap(),
-        [AltLocResidue {
-            residue: repeated.clone(),
-            labels: vec!["A".to_owned(), "B".to_owned()],
-        }]
-    );
+    let alternatives = document.alternate_locations().unwrap();
+    let [alternative] = alternatives.as_slice() else {
+        panic!("one residue with alternate locations");
+    };
+    assert_eq!(alternative.residue(), &repeated);
+    assert_eq!(alternative.labels(), ["A", "B"]);
 
     let cases = [
         (
@@ -951,8 +945,8 @@ fn recurring_numbers_and_alternate_locations_identify_residues() {
         let [decision] = interpreted.report().alternate_locations() else {
             panic!("one alternate-location decision");
         };
-        assert_eq!(decision.residue, repeated);
-        assert_eq!(decision.selected_labels, [label]);
+        assert_eq!(decision.residue(), &repeated);
+        assert_eq!(decision.selected_labels(), [label]);
         let mut residues = interpreted
             .report()
             .instances()

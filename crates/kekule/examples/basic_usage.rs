@@ -15,10 +15,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("atoms: {}", molecule.atom_count());
     println!("bonds: {}", molecule.bond_count());
     println!("formal charge: {}", molecule.formal_charge());
-    for assignment in &stereochemistry.assigned {
+    for assignment in stereochemistry.assigned() {
         println!(
             "stereo {:?}: {:?}",
-            assignment.element, assignment.descriptor
+            assignment.element(),
+            assignment.descriptor()
         );
     }
 

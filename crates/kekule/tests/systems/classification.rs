@@ -43,10 +43,7 @@ fn linear_residue_topology(
                 .add_atom_site(
                     residue,
                     InstanceAtomId::new(instance, atom),
-                    AtomSiteMetadata {
-                        label_atom_id: Some(name.to_owned()),
-                        ..AtomSiteMetadata::default()
-                    },
+                    AtomSiteMetadata::default().with_label_atom_id(Some(name.to_owned())),
                 )
                 .unwrap();
         }
@@ -71,10 +68,7 @@ fn one_residue_topology(
             .add_atom_site(
                 residue,
                 InstanceAtomId::new(instance, atom),
-                AtomSiteMetadata {
-                    label_atom_id: Some(format!("X{}", index + 1)),
-                    ..AtomSiteMetadata::default()
-                },
+                AtomSiteMetadata::default().with_label_atom_id(Some(format!("X{}", index + 1))),
             )
             .unwrap();
     }
@@ -254,10 +248,8 @@ fn reused_definition_shares_class_and_conflicting_strong_instances_become_other(
                     .add_atom_site(
                         residue,
                         InstanceAtomId::new(instance, atoms[index * 2 + offset]),
-                        AtomSiteMetadata {
-                            label_atom_id: Some(names[offset].to_owned()),
-                            ..AtomSiteMetadata::default()
-                        },
+                        AtomSiteMetadata::default()
+                            .with_label_atom_id(Some(names[offset].to_owned())),
                     )
                     .unwrap();
             }

@@ -162,9 +162,9 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
         .unwrap();
         let old = m.clone();
         let report = solvation::solvate(&mut m, &options()).unwrap();
-        assert!(report.waters_added > 100);
-        assert_eq!(m.atom_count(), 1 + 3 * report.waters_added);
-        assert_eq!(m.topology().bond_count(), 2 * report.waters_added);
+        assert!(report.waters_added() > 100);
+        assert_eq!(m.atom_count(), 1 + 3 * report.waters_added());
+        assert_eq!(m.topology().bond_count(), 2 * report.waters_added());
         assert_eq!(m.topology().definition_count(), 2);
         assert_eq!(m.cell(), old.cell());
         assert_eq!(points(&m)[0], points(&old)[0]);
@@ -205,7 +205,7 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
         for residue in m.topology().residues() {
             assert_eq!(residue.class(), ResidueClass::Water);
         }
-        assert_eq!(m.topology().atom_sites().count(), 3 * report.waters_added);
+        assert_eq!(m.topology().atom_sites().count(), 3 * report.waters_added());
     }
 }
 
@@ -216,7 +216,7 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
         let mut water_only = initial.clone();
         let nw = solvation::solvate(&mut water_only, &options())
             .unwrap()
-            .waters_added;
+            .waters_added();
         let opts = SolventOptions::default().with_ionic_strength(Quantity::new(0.2, MOLAR));
         let mut a = initial.clone();
         let mut b = initial.clone();
@@ -226,12 +226,12 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
         let pairs =
             (((nw - charge.unsigned_abs() as usize) as f64 * 0.2 / 55.4) + 0.5).floor() as usize;
         assert_eq!(
-            report.positive_ions_added,
+            report.positive_ions_added(),
             pairs + (-charge).max(0) as usize
         );
-        assert_eq!(report.negative_ions_added, pairs + charge.max(0) as usize);
+        assert_eq!(report.negative_ions_added(), pairs + charge.max(0) as usize);
         assert_eq!(
-            report.waters_added + report.positive_ions_added + report.negative_ions_added,
+            report.waters_added() + report.positive_ions_added() + report.negative_ions_added(),
             nw
         );
         assert_eq!(
@@ -304,8 +304,11 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
                 .with_ionic_strength(Quantity::new(0.1, MOLAR)),
         )
         .unwrap();
-        assert_eq!(report.positive_ions_added, report.negative_ions_added + 2);
-        assert_eq!(report.charge_basis, SolvationChargeBasis::Override);
+        assert_eq!(
+            report.positive_ions_added(),
+            report.negative_ions_added() + 2
+        );
+        assert_eq!(report.charge_basis(), SolvationChargeBasis::Override);
         assert_eq!(m.topology().atoms().next().unwrap().formal_charge, 0);
     }
     let composed = MOLE.try_div(METER.try_powi(3).unwrap()).unwrap();
@@ -388,10 +391,7 @@ fn original_entities_properties_and_existing_water_survive() {
             .add_atom_site(
                 residue,
                 *id,
-                AtomSiteMetadata {
-                    label_atom_id: Some(format!("old{i}")),
-                    ..Default::default()
-                },
+                AtomSiteMetadata::default().with_label_atom_id(Some(format!("old{i}"))),
             )
             .unwrap();
     }
@@ -433,10 +433,10 @@ fn original_entities_properties_and_existing_water_survive() {
         None
     );
     assert_eq!(
-        report.cleared_topology_properties,
+        report.cleared_topology_properties(),
         vec![key("topology_note")]
     );
-    assert_eq!(report.cleared_model_properties, vec![key("model_note")]);
+    assert_eq!(report.cleared_model_properties(), vec![key("model_note")]);
     assert_eq!(
         m.topology().hierarchy().chain(chain).unwrap(),
         before.topology().hierarchy().chain(chain).unwrap()
@@ -473,11 +473,11 @@ fn externally_supplied_solute_and_increasing_boxes() {
         )
         .unwrap();
         let report = solvation::solvate(&mut m, &options()).unwrap();
-        assert!(report.waters_added > previous);
-        let density = report.waters_added as f64 / size.powi(3);
+        assert!(report.waters_added() > previous);
+        let density = report.waters_added() as f64 / size.powi(3);
         assert!((25.0..35.0).contains(&density), "density={density}");
         assert_eq!(&points(&m)[..solute.atom_count()], points(&solute));
-        previous = report.waters_added;
+        previous = report.waters_added();
     }
 }
 
@@ -503,7 +503,7 @@ fn rotated_skewed_and_left_handed_cells_fill_without_moving_solute() {
         let cell = PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3]).unwrap();
         solvation::add_periodic_box(&mut m, &PeriodicBoxOptions::Cell(cell)).unwrap();
         let report = solvation::solvate(&mut m, &options()).unwrap();
-        assert!(report.waters_added > 100);
+        assert!(report.waters_added() > 100);
         assert_eq!(m.position(atom).unwrap().into_value(), position);
         let geometry = PeriodicGeometry::new(cell).unwrap();
         for water in m.topology().molecules().skip(1) {
@@ -583,7 +583,7 @@ fn all_candidate_waters_can_be_replaced_without_unused_definitions() {
     let mut water_only = initial.clone();
     let count = solvation::solvate(&mut water_only, &options())
         .unwrap()
-        .waters_added;
+        .waters_added();
     let mut m = initial;
     let report = solvation::solvate(
         &mut m,
@@ -592,8 +592,8 @@ fn all_candidate_waters_can_be_replaced_without_unused_definitions() {
             .with_ion_separation(Quantity::new(0.01, NANOMETER)),
     )
     .unwrap();
-    assert_eq!(report.waters_added, 0);
-    assert_eq!(report.negative_ions_added, count);
+    assert_eq!(report.waters_added(), 0);
+    assert_eq!(report.negative_ions_added(), count);
     assert_eq!(m.topology().definition_count(), 2);
     assert_eq!(m.atom_count(), 1 + count);
     assert_eq!(m.topology().bond_count(), 0);
@@ -621,7 +621,7 @@ fn salt_rounds_half_up_and_molarity_accepts_composed_units() {
     let mut water_only = initial.clone();
     let count = solvation::solvate(&mut water_only, &options())
         .unwrap()
-        .waters_added;
+        .waters_added();
     for (fraction, expected) in [(0.49, 0), (0.5, 1), (1.49, 1), (1.5, 2)] {
         let concentration = fraction * 55.4 / count as f64;
         let mut m = initial.clone();
@@ -630,8 +630,8 @@ fn salt_rounds_half_up_and_molarity_accepts_composed_units() {
             &options().with_ionic_strength(Quantity::new(concentration, MOLAR)),
         )
         .unwrap();
-        assert_eq!(report.positive_ions_added, expected);
-        assert_eq!(report.negative_ions_added, expected);
+        assert_eq!(report.positive_ions_added(), expected);
+        assert_eq!(report.negative_ions_added(), expected);
     }
     let composed = MOLE.try_div(METER.try_powi(3).unwrap()).unwrap();
     let mut a = initial.clone();

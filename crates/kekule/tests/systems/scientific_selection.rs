@@ -51,11 +51,9 @@ fn topology() -> Arc<Topology> {
             .add_atom_site(
                 residue,
                 atoms[index],
-                AtomSiteMetadata {
-                    label_atom_id: Some(label.into()),
-                    auth_atom_id: Some(author.into()),
-                    ..Default::default()
-                },
+                AtomSiteMetadata::default()
+                    .with_label_atom_id(Some(label.into()))
+                    .with_auth_atom_id(Some(author.into())),
             )
             .unwrap();
     }

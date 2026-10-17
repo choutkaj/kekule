@@ -121,12 +121,38 @@ impl std::error::Error for DsspCodeError {}
 /// Source hierarchy labels retained as metadata, not result identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DsspResidueSource {
-    pub residue_name: String,
-    pub chain_label_id: String,
-    pub chain_author_id: Option<String>,
-    pub label_sequence_id: Option<i32>,
-    pub author_sequence_id: Option<String>,
-    pub insertion_code: Option<String>,
+    pub(crate) residue_name: String,
+    pub(crate) chain_label_id: String,
+    pub(crate) chain_author_id: Option<String>,
+    pub(crate) label_sequence_id: Option<i32>,
+    pub(crate) author_sequence_id: Option<String>,
+    pub(crate) insertion_code: Option<String>,
+}
+
+impl DsspResidueSource {
+    pub fn residue_name(&self) -> &str {
+        &self.residue_name
+    }
+
+    pub fn chain_label_id(&self) -> &str {
+        &self.chain_label_id
+    }
+
+    pub fn chain_author_id(&self) -> Option<&str> {
+        self.chain_author_id.as_deref()
+    }
+
+    pub const fn label_sequence_id(&self) -> Option<i32> {
+        self.label_sequence_id
+    }
+
+    pub fn author_sequence_id(&self) -> Option<&str> {
+        self.author_sequence_id.as_deref()
+    }
+
+    pub fn insertion_code(&self) -> Option<&str> {
+        self.insertion_code.as_deref()
+    }
 }
 
 /// Whether a residue starts a chain segment in the analyzed snapshot.
@@ -156,18 +182,42 @@ pub enum DsspHelixPosition {
 /// cutoff.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DsspHydrogenBond {
-    pub partner: ResidueId,
+    pub(crate) partner: ResidueId,
+    pub(crate) energy_kcal_per_mol: f64,
+}
+
+impl DsspHydrogenBond {
+    pub const fn partner(&self) -> ResidueId {
+        self.partner
+    }
+
     /// DSSP electrostatic energy in kcal/mol.
-    pub energy_kcal_per_mol: f64,
+    pub const fn energy_kcal_per_mol(&self) -> f64 {
+        self.energy_kcal_per_mol
+    }
 }
 
 /// One beta partner produced by DSSP bridge/ladder construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspBetaPartner {
-    pub partner: ResidueId,
+    pub(crate) partner: ResidueId,
+    pub(crate) ladder: usize,
+    pub(crate) parallel: bool,
+}
+
+impl DsspBetaPartner {
+    pub const fn partner(&self) -> ResidueId {
+        self.partner
+    }
+
     /// Zero-based deterministic ladder identifier.
-    pub ladder: usize,
-    pub parallel: bool,
+    pub const fn ladder(&self) -> usize {
+        self.ladder
+    }
+
+    pub const fn parallel(&self) -> bool {
+        self.parallel
+    }
 }
 
 /// DSSP values for one analyzed residue.
@@ -359,9 +409,23 @@ pub enum DsspSkipReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DsspSkippedResidue {
-    pub key: ResidueId,
-    pub source: DsspResidueSource,
-    pub reason: DsspSkipReason,
+    pub(crate) key: ResidueId,
+    pub(crate) source: DsspResidueSource,
+    pub(crate) reason: DsspSkipReason,
+}
+
+impl DsspSkippedResidue {
+    pub const fn key(&self) -> ResidueId {
+        self.key
+    }
+
+    pub fn source(&self) -> &DsspResidueSource {
+        &self.source
+    }
+
+    pub fn reason(&self) -> &DsspSkipReason {
+        &self.reason
+    }
 }
 
 /// Non-fatal extraction and work accounting for one assignment.

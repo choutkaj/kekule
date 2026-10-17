@@ -136,16 +136,34 @@ fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
 
 /// Owner annotations excluded by one successful append, in property-key order.
 /// Entity properties are transferred under [`ModelEditor::append_model`]'s contract.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelAppendReport {
+    pub(crate) cleared_topology_properties: Vec<PropertyKey>,
+    pub(crate) cleared_model_properties: Vec<PropertyKey>,
+    pub(crate) omitted_topology_properties: Vec<PropertyKey>,
+    pub(crate) omitted_model_properties: Vec<PropertyKey>,
+}
+
+impl ModelAppendReport {
     /// Destination topology owner keys cleared because the system changed.
-    pub cleared_topology_properties: Vec<PropertyKey>,
+    pub fn cleared_topology_properties(&self) -> &[PropertyKey] {
+        &self.cleared_topology_properties
+    }
+
     /// Destination structure owner keys cleared because the model changed.
-    pub cleared_model_properties: Vec<PropertyKey>,
+    pub fn cleared_model_properties(&self) -> &[PropertyKey] {
+        &self.cleared_model_properties
+    }
+
     /// Source topology owner keys that do not describe the combined system.
-    pub omitted_topology_properties: Vec<PropertyKey>,
+    pub fn omitted_topology_properties(&self) -> &[PropertyKey] {
+        &self.omitted_topology_properties
+    }
+
     /// Source structure owner keys that do not describe the combined model.
-    pub omitted_model_properties: Vec<PropertyKey>,
+    pub fn omitted_model_properties(&self) -> &[PropertyKey] {
+        &self.omitted_model_properties
+    }
 }
 
 /// One import's source-to-draft identities and retention report.

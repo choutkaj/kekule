@@ -51,7 +51,7 @@ pub enum AltLocPreference {
 /// Exact choices and optional correlation constraints for one source block.
 ///
 /// Obtain source identities from [`super::super::MmcifBlock::alternate_locations`].
-/// Overrides take precedence over `default`. Every override and group member must
+/// Overrides take precedence over the default preference. Every override and group member must
 /// identify a residue with alternatives. Unknown identities and conflicting group
 /// choices are errors, including those in unselected source coordinate models.
 ///
@@ -61,15 +61,13 @@ pub enum AltLocPreference {
 ///     StructureInterpretOptions, StructureInterpretation};
 /// use kekule::mmcif::MmcifBlock;
 /// # fn choose(block: &MmcifBlock) -> Result<StructureInterpretation, FormatError> {
-/// let mut selection = AltLocSelection {
-///     default: AltLocPreference::PreferLabel("A".into()),
-///     ..Default::default()
-/// };
+/// let mut selection =
+///     AltLocSelection::default().with_default_preference(AltLocPreference::PreferLabel("A".into()));
 /// // Override one source residue, using its exact block-scoped identity.
 /// if let Some(residue) = block.alternate_locations()?.into_iter()
-///     .find(|residue| residue.labels.iter().any(|label| label == "B"))
+///     .find(|residue| residue.labels().iter().any(|label| label == "B"))
 /// {
-///     selection.overrides.insert(residue.residue, "B".into());
+///     selection = selection.with_override(residue.residue().clone(), "B");
 /// }
 /// block.interpret(
 ///     StructureInterpretOptions::default()
@@ -79,14 +77,69 @@ pub enum AltLocPreference {
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AltLocSelection {
-    pub default: AltLocPreference,
-    pub overrides: BTreeMap<SourceResidueId, String>,
+    pub(crate) default: AltLocPreference,
+    pub(crate) overrides: BTreeMap<SourceResidueId, String>,
+    pub(crate) groups: Vec<Vec<SourceResidueId>>,
+    pub(crate) source_conformation: Option<String>,
+}
+
+impl AltLocSelection {
+    /// The preference for residues without an override.
+    pub fn default_preference(&self) -> &AltLocPreference {
+        &self.default
+    }
+
+    /// Sets [`Self::default_preference`].
+    #[must_use]
+    pub fn with_default_preference(mut self, default: AltLocPreference) -> Self {
+        self.default = default;
+        self
+    }
+
+    /// Exact label choices that take precedence over the default preference.
+    pub fn overrides(&self) -> &BTreeMap<SourceResidueId, String> {
+        &self.overrides
+    }
+
+    /// Chooses `label` for one source residue, replacing an earlier override.
+    #[must_use]
+    pub fn with_override(mut self, residue: SourceResidueId, label: impl Into<String>) -> Self {
+        self.overrides.insert(residue, label.into());
+        self
+    }
+
+    /// Replaces every override.
+    #[must_use]
+    pub fn with_overrides(mut self, overrides: BTreeMap<SourceResidueId, String>) -> Self {
+        self.overrides = overrides;
+        self
+    }
+
     /// Residues constrained to use the same label. Groups must contain at least
     /// two distinct residues in one source model; overlapping groups are united.
-    pub groups: Vec<Vec<SourceResidueId>>,
+    pub fn groups(&self) -> &[Vec<SourceResidueId>] {
+        &self.groups
+    }
+
+    /// Sets [`Self::groups`].
+    #[must_use]
+    pub fn with_groups(mut self, groups: Vec<Vec<SourceResidueId>>) -> Self {
+        self.groups = groups;
+        self
+    }
+
     /// Select one `_atom_sites_alt_gen.ens_id` combination explicitly.
     /// This identifier does not create or select an `Ensemble` member.
-    pub source_conformation: Option<String>,
+    pub fn source_conformation(&self) -> Option<&str> {
+        self.source_conformation.as_deref()
+    }
+
+    /// Sets [`Self::source_conformation`].
+    #[must_use]
+    pub fn with_source_conformation(mut self, source_conformation: Option<String>) -> Self {
+        self.source_conformation = source_conformation;
+        self
+    }
 }
 
 /// A source-scoped residue identity, independent of selected chemistry and rows.
@@ -97,10 +150,44 @@ pub struct AltLocSelection {
 /// source coordinate models remain significant.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SourceResidueId {
-    pub model_id: String,
-    pub asym_id: String,
-    pub position: SourceResiduePosition,
-    pub insertion_code: Option<String>,
+    pub(crate) model_id: String,
+    pub(crate) asym_id: String,
+    pub(crate) position: SourceResiduePosition,
+    pub(crate) insertion_code: Option<String>,
+}
+
+impl SourceResidueId {
+    /// A residue identity from its source-scoped parts, for example to name
+    /// an [`AltLocSelection`] override without reading the block first.
+    pub fn from_parts(
+        model_id: impl Into<String>,
+        asym_id: impl Into<String>,
+        position: SourceResiduePosition,
+        insertion_code: Option<String>,
+    ) -> Self {
+        Self {
+            model_id: model_id.into(),
+            asym_id: asym_id.into(),
+            position,
+            insertion_code,
+        }
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    pub fn asym_id(&self) -> &str {
+        &self.asym_id
+    }
+
+    pub fn position(&self) -> &SourceResiduePosition {
+        &self.position
+    }
+
+    pub fn insertion_code(&self) -> Option<&str> {
+        self.insertion_code.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -169,9 +256,19 @@ impl SourceResidueId {
 /// Source alternatives available at a residue before any coordinate selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AltLocResidue {
-    pub residue: SourceResidueId,
+    pub(crate) residue: SourceResidueId,
+    pub(crate) labels: Vec<String>,
+}
+
+impl AltLocResidue {
+    pub fn residue(&self) -> &SourceResidueId {
+        &self.residue
+    }
+
     /// Labels in lexical order. Shared unlabelled atoms are not a separate choice.
-    pub labels: Vec<String>,
+    pub fn labels(&self) -> &[String] {
+        &self.labels
+    }
 }
 
 /// Why an alternate configuration was selected for a residue.
@@ -190,13 +287,39 @@ pub enum AltLocSelectionReason {
 /// Source correspondence for one residue's alternate-location decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AltLocDecision {
-    pub residue: SourceResidueId,
-    pub available_labels: Vec<String>,
+    pub(crate) residue: SourceResidueId,
+    pub(crate) available_labels: Vec<String>,
+    pub(crate) selected_labels: Vec<String>,
+    pub(crate) reason: AltLocSelectionReason,
+    pub(crate) selected_source_lines: Vec<usize>,
+    pub(crate) omitted_source_lines: Vec<usize>,
+}
+
+impl AltLocDecision {
+    pub fn residue(&self) -> &SourceResidueId {
+        &self.residue
+    }
+
+    pub fn available_labels(&self) -> &[String] {
+        &self.available_labels
+    }
+
     /// Usually one label; source-declared combinations may include several
     /// non-overlapping labelled subsets of one residue.
-    pub selected_labels: Vec<String>,
-    pub reason: AltLocSelectionReason,
+    pub fn selected_labels(&self) -> &[String] {
+        &self.selected_labels
+    }
+
+    pub fn reason(&self) -> &AltLocSelectionReason {
+        &self.reason
+    }
+
     /// One-based source lines, including retained unlabelled shared atoms.
-    pub selected_source_lines: Vec<usize>,
-    pub omitted_source_lines: Vec<usize>,
+    pub fn selected_source_lines(&self) -> &[usize] {
+        &self.selected_source_lines
+    }
+
+    pub fn omitted_source_lines(&self) -> &[usize] {
+        &self.omitted_source_lines
+    }
 }

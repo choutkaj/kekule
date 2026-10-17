@@ -2318,10 +2318,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
             .add_atom_site(
                 residue,
                 InstanceAtomId::new(instance, atom),
-                AtomSiteMetadata {
-                    label_atom_id: Some("CA".to_owned()),
-                    ..AtomSiteMetadata::default()
-                },
+                AtomSiteMetadata::default().with_label_atom_id(Some("CA".to_owned())),
             )
             .unwrap();
     }
@@ -2658,10 +2655,7 @@ fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &st
         .add_atom_site(
             residue,
             InstanceAtomId::new(instance, atom),
-            AtomSiteMetadata {
-                label_atom_id: Some(atom_name.to_owned()),
-                ..AtomSiteMetadata::default()
-            },
+            AtomSiteMetadata::default().with_label_atom_id(Some(atom_name.to_owned())),
         )
         .unwrap();
     builder.build().unwrap()
@@ -2704,10 +2698,7 @@ fn carbohydrate_model(components: &[&str], bonds: &[(usize, usize)]) -> Model {
             .add_atom_site(
                 residue,
                 InstanceAtomId::new(instance, atom),
-                AtomSiteMetadata {
-                    label_atom_id: Some("C1".to_owned()),
-                    ..AtomSiteMetadata::default()
-                },
+                AtomSiteMetadata::default().with_label_atom_id(Some("C1".to_owned())),
             )
             .unwrap();
     }

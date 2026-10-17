@@ -362,7 +362,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
         .contains(&FormatDetectionEvidence::MissingExtension));
     assert_eq!(sequential.metadata().atom_count(), 2);
     assert_eq!(
-        sequential.metadata().fields().positions,
+        sequential.metadata().fields().positions(),
         FieldAvailability::Required
     );
     assert_eq!(

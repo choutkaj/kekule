@@ -105,6 +105,30 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Results, reports and their records have private fields with
+  accessors and no `Default` (ARCHITECTURE.md, "Options, results, and
+  enums"); a field `report.added` is now `report.added()`, and collections
+  are returned as slices. This covers `AddHydrogensReport`,
+  `AddedHydrogen`, `RemoveHydrogensReport`, `RemovedHydrogen`,
+  `RetainedHydrogen`, `HydrogenCountAdjustment`, `CipAssignmentReport`,
+  `CipAssignment`, `CipSkipped`, `CoordinateStereoResult`,
+  `CoordinateStereoMaterializationReport`, `StereoCleanupReport`,
+  `ModelAppendReport`, `SolvationReport`, `DsspResidueSource`,
+  `DsspHydrogenBond`, `DsspBetaPartner`, `DsspSkippedResidue`,
+  `SourceResidueId`, `AltLocResidue`, `AltLocDecision`, the `kekule-openff`
+  parameter types (`ParameterIdentity`, `BondParameter`, `AngleParameter`,
+  `TorsionTerm`, `TorsionParameter`, `VdwParameter`, `ConstraintParameter`,
+  `Interaction`, `PairException`, `NonbondedSettings`, `MoleculeLabels`,
+  `ChargeAssignment`), `kekule-potentials` `EnergyComponent`,
+  `MinimizationStep` and `ComponentEvaluation`, and `kekule-traj`
+  `TrajectoryFieldAvailability`.
+  - `SourceResidueId::from_parts` builds a residue identity, for example to
+    name an override.
+  - `AltLocSelection` and `AtomSiteMetadata` are inputs and follow the
+    options style: getters and `with_*` setters, keeping `Default`.
+    `AltLocSelection::default` is `default_preference()` /
+    `with_default_preference`, and `with_override(residue, label)` adds one
+    override.
 - **Breaking:** Options structs have private fields, `Default`, getters and
   `#[must_use]` chainable `with_*` setters (ARCHITECTURE.md, "Options,
   results, and enums"); struct literals such as

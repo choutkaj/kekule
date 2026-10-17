@@ -143,13 +143,12 @@ fn annotated(conflict: Option<&str>) -> Model {
                 .add_atom_site(
                     residue,
                     InstanceAtomId::new(instance, id),
-                    AtomSiteMetadata {
-                        type_symbol: Some(value.element.symbol().into()),
-                        label_asym_id: Some("A".into()),
-                        auth_asym_id: Some("source-A".into()),
-                        label_atom_id: Some(format!("L{}", id.index())),
-                        auth_atom_id: Some(format!("X{}", id.index())),
-                    },
+                    AtomSiteMetadata::default()
+                        .with_type_symbol(Some(value.element.symbol().into()))
+                        .with_label_asym_id(Some("A".into()))
+                        .with_auth_asym_id(Some("source-A".into()))
+                        .with_label_atom_id(Some(format!("L{}", id.index())))
+                        .with_auth_atom_id(Some(format!("X{}", id.index()))),
                 )
                 .unwrap();
         }
@@ -414,18 +413,24 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     let mut editor = source.to_editor();
     let first = editor.append_model(&source).unwrap();
     assert_eq!(
-        first.report().cleared_topology_properties,
+        first.report().cleared_topology_properties(),
         vec![key("system_note")]
     );
-    assert_eq!(first.report().cleared_model_properties, vec![key("energy")]);
     assert_eq!(
-        first.report().omitted_topology_properties,
+        first.report().cleared_model_properties(),
+        vec![key("energy")]
+    );
+    assert_eq!(
+        first.report().omitted_topology_properties(),
         vec![key("system_note")]
     );
-    assert_eq!(first.report().omitted_model_properties, vec![key("energy")]);
+    assert_eq!(
+        first.report().omitted_model_properties(),
+        vec![key("energy")]
+    );
     let second = editor.append_model(&source.as_model_view()).unwrap();
-    assert!(second.report().cleared_model_properties.is_empty());
-    assert!(second.report().cleared_topology_properties.is_empty());
+    assert!(second.report().cleared_model_properties().is_empty());
+    assert!(second.report().cleared_topology_properties().is_empty());
     let result = editor.finish().unwrap();
     let target = &result;
     assert_eq!(target.atom_count(), source.atom_count() * 3);

@@ -990,10 +990,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
             .add_atom_site(
                 residue,
                 InstanceAtomId::new(waters[index], oxygen),
-                AtomSiteMetadata {
-                    label_atom_id: Some("O".to_owned()),
-                    ..AtomSiteMetadata::default()
-                },
+                AtomSiteMetadata::default().with_label_atom_id(Some("O".to_owned())),
             )
             .unwrap();
     }

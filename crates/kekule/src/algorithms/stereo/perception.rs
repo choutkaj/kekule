@@ -177,13 +177,23 @@ pub fn detect_stereo_candidates(
 }
 
 /// Stereo assertions removed by explicit chemical cleanup.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoCleanupReport {
-    pub removed_elements: Vec<StereoElementId>,
+    pub(crate) removed_elements: Vec<StereoElementId>,
+    pub(crate) unclassified_elements: Vec<StereoElementId>,
+}
+
+impl StereoCleanupReport {
+    pub fn removed_elements(&self) -> &[StereoElementId] {
+        &self.removed_elements
+    }
+
     /// Assertions whose local geometry is outside this cleanup model. These
     /// are preserved, not classified as chemically invalid from their absence
     /// in the candidate set.
-    pub unclassified_elements: Vec<StereoElementId>,
+    pub fn unclassified_elements(&self) -> &[StereoElementId] {
+        &self.unclassified_elements
+    }
 }
 
 /// Removes chemically ineligible or symmetry-degenerate tetrahedral/double-bond

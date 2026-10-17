@@ -240,7 +240,7 @@ fn group_aware_symmetry_cleanup_compares_whole_relationships() {
         let mut edit = source.to_editor();
         let report =
             kekule::stereo::cleanup::cleanup_stereo(&mut edit, Default::default()).unwrap();
-        assert_eq!(report.removed_elements.len(), 3 - count, "{fields}");
+        assert_eq!(report.removed_elements().len(), 3 - count, "{fields}");
         let cleaned = edit.finish().unwrap();
         assert_eq!(cleaned.stereo_elements().count(), count);
         assert_eq!(

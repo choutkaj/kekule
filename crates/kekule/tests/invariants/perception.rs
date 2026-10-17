@@ -65,7 +65,7 @@ fn explicit_hydrogen_round_trip_preserves_identity() {
             .map(|(focus, label)| {
                 let image = focus.try_map(|atom| {
                     removal
-                        .correspondence
+                        .correspondence()
                         .atom(AtomId::new(u32::try_from(atom).unwrap()))
                         .map(|id| id.index())
                 });

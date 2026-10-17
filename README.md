@@ -94,8 +94,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     // Assign and print stereochemistry
     let stereochemistry = stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())?;
-    for assignment in &stereochemistry.assigned {
-        println!("stereo {}: {:?}", assignment.element, assignment.descriptor);
+    for assignment in stereochemistry.assigned() {
+        println!("stereo {}: {:?}", assignment.element(), assignment.descriptor());
     }
     
     // Assign and print rotatable bonds
