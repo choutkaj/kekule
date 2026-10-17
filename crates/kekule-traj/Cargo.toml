@@ -4,18 +4,26 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/kekule-traj"
 license.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "Trajectory storage, streaming, workflows, and pure-Rust file codecs for Kekule."
+description = "Trajectory streaming, periodic preprocessing, analysis, and pure-Rust XYZ, DCD, TRR, and XTC I/O for Kekule."
 publish = true
+# Integration tests (tests/) and their fixtures are not shipped.
+include = ["/src/**", "/examples/**", "/benches/**", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
 
 [dependencies]
-kekule = { version = "0.3.0", path = "../kekule" }
+kekule.workspace = true
 
 [dev-dependencies]
 sha2 = "0.11"

@@ -4,12 +4,37 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-license.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/kekule"
+# The package also ships RDKit-derived code (BSD-3-Clause, LICENSE-RDKit) and
+# the OpenMM TIP3P water box (MIT, src/solvation/solvent/data/LICENSE-OPENMM).
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause AND MIT"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Pure Rust cheminformatics and molecular-structure backend."
 publish = true
+# Integration tests (tests/) and their fixtures are not shipped. The fixtures
+# below are compiled into the unit tests in src/, so `cargo test` works from
+# the package; their provenance records travel with them.
+include = [
+    "/src/**",
+    "/examples/**",
+    "/data/components/*.cif",
+    "/data/components/PROVENANCE.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/LICENSE-RDKit",
+    "/tests/fixtures/corpus/provenance.toml",
+    "/tests/fixtures/corpus/smoke/sources.lock.json",
+    "/tests/fixtures/corpus/smoke/data/rdkit_atropisomers/*.mol",
+    "/tests/fixtures/mmcif/1AKE.cif",
+    "/tests/fixtures/mmcif/provenance.toml",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true

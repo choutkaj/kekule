@@ -1,0 +1,47 @@
+# cargo-deny policy for the workspace lockfile. CI runs `cargo deny check`.
+# The fuzz package has its own lockfile and is audited by security.yml.
+
+[graph]
+all-features = true
+
+[advisories]
+# Vulnerabilities fail; unmaintained and unsound notices fail for direct and
+# transitive dependencies alike. Accept one only with a reason, as SECURITY.md
+# describes for cargo-audit.
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Every licence that ships in the dependency graph, including the workspace
+# crates' own data and ported code. Adding one is a deliberate review.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-3-Clause",
+    "CC-BY-4.0",
+    "Unicode-3.0",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+]
+confidence-threshold = 0.93
+unused-allowed-license = "allow"
+
+[licenses.private]
+# The unpublished benchmark observer is not distributed.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies between workspace members carry version requirements, so
+# they are not wildcards; the unpublished members have none.
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

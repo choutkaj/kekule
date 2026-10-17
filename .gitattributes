@@ -1,3 +1,5 @@
+# Normalize line endings to LF in the repository; exact-byte data opts out below.
+* text=auto
 # Provenance-pinned external fixtures must retain byte-exact source checksums.
 crates/kekule-openff/data/** -text
 crates/kekule/tests/fixtures/corpus/*/data/** binary

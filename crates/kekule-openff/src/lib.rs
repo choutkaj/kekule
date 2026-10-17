@@ -45,6 +45,7 @@ assert_eq!(parameters.charges().value().len(), atoms);
 //! The bundled Ash weights are CC BY 4.0 (see the `kekule-openff-ash` crate);
 //! disable the default `ash` feature to load models only from files.
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(rustdoc::broken_intra_doc_links)]
 
 mod assignment;

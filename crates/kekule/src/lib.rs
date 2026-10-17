@@ -1338,3 +1338,10 @@ pub mod prelude {
 
 #[cfg(test)]
 mod tests;
+
+// Compile and run the README examples so they cannot drift from the API. The
+// README is the workspace root's in the repository and the package root's once
+// packaged; `CARGO_PKG_README` names it relative to the manifest in both.
+#[cfg(doctest)]
+#[doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", env!("CARGO_PKG_README")))]
+struct ReadmeExamples;

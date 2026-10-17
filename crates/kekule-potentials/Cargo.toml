@@ -4,12 +4,20 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/kekule-potentials"
 license.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 description = "Energy, gradient, and geometry-optimization machinery for topology-bound Kekule models."
 publish = true
+# Integration tests (tests/) are not shipped.
+include = ["/src/**", "/examples/**", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
@@ -19,11 +27,11 @@ default = ["openff"]
 openff = ["dep:kekule-openff"]
 
 [dependencies]
-kekule = { version = "0.3.0", path = "../kekule" }
-kekule-openff = { version = "0.3.0", path = "../kekule-openff", optional = true }
+kekule.workspace = true
+kekule-openff = { workspace = true, optional = true }
 
 [dev-dependencies]
-kekule-traj = { version = "0.3.0", path = "../kekule-traj" }
+kekule-traj.workspace = true
 
 [[example]]
 name = "openff_workflow"

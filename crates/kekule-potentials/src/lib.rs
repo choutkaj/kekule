@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(rustdoc::broken_intra_doc_links)]
 
 //! Energies, gradients, and geometry optimization for topology-bound Kekule
@@ -61,10 +62,13 @@
 //! ```
 
 mod minimize;
+// Molecular-mechanics kernels serve only the OpenFF potential.
+#[cfg(feature = "openff")]
 mod mm;
 mod potential;
 
 #[cfg(feature = "openff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openff")))]
 pub mod openff;
 
 pub use minimize::{

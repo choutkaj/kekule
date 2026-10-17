@@ -9,12 +9,12 @@
   <a href="https://github.com/choutkaj/kekule/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/choutkaj/kekule/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://crates.io/crates/kekule"><img alt="crates.io version" src="https://img.shields.io/crates/v/kekule.svg"></a>
   <a href="https://github.com/choutkaj/kekule/blob/main/Cargo.toml"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
-  <a href="#license"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg"></a>
+  <a href="https://github.com/choutkaj/kekule#license"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg"></a>
 </p>
 
 `kekule` is an experimental chemistry backend scoped for both small molecules and macromolecules. The project is intended to cover regular cheminformatics workflows, as well as modeling-oriented tasks. `kekule` is human-architected and AI-coded.
 
-The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+The architectural contract lives in [`ARCHITECTURE.md`](https://github.com/choutkaj/kekule/blob/main/ARCHITECTURE.md).
 
 > [!NOTE]
 > `kekule` is in early development and should be considered unstable. Breaking API changes will happen without notice.
@@ -25,13 +25,18 @@ The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 cargo add kekule
 ```
 
-Trajectory I/O and selected potentials are available separately through the sister crates
-`kekule-traj` and `kekule-potentials`.
+Sister crates add the rest of the workspace:
 
+| Crate | Provides |
+| --- | --- |
+| [`kekule-traj`](https://crates.io/crates/kekule-traj) | Trajectory streaming, periodic preprocessing, and XYZ, DCD, TRR, and XTC file I/O |
+| [`kekule-openff`](https://crates.io/crates/kekule-openff) | SMIRNOFF force-field parameterization with the bundled OpenFF Rosemary force field and native NAGL partial charges |
+| [`kekule-openff-ash`](https://crates.io/crates/kekule-openff-ash) | The OpenFF Ash charge model as data, a default dependency of `kekule-openff` |
+| [`kekule-potentials`](https://crates.io/crates/kekule-potentials) | OpenFF energies and gradients, and L-BFGS geometry minimization |
 
 ## Concepts
 
-`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. Topology is a collection of one or more `Molecule`s together with `Hierarchy` (`Chain`, `Residue`, `AtomSite`). Molecules in `Topology` are not stored naively, but as `Definition`s and `Instance`s. For example, a hundred water molecules will be stored as one `Definition` and a hundred `Instances`. Coordinates are detached from `Molecule` and `Topology`: they live in structures. A structure is one set of coordinates and per-atom state of a topology: `Positions`, an optional periodic cell, and structure properties, plus fields specific to the kind of structure.
+`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. `Topology` is a collection of one or more `Molecule`s together with their hierarchy of chains, residues, and atom sites, read through `ChainView`, `ResidueView`, and `AtomSiteView`. Molecules in `Topology` are not stored naively, but as `MoleculeDefinition`s and instances. For example, a hundred water molecules will be stored as one definition and a hundred instances. Coordinates are detached from `Molecule` and `Topology`: they live in structures. A structure is one set of coordinates and per-atom state of a topology: `Positions`, an optional periodic cell, and structure properties, plus fields specific to the kind of structure.
 ```text
 Molecule = Graph + Perception + Properties
 Topology = collection of Molecules (stored as definitions and instances) + Hierarchy
@@ -110,9 +115,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ### SDF and mmCIF models
 
-Load one small molecule from an SDF record and another from an mmCIF data block, inspect and save both models, then combine them into a new model and write it as mmCIF:
+Load one small molecule from an SDF record and another from an mmCIF data block, inspect and save both models, then combine them into a new model and write it as mmCIF. The example reads
+`ligand.sdf` and `cofactor.cif` from the working directory:
 
-```rust
+```rust,no_run
 use std::{
     error::Error,
     fs::{self, File},
@@ -190,9 +196,10 @@ The combined-model example intentionally requires one connected small molecule p
 ### PDB structures
 
 Read a PDB entry, see where its bonds came from, and read every coordinate model
-as an ensemble:
+as an ensemble. The example reads `1ake.pdb`
+([1AKE](https://www.rcsb.org/structure/1AKE)) from the working directory:
 
-```rust
+```rust,no_run
 use std::{error::Error, fs};
 
 use kekule::macromolecular::{BondEvidence, StructureInterpretIssue};
@@ -243,4 +250,10 @@ Currently not accepting contributions.
 
 ## License
 
-`kekule` is available under either the [Apache License 2.0](LICENSE-APACHE) or the [MIT license](LICENSE-MIT), at your option.
+`kekule` is available under either the [Apache License 2.0](https://github.com/choutkaj/kekule/blob/main/LICENSE-APACHE) or the [MIT license](https://github.com/choutkaj/kekule/blob/main/LICENSE-MIT), at your option.
+
+Bundled third-party code and data keep their own licences, which each crate's
+`license` field declares: `kekule` contains RDKit-derived code
+([BSD-3-Clause](https://github.com/choutkaj/kekule/blob/main/crates/kekule/LICENSE-RDKit))
+and the OpenMM TIP3P water box (MIT), and `kekule-openff` and
+`kekule-openff-ash` bundle OpenFF data under CC BY 4.0.

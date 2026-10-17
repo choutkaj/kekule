@@ -1,11 +1,89 @@
 # Changelog
 
-All notable changes to Kekule are documented in this file.
+All notable changes to the Kekule workspace crates are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and the crates adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Before 1.0, a minor release (0.x to 0.(x+1)) may break the API; such entries
+are marked **Breaking:**.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-17
+
+This release curates the public API of every crate before it settles: one
+error policy, physical values as `Quantity`, consistent names, and topology
+views as the only hierarchy read path. It adds ensemble energies,
+symmetry-corrected RMSD and ensemble clustering, and fixes the correctness
+defects found by the 2026-10-15 release audit. It contains breaking API changes throughout
+the workspace. `kekule-openff-ash` is unchanged and stays at 0.3.0.
+
 ### Added
 
+- Ensemble members carry an optional typed energy (#246).
+  `EnsembleMember::with_energy`, `energy` and `set_energy` hold a finite
+  `Quantity` in the canonical energy unit, kept by selection, subsetting and
+  superposition like the weight and dropped when materializing a model.
+  Energies never change weights implicitly:
+  `Ensemble::assign_boltzmann_weights` derives them explicitly as
+  exp(-(E - E_min) / RT) and fails transactionally on a missing energy or an
+  underflowing factor.
+- Weight- and energy-aware ensemble selection (#246):
+  `Ensemble::ranked_by_weight`, `covering_weight` (the fewest members holding
+  a weight fraction), `ranked_by_energy`, `within_energy_window`,
+  `probabilities`, and Kish's `effective_sample_size`. Index results compose
+  with `select`, so the ten most populated members are
+  `select(ranked_by_weight().into_iter().take(10))`.
+- Symmetry-corrected fitting and RMSD through `alignment::SymmetricSelection`
+  and the new `FitAtoms::Symmetric` (#247). A symmetric selection prepares,
+  once per selection and topology layout, every permutation of the selected
+  atoms that extends to a graph automorphism fixing the selection setwise, so
+  methyl hydrogens, a flipped phenyl ring or carboxylate oxygens are compared
+  with their closest counterparts. Equivalence uses element, isotope,
+  hydrogen count and connectivity, never exchanges molecule instances, and
+  ignores bond orders and charges so localized resonance forms stay
+  equivalent. `alignment::fit`, `rmsd`, and the ensemble and trajectory
+  `superpose`, `rmsd` and `aligned_rmsd` methods take the smallest RMSD over
+  permutations, keeping the earliest on ties. The search is exact and
+  bounded; exceeding its permutation or step limit is an error rather than a
+  truncated result.
+- Ensemble clustering in the new `kekule::clustering` module (#248). Every
+  method returns an `EnsemblePartition`, a separate result assigning each
+  member to one cluster with one representative member per cluster;
+  clustering never changes the ensemble.
+  - `Ensemble::cluster_by_radius` is leader clustering on fitted RMSD over any
+    `FitAtoms`: members are visited by descending weight or ascending energy,
+    and each joins the nearest representative within the radius or founds a
+    new cluster.
+  - `Ensemble::collapse` keeps each representative's own state with its
+    cluster's summed weight, so collapsing Boltzmann-weighted rotamers gives
+    each conformer its degeneracy-weighted population.
+- Pairwise distance matrices and hierarchical clustering (#249).
+  `DistanceMatrix` stores each unordered pair once in SciPy's condensed
+  order; `Ensemble::pairwise_fitted_rmsd` fills it with fitted RMSDs and
+  `DistanceMatrix::from_condensed` accepts caller-supplied distances.
+  `DistanceMatrix::dendrogram` builds a single-, complete- or average-linkage
+  `Dendrogram` with the nearest-neighbor chain algorithm in O(n²) time, with
+  deterministic tie-breaking and SciPy-style cluster numbering, and
+  `Dendrogram::cut` cuts it by inclusive height or by cluster count.
+  `Ensemble::cluster_hierarchical` cuts it into a partition represented by
+  weighted medoids, so the tree depends on distances alone and weights only
+  choose representatives. Average-linkage merge distances are computed as a
+  weighted mean that never exceeds the larger input, so they stay finite as
+  distances approach `f64::MAX`. Member distances and radius clustering
+  accept only selections and symmetric selections, whose fits are the same in
+  either direction, and reject an `AtomCorrespondence` with
+  `ClusteringError::DirectedCorrespondence`.
+- Weighted k-medoids clustering (#250). `Ensemble::cluster_k_medoids`
+  partitions members around medoids that minimize the weight-summed distance
+  from every member to its nearest medoid, so highly populated conformers pull
+  cluster centers toward themselves. It is Partitioning Around Medoids: a
+  greedy BUILD, then best-improvement SWAP evaluated as in FastPAM1, in O(n²)
+  per iteration. Ties break by lowest member index, clusters are numbered by
+  lowest member, and the swap loop always terminates. Here and for
+  hierarchical representatives, weighted distance sums that exceed `f64::MAX`
+  are compared on distances rescaled by a power of two, so the member with the
+  least sum is chosen rather than the lowest index among infinite sums.
 - The `kekule-traj` readers, writers, and stream adapters (`XyzReader`,
   `IndexedDcdReader`, `FileTrajectoryWriter`, `MoleculeImager`,
   `TrajectoryUnwrapper`, and the others) and `kekule::core::AtomMut` and
@@ -1190,15 +1268,6 @@ All notable changes to Kekule are documented in this file.
   the source, terminator included. A CRLF line was counted one byte short, and
   a final line without a terminator one byte long, so the limit depended on
   line endings.
-- Average-linkage dendrograms no longer overflow to infinite merge heights
-  when finite distances approach `f64::MAX`, which also changed height cuts.
-  Merged distances are computed as a weighted mean that never exceeds the
-  larger input.
-- `Ensemble::cluster_k_medoids` and the representatives of
-  `Ensemble::cluster_hierarchical` choose the member with the least weighted
-  distance sum when those sums exceed `f64::MAX`, instead of the lowest index
-  among infinite sums. Such sums are compared on distances rescaled by a power
-  of two, so ordinary inputs and their tie-breaking are unchanged.
 - A 3D Molfile or SDF record no longer gives E/Z to a double bond whose
   endpoint carries two identical terminal ligands, such as a vinyl `=CH2`
   drawn with its hydrogens. The configuration was arbitrary, and canonical
@@ -1289,6 +1358,62 @@ This release adds the `kekule-openff` and `kekule-openff-ash` crates for OpenFF
 parameterization, rebuilds `kekule-potentials` around OpenFF energies and L-BFGS
 minimization, and moves trajectories and alignment into `kekule`. It contains
 breaking API changes throughout the workspace.
+
+### Added
+
+- The `kekule-openff` crate: pure-Rust SMIRNOFF parameter assignment with
+  native NAGL partial charges. It bundles the OpenFF Rosemary force field
+  (`ForceField::rosemary`) and, through the default `ash` feature, the Ash
+  charge model from the new `kekule-openff-ash` data crate (`NaglModel::ash`),
+  so a complete parameterization needs no Python, C toolchain, external files,
+  or network access. `ForceField::parameterize` assigns a shared topology once
+  per molecule definition and `parameterize_molecule` takes one molecule; both
+  take a `ChargeMethod` (a NAGL model, or `ChargeMethod::LibraryOnly`). Failures
+  are `Error` values with a stable `ErrorKind`. Custom OFFXML within the
+  supported SMIRNOFF subset and other schema-2 NAGL bundles are accepted, and
+  `kekule_openff::diagnostics` exposes NAGL features, raw inference, and lookup
+  keys. There is no molecule size limit. The crate's `CONTRACT.md` records the
+  supported subset, assignment semantics, error kinds, and validation. Both
+  crates are licensed `(MIT OR Apache-2.0) AND CC-BY-4.0` because they embed
+  CC BY 4.0 OpenFF data.
+- NAGL lookup selects a stored entry only when the input is exactly that
+  entry's molecule (isotopes ignored). Other bond-order or charge-placement
+  forms that upstream's fixed-H InChI lookup also merges use inference instead;
+  for Ash these are exotic, mostly with formal charges of magnitude 2-6.
+- Add `kekule_potentials::openff::OpenFfPotential`, which evaluates OpenFF
+  energies, gradients, and per-component gradients from a `ParameterizedTopology`
+  in vacuum without cutoffs, with optional replacement charges.
+- Add L-BFGS `minimize` and `minimize_with_observer` with a strong-Wolfe line
+  search, per-step displacement bound, singular-trial backtracking, and
+  `Minimization::to_model`.
+- Add `kekule_traj::periodic::make_molecules_whole`, `image_molecules`, and
+  temporal `unwrap`, which act in place on a `Trajectory`. They support
+  triclinic, rotated, and partially periodic cells, validate bonded ring
+  closure, and reject ambiguous temporal crossings. Imaging uses explicitly
+  selected anchor molecules. Unwrapping rejects decreasing available times,
+  including across frames without timestamps; equal times are allowed.
+- Add streaming `periodic::MoleculeImager`, `periodic::TrajectoryUnwrapper`, and
+  `analysis::FrameSuperposer`, which apply the same transformations to a
+  `FrameBuffer` and take the caller's frame index for diagnostics. Unwrapping
+  retains state across chunks, checks consecutive source indices, supports
+  explicit reset, and rolls back on failure.
+- Add `rmsf` and `contact_occupancy` over a `Trajectory`, where every frame
+  counts once; they reject ensembles, whose statistics must be weighted.
+- Add `kekule_traj::io::read_trajectory` and `read_trajectory_with_options` to
+  load complete trajectories through the existing streaming codecs, preserving
+  decoded frame state, topology sharing, and validation.
+- Add `io::write_trajectory` and `write_trajectory_with_options` for atomic saving
+  through the strict codecs, with extension inference, explicit format/precision
+  options, metadata preservation checks, and overwrite protection.
+- Add a trajectory workflow example that loads an mmCIF topology, prints frame
+  information, and aligns to the first frame. Streaming readers remain public
+  for processing files without loading every frame into memory.
+- Add infallible `AtomSelection::all(&topology)` with authoritative dense order
+  and exact topology sharing.
+- Add an optional comparison of the periodic transformations against references
+  generated with pinned MDTraj and MDAnalysis versions
+  (`trajectory_periodic_reference` example), and an informational
+  frame-access/superposition benchmark.
 
 ### Changed
 
@@ -1430,61 +1555,17 @@ breaking API changes throughout the workspace.
 - Borrow validated stored frames without rescanning dense properties on every
   access.
 
-### Added
+### Removed
 
-- The `kekule-openff` crate: pure-Rust SMIRNOFF parameter assignment with
-  native NAGL partial charges. It bundles the OpenFF Rosemary force field
-  (`ForceField::rosemary`) and, through the default `ash` feature, the Ash
-  charge model from the new `kekule-openff-ash` data crate (`NaglModel::ash`),
-  so a complete parameterization needs no Python, C toolchain, external files,
-  or network access. `ForceField::parameterize` assigns a shared topology once
-  per molecule definition and `parameterize_molecule` takes one molecule; both
-  take a `ChargeMethod` (a NAGL model, or `ChargeMethod::LibraryOnly`). Failures
-  are `Error` values with a stable `ErrorKind`. Custom OFFXML within the
-  supported SMIRNOFF subset and other schema-2 NAGL bundles are accepted, and
-  `kekule_openff::diagnostics` exposes NAGL features, raw inference, and lookup
-  keys. There is no molecule size limit. The crate's `CONTRACT.md` records the
-  supported subset, assignment semantics, error kinds, and validation. Both
-  crates are licensed `(MIT OR Apache-2.0) AND CC-BY-4.0` because they embed
-  CC BY 4.0 OpenFF data.
-- NAGL lookup selects a stored entry only when the input is exactly that
-  entry's molecule (isotopes ignored). Other bond-order or charge-placement
-  forms that upstream's fixed-H InChI lookup also merges use inference instead;
-  for Ash these are exotic, mostly with formal charges of magnitude 2-6.
-- Add `kekule_potentials::openff::OpenFfPotential`, which evaluates OpenFF
-  energies, gradients, and per-component gradients from a `ParameterizedTopology`
-  in vacuum without cutoffs, with optional replacement charges.
-- Add L-BFGS `minimize` and `minimize_with_observer` with a strong-Wolfe line
-  search, per-step displacement bound, singular-trial backtracking, and
-  `Minimization::to_model`.
-- Add `kekule_traj::periodic::make_molecules_whole`, `image_molecules`, and
-  temporal `unwrap`, which act in place on a `Trajectory`. They support
-  triclinic, rotated, and partially periodic cells, validate bonded ring
-  closure, and reject ambiguous temporal crossings. Imaging uses explicitly
-  selected anchor molecules. Unwrapping rejects decreasing available times,
-  including across frames without timestamps; equal times are allowed.
-- Add streaming `periodic::MoleculeImager`, `periodic::TrajectoryUnwrapper`, and
-  `analysis::FrameSuperposer`, which apply the same transformations to a
-  `FrameBuffer` and take the caller's frame index for diagnostics. Unwrapping
-  retains state across chunks, checks consecutive source indices, supports
-  explicit reset, and rolls back on failure.
-- Add `rmsf` and `contact_occupancy` over a `Trajectory`, where every frame
-  counts once; they reject ensembles, whose statistics must be weighted.
-- Add `kekule_traj::io::read_trajectory` and `read_trajectory_with_options` to
-  load complete trajectories through the existing streaming codecs, preserving
-  decoded frame state, topology sharing, and validation.
-- Add `io::write_trajectory` and `write_trajectory_with_options` for atomic saving
-  through the strict codecs, with extension inference, explicit format/precision
-  options, metadata preservation checks, and overwrite protection.
-- Add a trajectory workflow example that loads an mmCIF topology, prints frame
-  information, and aligns to the first frame. Streaming readers remain public
-  for processing files without loading every frame into memory.
-- Add infallible `AtomSelection::all(&topology)` with authoritative dense order
-  and exact topology sharing.
-- Add an optional comparison of the periodic transformations against references
-  generated with pinned MDTraj and MDAnalysis versions
-  (`trajectory_periodic_reference` example), and an informational
-  frame-access/superposition benchmark.
+- The unpublished `kekule-bench` benchmark layer under `benchmarks/`: stored
+  goldens, contract hashes, dashboard, run history, reference adapters and the
+  OpenFF/OpenMM numerical validation. Inputs used by crate tests moved to
+  `crates/kekule/tests/fixtures/corpus`, and the exporters and provenance of
+  shipped OpenFF data moved to `tools/openff`. It is replaced by a scientific
+  benchmark on two curated, hash-locked datasets (small molecules and wwPDB
+  entries) that compares chemistry-level observations with RDKit, gemmi,
+  Biotite and mkdssp nightly and triages every difference against a
+  checked-in list of known differences.
 
 ### Fixed
 
@@ -1514,18 +1595,6 @@ breaking API changes throughout the workspace.
   `UnresolvedPriority` instead of skipping the bond as nonstereogenic, and
   `add_hydrogens` rejected the molecule. This affected 3D structures such as
   acrylamide atropisomers read with explicit hydrogens.
-
-### Removed
-
-- The unpublished `kekule-bench` benchmark layer under `benchmarks/`: stored
-  goldens, contract hashes, dashboard, run history, reference adapters and the
-  OpenFF/OpenMM numerical validation. Inputs used by crate tests moved to
-  `crates/kekule/tests/fixtures/corpus`, and the exporters and provenance of
-  shipped OpenFF data moved to `tools/openff`. It is replaced by a scientific
-  benchmark on two curated, hash-locked datasets (small molecules and wwPDB
-  entries) that compares chemistry-level observations with RDKit, gemmi,
-  Biotite and mkdssp nightly and triages every difference against a
-  checked-in list of known differences.
 
 ## [0.2.1] - 2026-09-01
 
@@ -1557,24 +1626,18 @@ classification and uses it for ordinary mmCIF entity planning.
 This release establishes the canonical object model described in
 `ARCHITECTURE.md`. It contains breaking API changes throughout the workspace.
 
-### Breaking changes
+Migration notes:
 
-- Make every published `Molecule` one non-empty connected chemical graph.
-  Disconnected salts, complexes, and systems are represented by multiple
-  molecule instances in a `Topology`.
-- Move chain, residue, and atom-site hierarchy ownership to `Topology`, with
-  topology-qualified atom and bond identities and deterministic dense ordering.
-- Replace parallel annotation containers with the unified `Properties`,
-  `PropertyTable`, `PropertyColumn`, `PropertyKey`, and `PropertyValue` APIs.
-- Separate format parsing from canonical chemical interpretation. SMILES,
-  Molfile, SDF, and mmCIF now expose format-specific documents and
-  interpretation/projection APIs.
-- Replace subsystem-specific model units with one library-wide canonical unit
-  system based on nanometers, daltons, picoseconds, kilojoules per mole,
-  elementary charge, kelvin, and radians.
-- Refactor geometry-bearing objects around shared immutable `Topology` values,
-  topology-free dense storage, and explicit `Model`, `Ensemble`, and
-  `Trajectory` realization views.
+- Use format namespaces such as `kekule::smiles`, `kekule::molfile`,
+  `kekule::sdf`, and `kekule::mmcif` for parsing, interpretation, and writing.
+- Use `to_molecules()` for source scopes that can contain disconnected
+  components; no conversion silently chooses a main component.
+- Build systems with `Topology::from_molecule`,
+  `Topology::from_molecules`, or `TopologyBuilder`, then combine a shared
+  topology with `Positions` through `Model::new`.
+- Access hierarchy through `Topology` or topology-bound molecule/model views.
+- Store extensible annotations at the narrowest valid owner scope through the
+  unified property APIs.
 
 ### Added
 
@@ -1591,6 +1654,23 @@ This release establishes the canonical object model described in
 
 ### Changed
 
+- **Breaking:** Make every published `Molecule` one non-empty connected chemical graph.
+  Disconnected salts, complexes, and systems are represented by multiple
+  molecule instances in a `Topology`.
+- **Breaking:** Move chain, residue, and atom-site hierarchy ownership to `Topology`, with
+  topology-qualified atom and bond identities and deterministic dense ordering.
+- **Breaking:** Replace parallel annotation containers with the unified `Properties`,
+  `PropertyTable`, `PropertyColumn`, `PropertyKey`, and `PropertyValue` APIs.
+- **Breaking:** Separate format parsing from canonical chemical interpretation. SMILES,
+  Molfile, SDF, and mmCIF now expose format-specific documents and
+  interpretation/projection APIs.
+- **Breaking:** Replace subsystem-specific model units with one library-wide canonical unit
+  system based on nanometers, daltons, picoseconds, kilojoules per mole,
+  elementary charge, kelvin, and radians.
+- **Breaking:** Refactor geometry-bearing objects around shared immutable `Topology` values,
+  topology-free dense storage, and explicit `Model`, `Ensemble`, and
+  `Trajectory` realization views.
+
 - Aromatic source notation is localized before molecule publication;
   aromaticity remains derived perception state.
 - Source stereochemistry is normalized into canonical graph stereo, and CIP,
@@ -1600,23 +1680,14 @@ This release establishes the canonical object model described in
 - Crate documentation, examples, package metadata, and public API regression
   coverage now describe the canonical workflows.
 
-### Migration notes
-
-- Use format namespaces such as `kekule::smiles`, `kekule::molfile`,
-  `kekule::sdf`, and `kekule::mmcif` for parsing, interpretation, and writing.
-- Use `to_molecules()` for source scopes that can contain disconnected
-  components; no conversion silently chooses a main component.
-- Build systems with `Topology::from_molecule`,
-  `Topology::from_molecules`, or `TopologyBuilder`, then combine a shared
-  topology with `Positions` through `Model::new`.
-- Access hierarchy through `Topology` or topology-bound molecule/model views.
-- Store extensible annotations at the narrowest valid owner scope through the
-  unified property APIs.
-
 ## [0.1.0] - 2026-08-05
+
+### Added
 
 - Initial release of `kekule`, `kekule-traj`, and `kekule-potentials`.
 
+[Unreleased]: https://github.com/choutkaj/kekule/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/choutkaj/kekule/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/choutkaj/kekule/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/choutkaj/kekule/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/choutkaj/kekule/compare/v0.1.0...v0.2.0

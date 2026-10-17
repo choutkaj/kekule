@@ -157,6 +157,7 @@ impl NaglModel {
     /// # Ok::<(), kekule_openff::Error>(())
     /// ```
     #[cfg(feature = "ash")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "ash")))]
     pub fn ash() -> Result<Self> {
         use std::io::Read;
         let mut planes = Vec::new();

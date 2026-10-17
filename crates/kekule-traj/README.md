@@ -62,8 +62,8 @@ Saving infers the format from the extension, protects existing files, and reject
 unsupported metadata. Use `read_trajectory` or
 `write_trajectory` for explicit codec policies and precision.
 
-For more, see the [loaded workflow](examples/trajectory_workflow.rs) and
-[streaming workflow](examples/trajectory_streaming.rs) examples. Streaming uses
+For more, see the [loaded workflow](https://github.com/choutkaj/kekule/blob/main/crates/kekule-traj/examples/trajectory_workflow.rs) and
+[streaming workflow](https://github.com/choutkaj/kekule/blob/main/crates/kekule-traj/examples/trajectory_streaming.rs) examples. Streaming uses
 `open_trajectory` and a reusable frame buffer to process large files one frame at
 a time.
 

@@ -10,14 +10,24 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.89"
 repository = "https://github.com/choutkaj/kekule"
+homepage = "https://github.com/choutkaj/kekule"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modeling"]
 categories = ["science", "data-structures", "parser-implementations"]
+
+# Inter-crate requirements, declared once. Every published crate shares the
+# workspace version except `kekule-openff-ash`, which is versioned on its own
+# and released only when its model data changes (see RELEASING.md).
+[workspace.dependencies]
+kekule = { version = "0.4.0", path = "crates/kekule" }
+kekule-openff = { version = "0.4.0", path = "crates/kekule-openff" }
+kekule-openff-ash = { version = "0.3", path = "crates/kekule-openff-ash" }
+kekule-traj = { version = "0.4.0", path = "crates/kekule-traj" }
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"

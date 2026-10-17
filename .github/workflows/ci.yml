@@ -37,8 +37,9 @@ jobs:
       - run: cargo check --workspace --all-targets --all-features --locked
       - run: cargo check --manifest-path fuzz/Cargo.toml --bins --locked
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # Runs unit, integration and documentation tests, including the README
+      # examples of kekule and kekule-openff.
       - run: cargo test --workspace --all-features --locked
-      - run: cargo test --workspace --all-features --doc --locked
       - name: Check atomic-data generator output paths
         run: python3 -m unittest discover -s tools/atomic-data -p test_generate.py
       - name: Check shipped OpenFF data provenance
@@ -48,24 +49,65 @@ jobs:
       - name: Check benchmark datasets, comparison and triage
         run: python3 -m unittest discover -s benchmarks/tests -p "test_*.py"
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+      # Each optional feature set of the OpenFF crates. The all-features runs
+      # above cover the defaults, which enable every feature.
+      - run: cargo clippy -p kekule-potentials --all-targets --no-default-features --locked -- -D warnings
+      - run: cargo clippy -p kekule-openff --all-targets --no-default-features --locked -- -D warnings
       - run: cargo test -p kekule-potentials --no-default-features --locked
-      - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --no-deps --locked
       - run: cargo test -p kekule-openff --no-default-features --locked
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --no-deps --locked
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-openff --no-default-features --no-deps --locked
       - name: Check packaged license copies
         run: |
           for package in kekule kekule-potentials kekule-traj kekule-openff kekule-openff-ash; do
             cmp LICENSE-APACHE "crates/$package/LICENSE-APACHE"
             cmp LICENSE-MIT "crates/$package/LICENSE-MIT"
           done
-      - run: cargo package -p kekule --locked
-      # The data-only model crate has no Kekule dependency and packages fully.
-      - run: cargo package -p kekule-openff-ash --locked
-      # Full companion packaging resolves `kekule` through crates.io and is
-      # enabled only after the foundational crate is published. Until then,
-      # validate each exact package file set.
-      - run: cargo package -p kekule-potentials --locked --list
-      - run: cargo package -p kekule-traj --locked --list
-      - run: cargo package -p kekule-openff --locked --list
+      # Workspace packaging resolves unpublished member versions from the
+      # packages it builds, so every crate is built and verified as uploaded.
+      # Integration tests are not shipped, so cargo notes each ignored test.
+      - run: cargo package --workspace --exclude kekule-bench --locked
+      - name: Check package sizes against the crates.io limit
+        shell: bash
+        run: |
+          limit=10485760
+          warn=$((limit * 9 / 10))
+          status=0
+          for crate in target/package/*.crate; do
+            size=$(stat -c %s "$crate")
+            percent=$((size * 100 / limit))
+            echo "$(basename "$crate"): $size bytes ($percent% of $limit)"
+            if [ "$size" -gt "$limit" ]; then
+              echo "::error file=$crate::$(basename "$crate") is $size bytes, above the crates.io limit of $limit"
+              status=1
+            elif [ "$size" -gt "$warn" ]; then
+              echo "::warning file=$crate::$(basename "$crate") is $size bytes, $percent% of the crates.io limit"
+            fi
+          done
+          exit $status
+
+  deny:
+    name: Licences, advisories, bans and sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      # deny.toml sets the policy and resolves the graph with all features.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  semver:
+    name: Semver checks (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Informational until the API settles: a 0.x minor bump may break, and
+    # the report shows what a release would break.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      # Compares every publishable crate with its latest crates.io release.
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
 
   windows:
     name: Windows checks
