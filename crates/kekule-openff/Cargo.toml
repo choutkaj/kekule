@@ -4,11 +4,32 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-license = "(MIT OR Apache-2.0) AND CC-BY-4.0"
+homepage.workspace = true
+documentation = "https://docs.rs/kekule-openff"
+# Also ships ports of RDKit (BSD-3-Clause) and openff-nagl (MIT) and the
+# CC BY 4.0 Rosemary force field; see THIRD_PARTY.md and data/LICENSE-*.
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause AND MIT AND CC-BY-4.0"
 keywords.workspace = true
 categories.workspace = true
 description = "SMIRNOFF parameter assignment and native NAGL inference for Kekule."
 readme = "README.md"
+# Integration tests (tests/*.rs) are not shipped. The reference fixtures are
+# compiled into the unit tests in src/, so `cargo test` works from the package.
+include = [
+    "/src/**",
+    "/examples/**",
+    "/data/**",
+    "/tests/fixtures/*.json.gz",
+    "/README.md",
+    "/CONTRACT.md",
+    "/THIRD_PARTY.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true

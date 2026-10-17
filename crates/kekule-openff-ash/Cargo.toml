@@ -6,12 +6,18 @@ version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/kekule-openff-ash"
 license = "(MIT OR Apache-2.0) AND CC-BY-4.0"
 keywords = ["chemistry", "force-field", "openff", "partial-charges"]
 categories = ["science"]
 description = "The OpenFF Ash NAGL charge model (openff-gnn-am1bcc-1.0.0) as data for kekule-openff."
 readme = "README.md"
 include = ["src/**", "data/**", "README.md", "LICENSE-*", "ATTRIBUTION.md"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
