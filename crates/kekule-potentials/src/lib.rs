@@ -62,6 +62,8 @@
 //! ```
 
 mod minimize;
+// Molecular-mechanics kernels serve only the OpenFF potential.
+#[cfg(feature = "openff")]
 mod mm;
 mod potential;
 
