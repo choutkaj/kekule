@@ -9,22 +9,24 @@ external files, or network access.
 use kekule::smiles;
 use kekule_openff::{ForceField, NaglModel};
 
-let mut molecule = smiles::to_molecules("CCO")?.remove(0);
-molecule.perceive()?;
-molecule.add_hydrogens(Default::default())?;
-let model = NaglModel::ash()?;
-let parameters = ForceField::rosemary()?.parameterize_molecule(molecule, &model)?;
-println!("{} bonds, charges {:?}", parameters.bonds().len(), parameters.charges().value());
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut molecule = smiles::to_molecules("CCO")?.remove(0);
+    molecule.perceive()?;
+    molecule.add_hydrogens(Default::default())?;
+    let model = NaglModel::ash()?;
+    let parameters = ForceField::rosemary()?.parameterize_molecule(molecule, &model)?;
+    println!("{} bonds, charges {:?}", parameters.bonds().len(), parameters.charges().value());
+    Ok(())
+}
 ```
 
 Systems are parameterized from a shared topology with
 `ForceField::parameterize`, assigning each reusable molecule definition once.
 There is no molecule size limit. Custom OFFXML within the supported SMIRNOFF
 subset and other exported NAGL bundles are supported; see
-[CONTRACT.md](CONTRACT.md) for the supported subset, assignment semantics, error
+[CONTRACT.md](https://github.com/choutkaj/kekule/blob/main/crates/kekule-openff/CONTRACT.md) for the supported subset, assignment semantics, error
 kinds, and validation record. Energies and gradients live in `kekule-potentials`.
 
 The Rosemary force field and the Ash model are licensed under CC BY 4.0; see
-[THIRD_PARTY.md](THIRD_PARTY.md). The crate is pure Rust; the Rust code is
+[THIRD_PARTY.md](https://github.com/choutkaj/kekule/blob/main/crates/kekule-openff/THIRD_PARTY.md). The crate is pure Rust; the Rust code is
 MIT OR Apache-2.0.
