@@ -1,11 +1,14 @@
 //! SDF writing: independent Molfile records, each with a title and data fields.
 use std::io::Write;
 
-use crate::structure::{AsModelView, EnsembleMemberView, Model, ModelView, TrajectoryFrameView};
+use crate::structure::{
+    AsModelView, EnsembleMemberView, Model, ModelView, StructureKind, TrajectoryFrameView,
+};
 use crate::units::{Quantity, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
+use super::write_error::check_structure_state;
 use super::{MolfileWriteVersion, UnrepresentablePolicy};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 
@@ -13,6 +16,7 @@ use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail}
 pub struct SdfWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
+    frame_metadata: UnrepresentablePolicy,
 }
 
 impl SdfWriteOptions {
@@ -39,6 +43,21 @@ impl SdfWriteOptions {
         self.cell = cell;
         self
     }
+
+    /// A trajectory frame's time, step, velocities, and forces, which an SDF
+    /// record cannot carry: by default writing a frame with any of them
+    /// fails. An ensemble member's weight and energy are always written as
+    /// data fields.
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
+    }
+
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
+        self
+    }
 }
 
 /// The data field an ensemble member's relative weight is written to and
@@ -52,22 +71,26 @@ pub const SDF_ENERGY_FIELD: &str = "kekule.energy.kJ_per_mol";
 /// Convert from `&Model`, a borrowed ensemble member or trajectory frame, or
 /// `&SdfRecordInterpretation` (which keeps its title and data fields). An
 /// ensemble member's weight and energy follow its data fields as
-/// [`SDF_WEIGHT_FIELD`] and [`SDF_ENERGY_FIELD`].
+/// [`SDF_WEIGHT_FIELD`] and [`SDF_ENERGY_FIELD`], whichever way its view is
+/// passed; a trajectory frame's time, step, velocities, and forces fail to
+/// write unless [`SdfWriteOptions::frame_metadata`] omits them.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
     model: ModelView<'a>,
     title: &'a str,
     data_fields: &'a [SdfDataField],
-    member: Option<(f64, Option<Quantity<f64>>)>,
 }
 
 impl<'a> SdfRecordSource<'a> {
     pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
+        Self::view(model.as_model_view())
+    }
+
+    const fn view(model: ModelView<'a>) -> Self {
         Self {
-            model: model.as_model_view(),
+            model,
             title: "",
             data_fields: &[],
-            member: None,
         }
     }
 
@@ -92,23 +115,13 @@ impl<'a> From<&'a Model> for SdfRecordSource<'a> {
 
 impl<'a> From<EnsembleMemberView<'a>> for SdfRecordSource<'a> {
     fn from(member: EnsembleMemberView<'a>) -> Self {
-        Self {
-            model: member.as_model_view(),
-            title: "",
-            data_fields: &[],
-            member: Some((member.weight(), member.energy())),
-        }
+        Self::view(member.as_model_view())
     }
 }
 
 impl<'a> From<TrajectoryFrameView<'a>> for SdfRecordSource<'a> {
     fn from(frame: TrajectoryFrameView<'a>) -> Self {
-        Self {
-            model: frame.as_model_view(),
-            title: "",
-            data_fields: &[],
-            member: None,
-        }
+        Self::view(frame.as_model_view())
     }
 }
 
@@ -149,7 +162,16 @@ fn write_record(
     options: SdfWriteOptions,
 ) -> Result<(), FormatError> {
     validate_title(record.title)?;
-    let member_fields = record.member.map_or_else(Vec::new, member_fields);
+    check_structure_state(
+        Format::Sdf,
+        record.model.kind(),
+        None,
+        options.frame_metadata,
+    )?;
+    let member_fields = match record.model.kind() {
+        StructureKind::Member { weight, energy, .. } => member_fields(weight, energy),
+        _ => Vec::new(),
+    };
     for field in record.data_fields {
         validate_data_field(field)?;
         if member_fields
@@ -179,7 +201,7 @@ fn write_record(
 
 /// An ensemble member's weight and energy as data fields, in the shortest
 /// decimal text that reads back to the same value.
-fn member_fields((weight, energy): (f64, Option<Quantity<f64>>)) -> Vec<SdfDataField> {
+fn member_fields(weight: f64, energy: Option<Quantity<f64>>) -> Vec<SdfDataField> {
     let mut fields = vec![SdfDataField::new(SDF_WEIGHT_FIELD, weight.to_string())];
     if let Some(energy) = energy {
         let kj_per_mol = energy

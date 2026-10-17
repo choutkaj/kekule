@@ -7,17 +7,16 @@ fixed_u32_id!(ChainId, "chain");
 fixed_u32_id!(ResidueId, "residue");
 fixed_u32_id!(AtomSiteId, "atom site");
 
-/// Coordinate-independent residue, chain, polymer, and atom-site organization.
+/// Topology-owned storage of coordinate-independent residue, chain, and
+/// atom-site organization.
 ///
 /// A hierarchy owns no atoms or bonds. Atom sites refer to topology-global
 /// [`InstanceAtomId`] values and may span molecule-instance boundaries. It is
-/// valid for a topology to have an empty hierarchy.
-///
-/// `Chain`, `Residue`, and `AtomSite` are topology-owned storage nodes. Borrowed
-/// navigation normally uses [`super::ChainView`], [`super::ResidueView`], and
-/// [`super::AtomSiteView`], which retain the containing topology context.
+/// valid for a topology to have an empty hierarchy. Reads go through the
+/// topology views ([`super::ChainView`], [`super::ResidueView`],
+/// [`super::AtomSiteView`]); staging goes through [`HierarchyBuilder`].
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Hierarchy {
+pub(crate) struct Hierarchy {
     chains: Vec<Chain>,
     pub(crate) residues: Vec<Residue>,
     atom_sites: Vec<AtomSite>,
@@ -25,31 +24,22 @@ pub struct Hierarchy {
 }
 
 impl Hierarchy {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.chains.is_empty() && self.residues.is_empty() && self.atom_sites.is_empty()
     }
 
     /// Adds a chain or returns a structured capacity error without mutation.
-    pub fn add_chain(
+    pub(crate) fn add_chain(
         &mut self,
         label_id: impl Into<String>,
         author_id: Option<String>,
     ) -> std::result::Result<ChainId, HierarchyError> {
-        self.add_chain_at_slot(label_id.into(), author_id, self.chains.len())
-    }
-
-    fn add_chain_at_slot(
-        &mut self,
-        label_id: String,
-        author_id: Option<String>,
-        slot: usize,
-    ) -> std::result::Result<ChainId, HierarchyError> {
-        let id = checked_hierarchy_id(slot, HierarchyIdKind::Chain, ChainId::new)?;
-        debug_assert_eq!(slot, self.chains.len());
+        let label_id = label_id.into();
+        let id = checked_hierarchy_id(self.chains.len(), HierarchyIdKind::Chain, ChainId::new)?;
         self.chains.push(Chain {
             id,
             label_id,
@@ -60,7 +50,7 @@ impl Hierarchy {
     }
 
     /// Adds a residue to an existing chain transactionally.
-    pub fn add_residue(
+    pub(crate) fn add_residue(
         &mut self,
         chain: ChainId,
         name: impl Into<String>,
@@ -79,6 +69,7 @@ impl Hierarchy {
             id,
             chain,
             class: ResidueClass::Other,
+            explicit_class: None,
             name: name.clone(),
             label_comp_id: Some(name),
             author_comp_id: None,
@@ -92,7 +83,7 @@ impl Hierarchy {
     }
 
     /// Adds one atom site after validating residue, atom placement, and capacity.
-    pub fn add_atom_site(
+    pub(crate) fn add_atom_site(
         &mut self,
         residue: ResidueId,
         atom: InstanceAtomId,
@@ -125,17 +116,17 @@ impl Hierarchy {
     }
 
     /// One chain, or `None` when `id` names no chain of this hierarchy.
-    pub fn chain(&self, id: ChainId) -> Option<&Chain> {
+    pub(crate) fn chain(&self, id: ChainId) -> Option<&Chain> {
         self.chains.get(id.index())
     }
 
     /// One residue, or `None` when `id` names no residue of this hierarchy.
-    pub fn residue(&self, id: ResidueId) -> Option<&Residue> {
+    pub(crate) fn residue(&self, id: ResidueId) -> Option<&Residue> {
         self.residues.get(id.index())
     }
 
     /// One atom site, or `None` when `id` names no site of this hierarchy.
-    pub fn atom_site(&self, id: AtomSiteId) -> Option<&AtomSite> {
+    pub(crate) fn atom_site(&self, id: AtomSiteId) -> Option<&AtomSite> {
         self.atom_sites.get(id.index())
     }
 
@@ -161,7 +152,13 @@ impl Hierarchy {
             .ok_or(HierarchyError::InvalidAtomSiteId(id))
     }
 
-    pub fn atom_site_for_atom(&self, atom: InstanceAtomId) -> Option<&AtomSite> {
+    fn residue_mut(&mut self, id: ResidueId) -> std::result::Result<&mut Residue, HierarchyError> {
+        self.residues
+            .get_mut(id.index())
+            .ok_or(HierarchyError::InvalidResidueId(id))
+    }
+
+    pub(crate) fn atom_site_for_atom(&self, atom: InstanceAtomId) -> Option<&AtomSite> {
         self.atom_lookup
             .get(&atom)
             .and_then(|id| self.atom_sites.get(id.index()))
@@ -174,36 +171,198 @@ impl Hierarchy {
     }
 
     /// Restores distinct label and author component identifiers on one residue.
-    pub fn set_residue_component_ids(
+    pub(crate) fn set_residue_component_ids(
         &mut self,
         residue: ResidueId,
         label_comp_id: Option<String>,
         author_comp_id: Option<String>,
     ) -> std::result::Result<(), HierarchyError> {
-        let residue = self
-            .residues
-            .get_mut(residue.index())
-            .ok_or(HierarchyError::InvalidResidueId(residue))?;
+        let residue = self.residue_mut(residue)?;
         residue.label_comp_id = label_comp_id;
         residue.author_comp_id = author_comp_id;
         Ok(())
     }
 
-    pub fn chains(&self) -> impl Iterator<Item = (ChainId, &Chain)> {
+    /// Records or clears an explicit class on one residue node.
+    pub(crate) fn set_explicit_residue_class(
+        &mut self,
+        residue: ResidueId,
+        class: Option<ResidueClass>,
+    ) -> std::result::Result<(), HierarchyError> {
+        self.residue_mut(residue)?.explicit_class = class;
+        Ok(())
+    }
+
+    /// Equal chains, residues, and atom sites, ignoring explicit-class
+    /// intent, which is editing policy rather than layout.
+    pub(crate) fn same_layout(&self, other: &Self) -> bool {
+        self.chains == other.chains
+            && self.atom_sites == other.atom_sites
+            && self.residues.len() == other.residues.len()
+            && self.residues.iter().zip(&other.residues).all(|(a, b)| {
+                Residue {
+                    explicit_class: b.explicit_class,
+                    ..a.clone()
+                } == *b
+            })
+    }
+
+    pub(crate) fn chains(&self) -> impl ExactSizeIterator<Item = (ChainId, &Chain)> {
         self.chains.iter().map(|chain| (chain.id, chain))
     }
 
-    pub fn residues(&self) -> impl Iterator<Item = (ResidueId, &Residue)> {
+    pub(crate) fn residues(&self) -> impl ExactSizeIterator<Item = (ResidueId, &Residue)> {
         self.residues.iter().map(|residue| (residue.id, residue))
     }
 
-    pub fn atom_sites(&self) -> impl Iterator<Item = (AtomSiteId, &AtomSite)> {
+    pub(crate) fn atom_sites(&self) -> impl ExactSizeIterator<Item = (AtomSiteId, &AtomSite)> {
         self.atom_sites.iter().map(|site| (site.id, site))
     }
 }
 
+/// Staged chains, residues, and atom sites of a topology under construction.
+///
+/// [`TopologyBuilder::hierarchy_mut`](super::TopologyBuilder::hierarchy_mut)
+/// and [`ModelBuilder::hierarchy_mut`](crate::structure::ModelBuilder::hierarchy_mut)
+/// return the one staged hierarchy. Additions validate their own references
+/// and capacity; atom-site atoms are checked against the final instance atoms
+/// when the topology is built. A published topology is read through its
+/// views ([`Topology::chains`](super::Topology::chains), ...).
+///
+/// A residue's explicit class is staged on the residue itself, so replacing
+/// the staged hierarchy with a new one also discards its explicit classes.
+///
+/// ```
+/// use kekule::{molecule::AtomId, smiles};
+/// use kekule::topology::{AtomSiteMetadata, InstanceAtomId, ResidueClass, TopologyBuilder};
+/// let mut builder = TopologyBuilder::new();
+/// let water = builder.add_molecule(smiles::to_molecules("O")?.remove(0))?;
+/// let hierarchy = builder.hierarchy_mut();
+/// let chain = hierarchy.add_chain("W", None)?;
+/// let residue = hierarchy.add_residue(chain, "HOH", None, Some("1".into()), None)?;
+/// let oxygen = InstanceAtomId::new(water, AtomId::new(0));
+/// hierarchy.add_atom_site(residue, oxygen, AtomSiteMetadata::default())?;
+/// hierarchy.set_residue_class(residue, ResidueClass::Other)?;
+/// let topology = builder.build()?;
+/// let residue = topology.residue(residue).unwrap();
+/// assert_eq!(residue.class(), ResidueClass::Other);
+/// assert!(residue.class_assignment().is_explicit());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HierarchyBuilder {
+    hierarchy: Hierarchy,
+}
+
+impl HierarchyBuilder {
+    /// An empty staged hierarchy.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) const fn from_storage(hierarchy: Hierarchy) -> Self {
+        Self { hierarchy }
+    }
+
+    pub(crate) const fn storage(&self) -> &Hierarchy {
+        &self.hierarchy
+    }
+
+    pub(crate) fn storage_mut(&mut self) -> &mut Hierarchy {
+        &mut self.hierarchy
+    }
+
+    pub(crate) fn into_storage(self) -> Hierarchy {
+        self.hierarchy
+    }
+
+    /// Whether no chain, residue, or atom site is staged.
+    pub fn is_empty(&self) -> bool {
+        self.hierarchy.is_empty()
+    }
+
+    pub fn chain_count(&self) -> usize {
+        self.hierarchy.chains.len()
+    }
+
+    pub fn residue_count(&self) -> usize {
+        self.hierarchy.residues.len()
+    }
+
+    pub fn atom_site_count(&self) -> usize {
+        self.hierarchy.atom_sites.len()
+    }
+
+    /// Adds a chain with a label identifier and an optional author identifier.
+    pub fn add_chain(
+        &mut self,
+        label_id: impl Into<String>,
+        author_id: Option<String>,
+    ) -> Result<ChainId, HierarchyError> {
+        self.hierarchy.add_chain(label_id, author_id)
+    }
+
+    /// Adds a residue to an existing chain. Its label component identifier is
+    /// its name until [`Self::set_residue_component_ids`] changes it.
+    pub fn add_residue(
+        &mut self,
+        chain: ChainId,
+        name: impl Into<String>,
+        label_seq_id: Option<i32>,
+        author_seq_id: Option<String>,
+        insertion_code: Option<String>,
+    ) -> Result<ResidueId, HierarchyError> {
+        self.hierarchy
+            .add_residue(chain, name, label_seq_id, author_seq_id, insertion_code)
+    }
+
+    /// Adds one atom site to an existing residue; an atom has at most one
+    /// site.
+    pub fn add_atom_site(
+        &mut self,
+        residue: ResidueId,
+        atom: InstanceAtomId,
+        metadata: AtomSiteMetadata,
+    ) -> Result<AtomSiteId, HierarchyError> {
+        self.hierarchy.add_atom_site(residue, atom, metadata)
+    }
+
+    /// Sets distinct label and author component identifiers on one residue.
+    pub fn set_residue_component_ids(
+        &mut self,
+        residue: ResidueId,
+        label_comp_id: Option<String>,
+        author_comp_id: Option<String>,
+    ) -> Result<(), HierarchyError> {
+        self.hierarchy
+            .set_residue_component_ids(residue, label_comp_id, author_comp_id)
+    }
+
+    /// Assigns one residue's class explicitly. Publication keeps it instead
+    /// of inferring one, even when the residue's evidence changes.
+    pub fn set_residue_class(
+        &mut self,
+        residue: ResidueId,
+        class: ResidueClass,
+    ) -> Result<(), HierarchyError> {
+        self.hierarchy
+            .set_explicit_residue_class(residue, Some(class))
+    }
+
+    /// Clears one residue's explicit class, so publication infers it afresh.
+    pub fn clear_residue_class(&mut self, residue: ResidueId) -> Result<(), HierarchyError> {
+        self.hierarchy.set_explicit_residue_class(residue, None)
+    }
+
+    /// One residue's explicit class, or `None` when publication will infer
+    /// it or `residue` is not staged.
+    pub fn explicit_residue_class(&self, residue: ResidueId) -> Option<ResidueClass> {
+        self.hierarchy.residue(residue)?.explicit_class
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct Chain {
+pub(crate) struct Chain {
     pub(crate) id: ChainId,
     pub(crate) label_id: String,
     pub(crate) author_id: Option<String>,
@@ -211,28 +370,26 @@ pub struct Chain {
 }
 
 impl Chain {
-    pub const fn id(&self) -> ChainId {
-        self.id
-    }
-
-    pub fn label_id(&self) -> &str {
+    pub(crate) fn label_id(&self) -> &str {
         &self.label_id
     }
 
-    pub fn author_id(&self) -> Option<&str> {
+    pub(crate) fn author_id(&self) -> Option<&str> {
         self.author_id.as_deref()
     }
 
-    pub fn residues(&self) -> &[ResidueId] {
+    pub(crate) fn residues(&self) -> &[ResidueId] {
         &self.residues
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Residue {
+pub(crate) struct Residue {
     pub(crate) id: ResidueId,
     pub(crate) chain: ChainId,
     pub(crate) class: ResidueClass,
+    /// The explicitly assigned class, which publication keeps.
+    pub(crate) explicit_class: Option<ResidueClass>,
     pub(crate) name: String,
     pub(crate) label_comp_id: Option<String>,
     pub(crate) author_comp_id: Option<String>,
@@ -243,50 +400,49 @@ pub struct Residue {
 }
 
 impl Residue {
-    pub const fn id(&self) -> ResidueId {
+    pub(crate) const fn id(&self) -> ResidueId {
         self.id
     }
 
-    pub const fn chain(&self) -> ChainId {
+    pub(crate) const fn chain(&self) -> ChainId {
         self.chain
     }
 
-    /// Returns this topology-owned residue's canonical class.
-    pub const fn class(&self) -> ResidueClass {
+    pub(crate) const fn class(&self) -> ResidueClass {
         self.class
     }
 
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn label_comp_id(&self) -> Option<&str> {
+    pub(crate) fn label_comp_id(&self) -> Option<&str> {
         self.label_comp_id.as_deref()
     }
 
-    pub fn author_comp_id(&self) -> Option<&str> {
+    pub(crate) fn author_comp_id(&self) -> Option<&str> {
         self.author_comp_id.as_deref()
     }
 
-    pub const fn label_seq_id(&self) -> Option<i32> {
+    pub(crate) const fn label_seq_id(&self) -> Option<i32> {
         self.label_seq_id
     }
 
-    pub fn author_seq_id(&self) -> Option<&str> {
+    pub(crate) fn author_seq_id(&self) -> Option<&str> {
         self.author_seq_id.as_deref()
     }
 
-    pub fn insertion_code(&self) -> Option<&str> {
+    pub(crate) fn insertion_code(&self) -> Option<&str> {
         self.insertion_code.as_deref()
     }
 
-    pub fn atom_sites(&self) -> &[AtomSiteId] {
+    pub(crate) fn atom_sites(&self) -> &[AtomSiteId] {
         &self.atom_sites
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AtomSite {
+pub(crate) struct AtomSite {
     pub(crate) id: AtomSiteId,
     pub(crate) residue: ResidueId,
     pub(crate) atom: InstanceAtomId,
@@ -294,19 +450,19 @@ pub struct AtomSite {
 }
 
 impl AtomSite {
-    pub const fn id(&self) -> AtomSiteId {
+    pub(crate) const fn id(&self) -> AtomSiteId {
         self.id
     }
 
-    pub const fn residue(&self) -> ResidueId {
+    pub(crate) const fn residue(&self) -> ResidueId {
         self.residue
     }
 
-    pub const fn atom(&self) -> InstanceAtomId {
+    pub(crate) const fn atom(&self) -> InstanceAtomId {
         self.atom
     }
 
-    pub fn metadata(&self) -> &AtomSiteMetadata {
+    pub(crate) fn metadata(&self) -> &AtomSiteMetadata {
         &self.metadata
     }
 }
@@ -377,7 +533,7 @@ impl AtomSiteMetadata {
     }
 }
 
-/// Fixed-width identifier spaces owned by [`Hierarchy`].
+/// Fixed-width identifier spaces of a topology hierarchy.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HierarchyIdKind {

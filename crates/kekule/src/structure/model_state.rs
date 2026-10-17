@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::geometry::{PeriodicCell, Point3};
-use crate::properties::{StructureProperties, StructurePropertiesMut};
+use crate::properties::StructureProperties;
 use crate::topology::TopologyAtomIndex;
 use crate::units::Quantity;
 
@@ -42,10 +42,6 @@ impl ModelState {
         position: Quantity<Point3>,
     ) -> Result<(), StructureError> {
         Ok(self.positions.set(atom.index(), position)?)
-    }
-
-    pub(crate) fn properties_mut(&mut self) -> StructurePropertiesMut<'_> {
-        StructurePropertiesMut::new(&mut self.properties)
     }
 
     pub(crate) fn occupancy(&self, atom: TopologyAtomIndex) -> Option<f64> {

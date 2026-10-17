@@ -2227,18 +2227,12 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
     let instance = builder
         .add_molecule(molecule.clone(), &Positions::zeros(1))
         .unwrap();
-    let chain = builder
-        .topology_builder_mut()
-        .hierarchy_mut()
-        .add_chain("A", None)
-        .unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
-        .topology_builder_mut()
         .hierarchy_mut()
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
     builder
-        .topology_builder_mut()
         .hierarchy_mut()
         .add_atom_site(
             residue,
@@ -2306,19 +2300,13 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
     let instance = builder
         .add_molecule(macro_molecule.clone(), &positions)
         .unwrap();
-    let chain = builder
-        .topology_builder_mut()
-        .hierarchy_mut()
-        .add_chain("A", None)
-        .unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
-        .topology_builder_mut()
         .hierarchy_mut()
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
     for atom in [left, right] {
         builder
-            .topology_builder_mut()
             .hierarchy_mut()
             .add_atom_site(
                 residue,
@@ -2644,18 +2632,12 @@ fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &st
     let molecule = graph.finish().unwrap();
     let mut builder = ModelBuilder::new();
     let instance = builder.add_molecule(molecule.clone(), &positions).unwrap();
-    let chain = builder
-        .topology_builder_mut()
-        .hierarchy_mut()
-        .add_chain("A", None)
-        .unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
-        .topology_builder_mut()
         .hierarchy_mut()
         .add_residue(chain, component, Some(1), None, None)
         .unwrap();
     builder
-        .topology_builder_mut()
         .hierarchy_mut()
         .add_atom_site(
             residue,
@@ -2686,19 +2668,13 @@ fn carbohydrate_model(components: &[&str], bonds: &[(usize, usize)]) -> Model {
     let instance = builder
         .add_molecule(molecule.clone(), &Positions::zeros(atoms.len()))
         .unwrap();
-    let chain = builder
-        .topology_builder_mut()
-        .hierarchy_mut()
-        .add_chain("A", None)
-        .unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     for (index, (&component, atom)) in components.iter().zip(atoms).enumerate() {
         let residue = builder
-            .topology_builder_mut()
             .hierarchy_mut()
             .add_residue(chain, component, Some(index as i32 + 1), None, None)
             .unwrap();
         builder
-            .topology_builder_mut()
             .hierarchy_mut()
             .add_atom_site(
                 residue,

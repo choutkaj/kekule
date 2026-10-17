@@ -337,7 +337,13 @@ fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instanc
         for instance in restored.topology().instances() {
             let molecule = instance.molecule();
             let atom = molecule.atom_ids().next().unwrap();
-            assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
+            assert_eq!(
+                molecule
+                    .perception()
+                    .valence()
+                    .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+                Some(0)
+            );
         }
     }
 }

@@ -40,7 +40,7 @@ pub(crate) fn bond_reference_atoms(
     if left.len() == 1 && right.len() == 1 {
         return Ok((left[0] != right[0]).then_some([left[0], b, c, right[0]]));
     }
-    if let Err(error) = validate_stereo(mol) {
+    if let Err(error) = crate::molecule::validate_represented_stereo(mol) {
         return Err(CipRankingError::InvalidStereo {
             issue: error.issues.into_iter().next().expect("validation issue"),
         });

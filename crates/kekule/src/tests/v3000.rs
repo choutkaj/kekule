@@ -167,7 +167,7 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
         for cfg in 0..=3 {
             let source = atom_cfg_tetrahedron(cfg, fourth);
             let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
-            assert!(!molecule.perception().has_valence());
+            assert!(molecule.perception().valence().is_none());
             assert_eq!(
                 report.created_stereo_elements().len(),
                 usize::from(cfg != 0)
@@ -388,7 +388,7 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
         ] {
             let mut reread = read_molfile(&output).unwrap();
             assert_eq!(reread.stereo_elements().count(), 1);
-            assert!(!reread.perception().has_valence());
+            assert!(reread.perception().valence().is_none());
             perceive(&mut reread).unwrap();
             assert_eq!(
                 stereo_api::cip::assign_cip_descriptors(&mut reread, Default::default())
@@ -469,7 +469,7 @@ fn molfile_model_preserves_drawn_stereo_on_large_ring_imines() {
             actual.stereo_elements().next().unwrap().1,
             molecule.stereo_elements().next().unwrap().1
         );
-        assert!(!actual.perception().has_valence());
+        assert!(actual.perception().valence().is_none());
     }
 }
 
@@ -766,7 +766,7 @@ M  END
         [molfile::MolfileInterpretationWarning::CoordinateStereoValenceUnsupported { .. }]
     ));
     assert!(small.stereo_elements().next().is_none());
-    assert!(!small.perception().has_valence());
+    assert!(small.perception().valence().is_none());
     let mol = small;
 
     assert_eq!(mol.atom_count(), 3);
@@ -861,7 +861,7 @@ M  END
                 .hydrogens,
             ImplicitHydrogens::Fixed(1)
         );
-        assert!(!parsed.perception().has_valence());
+        assert!(parsed.perception().valence().is_none());
         assert_eq!(report.created_stereo_elements().len(), 1);
         assert_eq!(parsed.stereo_elements().count(), 1);
         assert_eq!(
@@ -972,7 +972,7 @@ M  END
         .into_molecule();
     let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
     assert_eq!(carbon.hydrogens, ImplicitHydrogens::Fixed(4));
-    assert!(!molecule.perception().has_valence());
+    assert!(molecule.perception().valence().is_none());
 
     let zero_declarations = valence.replace("VAL=4", "VAL=-1");
     let document = molfile::parse_str(&zero_declarations, Default::default())

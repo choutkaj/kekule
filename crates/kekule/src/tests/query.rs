@@ -718,7 +718,11 @@ fn ring_bond_count_uses_cycle_membership_without_a_selected_ring_basis() {
             RingPerceptionOptions::membership_only(),
         )
         .expect("membership perception cannot fail");
-        assert!(molecule.ring_set().is_none());
+        assert!(molecule
+            .perception()
+            .rings()
+            .and_then(|rings| rings.ring_set())
+            .is_none());
         for (count, expected) in counts.into_iter().enumerate() {
             let smarts = format!("[x{count}]");
             let actual = PreparedTarget::new(&molecule)

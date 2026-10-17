@@ -8,7 +8,9 @@ use kekule::topology::{
 };
 use kekule::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
-use kekule::structure::{AsModelView, Trajectory};
+use kekule::structure::Trajectory;
+
+use super::AsFrameView;
 
 /// Invalid reduction inputs or a failed frame observation.
 #[derive(Debug, Clone, PartialEq)]
@@ -122,7 +124,7 @@ struct Moments {
 /// let mut index = 0;
 /// while reader.read_next(&mut buffer)? {
 ///     // Apply any intended periodic preprocessing and fitting here.
-///     rmsf.observe(index, &buffer.as_model_view())?;
+///     rmsf.observe(index, &buffer)?;
 ///     index += 1;
 /// }
 /// let result = rmsf.finish()?;
@@ -160,9 +162,9 @@ impl RmsfAccumulator {
     pub fn observe(
         &mut self,
         frame_index: usize,
-        frame: &(impl AsModelView + ?Sized),
+        frame: &(impl AsFrameView + ?Sized),
     ) -> Result<(), ReductionError> {
-        let frame = frame.as_model_view();
+        let frame = frame.as_frame_view().as_model_view();
         self.selection
             .ensure_compatible(&frame.shared_topology())
             .map_err(|_| ReductionError::TopologyMismatch { frame: frame_index })?;
@@ -331,9 +333,9 @@ impl ContactOccupancyAccumulator {
     pub fn observe(
         &mut self,
         frame_index: usize,
-        frame: &(impl AsModelView + ?Sized),
+        frame: &(impl AsFrameView + ?Sized),
     ) -> Result<(), ReductionError> {
-        let frame = frame.as_model_view();
+        let frame = frame.as_frame_view().as_model_view();
         if !self.topology.shares_layout(frame.topology()) {
             return Err(ReductionError::TopologyMismatch { frame: frame_index });
         }

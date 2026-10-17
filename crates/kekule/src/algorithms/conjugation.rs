@@ -41,7 +41,7 @@ pub fn perceive_conjugation(
 ) -> std::result::Result<(), ConjugationError> {
     let aromaticity = mol
         .perception()
-        .aromaticity_state()
+        .aromaticity()
         .ok_or(ConjugationError::MissingAromaticity)?;
     let mut bonds: BTreeSet<_> = aromaticity.bonds().collect();
     let mut profiles = vec![(false, 0); mol.graph.atom_slot_count()];
@@ -67,7 +67,11 @@ pub fn perceive_conjugation(
             continue;
         }
         for (first, bond) in mol.incident_bonds(id).expect("live atom") {
-            if !(mol.perception().bond_is_aromatic(first) == Some(true)
+            if !(mol
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(first))
+                == Some(true)
                 || matches!(
                     bond.order,
                     BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple

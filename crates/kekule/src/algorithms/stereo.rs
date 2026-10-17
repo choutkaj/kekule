@@ -245,6 +245,19 @@ pub enum StereoValidationIssue {
         /// The carrier.
         carrier: StereoCarrier,
     },
+    /// The element's implicit-hydrogen carriers on `atom` disagree with the
+    /// atom's fixed implicit hydrogen count: a stereo center has exactly one
+    /// implicit-hydrogen carrier per fixed implicit hydrogen, and a
+    /// double-bond endpoint names one only when it has a fixed implicit
+    /// hydrogen.
+    ImplicitHydrogenCarrierMismatch {
+        /// The element.
+        element: StereoElementId,
+        /// The center or endpoint.
+        atom: AtomId,
+        /// The atom's fixed implicit hydrogen count.
+        fixed_hydrogens: u8,
+    },
     /// A double-bond carrier is neither an atom nor an implicit hydrogen.
     UnsupportedDoubleBondCarrier {
         /// The element.
@@ -419,6 +432,14 @@ impl fmt::Display for StereoValidationIssue {
                 endpoint,
                 carrier,
             } => write!(f, "{element} carrier {carrier:?} is not bonded to {endpoint}"),
+            Self::ImplicitHydrogenCarrierMismatch {
+                element,
+                atom,
+                fixed_hydrogens,
+            } => write!(
+                f,
+                "{element} implicit-hydrogen carriers on {atom} disagree with its {fixed_hydrogens} fixed implicit hydrogen(s)"
+            ),
             Self::UnsupportedDoubleBondCarrier {
                 element,
                 endpoint,
@@ -565,16 +586,6 @@ impl From<StereoValidationError> for CoordinateStereoError {
     }
 }
 
-pub fn validate_stereo(mol: &Molecule) -> std::result::Result<(), StereoValidationError> {
-    let mut issues = Vec::new();
-    validate_existing_elements(mol, &mut issues);
-    if issues.is_empty() {
-        Ok(())
-    } else {
-        Err(StereoValidationError { issues })
-    }
-}
-
 /// Infers coordinate-derived stereo without changing the molecule.
 ///
 /// Only foci without a stereo element are inferred: an asserted center,
@@ -598,7 +609,7 @@ pub fn infer_coordinate_stereo(
             actual: positions.len(),
         });
     }
-    validate_stereo(mol)?;
+    crate::molecule::validate_represented_stereo(mol)?;
     let perceived = perception::prepared(mol).map_err(CoordinateStereoError::Perception)?;
     let mol = perceived.as_ref();
     let candidates = detect_stereo_candidates(mol, options.perception)
@@ -640,277 +651,12 @@ pub fn materialize_coordinate_stereo(
             .map_err(CoordinateStereoError::CouldNotCreateElement)?;
         created_elements.push(id);
     }
-    validate_stereo(staged.working())?;
+    crate::molecule::validate_represented_stereo(staged.working())?;
     *editor = staged;
     Ok(CoordinateStereoMaterializationReport {
         created_elements,
         disagreements: inferred.disagreements,
     })
-}
-
-fn validate_existing_elements(mol: &Molecule, issues: &mut Vec<StereoValidationIssue>) {
-    let mut foci = std::collections::BTreeMap::new();
-    for (id, element) in mol.stereo_elements() {
-        if let Some(previous) = foci.insert(element.kind.focus(), id) {
-            issues.push(StereoValidationIssue::DuplicateStereoFocus {
-                element: id,
-                previous,
-            });
-        }
-        match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => validate_tetrahedral(mol, id, stereo, issues),
-            StereoElementKind::DoubleBond(stereo) => validate_double_bond(mol, id, stereo, issues),
-            StereoElementKind::Axis(stereo) => validate_axis(mol, id, stereo, issues),
-        }
-    }
-}
-
-fn validate_tetrahedral(
-    mol: &Molecule,
-    element: StereoElementId,
-    stereo: &TetrahedralStereo,
-    issues: &mut Vec<StereoValidationIssue>,
-) {
-    if mol.atom(stereo.center).is_none() {
-        issues.push(StereoValidationIssue::MissingStereoAtom {
-            element,
-            atom: stereo.center,
-        });
-        return;
-    }
-    let mut seen = Vec::<StereoCarrier>::new();
-    for carrier in &stereo.carriers {
-        if seen.contains(carrier) {
-            issues.push(StereoValidationIssue::DuplicateTetrahedralCarrier {
-                element,
-                center: stereo.center,
-                carrier: *carrier,
-            });
-        } else {
-            seen.push(*carrier);
-        }
-        match carrier {
-            StereoCarrier::Atom(atom) => {
-                if mol.atom(*atom).is_none() {
-                    issues.push(StereoValidationIssue::MissingStereoAtom {
-                        element,
-                        atom: *atom,
-                    });
-                } else if mol.bond_between(stereo.center, *atom).is_none() {
-                    issues.push(StereoValidationIssue::TetrahedralCarrierNotAdjacent {
-                        element,
-                        center: stereo.center,
-                        carrier: *carrier,
-                    });
-                }
-            }
-            StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {}
-        }
-    }
-    for neighbor in mol.neighbors(stereo.center).into_iter().flatten() {
-        if !stereo.carriers.contains(&StereoCarrier::Atom(neighbor)) {
-            issues.push(StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
-                element,
-                center: stereo.center,
-                neighbor,
-            });
-        }
-    }
-}
-
-fn validate_double_bond(
-    mol: &Molecule,
-    element: StereoElementId,
-    stereo: &DoubleBondStereo,
-    issues: &mut Vec<StereoValidationIssue>,
-) {
-    let Some(bond) = mol.bond(stereo.bond) else {
-        issues.push(StereoValidationIssue::MissingStereoBond {
-            element,
-            bond: stereo.bond,
-        });
-        return;
-    };
-    if bond.order != BondOrder::Double {
-        issues.push(StereoValidationIssue::InvalidDoubleBondOrder {
-            element,
-            bond: stereo.bond,
-            order: bond.order,
-        });
-    }
-    if !bond_connects(bond, stereo.left, stereo.right) {
-        issues.push(StereoValidationIssue::DoubleBondFocusMismatch {
-            element,
-            bond: stereo.bond,
-            left: stereo.left,
-            right: stereo.right,
-        });
-    }
-    validate_double_bond_carrier(
-        mol,
-        element,
-        stereo.left,
-        stereo.right,
-        stereo.left_carrier,
-        issues,
-    );
-    for (endpoint, other) in [(stereo.left, stereo.right), (stereo.right, stereo.left)] {
-        let substituent_count = mol
-            .neighbors(endpoint)
-            .into_iter()
-            .flatten()
-            .filter(|neighbor| *neighbor != other)
-            .count();
-        if substituent_count > 2 {
-            issues.push(StereoValidationIssue::DoubleBondEndpointOvercoordinated {
-                element,
-                endpoint,
-                substituent_count,
-            });
-        }
-    }
-    validate_double_bond_carrier(
-        mol,
-        element,
-        stereo.right,
-        stereo.left,
-        stereo.right_carrier,
-        issues,
-    );
-}
-
-fn validate_double_bond_carrier(
-    mol: &Molecule,
-    element: StereoElementId,
-    endpoint: AtomId,
-    other_endpoint: AtomId,
-    carrier: StereoCarrier,
-    issues: &mut Vec<StereoValidationIssue>,
-) {
-    match carrier {
-        StereoCarrier::Atom(atom) => {
-            if atom == endpoint || atom == other_endpoint {
-                issues.push(StereoValidationIssue::DoubleBondCarrierIsFocusAtom {
-                    element,
-                    endpoint,
-                    carrier: atom,
-                });
-            } else if mol.atom(atom).is_none() {
-                issues.push(StereoValidationIssue::MissingStereoAtom { element, atom });
-            } else if mol.bond_between(endpoint, atom).is_none() {
-                issues.push(StereoValidationIssue::DoubleBondCarrierNotAdjacent {
-                    element,
-                    endpoint,
-                    carrier,
-                });
-            }
-        }
-        StereoCarrier::ImplicitHydrogen => {}
-        StereoCarrier::ImplicitLonePair => {
-            issues.push(StereoValidationIssue::UnsupportedDoubleBondCarrier {
-                element,
-                endpoint,
-                carrier,
-            });
-        }
-    }
-}
-
-fn validate_axis(
-    mol: &Molecule,
-    element: StereoElementId,
-    stereo: &AxisStereo,
-    issues: &mut Vec<StereoValidationIssue>,
-) {
-    let Some(bond) = mol.bond(stereo.axis) else {
-        issues.push(StereoValidationIssue::MissingStereoBond {
-            element,
-            bond: stereo.axis,
-        });
-        return;
-    };
-    let (left, right) = bond.endpoints();
-    for (endpoint, other) in [(left, right), (right, left)] {
-        let substituent_count = mol
-            .neighbors(endpoint)
-            .into_iter()
-            .flatten()
-            .filter(|neighbor| *neighbor != other)
-            .count();
-        if substituent_count > 2 {
-            issues.push(StereoValidationIssue::AxisEndpointOvercoordinated {
-                element,
-                endpoint,
-                substituent_count,
-            });
-        }
-    }
-    for carrier in &stereo.carriers {
-        validate_axis_carrier(mol, element, stereo.axis, left, right, *carrier, issues);
-    }
-    if stereo
-        .carriers
-        .iter()
-        .all(|carrier| matches!(carrier, StereoCarrier::Atom(_)))
-    {
-        let endpoint_counts = [left, right].map(|endpoint| {
-            stereo
-                .carriers
-                .iter()
-                .filter(|carrier| {
-                    matches!(carrier, StereoCarrier::Atom(atom)
-                    if mol.bond_between(endpoint, *atom).is_some())
-                })
-                .count()
-        });
-        if endpoint_counts != [1, 1] {
-            issues.push(StereoValidationIssue::AxisCarrierEndpointMismatch {
-                element,
-                axis: stereo.axis,
-            });
-        }
-    }
-}
-
-fn validate_axis_carrier(
-    mol: &Molecule,
-    element: StereoElementId,
-    axis: BondId,
-    left: AtomId,
-    right: AtomId,
-    carrier: StereoCarrier,
-    issues: &mut Vec<StereoValidationIssue>,
-) {
-    match carrier {
-        StereoCarrier::Atom(atom) => {
-            if atom == left || atom == right {
-                issues.push(StereoValidationIssue::AxisCarrierIsFocusAtom {
-                    element,
-                    axis,
-                    carrier: atom,
-                });
-            } else if mol.atom(atom).is_none() {
-                issues.push(StereoValidationIssue::MissingStereoAtom { element, atom });
-            } else {
-                let adjacent_left = mol.bond_between(left, atom).is_some();
-                let adjacent_right = mol.bond_between(right, atom).is_some();
-                if adjacent_left == adjacent_right {
-                    issues.push(StereoValidationIssue::AxisCarrierNotAdjacent {
-                        element,
-                        axis,
-                        carrier,
-                    });
-                }
-            }
-        }
-        StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
-            issues.push(StereoValidationIssue::UnsupportedAxisCarrier {
-                element,
-                axis,
-                carrier,
-            });
-        }
-    }
 }
 
 fn tetrahedral_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
@@ -934,7 +680,11 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = Vec::new();
     for (bond_id, bond) in mol.bonds() {
         if !double_bond_geometry_is_supported(mol, bond_id, bond)
-            || mol.bond_is_aromatic(bond_id) == Some(true)
+            || mol
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(bond_id))
+                == Some(true)
         {
             continue;
         }
@@ -1397,8 +1147,4 @@ pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
     // Stereo eligibility only needs small ligand counts. Preserve the existing
     // saturation for oversized expert-supplied perception assignments.
     u8::try_from(count).unwrap_or(u8::MAX)
-}
-
-fn bond_connects(bond: &Bond, a: AtomId, b: AtomId) -> bool {
-    (bond.a() == a && bond.b() == b) || (bond.a() == b && bond.b() == a)
 }

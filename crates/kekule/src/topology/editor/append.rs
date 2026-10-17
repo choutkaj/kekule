@@ -108,7 +108,10 @@ impl TopologyEditor {
                 .get_mut(&mapping.residues[&id])
                 .unwrap();
             target.class = Some(residue.class());
-            target.class_explicit = source.residue_class_overrides.contains_key(&id);
+            target.class_explicit = source
+                .hierarchy()
+                .residue(id)
+                .is_some_and(|residue| residue.explicit_class.is_some());
         }
         for (instance, value) in source.instance_records() {
             let definition = source.definition(value.definition()).unwrap();

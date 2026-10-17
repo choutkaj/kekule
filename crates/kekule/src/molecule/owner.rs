@@ -359,9 +359,11 @@ impl Molecule {
     /// chemical edit; it also means `atom` names no atom of this molecule.
     /// This method never runs perception implicitly.
     pub fn implicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
-        self.atom(atom)?
-            .hydrogens
-            .resolve(self.perception.inferred_hydrogens(atom))
+        self.atom(atom)?.hydrogens.resolve(
+            self.perception
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+        )
     }
 
     /// Counts explicit hydrogen neighbors plus all implicit hydrogens.
@@ -371,49 +373,6 @@ impl Molecule {
         let explicit = self.explicit_hydrogens(atom)?;
         self.implicit_hydrogens(atom)
             .map(|implicit| explicit + implicit)
-    }
-
-    /// Reads installed aromaticity. `None` means it has not been computed or
-    /// `atom` names no atom of this molecule.
-    pub fn atom_is_aromatic(&self, atom: AtomId) -> Option<bool> {
-        self.atom(atom)?;
-        self.perception.atom_is_aromatic(atom)
-    }
-
-    /// Reads installed aromaticity. `None` means it has not been computed or
-    /// `bond` names no bond of this molecule.
-    pub fn bond_is_aromatic(&self, bond: BondId) -> Option<bool> {
-        self.bond(bond)?;
-        self.perception.bond_is_aromatic(bond)
-    }
-
-    /// Reads installed conjugation. `None` means it has not been computed or
-    /// `atom` names no atom of this molecule.
-    pub fn atom_is_conjugated(&self, atom: AtomId) -> Option<bool> {
-        self.atom(atom)?;
-        self.perception.atom_is_conjugated(atom)
-    }
-
-    /// Reads installed conjugation. Aromatic bonds are also conjugated. `None`
-    /// means it has not been computed or `bond` names no bond of this molecule.
-    pub fn bond_is_conjugated(&self, bond: BondId) -> Option<bool> {
-        self.bond(bond)?;
-        self.perception.bond_is_conjugated(bond)
-    }
-
-    /// Reads an installed CIP descriptor. `None` means none is installed or
-    /// `element` names no stereo element of this molecule.
-    pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
-        self.stereo_element(element)?;
-        self.perception.cip_descriptor(element)
-    }
-
-    pub fn ring_membership(&self) -> Option<&RingMembership> {
-        self.perception.ring_membership()
-    }
-
-    pub fn ring_set(&self) -> Option<&RingSet> {
-        self.perception.ring_set()
     }
 
     /// Inserts an ungrouped validated stereo element without narrowing its collection slot.
@@ -458,7 +417,7 @@ impl Molecule {
                 StereoValidationIssue::GroupMembershipOutsideGroupEdit { element: pending },
             ));
         }
-        self.validate_stereo_element_refs(pending, &element)?;
+        self.validate_stereo_element(pending, &element)?;
         self.validate_unique_stereo_focus(pending, &element, None)?;
         self.canonicalize_stereo_element(&mut element);
         let id = checked_molecule_id(
@@ -492,7 +451,7 @@ impl Molecule {
                 StereoValidationIssue::GroupMembershipOutsideGroupEdit { element: id },
             ));
         }
-        self.validate_stereo_element_refs(id, &replacement)?;
+        self.validate_stereo_element(id, &replacement)?;
         self.validate_unique_stereo_focus(id, &replacement, Some(id))?;
         self.canonicalize_stereo_element(&mut replacement);
         let previous = std::mem::replace(
@@ -743,20 +702,26 @@ impl Molecule {
     pub(crate) fn install_valence(
         &mut self,
         model: ValenceModel,
+        validation: ValenceValidation,
         inferred_hydrogens: BTreeMap<AtomId, u8>,
     ) {
         self.perception.valence = Some(ValencePerception {
-            model: Some(model),
+            model,
+            validation,
             inferred_hydrogens,
         });
         self.invalidate_aromaticity();
     }
 
+    /// Overrides one inferred count of a private projection copy, keeping the
+    /// installed provenance. A copy without valence takes the permissive
+    /// RDKit-like provenance under which projected counts are written.
     pub(crate) fn set_inferred_hydrogens(&mut self, atom: AtomId, count: u8) {
         self.perception
             .valence
             .get_or_insert_with(|| ValencePerception {
-                model: None,
+                model: ValenceModel::RdkitLike,
+                validation: ValenceValidation::Permissive,
                 inferred_hydrogens: BTreeMap::new(),
             })
             .inferred_hydrogens
@@ -772,15 +737,10 @@ impl Molecule {
         self.invalidate_aromaticity();
     }
 
-    pub(crate) fn install_ring_basis(
-        &mut self,
-        membership: RingMembership,
-        model: RingBasisModel,
-        rings: RingSet,
-    ) {
+    pub(crate) fn install_ring_basis(&mut self, membership: RingMembership, basis: RingBasisState) {
         self.perception.rings = Some(RingPerception {
             membership,
-            basis: Some(RingBasisState::new(Some(model), rings)),
+            basis: Some(basis),
         });
         self.invalidate_aromaticity();
     }
@@ -835,6 +795,59 @@ impl Molecule {
         state: Option<CipPerception>,
     ) -> Option<CipPerception> {
         std::mem::replace(&mut self.perception.stereo, state)
+    }
+
+    /// Checks `element`, which has or receives ID `id`, completely: its
+    /// graph references and the hydrogen declarations its implicit-hydrogen
+    /// carriers rely on. Explicit stereo edits and publication use this;
+    /// graph-edit pruning checks references alone, because hydrogen
+    /// transforms change a carrier and its declaration in separate steps.
+    pub(crate) fn validate_stereo_element(
+        &self,
+        id: StereoElementId,
+        element: &StereoElement,
+    ) -> Result<()> {
+        self.validate_stereo_element_refs(id, element)?;
+        let invalid = |issue| Err(MoleculeError::InvalidStereoReference(issue));
+        match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => {
+                let center = stereo.center;
+                let carried = stereo
+                    .carriers
+                    .iter()
+                    .filter(|carrier| **carrier == StereoCarrier::ImplicitHydrogen)
+                    .count();
+                if let ImplicitHydrogens::Fixed(fixed_hydrogens) =
+                    self.require_atom(center)?.hydrogens()
+                {
+                    if usize::from(fixed_hydrogens) != carried {
+                        return invalid(StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                            element: id,
+                            atom: center,
+                            fixed_hydrogens,
+                        });
+                    }
+                }
+            }
+            StereoElementKind::DoubleBond(stereo) => {
+                for (endpoint, carrier) in [
+                    (stereo.left, stereo.left_carrier),
+                    (stereo.right, stereo.right_carrier),
+                ] {
+                    if carrier == StereoCarrier::ImplicitHydrogen
+                        && self.require_atom(endpoint)?.hydrogens() == ImplicitHydrogens::Fixed(0)
+                    {
+                        return invalid(StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                            element: id,
+                            atom: endpoint,
+                            fixed_hydrogens: 0,
+                        });
+                    }
+                }
+            }
+            StereoElementKind::Axis(_) => {}
+        }
+        Ok(())
     }
 
     /// Checks the references of `element`, which has or receives ID `id`,

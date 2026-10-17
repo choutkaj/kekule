@@ -81,7 +81,9 @@ fn consuming_publication_moves_added_molecules_and_preserves_owner_annotations()
     let pointer = editor.atom(atom).unwrap() as *const Atom;
     let key = PropertyKey::new("label").unwrap();
     editor
-        .insert_property(key.clone(), PropertyValue::String("draft".into()))
+        .properties_mut()
+        .owner_mut()
+        .insert(key.clone(), PropertyValue::String("draft".into()))
         .unwrap();
     let topology = editor.finish().unwrap();
     assert_eq!(

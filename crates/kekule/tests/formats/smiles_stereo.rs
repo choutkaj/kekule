@@ -137,7 +137,11 @@ fn mapped_cip(molecule: &mut Molecule) -> BTreeMap<(u32, u32), StereoDescriptor>
                 .get();
             (
                 (left.min(right), left.max(right)),
-                molecule.cip_descriptor(id).unwrap(),
+                molecule
+                    .perception()
+                    .cip()
+                    .and_then(|cip| cip.cip_descriptor(id))
+                    .unwrap(),
             )
         })
         .collect()
@@ -201,7 +205,11 @@ fn contradictory_double_bond_assertions_are_rejected_before_export() {
     original.perceive().unwrap();
     stereo::cip::assign_cip_descriptors(&mut original, Default::default()).unwrap();
     let (id, element) = original.stereo_elements().next().unwrap();
-    let expected = original.cip_descriptor(id).unwrap();
+    let expected = original
+        .perception()
+        .cip()
+        .and_then(|cip| cip.cip_descriptor(id))
+        .unwrap();
     let expected_export = smiles::write(&original, smiles::SmilesWriteOptions::isomeric()).unwrap();
     let mut opposite = element.clone();
     let StereoElementKind::DoubleBond(stereo) = &mut opposite.kind else {
@@ -221,14 +229,28 @@ fn contradictory_double_bond_assertions_are_rejected_before_export() {
 
     let preserved = editor.finish().unwrap();
     assert_eq!(preserved.stereo_elements().count(), 1);
-    assert_eq!(preserved.cip_descriptor(id).unwrap(), expected);
+    assert_eq!(
+        preserved
+            .perception()
+            .cip()
+            .and_then(|cip| cip.cip_descriptor(id))
+            .unwrap(),
+        expected
+    );
     let written = smiles::write(&preserved, smiles::SmilesWriteOptions::isomeric()).unwrap();
     assert_eq!(written, expected_export);
     let mut restored = molecule(&written);
     restored.perceive().unwrap();
     stereo::cip::assign_cip_descriptors(&mut restored, Default::default()).unwrap();
     let restored_id = restored.stereo_element_ids().next().unwrap();
-    assert_eq!(restored.cip_descriptor(restored_id).unwrap(), expected);
+    assert_eq!(
+        restored
+            .perception()
+            .cip()
+            .and_then(|cip| cip.cip_descriptor(restored_id))
+            .unwrap(),
+        expected
+    );
 }
 
 #[test]

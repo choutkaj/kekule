@@ -197,7 +197,7 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
 
     let mut editor = model.to_editor();
     let [carbon, water_oxygen, oxygen] =
-        [carbon, water_oxygen, oxygen].map(|atom| editor.atom_handle(atom).unwrap());
+        [carbon, water_oxygen, oxygen].map(|atom| editor.topology().atom_handle(atom).unwrap());
     // Merging the water into methanol keeps every atom in place.
     editor
         .add_bond(oxygen, water_oxygen, BondOrder::Single)
@@ -220,7 +220,10 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
     }
 
     let mut editor = model.to_editor();
-    let water_oxygen = editor.atom_handle(model.topology().atom_ids()[1]).unwrap();
+    let water_oxygen = editor
+        .topology()
+        .atom_handle(model.topology().atom_ids()[1])
+        .unwrap();
     editor.delete_atom(water_oxygen).unwrap();
     let removed = editor.finish().unwrap();
     assert_eq!(xs(&removed), [0.0, 2.0]);

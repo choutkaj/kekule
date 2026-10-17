@@ -2,13 +2,13 @@ use crate::DraftError;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3};
+use crate::geometry::{PeriodicCell, Point3, RigidTransform};
 use crate::molecule::Molecule;
 use crate::properties::{StructureProperties, TopologyPropertiesMut};
 use crate::topology::TopologySubsetError;
 use crate::topology::{
-    AtomSelection, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeDefinitionId,
-    MoleculeInstanceId, ResidueClass, ResidueId, Topology, TopologyAtomIndex, TopologyBuildError,
+    AtomSelection, HierarchyBuilder, InstanceAtomId, InstanceBondId, MoleculeClass,
+    MoleculeDefinitionId, MoleculeInstanceId, Topology, TopologyAtomIndex, TopologyBuildError,
     TopologyBuilder, TopologyPerceptionError,
 };
 use crate::units::Quantity;
@@ -17,9 +17,9 @@ use super::model_state::ModelState;
 use super::scalars::{b_factor_quantities, b_factor_quantity, AtomScalars};
 use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
-    validate_binding,
+    transform_cell, transform_positions, validate_binding,
 };
-use super::{DenseArrayError, Positions, StructureError};
+use super::{DenseArrayError, Forces, Positions, StructureError, Velocities};
 
 /// One concrete structure of one topology.
 ///
@@ -166,6 +166,38 @@ impl Model {
         self.positions.len()
     }
 
+    /// Applies a rigid transform to the whole model transactionally:
+    /// positions move and the cell rotates, as for ensemble members and
+    /// trajectory frames. Use [`Self::transform_atoms`] to move a selection
+    /// while keeping the cell.
+    ///
+    /// ```
+    /// use kekule::{smiles, geometry::{Matrix3, PeriodicCell, RigidTransform, Vector3},
+    ///     structure::{Model, Positions}, units::{Quantity, NANOMETER}};
+    /// let mut model = Model::new(smiles::to_topology("O")?, Positions::zeros(1))?;
+    /// let cell = PeriodicCell::orthorhombic(
+    ///     Quantity::new(Vector3::new(1.0, 2.0, 3.0), NANOMETER), [true; 3])?;
+    /// model.set_cell(Some(cell));
+    /// // A quarter turn about z.
+    /// let turn = Matrix3::from_columns(
+    ///     Vector3::new(0.0, 1.0, 0.0), Vector3::new(-1.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+    /// let still = Quantity::new(Vector3::zero(), NANOMETER);
+    /// model.apply_rigid_transform(&RigidTransform::new(turn, still)?)?;
+    /// let [a, b, _] = model.cell().unwrap().vectors().into_value();
+    /// assert_eq!((a, b), (Vector3::new(0.0, 1.0, 0.0), Vector3::new(-2.0, 0.0, 0.0)));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn apply_rigid_transform(
+        &mut self,
+        transform: &RigidTransform,
+    ) -> Result<(), StructureError> {
+        let cell = transform_cell(self.cell, *transform)?;
+        let positions = transform_positions(&self.positions, *transform)?;
+        self.cell = cell;
+        self.positions = positions;
+        Ok(())
+    }
+
     /// Borrows this model as the common kernel input without copying.
     pub fn as_model_view(&self) -> ModelView<'_> {
         ModelView::bound(
@@ -175,6 +207,7 @@ impl Model {
             &self.occupancies,
             &self.b_factors,
             &self.properties,
+            StructureKind::Model,
         )
     }
 
@@ -191,7 +224,7 @@ impl Model {
     /// let topology = smiles::to_topology("c1ccccc1")?;
     /// let mut model = Model::new(topology, Positions::zeros(6))?;
     /// model.perceive()?;
-    /// assert!(model.topology().instances().all(|m| m.molecule().perception().has_rings()));
+    /// assert!(model.topology().instances().all(|m| m.molecule().perception().rings().is_some()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
@@ -339,13 +372,46 @@ impl<'a> From<&'a Model> for ModelView<'a> {
     }
 }
 
+/// What a [`ModelView`] borrows: a model, an ensemble member, or a trajectory
+/// frame, with the state only that kind of structure owns.
+///
+/// Kernels that only need coordinates ignore it. Writers and reductions read
+/// it so that member and frame state is written, rejected, or deliberately
+/// omitted, never silently dropped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum StructureKind<'a> {
+    /// A [`Model`], or a view materialized as one.
+    Model,
+    /// An [`EnsembleMember`](super::EnsembleMember).
+    #[non_exhaustive]
+    Member {
+        /// The member's finite, positive relative weight.
+        weight: f64,
+        /// The member's energy, when recorded.
+        energy: Option<Quantity<f64>>,
+    },
+    /// A [`TrajectoryFrame`](super::TrajectoryFrame) or a frame buffer.
+    #[non_exhaustive]
+    Frame {
+        /// The frame's simulation time, when recorded.
+        time: Option<Quantity<f64>>,
+        /// The frame's integration step, when recorded.
+        step: Option<u64>,
+        /// The frame's velocities, when recorded.
+        velocities: Option<&'a Velocities>,
+        /// The frame's forces, when recorded.
+        forces: Option<&'a Forces>,
+    },
+}
+
 /// A borrowed topology plus the structure state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
 /// Models, ensemble members, trajectory frames, and frame buffers all borrow
-/// as a view. Accessors return borrows with the view's full lifetime. A view of
-/// a trajectory frame has no occupancies or B-factors. Views preserve exact
-/// topology identity.
+/// as a view, and [`Self::kind`] says which one it is. Accessors return
+/// borrows with the view's full lifetime. A view of a trajectory frame has no
+/// occupancies or B-factors. Views preserve exact topology identity.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,
@@ -354,6 +420,7 @@ pub struct ModelView<'a> {
     occupancies: &'a AtomScalars,
     b_factors: &'a AtomScalars,
     properties: &'a StructureProperties,
+    kind: StructureKind<'a>,
 }
 
 impl<'a> ModelView<'a> {
@@ -365,6 +432,7 @@ impl<'a> ModelView<'a> {
         occupancies: &'a AtomScalars,
         b_factors: &'a AtomScalars,
         properties: &'a StructureProperties,
+        kind: StructureKind<'a>,
     ) -> Self {
         debug_assert!(is_bound(positions.len(), properties, topology));
         Self {
@@ -374,7 +442,20 @@ impl<'a> ModelView<'a> {
             occupancies,
             b_factors,
             properties,
+            kind,
         }
+    }
+
+    /// Which structure this view borrows, with its member or frame state.
+    ///
+    /// ```
+    /// use kekule::{smiles, structure::{Model, Positions, StructureKind}};
+    /// let model = Model::new(smiles::to_topology("O")?, Positions::zeros(1))?;
+    /// assert_eq!(model.as_model_view().kind(), StructureKind::Model);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub const fn kind(self) -> StructureKind<'a> {
+        self.kind
     }
 
     pub fn topology(self) -> &'a Topology {
@@ -461,7 +542,8 @@ impl<'a> ModelView<'a> {
             .map(move |atom| ModelAtomView { atom, model: self })
     }
 
-    /// Materializes this borrowed structure as an owned model. A view of a
+    /// Materializes this borrowed structure as an owned model, dropping any
+    /// member or frame state reported by [`Self::kind`]. A view of a
     /// trajectory frame yields a model without occupancies or B-factors.
     pub fn to_model(self) -> Model {
         Model {
@@ -626,11 +708,14 @@ impl ModelBuilder {
         }
     }
 
-    pub fn hierarchy(&self) -> &Hierarchy {
+    /// The staged hierarchy.
+    pub fn hierarchy(&self) -> &HierarchyBuilder {
         self.topology.hierarchy()
     }
 
-    pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
+    /// The staged hierarchy, for adding chains, residues, and atom sites and
+    /// assigning residue classes; see [`TopologyBuilder::hierarchy_mut`].
+    pub fn hierarchy_mut(&mut self) -> &mut HierarchyBuilder {
         self.topology.hierarchy_mut()
     }
 
@@ -741,13 +826,13 @@ impl ModelBuilder {
         Ok(self.topology.set_molecule_class(definition, class)?)
     }
 
-    /// Overrides automatic classification for one staged hierarchy residue.
-    pub fn set_residue_class(
+    /// Clears one staged definition's explicit class, so publication infers
+    /// it afresh.
+    pub fn clear_molecule_class(
         &mut self,
-        residue: ResidueId,
-        class: ResidueClass,
+        definition: MoleculeDefinitionId,
     ) -> Result<(), ModelBuildError> {
-        Ok(self.topology.set_residue_class(residue, class)?)
+        Ok(self.topology.clear_molecule_class(definition)?)
     }
 
     /// Adds an instance with dense positions in its definition's atom order.
@@ -896,10 +981,6 @@ pub struct ModelTopologyMut<'a> {
 }
 
 impl<'a> ModelTopologyMut<'a> {
-    pub fn hierarchy_mut(self) -> &'a mut Hierarchy {
-        self.topology.hierarchy_mut()
-    }
-
     /// Length-preserving mutable access to staged static topology annotations.
     pub fn properties_mut(self) -> crate::properties::TopologyPropertiesMut<'a> {
         self.topology.properties_mut()

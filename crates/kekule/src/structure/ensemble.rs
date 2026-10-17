@@ -16,7 +16,7 @@ use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     transform_cell, transform_positions, validate_binding,
 };
-use super::{AsModelView, Model, ModelView, Positions, StructureError};
+use super::{AsModelView, Model, ModelView, Positions, StructureError, StructureKind};
 
 /// A weighted, unordered sample of structures of one shared topology, such
 /// as conformers, Monte Carlo samples, or alternate experimental models.
@@ -673,6 +673,10 @@ impl EnsembleMember {
             &self.occupancies,
             &self.b_factors,
             &self.properties,
+            StructureKind::Member {
+                weight: self.weight,
+                energy: self.energy,
+            },
         )
     }
 

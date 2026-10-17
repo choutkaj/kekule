@@ -472,7 +472,11 @@ pub(crate) fn remove_hydrogens_keeping(
         molecule.atom(*parent).is_some_and(|atom| {
             atom.element.symbol() == "N"
                 && atom.formal_charge == 0
-                && molecule.atom_is_aromatic(*parent) == Some(true)
+                && molecule
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(*parent))
+                    == Some(true)
         })
     }));
     let stereo_bindings = stereo_hydrogen_bindings(molecule, &removable);

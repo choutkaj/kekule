@@ -207,9 +207,8 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
         .into_model();
     assert!(model
         .topology()
-        .hierarchy()
         .residues()
-        .all(|(_, residue)| residue.label_seq_id().is_none()));
+        .all(|residue| residue.label_seq_id().is_none()));
     let assigned = dssp::assign(&model, DsspOptions::default()).unwrap();
     assert_eq!(assigned.statistics(), reference.statistics());
     for (actual, expected) in assigned.residues().zip(reference.residues()) {

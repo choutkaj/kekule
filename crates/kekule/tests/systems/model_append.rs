@@ -111,8 +111,8 @@ fn annotated(conflict: Option<&str>) -> Model {
             .unwrap();
     }
     let molecule = chemistry.finish().unwrap();
-    assert!(molecule.perception().has_valence());
-    assert!(molecule.perception().has_stereo());
+    assert!(molecule.perception().valence().is_some());
+    assert!(molecule.perception().cip().is_some());
     assert!(molecule.stereo_elements().count() > 0);
     let mut builder = TopologyBuilder::new();
     let shared = builder.add_molecule_definition(molecule.clone()).unwrap();
@@ -154,6 +154,7 @@ fn annotated(conflict: Option<&str>) -> Model {
         }
     }
     builder
+        .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::Other)
         .unwrap();
     let atom_count = molecule.atom_count() * 3;
@@ -290,8 +291,8 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
             );
             assert_eq!(occupancy(source, id), occupancy(target, other));
             assert_eq!(b_factor(source, id), b_factor(target, other));
-            let before = source.topology().hierarchy().atom_site_for_atom(id);
-            let after = target.topology().hierarchy().atom_site_for_atom(other);
+            let before = source.topology().atom(id).unwrap().atom_site();
+            let after = target.topology().atom(other).unwrap().atom_site();
             assert_eq!(before.is_some(), after.is_some());
             if let (Some(before), Some(after)) = (before, after) {
                 assert_eq!(before.metadata(), after.metadata());
@@ -300,16 +301,7 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
                     target.topology().properties().atom_sites(),
                     &[(before.id().index(), after.id().index())],
                 );
-                let before = source
-                    .topology()
-                    .hierarchy()
-                    .residue(before.residue())
-                    .unwrap();
-                let after = target
-                    .topology()
-                    .hierarchy()
-                    .residue(after.residue())
-                    .unwrap();
+                let (before, after) = (before.residue(), after.residue());
                 assert_eq!(before.atom_sites().len(), after.atom_sites().len());
                 assert_eq!(before.name(), after.name());
                 assert_eq!(before.label_seq_id(), after.label_seq_id());
@@ -323,8 +315,7 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
                     target.topology().properties().residues(),
                     &[(before.id().index(), after.id().index())],
                 );
-                let before = source.topology().hierarchy().chain(before.chain()).unwrap();
-                let after = target.topology().hierarchy().chain(after.chain()).unwrap();
+                let (before, after) = (before.chain(), after.chain());
                 assert_eq!(before.residues().len(), after.residues().len());
                 assert_eq!(before.label_id(), after.label_id());
                 assert_eq!(before.author_id(), after.author_id());
@@ -499,6 +490,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     editor
         .delete_atom(
             editor
+                .topology()
                 .atom_handle(receptor.topology().atom_ids()[1])
                 .unwrap(),
         )
@@ -515,7 +507,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     editor.add_bond(left, hydrogen, BondOrder::Single).unwrap();
     editor
         .add_bond(
-            editor.atom_handle(receptor_atom).unwrap(),
+            editor.topology().atom_handle(receptor_atom).unwrap(),
             left,
             BondOrder::Single,
         )
@@ -548,7 +540,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     );
     let removed = imported.bond(source_bond).unwrap();
     editor.delete_bond(removed).unwrap();
-    assert!(editor.bond(removed).is_none());
+    assert!(editor.topology().bond(removed).is_none());
     let split = editor.clone().finish().unwrap();
     assert_eq!(split.topology().instance_count(), 2);
     assert_eq!(split.atom_count(), 4);
@@ -571,8 +563,8 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     );
     editor.delete_atom(left).unwrap();
     editor.delete_atom(right).unwrap();
-    assert!(editor.atom(left).is_none());
-    assert!(editor.atom(right).is_none());
+    assert!(editor.topology().atom(left).is_none());
+    assert!(editor.topology().atom(right).is_none());
     let deleted = editor.finish().unwrap();
     assert_eq!(deleted.atom_count(), 2);
     assert_eq!(deleted.topology().instance_count(), 2);
@@ -881,7 +873,7 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
                     .unwrap(),
                 None
             );
-            assert!(!after.perception().has_valence());
+            assert!(after.perception().valence().is_none());
         } else {
             assert_eq!(before, after);
             assert_eq!(before.perception(), after.perception());
@@ -936,7 +928,7 @@ fn edited_source_ids_and_reordered_definition_occurrences_keep_dense_state_assoc
         .insert(key("tag"), column(2, 500, false))
         .unwrap();
     let mut destination = model("CCC").into_editor();
-    let deleted = destination.atom_ids().next().unwrap();
+    let deleted = destination.topology().atom_ids().next().unwrap();
     destination.delete_atom(deleted).unwrap();
     destination.append_model(&source).unwrap();
     let result = destination.finish().unwrap();

@@ -255,11 +255,17 @@ fn stereo_cleanup_is_explicit_transactional_and_preserves_surviving_groups() {
     let group = cleaned.stereo_groups().next().unwrap().1;
     assert_eq!(group.kind, StereoGroupKind::And);
     assert_eq!(group.members, vec![survivor]);
-    assert!(cleaned.perception().has_valence());
+    assert!(cleaned.perception().valence().is_some());
     for id in before.atom_ids() {
         assert_eq!(
-            cleaned.perception().inferred_hydrogens(id),
-            before.perception().inferred_hydrogens(id)
+            cleaned
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(id)),
+            before
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(id))
         );
     }
     assert_eq!(molecule, before);

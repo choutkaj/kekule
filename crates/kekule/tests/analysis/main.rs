@@ -8,3 +8,5 @@ mod dssp;
 mod geometry;
 mod measurements;
 mod solvation;
+#[path = "../support/mod.rs"]
+mod support;

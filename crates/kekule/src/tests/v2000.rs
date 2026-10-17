@@ -634,7 +634,7 @@ fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
                 );
                 StereoCarrier::ImplicitHydrogen
             };
-            assert!(!molecule.perception().has_valence());
+            assert!(molecule.perception().valence().is_none());
             assert_eq!(molecule.stereo_elements().count(), 1);
             assert!(molecule.stereo_elements().any(|(_, element)| {
                 matches!(
@@ -679,7 +679,7 @@ fn v2000_declared_valence_defines_stereo_hydrogen_carriers() {
                 center.hydrogens,
                 ImplicitHydrogens::Fixed(expected_hydrogens)
             );
-            assert!(!molecule.perception().has_valence());
+            assert!(molecule.perception().valence().is_none());
             assert_eq!(molecule.stereo_elements().count(), 1);
             assert_eq!(
                 molecule

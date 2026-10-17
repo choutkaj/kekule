@@ -208,6 +208,7 @@ fn explicit_definition_and_residue_overrides_win() {
         .set_molecule_class(definition, MoleculeClass::Protein)
         .unwrap();
     builder
+        .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::AminoAcid)
         .unwrap();
     let topology = builder.build().unwrap();
@@ -348,6 +349,7 @@ fn subsets_reuse_compact_definitions_and_preserve_only_complete_entity_classes()
                 .unwrap();
         }
         builder
+            .hierarchy_mut()
             .set_residue_class(residue, ResidueClass::Water)
             .unwrap();
     }

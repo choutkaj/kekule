@@ -79,8 +79,12 @@ Bonds carry localized orders. Aromaticity is perceived state, not a bond order.
 Source aromatic and stereo syntax is normalized during interpretation.
 
 Represented stereo must refer to valid focuses and adjacent carriers, with the
-required focus bond order and consistent assertions and groups. Validate these
-conditions before canonicalization. Changing a focus order, adding a bond to a
+required focus bond order and consistent assertions and groups, and an
+implicit-hydrogen carrier must agree with a fixed hydrogen declaration. One
+validator checks these conditions for explicit stereo edits, publication, and
+`MoleculeEditor::validate`, before canonicalization; graph-edit pruning checks
+references alone, since hydrogen transforms change a carrier and its
+declaration in separate steps. Changing a focus order, adding a bond to a
 focus, or deleting a carrier bond prunes the stereo and group membership it
 invalidates, even if an alternate graph path keeps the molecule connected.
 Pruning is local to the edited atoms and bonds, so unaffected assertions
@@ -97,6 +101,14 @@ results borrowing the exact source molecule; default perception never enumerates
 them or rewrites represented bond orders and charges. Task-specific
 descriptors, force-field typing, scoring, and analyses belong in separate result
 objects; attaching selected values as properties is deliberate.
+
+`Perception` exposes only its sections (valence, rings, aromaticity,
+conjugation, resonance, and CIP state); each section owns its queries and
+records mandatory provenance: the model, plus the policy where results depend
+on it. Valence records strict or permissive validation; a ring basis records
+the requested model separately from whether the depth-first fallback chose
+its rings. Consumers reuse installed state only when its provenance matches
+what they would perceive themselves, rather than revalidating it.
 
 Chemical edits invalidate dependent perception. Property changes do not.
 Detached perception is checked against graph references and dimensions before
@@ -153,7 +165,9 @@ interpretation keeps source atom-row order, builders default to instance order
 or accept an explicit permutation, and editors and subsets keep surviving atoms
 in source order. Dense bond order is instance order, then local bond ID.
 
-`Hierarchy` is owned exactly once by `Topology`. Atom sites refer to live
+`Hierarchy` is owned exactly once by `Topology`. Its storage is private: the
+chain, residue, and atom-site views are the only read path, and builders stage
+it through one `HierarchyBuilder`. Atom sites refer to live
 `InstanceAtomId` values; they do not copy atoms. One chain or residue may span
 molecules, and one molecule may span chains. Molecular and domain-specific
 hierarchy views borrow and filter this single hierarchy. Source labels and author
@@ -166,7 +180,10 @@ contextual roles such as receptor or ligand, and do not affect molecular identit
 Inference occurs at topology publication without running chemical perception.
 It combines conservative component recognition, simple graph evidence, and
 inter-residue connectivity; conflicting strong evidence yields `Other`.
-Explicit assignments retain their intent separately from inferred cached values.
+Explicit assignments retain their intent separately from inferred cached values,
+and `ClassAssignment` reports which one a published class is. A residue's
+explicit class lives on its staged node, so replacing a staged hierarchy
+discards it; clearing an assignment returns the entity to inference.
 
 Unchanged complete entities preserve their classifications through subsets and
 ordinary appends. Changed chemistry or informative new context triggers
@@ -261,6 +278,12 @@ take the table's row type. Writes go through length-preserving
 `*Mut` guards: whole-column replacement or removal, single-cell writes, and
 transactional batches with ordered update semantics. A draft editor addresses
 allocated slots, and writing a value to a deleted slot fails with `RemovedRow`.
+System editors expose the same guard keyed by editing handle
+(`TopologyEditor::properties_mut`), and a deleted handle fails with the
+editor's typed invalid-handle error. `ModelEditor` does not dereference to its
+topology draft: `topology()` reads it, `topology_mut()` reaches the edits that
+need no coordination with geometry, and its own `properties_mut()` holds
+structure-scoped values, so the two scopes never shadow each other.
 
 Keys are validated and never reserved. A column has one type and, for real
 values, one physical unit; missing entries are explicit. Column length matches
@@ -293,7 +316,10 @@ store flat payloads, not nested models; a detached payload has
 atom rows only and acquires bond rows when its collection binds it. Borrowed
 `ModelView` access, obtained through the sealed `AsModelView` (or a frame
 buffer's `as_model_view`), lets coordinate algorithms and writers share
-kernels across models, members, frames, and buffers. Owned
+kernels across models, members, frames, and buffers. A view's `kind()`
+says which structure it borrows and carries that structure's own state (a
+member's weight and energy, a frame's time, step, velocities, and forces), so
+writers and reductions never lose it silently. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
 one shared layout; there is no special single-member ownership model.
@@ -329,7 +355,9 @@ policies and supported geometries live with
 [alignment](crates/kekule/src/alignment.rs).
 
 Cartesian geometry edits mutate `Model` coordinates atomically while retaining
-the exact topology, cell, and properties. Prepared distance, angle, and dihedral
+the exact topology, cell, and properties. A rigid motion of a whole structure
+(`apply_rigid_transform` on a model, member, or frame) rotates its cell with
+its coordinates; selection edits such as `transform_atoms` keep the cell. Prepared distance, angle, and dihedral
 edits bind references and moving selections to that layout, never to cached
 coordinates. Automatic fragments must separate from fixed references; explicit
 selections may deliberately deform boundary bonds. Neither path performs ring
@@ -369,7 +397,9 @@ change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
 RMSF and contact-occupancy reductions are trajectory statistics in which every
 frame counts once; they do not accept ensembles, whose statistics must be
-weighted. They consume borrowed frames sharing the source
+weighted. Their accumulators take frames through the sealed `AsFrameView`,
+implemented only by trajectory frame views and frame buffers, so an ensemble
+member or an untyped `ModelView` does not compile. They consume borrowed frames sharing the source
 topology's layout with memory bounded by selected atoms or pairs, not frame count. Failed
 observations leave accumulators unchanged. Results retain atom/pair associations;
 frame indices are diagnostic labels, not statistical weights. Preprocessing,
@@ -557,12 +587,17 @@ writers stream into the caller's writer without buffering it, as trajectory
 codecs do; callers wrap unbuffered sinks, and only path writers buffer. The
 exception is the Molfile/SDF writer, which renders one CTAB before emitting it,
 because automatic version selection learns whether V2000 can hold a record only
-by rendering it; SDF still streams record by record. Each
-source type converts from the inputs that format can represent: molecules,
+by rendering it; SDF still streams record by record. Each source type
+is a struct with private fields, constructors for the inputs it accepts, and
+the record's title or name (`with_title`, `with_name`), and it converts from
+the inputs that format can represent: molecules,
 models, collection items, interpreted records, or mmCIF block sources carrying
 classifications or reports. Models and collection items share a borrowed
 structure path. Coordinate-bearing writers emit atoms in dense order.
-Unsupported representational content must fail explicitly. There is no
+Unsupported representational content must fail explicitly. Writers read the
+view's `kind()`: member or frame state the format cannot carry fails unless
+the caller sets `UnrepresentablePolicy::Omit` for it, and a format that can
+carry it writes it whichever path supplied the view. There is no
 universal save trait or implicit trajectory-to-structure export.
 
 - SMILES exports represented chemistry and supported stereo. Canonical output
@@ -577,10 +612,12 @@ universal save trait or implicit trajectory-to-structure export.
   one fails unless the caller chooses to omit it.
 - SDF represents independent records; an ensemble member's weight and energy
   travel as data fields, and only the explicit `sdf::ensemble` assembles
-  records into an ensemble. mmCIF distinguishes independent model blocks
+  records into an ensemble. A Molfile, an SDF record, and an mmCIF block
+  cannot carry a frame's time, step, velocities, or forces. A Molfile cannot
+  carry a member's weight or energy. mmCIF distinguishes independent model blocks
   from one ensemble's multi-model block, and cannot carry member weights or
-  energies, so writing unequal weights or any energy fails unless the
-  caller chooses to omit them. mmCIF writes a cell periodic along all three
+  energies, so writing unequal weights, any energy, or one member as a model
+  block fails unless the caller chooses to omit them. mmCIF writes a cell periodic along all three
   axes in the standard crystallographic frame as `_cell` in space group P 1,
   and reads `_cell` as the model's cell only in P 1 (or with no space group),
   where the coordinates are a whole unit cell; PDB reads `CRYST1` by the same

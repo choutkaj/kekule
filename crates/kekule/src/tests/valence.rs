@@ -15,8 +15,27 @@ fn quadruple_bonds_contribute_four_to_both_endpoint_valences() {
     valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("RDKit accepts valence four at each endpoint");
 
-    assert_eq!(molecule.perception().inferred_hydrogens(left), Some(0));
-    assert_eq!(molecule.perception().inferred_hydrogens(right), Some(0));
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(left)),
+        Some(0)
+    );
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(right)),
+        Some(0)
+    );
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .map(|valence| valence.validation()),
+        Some(crate::molecule::ValenceValidation::Strict)
+    );
     assert_eq!(molecule.bond(bond).unwrap().order, BondOrder::Quadruple);
     assert_eq!(represented_molecule_snapshot(&molecule), represented);
 }
@@ -69,7 +88,13 @@ fn singlet_and_triplet_two_electron_centers_have_the_same_valence_occupancy() {
             isolated_valence_state("C", 0, radical, ImplicitHydrogens::Inferred);
         valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
             .unwrap();
-        assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(2));
+        assert_eq!(
+            molecule
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+            Some(2)
+        );
         assert_eq!(molecule.atom(atom).unwrap().radical, radical);
     }
 }
@@ -99,7 +124,13 @@ fn disabling_inferred_hydrogens_skips_radical_occupancy_checks() {
         assert_eq!(result.is_ok(), succeeds);
         assert_eq!(represented_molecule_snapshot(&molecule), represented);
         if succeeds {
-            assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
+            assert_eq!(
+                molecule
+                    .perception()
+                    .valence()
+                    .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+                Some(0)
+            );
         } else {
             assert_eq!(
                 result.unwrap_err().issues,
@@ -151,10 +182,19 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
             &mut molecule,
             ValenceModel::RdkitLike,
             ValenceOptions::default()
-                .with_validation(crate::algorithms::ValenceValidation::Permissive),
+                .with_validation(crate::molecule::ValenceValidation::Permissive),
         )
         .unwrap();
-        assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
+        let valence = molecule.perception().valence().unwrap();
+        assert_eq!(valence.inferred_hydrogen_count(atom), Some(0));
+        // Installed valence records the policy it was perceived under.
+        assert_eq!(
+            (valence.model(), valence.validation()),
+            (
+                ValenceModel::RdkitLike,
+                crate::molecule::ValenceValidation::Permissive
+            )
+        );
     }
 }
 
@@ -164,7 +204,13 @@ fn original_unrestricted_and_noble_gas_valences_do_not_gain_radical_limits() {
         let (mut molecule, atom) = valence_state_with_graph_hydrogens(symbol, 1, radical, 1);
         valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
             .expect("RDKit preserves the original-element implicit-valence exemption");
-        assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
+        assert_eq!(
+            molecule
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+            Some(0)
+        );
     }
 }
 
@@ -190,16 +236,28 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
             &mut molecule,
             ValenceModel::RdkitLike,
             ValenceOptions::default()
-                .with_validation(crate::algorithms::ValenceValidation::Permissive),
+                .with_validation(crate::molecule::ValenceValidation::Permissive),
         )
         .unwrap();
-        assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
+        assert_eq!(
+            molecule
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+            Some(0)
+        );
 
         let (mut fixed, atom) =
             isolated_valence_state("H", charge, None, ImplicitHydrogens::Fixed(0));
         valence_api::perceive_valence(&mut fixed, ValenceModel::RdkitLike, Default::default())
             .unwrap();
-        assert_eq!(fixed.perception().inferred_hydrogens(atom), Some(0));
+        assert_eq!(
+            fixed
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+            Some(0)
+        );
     }
 }
 
@@ -210,7 +268,13 @@ fn hypervalent_anions_mapping_to_unrestricted_elements_do_not_infer_hydrogen() {
             isolated_valence_state(symbol, -5, None, ImplicitHydrogens::Inferred);
         valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
             .unwrap();
-        assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
+        assert_eq!(
+            molecule
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+            Some(0)
+        );
     }
 }
 
@@ -221,7 +285,13 @@ fn extreme_charge_adjustments_are_bounded_without_overflow() {
             isolated_valence_state("C", charge, None, ImplicitHydrogens::Inferred);
         valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
             .unwrap();
-        assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
+        assert_eq!(
+            molecule
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+            Some(0)
+        );
     }
 }
 
@@ -244,10 +314,16 @@ fn hydride_explicit_valence_compatibility_does_not_override_implicit_valence_rul
             &mut molecule,
             ValenceModel::RdkitLike,
             ValenceOptions::default()
-                .with_validation(crate::algorithms::ValenceValidation::Permissive),
+                .with_validation(crate::molecule::ValenceValidation::Permissive),
         )
         .unwrap();
-        assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(0));
+        assert_eq!(
+            molecule
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+            Some(0)
+        );
     }
 }
 
@@ -271,9 +347,11 @@ fn valence_accepts_aromatic_input_localized_during_interpretation() {
 
     valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .expect("localized benzene valence should succeed");
-    assert!(molecule
-        .atom_ids()
-        .all(|atom| molecule.perception().inferred_hydrogens(atom) == Some(1)));
+    assert!(molecule.atom_ids().all(|atom| molecule
+        .perception()
+        .valence()
+        .and_then(|valence| valence.inferred_hydrogen_count(atom))
+        == Some(1)));
 }
 
 #[test]
@@ -283,7 +361,8 @@ fn localized_aromatic_valence_replaces_previous_valence_transactionally() {
     let bond_ids = molecule.bond_ids().collect::<Vec<_>>();
     let previous = Perception::builder()
         .with_valence(
-            Some(ValenceModel::RdkitLike),
+            ValenceModel::RdkitLike,
+            ValenceValidation::Strict,
             atom_ids.iter().copied().map(|atom| (atom, 2)).collect(),
         )
         .expect("valid previous valence")
@@ -300,15 +379,17 @@ fn localized_aromatic_valence_replaces_previous_valence_transactionally() {
     valence_api::perceive_valence(
         &mut molecule,
         ValenceModel::RdkitLike,
-        ValenceOptions::default().with_validation(crate::algorithms::ValenceValidation::Permissive),
+        ValenceOptions::default().with_validation(crate::molecule::ValenceValidation::Permissive),
     )
     .expect("localized aromatic valence can be recomputed");
 
-    assert!(molecule
-        .atom_ids()
-        .all(|atom| molecule.perception().inferred_hydrogens(atom) == Some(1)));
-    assert!(molecule.perception().has_rings());
-    assert!(!molecule.perception().has_aromaticity());
+    assert!(molecule.atom_ids().all(|atom| molecule
+        .perception()
+        .valence()
+        .and_then(|valence| valence.inferred_hydrogen_count(atom))
+        == Some(1)));
+    assert!(molecule.perception().rings().is_some());
+    assert!(molecule.perception().aromaticity().is_none());
 }
 
 fn assert_aromatic_valence_pipeline(
@@ -333,7 +414,7 @@ fn assert_aromatic_valence_pipeline_for_molecule(
     expected_aromatic_atoms: usize,
 ) {
     let smiles = label;
-    assert!(!molecule.perception().has_aromaticity(), "{smiles}");
+    assert!(molecule.perception().aromaticity().is_none(), "{smiles}");
 
     molecule
         .canonicalize_fixture()
@@ -345,16 +426,17 @@ fn assert_aromatic_valence_pipeline_for_molecule(
 
     valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
         .unwrap_or_else(|error| panic!("localized valence should succeed: {smiles}: {error}"));
-    assert!(molecule.perception().has_valence(), "{smiles}");
-    assert!(!molecule.perception().has_rings(), "{smiles}");
-    assert!(!molecule.perception().has_aromaticity(), "{smiles}");
+    assert!(molecule.perception().valence().is_some(), "{smiles}");
+    assert!(molecule.perception().rings().is_none(), "{smiles}");
+    assert!(molecule.perception().aromaticity().is_none(), "{smiles}");
     assert_eq!(
         molecule
             .atom_ids()
             .map(|atom| {
                 molecule
                     .perception()
-                    .inferred_hydrogens(atom)
+                    .valence()
+                    .and_then(|valence| valence.inferred_hydrogen_count(atom))
                     .expect("complete valence assignment")
             })
             .collect::<Vec<_>>(),
@@ -373,7 +455,11 @@ fn assert_aromatic_valence_pipeline_for_molecule(
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
+            .filter(|atom| molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(*atom))
+                == Some(true))
             .count(),
         expected_aromatic_atoms,
         "{smiles}"
@@ -427,10 +513,13 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
     assert_eq!(nitrogen.hydrogens, ImplicitHydrogens::Fixed(1));
     assert_eq!(nitrogen.hydrogens, represented_nitrogen.hydrogens);
     assert_eq!(
-        molecule.perception().inferred_hydrogens(AtomId::new(0)),
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(AtomId::new(0))),
         Some(0)
     );
-    assert!(!molecule.perception().has_aromaticity());
+    assert!(molecule.perception().aromaticity().is_none());
     assert_eq!(represented_molecule_snapshot(&molecule), represented);
 
     rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::default())
@@ -446,7 +535,11 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
+            .filter(|atom| molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(*atom))
+                == Some(true))
             .count(),
         5
     );
@@ -457,7 +550,8 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
                 + usize::from(
                     molecule
                         .perception()
-                        .inferred_hydrogens(atom_id)
+                        .valence()
+                        .and_then(|valence| valence.inferred_hydrogen_count(atom_id))
                         .expect("complete valence assignment"),
                 )
         })
@@ -501,11 +595,21 @@ fn valence_ignores_preinstalled_semantic_aromaticity() {
 
     let without = without_aromaticity
         .atom_ids()
-        .map(|atom| without_aromaticity.perception().inferred_hydrogens(atom))
+        .map(|atom| {
+            without_aromaticity
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom))
+        })
         .collect::<Vec<_>>();
     let with = with_aromaticity
         .atom_ids()
-        .map(|atom| with_aromaticity.perception().inferred_hydrogens(atom))
+        .map(|atom| {
+            with_aromaticity
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom))
+        })
         .collect::<Vec<_>>();
     assert_eq!(with, without);
     assert_eq!(with, vec![Some(1); 6]);
@@ -531,7 +635,8 @@ fn fused_aromatic_valence_comes_from_localized_bond_orders() {
             .count();
         let implicit = molecule
             .perception()
-            .inferred_hydrogens(atom_id)
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(atom_id))
             .expect("complete valence assignment");
         match degree {
             2 => {
@@ -558,7 +663,11 @@ fn fused_aromatic_valence_comes_from_localized_bond_orders() {
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
+            .filter(|atom| molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(*atom))
+                == Some(true))
             .count(),
         10
     );
@@ -580,7 +689,7 @@ fn represented_valence_exposes_localized_bonds_and_declared_hydrogens() {
         Ok(1)
     );
     assert!(valence_api::represented_valence(&molecule, AtomId::new(99)).is_err());
-    assert!(!molecule.perception().has_valence());
+    assert!(molecule.perception().valence().is_none());
     let mut editor = MoleculeEditor::new();
     let mut nitrogen = Atom::new(Element::from_symbol("N").unwrap());
     nitrogen.hydrogens = ImplicitHydrogens::Fixed(3);

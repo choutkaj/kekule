@@ -754,7 +754,7 @@ fn hierarchy_publication_rejects_each_inconsistent_listing() {
     assert_eq!(staged().build().unwrap().hierarchy().residues().count(), 2);
     for (case, corrupt, expected) in cases {
         let mut builder = staged();
-        corrupt(builder.hierarchy_mut());
+        corrupt(builder.hierarchy_mut().storage_mut());
         assert_eq!(builder.hierarchy_consistency(), Err(expected), "{case}");
     }
 }
@@ -1556,4 +1556,11 @@ fn retaining_one_whole_instance_projects_exactly_one_instance_property_row() {
         retained.properties().molecule_instances().get(&key),
         Some(&PropertyColumn::Int(vec![Some(20)]))
     );
+}
+
+#[test]
+fn perception_snapshots_share_hierarchy_storage() {
+    let source = crate::smiles::to_topology("c1ccccc1.[Na+]").unwrap();
+    let perceived = source.perceived().unwrap();
+    assert!(std::ptr::eq(source.hierarchy(), perceived.hierarchy()));
 }

@@ -383,8 +383,8 @@ impl std::error::Error for RingPerceptionError {}
 
 /// Installs ring perception: cycle membership and, unless `options` selects
 /// [`RingPerceptionScope::Membership`], the RDKit-like Figueras rings and
-/// symmetric alternatives. Read the result through
-/// [`Molecule::ring_membership`] and [`Molecule::ring_set`].
+/// symmetric alternatives. Read the result through the molecule's
+/// [`Perception::rings`](crate::perception::Perception::rings) section.
 ///
 /// Cycle membership is a linear-time traversal, independent of the selected
 /// rings. Incomplete candidate searches use deterministic depth-first cycles.
@@ -426,14 +426,14 @@ pub fn perceive_rings(
         }
     }
     let rings = symmetrize_ring_set(rings, extras, mol.graph.bond_slot_count(), &mut tracker)?;
+    let rings = RingSet::from_rings(rings);
     mol.install_ring_basis(
         membership,
         if tracker.used_fallback {
-            RingBasisModel::DepthFirstFallback
+            RingBasisState::with_depth_first_fallback(RingBasisModel::FiguerasSssrLike, rings)
         } else {
-            RingBasisModel::FiguerasSssrLike
+            RingBasisState::new(RingBasisModel::FiguerasSssrLike, rings)
         },
-        RingSet::from_rings(rings),
     );
     Ok(())
 }

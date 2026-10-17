@@ -93,7 +93,12 @@ fn cycles_and_membership_match_an_independent_oracle_under_numbering_changes() {
                     let mut molecule = editor.finish().unwrap();
                     perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
                         .expect("membership perception cannot fail");
-                    let membership = molecule.ring_membership().expect("rings installed").clone();
+                    let membership = molecule
+                        .perception()
+                        .rings()
+                        .map(|rings| rings.membership())
+                        .expect("rings installed")
+                        .clone();
                     for (index, &bond) in bonds.iter().enumerate() {
                         assert_eq!(
                             membership.bond_in_ring(bond),
@@ -107,8 +112,19 @@ fn cycles_and_membership_match_an_independent_oracle_under_numbering_changes() {
                         assert_eq!(membership.atom_in_ring(atom), expected);
                     }
                     perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
-                    let rings = molecule.ring_set().expect("rings installed").clone();
-                    assert_eq!(molecule.ring_membership(), Some(&membership));
+                    let rings = molecule
+                        .perception()
+                        .rings()
+                        .and_then(|rings| rings.ring_set())
+                        .expect("rings installed")
+                        .clone();
+                    assert_eq!(
+                        molecule
+                            .perception()
+                            .rings()
+                            .map(|rings| rings.membership()),
+                        Some(&membership)
+                    );
                     let mut selected_cycles = BTreeSet::new();
                     for ring in rings.rings() {
                         assert!(ring.atoms.len() >= 3);
@@ -285,7 +301,12 @@ fn excluded_bonds_do_not_close_cycles_or_connect_ring_components() {
         let mut molecule = editor.finish().unwrap();
         perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
             .expect("membership perception cannot fail");
-        let membership = molecule.ring_membership().expect("rings installed").clone();
+        let membership = molecule
+            .perception()
+            .rings()
+            .map(|rings| rings.membership())
+            .expect("rings installed")
+            .clone();
         for (index, &(a, b)) in edges.iter().enumerate() {
             let bond = molecule.bond_between(atoms[a], atoms[b]).unwrap();
             assert_eq!(
@@ -294,7 +315,12 @@ fn excluded_bonds_do_not_close_cycles_or_connect_ring_components() {
             );
         }
         perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
-        let rings = molecule.ring_set().expect("rings installed").clone();
+        let rings = molecule
+            .perception()
+            .rings()
+            .and_then(|rings| rings.ring_set())
+            .expect("rings installed")
+            .clone();
         let mut covered = 0_u64;
         for ring in rings.rings() {
             let selected = ring
@@ -305,7 +331,13 @@ fn excluded_bonds_do_not_close_cycles_or_connect_ring_components() {
             covered |= selected;
         }
         assert_eq!(covered, cyclic_edges);
-        assert_eq!(molecule.ring_membership(), Some(&membership));
+        assert_eq!(
+            molecule
+                .perception()
+                .rings()
+                .map(|rings| rings.membership()),
+            Some(&membership)
+        );
     }
 }
 
@@ -316,7 +348,12 @@ fn high_degree_graph_uses_rdkit_depth_first_fallback() {
         .collect::<Vec<_>>();
     let mut molecule = graph(5, &edges);
     perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
-    let rings = molecule.ring_set().expect("rings installed").clone();
+    let rings = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
     // RDKit 2026.03.3 falls back when every remaining vertex has degree four.
     assert_eq!(
         atom_sets(&rings),
@@ -330,7 +367,9 @@ fn high_degree_graph_uses_rdkit_depth_first_fallback() {
         ]
     );
     assert!(molecule
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .unwrap()
         .bond_flags()
         .iter()
@@ -369,13 +408,29 @@ fn fallback_preserves_coverage_when_rdkit_selected_rings_omit_a_cyclic_bond() {
             .is_some());
     }
     perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
-    let rings = molecule.ring_set().expect("rings installed").clone();
-    assert!(molecule.ring_membership().unwrap().bond_in_ring(omitted));
+    let rings = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
+    assert!(molecule
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
+        .unwrap()
+        .bond_in_ring(omitted));
     assert!(rings
         .rings()
         .iter()
         .any(|ring| ring.bonds.contains(&omitted)));
-    for bond in molecule.ring_membership().unwrap().ring_bond_ids() {
+    for bond in molecule
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
+        .unwrap()
+        .ring_bond_ids()
+    {
         assert!(rings.rings().iter().any(|ring| ring.bonds.contains(&bond)));
     }
 }
@@ -417,7 +472,12 @@ fn candidate_count_at_cyclomatic_number_is_not_pruned() {
         ],
     );
     perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
-    let rings = molecule.ring_set().expect("rings installed").clone();
+    let rings = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
     assert_eq!(
         atom_sets(&rings),
         vec![
@@ -479,7 +539,12 @@ fn pubchem_125634_ring_scaffold_keeps_the_central_six_membered_ring() {
         ],
     );
     perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
-    let rings = molecule.ring_set().expect("rings installed").clone();
+    let rings = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
     assert_eq!(
         atom_sets(&rings),
         vec![
@@ -760,7 +825,12 @@ fn ring_rich_polymers_perceive_with_default_bounds() {
         .unwrap()
         .remove(0);
     perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
-    let rings = molecule.ring_set().expect("rings installed").clone();
+    let rings = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
     assert_eq!(rings.rings().len(), 1000);
     molecule.perceive().unwrap();
 }

@@ -33,7 +33,7 @@ pub use graph::Graph;
 pub(crate) use ids::{checked_fixed_id_collection_len, checked_raw_id};
 pub use ids::{AtomId, BondId};
 pub(crate) use ids::{StereoElementId, StereoGroupId};
-pub(crate) use molecule_edit::canonicalize_represented_chemistry;
+pub(crate) use molecule_edit::{canonicalize_represented_chemistry, validate_represented_stereo};
 pub use molecule_edit::{MoleculeEditor, MoleculePublicationError};
 pub use molecule_editor_ops::MoleculeCorrespondence;
 pub use owner::{AtomMut, BondMut, Molecule, MoleculeError, MoleculeIdKind};
@@ -41,7 +41,7 @@ pub(crate) use owner::{Result, SlotCompaction};
 use perception::validate_perception;
 pub(crate) use perception::{
     AromaticityModel, AromaticityPerception, Ring, RingBasisModel, RingBasisState, RingMembership,
-    RingPerception, RingSet, ValenceModel, ValencePerception,
+    RingPerception, RingSet, ValenceModel, ValencePerception, ValenceValidation,
 };
 pub(crate) use perception::{CipPerception, Perception, PerceptionInstallError};
 use std::num::{NonZeroU16, NonZeroU32};

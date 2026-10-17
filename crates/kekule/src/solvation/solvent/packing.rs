@@ -359,6 +359,7 @@ fn new_chain(builder: &mut ModelBuilder, prefix: &str) -> Result<ChainId, Solvat
         let label = format!("{prefix}{suffix}");
         if !builder
             .hierarchy()
+            .storage()
             .chains()
             .any(|(_, c)| c.label_id() == label)
         {
@@ -395,7 +396,7 @@ fn append(
             AtomSiteMetadata::default().with_label_atom_id(Some(name.into())),
         )?;
     }
-    builder.set_residue_class(residue, class)?;
+    builder.hierarchy_mut().set_residue_class(residue, class)?;
     Ok(())
 }
 

@@ -181,7 +181,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         interpreted.model().positions()
     );
     assert_eq!(interpreted.model().topology().instance_count(), 1);
-    assert!(!interpreted.model().topology().hierarchy().is_empty());
+    assert_ne!(interpreted.model().topology().atom_sites().len(), 0);
     assert_eq!(interpreted.model().positions().len(), 2);
     assert_eq!(interpreted.molecules().count(), 1);
     assert!(interpreted

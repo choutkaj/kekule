@@ -5,11 +5,19 @@ use crate::properties::{PropertyKey, PropertyValue};
 // Defensive algorithm validation must also handle invalid internal staging;
 // public insertion rejects these malformed assertions before allocating a slot.
 fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
-    molecule.atom_is_aromatic(atom) == Some(true)
+    molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.atom_is_aromatic(atom))
+        == Some(true)
 }
 
 fn aromatic_bond(molecule: &Molecule, bond: BondId) -> bool {
-    molecule.bond_is_aromatic(bond) == Some(true)
+    molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
+        == Some(true)
 }
 
 fn fully_perceived_aromatic_stereo_fixture() -> Molecule {
@@ -19,10 +27,10 @@ fn fully_perceived_aromatic_stereo_fixture() -> Molecule {
     let report = stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
         .expect("CIP assignment should succeed");
     assert!(!report.assigned.is_empty());
-    assert!(molecule.perception().has_valence());
-    assert!(molecule.perception().has_rings());
-    assert!(molecule.perception().has_aromaticity());
-    assert!(molecule.perception().has_stereo());
+    assert!(molecule.perception().valence().is_some());
+    assert!(molecule.perception().rings().is_some());
+    assert!(molecule.perception().aromaticity().is_some());
+    assert!(molecule.perception().cip().is_some());
     molecule
 }
 
@@ -36,7 +44,9 @@ fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     .expect("membership perception cannot fail");
     let empty_membership = empty
         .working()
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("rings installed")
         .clone();
     assert!(empty_membership.ring_atom_ids().next().is_none());
@@ -59,7 +69,9 @@ fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     .expect("membership perception cannot fail");
     let chain_membership = chain
         .working()
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("rings installed")
         .clone();
 
@@ -67,7 +79,7 @@ fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     assert!(!chain_membership.atom_in_ring(b));
     assert!(!chain_membership.bond_in_ring(ab));
     assert!(!chain_membership.bond_in_ring(bc));
-    assert!(chain.perception().has_rings());
+    assert!(chain.perception().rings().is_some());
 }
 
 #[test]
@@ -75,21 +87,26 @@ fn ring_membership_reperception_preserves_valence_and_clears_downstream_sections
     let mut molecule = fully_perceived_aromatic_stereo_fixture();
     let valence = molecule
         .perception()
-        .valence_state()
+        .valence()
         .expect("installed valence")
         .clone();
 
     rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
         .expect("membership perception cannot fail");
-    let membership = molecule.ring_membership().expect("rings installed").clone();
+    let membership = molecule
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
+        .expect("rings installed")
+        .clone();
 
     let perception = molecule.perception();
-    assert_eq!(perception.valence_state(), Some(&valence));
-    let rings = perception.ring_state().expect("membership installed");
+    assert_eq!(perception.valence(), Some(&valence));
+    let rings = perception.rings().expect("membership installed");
     assert_eq!(rings.membership(), &membership);
     assert!(rings.basis().is_none());
-    assert!(!perception.has_aromaticity());
-    assert!(!perception.has_stereo());
+    assert!(perception.aromaticity().is_none());
+    assert!(perception.cip().is_none());
 }
 
 #[test]
@@ -97,23 +114,31 @@ fn ring_basis_reperception_preserves_valence_and_clears_downstream_sections() {
     let mut molecule = fully_perceived_aromatic_stereo_fixture();
     let valence = molecule
         .perception()
-        .valence_state()
+        .valence()
         .expect("installed valence")
         .clone();
 
     rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::default())
         .expect("ring basis perception should succeed");
-    let ring_set = molecule.ring_set().expect("rings installed").clone();
+    let ring_set = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
 
     let perception = molecule.perception();
-    assert_eq!(perception.valence_state(), Some(&valence));
-    assert_eq!(perception.ring_set(), Some(&ring_set));
+    assert_eq!(perception.valence(), Some(&valence));
     assert_eq!(
-        perception.ring_basis_model(),
-        Some(RingBasisModel::FiguerasSssrLike)
+        perception.rings().and_then(|rings| rings.ring_set()),
+        Some(&ring_set)
     );
-    assert!(!perception.has_aromaticity());
-    assert!(!perception.has_stereo());
+    let basis = perception.rings().and_then(|rings| rings.basis()).unwrap();
+    assert_eq!(basis.model(), RingBasisModel::FiguerasSssrLike);
+    // The requested model is recorded separately from the search outcome.
+    assert!(!basis.used_depth_first_fallback());
+    assert!(perception.aromaticity().is_none());
+    assert!(perception.cip().is_none());
 }
 
 #[test]
@@ -121,19 +146,30 @@ fn implicit_hydrogen_update_preserves_rings_and_rebuilds_downstream_sections() {
     let mut molecule = fully_perceived_aromatic_stereo_fixture();
     let rings = molecule
         .perception()
-        .ring_state()
+        .rings()
         .expect("installed rings")
         .clone();
     let atom = AtomId::new(0);
-    assert_eq!(molecule.perception().inferred_hydrogens(atom), Some(1));
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+        Some(1)
+    );
 
     molecule.set_inferred_hydrogens(atom, 0);
 
     let perception = molecule.perception();
-    assert_eq!(perception.inferred_hydrogens(atom), Some(0));
-    assert_eq!(perception.ring_state(), Some(&rings));
-    assert!(!perception.has_aromaticity());
-    assert!(!perception.has_stereo());
+    assert_eq!(
+        perception
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+        Some(0)
+    );
+    assert_eq!(perception.rings(), Some(&rings));
+    assert!(perception.aromaticity().is_none());
+    assert!(perception.cip().is_none());
 
     aromaticity_api::perceive_aromaticity(
         &mut molecule,
@@ -141,13 +177,16 @@ fn implicit_hydrogen_update_preserves_rings_and_rebuilds_downstream_sections() {
         Default::default(),
     )
     .expect("aromaticity should rebuild from retained valence and rings");
-    assert!(molecule.perception().has_aromaticity());
-    assert!(!molecule.perception().has_stereo());
+    assert!(molecule.perception().aromaticity().is_some());
+    assert!(molecule.perception().cip().is_none());
     stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
         .expect("CIP should rebuild after aromaticity");
-    assert!(molecule.perception().has_stereo());
-    assert!(molecule.perception().has_cip_descriptors());
-    assert_eq!(molecule.perception().ring_state(), Some(&rings));
+    assert!(molecule.perception().cip().is_some());
+    assert!(molecule
+        .perception()
+        .cip()
+        .is_some_and(|cip| cip.cip_descriptors().len() != 0));
+    assert_eq!(molecule.perception().rings(), Some(&rings));
 }
 
 #[test]
@@ -164,7 +203,9 @@ fn ring_membership_marks_triangle_atoms_and_bonds() {
         .expect("membership perception cannot fail");
     let membership = mol
         .working()
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("rings installed")
         .clone();
 
@@ -191,7 +232,9 @@ fn ring_membership_excludes_tail_from_ring() {
         .expect("membership perception cannot fail");
     let membership = mol
         .working()
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("rings installed")
         .clone();
 
@@ -229,7 +272,9 @@ fn ring_membership_handles_fused_rings_with_an_acyclic_tail() {
         .expect("membership perception cannot fail");
     let membership = mol
         .working()
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("rings installed")
         .clone();
 
@@ -260,7 +305,9 @@ fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
         .expect("membership perception cannot fail");
     let membership = mol
         .working()
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("rings installed")
         .clone();
     assert!(!membership.bond_in_ring(ab));
@@ -268,9 +315,17 @@ fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
     assert!(!membership.bond_in_ring(ca));
 
     mol.add_bond(c, a, BondOrder::Single).expect("bond");
-    assert!(!mol.perception().has_rings());
-    assert!(mol.ring_membership().is_none());
-    assert!(mol.ring_set().is_none());
+    assert!(mol.perception().rings().is_none());
+    assert!(mol
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
+        .is_none());
+    assert!(mol
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .is_none());
 }
 
 #[test]
@@ -294,7 +349,7 @@ fn aromaticity_marks_benzene_like_ring() {
     )
     .expect("benzene should be supported");
 
-    assert!(mol.perception().has_aromaticity());
+    assert!(mol.perception().aromaticity().is_some());
     assert!(atoms.iter().all(|atom| aromatic_atom(&mol, *atom)));
     assert!(bonds.iter().all(|bond| aromatic_bond(&mol, *bond)));
 }
@@ -351,9 +406,9 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     molecule.perceive().expect("default perception");
 
     assert_eq!(represented_molecule_snapshot(&molecule), represented_before);
-    assert!(molecule.perception().has_valence());
-    assert!(molecule.perception().has_rings());
-    assert!(molecule.perception().has_aromaticity());
+    assert!(molecule.perception().valence().is_some());
+    assert!(molecule.perception().rings().is_some());
+    assert!(molecule.perception().aromaticity().is_some());
     assert_eq!(molecule.stereo_elements().count(), 1);
     assert_eq!(molecule.stereo_groups().count(), 1);
 }
@@ -369,24 +424,48 @@ fn molecule_perception_queries_read_the_installed_state_directly() {
     let graph = molecule;
     for atom in graph.atom_ids() {
         assert_eq!(
-            graph.perception().inferred_hydrogens(atom),
-            graph.perception().inferred_hydrogens(atom)
+            graph
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+            graph
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom))
         );
         assert_eq!(
-            graph.atom_is_aromatic(atom),
-            graph.perception().atom_is_aromatic(atom)
+            graph
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(atom)),
+            graph
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(atom))
         );
     }
     for bond in graph.bond_ids() {
         assert_eq!(
-            graph.bond_is_aromatic(bond),
-            graph.perception().bond_is_aromatic(bond)
+            graph
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(bond)),
+            graph
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
         );
     }
     for element in graph.stereo_element_ids() {
         assert_eq!(
-            graph.cip_descriptor(element),
-            graph.perception().cip_descriptor(element)
+            graph
+                .perception()
+                .cip()
+                .and_then(|cip| cip.cip_descriptor(element)),
+            graph
+                .perception()
+                .cip()
+                .and_then(|cip| cip.cip_descriptor(element))
         );
     }
 }
@@ -399,9 +478,9 @@ fn default_perception_accepts_aromatic_source_localized_by_interpretation() {
         .perceive()
         .expect("localized aromatic source should perceive directly");
 
-    assert!(molecule.perception().has_valence());
-    assert!(molecule.perception().has_rings());
-    assert!(molecule.perception().has_aromaticity());
+    assert!(molecule.perception().valence().is_some());
+    assert!(molecule.perception().rings().is_some());
+    assert!(molecule.perception().aromaticity().is_some());
 }
 
 #[test]
@@ -451,14 +530,18 @@ fn default_perceive_installs_only_valence_rings_and_aromaticity() {
 
     molecule.perceive().expect("ethanol should perceive");
 
-    assert!(molecule.perception().has_valence());
-    assert!(molecule.perception().has_rings());
-    assert!(molecule.perception().has_aromaticity());
+    assert!(molecule.perception().valence().is_some());
+    assert!(molecule.perception().rings().is_some());
+    assert!(molecule.perception().aromaticity().is_some());
     assert_eq!(
-        molecule.perception().ring_basis_model(),
+        molecule
+            .perception()
+            .rings()
+            .and_then(|rings| rings.basis())
+            .map(|basis| basis.model()),
         Some(RingBasisModel::FiguerasSssrLike)
     );
-    assert!(!molecule.perception().has_stereo());
+    assert!(molecule.perception().cip().is_none());
 }
 
 #[test]
@@ -490,10 +573,10 @@ fn interpretation_canonicalizes_source_stereo_before_perception() {
         molecule.stereo_elements().collect::<Vec<_>>(),
         represented_before.stereo_elements().collect::<Vec<_>>()
     );
-    assert!(molecule.perception().has_valence());
-    assert!(molecule.perception().has_rings());
-    assert!(molecule.perception().has_aromaticity());
-    assert!(!molecule.perception().has_stereo());
+    assert!(molecule.perception().valence().is_some());
+    assert!(molecule.perception().rings().is_some());
+    assert!(molecule.perception().aromaticity().is_some());
+    assert!(molecule.perception().cip().is_none());
 }
 
 #[test]
@@ -1217,8 +1300,10 @@ fn aromaticity_becomes_stale_after_topology_mutation() {
     .expect("benzene should be supported");
 
     mol.add_atom(oxygen()).expect("atom identifier capacity");
-    assert!(!mol.perception().has_aromaticity());
-    assert!(atoms
-        .iter()
-        .all(|atom| mol.atom_is_aromatic(*atom).is_none()));
+    assert!(mol.perception().aromaticity().is_none());
+    assert!(atoms.iter().all(|atom| mol
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.atom_is_aromatic(*atom))
+        .is_none()));
 }

@@ -3,6 +3,7 @@ use kekule::perception::aromaticity::{
     perceive_aromaticity, AromaticityError, AromaticityModel, AromaticityOptions,
 };
 use kekule::perception::rings::RingPerceptionOptions;
+use kekule::perception::valence::{ValenceModel, ValenceValidation};
 use kekule::smiles;
 use kekule::stereo::cip::assign_cip_descriptors;
 use kekule::{
@@ -24,7 +25,13 @@ fn default_perception_matches_reference_aromaticity_regressions() {
         molecule
             .perceive()
             .unwrap_or_else(|error| panic!("{}: {error}", case.label));
-        let aromatic = |atom| molecule.atom_is_aromatic(atom) == Some(true);
+        let aromatic = |atom| {
+            molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(atom))
+                == Some(true)
+        };
         let atoms = molecule
             .atom_ids()
             .filter(|&atom| aromatic(atom))
@@ -35,7 +42,12 @@ fn default_perception_matches_reference_aromaticity_regressions() {
             let endpoints = (bond.a().index(), bond.b().index());
             let endpoints = (endpoints.0.min(endpoints.1), endpoints.0.max(endpoints.1));
             let both_aromatic = aromatic(bond.a()) && aromatic(bond.b());
-            match molecule.bond_is_aromatic(id) == Some(true) {
+            match molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(id))
+                == Some(true)
+            {
                 true if !both_aromatic => failures.push(format!(
                     "{}: aromatic bond {endpoints:?} has a non-aromatic endpoint",
                     case.label
@@ -95,13 +107,23 @@ fn standalone_aromaticity_uses_the_same_charged_hydrogen_rules_as_default_percep
     let sulfur = standalone.atom_ids().next().unwrap();
     let mut complete = standalone.clone();
     complete.perceive().unwrap();
-    assert_eq!(complete.perception().inferred_hydrogens(sulfur), Some(1));
-    assert!(complete
-        .atoms()
-        .all(|(atom, _)| complete.atom_is_aromatic(atom) == Some(true)));
-    assert!(complete
-        .bonds()
-        .all(|(bond, _)| complete.bond_is_aromatic(bond) == Some(true)));
+    assert_eq!(
+        complete
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(sulfur)),
+        Some(1)
+    );
+    assert!(complete.atoms().all(|(atom, _)| complete
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.atom_is_aromatic(atom))
+        == Some(true)));
+    assert!(complete.bonds().all(|(bond, _)| complete
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
+        == Some(true)));
 
     perceive_aromaticity(
         &mut standalone,
@@ -111,10 +133,10 @@ fn standalone_aromaticity_uses_the_same_charged_hydrogen_rules_as_default_percep
     .unwrap();
 
     assert_eq!(
-        standalone.perception().aromaticity_state(),
-        complete.perception().aromaticity_state()
+        standalone.perception().aromaticity(),
+        complete.perception().aromaticity()
     );
-    assert!(!standalone.perception().has_valence());
+    assert!(standalone.perception().valence().is_none());
     assert_eq!(standalone, represented);
 }
 
@@ -123,7 +145,11 @@ fn standalone_aromaticity_preserves_partial_installed_hydrogen_assignments() {
     let mut molecule = protonated_thiophene_with_inferred_hydrogen();
     let sulfur = molecule.atom_ids().next().unwrap();
     let installed = Perception::builder()
-        .with_valence(None, vec![(sulfur, 0)])
+        .with_valence(
+            ValenceModel::RdkitLike,
+            ValenceValidation::Permissive,
+            vec![(sulfur, 0)],
+        )
         .unwrap()
         .build();
     molecule.install_perception(installed.clone()).unwrap();
@@ -136,16 +162,17 @@ fn standalone_aromaticity_preserves_partial_installed_hydrogen_assignments() {
     .unwrap();
 
     // An expert-installed zero takes precedence over the model's inferred one.
-    assert_eq!(
-        molecule.perception().valence_state(),
-        installed.valence_state()
-    );
-    assert!(molecule
-        .atoms()
-        .all(|(atom, _)| molecule.atom_is_aromatic(atom) == Some(false)));
-    assert!(molecule
-        .bonds()
-        .all(|(bond, _)| molecule.bond_is_aromatic(bond) == Some(false)));
+    assert_eq!(molecule.perception().valence(), installed.valence());
+    assert!(molecule.atoms().all(|(atom, _)| molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.atom_is_aromatic(atom))
+        == Some(false)));
+    assert!(molecule.bonds().all(|(bond, _)| molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
+        == Some(false)));
 }
 
 #[test]
@@ -177,14 +204,22 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
                     assert_eq!(
                         actual
                             .atoms()
-                            .filter(|(id, _)| actual.atom_is_aromatic(*id) == Some(true))
+                            .filter(|(id, _)| actual
+                                .perception()
+                                .aromaticity()
+                                .map(|aromaticity| aromaticity.atom_is_aromatic(*id))
+                                == Some(true))
                             .count(),
                         12
                     );
                     assert_eq!(
                         actual
                             .bonds()
-                            .filter(|(id, _)| actual.bond_is_aromatic(*id) == Some(true))
+                            .filter(|(id, _)| actual
+                                .perception()
+                                .aromaticity()
+                                .map(|aromaticity| aromaticity.bond_is_aromatic(*id))
+                                == Some(true))
                             .count(),
                         12
                     );

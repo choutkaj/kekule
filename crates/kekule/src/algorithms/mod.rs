@@ -44,10 +44,9 @@ pub(crate) use stereo::{
 };
 pub use stereo::{
     cleanup_stereo, detect_stereo_candidates, infer_coordinate_stereo,
-    materialize_coordinate_stereo, validate_stereo, CoordinateStereoError,
-    CoordinateStereoMaterializationReport, CoordinateStereoOptions, CoordinateStereoResult,
-    StereoCandidate, StereoCleanupReport, StereoSearchError, StereoSearchOptions,
-    StereoValidationError, StereoValidationIssue,
+    materialize_coordinate_stereo, CoordinateStereoError, CoordinateStereoMaterializationReport,
+    CoordinateStereoOptions, CoordinateStereoResult, StereoCandidate, StereoCleanupReport,
+    StereoSearchError, StereoSearchOptions, StereoValidationError, StereoValidationIssue,
 };
 pub use substructure::{
     MatchCompletion, PreparedTarget, PreparedTopologyTarget, QueryMatch, QueryPerception,
@@ -60,5 +59,4 @@ pub(crate) use valence::{
 };
 pub use valence::{
     perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,
-    ValenceValidation,
 };

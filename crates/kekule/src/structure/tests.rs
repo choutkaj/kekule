@@ -1108,3 +1108,97 @@ fn energy_ranking_and_windows_are_relative_to_the_lowest_member() {
         Err(EnsembleError::MissingEnergy { index: 3 })
     );
 }
+
+#[test]
+fn model_views_report_which_structure_they_borrow() {
+    let topology = Arc::new(single_atom_topology());
+    let model = Model::new(Arc::clone(&topology), single_position(0.0)).unwrap();
+    assert_eq!(model.as_model_view().kind(), StructureKind::Model);
+
+    let ensemble = energy_ensemble(&[2.5]);
+    let member = ensemble.get(0).unwrap();
+    assert_eq!(
+        member.as_model_view().kind(),
+        StructureKind::Member {
+            weight: 1.0,
+            energy: Some(Quantity::new(2.5, KILOJOULE_PER_MOLE)),
+        }
+    );
+    // Materializing a member as a model drops its member state.
+    assert_eq!(
+        member.to_model().as_model_view().kind(),
+        StructureKind::Model
+    );
+
+    let mut trajectory = Trajectory::new(topology);
+    let mut frame = TrajectoryFrame::new(single_position(0.0));
+    frame.set_step(Some(4));
+    trajectory.push(frame).unwrap();
+    let frame = trajectory.get(0).unwrap();
+    assert_eq!(
+        frame.as_model_view().kind(),
+        StructureKind::Frame {
+            time: None,
+            step: Some(4),
+            velocities: None,
+            forces: None,
+        }
+    );
+}
+
+#[test]
+fn rigid_transforms_move_models_members_and_frames_with_their_cells() {
+    use crate::geometry::{Matrix3, RigidTransform};
+    let topology = Arc::new(single_atom_topology());
+    let box_cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(1.0, 2.0, 3.0), NANOMETER),
+        [true; 3],
+    )
+    .unwrap();
+    let mut model = Model::new(Arc::clone(&topology), single_position(1.0)).unwrap();
+    model.set_cell(Some(box_cell));
+    // A quarter turn about z followed by a 2 nm shift along x.
+    let turn = Matrix3::from_columns(
+        Vector3::new(0.0, 1.0, 0.0),
+        Vector3::new(-1.0, 0.0, 0.0),
+        Vector3::new(0.0, 0.0, 1.0),
+    );
+    let transform = RigidTransform::from_canonical(turn, Vector3::new(2.0, 0.0, 0.0)).unwrap();
+    let mut ensemble = Ensemble::from_models([model.clone()]).unwrap();
+    let mut trajectory = Trajectory::new(Arc::clone(&topology));
+    trajectory
+        .push(TrajectoryFrame::new(single_position(1.0)).with_cell(box_cell))
+        .unwrap();
+
+    model.apply_rigid_transform(&transform).unwrap();
+    ensemble
+        .get_mut(0)
+        .unwrap()
+        .apply_rigid_transform(&transform)
+        .unwrap();
+    trajectory
+        .get_mut(0)
+        .unwrap()
+        .apply_rigid_transform(&transform)
+        .unwrap();
+
+    assert_eq!(
+        model.positions().values().value(),
+        &[Point3::new(2.0, 1.0, 0.0)]
+    );
+    assert_eq!(
+        model.cell().unwrap().vectors().into_value(),
+        [
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(-2.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 3.0),
+        ]
+    );
+    for view in [
+        ensemble.get(0).unwrap().as_model_view(),
+        trajectory.get(0).unwrap().as_model_view(),
+    ] {
+        assert_eq!(view.positions(), model.positions());
+        assert_eq!(view.cell(), model.cell());
+    }
+}

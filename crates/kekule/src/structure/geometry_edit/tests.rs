@@ -456,7 +456,7 @@ fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
         RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(f64::MAX, 0.0, 0.0))
             .unwrap();
     assert_eq!(
-        model.apply_transform(&all, &transform),
+        model.transform_atoms(&all, &transform),
         Err(GeometryEditError::NumericalFailure)
     );
     assert_eq!(model, baseline);
@@ -525,7 +525,7 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
     }
     let transform =
         RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(1.0, 0.0, 0.0)).unwrap();
-    model.apply_transform(&selected, &transform).unwrap();
+    model.transform_atoms(&selected, &transform).unwrap();
     close_point(point(&model, c), Point3::new(2.0, 3.0, 3.0));
     // Both huge and subnormal finite axes are accepted.
     for scale in [f64::MAX, f64::from_bits(1)] {
@@ -559,7 +559,7 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
         .rotate(&empty, zero, axis, Quantity::new(90.0, DEGREE))
         .unwrap();
     model
-        .apply_transform(&empty, &RigidTransform::identity())
+        .transform_atoms(&empty, &RigidTransform::identity())
         .unwrap();
     assert_eq!(model, baseline);
     assert_eq!(
@@ -613,7 +613,7 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
         Err(GeometryEditError::TopologyMismatch)
     );
     assert_eq!(
-        model.apply_transform(&foreign, &RigidTransform::identity()),
+        model.transform_atoms(&foreign, &RigidTransform::identity()),
         Err(GeometryEditError::TopologyMismatch)
     );
     assert_eq!(model, baseline);
@@ -663,7 +663,7 @@ fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
         )
         .unwrap();
     model
-        .apply_transform(&all, &RigidTransform::identity())
+        .transform_atoms(&all, &RigidTransform::identity())
         .unwrap();
     assert!(Arc::ptr_eq(
         &model.shared_topology(),
@@ -804,7 +804,7 @@ fn prepared_selection_is_a_snapshot_and_repeated_definitions_stay_independent() 
 }
 
 #[test]
-fn apply_transform_uses_rotation_and_translation_together() {
+fn transform_atoms_uses_rotation_and_translation_together() {
     let mut model = chain();
     let baseline = model.clone();
     let [a, b, c, d] = ids(&model);
@@ -818,7 +818,7 @@ fn apply_transform_uses_rotation_and_translation_together() {
         Vector3::new(2.0, 3.0, 4.0),
     )
     .unwrap();
-    model.apply_transform(&selected, &transform).unwrap();
+    model.transform_atoms(&selected, &transform).unwrap();
     close_point(point(&model, c), Point3::new(2.0, 4.0, 4.0));
     close_point(point(&model, d), Point3::new(1.0, 4.0, 5.0));
     for atom in [a, b] {

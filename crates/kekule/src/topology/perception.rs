@@ -57,8 +57,8 @@ impl Topology {
     /// let source = Topology::from_molecules(molecules)?;
     /// let perceived = source.perceived()?;
     /// assert!(perceived.shares_layout(&source));
-    /// assert!(perceived.instances().all(|m| m.molecule().perception().has_aromaticity()));
-    /// assert!(source.instances().all(|m| !m.molecule().perception().has_aromaticity()));
+    /// assert!(perceived.instances().all(|m| m.molecule().perception().aromaticity().is_some()));
+    /// assert!(source.instances().all(|m| m.molecule().perception().aromaticity().is_none()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceived(&self) -> Result<Self, TopologyPerceptionError> {
@@ -87,7 +87,6 @@ impl Topology {
             bond_order: Arc::clone(&self.bond_order),
             hierarchy: Arc::clone(&self.hierarchy),
             molecule_class_overrides: self.molecule_class_overrides.clone(),
-            residue_class_overrides: self.residue_class_overrides.clone(),
             properties: Arc::clone(&self.properties),
             layout: self.layout,
         })

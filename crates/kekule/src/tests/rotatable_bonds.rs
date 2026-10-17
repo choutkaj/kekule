@@ -248,14 +248,14 @@ fn detection_reuses_or_computes_rings_without_mutating_perception() {
     let before = molecule.perception().clone();
     let detached = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap();
     assert_eq!(molecule.perception(), &before);
-    assert!(!molecule.perception().has_rings());
+    assert!(molecule.perception().rings().is_none());
 
     crate::perception::rings::perceive_rings(
         &mut molecule,
         RingPerceptionOptions::membership_only(),
     )
     .expect("membership perception cannot fail");
-    assert!(molecule.perception().has_rings());
+    assert!(molecule.perception().rings().is_some());
     let installed = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap();
     assert_eq!(installed, detached);
 }
@@ -282,17 +282,27 @@ fn resonance_detection_is_independent_of_installed_perception() {
         // a different aromaticity model or overwrite the caller's state.
         let assignments = molecule
             .perception()
-            .valence_state()
+            .valence()
             .unwrap()
             .inferred_hydrogens()
             .map(|(id, count)| (id, if id == AtomId::new(0) { 0 } else { count }))
             .collect::<Vec<_>>();
         let neutral = crate::perception::Perception::builder()
-            .with_valence(None, assignments)
+            .with_valence(
+                ValenceModel::RdkitLike,
+                ValenceValidation::Permissive,
+                assignments,
+            )
             .unwrap()
             .build();
         molecule.install_perception(neutral).unwrap();
-        assert_eq!(molecule.perception().valence_model(), None);
+        assert_eq!(
+            molecule
+                .perception()
+                .valence()
+                .map(|valence| valence.validation()),
+            Some(ValenceValidation::Permissive)
+        );
         let before = molecule.perception().clone();
         assert_eq!(
             descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap(),
@@ -315,7 +325,7 @@ fn strict_detection_reports_valence_failures_even_with_permissive_cached_state()
         &mut molecule,
         ValenceModel::RdkitLike,
         crate::algorithms::ValenceOptions::default()
-            .with_validation(crate::algorithms::ValenceValidation::Permissive),
+            .with_validation(crate::molecule::ValenceValidation::Permissive),
     )
     .unwrap();
     crate::algorithms::perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();

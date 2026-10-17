@@ -416,7 +416,8 @@ pub enum FormatErrorDetail {
         /// The model ID.
         model_id: String,
     },
-    /// An SDF record title cannot be written.
+    /// A record title or name cannot be written: an SDF or Molfile title, or
+    /// a SMILES record name.
     Title,
     /// An SDF data field cannot be written, or holds an invalid ensemble
     /// member value.
@@ -426,9 +427,45 @@ pub enum FormatErrorDetail {
     },
     /// A failure specific to the mmCIF writer.
     MmcifWrite(crate::io::MmcifWriteIssue),
+    /// The written structure is an ensemble member or a trajectory frame
+    /// with this state, which the format cannot carry, and the writer's
+    /// policy for it is [`UnrepresentablePolicy::Fail`].
+    UnrepresentableState(StructureField),
     /// A configured or built-in resource limit was exceeded; the kind is
     /// [`DiagnosticKind::Limit`].
     LimitExceeded(LimitExceeded),
+}
+
+/// Ensemble member or trajectory frame state named by
+/// [`FormatErrorDetail::UnrepresentableState`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StructureField {
+    /// An ensemble member's relative weight.
+    Weight,
+    /// An ensemble member's energy.
+    Energy,
+    /// A trajectory frame's time.
+    Time,
+    /// A trajectory frame's step.
+    Step,
+    /// A trajectory frame's velocities.
+    Velocities,
+    /// A trajectory frame's forces.
+    Forces,
+}
+
+impl fmt::Display for StructureField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Weight => "ensemble member weight",
+            Self::Energy => "ensemble member energy",
+            Self::Time => "trajectory frame time",
+            Self::Step => "trajectory frame step",
+            Self::Velocities => "trajectory frame velocities",
+            Self::Forces => "trajectory frame forces",
+        })
+    }
 }
 
 /// A failure to parse, interpret or write a format, SMARTS included.

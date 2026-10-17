@@ -105,6 +105,121 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `smiles::SmilesSource` and `molfile::MolfileSource` are
+  structs with private fields, like `sdf::SdfRecordSource`. Build them with
+  `SmilesSource::molecule`/`topology` and `MolfileSource::molecule`/`model`
+  (or the existing `From` conversions) instead of the enum variants.
+  `SmilesSource::with_name` writes a `.smi` record name after the SMILES and
+  `MolfileSource::with_title` writes the Molfile title line, so both now
+  round-trip; before, Molfile titles were always empty and SMILES names could
+  not be written. Names that would not read back (empty, padded, or
+  multi-line) and multi-line titles fail with `FormatErrorDetail::Title`.
+- **Breaking:** Represented stereo has one validator (ARCHITECTURE.md,
+  "Represented and derived chemistry"), used by explicit stereo edits,
+  publication and `MoleculeEditor::validate`. The public
+  `stereo::validate_stereo`, a second validator that always passed on a
+  published molecule, is removed; `StereoValidationError` remains as the
+  payload of `CoordinateStereoError` and `StereoSearchError`, now listing the
+  first issue of each failing element or group.
+- **Breaking:** `Perception` exposes only its sections (ARCHITECTURE.md,
+  "Represented and derived chemistry"): `valence()`, `rings()`,
+  `aromaticity()`, `conjugation()`, `resonance()` and `cip()`.
+  - Its 26 flat methods are removed: `has_valence`, `has_rings`,
+    `has_aromaticity`, `has_stereo`, `has_conjugation`, `has_resonance`,
+    `has_cip_descriptors`, `valence_state`, `ring_state`,
+    `aromaticity_state`, `stereo_state`, `conjugation_state`,
+    `resonance_state`, `valence_model`, `inferred_hydrogens`,
+    `ring_membership`, `ring_set`, `ring_basis_model`, `aromaticity_model`,
+    `atom_is_aromatic`, `bond_is_aromatic`, `atom_is_conjugated`,
+    `bond_is_conjugated`, `cip_descriptor` and `cip_descriptors`. So are the
+    duplicate reads on `Molecule` and `MoleculeEditor` (`atom_is_aromatic`,
+    `bond_is_aromatic`, `atom_is_conjugated`, `bond_is_conjugated`,
+    `cip_descriptor`, `ring_membership`, `ring_set`); the section queries
+    report membership, so an ID outside the molecule is `false` rather than
+    `None`.
+  - Sections own their queries: `ValencePerception::inferred_hydrogen_count`,
+    `AromaticityPerception::atom_is_aromatic`/`bond_is_aromatic` and
+    `ConjugationPerception::atom_is_conjugated`/`bond_is_conjugated` are
+    new.
+  - Provenance is mandatory. `ValencePerception::model` returns a
+    `ValenceModel`, and the new `validation()` records `ValenceValidation`
+    (which moves to `perception::valence`); `PerceptionBuilder::with_valence`
+    takes both, so model-neutral valence can no longer be built.
+    `RingBasisModel::DepthFirstFallback` is removed: `RingBasisState::model`
+    is the requested model and `used_depth_first_fallback()` records the
+    outcome (`RingBasisState::new` for a complete search,
+    `with_depth_first_fallback` otherwise).
+  - `descriptors::rotatable_bonds` reuses installed perception when its
+    provenance records RDKit-like models, an SSSR-like basis and strict
+    validation, instead of revalidating valence on every call; permissive
+    valence is reperceived on a copy as before.
+- **Breaking:** Editor properties go through guards (ARCHITECTURE.md,
+  "Properties and units").
+  - `TopologyEditor`'s flat property API (`owner_properties`,
+    `insert_property`, `remove_property`, `clear_properties`,
+    `atom_property`, `set_atom_property`, `set_atom_properties`,
+    `atom_property_column`, `insert_atom_property_column`,
+    `remove_atom_property_column`, their bond, chain, residue and atom-site
+    forms, and `set_definition_atom_property`/`set_definition_bond_property`)
+    is replaced by `properties()` and `properties_mut()`. The new
+    `topology::edit::EditPropertiesMut` has `owner_mut` and
+    `atoms_mut`/`bonds_mut`/`chains_mut`/`residues_mut`/`atom_sites_mut`,
+    each an `EditPropertyTableMut` keyed by `Edit*Id` with the method set of
+    `PropertyTableMut` (`insert`, `remove`, `clear`, `set_value`,
+    `clear_value`, `set_values`) plus reads (`get`, `value`, `keys`), and
+    `set_definition_atom_value`/`set_definition_bond_value`. Arguments follow
+    the table order: `set_value(key, handle, value)`. A deleted handle fails
+    with `TopologyEditError::InvalidAtom` (and the bond, chain, residue and
+    atom-site forms).
+  - `ModelEditor` no longer implements `Deref<Target = TopologyEditor>`.
+    Read the draft through `topology()` (formerly `topology_editor()`);
+    `topology_mut()` returns `ModelEditorTopologyMut` with `properties_mut`,
+    `set_molecule_class`, `set_residue_class` and `clear_residue_class`.
+    Structure-scoped values move to `ModelEditor::properties()` and
+    `properties_mut()` (`ModelEditorProperties`, `ModelEditorPropertiesMut`).
+    The forwarding wrappers `insert_topology_property`,
+    `set_topology_atom_property`, `set_topology_bond_property`,
+    `remove_topology_property`, `clear_topology_properties`,
+    `set_chain_property`, `set_residue_property`, `set_atom_site_property`,
+    `set_definition_atom_property`, `set_definition_bond_property`,
+    `set_molecule_class` and `set_residue_class` are removed, as are the
+    structure-scoped `owner_properties`, `owner_properties_mut`,
+    `atom_property`, `set_atom_property`, ... methods. Structure property
+    failures are now `TopologyEditError`s.
+- **Breaking:** The topology views are the only read path for hierarchy
+  data (ARCHITECTURE.md, "Topology, hierarchy, and classification").
+  - `Hierarchy`, `Chain`, `Residue` and `AtomSite` are crate-private, and
+    `Topology::hierarchy` is gone. Read through `Topology::chains`,
+    `residues`, `atom_sites`, `chain`, `residue`, `atom_site` and
+    `AtomView::atom_site`; these iterators, and `InstanceView::chains`,
+    `residues` and `atom_sites`, are `ExactSizeIterator`s.
+  - Staging goes through the new `topology::HierarchyBuilder`, returned by
+    `TopologyBuilder::hierarchy`/`hierarchy_mut` and
+    `ModelBuilder::hierarchy`/`hierarchy_mut`. `ModelTopologyMut::hierarchy_mut`
+    is removed, so `ModelBuilder` has one hierarchy path.
+  - `TopologyBuilder::set_residue_class` and `ModelBuilder::set_residue_class`
+    move to `HierarchyBuilder::set_residue_class`. The explicit class is
+    stored on the staged residue, so replacing the staged hierarchy
+    (`*builder.hierarchy_mut() = HierarchyBuilder::new()`) now discards it
+    instead of applying it to whichever new residue reuses the identifier.
+  - The new `ClassAssignment::{Explicit, Inferred}`, from
+    `ResidueView::class_assignment` and `InstanceView::class_assignment`,
+    says whether a class was assigned or inferred. `HierarchyBuilder::clear_residue_class`,
+    `TopologyBuilder::clear_molecule_class`, `ModelBuilder::clear_molecule_class`
+    and `TopologyEditor::clear_residue_class` return a class to inference.
+- **Breaking:** `Model::apply_transform` is renamed `Model::transform_atoms`:
+  it moves a selection's atoms and keeps the cell. The new
+  `Model::apply_rigid_transform(&RigidTransform)` moves the whole model and
+  rotates its cell, as `EnsembleMemberMut` and `TrajectoryFrameMut` already
+  did, so a fitted transform applied to a periodic model keeps its lattice in
+  the same frame as its coordinates.
+- **Breaking:** `kekule-traj` reductions accept only trajectory frames
+  (ARCHITECTURE.md, "Trajectories and streaming").
+  `RmsfAccumulator::observe` and `ContactOccupancyAccumulator::observe` take
+  the new sealed `analysis::AsFrameView`, implemented by
+  `TrajectoryFrameView` and `FrameBuffer`, instead of any `AsModelView`, so
+  passing an ensemble member or a `ModelView` no longer compiles. Pass
+  `&buffer` where `&buffer.as_model_view()` was passed.
 - **Breaking:** `Atom` has private fields. Build one with `Atom::new` and
   `with_element`, `with_isotope`, `with_formal_charge`, `with_radical`,
   `with_hydrogens` and `with_atom_map`; read it with the same-named getters;
@@ -893,6 +1008,32 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Represented stereo is checked against the hydrogen declaration it relies
+  on. A tetrahedral center needs exactly one implicit-hydrogen carrier per
+  fixed implicit hydrogen, and a double-bond endpoint may name an implicit
+  hydrogen only when its fixed count is not zero. Before, `[C@H](F)(Cl)Br`
+  with its center's count changed to `Fixed(0)` published a center whose
+  fourth ligand did not exist. The failure is the new
+  `StereoValidationIssue::ImplicitHydrogenCarrierMismatch`; inferred counts,
+  unknown before perception, are not checked.
+- Structure writers no longer silently drop what an item is. `ModelView`
+  gains `kind()`, a `StructureKind` of `Model`, `Member { weight, energy }`
+  or `Frame { time, step, velocities, forces }`. Before, `sdf::write(&trajectory, …)`
+  dropped each frame's time and step, and `SdfRecordSource::model(&member)`
+  dropped the weight and energy that `SdfRecordSource::from(member)` wrote.
+  - SDF writes a member's weight and energy as data fields however its view
+    is passed, and fails on a frame's time, step, velocities or forces
+    unless the new `SdfWriteOptions::with_frame_metadata(UnrepresentablePolicy::Omit)`.
+  - Molfile fails on an ensemble member (its weight is relative to members
+    the record does not hold, and it may have an energy) and on frame state,
+    unless `MolfileWriteOptions::with_ensemble_metadata` or
+    `with_frame_metadata` omits it.
+  - An mmCIF model block of an ensemble member fails unless
+    `MmcifWriteOptions::with_ensemble_metadata` omits its weight and energy,
+    as ensemble blocks with unequal weights already did; a frame's state
+    fails unless the new `with_frame_metadata` omits it.
+  - The failure is `DiagnosticKind::Unsupported` with the new
+    `FormatErrorDetail::UnrepresentableState(StructureField)`.
 - CIP assignment no longer ranks an unperceived inferred hydrogen count as
   zero hydrogens. Unperceived `C[C@@H](O)[CH3]` was labelled R, although the
   centre carries two methyls. `assign_cip_descriptors` now fails with the new

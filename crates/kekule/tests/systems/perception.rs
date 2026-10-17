@@ -1,4 +1,6 @@
 use std::error::Error;
+
+use crate::support::hierarchy_record;
 use std::sync::{Arc, Weak};
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -26,12 +28,12 @@ fn assert_default_perception(topology: &Topology) {
         expected.clear_perception();
         expected.perceive().unwrap();
         assert_eq!(molecule.perception(), expected.perception());
-        assert!(molecule.perception().has_valence());
-        assert!(molecule.perception().has_rings());
-        assert!(molecule.perception().has_aromaticity());
-        assert!(molecule.perception().has_conjugation());
-        assert!(!molecule.perception().has_resonance());
-        assert!(!molecule.perception().has_stereo());
+        assert!(molecule.perception().valence().is_some());
+        assert!(molecule.perception().rings().is_some());
+        assert!(molecule.perception().aromaticity().is_some());
+        assert!(molecule.perception().conjugation().is_some());
+        assert!(molecule.perception().resonance().is_none());
+        assert!(molecule.perception().cip().is_none());
     }
 }
 
@@ -42,8 +44,11 @@ fn failing_topology() -> Arc<Topology> {
     good.perceive().unwrap();
     stereo::cip::assign_cip_descriptors(&mut good, Default::default()).unwrap();
     perception::resonance::perceive_resonance(&mut good).unwrap();
-    assert!(good.perception().has_cip_descriptors());
-    assert!(good.perception().has_resonance());
+    assert!(good
+        .perception()
+        .cip()
+        .is_some_and(|cip| cip.cip_descriptors().len() != 0));
+    assert!(good.perception().resonance().is_some());
 
     // Publication permits represented chemistry rejected by the default valence model.
     let mut editor = MoleculeEditor::new();
@@ -118,6 +123,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
         .add_residue(chain, "LIG", Some(1), None, None)
         .unwrap();
     builder
+        .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::Other)
         .unwrap();
     for instance in [first, second] {
@@ -150,7 +156,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
     assert!(!Arc::ptr_eq(&source, &target));
     assert_eq!(target.atom_ids(), source.atom_ids());
     assert_eq!(target.bond_ids(), source.bond_ids());
-    assert_eq!(target.hierarchy(), source.hierarchy());
+    assert_eq!(hierarchy_record(&target), hierarchy_record(&source));
     assert_eq!(target.properties(), source.properties());
     assert_eq!(target.definition_count(), 1);
     assert_eq!(target.instance_count(), 2);
@@ -161,7 +167,11 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
     assert_eq!(first.molecule(), &molecule);
     assert_eq!(first.molecule().properties(), molecule.properties());
     assert_eq!(
-        first.molecule().perception().inferred_hydrogens(carbon),
+        first
+            .molecule()
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
         Some(2)
     );
     assert_eq!(
@@ -256,7 +266,7 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
         .remove(0);
     molecule.perceive().unwrap();
     stereo::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
-    assert!(molecule.perception().has_stereo());
+    assert!(molecule.perception().cip().is_some());
     let mut model =
         Model::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count())).unwrap();
     let old = Arc::downgrade(&model.shared_topology());
@@ -401,7 +411,6 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     let again = Arc::new(perceived.perceived().unwrap());
     assert!(perceived.shares_layout(&source) && again.shares_layout(&source));
     // Perception shares the layout storage instead of copying it.
-    assert!(std::ptr::eq(source.hierarchy(), perceived.hierarchy()));
     assert!(std::ptr::eq(
         source.atom_ids().as_ptr(),
         perceived.atom_ids().as_ptr()

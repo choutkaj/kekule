@@ -31,11 +31,11 @@ fn conjugation_matches_pinned_rdkit_local_rules() {
     ] {
         let m = molecule(smi);
         assert_eq!(
-            m.perception().conjugation_state().unwrap().bonds().len(),
+            m.perception().conjugation().unwrap().bonds().len(),
             expected,
             "{smi}"
         );
-        assert!(!m.perception().has_resonance());
+        assert!(m.perception().resonance().is_none());
     }
 }
 
@@ -58,7 +58,7 @@ fn default_contributors_and_all_kekule_forms() {
         for i in 0..expected {
             let c = result.to_molecule(i).unwrap();
             assert_eq!(c.atom_count(), m.atom_count());
-            assert!(!c.perception().has_conjugation());
+            assert!(c.perception().conjugation().is_none());
         }
     }
     let m = molecule("c1ccccc1");
@@ -75,7 +75,7 @@ fn group_preparation_is_separate_and_transactional() {
     let mut m = molecule("CC(=O)NCC(=O)[O-]");
     let original = m.clone();
     perceive_resonance(&mut m).unwrap();
-    assert_eq!(m.perception().resonance_state().unwrap().groups().len(), 2);
+    assert_eq!(m.perception().resonance().unwrap().groups().len(), 2);
     assert_eq!(m, original);
     let before = m.perception().clone();
     assert!(matches!(
@@ -89,10 +89,10 @@ fn group_preparation_is_separate_and_transactional() {
         Default::default(),
     )
     .unwrap();
-    assert!(!m.perception().has_conjugation());
-    assert!(!m.perception().has_resonance());
+    assert!(m.perception().conjugation().is_none());
+    assert!(m.perception().resonance().is_none());
     perceive_conjugation(&mut m, ConjugationModel::RdkitLike).unwrap();
-    assert!(m.perception().has_conjugation());
+    assert!(m.perception().conjugation().is_some());
 }
 
 #[test]
@@ -212,7 +212,12 @@ fn canonical_aromatic_seed_retains_aryne_triple_bonds() {
         .find(|(_, b)| b.order == BondOrder::Triple)
         .unwrap()
         .0;
-    assert_eq!(m.bond_is_aromatic(triple), Some(true));
+    assert_eq!(
+        m.perception()
+            .aromaticity()
+            .map(|aromaticity| aromaticity.bond_is_aromatic(triple)),
+        Some(true)
+    );
     let result = enumerate_resonance(&m, Default::default()).unwrap();
     assert_eq!(result.contributors().len(), 1);
     let orders: std::collections::BTreeMap<_, _> = result.contributors()[0].bond_orders().collect();
@@ -243,11 +248,8 @@ fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
         perceive_resonance(&mut m).unwrap();
         enumerate_resonance(&m, Default::default()).unwrap();
         assert_eq!(m, chemistry);
-        assert_eq!(
-            m.perception().aromaticity_state(),
-            before.aromaticity_state()
-        );
-        assert_eq!(m.perception().stereo_state(), before.stereo_state());
+        assert_eq!(m.perception().aromaticity(), before.aromaticity());
+        assert_eq!(m.perception().cip(), before.cip());
         assert_eq!(
             smiles::write(&m, smiles::SmilesWriteOptions::canonical()).unwrap(),
             text
@@ -264,38 +266,34 @@ fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
 #[test]
 fn present_empty_sections_and_prerequisite_invalidation() {
     let mut m = molecule("CC");
-    assert!(m.perception().has_conjugation());
-    assert!(!m.perception().has_resonance());
+    assert!(m.perception().conjugation().is_some());
+    assert!(m.perception().resonance().is_none());
     let a = m.atom_ids().next().unwrap();
-    assert_eq!(m.perception().atom_is_conjugated(a), Some(false));
-    assert_eq!(m.atom_is_conjugated(a), Some(false));
-    assert!(m.atom_is_conjugated(AtomId::new(999)).is_none());
+    let conjugation = m.perception().conjugation().unwrap();
+    assert!(!conjugation.atom_is_conjugated(a));
+    // The section answers membership; an ID outside the molecule is not a member.
+    assert!(!conjugation.atom_is_conjugated(AtomId::new(999)));
     let bond = m.bond_ids().next().unwrap();
-    assert_eq!(m.bond_is_conjugated(bond), Some(false));
-    assert!(m.bond_is_conjugated(BondId::new(999)).is_none());
+    assert!(!conjugation.bond_is_conjugated(bond));
+    assert!(!conjugation.bond_is_conjugated(BondId::new(999)));
     perceive_resonance(&mut m).unwrap();
-    assert!(m
-        .perception()
-        .resonance_state()
-        .unwrap()
-        .groups()
-        .is_empty());
+    assert!(m.perception().resonance().unwrap().groups().is_empty());
     perception::valence::perceive_valence(&mut m, ValenceModel::RdkitLike, Default::default())
         .unwrap();
-    assert!(!m.perception().has_conjugation());
-    assert!(!m.perception().has_resonance());
+    assert!(m.perception().conjugation().is_none());
+    assert!(m.perception().resonance().is_none());
     m.perceive().unwrap();
     perceive_resonance(&mut m).unwrap();
     let mut edit = m.to_editor();
     edit.atom_mut(a).unwrap().set_isotope(NonZeroU16::new(13));
     let edited = edit.finish().unwrap();
-    assert!(!edited.perception().has_conjugation());
-    assert!(!edited.perception().has_resonance());
+    assert!(edited.perception().conjugation().is_none());
+    assert!(edited.perception().resonance().is_none());
 }
 
 fn detached(m: &Molecule, groups: Vec<ResonanceGroup>) -> Perception {
-    let c = m.perception().conjugation_state().unwrap();
-    let a = m.perception().aromaticity_state().unwrap();
+    let c = m.perception().conjugation().unwrap();
+    let a = m.perception().aromaticity().unwrap();
     Perception::builder()
         .with_aromaticity(a.model(), a.atoms().collect(), a.bonds().collect())
         .unwrap()
@@ -310,14 +308,14 @@ fn detached(m: &Molecule, groups: Vec<ResonanceGroup>) -> Perception {
 fn detached_group_order_is_canonical_before_and_after_installation() {
     let mut m = molecule("CC(=O)NCC(=O)[O-]");
     perceive_resonance(&mut m).unwrap();
-    let expected = m.perception().resonance_state().unwrap().clone();
+    let expected = m.perception().resonance().unwrap().clone();
     let mut groups = expected.groups().to_vec();
     assert_eq!(groups.len(), 2);
     groups.reverse();
     let state = detached(&m, groups);
-    assert_eq!(state.resonance_state(), Some(&expected));
+    assert_eq!(state.resonance(), Some(&expected));
     m.install_perception(state).unwrap();
-    let installed = m.perception().resonance_state().unwrap();
+    let installed = m.perception().resonance().unwrap();
     assert_eq!(installed, &expected);
     for (index, group) in expected.groups().iter().enumerate() {
         for &atom in &group.atoms {
@@ -334,7 +332,7 @@ fn detached_group_validation_is_structural_and_atomic() {
     let mut m = molecule("CC(=O)NCC(=O)[O-]");
     perceive_resonance(&mut m).unwrap();
     let before = m.perception().clone();
-    let groups = before.resonance_state().unwrap().groups().to_vec();
+    let groups = before.resonance().unwrap().groups().to_vec();
     let mut malformed = Vec::new();
     malformed.push(vec![]); // incomplete partition
     let mut empty = groups.clone();
@@ -370,14 +368,14 @@ fn detached_group_validation_is_structural_and_atomic() {
         assert_eq!(m.perception(), &before);
     }
     m.install_perception(detached(&m, groups)).unwrap();
-    assert!(m.perception().has_resonance());
+    assert!(m.perception().resonance().is_some());
 }
 
 #[test]
 fn explicit_hydrogens_and_atom_renumbering_preserve_membership() {
     fn mapped_edges(m: &Molecule) -> std::collections::BTreeSet<[u32; 2]> {
         m.perception()
-            .conjugation_state()
+            .conjugation()
             .unwrap()
             .bonds()
             .map(|id| {
@@ -400,7 +398,7 @@ fn explicit_hydrogens_and_atom_renumbering_preserve_membership() {
         let mut explicit = molecule(smi);
         let original = explicit
             .perception()
-            .conjugation_state()
+            .conjugation()
             .unwrap()
             .bonds()
             .collect::<Vec<_>>();
@@ -413,7 +411,7 @@ fn explicit_hydrogens_and_atom_renumbering_preserve_membership() {
         assert_eq!(
             explicit
                 .perception()
-                .conjugation_state()
+                .conjugation()
                 .unwrap()
                 .bonds()
                 .collect::<Vec<_>>(),
@@ -444,12 +442,12 @@ fn saturated_and_unsupported_parts_do_not_hide_supported_groups() {
         let mut m = molecule(smi);
         perceive_resonance(&mut m).unwrap();
         assert_eq!(
-            m.perception().resonance_state().unwrap().groups().len(),
+            m.perception().resonance().unwrap().groups().len(),
             groups,
             "{smi}"
         );
         assert_eq!(
-            m.perception().conjugation_state().unwrap().bonds().len(),
+            m.perception().conjugation().unwrap().bonds().len(),
             bonds,
             "{smi}"
         );

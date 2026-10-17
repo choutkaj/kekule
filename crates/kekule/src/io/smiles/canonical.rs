@@ -106,7 +106,9 @@ fn write_canonical_emission_with_limits(
     // each Kekule form of one cyclic molecule would have its own canonical
     // string. A connected graph has a ring exactly when it has as many bonds
     // as atoms; an acyclic molecule has no aromatic atom to perceive.
-    if molecule.bond_count() >= molecule.atom_count() && !molecule.perception().has_aromaticity() {
+    if molecule.bond_count() >= molecule.atom_count()
+        && molecule.perception().aromaticity().is_none()
+    {
         return Err(SMILES_WRITE.missing_perception(
             "canonical SMILES requires installed aromaticity perception; perceive the molecule before writing",
         ));
@@ -232,7 +234,7 @@ fn restore_projection_valence(
     // declarations, so every other atom keeps its inferred contribution.
     // Removal verified each parent's reconstructed count. Translate these
     // counts instead of reperceiving the copy under a model nobody selected.
-    let Some(valence) = original.valence_state() else {
+    let Some(valence) = original.valence() else {
         return;
     };
     let ids = &removal.correspondence;
@@ -250,14 +252,7 @@ fn restore_projection_valence(
             inferred.insert(parent, count);
         }
     }
-    match valence.model() {
-        Some(model) => normalized.install_valence(model, inferred),
-        None => {
-            for (atom, count) in inferred {
-                normalized.set_inferred_hydrogens(atom, count);
-            }
-        }
-    }
+    normalized.install_valence(valence.model(), valence.validation(), inferred);
 }
 
 fn restore_projection_aromaticity(
@@ -270,7 +265,7 @@ fn restore_projection_aromaticity(
     // aromaticity through the ordinary edit helper. This private export copy
     // retains the original perceived aromatic system: isotope/H projection
     // neither changes its valence nor selects another aromaticity model.
-    if let Some(aromaticity) = original.aromaticity_state() {
+    if let Some(aromaticity) = original.aromaticity() {
         projected.begin_aromaticity(aromaticity.model());
         for atom in aromaticity.atoms().filter_map(&atom_id) {
             if projected.atom(atom).is_some() {
@@ -289,11 +284,17 @@ fn canonical_atom_style(mol: &Molecule) -> CanonicalAtomStyle {
     if mol
         .stereo_elements()
         .any(|(_, element)| match &element.kind {
-            StereoElementKind::DoubleBond(value) => [value.left, value.right]
-                .iter()
-                .any(|atom| mol.atom_is_aromatic(*atom) == Some(true)),
+            StereoElementKind::DoubleBond(value) => [value.left, value.right].iter().any(|atom| {
+                mol.perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(*atom))
+                    == Some(true)
+            }),
             StereoElementKind::Tetrahedral(value) => {
-                mol.atom_is_aromatic(value.center) == Some(true)
+                mol.perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(value.center))
+                    == Some(true)
             }
             StereoElementKind::Axis(_) => false,
         })
@@ -395,8 +396,15 @@ fn canonical_smiles_atom_representation(
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<(Atom, bool, u8), FormatError> {
-    let aromatic = mol.atom_is_aromatic(atom_id) == Some(true);
-    let perceived_hydrogens = mol.perception().inferred_hydrogens(atom_id);
+    let aromatic = mol
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.atom_is_aromatic(atom_id))
+        == Some(true);
+    let perceived_hydrogens = mol
+        .perception()
+        .valence()
+        .and_then(|valence| valence.inferred_hydrogen_count(atom_id));
     let inferred_hydrogens = perceived_hydrogens.unwrap_or(0);
     let aromatic = aromatic && !matches!(atom_style, CanonicalAtomStyle::StoredKekule);
     let (mut payload, mut inferred_hydrogens) = canonical_smiles_atom_normalized(
@@ -694,7 +702,13 @@ fn smiles_bond_valence_sum(mol: &Molecule, atom_id: AtomId, stored_kekule: bool)
     mol.incident_bonds(atom_id)
         .expect("the writer visits live atoms")
         .map(|(bond_id, bond)| {
-            if mol.bond_is_aromatic(bond_id) == Some(true) && !stored_kekule {
+            if mol
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(bond_id))
+                == Some(true)
+                && !stored_kekule
+            {
                 return 1;
             }
             match bond.order {

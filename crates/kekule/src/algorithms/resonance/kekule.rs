@@ -41,7 +41,12 @@ fn ranks(mol: &Molecule, work: &mut super::search::Work) -> Result<Vec<usize>, R
                         .expect("live atom")
                         .map(|(bid, b)| {
                             (
-                                if mol.perception().bond_is_aromatic(bid) == Some(true) {
+                                if mol
+                                    .perception()
+                                    .aromaticity()
+                                    .map(|aromaticity| aromaticity.bond_is_aromatic(bid))
+                                    == Some(true)
+                                {
                                     12
                                 } else {
                                     match b.order {
@@ -196,7 +201,13 @@ pub(super) fn orders(
 ) -> Result<BTreeMap<BondId, BondOrder>, ResonanceError> {
     let aromatic: BTreeSet<_> = mol
         .bonds()
-        .filter_map(|(id, _)| (mol.perception().bond_is_aromatic(id) == Some(true)).then_some(id))
+        .filter_map(|(id, _)| {
+            (mol.perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(id))
+                == Some(true))
+            .then_some(id)
+        })
         .collect();
     let mut result: BTreeMap<_, _> = mol.bonds().map(|(id, b)| (id, b.order)).collect();
     if aromatic.is_empty() {

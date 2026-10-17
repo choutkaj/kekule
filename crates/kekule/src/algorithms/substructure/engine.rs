@@ -1,6 +1,6 @@
 use super::*;
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::molecule::{BondId, RingBasisModel};
+use crate::molecule::{BondId, RingBasisState, RingPerception};
 use crate::query::{AtomPredicate, BondPredicate, QueryBond, QueryStereoConstraint};
 use crate::stereo::{DoubleBondOrientation, StereoElementKind};
 use std::cmp::Reverse;
@@ -55,7 +55,9 @@ impl<'a> TargetData<'a> {
                             .expect("valid atom")
                             .collect::<Vec<_>>();
                         let rings = molecule
-                            .ring_set()
+                            .perception()
+                            .rings()
+                            .and_then(|rings| rings.ring_set())
                             .map(|s| {
                                 s.rings()
                                     .iter()
@@ -77,7 +79,9 @@ impl<'a> TargetData<'a> {
                                 .expect("valid atom")
                                 .filter(|(b, _)| {
                                     molecule
-                                        .ring_membership()
+                                        .perception()
+                                        .rings()
+                                        .map(|rings| rings.membership())
                                         .is_some_and(|r| r.bond_in_ring(*b))
                                 })
                                 .count(),
@@ -201,11 +205,11 @@ impl Context<'_, '_> {
                 for target in molecules.values() {
                     let required = match p {
                         BondPredicate::Aromatic(_) => Some((
-                            target.perception().has_aromaticity(),
+                            target.perception().aromaticity().is_some(),
                             QueryPerception::Aromaticity,
                         )),
                         BondPredicate::RingMembership(_) => Some((
-                            target.perception().has_rings(),
+                            target.perception().rings().is_some(),
                             QueryPerception::RingMembership,
                         )),
                         _ => None,
@@ -290,7 +294,12 @@ impl Context<'_, '_> {
             AtomPredicate::Element(e) => atom.element == *e,
             AtomPredicate::Isotope(i) => atom.isotope.map_or(0, std::num::NonZero::get) == *i,
             AtomPredicate::FormalCharge(c) => atom.formal_charge == *c,
-            AtomPredicate::Aromatic(a) => m.perception().atom_is_aromatic(id) == Some(*a),
+            AtomPredicate::Aromatic(a) => {
+                m.perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(id))
+                    == Some(*a)
+            }
             AtomPredicate::Degree(n) => f.degree == usize::from(*n),
             AtomPredicate::TotalConnectivity(n) => {
                 f.degree + f.nongraph_hydrogens == usize::from(*n)
@@ -301,7 +310,9 @@ impl Context<'_, '_> {
             }),
             AtomPredicate::TotalValence(n) => f.valence == usize::from(*n),
             AtomPredicate::RingMembership(r) => m
-                .ring_membership()
+                .perception()
+                .rings()
+                .map(|rings| rings.membership())
                 .is_some_and(|s| s.atom_in_ring(id) == *r),
             AtomPredicate::RingBondCount(n) => f.ring_bonds == usize::from(*n),
             AtomPredicate::RingCount(n) => f.ring_count == usize::from(*n),
@@ -711,27 +722,38 @@ fn require_atom_perception(m: &Molecule, p: &AtomPredicate) -> Result<(), Substr
         | AtomPredicate::ImplicitHydrogens(_)
         | AtomPredicate::TotalConnectivity(_)
         | AtomPredicate::TotalValence(_) => {
-            Some((m.perception().has_valence(), QueryPerception::Valence))
+            Some((m.perception().valence().is_some(), QueryPerception::Valence))
         }
         AtomPredicate::Aromatic(_) => Some((
-            m.perception().has_aromaticity(),
+            m.perception().aromaticity().is_some(),
             QueryPerception::Aromaticity,
         )),
-        AtomPredicate::RingMembership(_) | AtomPredicate::RingBondCount(_) => {
-            Some((m.perception().has_rings(), QueryPerception::RingMembership))
-        }
+        AtomPredicate::RingMembership(_) | AtomPredicate::RingBondCount(_) => Some((
+            m.perception().rings().is_some(),
+            QueryPerception::RingMembership,
+        )),
         AtomPredicate::RingCount(_) | AtomPredicate::SmallestRingSize(_) => {
-            if m.ring_set().is_some()
+            if m.perception()
+                .rings()
+                .and_then(|rings| rings.ring_set())
+                .is_some()
                 && !m
                     .perception()
-                    .ring_basis_model()
-                    .is_some_and(RingBasisModel::is_sssr_like)
+                    .rings()
+                    .and_then(RingPerception::basis)
+                    .is_some_and(RingBasisState::is_sssr_like)
             {
                 return Err(SubstructureMatchError::IncompatiblePerception(
                     QueryPerception::RingBasis,
                 ));
             }
-            Some((m.ring_set().is_some(), QueryPerception::RingBasis))
+            Some((
+                m.perception()
+                    .rings()
+                    .and_then(|rings| rings.ring_set())
+                    .is_some(),
+                QueryPerception::RingBasis,
+            ))
         }
         _ => None,
     };
@@ -755,9 +777,17 @@ fn bond_predicate(target: &Molecule, id: BondId, p: &BondPredicate) -> bool {
     match p {
         BondPredicate::Direction(_) => unreachable!("direction requires a complete mapping"),
         BondPredicate::Order(o) => bond.order == *o,
-        BondPredicate::Aromatic(a) => target.perception().bond_is_aromatic(id) == Some(*a),
+        BondPredicate::Aromatic(a) => {
+            target
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(id))
+                == Some(*a)
+        }
         BondPredicate::RingMembership(r) => target
-            .ring_membership()
+            .perception()
+            .rings()
+            .map(|rings| rings.membership())
             .is_some_and(|s| s.bond_in_ring(id) == *r),
     }
 }

@@ -8,9 +8,9 @@ use crate::properties::{PropertyError, TopologyProperties, TopologyPropertiesMut
 
 use super::dense_order::{DenseOrder, OrderError};
 use super::{
-    AtomSiteId, ChainId, Hierarchy, InstanceAtomId, InstanceBondId, LayoutId, MoleculeClass,
-    MoleculeDefinition, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueClass,
-    ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex,
+    AtomSiteId, ChainId, Hierarchy, HierarchyBuilder, InstanceAtomId, InstanceBondId, LayoutId,
+    MoleculeClass, MoleculeDefinition, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId,
+    ResidueClass, ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex,
 };
 
 /// Linear, validate-then-commit builder for coordinate-free topology.
@@ -51,10 +51,9 @@ pub struct TopologyBuilder {
     pub(super) instances: Vec<MoleculeInstance>,
     atoms: DenseOrder<InstanceAtomId>,
     bonds: DenseOrder<InstanceBondId>,
-    hierarchy: Hierarchy,
+    hierarchy: HierarchyBuilder,
     properties: TopologyProperties,
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
-    residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
     preserved_molecule_classes: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
     preserved_residue_classes: BTreeMap<ResidueId, ResidueClass>,
     source_hierarchy: Option<Hierarchy>,
@@ -172,7 +171,7 @@ impl TopologyBuilder {
     /// The storage consistency of the staged hierarchy.
     #[cfg(test)]
     pub(crate) fn hierarchy_consistency(&self) -> Result<(), TopologyHierarchyError> {
-        validate_hierarchy(&self.hierarchy, &self.atoms)
+        validate_hierarchy(self.hierarchy.storage(), &self.atoms)
     }
 
     /// Validates a cloned snapshot without consuming staged state.
@@ -195,7 +194,6 @@ impl TopologyBuilder {
             bond_order: bonds,
             hierarchy,
             molecule_class_overrides,
-            residue_class_overrides,
             properties,
             layout: _,
         } = topology;
@@ -204,9 +202,16 @@ impl TopologyBuilder {
         let bonds = Arc::unwrap_or_clone(bonds);
         let hierarchy = Arc::unwrap_or_clone(hierarchy);
         let properties = Arc::unwrap_or_clone(properties);
-        let preserved_molecule_classes = definitions.iter().map(|d| (d.id(), d.class())).collect();
+        // Explicit classes stay explicit; clearing one returns it to inference
+        // rather than to its retained value.
+        let preserved_molecule_classes = definitions
+            .iter()
+            .filter(|d| !molecule_class_overrides.contains_key(&d.id()))
+            .map(|d| (d.id(), d.class()))
+            .collect();
         let preserved_residue_classes = hierarchy
             .residues()
+            .filter(|(_, r)| r.explicit_class.is_none())
             .map(|(id, r)| (id, r.class()))
             .collect();
         let source_hierarchy = Some(hierarchy.clone());
@@ -216,10 +221,9 @@ impl TopologyBuilder {
             instances,
             atoms,
             bonds,
-            hierarchy,
+            hierarchy: HierarchyBuilder::from_storage(hierarchy),
             properties,
             molecule_class_overrides,
-            residue_class_overrides,
             preserved_molecule_classes,
             preserved_residue_classes,
             source_hierarchy,
@@ -228,20 +232,21 @@ impl TopologyBuilder {
         }
     }
 
-    /// Returns staged system-level hierarchy state.
-    pub const fn hierarchy(&self) -> &Hierarchy {
+    /// The staged system-level hierarchy.
+    pub const fn hierarchy(&self) -> &HierarchyBuilder {
         &self.hierarchy
     }
 
-    /// Returns mutable staged hierarchy state.
+    /// The staged hierarchy, for adding chains, residues, and atom sites and
+    /// assigning residue classes.
     ///
     /// References are checked transactionally by [`Self::build`]; published
     /// topologies never expose mutable hierarchy access.
     /// Inferred classes follow the resulting component identities and atom sites;
-    /// explicit builder class assignments retain precedence over changed
+    /// explicit class assignments retain precedence over changed
     /// evidence, including changed residue membership. In contrast, structural
     /// editor composition changes require fresh class overrides.
-    pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
+    pub fn hierarchy_mut(&mut self) -> &mut HierarchyBuilder {
         &mut self.hierarchy
     }
 
@@ -303,17 +308,15 @@ impl TopologyBuilder {
         Ok(())
     }
 
-    /// Overrides automatic classification for one staged hierarchy residue.
-    /// Publication discards assignments to residues absent from the final hierarchy.
-    pub fn set_residue_class(
+    /// Clears one staged definition's explicit class, so publication infers
+    /// it afresh.
+    pub fn clear_molecule_class(
         &mut self,
-        residue: ResidueId,
-        class: ResidueClass,
+        definition: MoleculeDefinitionId,
     ) -> Result<(), TopologyBuildError> {
-        self.hierarchy
-            .require_residue(residue)
-            .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
-        self.residue_class_overrides.insert(residue, class);
+        self.require_definition(definition)?;
+        self.molecule_class_overrides.remove(&definition);
+        self.preserved_molecule_classes.remove(&definition);
         Ok(())
     }
 
@@ -340,12 +343,16 @@ impl TopologyBuilder {
         class: ResidueClass,
         explicit: bool,
     ) -> Result<(), TopologyBuildError> {
-        self.hierarchy
-            .require_residue(residue)
-            .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
         if explicit {
-            self.residue_class_overrides.insert(residue, class);
+            self.hierarchy
+                .storage_mut()
+                .set_explicit_residue_class(residue, Some(class))
+                .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
         } else {
+            self.hierarchy
+                .storage()
+                .require_residue(residue)
+                .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
             self.preserved_residue_classes.insert(residue, class);
         }
         Ok(())
@@ -415,7 +422,7 @@ impl TopologyBuilder {
         }
         let atom_count = self.atoms.len();
         let bond_count = self.bonds.len();
-        match validate_hierarchy(&self.hierarchy, &self.atoms) {
+        match validate_hierarchy(self.hierarchy.storage(), &self.atoms) {
             Ok(()) => {}
             Err(TopologyHierarchyError::InvalidAtomSiteAtom { site, atom }) => {
                 return Err(TopologyBuildError::MissingHierarchyAtom { site, atom });
@@ -429,17 +436,16 @@ impl TopologyBuilder {
         }
 
         self.invalidate_changed_hierarchy_classes();
-        self.residue_class_overrides
-            .retain(|id, _| self.hierarchy.residue(*id).is_some());
+        let mut hierarchy = self.hierarchy.into_storage();
         self.preserved_residue_classes.extend(
-            self.residue_class_overrides
-                .iter()
-                .map(|(&id, &class)| (id, class)),
+            hierarchy
+                .residues()
+                .filter_map(|(id, residue)| residue.explicit_class.map(|class| (id, class))),
         );
         super::classification::finalize(
             &mut self.definitions,
             &self.instances,
-            &mut self.hierarchy,
+            &mut hierarchy,
             &self.molecule_class_overrides,
             &self.preserved_molecule_classes,
             self.source_hierarchy
@@ -452,9 +458,9 @@ impl TopologyBuilder {
             self.instances.len(),
             atom_count,
             bond_count,
-            self.hierarchy.chains().count(),
-            self.hierarchy.residues().count(),
-            self.hierarchy.atom_sites().count(),
+            hierarchy.chains().len(),
+            hierarchy.residues().len(),
+            hierarchy.atom_sites().len(),
         ];
         self.properties.resize_domains(dimensions);
         self.properties
@@ -466,9 +472,8 @@ impl TopologyBuilder {
             instances: self.instances,
             atom_order: Arc::new(self.atoms),
             bond_order: Arc::new(self.bonds),
-            hierarchy: Arc::new(self.hierarchy),
+            hierarchy: Arc::new(hierarchy),
             molecule_class_overrides: self.molecule_class_overrides,
-            residue_class_overrides: self.residue_class_overrides,
             properties: Arc::new(self.properties),
             layout: LayoutId::mint(),
         })
@@ -525,9 +530,9 @@ impl TopologyBuilder {
             self.instances.len(),
             self.atoms.len(),
             self.bonds.len(),
-            self.hierarchy.chains().count(),
-            self.hierarchy.residues().count(),
-            self.hierarchy.atom_sites().count(),
+            self.hierarchy.chain_count(),
+            self.hierarchy.residue_count(),
+            self.hierarchy.atom_site_count(),
         ]);
     }
 
@@ -535,10 +540,11 @@ impl TopologyBuilder {
         let Some(source) = &self.source_hierarchy else {
             return;
         };
+        let staged = self.hierarchy.storage();
         let unchanged_residues = source
             .residues()
             .filter_map(|(id, before)| {
-                let after = self.hierarchy.residue(id)?;
+                let after = staged.residue(id)?;
                 let same_component = before.name() == after.name()
                     && before.label_comp_id() == after.label_comp_id()
                     && before.author_comp_id() == after.author_comp_id();
@@ -554,11 +560,10 @@ impl TopologyBuilder {
                         })
                         .collect::<std::collections::BTreeSet<_>>()
                 };
-                let same_atoms = atoms(source, before) == atoms(&self.hierarchy, after);
-                let same_class = self
-                    .residue_class_overrides
-                    .get(&id)
-                    .is_none_or(|&class| class == before.class());
+                let same_atoms = atoms(source, before) == atoms(staged, after);
+                let same_class = after
+                    .explicit_class
+                    .is_none_or(|class| class == before.class());
                 (same_component && same_atoms && same_class).then_some(id)
             })
             .collect::<std::collections::BTreeSet<_>>();
@@ -570,7 +575,7 @@ impl TopologyBuilder {
                 let atom = instance.qualify_atom(atom);
                 match (
                     source.atom_site_for_atom(atom),
-                    self.hierarchy.atom_site_for_atom(atom),
+                    staged.atom_site_for_atom(atom),
                 ) {
                     (None, None) => true,
                     (Some(before), Some(after)) => {

@@ -1,3 +1,4 @@
+use crate::support::hierarchy_record;
 use kekule::diagnostics::{
     DiagnosticKind, Format, FormatErrorDetail, FormatStage, SourceLocation, UnsupportedContent,
 };
@@ -88,8 +89,8 @@ fn sdf_model_can_install_perception_without_losing_source_order_or_geometry() {
     assert!(model.topology().same_layout(original.topology()));
     assert_eq!(model.topology().atom_ids(), original.topology().atom_ids());
     assert_eq!(
-        model.topology().hierarchy(),
-        original.topology().hierarchy()
+        hierarchy_record(model.topology()),
+        hierarchy_record(original.topology())
     );
     assert_eq!(model.positions(), original.positions());
     assert_eq!(model.positions().values().value().as_ptr(), positions_ptr);
@@ -231,13 +232,11 @@ fn molfile_document_model_retains_published_component_geometry() {
     assert!(model_molecules(&model)
         .iter()
         .all(|molecule| molecule.perception() == &Perception::default()));
-    let hierarchy = model.topology().hierarchy();
-    let (_, chain) = hierarchy.chains().next().expect("synthetic chain");
+    let chain = model.topology().chains().next().expect("synthetic chain");
     assert_eq!(chain.label_id(), "A");
     assert_eq!(chain.author_id(), None);
     assert_eq!(chain.residues().len(), 2);
-    for (index, residue_id) in chain.residues().iter().enumerate() {
-        let residue = hierarchy.residue(*residue_id).unwrap();
+    for (index, residue) in chain.residues().enumerate() {
         assert_eq!(residue.name(), "UNL");
         assert_eq!(residue.label_seq_id(), Some((index + 1) as i32));
         assert_eq!(
@@ -353,8 +352,8 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
             .collect::<Vec<_>>(),
         projected_molecules.iter().collect::<Vec<_>>()
     );
-    assert_eq!(projected_topology.hierarchy().chains().count(), 1);
-    assert_eq!(projected_topology.hierarchy().residues().count(), 2);
+    assert_eq!(projected_topology.chains().len(), 1);
+    assert_eq!(projected_topology.residues().len(), 2);
 
     let first_molecules = records[0]
         .interpret(Default::default())
@@ -530,7 +529,14 @@ fn smiles_default_options_and_topology_projection_are_consistent() {
             .collect::<Vec<_>>(),
         vec![3, 1]
     );
-    assert!(topology.hierarchy().is_empty());
+    assert_eq!(
+        (
+            topology.chains().len(),
+            topology.residues().len(),
+            topology.atom_sites().len()
+        ),
+        (0, 0, 0)
+    );
 
     let concise = smiles::to_topology("CCO.[Na+]").expect("concise topology builds");
     assert!(concise.same_layout(&topology));

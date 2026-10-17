@@ -243,3 +243,86 @@ pub(crate) fn try_cip_labels(
         })
         .collect())
 }
+
+/// One chain as its topology view reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ChainRecord {
+    pub(crate) id: kekule::topology::ChainId,
+    pub(crate) label_id: String,
+    pub(crate) author_id: Option<String>,
+    pub(crate) residues: Vec<kekule::topology::ResidueId>,
+}
+
+/// One residue as its topology view reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResidueRecord {
+    pub(crate) id: kekule::topology::ResidueId,
+    pub(crate) chain: kekule::topology::ChainId,
+    pub(crate) name: String,
+    pub(crate) class: kekule::topology::ResidueClass,
+    pub(crate) label_comp_id: Option<String>,
+    pub(crate) author_comp_id: Option<String>,
+    pub(crate) label_seq_id: Option<i32>,
+    pub(crate) author_seq_id: Option<String>,
+    pub(crate) insertion_code: Option<String>,
+    pub(crate) atom_sites: Vec<kekule::topology::AtomSiteId>,
+}
+
+/// One atom site as its topology view reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AtomSiteRecord {
+    pub(crate) id: kekule::topology::AtomSiteId,
+    pub(crate) residue: kekule::topology::ResidueId,
+    pub(crate) atom: kekule::topology::InstanceAtomId,
+    pub(crate) metadata: kekule::topology::AtomSiteMetadata,
+}
+
+/// Every chain, residue, and atom site of a topology, for comparing the
+/// hierarchies of two topologies.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct HierarchyRecord {
+    pub(crate) chains: Vec<ChainRecord>,
+    pub(crate) residues: Vec<ResidueRecord>,
+    pub(crate) atom_sites: Vec<AtomSiteRecord>,
+}
+
+pub(crate) fn chain_record(chain: kekule::topology::ChainView<'_>) -> ChainRecord {
+    ChainRecord {
+        id: chain.id(),
+        label_id: chain.label_id().to_owned(),
+        author_id: chain.author_id().map(str::to_owned),
+        residues: chain.residues().map(|residue| residue.id()).collect(),
+    }
+}
+
+pub(crate) fn residue_record(residue: kekule::topology::ResidueView<'_>) -> ResidueRecord {
+    ResidueRecord {
+        id: residue.id(),
+        chain: residue.chain().id(),
+        name: residue.name().to_owned(),
+        class: residue.class(),
+        label_comp_id: residue.label_comp_id().map(str::to_owned),
+        author_comp_id: residue.author_comp_id().map(str::to_owned),
+        label_seq_id: residue.label_seq_id(),
+        author_seq_id: residue.author_seq_id().map(str::to_owned),
+        insertion_code: residue.insertion_code().map(str::to_owned),
+        atom_sites: residue.atom_sites().map(|site| site.id()).collect(),
+    }
+}
+
+pub(crate) fn atom_site_record(site: kekule::topology::AtomSiteView<'_>) -> AtomSiteRecord {
+    AtomSiteRecord {
+        id: site.id(),
+        residue: site.residue().id(),
+        atom: site.atom().id(),
+        metadata: site.metadata().clone(),
+    }
+}
+
+pub(crate) fn hierarchy_record(topology: &kekule::topology::Topology) -> HierarchyRecord {
+    HierarchyRecord {
+        chains: topology.chains().map(chain_record).collect(),
+        residues: topology.residues().map(residue_record).collect(),
+        atom_sites: topology.atom_sites().map(atom_site_record).collect(),
+    }
+}

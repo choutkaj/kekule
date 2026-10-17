@@ -7,8 +7,8 @@ use kekule::structure::{
     TrajectoryFrame,
 };
 use kekule::topology::{
-    AtomSelection, AtomSiteMetadata, Hierarchy, InstanceAtomId, Topology, TopologyBuildError,
-    TopologyBuilder,
+    AtomSelection, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, Topology,
+    TopologyBuildError, TopologyBuilder,
 };
 
 fn key() -> PropertyKey {
@@ -74,7 +74,7 @@ fn replacing_hierarchy_cannot_silently_truncate_populated_columns() {
         .chains_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(11)]))
         .unwrap();
-    *builder.hierarchy_mut() = Hierarchy::new();
+    *builder.hierarchy_mut() = HierarchyBuilder::new();
     assert_eq!(
         builder.properties_mut().chains_mut().get(&key()),
         Some(&PropertyColumn::Int(vec![Some(11)]))
@@ -111,9 +111,9 @@ fn topology_only_domains_are_typed_and_stay_out_of_structures() {
     let topology = Arc::new(builder.build().unwrap());
     let properties = topology.properties();
     let instance = topology.instances().next().unwrap().id();
-    let chain = topology.hierarchy().chains().next().unwrap().0;
-    let residue = topology.hierarchy().residues().next().unwrap().0;
-    let site = topology.hierarchy().atom_sites().next().unwrap().0;
+    let chain = topology.chains().next().unwrap().id();
+    let residue = topology.residues().next().unwrap().id();
+    let site = topology.atom_sites().next().unwrap().id();
     assert_eq!(
         properties
             .molecule_instances()
