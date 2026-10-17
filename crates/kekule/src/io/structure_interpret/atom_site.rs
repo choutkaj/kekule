@@ -1,3 +1,5 @@
+//! Reads mmCIF `_atom_site`, `_entity`, and `_struct_asym` rows into typed
+//! atom rows, the source-neutral input of interpretation.
 use super::types::structure_error;
 use crate::diagnostics::{DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};

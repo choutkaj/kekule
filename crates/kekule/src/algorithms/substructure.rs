@@ -13,6 +13,10 @@ use crate::query::{QueryAtomId, QueryGraph};
 /// Absolute query-size ceiling for the recursive bounded matcher.
 pub const MAX_SUBSTRUCTURE_QUERY_ATOMS: usize = 256;
 
+/// Resource bounds and match semantics for substructure search.
+///
+/// [`Default`] gives fixed bounds, keeps one match per target atom set, and
+/// matches stereo by local parity only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubstructureMatchOptions {
     max_matches: usize,
@@ -24,9 +28,9 @@ pub struct SubstructureMatchOptions {
 }
 
 impl SubstructureMatchOptions {
-    /// Maximum matches. Complete enumeration (`all`) reports
-    /// exceeding it as [`SubstructureMatchError::LimitExceeded`]; a visitor
-    /// stops successfully once it is reached.
+    /// Maximum matches. Enumeration with `all`, `visit`, or
+    /// [`TaggedQuery::find_matches`] reports exceeding it as
+    /// [`SubstructureMatchError::LimitExceeded`]; `first` stops at one match.
     pub const fn max_matches(&self) -> usize {
         self.max_matches
     }
@@ -80,7 +84,8 @@ impl SubstructureMatchOptions {
     ///
     /// # Errors
     ///
-    /// [`SubstructureMatchError::InvalidLimit`] when `max_query_atoms` is zero or exceeds [`MAX_SUBSTRUCTURE_QUERY_ATOMS`].
+    /// [`SubstructureMatchError::InvalidLimit`] when `max_query_atoms` is zero
+    /// or exceeds [`MAX_SUBSTRUCTURE_QUERY_ATOMS`].
     pub fn with_max_query_atoms(
         mut self,
         max_query_atoms: usize,
@@ -168,21 +173,32 @@ impl Default for SubstructureMatchOptions {
     }
 }
 
+/// Work done by a substructure search, reported with
+/// [`SubstructureMatchError::LimitExceeded`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SubstructureMatchWork {
+    /// Atoms in the query.
     pub query_atoms: usize,
+    /// Atoms in the target.
     pub target_atoms: usize,
+    /// Query-atom by target-atom compatibility pairs evaluated, including
+    /// those of recursive subqueries.
     pub candidate_pairs: usize,
+    /// Candidate assignments visited by backtracking.
     pub search_states: usize,
+    /// Matches found.
     pub matches: usize,
 }
 
+/// One embedding of a query in a molecule.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryMatch {
     atoms: Vec<AtomId>,
 }
 
 impl QueryMatch {
+    /// The target atom matched by `query_atom`, or `None` when the query has
+    /// no such atom.
     pub fn atom(&self, query_atom: QueryAtomId) -> Option<AtomId> {
         self.atoms.get(query_atom.index()).copied()
     }
@@ -193,12 +209,18 @@ impl QueryMatch {
     }
 }
 
+/// Target perception a query predicate depends on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum QueryPerception {
+    /// Valence perception, for hydrogen counts, connectivity, and valence.
     Valence,
+    /// Ring membership, for ring-membership and ring-bond-count predicates.
     RingMembership,
+    /// An SSSR-like ring basis, for ring-count and smallest-ring-size
+    /// predicates.
     RingBasis,
+    /// Aromaticity perception, for aromatic atom and bond predicates.
     Aromaticity,
 }
 
@@ -240,6 +262,8 @@ pub enum SubstructureMatchError {
 }
 
 impl SubstructureMatchError {
+    /// The work done before a bound was exceeded, or `None` for any other
+    /// error.
     pub fn work(&self) -> Option<SubstructureMatchWork> {
         match self {
             Self::LimitExceeded { work, .. } => Some(*work),
@@ -274,6 +298,8 @@ impl std::error::Error for SubstructureMatchError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MatchCompletion {
+    /// Every match was delivered.
     Complete,
+    /// The visitor stopped the traversal.
     Stopped,
 }

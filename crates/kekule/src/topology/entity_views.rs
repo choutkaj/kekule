@@ -55,6 +55,7 @@ impl<'a> AtomView<'a> {
         }
     }
 
+    /// The instance-qualified atom ID.
     pub const fn id(self) -> InstanceAtomId {
         self.id
     }
@@ -133,6 +134,7 @@ impl<'a> AtomView<'a> {
             .map(|aromaticity| aromaticity.atom_is_aromatic(self.id.atom()))
     }
 
+    /// The hierarchy atom site placing this atom, or `None` when it has none.
     pub fn atom_site(self) -> Option<AtomSiteView<'a>> {
         self.topology
             .hierarchy()
@@ -140,10 +142,12 @@ impl<'a> AtomView<'a> {
             .map(|site| AtomSiteView::new(self.topology, site.id()))
     }
 
+    /// The residue of this atom's site, or `None` when the atom has no site.
     pub fn residue(self) -> Option<ResidueView<'a>> {
         self.atom_site().map(AtomSiteView::residue)
     }
 
+    /// The chain of this atom's residue, or `None` when the atom has no site.
     pub fn chain(self) -> Option<ChainView<'a>> {
         self.residue().map(ResidueView::chain)
     }
@@ -209,6 +213,7 @@ impl<'a> BondView<'a> {
         }
     }
 
+    /// The instance-qualified bond ID.
     pub const fn id(self) -> InstanceBondId {
         self.id
     }

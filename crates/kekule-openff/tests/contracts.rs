@@ -1,3 +1,6 @@
+//! Rosemary rule labelling against the reference labels, and explicit failures for
+//! unsupported functional forms and unassigned chemistry.
+
 use kekule::{molecule::Molecule, smiles};
 use kekule_openff::ForceField;
 

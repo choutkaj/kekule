@@ -26,11 +26,15 @@ use serde_json::{json, Value};
 /// A failure reported for one input, never for the whole run.
 #[derive(Debug)]
 pub struct Failure {
+    /// Stable failure category reported as `error.kind`, such as `request` or
+    /// `parse`.
     pub kind: &'static str,
+    /// Human-readable detail reported as `error.message`.
     pub message: String,
 }
 
 impl Failure {
+    /// A failure of category `kind` whose message is `error`'s display text.
     pub fn new(kind: &'static str, error: impl std::fmt::Display) -> Self {
         Self {
             kind,
@@ -39,6 +43,7 @@ impl Failure {
     }
 }
 
+/// The facts observed for one input, each a JSON array `[key..., value]`.
 pub type Facts = Vec<Value>;
 
 fn dispatch(task: &str, format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {

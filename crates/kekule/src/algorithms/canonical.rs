@@ -3,22 +3,31 @@ use std::collections::{BTreeMap, VecDeque};
 use super::rings::compute_ring_membership;
 use crate::molecule::{Atom, AtomId, Bond, BondId, BondOrder, Molecule};
 
+/// Canonical symmetry classes of a molecule's atoms, from
+/// [`canonical_atom_ranking`].
+///
+/// Ranks are dense from zero and ordered by graph invariants, so atoms share a
+/// rank exactly when the ranking finds them equivalent. Ranks are independent
+/// of atom order and IDs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalAtomRanking {
     ranks: Vec<(AtomId, u32)>,
 }
 
 impl CanonicalAtomRanking {
+    /// Every atom with its rank, in ascending atom ID order.
     pub fn iter(&self) -> impl Iterator<Item = (AtomId, u32)> + '_ {
         self.ranks.iter().copied()
     }
 
+    /// The rank of `atom`, or `None` when it was not in the ranked molecule.
     pub fn rank_of(&self, atom: AtomId) -> Option<u32> {
         self.ranks
             .iter()
             .find_map(|(id, rank)| (*id == atom).then_some(*rank))
     }
 
+    /// The number of distinct ranks, that is, of equivalence classes.
     pub fn rank_count(&self) -> usize {
         self.ranks
             .iter()

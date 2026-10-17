@@ -11,7 +11,10 @@ use super::{dcd, detect, trr, xtc, xyz, TrajectoryIoLimits};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TrajectoryFormatHint {
+    /// Detect the format from a conclusive content signature, checked against
+    /// the file extension when it names a known format.
     Auto,
+    /// Use this format without inspecting the signature or extension.
     Explicit(TrajectoryFormat),
 }
 
@@ -19,8 +22,11 @@ pub enum TrajectoryFormatHint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FieldAvailability {
+    /// Every frame carries the field.
     Required,
+    /// Each frame may or may not carry the field.
     Optional,
+    /// No frame carries the field.
     Absent,
 }
 
@@ -37,30 +43,37 @@ pub struct TrajectoryFieldAvailability {
 }
 
 impl TrajectoryFieldAvailability {
+    /// Availability of atom positions.
     pub const fn positions(&self) -> FieldAvailability {
         self.positions
     }
 
+    /// Availability of the periodic cell.
     pub const fn cell(&self) -> FieldAvailability {
         self.cell
     }
 
+    /// Availability of atom velocities.
     pub const fn velocities(&self) -> FieldAvailability {
         self.velocities
     }
 
+    /// Availability of atom forces.
     pub const fn forces(&self) -> FieldAvailability {
         self.forces
     }
 
+    /// Availability of the frame time.
     pub const fn time(&self) -> FieldAvailability {
         self.time
     }
 
+    /// Availability of the integration step.
     pub const fn step(&self) -> FieldAvailability {
         self.step
     }
 
+    /// Availability of frame-level properties, such as the TRR lambda.
     pub const fn properties(&self) -> FieldAvailability {
         self.properties
     }
@@ -70,9 +83,13 @@ impl TrajectoryFieldAvailability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ScalarPrecision {
+    /// Decimal text numbers.
     DecimalText,
+    /// IEEE 754 single precision.
     Float32,
+    /// IEEE 754 double precision.
     Float64,
+    /// Frames of one file use different binary precisions.
     Mixed,
 }
 
@@ -80,10 +97,14 @@ pub enum ScalarPrecision {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum CoordinateEncoding {
+    /// Coordinates are stored as plain scalars.
     Lossless {
+        /// The stored scalar representation.
         precision: ScalarPrecision,
     },
+    /// Coordinates are quantised, as in compressed XTC frames.
     Lossy {
+        /// The scalar representation of the decoded coordinates.
         precision: ScalarPrecision,
         /// The nominal coordinate resolution, a length.
         resolution: Quantity<f64>,
@@ -94,7 +115,9 @@ pub enum CoordinateEncoding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RandomAccessCapability {
+    /// Frames are read in stream order only.
     SequentialOnly,
+    /// A verified frame index supports random reads.
     Indexed,
 }
 
@@ -117,34 +140,45 @@ pub struct FileTrajectoryMetadata {
 }
 
 impl FileTrajectoryMetadata {
+    /// The opened file's format.
     pub const fn format(&self) -> TrajectoryFormat {
         self.format
     }
 
+    /// The atom count of every frame, equal to the topology's.
     pub const fn atom_count(&self) -> usize {
         self.atom_count
     }
 
+    /// The frame count the header declares, for formats with one (DCD);
+    /// `None` otherwise.
     pub const fn declared_frame_count(&self) -> Option<usize> {
         self.declared_frame_count
     }
 
+    /// The verified frame count of an indexed reader; `None` for a
+    /// sequential reader.
     pub const fn indexed_frame_count(&self) -> Option<usize> {
         self.indexed_frame_count
     }
 
+    /// Which frame fields the file carries.
     pub const fn fields(&self) -> TrajectoryFieldAvailability {
         self.fields
     }
 
+    /// How coordinates are stored.
     pub const fn coordinate_encoding(&self) -> CoordinateEncoding {
         self.coordinate_encoding
     }
 
+    /// Whether the reader supports random frame access.
     pub const fn random_access(&self) -> RandomAccessCapability {
         self.random_access
     }
 
+    /// A human-readable description of the format variant, such as DCD byte
+    /// order or XTC magic; diagnostic text, not a stable identifier.
     pub fn variant(&self) -> Option<&str> {
         self.variant.as_deref()
     }
@@ -321,10 +355,16 @@ impl FileTrajectoryMetadata {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FormatDetectionEvidence {
+    /// The caller named the format with [`TrajectoryFormatHint::Explicit`].
     ExplicitHint,
+    /// The content prefix carries a conclusive format signature.
     Signature,
+    /// The file extension names the format.
     Extension,
+    /// The signature and the extension select the same format.
     ExtensionSignatureAgreement,
+    /// The path has no extension naming a supported format, so the signature
+    /// alone selected it.
     MissingExtension,
 }
 
@@ -336,10 +376,12 @@ pub struct TrajectoryFormatDetection {
 }
 
 impl TrajectoryFormatDetection {
+    /// The selected format.
     pub const fn format(&self) -> TrajectoryFormat {
         self.format
     }
 
+    /// Why the format was selected, in the order the checks ran.
     pub fn evidence(&self) -> &[FormatDetectionEvidence] {
         &self.evidence
     }
@@ -349,7 +391,57 @@ impl TrajectoryFormatDetection {
 ///
 /// The reader is restored to its original stream position before this function
 /// returns. Automatic detection never trusts a known extension without a
-/// conclusive signature.
+/// conclusive signature. `source_name` supplies the extension and the
+/// diagnostic source label; nothing is opened.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when automatic detection
+/// finds no conclusive signature, [`TrajectoryIoErrorKind::FormatMismatch`]
+/// when the signature and a known extension disagree,
+/// [`TrajectoryIoErrorKind::UnsupportedVariant`] for a gzip, xz or bzip2
+/// wrapper, [`TrajectoryIoErrorKind::LimitExceeded`] when
+/// [`TrajectoryIoLimits::max_detection_bytes`] is zero or exceeds
+/// [`TrajectoryIoLimits::max_scratch_bytes`], and
+/// [`TrajectoryIoErrorKind::Io`] when reading or seeking fails. The wrapper and
+/// limit checks apply to explicit hints too.
+///
+/// [`TrajectoryIoErrorKind::UnknownFormat`]: crate::TrajectoryIoErrorKind::UnknownFormat
+/// [`TrajectoryIoErrorKind::FormatMismatch`]: crate::TrajectoryIoErrorKind::FormatMismatch
+/// [`TrajectoryIoErrorKind::UnsupportedVariant`]: crate::TrajectoryIoErrorKind::UnsupportedVariant
+/// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::TrajectoryIoErrorKind::LimitExceeded
+/// [`TrajectoryIoErrorKind::Io`]: crate::TrajectoryIoErrorKind::Io
+///
+/// # Examples
+///
+/// ```
+/// use std::io::Cursor;
+///
+/// use kekule_traj::io::{
+///     detect_trajectory_format, FormatDetectionEvidence, TrajectoryFormatHint,
+///     TrajectoryIoLimits,
+/// };
+/// use kekule_traj::TrajectoryFormat;
+///
+/// let mut content = Cursor::new(b"1\ncomment\nO 0.0 0.0 0.0\n".to_vec());
+/// let detection = detect_trajectory_format(
+///     &mut content,
+///     "water.xyz",
+///     TrajectoryFormatHint::Auto,
+///     &TrajectoryIoLimits::default(),
+/// )?;
+/// assert_eq!(detection.format(), TrajectoryFormat::Xyz);
+/// assert_eq!(
+///     detection.evidence(),
+///     [
+///         FormatDetectionEvidence::Signature,
+///         FormatDetectionEvidence::Extension,
+///         FormatDetectionEvidence::ExtensionSignatureAgreement,
+///     ]
+/// );
+/// assert_eq!(content.position(), 0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn detect_trajectory_format<R: io::Read + io::Seek>(
     reader: &mut R,
     source_name: impl AsRef<Path>,
@@ -374,14 +466,18 @@ pub struct TrajectoryOpenReport {
 }
 
 impl TrajectoryOpenReport {
+    /// The format the reader was opened with.
     pub const fn selected_format(&self) -> TrajectoryFormat {
         self.selected_format
     }
 
+    /// Why the format was selected; see
+    /// [`TrajectoryFormatDetection::evidence`].
     pub fn detection_evidence(&self) -> &[FormatDetectionEvidence] {
         &self.detection_evidence
     }
 
+    /// Human-readable notes on format conventions applied while opening.
     pub fn notes(&self) -> &[String] {
         &self.notes
     }
@@ -415,42 +511,49 @@ impl Default for TrajectoryOpenOptions {
 }
 
 impl TrajectoryOpenOptions {
+    /// Sets [`Self::format_hint`].
     #[must_use]
     pub fn with_format_hint(mut self, format_hint: TrajectoryFormatHint) -> Self {
         self.format_hint = format_hint;
         self
     }
 
+    /// Sets [`Self::limits`].
     #[must_use]
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
     }
 
+    /// Sets [`Self::xyz_options`].
     #[must_use]
     pub fn with_xyz_options(mut self, options: xyz::XyzReadOptions) -> Self {
         self.xyz = options;
         self
     }
 
+    /// Sets [`Self::dcd_options`].
     #[must_use]
     pub fn with_dcd_options(mut self, options: dcd::DcdReadOptions) -> Self {
         self.dcd = options;
         self
     }
 
+    /// Sets [`Self::trr_options`].
     #[must_use]
     pub fn with_trr_options(mut self, options: trr::TrrReadOptions) -> Self {
         self.trr = options;
         self
     }
 
+    /// Sets [`Self::xtc_options`].
     #[must_use]
     pub fn with_xtc_options(mut self, options: xtc::XtcReadOptions) -> Self {
         self.xtc = options;
         self
     }
 
+    /// How the format is selected; [`TrajectoryFormatHint::Auto`] by default.
     pub const fn format_hint(&self) -> TrajectoryFormatHint {
         self.format_hint
     }
@@ -460,18 +563,26 @@ impl TrajectoryOpenOptions {
         &self.limits
     }
 
+    /// Options for the XYZ reader; path readers override its limits
+    /// and source label.
     pub const fn xyz_options(&self) -> &xyz::XyzReadOptions {
         &self.xyz
     }
 
+    /// Options for the DCD reader; path readers override its limits
+    /// and source label.
     pub const fn dcd_options(&self) -> &dcd::DcdReadOptions {
         &self.dcd
     }
 
+    /// Options for the TRR reader; path readers override its limits
+    /// and source label.
     pub const fn trr_options(&self) -> &trr::TrrReadOptions {
         &self.trr
     }
 
+    /// Options for the XTC reader; path readers override its limits
+    /// and source label.
     pub const fn xtc_options(&self) -> &xtc::XtcReadOptions {
         &self.xtc
     }

@@ -2,6 +2,7 @@ use crate::molecule::*;
 use std::collections::BTreeMap;
 use std::fmt;
 
+/// Options of [`perceive_valence`]: how invalid valence states are treated.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ValenceOptions {
     validation: ValenceValidation,
@@ -88,11 +89,16 @@ impl std::error::Error for ValenceError {}
 /// atom state using the selected model's valence rules.
 ///
 /// The default options apply strict validation. With
-/// [`ValenceValidation::Permissive`], RDKit's permissive property-cache rules assign zero additional
-/// hydrogens to excess occupancy. Success replaces installed valence and clears
-/// dependent aromaticity and CIP assignments while retaining ring perception.
-/// Failure preserves all previously installed perception. Neither outcome
-/// changes represented graph chemistry.
+/// [`ValenceValidation::Permissive`], RDKit's permissive property-cache rules
+/// assign zero additional hydrogens to excess occupancy. Success replaces
+/// installed valence and clears dependent aromaticity and CIP assignments
+/// while retaining ring perception. Failure preserves all previously installed
+/// perception. Neither outcome changes represented graph chemistry.
+///
+/// # Errors
+///
+/// Only strict validation fails: [`ValenceError`] with one [`ValenceIssue`]
+/// per atom whose valence or hydrogen state is invalid.
 pub fn perceive_valence(
     mol: &mut Molecule,
     model: ValenceModel,
@@ -372,7 +378,9 @@ fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> b
 /// at both endpoints, as specified by [`ValenceModel::RdkitLike`]. This reads
 /// represented chemistry without installing or changing perception.
 ///
-/// Returns an error if `atom` is not live in `mol`.
+/// # Errors
+///
+/// [`MoleculeError::InvalidAtomId`] when `atom` is not live in `mol`.
 pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize> {
     let declaration = mol.require_atom(atom)?.hydrogens.represented_count();
     Ok(explicit_valence(mol, atom) + usize::from(declaration))

@@ -145,6 +145,12 @@ pub struct RmsfAccumulator {
 }
 
 impl RmsfAccumulator {
+    /// An empty accumulator over `selection`, which fixes the atoms and the
+    /// topology layout of every observed frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReductionError::EmptySelection`] when `selection` has no atom.
     pub fn new(selection: &AtomSelection) -> Result<Self, ReductionError> {
         let len = selection.indices().len();
         if len == 0 {
@@ -159,6 +165,13 @@ impl RmsfAccumulator {
     }
 
     /// Observes one frame; failure preserves all accumulated statistics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReductionError::TopologyMismatch`] when the frame's topology
+    /// is incompatible with the selection,
+    /// [`ReductionError::NumericalFailure`] when a moment leaves the finite
+    /// range, and [`ReductionError::FrameCountOverflow`] after 2^53 frames.
     pub fn observe(
         &mut self,
         frame_index: usize,
@@ -211,11 +224,16 @@ impl RmsfAccumulator {
         Ok(())
     }
 
+    /// The number of frames observed so far.
     pub fn frame_count(&self) -> usize {
         self.frames
     }
 
     /// Finishes with values in selection order, retaining source atom identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReductionError::NoFrames`] when no frame was observed.
     pub fn finish(self) -> Result<RmsfResult, ReductionError> {
         if self.frames == 0 {
             return Err(ReductionError::NoFrames);
@@ -243,12 +261,16 @@ pub struct RmsfResult {
 }
 
 impl RmsfResult {
+    /// The selection the values follow, bound to its topology.
     pub fn selection(&self) -> &AtomSelection {
         &self.selection
     }
+    /// One RMSF per selected atom in selection order, in the canonical length
+    /// unit (nm).
     pub fn values(&self) -> &Quantity<Vec<f64>> {
         &self.values
     }
+    /// The number of frames reduced.
     pub fn frame_count(&self) -> usize {
         self.frames
     }
@@ -285,6 +307,17 @@ pub struct ContactOccupancyAccumulator {
 }
 
 impl ContactOccupancyAccumulator {
+    /// An empty accumulator for `pairs` of `topology` atoms in contact at
+    /// distances up to `cutoff`, a length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReductionError::Unit`] when `cutoff` is not a length,
+    /// [`ReductionError::InvalidCutoff`] when it is not finite and
+    /// nonnegative, [`ReductionError::EmptySelection`] for no pairs,
+    /// [`ReductionError::Selection`] for an atom not in `topology`,
+    /// [`ReductionError::SelfPair`] for a pair naming one atom twice, and
+    /// [`ReductionError::DuplicatePair`] for a repeated unordered pair.
     pub fn new(
         topology: &Arc<Topology>,
         pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
@@ -330,6 +363,13 @@ impl ContactOccupancyAccumulator {
     }
 
     /// Observes one frame, with `frame_index` used only in error diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReductionError::TopologyMismatch`] when the frame does not
+    /// share the accumulator's layout, [`ReductionError::NumericalFailure`]
+    /// when a distance is not finite, and
+    /// [`ReductionError::FrameCountOverflow`] after 2^53 frames.
     pub fn observe(
         &mut self,
         frame_index: usize,
@@ -359,10 +399,16 @@ impl ContactOccupancyAccumulator {
         Ok(())
     }
 
+    /// The number of frames observed so far.
     pub fn frame_count(&self) -> usize {
         self.frames
     }
 
+    /// Finishes with counts in input pair order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReductionError::NoFrames`] when no frame was observed.
     pub fn finish(self) -> Result<ContactOccupancyResult, ReductionError> {
         if self.frames == 0 {
             return Err(ReductionError::NoFrames);
@@ -388,18 +434,23 @@ pub struct ContactOccupancyResult {
 }
 
 impl ContactOccupancyResult {
+    /// The topology the pairs belong to.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
+    /// The atom pairs in input order.
     pub fn pairs(&self) -> &[(InstanceAtomId, InstanceAtomId)] {
         &self.pairs
     }
+    /// The number of frames each pair was in contact, in pair order.
     pub fn hit_counts(&self) -> &[usize] {
         &self.hits
     }
+    /// The number of frames reduced.
     pub fn frame_count(&self) -> usize {
         self.frames
     }
+    /// The contact cutoff in the canonical length unit (nm).
     pub fn cutoff(&self) -> Quantity<f64> {
         self.cutoff
     }
@@ -419,6 +470,13 @@ impl ContactOccupancyResult {
 /// Per-atom population RMSF about mean stored positions over every frame of
 /// a trajectory, each frame counting once. Align and perform periodic
 /// preprocessing beforehand. Uses [`RmsfAccumulator`].
+///
+/// # Errors
+///
+/// Returns [`ReductionError::Selection`] when `selection` is incompatible with
+/// the trajectory's topology, [`ReductionError::NoFrames`] for an empty
+/// trajectory, and the errors of [`RmsfAccumulator::new`] and
+/// [`RmsfAccumulator::observe`].
 ///
 /// Ensemble statistics must use member weights, so this does not accept an
 /// [`kekule::structure::Ensemble`]:
@@ -446,6 +504,12 @@ pub fn rmsf(
 /// Cartesian contact occupancies over every frame of a trajectory, each frame
 /// counting once, using the same implementation as streaming
 /// [`ContactOccupancyAccumulator`].
+///
+/// # Errors
+///
+/// Returns [`ReductionError::NoFrames`] for an empty trajectory and the errors
+/// of [`ContactOccupancyAccumulator::new`] and
+/// [`ContactOccupancyAccumulator::observe`].
 pub fn contact_occupancy(
     trajectory: &Trajectory,
     pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,

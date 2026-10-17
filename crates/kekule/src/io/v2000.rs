@@ -1,3 +1,5 @@
+//! V2000 connection-table parsing.
+
 use std::collections::BTreeSet;
 
 use crate::diagnostics::DiagnosticKind;

@@ -92,14 +92,18 @@ impl SuperpositionReport {
         &self.alignments
     }
 
+    /// The alignment applied to item `index`, or `None` when `index` is out of
+    /// range.
     pub fn alignment(&self, index: usize) -> Option<&RigidAlignment> {
         self.alignments.get(index)
     }
 
+    /// Number of aligned items.
     pub fn len(&self) -> usize {
         self.alignments.len()
     }
 
+    /// Whether the collection had no items.
     pub fn is_empty(&self) -> bool {
         self.alignments.is_empty()
     }
@@ -292,13 +296,23 @@ impl Ensemble {
     ///
     /// `reference` is an index into this ensemble or any borrowed view
     /// (`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an
-    /// [`AtomSelection`](crate::topology::AtomSelection) of this layout or an
+    /// [`AtomSelection`](crate::topology::AtomSelection) or
+    /// [`SymmetricSelection`](super::SymmetricSelection) of this layout, or an
     /// [`AtomCorrespondence`](super::AtomCorrespondence) to an independent
     /// reference. Positions move and cells rotate; all other state is kept.
     /// The fit is transactional: on failure nothing changes. Coordinates are
     /// fitted as stored; no imaging or unwrapping is performed. Clone first to
     /// keep the original. `options` selects the fit weights, in pair order, and
     /// the periodic policy.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`fit`](super::fit) for the pairing and weights.
+    /// [`AlignmentError::Transform`] when a fitted transform cannot be
+    /// applied to a member.
     pub fn superpose<'a>(
         &mut self,
         reference: impl Into<Reference<'a>>,
@@ -326,6 +340,13 @@ impl Ensemble {
     /// [`CANONICAL_LENGTH_UNIT`], one per member in order; weight them by the
     /// member weights for ensemble statistics. `options` selects the pair
     /// weights and the periodic policy.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`rmsd`](super::rmsd) for the pairing and weights.
     pub fn rmsd<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
@@ -346,7 +367,15 @@ impl Ensemble {
     /// pairs, without changing the ensemble or copying coordinates.
     ///
     /// For example, fit a protein backbone and measure ligand motion. `options`
-    /// holds the fit options and the measurement weights.
+    /// holds the fit options and the measurement weights. Values are in
+    /// [`CANONICAL_LENGTH_UNIT`], one per item in order.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`aligned_rmsd`](super::aligned_rmsd) for the pairing and weights.
     pub fn aligned_rmsd<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
@@ -371,12 +400,23 @@ impl Trajectory {
     ///
     /// `reference` is an index into this trajectory or any borrowed view
     /// (`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an
-    /// [`AtomSelection`](crate::topology::AtomSelection) of this layout or an
+    /// [`AtomSelection`](crate::topology::AtomSelection) or
+    /// [`SymmetricSelection`](super::SymmetricSelection) of this layout, or an
     /// [`AtomCorrespondence`](super::AtomCorrespondence) to an independent
     /// reference. Positions move; cells, velocities, and forces rotate; all
     /// other state is kept. The fit is transactional: on failure nothing
     /// changes. Coordinates are fitted as stored; no imaging or unwrapping is
-    /// performed. Clone first to keep the original.
+    /// performed. Clone first to keep the original. `options` selects the fit
+    /// weights, in pair order, and the periodic policy.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`fit`](super::fit) for the pairing and weights.
+    /// [`AlignmentError::Transform`] when a fitted transform cannot be
+    /// applied to a frame.
     pub fn superpose<'a>(
         &mut self,
         reference: impl Into<Reference<'a>>,
@@ -403,6 +443,13 @@ impl Trajectory {
     /// Never fits or changes the trajectory. Values are in
     /// [`CANONICAL_LENGTH_UNIT`], one per frame in temporal order. `options`
     /// selects the pair weights and the periodic policy.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`rmsd`](super::rmsd) for the pairing and weights.
     pub fn rmsd<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
@@ -423,7 +470,15 @@ impl Trajectory {
     /// pairs, without changing the trajectory or copying coordinates.
     ///
     /// For example, fit a protein backbone and measure ligand motion. `options`
-    /// holds the fit options and the measurement weights.
+    /// holds the fit options and the measurement weights. Values are in
+    /// [`CANONICAL_LENGTH_UNIT`], one per item in order.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`aligned_rmsd`](super::aligned_rmsd) for the pairing and weights.
     pub fn aligned_rmsd<'a>(
         &self,
         reference: impl Into<Reference<'a>>,

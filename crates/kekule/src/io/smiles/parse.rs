@@ -1,3 +1,6 @@
+//! SMILES record parsing into a typed [`SmilesDocument`] and streaming
+//! line readers.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufReader, Read};
 use std::ops::Range;
@@ -48,10 +51,12 @@ impl SmilesDocument {
         &self.tokens
     }
 
+    /// The base SMILES text, without CX extension or name.
     pub fn base_smiles(&self) -> &str {
         &self.source[self.smiles_span.clone()]
     }
 
+    /// Byte range of [`Self::base_smiles`] in [`Self::source`].
     pub fn base_smiles_span(&self) -> Range<usize> {
         self.smiles_span.clone()
     }
@@ -63,6 +68,8 @@ impl SmilesDocument {
             .map(|span| &self.source[span])
     }
 
+    /// Byte range of [`Self::cx_extension`] in [`Self::source`]; `None` when
+    /// the record has no extension.
     pub fn cx_extension_span(&self) -> Option<Range<usize>> {
         self.cx_extension_span.clone()
     }
@@ -80,11 +87,14 @@ impl SmilesDocument {
         self.name_span.clone().map(|span| &self.source[span])
     }
 
+    /// Byte range of [`Self::name`] in [`Self::source`]; `None` when the
+    /// record has no name.
     pub fn name_span(&self) -> Option<Range<usize>> {
         self.name_span.clone()
     }
 
-    /// Dot-delimited source fragments; ring closures may connect fragments.
+    /// Dot-delimited source fragments as index ranges into [`Self::tokens`],
+    /// excluding the separators; ring closures may connect fragments.
     pub fn fragment_token_ranges(&self) -> &[Range<usize>] {
         &self.fragments
     }
@@ -97,6 +107,14 @@ impl SmilesDocument {
     /// and the record-level relative configuration flag. Other fields fail
     /// with [`DiagnosticKind::Unsupported`] unless `options` omits and reports
     /// them; no extension is silently discarded.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] located in this record: [`DiagnosticKind::Unsupported`]
+    /// for rejected CX fields, `InvalidValue`, `InvalidReference` or
+    /// `Inconsistent` for CX fields or stereo that contradict the base
+    /// SMILES, and `Chemistry` when a component cannot be published, such as
+    /// aromatic syntax that cannot be localized.
     pub fn interpret(
         &self,
         options: super::interpret::SmilesInterpretOptions,
@@ -109,6 +127,10 @@ impl SmilesDocument {
     /// CXSMILES can change represented chemistry. This is a lossy projection,
     /// not a fallback for full interpretation. The returned interpretation
     /// retains the extension text and reports the omitted source span.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::interpret`] that concern the base SMILES.
     pub fn interpret_base(&self) -> Result<super::interpret::SmilesInterpretation, FormatError> {
         super::interpret::interpret_base_smiles_document(self)
     }
@@ -174,6 +196,7 @@ pub(super) enum SmilesChiralityToken {
     AtAt,
 }
 
+/// One lexical token of the base SMILES and its byte span in the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesDocumentToken {
     kind: SmilesDocumentTokenKind,
@@ -181,23 +204,32 @@ pub struct SmilesDocumentToken {
 }
 
 impl SmilesDocumentToken {
+    /// What the token is.
     pub const fn kind(&self) -> SmilesDocumentTokenKind {
         self.kind
     }
 
+    /// Byte range of the token in [`SmilesDocument::source`].
     pub fn span(&self) -> Range<usize> {
         self.span.clone()
     }
 }
 
+/// Lexical class of a [`SmilesDocumentToken`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SmilesDocumentTokenKind {
+    /// An organic-subset or bracket atom, brackets included.
     Atom,
+    /// An explicit bond symbol: `-`, `=`, `#`, `$`, `:`, `/`, or `\`.
     Bond,
+    /// `(`.
     BranchOpen,
+    /// `)`.
     BranchClose,
+    /// A ring-closure label: a digit or `%nn`.
     Ring,
+    /// `.`.
     ComponentSeparator,
 }
 
@@ -1404,6 +1436,8 @@ pub struct SmilesRecords<R> {
 }
 
 impl<R: Read> SmilesRecords<R> {
+    /// Streams the nonblank lines of `reader` as records, each bounded by
+    /// `options`.
     pub fn new(reader: R, options: SmilesParseOptions) -> Self {
         Self {
             reader: BufReader::new(reader),

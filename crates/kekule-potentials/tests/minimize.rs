@@ -1,3 +1,5 @@
+//! L-BFGS minimization: convergence, observers, limits, line-search failures and options.
+
 use std::ops::ControlFlow;
 use std::sync::Arc;
 

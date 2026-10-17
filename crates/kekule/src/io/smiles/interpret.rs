@@ -1,3 +1,6 @@
+//! Interpretation of a SMILES document into connected molecules with source
+//! mappings.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 use std::ops::Range;
@@ -68,6 +71,7 @@ fn component_count_error(actual: usize) -> FormatError {
     .with_detail(FormatErrorDetail::ComponentCount { actual })
 }
 
+/// Correspondence between one interpreted atom and its source atom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesAtomMapping {
     atom: AtomId,
@@ -82,15 +86,18 @@ impl SmilesAtomMapping {
         self.source_index
     }
 
+    /// The atom in the component's molecule.
     pub const fn atom(&self) -> AtomId {
         self.atom
     }
 
+    /// Byte range of the atom token in [`SmilesDocument::source`].
     pub fn source_span(&self) -> Range<usize> {
         self.source_span.clone()
     }
 }
 
+/// Correspondence between one interpreted bond and its source syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SmilesBondMapping {
     bond: BondId,
@@ -98,15 +105,19 @@ pub struct SmilesBondMapping {
 }
 
 impl SmilesBondMapping {
+    /// The bond in the component's molecule.
     pub const fn bond(&self) -> BondId {
         self.bond
     }
 
+    /// Byte offset of the bond's source syntax in [`SmilesDocument::source`];
+    /// for a directional bond, the offset of its `/` or `\`.
     pub const fn source_offset(&self) -> usize {
         self.source_offset
     }
 }
 
+/// Source correspondence of one interpreted SMILES component.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SmilesInterpretationReport {
     atom_mappings: Vec<SmilesAtomMapping>,
@@ -115,10 +126,12 @@ pub struct SmilesInterpretationReport {
 }
 
 impl SmilesInterpretationReport {
+    /// One mapping per atom of the component.
     pub fn atom_mappings(&self) -> &[SmilesAtomMapping] {
         &self.atom_mappings
     }
 
+    /// One mapping per bond of the component.
     pub fn bond_mappings(&self) -> &[SmilesBondMapping] {
         &self.bond_mappings
     }
@@ -144,18 +157,22 @@ impl SmilesComponentInterpretation {
         self.source_span.clone()
     }
 
+    /// The component's connected molecule, without perception.
     pub fn molecule(&self) -> &Molecule {
         &self.molecule
     }
 
+    /// Source correspondence of the component.
     pub fn report(&self) -> &SmilesInterpretationReport {
         &self.report
     }
 
+    /// Consumes the component into its molecule.
     pub fn into_molecule(self) -> Molecule {
         self.molecule
     }
 
+    /// Splits the component into its molecule and report.
     pub fn into_parts(self) -> (Molecule, SmilesInterpretationReport) {
         (self.molecule, self.report)
     }
@@ -172,6 +189,7 @@ pub struct SmilesInterpretation {
 }
 
 impl SmilesInterpretation {
+    /// The record name; `None` when the record has none.
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
@@ -194,16 +212,20 @@ impl SmilesInterpretation {
         &self.omitted_cx_fields
     }
 
+    /// Connected components in source order of their first atom.
     pub fn components(&self) -> &[SmilesComponentInterpretation] {
         &self.components
     }
 
+    /// The molecule of each component, in [`Self::components`] order.
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.components
             .iter()
             .map(SmilesComponentInterpretation::molecule)
     }
 
+    /// Consumes the interpretation into one molecule per component, in
+    /// [`Self::components`] order.
     pub fn into_molecules(self) -> Vec<Molecule> {
         self.components
             .into_iter()
@@ -217,6 +239,10 @@ impl SmilesInterpretation {
     /// atom order is the source atom order ([`SmilesAtomMapping::source_index`]),
     /// which interleaves components when ring closures join atoms across dots.
     /// The projection fabricates no hierarchy and runs no perception.
+    ///
+    /// # Errors
+    ///
+    /// A [`TopologyBuildError`] when the components exceed topology capacity.
     pub fn into_topology(self) -> Result<Topology, TopologyBuildError> {
         let mut builder = TopologyBuilder::new();
         builder.reserve_definitions(self.components.len())?;
@@ -242,6 +268,13 @@ impl SmilesInterpretation {
     ///
     /// Prefer [`Self::components`] for general SMILES input. An input with
     /// several connected components returns a component-count error.
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Inconsistent`] with
+    /// [`FormatErrorDetail::ComponentCount`] unless there is exactly one
+    /// component; [`Self::report`], [`Self::into_molecule`] and
+    /// [`Self::into_parts`] fail the same way.
     pub fn molecule(&self) -> Result<&Molecule, FormatError> {
         Ok(self.single_component()?.molecule())
     }

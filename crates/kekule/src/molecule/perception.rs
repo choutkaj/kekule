@@ -22,6 +22,8 @@ pub enum ValenceModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AromaticityModel {
+    /// RDKit's default aromaticity model (RDKit 2026.03.3), in which fused
+    /// rings are searched only as single rings and pairs.
     RdkitLike,
     /// MDL model as implemented by RDKit (the OpenFF OEAroModel_MDL profile).
     Mdl,
@@ -94,20 +96,24 @@ impl RingMembership {
         &self.bond_flags
     }
 
+    /// Whether an atom is in a ring; `false` for an ID beyond the flags.
     pub fn atom_in_ring(&self, atom: AtomId) -> bool {
         self.atom_flags.get(atom.index()).copied().unwrap_or(false)
     }
 
+    /// Whether a bond is in a ring; `false` for an ID beyond the flags.
     pub fn bond_in_ring(&self, bond: BondId) -> bool {
         self.bond_flags.get(bond.index()).copied().unwrap_or(false)
     }
 
+    /// Ring atoms in ascending ID order.
     pub fn ring_atom_ids(&self) -> impl Iterator<Item = AtomId> + '_ {
         (0..=u32::MAX)
             .zip(self.atom_flags.iter())
             .filter_map(|(raw, in_ring)| in_ring.then_some(AtomId::new(raw)))
     }
 
+    /// Ring bonds in ascending ID order.
     pub fn ring_bond_ids(&self) -> impl Iterator<Item = BondId> + '_ {
         (0..=u32::MAX)
             .zip(self.bond_flags.iter())
@@ -116,9 +122,14 @@ impl RingMembership {
 }
 
 /// One ring in an installed deterministic selected ring set.
+///
+/// An installed ring is one simple cycle of at least three atoms, with as many
+/// bonds as atoms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ring {
+    /// The ring atoms; perception lists them in order around the cycle.
     pub atoms: Vec<AtomId>,
+    /// The ring bonds; perception lists them in ascending ID order.
     pub bonds: Vec<BondId>,
 }
 
@@ -142,14 +153,17 @@ impl RingSet {
         Self { rings }
     }
 
+    /// The selected rings.
     pub fn rings(&self) -> &[Ring] {
         &self.rings
     }
 
+    /// The number of selected rings.
     pub fn len(&self) -> usize {
         self.rings.len()
     }
 
+    /// Whether no rings are selected, as for an acyclic molecule.
     pub fn is_empty(&self) -> bool {
         self.rings.is_empty()
     }
@@ -413,6 +427,12 @@ pub struct PerceptionBuilder {
 
 impl PerceptionBuilder {
     /// Adds exact conjugation membership. Graph coherence is checked at installation.
+    ///
+    /// # Errors
+    ///
+    /// [`PerceptionBuildError::DuplicateConjugationMember`] when an atom or bond
+    /// repeats, or [`PerceptionBuildError::ComponentCapacityExceeded`] when a
+    /// list exceeds ID capacity.
     pub fn with_conjugation(
         mut self,
         model: ConjugationModel,
@@ -435,6 +455,11 @@ impl PerceptionBuilder {
     }
     /// Adds connected groups, ordered by their smallest bond ID.
     /// Installation checks the complete partition, including empty or duplicate members.
+    ///
+    /// # Errors
+    ///
+    /// [`PerceptionBuildError::ComponentCapacityExceeded`] when the groups or a
+    /// group's members exceed ID capacity.
     pub fn with_resonance_groups(
         mut self,
         mut groups: Vec<ResonanceGroup>,
@@ -489,6 +514,13 @@ impl PerceptionBuilder {
     }
 
     /// Installs exact model-perceived aromaticity membership.
+    ///
+    /// # Errors
+    ///
+    /// [`PerceptionBuildError::DuplicateAromaticAtom`] or
+    /// [`PerceptionBuildError::DuplicateAromaticBond`] when a member repeats, or
+    /// [`PerceptionBuildError::ComponentCapacityExceeded`] when a list exceeds
+    /// ID capacity.
     pub fn with_aromaticity(
         mut self,
         model: AromaticityModel,
@@ -521,6 +553,12 @@ impl PerceptionBuilder {
     ///
     /// An empty assignment list intentionally installs a present, empty
     /// section, recording that CIP derivation completed without assignments.
+    ///
+    /// # Errors
+    ///
+    /// [`PerceptionBuildError::DuplicateCipDescriptor`] when an element repeats,
+    /// or [`PerceptionBuildError::ComponentCapacityExceeded`] when the list
+    /// exceeds ID capacity.
     pub fn with_cip_descriptors(
         mut self,
         assignments: Vec<(StereoElementId, StereoDescriptor)>,

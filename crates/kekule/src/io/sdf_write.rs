@@ -12,6 +12,8 @@ use super::write_error::check_structure_state;
 use super::{MolfileWriteVersion, UnrepresentablePolicy};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 
+/// Options of SDF writing; the default writes
+/// [`MolfileWriteVersion::Auto`] records and fails on a periodic cell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfWriteOptions {
     version: MolfileWriteVersion,
@@ -20,6 +22,8 @@ pub struct SdfWriteOptions {
 }
 
 impl SdfWriteOptions {
+    /// Connection-table version of each record's CTAB; `Auto` chooses per
+    /// record.
     pub const fn version(&self) -> MolfileWriteVersion {
         self.version
     }
@@ -82,6 +86,7 @@ pub struct SdfRecordSource<'a> {
 }
 
 impl<'a> SdfRecordSource<'a> {
+    /// A record of any model view, with an empty title and no data fields.
     pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
         Self::view(model.as_model_view())
     }
@@ -94,12 +99,19 @@ impl<'a> SdfRecordSource<'a> {
         }
     }
 
+    /// Sets the Molfile title line of the record. Writing fails with
+    /// `Unsupported` for a title containing a line break or equal to `$$$$`.
     #[must_use]
     pub fn with_title(mut self, title: &'a str) -> Self {
         self.title = title;
         self
     }
 
+    /// Sets the data fields, written in order; an ensemble member's weight
+    /// and energy fields still follow them. Writing fails with `Unsupported`
+    /// for a field SDF cannot frame (an empty, untrimmed, or bracketed name,
+    /// or a value with a carriage return, blank line, or `$$$$` line) and
+    /// with `Inconsistent` for a field named like the member metadata.
     #[must_use]
     pub fn with_data_fields(mut self, data_fields: &'a [SdfDataField]) -> Self {
         self.data_fields = data_fields;

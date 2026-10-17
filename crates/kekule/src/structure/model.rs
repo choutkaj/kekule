@@ -126,6 +126,7 @@ impl Model {
         self
     }
 
+    /// An empty [`ModelBuilder`]; equivalent to [`ModelBuilder::new`].
     pub fn builder() -> ModelBuilder {
         ModelBuilder::new()
     }
@@ -140,6 +141,8 @@ impl Model {
         }
     }
 
+    /// Copies this model into append-oriented construction state; see
+    /// [`Self::into_builder`].
     pub fn to_builder(&self) -> ModelBuilder {
         self.clone().into_builder()
     }
@@ -154,14 +157,18 @@ impl Model {
         builder.build()
     }
 
+    /// The coordinate-free topology this model is a structure of.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
+    /// A shared handle to the topology; cloning the [`Arc`] copies no topology
+    /// data and keeps the same layout identity.
     pub fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
     }
 
+    /// Number of atoms, equal to the topology's atom count.
     pub fn atom_count(&self) -> usize {
         self.positions.len()
     }
@@ -271,6 +278,7 @@ impl Model {
         self.as_model_view().atom(atom)
     }
 
+    /// One atom by dense index, or `None` when `index` is out of range.
     pub fn atom_at(&self, index: TopologyAtomIndex) -> Option<ModelAtomView<'_>> {
         self.as_model_view().atom_at(index)
     }
@@ -280,6 +288,15 @@ impl Model {
         self.as_model_view().atoms()
     }
 
+    /// Replaces the position of one atom, accepting any length unit.
+    ///
+    /// The model is unchanged when an error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::InvalidAtomId`] when `atom` is not in the topology
+    /// and [`ModelError::Structure`] when the unit is not a length or the
+    /// converted position is not finite.
     pub fn set_position(
         &mut self,
         atom: InstanceAtomId,
@@ -348,6 +365,7 @@ pub(crate) mod sealed {
 /// structure-like types, such as a `kekule-traj` frame buffer, are passed
 /// through their own `as_model_view()`.
 pub trait AsModelView: sealed::Sealed {
+    /// Borrows the structure as a [`ModelView`] without copying.
     fn as_model_view(&self) -> ModelView<'_>;
 }
 
@@ -458,6 +476,7 @@ impl<'a> ModelView<'a> {
         self.kind
     }
 
+    /// The topology the viewed structure belongs to.
     pub fn topology(self) -> &'a Topology {
         self.topology
     }
@@ -466,22 +485,27 @@ impl<'a> ModelView<'a> {
         self.topology
     }
 
+    /// A shared handle to the bound topology.
     pub fn shared_topology(self) -> Arc<Topology> {
         Arc::clone(self.topology)
     }
 
+    /// Number of atoms, equal to the topology's atom count.
     pub fn atom_count(self) -> usize {
         self.positions.len()
     }
 
+    /// Positions in dense topology atom order.
     pub fn positions(self) -> &'a Positions {
         self.positions
     }
 
+    /// The periodic cell, or `None` for a non-periodic structure.
     pub fn cell(self) -> Option<&'a PeriodicCell> {
         self.cell
     }
 
+    /// Structure annotations: owner values plus one row per dense atom and bond.
     pub fn properties(self) -> &'a StructureProperties {
         self.properties
     }
@@ -588,6 +612,7 @@ impl<'a> ModelAtomView<'a> {
         self.atom
     }
 
+    /// The atom's stored position in the canonical length unit (nm).
     pub fn position(self) -> Quantity<Point3> {
         self.model
             .positions()
@@ -595,10 +620,13 @@ impl<'a> ModelAtomView<'a> {
             .expect("bound structures cover every atom")
     }
 
+    /// The atom's occupancy, or `None` when it was never recorded.
     pub fn occupancy(self) -> Option<f64> {
         self.model.occupancy(self.atom.index())
     }
 
+    /// The atom's isotropic B-factor in nm², or `None` when it was never
+    /// recorded.
     pub fn b_factor(self) -> Option<Quantity<f64>> {
         self.model.b_factor(self.atom.index())
     }
@@ -681,10 +709,12 @@ pub struct ModelBuilder {
 }
 
 impl ModelBuilder {
+    /// An empty builder with no molecules or positions.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// The staged topology, for read-only inspection.
     pub fn topology_builder(&self) -> &TopologyBuilder {
         &self.topology
     }
@@ -719,10 +749,12 @@ impl ModelBuilder {
         self.topology.hierarchy_mut()
     }
 
+    /// Number of staged atoms.
     pub fn atom_count(&self) -> usize {
         self.topology.atom_count()
     }
 
+    /// Number of staged bonds.
     pub fn bond_count(&self) -> usize {
         self.topology.bond_count()
     }
@@ -750,6 +782,15 @@ impl ModelBuilder {
         self.state.positions.get(self.atom_index(atom)?.index())
     }
 
+    /// Replaces the staged position of one atom, accepting any length unit.
+    ///
+    /// The builder is unchanged when an error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelBuildError::Model`] wrapping [`ModelError::InvalidAtomId`]
+    /// when `atom` is not staged, or [`ModelError::Structure`] when the unit is
+    /// not a length or the converted position is not finite.
     pub fn set_position(
         &mut self,
         atom: InstanceAtomId,
@@ -784,6 +825,11 @@ impl ModelBuilder {
         Ok(self.state.positions.set_canonical_batch(&staged)?)
     }
 
+    /// Checks that [`Self::build`] would succeed, without consuming the builder.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error [`Self::build`] would return.
     pub fn validate(&self) -> Result<(), ModelBuildError> {
         self.clone().build().map(|_| ())
     }

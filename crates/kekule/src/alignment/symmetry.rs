@@ -53,11 +53,25 @@ pub struct SymmetricSelection {
 
 impl SymmetricSelection {
     /// Finds the permutations of `selection` within [`SymmetryLimits::default`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::with_limits`].
     pub fn new(selection: &AtomSelection) -> Result<Self, SymmetryError> {
         Self::with_limits(selection, SymmetryLimits::default())
     }
 
     /// Finds the permutations of `selection` within explicit limits.
+    ///
+    /// # Errors
+    ///
+    /// - [`SymmetryError::LimitExceeded`] when the selection admits more than
+    ///   [`SymmetryLimits::max_permutations`] permutations or the search
+    ///   examines more than [`SymmetryLimits::max_search_steps`] mappings.
+    /// - [`SymmetryError::Perception`] when hydrogen counts must be inferred
+    ///   and perceiving the topology fails.
+    /// - [`SymmetryError::UnknownHydrogenCount`] when an atom's hydrogen count
+    ///   is unknown even after perception.
     pub fn with_limits(
         selection: &AtomSelection,
         limits: SymmetryLimits,
@@ -89,6 +103,7 @@ impl SymmetricSelection {
         self.selection.len()
     }
 
+    /// Whether the selection is empty.
     pub fn is_empty(&self) -> bool {
         self.selection.is_empty()
     }
@@ -175,9 +190,9 @@ impl Default for SymmetryLimits {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SymmetryError {
-    /// The selection admits more permutations
-    /// ([`Resource::Permutations`](crate::diagnostics::Resource::Permutations)) or the search examined more candidate
-    /// mappings ([`Resource::SearchStates`](crate::diagnostics::Resource::SearchStates)) than allowed.
+    /// The selection admits more permutations ([`Resource::Permutations`]) or
+    /// the search examined more candidate mappings
+    /// ([`Resource::SearchStates`]) than allowed.
     LimitExceeded(LimitExceeded),
     /// Perceiving inferred hydrogen counts failed.
     Perception(TopologyPerceptionError),

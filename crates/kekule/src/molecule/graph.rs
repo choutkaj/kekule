@@ -62,12 +62,14 @@ impl Graph {
         self.atoms.get(id.index()).and_then(Option::as_ref)
     }
 
+    /// Live atoms with their IDs, in ascending ID order.
     pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
         (0..=u32::MAX)
             .zip(self.atoms.iter())
             .filter_map(|(raw, atom)| atom.as_ref().map(|atom| (AtomId::new(raw), atom)))
     }
 
+    /// Live atom IDs in ascending order.
     pub fn atom_ids(&self) -> impl Iterator<Item = AtomId> + '_ {
         self.atoms().map(|(id, _)| id)
     }
@@ -77,12 +79,14 @@ impl Graph {
         self.bonds.get(id.index()).and_then(Option::as_ref)
     }
 
+    /// Live bonds with their IDs, in ascending ID order.
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
         (0..=u32::MAX)
             .zip(self.bonds.iter())
             .filter_map(|(raw, bond)| bond.as_ref().map(|bond| (BondId::new(raw), bond)))
     }
 
+    /// Live bond IDs in ascending order.
     pub fn bond_ids(&self) -> impl Iterator<Item = BondId> + '_ {
         self.bonds().map(|(id, _)| id)
     }
@@ -160,6 +164,7 @@ impl Graph {
             .and_then(Option::as_ref)
     }
 
+    /// Represented stereo elements with their IDs, in ascending ID order.
     pub fn stereo_elements(&self) -> impl Iterator<Item = (StereoElementId, &StereoElement)> {
         (0..=u32::MAX)
             .zip(self.stereo_elements.iter())
@@ -170,6 +175,7 @@ impl Graph {
             })
     }
 
+    /// Represented stereo element IDs in ascending order.
     pub fn stereo_element_ids(&self) -> impl Iterator<Item = StereoElementId> + '_ {
         self.stereo_elements().map(|(id, _)| id)
     }
@@ -235,6 +241,7 @@ impl Graph {
             .ok_or(MoleculeError::InvalidStereoGroupId(id))
     }
 
+    /// Enhanced stereo groups with their IDs, in ascending ID order.
     pub fn stereo_groups(&self) -> impl Iterator<Item = (StereoGroupId, &StereoGroup)> {
         (0..=u32::MAX)
             .zip(self.stereo_groups.iter())

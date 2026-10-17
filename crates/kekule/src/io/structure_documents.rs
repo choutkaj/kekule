@@ -1,3 +1,6 @@
+//! Interpretation of Molfile and SDF records: the represented graph, stereo
+//! from bond marks, atom parities, and 3D coordinates, and one model with one
+//! molecule instance per connected component, with source-line reports.
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
@@ -282,6 +285,7 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, FormatErro
     })
 }
 
+/// The source atom line of one interpreted atom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MolfileAtomMapping {
     atom: AtomId,
@@ -289,6 +293,7 @@ pub struct MolfileAtomMapping {
 }
 
 impl MolfileAtomMapping {
+    /// The interpreted atom, local to its molecule.
     pub const fn atom(&self) -> AtomId {
         self.atom
     }
@@ -299,6 +304,7 @@ impl MolfileAtomMapping {
     }
 }
 
+/// The source bond line of one interpreted bond.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MolfileBondMapping {
     bond: BondId,
@@ -306,6 +312,7 @@ pub struct MolfileBondMapping {
 }
 
 impl MolfileBondMapping {
+    /// The interpreted bond, local to its molecule.
     pub const fn bond(&self) -> BondId {
         self.bond
     }
@@ -326,10 +333,12 @@ pub struct MolfileInterpretationReport {
 }
 
 impl MolfileInterpretationReport {
+    /// The source line of every atom of the molecule, in source order.
     pub fn atom_mappings(&self) -> &[MolfileAtomMapping] {
         &self.atom_mappings
     }
 
+    /// The source line of every bond of the molecule, in source order.
     pub fn bond_mappings(&self) -> &[MolfileBondMapping] {
         &self.bond_mappings
     }
@@ -339,6 +348,7 @@ impl MolfileInterpretationReport {
         &self.created_stereo_elements
     }
 
+    /// Nonfatal diagnostics for the molecule.
     pub fn warnings(&self) -> &[MolfileInterpretationWarning] {
         &self.warnings
     }
@@ -352,21 +362,28 @@ pub enum MolfileInterpretationWarning {
     /// source document retains the marks; the interpreted graph omits that
     /// assertion and preserves its connectivity and unrelated stereo.
     ConflictingAtropisomericWedgeMarks {
+        /// The axis bond.
         axis: BondId,
+        /// The source line of the axis bond.
         location: SourceLocation,
+        /// The number of wedge marks on the axis.
         mark_count: usize,
     },
     /// The represented graph is retained, but its valence is outside the
     /// coordinate-stereo model. No new configuration is inferred. Resource
     /// exhaustion and structural failures remain interpretation errors.
     CoordinateStereoValenceUnsupported {
+        /// Why the valence is outside the model.
         error: crate::algorithms::ValenceError,
     },
     /// Wedge geometry does not establish one configuration. A single mark may
     /// be ambiguous; no represented stereo is created from an invalid drawing.
     AmbiguousTetrahedralWedgeMarks {
+        /// The stereocenter.
         center: AtomId,
+        /// The source line of the stereocenter.
         location: SourceLocation,
+        /// The number of wedge marks at the center.
         mark_count: usize,
     },
     /// A V3000 atom `CFG` parity contradicts the configuration of the atom's
@@ -374,7 +391,9 @@ pub enum MolfileInterpretationWarning {
     /// wedges in a conformation, the coordinates decide and the parity is not
     /// asserted.
     AtomParityContradictsCoordinates {
+        /// The stereocenter.
         center: AtomId,
+        /// The source line of the stereocenter.
         location: SourceLocation,
     },
 }
@@ -391,10 +410,12 @@ pub struct MolfileInterpretation {
 }
 
 impl MolfileInterpretation {
+    /// The interpreted model, with one molecule instance per connected component.
     pub fn model(&self) -> &Model {
         &self.model
     }
 
+    /// The topology of [`Self::model`].
     pub fn topology(&self) -> &Topology {
         self.model.topology()
     }
@@ -411,12 +432,16 @@ impl MolfileInterpretation {
         &self.omitted
     }
 
+    /// Borrows each molecule definition once per instance, in topology instance
+    /// order.
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.topology()
             .instances()
             .map(|instance| instance.molecule())
     }
 
+    /// Clones each molecule definition once per instance, in topology instance
+    /// order.
     pub fn into_molecules(self) -> Vec<Molecule> {
         self.molecules().cloned().collect()
     }
@@ -426,10 +451,12 @@ impl MolfileInterpretation {
         self.model.shared_topology()
     }
 
+    /// The interpreted model, discarding the reports.
     pub fn into_model(self) -> Model {
         self.model
     }
 
+    /// The model, the component reports, and the omitted content.
     pub fn into_parts(
         self,
     ) -> (

@@ -26,8 +26,10 @@ use super::{TrajectoryIoError, TrajectoryIoErrorKind};
 /// - `Ok(false)` means a clean end of stream with no partial frame; a
 ///   truncated frame is an error.
 pub trait TrajectoryReader {
+    /// The topology every frame of this reader belongs to.
     fn topology(&self) -> &Topology;
 
+    /// A shared handle to [`Self::topology`].
     fn shared_topology(&self) -> Arc<Topology>;
 
     /// Creates reusable frame storage sharing this reader's exact topology.
@@ -35,6 +37,17 @@ pub trait TrajectoryReader {
         FrameBuffer::new(self.shared_topology())
     }
 
+    /// Reads the next frame into `destination`.
+    ///
+    /// Returns `Ok(true)` when a frame was published and `Ok(false)` at a
+    /// clean end of stream, leaving `destination` unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::TopologyMismatch`] when `destination`
+    /// does not share the reader's layout, and a decoding, validation or
+    /// [`TrajectoryIoErrorKind::Io`] error when the frame cannot be read; on
+    /// error `destination` is unchanged.
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError>;
 }
 
@@ -60,8 +73,20 @@ pub trait TrajectoryReader {
 /// - report [`Self::frame_count`] as `None` only when the count is unknown
 ///   without reading the whole stream.
 pub trait SeekableTrajectoryReader: TrajectoryReader {
+    /// The number of frames, or `None` when it is unknown without reading the
+    /// whole stream.
     fn frame_count(&self) -> Option<usize>;
 
+    /// Reads the zero-based frame `index` into `destination` without moving
+    /// the sequential cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::FrameIndexOutOfRange`] when no frame
+    /// has `index`, [`TrajectoryIoErrorKind::TopologyMismatch`] when
+    /// `destination` does not share the reader's layout, and a decoding or
+    /// [`TrajectoryIoErrorKind::Io`] error when the frame cannot be read; on
+    /// error `destination` is unchanged.
     fn read_frame(
         &mut self,
         index: usize,
@@ -91,10 +116,21 @@ pub trait SeekableTrajectoryReader: TrajectoryReader {
 /// - A rejected frame writes nothing; only a failure part-way through writing
 ///   may poison the writer, which then refuses every further frame.
 pub trait TrajectoryWriter {
+    /// The topology this writer was opened for.
     fn topology(&self) -> &Topology;
 
+    /// A shared handle to [`Self::topology`].
     fn shared_topology(&self) -> Arc<Topology>;
 
+    /// Appends one frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::TopologyMismatch`] when the frame's
+    /// topology does not share the writer's layout,
+    /// [`TrajectoryIoErrorKind::UnsupportedField`] when the format cannot store
+    /// a field the frame carries, another validation kind when the frame
+    /// cannot be encoded, and [`TrajectoryIoErrorKind::Io`] when writing fails.
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError>;
 }
 
@@ -116,6 +152,7 @@ impl fmt::Debug for MemoryTrajectoryWriter {
 }
 
 impl MemoryTrajectoryWriter {
+    /// An empty writer collecting frames of `topology`.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         let topology = topology.into();
         Self {
@@ -123,6 +160,7 @@ impl MemoryTrajectoryWriter {
         }
     }
 
+    /// The frames written so far, in write order.
     pub fn into_trajectory(self) -> Trajectory {
         self.trajectory
     }

@@ -7,6 +7,41 @@
 //! reductions, in which every frame counts once, that run either over a loaded
 //! trajectory ([`rmsf`], [`contact_occupancy`]) or frame by frame through
 //! accumulators.
+//!
+//! Lengths are reported in the canonical length unit (nm).
+//!
+//! # Examples
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::Point3;
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::topology::{AtomSelection, Topology};
+//! use kekule::units::{Quantity, NANOMETER};
+//! use kekule::smiles;
+//! use kekule_traj::analysis::{contact_occupancy, rmsf};
+//!
+//! let molecule = smiles::to_molecules("CC")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let mut trajectory = Trajectory::new(Arc::clone(&topology));
+//! for x in [0.0, 0.5] {
+//!     let points = vec![Point3::new(x, 0.0, 0.0), Point3::new(0.15, 0.0, 0.0)];
+//!     let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
+//!     trajectory.push(TrajectoryFrame::new(positions))?;
+//! }
+//!
+//! let fluctuation = rmsf(&trajectory, &AtomSelection::all(Arc::clone(&topology)))?;
+//! assert_eq!(fluctuation.frame_count(), 2);
+//! assert_eq!(fluctuation.values().value_in(NANOMETER)?, [0.25, 0.0]);
+//!
+//! let atoms = topology.atom_ids();
+//! let cutoff = Quantity::new(0.2, NANOMETER);
+//! let contacts = contact_occupancy(&trajectory, [(atoms[0], atoms[1])], cutoff)?;
+//! assert_eq!(contacts.hit_counts(), [1]);
+//! assert_eq!(contacts.contacts().next(), Some(((atoms[0], atoms[1]), 0.5)));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use kekule::alignment::{self, AlignmentError, AlignmentOptions, FitAtoms, RigidAlignment};
 use kekule::structure::{AsModelView, ModelView, TrajectoryFrameView};
@@ -126,6 +161,12 @@ impl<'a> FrameSuperposer<'a> {
     /// `frame_index` is the caller's zero-based source index; failures are
     /// reported as [`AlignmentError::Item`] with that index, like the items of
     /// an in-memory collection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlignmentError::Item`] at `frame_index` wrapping the fit or
+    /// transform failure, such as an incompatible topology or a degenerate
+    /// fitting selection; the buffer is then unchanged.
     pub fn superpose(
         &self,
         frame_index: usize,

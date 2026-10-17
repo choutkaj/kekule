@@ -1,3 +1,6 @@
+//! Composition, library-only charging, parameter sharing and nonbonded settings of
+//! parameterized multi-molecule topologies.
+
 use kekule::{
     smiles,
     topology::{Topology, TopologyBuilder},

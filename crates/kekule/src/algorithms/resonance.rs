@@ -17,10 +17,18 @@ mod search;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ResonanceFlags(u8);
 impl ResonanceFlags {
+    /// Keep contributors with less complete octets than the most
+    /// octet-complete one.
     pub const ALLOW_INCOMPLETE_OCTETS: Self = Self(1);
+    /// Keep charge-separated contributors even when uncharged ones exist.
     pub const ALLOW_CHARGE_SEPARATION: Self = Self(2);
+    /// Enumerate every degenerate Kekulé structure instead of one.
     pub const KEKULE_ALL: Self = Self(4);
+    /// Do not restrict which atoms may carry a positive charge; implies
+    /// [`Self::ALLOW_INCOMPLETE_OCTETS`] and [`Self::ALLOW_CHARGE_SEPARATION`].
     pub const UNCONSTRAINED_CATIONS: Self = Self(8);
+    /// Do not restrict which atoms may carry a negative charge; implies
+    /// [`Self::ALLOW_CHARGE_SEPARATION`].
     pub const UNCONSTRAINED_ANIONS: Self = Self(16);
     /// Constructs flags, rejecting unknown bits.
     pub const fn from_bits(bits: u8) -> Option<Self> {
@@ -30,13 +38,17 @@ impl ResonanceFlags {
             None
         }
     }
+    /// The raw flag bits, as accepted by [`Self::from_bits`].
     pub const fn bits(self) -> u8 {
         self.0
     }
+    /// Whether every bit of `flag` is set.
     pub const fn contains(self, flag: Self) -> bool {
         self.0 & flag.0 == flag.0
     }
-    /// Applies RDKit's implications for unconstrained ions.
+    /// Adds the flags implied by [`Self::UNCONSTRAINED_CATIONS`] and
+    /// [`Self::UNCONSTRAINED_ANIONS`], as RDKit does.
+    /// [`enumerate_resonance`] applies this itself.
     pub const fn effective(self) -> Self {
         Self(self.0 | if self.0 & 8 != 0 { 3 } else { 0 } | if self.0 & 16 != 0 { 2 } else { 0 })
     }
@@ -57,6 +69,7 @@ pub struct ResonanceOptions {
 }
 
 impl ResonanceOptions {
+    /// Contributor policy; empty by default.
     pub const fn flags(&self) -> ResonanceFlags {
         self.flags
     }
@@ -173,6 +186,11 @@ impl std::error::Error for ResonanceError {
 
 /// Prepares connected conjugated groups, without enumerating contributors.
 /// Success installs only the group partition; failure leaves all state intact.
+///
+/// # Errors
+///
+/// [`ResonanceError::MissingConjugation`] when conjugation perception is not
+/// installed.
 pub fn perceive_resonance(mol: &mut Molecule) -> Result<(), ResonanceError> {
     let groups = conjugated_groups(mol)?;
     mol.perception.resonance = Some(ResonancePerception { groups });
@@ -222,9 +240,13 @@ pub struct ResonanceContributor {
     orders: BTreeMap<BondId, BondOrder>,
 }
 impl ResonanceContributor {
+    /// The formal charge of every atom of the source, in ascending atom ID
+    /// order.
     pub fn formal_charges(&self) -> impl ExactSizeIterator<Item = (AtomId, i8)> + '_ {
         self.charges.iter().map(|(&id, &q)| (id, q))
     }
+    /// The localized order of every bond of the source, in ascending bond ID
+    /// order.
     pub fn bond_orders(&self) -> impl ExactSizeIterator<Item = (BondId, BondOrder)> + '_ {
         self.orders.iter().map(|(&id, &o)| (id, o))
     }
@@ -241,12 +263,16 @@ pub struct ResonanceStructures<'a> {
     limit_reached: bool,
 }
 impl ResonanceStructures<'_> {
+    /// The connected conjugated groups the contributors vary over.
     pub fn groups(&self) -> &[ResonanceGroup] {
         &self.groups
     }
+    /// The enumerated contributors, in deterministic order.
     pub fn contributors(&self) -> &[ResonanceContributor] {
         &self.contributors
     }
+    /// The options used, with [`ResonanceFlags::effective`] flags and the
+    /// structure limit clamped to [`ResonanceOptions::MAX_STRUCTURES`].
     pub const fn options(&self) -> ResonanceOptions {
         self.options
     }
@@ -256,6 +282,14 @@ impl ResonanceStructures<'_> {
     }
     /// Materializes one contributor, fixes hydrogen counts and clears derived state.
     /// Bond edits prune invalid represented stereo through the ordinary editor.
+    ///
+    /// # Errors
+    ///
+    /// [`ResonanceError::ContributorOutOfRange`] for an index beyond
+    /// [`Self::contributors`], [`ResonanceError::InvalidElectronCount`] when
+    /// an implicit hydrogen count does not fit a fixed count, and
+    /// [`ResonanceError::Molecule`] or [`ResonanceError::Publication`] when
+    /// editing or publishing the contributor fails.
     pub fn to_molecule(&self, index: usize) -> Result<Molecule, ResonanceError> {
         let contributor =
             self.contributors
@@ -295,6 +329,20 @@ impl ResonanceStructures<'_> {
 /// perception. Resource exhaustion returns no partial result.
 /// At a contributor cutoff, exact ties use deterministic indexed ordering;
 /// the selected subset can differ from RDKit's platform-dependent tie ordering.
+///
+/// # Errors
+///
+/// - [`ResonanceError::MissingConjugation`] when neither resonance groups nor
+///   conjugation are installed.
+/// - [`ResonanceError::InvalidStructureLimit`] when the structure limit is one
+///   and the molecule has a conjugated group.
+/// - [`ResonanceError::UnknownHydrogens`] for the first atom whose implicit
+///   hydrogen count is unknown.
+/// - [`ResonanceError::LimitExceeded`] when the search exceeds
+///   [`ResonanceOptions::max_total_work`].
+/// - [`ResonanceError::UnsupportedBond`] or
+///   [`ResonanceError::InvalidElectronCount`] when a group holds a bond or
+///   electron count the search cannot represent.
 ///
 /// ```
 /// use kekule::{smiles, perception::resonance::{enumerate_resonance, ResonanceOptions}};

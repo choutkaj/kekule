@@ -22,6 +22,56 @@
 //!
 //! See the crate-level singular-geometry policy for coordinates at which an
 //! energy or gradient is undefined.
+//!
+//! # Example
+//!
+//! A water model with a stretched bond. All nonbonded pairs of water are 1-2 or
+//! 1-3 exceptions, which SMIRNOFF scales to zero, so only the bond term remains.
+//!
+//! ```
+//! use kekule::{geometry::Point3, smiles, structure::{Model, Positions}};
+//! use kekule::units::{Quantity, NANOMETER};
+//! use kekule_openff::{ChargeMethod, ForceField};
+//! use kekule_potentials::{openff::OpenFfPotential, ComponentKind, Potential};
+//!
+//! let force_field = ForceField::from_offxml(
+//!     r#"<SMIRNOFF version="0.3" aromaticity_model="OEAroModel_MDL">
+//! <Bonds version="0.4">
+//!   <Bond smirks="[#8:1]-[#1:2]" length="1*nanometer" k="2*kilojoule_per_mole/nanometer**2"/>
+//! </Bonds>
+//! <Angles version="0.3">
+//!   <Angle smirks="[#1:1]-[#8:2]-[#1:3]" angle="90*degree" k="0*kilojoule_per_mole/radian**2"/>
+//! </Angles>
+//! <ProperTorsions version="0.4"/>
+//! <vdW version="0.4">
+//!   <Atom smirks="[*:1]" sigma="0.3*nanometer" epsilon="0.1*kilojoule_per_mole"/>
+//! </vdW>
+//! <Electrostatics version="0.4"/>
+//! <LibraryCharges version="0.3">
+//!   <LibraryCharge smirks="[#1:1]-[#8:2]-[#1:3]" charge1="0.5*elementary_charge"
+//!     charge2="-1*elementary_charge" charge3="0.5*elementary_charge"/>
+//! </LibraryCharges>
+//! </SMIRNOFF>"#,
+//! )?;
+//!
+//! // Atoms H, O, H: one bond at its 1 nm equilibrium, one stretched to 2 nm.
+//! let topology = smiles::to_topology("[H]O[H]")?;
+//! let points = [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 2.0, 0.0]];
+//! let points = points.map(|[x, y, z]| Point3::new(x, y, z)).to_vec();
+//! let model = Model::new(topology, Positions::new(Quantity::new(points, NANOMETER))?)?;
+//!
+//! let parameters = force_field.parameterize(model.shared_topology(), ChargeMethod::LibraryOnly)?;
+//! let potential = OpenFfPotential::new(&parameters)?;
+//! let energy = potential.energy(model.as_model_view())?;
+//!
+//! // k / 2 * (r - length)^2 with r - length = 1 nm. Unit conversion while
+//! // compiling the OFFXML may round k by an ulp, so read back the stored value.
+//! let k = parameters.bonds()[0].parameter().k().into_value();
+//! assert_eq!(energy.component(ComponentKind::Bonds).unwrap().into_value(), k / 2.0);
+//! assert_eq!(energy.component(ComponentKind::VanDerWaals).unwrap().into_value(), 0.0);
+//! assert_eq!(energy.total().into_value(), k / 2.0);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use std::fmt;
 use std::sync::Arc;
@@ -73,14 +123,18 @@ pub struct ComponentEvaluation {
 }
 
 impl ComponentEvaluation {
+    /// Which component this is.
     pub const fn kind(&self) -> ComponentKind {
         self.kind
     }
 
+    /// The component's finite energy in kJ/mol.
     pub const fn energy(&self) -> Quantity<f64> {
         self.energy
     }
 
+    /// The component's finite gradient in kJ/(mol nm), one vector per topology
+    /// atom in dense order.
     pub fn gradient(&self) -> &Quantity<Vec<Vector3>> {
         &self.gradient
     }
@@ -91,6 +145,20 @@ impl OpenFfPotential {
     ///
     /// The potential binds `parameters.topology()`; it does not copy rule
     /// identities, constraints, or charge provenance.
+    ///
+    /// # Errors
+    ///
+    /// - [`OpenFfPotentialError::UnsupportedVdwMethod`] or
+    ///   [`OpenFfPotentialError::UnsupportedElectrostaticsMethod`] unless the
+    ///   nonperiodic methods are `no-cutoff` vdW and Coulomb.
+    /// - [`OpenFfPotentialError::InvalidParameter`],
+    ///   [`OpenFfPotentialError::ZeroTorsionDivisor`] or
+    ///   [`OpenFfPotentialError::Unit`] for a parameter that cannot be lowered.
+    /// - [`OpenFfPotentialError::InvalidAtom`],
+    ///   [`OpenFfPotentialError::AtomCountMismatch`],
+    ///   [`OpenFfPotentialError::SelfPairException`] or
+    ///   [`OpenFfPotentialError::DuplicatePairException`] for an assignment
+    ///   inconsistent with its topology.
     pub fn new(parameters: &ParameterizedTopology) -> Result<Self, OpenFfPotentialError> {
         let topology = parameters.shared_topology();
         let settings = parameters.nonbonded_settings();
@@ -201,6 +269,13 @@ impl OpenFfPotential {
     ///
     /// Use this to evaluate the same valence and vdW assignment with charges
     /// from another source. Charges are not checked against formal charges.
+    ///
+    /// # Errors
+    ///
+    /// [`OpenFfPotentialError::Unit`] if `charges` are not charges,
+    /// [`OpenFfPotentialError::AtomCountMismatch`] unless there is one per
+    /// atom, and [`OpenFfPotentialError::InvalidParameter`] for a nonfinite
+    /// charge.
     pub fn with_charges(
         mut self,
         charges: Quantity<Vec<f64>>,
@@ -234,6 +309,12 @@ impl OpenFfPotential {
     ///
     /// Components are returned in [`Energy::components`] order. This is a
     /// diagnostic path: it stores one gradient array per component.
+    ///
+    /// # Errors
+    ///
+    /// As [`Potential::evaluate`]: [`EvaluationError::IncompatibleTopology`],
+    /// [`EvaluationError::UnsupportedPeriodicCell`],
+    /// [`EvaluationError::InvalidGeometry`], or a nonfinite energy or gradient.
     pub fn evaluate_components(
         &self,
         model: ModelView<'_>,

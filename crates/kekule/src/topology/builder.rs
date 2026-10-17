@@ -62,6 +62,7 @@ pub struct TopologyBuilder {
 }
 
 impl TopologyBuilder {
+    /// An empty builder with no definitions, instances, or hierarchy.
     pub fn new() -> Self {
         Self::default()
     }
@@ -74,18 +75,23 @@ impl TopologyBuilder {
         Self::from_topology(Arc::unwrap_or_clone(topology))
     }
 
+    /// The number of staged definitions.
     pub fn definition_count(&self) -> usize {
         self.definitions.len()
     }
+    /// The number of staged instances.
     pub fn instance_count(&self) -> usize {
         self.instances.len()
     }
+    /// The number of atoms across staged instances.
     pub fn atom_count(&self) -> usize {
         self.atoms.len()
     }
+    /// The number of bonds across staged instances.
     pub fn bond_count(&self) -> usize {
         self.bonds.len()
     }
+    /// Staged definitions in definition-ID order.
     pub fn definitions(
         &self,
     ) -> impl ExactSizeIterator<Item = (MoleculeDefinitionId, &MoleculeDefinition)> {
@@ -258,6 +264,12 @@ impl TopologyBuilder {
         TopologyPropertiesMut::new(&mut self.properties)
     }
 
+    /// Reserves capacity for `additional` more definitions.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyBuildError::IdentifierCapacityExceeded`] when the definitions
+    /// would not fit the [`MoleculeDefinitionId`] space or cannot be allocated.
     pub fn reserve_definitions(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
         checked_future_len(
             self.definitions.len(),
@@ -269,6 +281,12 @@ impl TopologyBuilder {
         })
     }
 
+    /// Reserves capacity for `additional` more instances.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyBuildError::IdentifierCapacityExceeded`] when the instances
+    /// would not fit the [`MoleculeInstanceId`] space or cannot be allocated.
     pub fn reserve_instances(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
         checked_future_len(
             self.instances.len(),
@@ -396,6 +414,22 @@ impl TopologyBuilder {
             .map(|(_, instance)| instance)
     }
 
+    /// Validates the staged system and publishes it as a new topology layout.
+    ///
+    /// Publication classifies definitions and residues (explicit assignments take
+    /// precedence) and sizes every property table to the published entities.
+    ///
+    /// # Errors
+    ///
+    /// - [`TopologyBuildError::NoMoleculeInstances`] when nothing is instantiated.
+    /// - [`TopologyBuildError::InvalidMoleculeDefinitionId`] when an instance names
+    ///   a missing definition.
+    /// - [`TopologyBuildError::UnusedMoleculeDefinition`] when a staged definition
+    ///   has no instance.
+    /// - [`TopologyBuildError::MissingHierarchyAtom`] when an atom site places an
+    ///   atom that no staged instance contains.
+    /// - [`TopologyBuildError::Property`] when staged property rows do not fit the
+    ///   published dimensions.
     pub fn build(mut self) -> Result<Topology, TopologyBuildError> {
         if self.instances.is_empty() {
             return Err(TopologyBuildError::NoMoleculeInstances);

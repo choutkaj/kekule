@@ -1,9 +1,11 @@
-//! Reusable frame buffers and streaming reader/writer contracts.
+//! Reusable frame buffers, streaming reader/writer contracts, and the
+//! trajectory I/O error type.
 //!
 //! In-memory frames and trajectories live in [`kekule::structure`]
 //! ([`kekule::structure::TrajectoryFrame`], [`kekule::structure::Trajectory`]).
 //! [`FrameBuffer`] provides reusable validated storage for streaming decoders.
 //! The reader and writer traits publish complete frames transactionally.
+//! [`TrajectoryIoError`] reports every codec and file failure.
 
 mod buffer;
 mod stream;
@@ -21,13 +23,19 @@ use kekule::structure::{StructureError, TrajectoryError};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TrajectoryFormat {
+    /// Multi-frame extended XYZ text.
     Xyz,
+    /// CHARMM/NAMD/LAMMPS binary DCD.
     Dcd,
+    /// GROMACS compressed XTC.
     Xtc,
+    /// GROMACS full-precision TRR.
     Trr,
 }
 
 impl TrajectoryFormat {
+    /// The conventional upper-case format name, such as `"XYZ"`; also its
+    /// `Display` form.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Xyz => "XYZ",
@@ -48,12 +56,19 @@ impl fmt::Display for TrajectoryFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TrajectoryIoOperation {
+    /// Detecting the format from a path or content.
     Detect,
+    /// Opening a file or stream.
     Open,
+    /// Building the frame index for random access.
     Index,
+    /// Reading the file header.
     ReadHeader,
+    /// Reading a frame.
     ReadFrame,
+    /// Writing a frame.
     WriteFrame,
+    /// Finishing a writer: patching headers and flushing.
     Finish,
 }
 

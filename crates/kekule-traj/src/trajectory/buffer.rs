@@ -61,26 +61,34 @@ impl<'a> FrameData<'a> {
         }
     }
 
+    /// Sets the periodic cell.
     pub const fn with_cell(mut self, cell: PeriodicCell) -> Self {
         self.cell = Some(cell);
         self
     }
 
+    /// Sets per-atom velocities, one per atom in dense order; any velocity
+    /// unit is accepted and converted on publication.
     pub const fn with_velocities(mut self, velocities: Quantity<&'a [Vector3]>) -> Self {
         self.velocities = Some(velocities);
         self
     }
 
+    /// Sets per-atom forces, one per atom in dense order; any force unit is
+    /// accepted and converted on publication.
     pub const fn with_forces(mut self, forces: Quantity<&'a [Vector3]>) -> Self {
         self.forces = Some(forces);
         self
     }
 
+    /// Sets the simulation time; any time unit is accepted and converted on
+    /// publication.
     pub const fn with_time(mut self, time: Quantity<f64>) -> Self {
         self.time = Some(time);
         self
     }
 
+    /// Sets the integration step.
     pub const fn with_step(mut self, step: u64) -> Self {
         self.step = Some(step);
         self
@@ -117,6 +125,8 @@ impl std::ops::Deref for FrameBuffer {
 }
 
 impl FrameBuffer {
+    /// A buffer bound to `topology` holding one frame with every position at
+    /// the origin and no optional state.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         let topology = topology.into();
         let frame = TrajectoryFrame::new(Positions::zeros(topology.atom_count()));
@@ -129,10 +139,12 @@ impl FrameBuffer {
         }
     }
 
+    /// The topology snapshot the buffer is bound to.
     pub fn topology(&self) -> &Topology {
         self.storage.topology()
     }
 
+    /// A shared handle to [`Self::topology`].
     pub fn shared_topology(&self) -> Arc<Topology> {
         self.storage.shared_topology()
     }
@@ -142,6 +154,7 @@ impl FrameBuffer {
         self.storage.get(0).expect("frame buffer holds one frame")
     }
 
+    /// The buffered frame as a [`ModelView`], so model analyses apply to it.
     pub fn as_model_view(&self) -> ModelView<'_> {
         self.frame_view().as_model_view()
     }
@@ -154,6 +167,12 @@ impl FrameBuffer {
     }
 
     /// Copies velocities into reusable storage, or clears them with `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StructureError::Array`] when the count differs from the atom
+    /// count, a value is not finite, or the unit is not a velocity; the
+    /// buffer is then unchanged.
     pub fn set_velocities<T>(
         &mut self,
         velocities: Option<Quantity<T>>,
@@ -169,6 +188,12 @@ impl FrameBuffer {
     }
 
     /// Copies forces into reusable storage, or clears them with `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StructureError::Array`] when the count differs from the atom
+    /// count, a value is not finite, or the unit is not a force; the buffer is
+    /// then unchanged.
     pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), StructureError>
     where
         T: AsRef<[Vector3]>,
@@ -205,6 +230,15 @@ impl FrameBuffer {
     /// All count, unit, finite-value, and annotation validation completes
     /// before any field changes. Optional fields absent from `data`, including
     /// annotations, are cleared.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StructureError::Array`] when positions, velocities, forces or
+    /// atom annotations have the wrong count, a non-finite value or a unit of
+    /// the wrong dimension, [`StructureError::BondCountMismatch`] when bond
+    /// annotations have the wrong row count, and
+    /// [`StructureError::NonFiniteTime`] or [`StructureError::Unit`] for an
+    /// invalid time. On error the buffer is unchanged.
     pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), StructureError> {
         self.positions().validate_all(&data.positions)?;
         let time = validated_time(data.time)?;
@@ -266,6 +300,12 @@ impl FrameBuffer {
     }
 
     /// Copies a complete frame of any snapshot sharing this buffer's layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::TopologyMismatch`] when the frame's
+    /// topology does not share this buffer's layout; the buffer is then
+    /// unchanged.
     pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryIoError::new(

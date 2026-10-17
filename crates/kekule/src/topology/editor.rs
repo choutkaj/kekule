@@ -189,6 +189,9 @@ impl Topology {
 }
 
 impl TopologyEditor {
+    /// An empty draft with no source topology.
+    ///
+    /// Publishing it fails until atoms are added.
     pub fn new() -> Self {
         Self::default()
     }
@@ -242,24 +245,31 @@ impl TopologyEditor {
         editor
     }
 
+    /// The source snapshot, or `None` for a draft started with [`Self::new`].
     pub fn source_topology(&self) -> Option<&Topology> {
         self.source.as_deref()
     }
+    /// The number of live draft atoms.
     pub fn atom_count(&self) -> usize {
         self.atoms.len()
     }
+    /// The number of live draft bonds.
     pub fn bond_count(&self) -> usize {
         self.bonds.len()
     }
+    /// Whether the draft has no live atoms.
     pub fn is_empty(&self) -> bool {
         self.atoms.is_empty()
     }
+    /// Live atom handles in publication order.
     pub fn atom_ids(&self) -> impl ExactSizeIterator<Item = EditAtomId> + '_ {
         self.atoms.keys().copied()
     }
+    /// Live bond handles in handle order.
     pub fn bond_ids(&self) -> impl ExactSizeIterator<Item = EditBondId> + '_ {
         self.bonds.keys().copied()
     }
+    /// Live atoms with their handles, in publication order.
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = (EditAtomId, &Atom)> + '_ {
         self.atoms.iter().map(|(&id, loc)| {
             (
@@ -323,6 +333,11 @@ impl TopologyEditor {
     pub(crate) fn require_bond(&self, id: EditBondId) -> Result<EditBond, TopologyEditError> {
         self.bond(id).ok_or(TopologyEditError::InvalidBond(id))
     }
+    /// Handles of the atoms bonded to `id`.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when `id` is deleted or foreign.
     pub fn neighbors(
         &self,
         id: EditAtomId,
@@ -334,6 +349,11 @@ impl TopologyEditor {
             .require_neighbors(loc.local)?
             .map(|id| group.atoms[&id]))
     }
+    /// Handles of the bonds incident to `id`.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when `id` is deleted or foreign.
     pub fn incident_bonds(
         &self,
         id: EditAtomId,
@@ -345,6 +365,11 @@ impl TopologyEditor {
             .require_incident_bonds(loc.local)?
             .map(|(id, _)| group.bonds[&id]))
     }
+    /// The bond joining `a` and `b`, or `None` when they are not bonded.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when either handle is deleted or foreign.
     pub fn bond_between(
         &self,
         a: EditAtomId,
@@ -360,6 +385,9 @@ impl TopologyEditor {
             .require_bond_between(left.local, right.local)?
             .map(|id| self.groups[left.group].as_ref().unwrap().bonds[&id]))
     }
+    /// The current connected components as atom-handle lists.
+    ///
+    /// Each becomes one molecule instance at publication.
     pub fn connected_components(&self) -> Vec<Vec<EditAtomId>> {
         self.groups
             .iter()
@@ -376,6 +404,10 @@ impl TopologyEditor {
     }
 
     /// Adds an isolated atom. Bond it to an existing atom or publish a new occurrence.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::Molecule`] when the molecular draft rejects the atom.
     pub fn add_atom(&mut self, atom: Atom) -> Result<EditAtomId, TopologyEditError> {
         let mut draft = MoleculeEditor::new();
         let local = draft.add_atom(atom)?;
@@ -398,6 +430,12 @@ impl TopologyEditor {
     }
 
     /// Adds a complete occurrence, retaining represented stereo and definition properties.
+    ///
+    /// The returned [`EditMolecule`] maps the molecule's local IDs to new handles.
+    ///
+    /// # Errors
+    ///
+    /// Currently never fails; the `Result` is reserved for checked additions.
     pub fn add_molecule(&mut self, molecule: Molecule) -> Result<EditMolecule, TopologyEditError> {
         let owned = Arc::new(molecule);
         let identity = GroupIdentity::appended(
@@ -433,6 +471,15 @@ impl TopologyEditor {
         Ok(result)
     }
 
+    /// Replaces one atom's chemistry and returns the previous atom.
+    ///
+    /// Replacing an atom with an equal one leaves the draft unchanged. A change
+    /// invalidates the class of the atom's component and residue.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when `id` is deleted or foreign.
+    /// [`TopologyEditError::Molecule`] when the molecular draft rejects the atom.
     pub fn replace_atom(&mut self, id: EditAtomId, atom: Atom) -> Result<Atom, TopologyEditError> {
         let loc = self.atom_location(id)?;
         if self.require_atom(id)? == &atom {
@@ -446,6 +493,13 @@ impl TopologyEditor {
         Ok(previous)
     }
 
+    /// Deletes one atom with its incident bonds and atom site, returning the atom.
+    ///
+    /// Deleting a bridging atom splits its molecule at publication.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when `id` is deleted or foreign.
     pub fn delete_atom(&mut self, id: EditAtomId) -> Result<Atom, TopologyEditError> {
         let loc = self.atom_location(id)?;
         let bonds = self.incident_bonds(id)?.collect::<Vec<_>>();
@@ -475,7 +529,14 @@ impl TopologyEditor {
         Ok(previous)
     }
 
+    /// Deletes several atoms, returning them in handle order.
+    ///
     /// Validates every handle before deleting any atom; duplicates are ignored.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when any handle is deleted or foreign;
+    /// nothing is deleted then.
     pub fn delete_atoms(
         &mut self,
         ids: impl IntoIterator<Item = EditAtomId>,
@@ -488,6 +549,13 @@ impl TopologyEditor {
             .map(|id| self.delete_atom(id).map(|a| (id, a)))
             .collect()
     }
+    /// Deletes every live atom not in `ids`, returning the deleted atoms in
+    /// handle order.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when any retained handle is deleted or
+    /// foreign; nothing is deleted then.
     pub fn retain_atoms(
         &mut self,
         ids: impl IntoIterator<Item = EditAtomId>,
@@ -506,6 +574,11 @@ impl TopologyEditor {
     /// After merges, atoms from other source occurrences remain. To delete a
     /// current component, pass its handles from [`Self::connected_components`]
     /// to [`Self::delete_atoms`].
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidSourceInstance`] when `source` is not an
+    /// instance of the source topology.
     pub fn delete_instance(
         &mut self,
         source: MoleculeInstanceId,
@@ -527,6 +600,13 @@ impl TopologyEditor {
     }
 
     /// Adds an asserted bond. Different occurrences are merged transactionally.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when either handle is deleted or
+    /// foreign, or [`TopologyEditError::Molecule`] for a self bond, an
+    /// existing bond, or conflicting fragment properties. The draft is
+    /// unchanged on error.
     pub fn add_bond(
         &mut self,
         a: EditAtomId,
@@ -572,6 +652,12 @@ impl TopologyEditor {
         Ok(self.register_bond(target, local, a, b))
     }
 
+    /// Deletes one bond, returning it. Deleting a bridge splits its molecule at
+    /// publication.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidBond`] when `id` is deleted or foreign.
     pub fn delete_bond(&mut self, id: EditBondId) -> Result<EditBond, TopologyEditError> {
         let previous = self.require_bond(id)?;
         let loc = self.bond_location(id)?;
@@ -590,6 +676,14 @@ impl TopologyEditor {
         self.changed();
         Ok(previous)
     }
+    /// Deletes several bonds, returning them in handle order.
+    ///
+    /// Validates every handle first; duplicates are ignored.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidBond`] when any handle is deleted or foreign;
+    /// nothing is deleted then.
     pub fn delete_bonds(
         &mut self,
         ids: impl IntoIterator<Item = EditBondId>,
@@ -604,6 +698,11 @@ impl TopologyEditor {
     }
     /// Changes represented order, removing stereo assertions focused on this bond.
     /// Assigning the current order leaves the draft unchanged.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidBond`] when `id` is deleted or foreign, or
+    /// [`TopologyEditError::Molecule`] when the molecular draft rejects the order.
     pub fn set_bond_order(
         &mut self,
         id: EditBondId,
@@ -625,6 +724,13 @@ impl TopologyEditor {
 
     /// Rewires a bond while retaining its editing handle and static annotations.
     /// The transaction may merge groups and split the old component at publication.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidBond`] or [`TopologyEditError::InvalidAtom`]
+    /// for deleted or foreign handles, or [`TopologyEditError::Molecule`] for a
+    /// self bond or an existing bond between the new endpoints. The draft is
+    /// unchanged on error.
     pub fn set_bond_endpoints(
         &mut self,
         id: EditBondId,
@@ -685,6 +791,15 @@ impl TopologyEditor {
         Ok(())
     }
 
+    /// Replaces one bond's endpoints and order, returning the previous bond.
+    ///
+    /// Transactional: combines [`Self::set_bond_endpoints`] and
+    /// [`Self::set_bond_order`].
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::set_bond_endpoints`] and [`Self::set_bond_order`]; the draft
+    /// is unchanged on error.
     pub fn replace_bond(
         &mut self,
         id: EditBondId,
@@ -701,6 +816,10 @@ impl TopologyEditor {
     /// Explicitly assigns the current connected component's class. Assigning its
     /// existing inferred class still records an override for subsequent metadata
     /// edits. A later chemical change invalidates this component's override.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when `atom` is deleted or foreign.
     pub fn set_molecule_class(
         &mut self,
         atom: EditAtomId,
@@ -741,6 +860,14 @@ impl TopologyEditor {
     /// occurrence's molecule-local IDs. Call on a fresh editor before structural
     /// edits to this occurrence; other occurrences may still be edited normally.
     /// Existing enhanced stereo groups are deliberately removed. Atomic on error.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidSourceInstance`] when the draft has no source,
+    /// `instance` is not a source instance, or the occurrence was already
+    /// edited; [`TopologyEditError::InvalidSourceAtom`] when its atoms were
+    /// deleted; [`TopologyEditError::Molecule`] or
+    /// [`TopologyEditError::Publication`] when the stereo elements are invalid.
     pub fn replace_source_instance_stereo(
         &mut self,
         instance: MoleculeInstanceId,
@@ -970,18 +1097,23 @@ impl TopologyEditor {
 pub struct EditBond {
     a: EditAtomId,
     b: EditAtomId,
+    /// The represented bond order.
     pub order: BondOrder,
 }
 impl EditBond {
+    /// A bond between handles `a` and `b`. Nothing is validated until it is applied.
     pub fn new(a: EditAtomId, b: EditAtomId, order: BondOrder) -> Self {
         Self { a, b, order }
     }
+    /// The first endpoint handle.
     pub fn a(self) -> EditAtomId {
         self.a
     }
+    /// The second endpoint handle.
     pub fn b(self) -> EditAtomId {
         self.b
     }
+    /// Both endpoint handles as `(a, b)`.
     pub fn endpoints(self) -> (EditAtomId, EditAtomId) {
         (self.a, self.b)
     }
@@ -994,9 +1126,11 @@ pub struct EditMolecule {
     bonds: BTreeMap<BondId, EditBondId>,
 }
 impl EditMolecule {
+    /// New atom handles keyed by the added molecule's local atom IDs.
     pub fn atoms(&self) -> &BTreeMap<AtomId, EditAtomId> {
         &self.atoms
     }
+    /// New bond handles keyed by the added molecule's local bond IDs.
     pub fn bonds(&self) -> &BTreeMap<BondId, EditBondId> {
         &self.bonds
     }

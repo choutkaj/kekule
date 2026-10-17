@@ -1,3 +1,5 @@
+//! Public options, reports, issues, and source provenance of macromolecular
+//! structure interpretation.
 use std::fmt;
 use std::sync::Arc;
 
@@ -8,11 +10,19 @@ use crate::molecule::Molecule;
 use crate::structure::{Ensemble, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
+/// Which coordinate model of a source one interpretation reads.
+///
+/// Model IDs are mmCIF `_atom_site.pdbx_PDB_model_num` values or PDB `MODEL`
+/// serial numbers as text; a source without them has the one model `"1"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ModelSelection {
+    /// The only coordinate model; a source with several fails with
+    /// [`DiagnosticKind::Inconsistent`].
     RequireSingle,
+    /// The coordinate model with this ID.
     Select(String),
+    /// The first coordinate model in source order.
     First,
 }
 
@@ -89,6 +99,12 @@ impl EntityMetadataPolicy {
     }
 }
 
+/// Policy for interpreting one coordinate model of an mmCIF data block or a
+/// PDB entry as a [`Model`].
+///
+/// The default requires a single coordinate model, keeps the
+/// highest-occupancy alternate locations, infers missing entity types, and
+/// uses the default [`ConnectivityOptions`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureInterpretOptions {
     entity_metadata: EntityMetadataPolicy,
@@ -114,6 +130,8 @@ impl StructureInterpretOptions {
         self.entity_metadata.requires_declared()
     }
 
+    /// Which alternate locations the selected model keeps;
+    /// [`AltLocPolicy::HighestOccupancy`] by default.
     pub fn altloc_policy(&self) -> &AltLocPolicy {
         &self.altloc_policy
     }
@@ -125,6 +143,8 @@ impl StructureInterpretOptions {
         self
     }
 
+    /// Which coordinate model is interpreted; [`ModelSelection::RequireSingle`]
+    /// by default.
     pub fn model_selection(&self) -> &ModelSelection {
         &self.model_selection
     }
@@ -136,6 +156,7 @@ impl StructureInterpretOptions {
         self
     }
 
+    /// How bonds the source does not state are resolved.
     pub fn connectivity(&self) -> &ConnectivityOptions {
         &self.connectivity
     }
@@ -159,13 +180,21 @@ impl Default for StructureInterpretOptions {
     }
 }
 
+/// The kind of an mmCIF entity, the `_entity.type` of a structural instance.
+///
+/// Matching of source values is case-insensitive.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum EntityKind {
+    /// `polymer`: a polypeptide or polynucleotide chain.
     Polymer,
+    /// `branched`: a branched oligosaccharide.
     Branched,
+    /// `non-polymer`: a ligand, ion, or other small molecule.
     NonPolymer,
+    /// `water`.
     Water,
+    /// Any other `_entity.type` value, as written in the source.
     Other(String),
 }
 
@@ -192,115 +221,173 @@ impl EntityKind {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StructureInterpretIssue {
+    /// A structural instance has no declared entity type, so its kind was
+    /// inferred from its residues under [`EntityMetadataPolicy::InferMissing`].
     EntityTypeInferred {
+        /// The structural instance (`label_asym_id`, or the PDB chain).
         asym_id: String,
+        /// The inferred kind.
         kind: EntityKind,
     },
     /// Atom records without an element symbol had their elements inferred
     /// from the alignment of their atom names, as PDB convention places them.
     ElementsInferredFromAtomNames {
+        /// The 1-based source lines of the affected records.
         source_lines: Vec<usize>,
     },
+    /// A connection record of a non-covalent type, such as a hydrogen bond,
+    /// was not interpreted as a bond.
     ConnectionIgnored {
+        /// The source connection type, such as `hydrog`.
         connection_type: String,
     },
     /// One declared connection partner matched no selected-model atom.
     ConnectionUnresolved {
+        /// The source connection ID, if the record has one.
         connection_id: Option<String>,
+        /// The source connection type or record name.
         connection_type: String,
+        /// Which partner of the record, `1` or `2`.
         partner: u8,
+        /// The 1-based source line of the record, if known.
         source_line: Option<usize>,
+        /// Why the partner did not resolve.
         reason: ConnectionResolutionReason,
     },
     /// One declared connection partner matched more than one selected-model atom.
     ConnectionAmbiguous {
+        /// The source connection ID, if the record has one.
         connection_id: Option<String>,
+        /// The source connection type or record name.
         connection_type: String,
+        /// Which partner of the record, `1` or `2`.
         partner: u8,
+        /// The 1-based source line of the record, if known.
         source_line: Option<usize>,
+        /// The number of matching atoms.
         candidates: usize,
+        /// Why the partner is ambiguous.
         reason: ConnectionResolutionReason,
     },
+    /// A coordinate model other than the selected one was not interpreted.
     CoordinateModelIgnored {
+        /// The ignored model's ID.
         model_id: String,
+        /// The number of its atom-site rows.
         atom_site_rows: usize,
     },
+    /// One atom-site row of an alternative that alternate-location selection
+    /// did not keep.
     AlternateLocationOmitted {
+        /// The atom name of the row.
         atom_name: String,
+        /// The row's alternate-location label, if any.
         alt_id: Option<String>,
+        /// The residue of the row.
         residue: SourceResidueId,
+        /// The 1-based source line of the row.
         source_line: usize,
     },
     /// An alternative lacks sites present in another alternative of the same
     /// chemical component. It is excluded rather than completed from other labels.
     AlternateLocationIncomplete {
+        /// The residue.
         residue: SourceResidueId,
+        /// The excluded alternative.
         alternative: String,
+        /// Names of the atoms the alternative lacks.
         missing_atoms: Vec<String>,
     },
+    /// Alternate-location rows of a residue state no occupancy.
     AlternateLocationOccupancyMissing {
+        /// The residue.
         residue: SourceResidueId,
+        /// The 1-based source lines of the rows without occupancy.
         source_lines: Vec<usize>,
     },
     /// A source-declared combination cannot represent this residue (for example,
     /// it omits every label or includes overlapping sites). Other declared
     /// combinations can still be considered; the rejected one is never repaired.
     AlternateLocationCombinationRejected {
+        /// The residue.
         residue: SourceResidueId,
+        /// The rejected source-declared combination.
         alternative: String,
+        /// Why it was rejected.
         reason: String,
     },
     /// Equal heuristic scores, resolved by lexical alternative identifier.
     AlternateLocationOccupancyTie {
+        /// The residues selected together.
         residues: Vec<SourceResidueId>,
+        /// The tied alternatives.
         alternatives: Vec<String>,
     },
     /// Atom pairs within covalent bonding distance that no evidence bonds,
     /// such as close contacts between residues. They are counted, not bonded.
     ConnectivityCandidatesInferred {
+        /// The number of atoms in the molecule searched.
         atom_count: usize,
+        /// The number of unbonded close pairs found.
         candidate_count: usize,
     },
     /// A residue without template or bond table had its bonds inferred from
     /// covalent radii; inferred bonds are single.
     ResidueBondsInferred {
+        /// The residue.
         residue: SourceResidueId,
+        /// Its component ID.
         component_id: String,
+        /// The number of inferred bonds.
         bonds: usize,
     },
     /// A hydrogen that no bond source names (the residue template, the
     /// block's own component bond table, or the source's listed bonds) was
     /// bonded to the nearest heavy atom of its residue.
     HydrogenAttachedByDistance {
+        /// The residue.
         residue: SourceResidueId,
+        /// The hydrogen's atom name.
         atom_name: String,
+        /// The atom name of the heavy atom it was bonded to.
         heavy_atom_name: String,
     },
     /// Residues adjacent in sequence, or joined by a branched entity's link,
     /// whose linking atoms lie beyond bonding distance are not bonded.
     ChainBreak {
+        /// The first residue.
         residue: SourceResidueId,
+        /// The residue that would be linked to it.
         next: SourceResidueId,
     },
     /// The model's hydrogens differ from the reference template: a protonation
     /// variant was selected, or heteroatom charges were adjusted by one per
     /// added or removed hydrogen.
     ProtonationFromHydrogens {
+        /// The residue.
         residue: SourceResidueId,
+        /// Its component ID.
         component_id: String,
+        /// The selected protonation variant, if any.
         variant: Option<String>,
+        /// The atoms whose formal charge was adjusted, by atom name, with
+        /// their resulting formal charge in e.
         charged_atoms: Vec<(String, i8)>,
     },
     /// The resolved atoms of one residue lie in more than one molecule, for
     /// example because a bridging atom is missing from the model.
     ResidueFragmented {
+        /// The residue.
         residue: SourceResidueId,
+        /// The number of molecules its atoms lie in.
         fragments: usize,
     },
     /// The source states unit-cell parameters (mmCIF `_cell`, PDB `CRYST1`)
     /// that are not the model's periodic cell, so the model has none.
     CellOmitted {
+        /// Why the cell was omitted.
         reason: CellOmissionReason,
+        /// The source location of the cell parameters.
         location: SourceLocation,
     },
 }
@@ -313,7 +400,10 @@ pub enum CellOmissionReason {
     Incomplete,
     /// The coordinates are the asymmetric unit of this space group, whose
     /// translates alone are not the crystal.
-    SpaceGroup { name: String },
+    SpaceGroup {
+        /// The space-group symbol as stated.
+        name: String,
+    },
     /// PDB's 1 Å cube, recorded for structures without a crystal lattice
     /// such as NMR and EM models.
     Placeholder,
@@ -327,7 +417,9 @@ pub enum BondEvidence {
     ComponentTable,
     /// A component template; `variant` names a protonation variant.
     Template {
+        /// The template's component ID.
         component_id: String,
+        /// The protonation variant, if one was selected.
         variant: Option<String>,
     },
     /// Standard linkage between polymer residues adjacent in sequence.
@@ -338,7 +430,9 @@ pub enum BondEvidence {
     /// `connection_type` names, or a PDB `LINK`, `SSBOND`, or `CONECT` record,
     /// named by its record type. Metal coordination yields a dative bond.
     Connection {
+        /// The source connection ID, if the record has one.
         connection_id: Option<String>,
+        /// The connection type or record name.
         connection_type: String,
     },
     /// Covalent radii, for a residue without template or bond table.
@@ -356,10 +450,12 @@ pub struct BondProvenance {
 }
 
 impl BondProvenance {
+    /// The bonded atoms.
     pub const fn atoms(&self) -> [InstanceAtomId; 2] {
         self.atoms
     }
 
+    /// The evidence the bond was resolved from.
     pub fn evidence(&self) -> &BondEvidence {
         &self.evidence
     }
@@ -389,7 +485,10 @@ impl fmt::Display for ConflictingSelector {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionResolutionReason {
     /// The record requests a symmetry mate outside the asymmetric unit.
-    UnsupportedSymmetry { symmetry: String },
+    UnsupportedSymmetry {
+        /// The symmetry operator as stated.
+        symmetry: String,
+    },
     /// No label or author atom-identity selector was supplied.
     MissingSelector,
     /// Alias fields for the same selector supplied conflicting values.
@@ -400,7 +499,10 @@ pub enum ConnectionResolutionReason {
     /// Label and author selector families matched disjoint atom sets.
     ConflictingLabelAndAuthorSelectors,
     /// An explicitly named alternate location existed before selection but was omitted.
-    AlternateLocationOmitted { alternate_location: String },
+    AlternateLocationOmitted {
+        /// The named alternate-location label.
+        alternate_location: String,
+    },
     /// No selected-model atom satisfied every supplied selector field.
     NoMatchingAtom,
     /// More than one selected-model atom satisfied every supplied selector field.
@@ -463,14 +565,17 @@ pub struct AtomProvenance {
 }
 
 impl AtomProvenance {
+    /// The interpreted atom.
     pub const fn atom(&self) -> InstanceAtomId {
         self.atom
     }
 
+    /// The 1-based source line of the atom's coordinate row or record.
     pub const fn source_line(&self) -> usize {
         self.source_line
     }
 
+    /// `_atom_site.id`, or the PDB atom serial number; `None` when absent.
     pub fn atom_site_id(&self) -> Option<&str> {
         self.atom_site_id.as_deref()
     }
@@ -487,6 +592,7 @@ impl AtomProvenance {
         self.label_atom_name.as_deref()
     }
 
+    /// `_atom_site.auth_atom_id`, or the PDB atom name; `None` when absent.
     pub fn auth_atom_name(&self) -> Option<&str> {
         self.auth_atom_name.as_deref()
     }
@@ -503,6 +609,7 @@ impl AtomProvenance {
         self.label_component_id.as_deref()
     }
 
+    /// `_atom_site.auth_comp_id`, or the PDB residue name; `None` when absent.
     pub fn auth_component_id(&self) -> Option<&str> {
         self.auth_component_id.as_deref()
     }
@@ -524,6 +631,8 @@ impl AtomProvenance {
         self.auth_asym_id.as_deref()
     }
 
+    /// `_atom_site.label_entity_id`; always `None` for PDB entries, which declare
+    /// no entities.
     pub fn entity_id(&self) -> Option<&str> {
         self.entity_id.as_deref()
     }
@@ -533,14 +642,19 @@ impl AtomProvenance {
         &self.entity_kind
     }
 
+    /// `_atom_site.label_seq_id`; always `None` for PDB entries.
     pub const fn label_sequence_id(&self) -> Option<i32> {
         self.label_sequence_id
     }
 
+    /// `_atom_site.auth_seq_id`, or the PDB residue sequence number, as text;
+    /// `None` when absent.
     pub fn author_sequence_id(&self) -> Option<&str> {
         self.author_sequence_id.as_deref()
     }
 
+    /// `_atom_site.pdbx_PDB_ins_code`, or the PDB insertion code; `None` when
+    /// absent.
     pub fn insertion_code(&self) -> Option<&str> {
         self.insertion_code.as_deref()
     }
@@ -549,7 +663,9 @@ impl AtomProvenance {
     /// label and author sequence identifiers are absent.
     ///
     /// The discriminator is scoped to one coordinate model, asymmetry
-    /// identifier, and component identifier.
+    /// identifier, and component identifier. For a PDB entry it instead
+    /// numbers the repeats of a residue identity that recurs in a chain, from
+    /// `1`, and is `None` for its first occurrence.
     pub const fn occurrence(&self) -> Option<usize> {
         self.occurrence
     }
@@ -562,6 +678,8 @@ impl AtomProvenance {
     }
 }
 
+/// Source correspondence for one interpreted molecule instance: its
+/// structural instances, entities, atoms, and bond evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceProvenance {
     pub(crate) molecule: MoleculeInstanceId,
@@ -574,26 +692,34 @@ pub struct InstanceProvenance {
 }
 
 impl InstanceProvenance {
+    /// The molecule instance.
     pub const fn instance(&self) -> MoleculeInstanceId {
         self.molecule
     }
 
+    /// The ID of the coordinate model the instance was read from.
     pub fn coordinate_model_id(&self) -> &str {
         &self.coordinate_model_id
     }
 
+    /// The structural instances (`label_asym_id`, or PDB chains) the molecule
+    /// spans, sorted and distinct.
     pub fn asym_ids(&self) -> &[String] {
         &self.asym_ids
     }
 
+    /// The source entity IDs the molecule spans, sorted and distinct; empty for
+    /// PDB entries.
     pub fn entity_ids(&self) -> &[String] {
         &self.entity_ids
     }
 
+    /// The entity kinds of the molecule's residues, sorted and distinct.
     pub fn entity_kinds(&self) -> &[EntityKind] {
         &self.entity_kinds
     }
 
+    /// Source correspondence of every atom of the molecule.
     pub fn atoms(&self) -> &[AtomProvenance] {
         &self.atoms
     }
@@ -633,30 +759,38 @@ impl StructureInterpretationReport {
         &self.block_name
     }
 
+    /// The number of `_entity` definitions in the block; `0` for PDB entries.
     pub const fn entity_definitions(&self) -> usize {
         self.entity_definitions
     }
 
+    /// The number of coordinate models in the source.
     pub const fn coordinate_models(&self) -> usize {
         self.coordinate_models
     }
 
+    /// The ID of the interpreted coordinate model.
     pub fn selected_model(&self) -> Option<&str> {
         self.selected_model.as_deref()
     }
 
+    /// The IDs of the source's other coordinate models, in source order.
     pub fn ignored_coordinate_models(&self) -> &[String] {
         &self.ignored_coordinate_models
     }
 
+    /// The number of molecule instances with a polymer or branched entity.
     pub const fn macromolecules(&self) -> usize {
         self.macromolecules
     }
 
+    /// The number of molecule instances that are not macromolecules, water
+    /// included.
     pub const fn small_molecules(&self) -> usize {
         self.small_molecules
     }
 
+    /// The number of molecule instances with a water entity.
     pub const fn solvent_molecules(&self) -> usize {
         self.solvent_molecules
     }
@@ -666,10 +800,14 @@ impl StructureInterpretationReport {
         self.applied_connections
     }
 
+    /// The number of close atom pairs no evidence bonds, summed over molecules;
+    /// see [`StructureInterpretIssue::ConnectivityCandidatesInferred`].
     pub const fn connectivity_candidates(&self) -> usize {
         self.connectivity_candidates
     }
 
+    /// Source correspondence of every molecule instance, in topology instance
+    /// order.
     pub fn instances(&self) -> &[InstanceProvenance] {
         &self.instances
     }
@@ -697,14 +835,17 @@ pub struct StructureInterpretation {
 }
 
 impl StructureInterpretation {
+    /// The interpreted model.
     pub fn model(&self) -> &Model {
         &self.model
     }
 
+    /// How the model was read from its source.
     pub fn report(&self) -> &StructureInterpretationReport {
         &self.report
     }
 
+    /// The topology of [`Self::model`].
     pub fn topology(&self) -> &crate::topology::Topology {
         self.model.topology()
     }
@@ -718,6 +859,8 @@ impl StructureInterpretation {
             .map(|occurrence| occurrence.molecule())
     }
 
+    /// Clones each molecule definition once per occurrence, in topology instance
+    /// order.
     pub fn into_molecules(self) -> Vec<Molecule> {
         self.model
             .topology()
@@ -731,10 +874,12 @@ impl StructureInterpretation {
         self.model.shared_topology()
     }
 
+    /// The interpreted model, discarding the report.
     pub fn into_model(self) -> Model {
         self.model
     }
 
+    /// The model and its report.
     pub fn into_parts(self) -> (Model, StructureInterpretationReport) {
         (self.model, self.report)
     }
@@ -789,6 +934,8 @@ impl StructureEnsembleInterpretOptions {
         self.entity_metadata.requires_declared()
     }
 
+    /// Which alternate locations each member keeps;
+    /// [`AltLocPolicy::HighestOccupancy`] by default.
     pub fn altloc_policy(&self) -> &AltLocPolicy {
         &self.altloc_policy
     }
@@ -800,6 +947,7 @@ impl StructureEnsembleInterpretOptions {
         self
     }
 
+    /// How bonds the source does not state are resolved.
     pub fn connectivity(&self) -> &ConnectivityOptions {
         &self.connectivity
     }
@@ -850,22 +998,27 @@ pub struct StructureEnsembleInterpretation {
 }
 
 impl StructureEnsembleInterpretation {
+    /// The interpreted ensemble, one member per selected model or conformation.
     pub fn ensemble(&self) -> &Ensemble {
         &self.ensemble
     }
 
+    /// One report per member, in member order.
     pub fn reports(&self) -> &[StructureInterpretationReport] {
         &self.reports
     }
 
+    /// The topology all members share.
     pub fn topology(&self) -> &Topology {
         self.ensemble.topology()
     }
 
+    /// The interpreted ensemble, discarding the reports.
     pub fn into_ensemble(self) -> Ensemble {
         self.ensemble
     }
 
+    /// The ensemble and its per-member reports.
     pub fn into_parts(self) -> (Ensemble, Vec<StructureInterpretationReport>) {
         (self.ensemble, self.reports)
     }

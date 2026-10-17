@@ -144,6 +144,7 @@ impl ImplicitHydrogens {
         }
     }
 
+    /// Whether the valence model supplies the count.
     pub const fn is_inferred(self) -> bool {
         matches!(self, Self::Inferred)
     }
@@ -221,26 +222,40 @@ impl AtomRadical {
     }
 }
 
+/// The represented chemistry of one bond: two endpoint atoms and a localized
+/// order.
+///
+/// Endpoint order carries no chemical meaning. The endpoints are fixed once
+/// the bond exists; change the order of a bond in a molecule through
+/// [`BondMut`](super::BondMut) or [`MoleculeEditor`](super::MoleculeEditor).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bond {
     pub(crate) a: AtomId,
     pub(crate) b: AtomId,
+    /// The localized bond order.
     pub order: BondOrder,
 }
 
 impl Bond {
+    /// A bond between atoms `a` and `b`.
+    ///
+    /// The endpoints are not checked here; adding the bond to a molecule
+    /// rejects missing, identical, or already bonded endpoints.
     pub fn new(a: AtomId, b: AtomId, order: BondOrder) -> Self {
         Self { a, b, order }
     }
 
+    /// The first endpoint.
     pub const fn a(&self) -> AtomId {
         self.a
     }
 
+    /// The second endpoint.
     pub const fn b(&self) -> AtomId {
         self.b
     }
 
+    /// Both endpoints as `(a, b)`.
     pub const fn endpoints(&self) -> (AtomId, AtomId) {
         (self.a, self.b)
     }
@@ -252,10 +267,18 @@ impl Bond {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum BondOrder {
+    /// A zero-order bond: asserted connectivity without a shared electron pair.
+    /// It contributes no valence and is excluded from ring perception.
     Zero,
+    /// A single bond.
     Single,
+    /// A double bond.
     Double,
+    /// A triple bond.
     Triple,
+    /// A quadruple bond.
     Quadruple,
+    /// A dative (coordination) bond. It contributes no valence and is excluded
+    /// from ring perception.
     Dative,
 }

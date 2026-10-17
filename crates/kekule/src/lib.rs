@@ -12,13 +12,31 @@
 //!   more explicit molecule instances plus an optional biological hierarchy.
 //! - [`structure::Model`] is one structure of a topology: positions, an
 //!   optional periodic cell, and structure-scoped properties.
-//! - [`structure::Ensemble`] stores several non-temporal structures of one
-//!   shared topology. Ordered trajectories live in the `kekule-traj`
+//! - [`structure::Ensemble`] stores several weighted, unordered structures of
+//!   one shared topology.
+//! - [`structure::Trajectory`] stores ordered
+//!   [`structure::TrajectoryFrame`]s of one shared topology, each with
+//!   positions and optional cell, velocities, forces, time, and step. File
+//!   codecs and streaming analysis for trajectories live in the `kekule-traj`
 //!   companion crate.
 //!
 //! A disconnected salt, solvent box, or protein-ligand complex is therefore a
 //! [`topology::Topology`] containing several connected molecules, not one
-//! disconnected [`molecule::Molecule`].
+//! disconnected [`molecule::Molecule`]. Instances may explicitly share one
+//! reusable molecule definition. Geometry and numeric arrays address atoms by
+//! dense topology index in the topology's stored layout order; molecule atom
+//! IDs and hierarchy IDs are separate semantic identities.
+//!
+//! # Modules
+//!
+//! | Area | Modules |
+//! | --- | --- |
+//! | Molecules and systems | [`molecule`], [`topology`] (with [`topology::edit`]), [`structure`] (with [`structure::measure`]), [`prelude`] |
+//! | Values and diagnostics | [`units`], [`properties`], [`geometry`], [`diagnostics`] |
+//! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`macromolecular`], [`components`] |
+//! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
+//! | Queries | [`query`], [`smarts`], [`substructure`] |
+//! | Structure analysis and preparation | [`alignment`], [`clustering`], [`dssp`], [`solvation`] |
 //!
 //! # Typical workflow
 //!
@@ -89,26 +107,31 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 
 macro_rules! fixed_u32_id {
-    ($name:ident) => {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(u32);
 
         impl $name {
+            /// Wraps a raw value. Nothing is validated here; a lookup with a
+            /// value its owner does not hold returns `None`.
             pub const fn new(raw: u32) -> Self {
                 Self(raw)
             }
 
+            /// Returns the raw value.
             pub const fn raw(self) -> u32 {
                 self.0
             }
 
+            /// Returns the raw value as a `usize` position.
             pub const fn index(self) -> usize {
                 self.0 as usize
             }
         }
     };
-    ($name:ident, $display:literal) => {
-        fixed_u32_id!($name);
+    ($(#[$meta:meta])* $name:ident, $display:literal) => {
+        fixed_u32_id!($(#[$meta])* $name);
 
         impl std::fmt::Display for $name {
             fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -140,8 +163,27 @@ pub use draft::DraftError;
 
 /// Syntax-independent substructure matching algorithms.
 ///
-/// Matching consumes `query::QueryGraph` and current target perception state;
+/// Matching consumes [`query::QueryGraph`] and current target perception state;
 /// it never invokes parsing, interpretation, or perception implicitly.
+/// [`PreparedTarget`](substructure::PreparedTarget) borrows one molecule and
+/// answers repeated queries against it;
+/// [`PreparedTopologyTarget`](substructure::PreparedTopologyTarget) does the
+/// same for every molecule instance of a topology.
+///
+/// ```
+/// use kekule::substructure::{PreparedTarget, SubstructureMatchOptions};
+/// use kekule::{smarts, smiles};
+///
+/// let mut toluene = smiles::to_molecules("Cc1ccccc1")?.remove(0);
+/// toluene.perceive()?;
+/// let aromatic_carbon = smarts::parse_str("c", Default::default())?;
+/// let target = PreparedTarget::new(&toluene);
+/// let matches = target.all(&aromatic_carbon, SubstructureMatchOptions::default())?;
+/// assert_eq!(matches.len(), 6);
+/// let nitrogen = smarts::parse_str("N", Default::default())?;
+/// assert!(target.first(&nitrogen, Default::default())?.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod substructure {
     pub use crate::algorithms::{
         MatchCompletion, PreparedTarget, PreparedTopologyTarget, QueryMatch, QueryPerception,
@@ -157,7 +199,18 @@ pub mod substructure {
 /// [`SmilesDocument::interpret`](smiles::SmilesDocument::interpret) publishes
 /// canonical connected molecules. [`smiles::to_molecules`] is the concise
 /// parse-and-interpret path. Dot-separated components remain separate molecules
-/// and perception is never run implicitly.
+/// and perception is never run implicitly. [`smiles::write`] writes a molecule
+/// or a whole topology as ordinary, isomeric, or canonical SMILES.
+///
+/// ```
+/// use kekule::smiles::{self, SmilesWriteOptions};
+///
+/// let molecules = smiles::to_molecules("CCO.[Na+].[Cl-]")?;
+/// assert_eq!(molecules.len(), 3);
+/// assert_eq!(molecules[0].atom_count(), 3);
+/// assert_eq!(smiles::write(&molecules[0], SmilesWriteOptions::ordinary())?, "CCO");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod smiles {
     use std::sync::Arc;
 
@@ -236,12 +289,15 @@ pub mod smiles {
         Canonical,
     }
 
+    /// Options of [`write()`] and [`write_to()`]; the default writes
+    /// [`SmilesWriteMode::Ordinary`] SMILES.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     pub struct SmilesWriteOptions {
         mode: SmilesWriteMode,
     }
 
     impl SmilesWriteOptions {
+        /// The output policy.
         pub const fn mode(&self) -> SmilesWriteMode {
             self.mode
         }
@@ -255,18 +311,21 @@ pub mod smiles {
     }
 
     impl SmilesWriteOptions {
+        /// Options for [`SmilesWriteMode::Ordinary`] output.
         pub const fn ordinary() -> Self {
             Self {
                 mode: SmilesWriteMode::Ordinary,
             }
         }
 
+        /// Options for [`SmilesWriteMode::Isomeric`] output.
         pub const fn isomeric() -> Self {
             Self {
                 mode: SmilesWriteMode::Isomeric,
             }
         }
 
+        /// Options for [`SmilesWriteMode::Canonical`] output.
         pub const fn canonical() -> Self {
             Self {
                 mode: SmilesWriteMode::Canonical,
@@ -277,6 +336,13 @@ pub mod smiles {
     /// Parses one record: base SMILES, an optional CX extension with its fields
     /// typed, and an optional name. `options` bounds the input and the parsed
     /// graph.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of kind [`DiagnosticKind::Limit`] when the
+    /// input exceeds `options`, and [`DiagnosticKind::Syntax`],
+    /// [`DiagnosticKind::InvalidValue`] or [`DiagnosticKind::Unsupported`]
+    /// when the record is malformed or uses syntax Kekule does not read.
     pub fn parse_str(
         input: &str,
         options: SmilesParseOptions,
@@ -287,8 +353,10 @@ pub mod smiles {
     /// Reads and parses one record from `reader`, as [`parse_str`] parses the
     /// same text. Use [`records`] for line-delimited multi-record input.
     ///
-    /// The configured byte limit is enforced while reading; non-UTF-8 input
-    /// fails with [`DiagnosticKind::Io`].
+    /// # Errors
+    ///
+    /// As [`parse_str`]. The configured byte limit is enforced while reading;
+    /// a read failure or non-UTF-8 input fails with [`DiagnosticKind::Io`].
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: SmilesParseOptions,
@@ -311,6 +379,11 @@ pub mod smiles {
     /// This is the concise form of [`parse_str`] followed by
     /// [`SmilesDocument::interpret`], both with default options.
     /// Dot-delimited components remain separate, and no perception is run implicitly.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`parse_str`], and of interpretation: chemistry that
+    /// cannot be published fails with [`DiagnosticKind::Chemistry`].
     pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, FormatError> {
         let document = parse_str(input, SmilesParseOptions::default())?;
         Ok(document
@@ -323,8 +396,11 @@ pub mod smiles {
     ///
     /// Every connected component becomes one explicit molecule
     /// occurrence in source order. No hierarchy or perception is fabricated.
-    /// A topology that cannot be assembled fails with
-    /// [`DiagnosticKind::Chemistry`] and the
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`to_molecules`]. A topology that cannot be assembled
+    /// fails with [`DiagnosticKind::Chemistry`] and the
     /// [`TopologyBuildError`](crate::topology::TopologyBuildError) as its
     /// source.
     pub fn to_topology(input: &str) -> Result<Arc<Topology>, FormatError> {
@@ -368,6 +444,7 @@ pub mod smiles {
     #[derive(Debug, Clone, Copy)]
     enum SmilesContent<'a> {
         Molecule(&'a Molecule),
+        /// Every molecule occurrence of a topology.
         Topology(&'a Topology),
     }
 
@@ -434,6 +511,15 @@ pub mod smiles {
     /// order. Enhanced groups share one CX extension with record-global atom
     /// indices.
     ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of kind [`DiagnosticKind::MissingPerception`]
+    /// when required perception is not installed,
+    /// [`DiagnosticKind::Unsupported`] when the mode cannot represent the
+    /// chemistry without loss, and [`DiagnosticKind::Limit`] when a
+    /// canonicalization or stereo-encoding bound of [`SmilesWriteMode`] is
+    /// exceeded.
+    ///
     /// ```
     /// use kekule::smiles::{self, SmilesWriteOptions};
     /// let canonical = |source: &str| -> Result<String, Box<dyn std::error::Error>> {
@@ -479,6 +565,11 @@ pub mod smiles {
 
     /// Writes one SMILES record as a line terminated by `\n`, so repeated
     /// calls produce a line-delimited SMILES file. See [`write()`].
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`write()`], before anything reaches `writer`; a failing
+    /// `writer` gives [`DiagnosticKind::Io`].
     pub fn write_to<'a>(
         writer: &mut impl std::io::Write,
         source: impl Into<SmilesSource<'a>>,
@@ -499,6 +590,18 @@ pub mod smiles {
 /// matching it are separate operations; matching does not perceive the target
 /// implicitly. The dialect, including its explicit exclusions, is documented on
 /// [`query`].
+///
+/// ```
+/// use kekule::{smarts, smiles, substructure::PreparedTarget};
+///
+/// let mut succinic_acid = smiles::to_molecules("OC(=O)CCC(=O)O")?.remove(0);
+/// succinic_acid.perceive()?;
+/// let carboxylic_acid = smarts::parse_str("C(=O)[OX2H1]", Default::default())?;
+/// let target = PreparedTarget::new(&succinic_acid);
+/// let matches = target.all(&carboxylic_acid, Default::default())?;
+/// assert_eq!(matches.len(), 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod smarts {
     pub use crate::query::smarts::{parse_str, SmartsParseOptions};
 }
@@ -509,6 +612,18 @@ pub mod smarts {
 /// project to connected molecules or to a geometry-bearing
 /// [`crate::structure::Model`]. Writers reject chemistry that the selected
 /// Molfile version cannot represent.
+///
+/// ```
+/// use kekule::{molfile, smiles};
+///
+/// let ethanol = smiles::to_molecules("CCO")?.remove(0);
+/// let text = molfile::write(&ethanol, Default::default())?;
+/// let document = molfile::parse_str(&text, Default::default())?;
+/// let interpretation = document.interpret(Default::default())?;
+/// assert_eq!(interpretation.model().atom_count(), 3);
+/// assert_eq!(interpretation.into_molecules().len(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod molfile {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
@@ -523,6 +638,14 @@ pub mod molfile {
     /// Parses one V2000 or V3000 Molfile into its typed connection table
     /// without assigning canonical meaning. `options` bounds the input and the
     /// parsed table.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of kind
+    /// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
+    /// when the input exceeds `options`, and `Syntax`, `InvalidValue`,
+    /// `InvalidReference`, `Inconsistent` or `Unsupported` when the connection
+    /// table is malformed or uses content Kekule does not read.
     pub fn parse_str(
         input: &str,
         options: MolfileParseOptions,
@@ -532,8 +655,11 @@ pub mod molfile {
 
     /// Reads and parses one Molfile from `reader`.
     ///
-    /// The configured byte limit is enforced while reading; non-UTF-8 input
-    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    /// # Errors
+    ///
+    /// As [`parse_str`]. The configured byte limit is enforced while reading;
+    /// a read failure or non-UTF-8 input fails with
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: MolfileParseOptions,
@@ -548,6 +674,14 @@ pub mod molfile {
     /// places in angstroms; V3000 preserves round-trip decimal text. Stereo is
     /// projected against the coordinates emitted by the chosen version, so
     /// specified stereo requires a geometry-bearing model.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of kind
+    /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
+    /// when the selected version cannot represent the chemistry, or
+    /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
+    /// when the source is incomplete.
     pub fn write<'a>(
         source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
@@ -558,6 +692,11 @@ pub mod molfile {
     /// Writes the CTAB [`write()`] would return. It renders the whole CTAB
     /// first, since automatic version selection learns whether V2000 can hold
     /// it only by rendering it, so nothing reaches `writer` on failure.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`write()`]; a failing `writer` gives
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn write_to<'a>(
         writer: &mut impl std::io::Write,
         source: impl Into<MolfileSource<'a>>,
@@ -574,6 +713,24 @@ pub mod molfile {
 /// collects every record into a [`sdf::SdfDocument`]. Interpret each record
 /// explicitly with [`sdf::SdfRecord::interpret`]; sibling records are not
 /// merged into one model or reinterpreted as an ensemble.
+///
+/// ```
+/// use kekule::geometry::Point3;
+/// use kekule::structure::{Model, Positions};
+/// use kekule::units::{Quantity, ANGSTROM};
+/// use kekule::{sdf, smiles};
+///
+/// let water = smiles::to_molecules("O")?.remove(0);
+/// let positions = Positions::new(Quantity::new(vec![Point3::new(0.0, 0.0, 0.0)], ANGSTROM))?;
+/// let model = Model::from_molecule(water, &positions)?;
+///
+/// let text = sdf::write([&model, &model], Default::default())?;
+/// let document = sdf::parse_str(&text, Default::default())?;
+/// assert_eq!(document.records().len(), 2);
+/// let first = document.records()[0].interpret(Default::default())?;
+/// assert_eq!(first.model().atom_count(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod sdf {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
@@ -588,6 +745,15 @@ pub mod sdf {
     /// from [`ENERGY_FIELD`] in kJ/mol (none when absent), the fields
     /// [`write()`] emits for ensemble members. Sibling records never form an
     /// ensemble implicitly.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of kind
+    /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
+    /// when the records do not form an ensemble (none, or differing
+    /// topologies) or a weight or energy field is repeated, and
+    /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
+    /// when such a field is not a valid number, weight or energy.
     pub fn ensemble<'a>(
         records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
     ) -> Result<crate::structure::Ensemble, FormatError> {
@@ -606,14 +772,25 @@ pub mod sdf {
 
     /// Parses every record of an SDF input, failing on the first malformed
     /// record. Use [`records`] to skip past malformed records instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`FormatError`] of the first record that fails: kind
+    /// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
+    /// when the input or a record exceeds `options`, and the errors of
+    /// [`molfile::parse_str`](crate::molfile::parse_str) for a malformed
+    /// connection table or data field.
     pub fn parse_str(input: &str, options: SdfParseOptions) -> Result<SdfDocument, FormatError> {
         crate::io::parse_sdf_document(input, options)
     }
 
     /// Reads and parses every record of an SDF input from `reader`.
     ///
-    /// The configured byte limit is enforced while reading; non-UTF-8 input
-    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    /// # Errors
+    ///
+    /// As [`parse_str`]. The configured byte limit is enforced while reading;
+    /// a read failure or non-UTF-8 input fails with
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: SdfParseOptions,
@@ -626,6 +803,15 @@ pub mod sdf {
     /// Records convert from models, ensemble members and trajectory frames
     /// (`sdf::write(&ensemble, options)` writes one record per member), or
     /// interpreted records, which keep their titles and data fields.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`molfile::write`](crate::molfile::write) for any record,
+    /// and
+    /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
+    /// or
+    /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
+    /// for a title or data field the format cannot hold.
     pub fn write<'a, R: Into<SdfRecordSource<'a>>>(
         records: impl IntoIterator<Item = R>,
         options: SdfWriteOptions,
@@ -636,6 +822,12 @@ pub mod sdf {
     /// Streams the records [`write()`] would return, each as soon as it is
     /// rendered; wrap an unbuffered sink such as a `File` in a
     /// [`BufWriter`](std::io::BufWriter).
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`write()`]; records before the failing one have already
+    /// reached `writer`. A failing `writer` gives
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn write_to<'a, R: Into<SdfRecordSource<'a>>>(
         writer: &mut impl std::io::Write,
         records: impl IntoIterator<Item = R>,
@@ -658,6 +850,16 @@ pub mod sdf {
 /// atom names; [`ComponentLibrary::amber`](components::ComponentLibrary::amber)
 /// and [`ComponentLibrary::charmm`](components::ComponentLibrary::charmm)
 /// define them.
+///
+/// ```
+/// use kekule::components::ComponentLibrary;
+///
+/// let alanine = ComponentLibrary::bundled().get("ALA").expect("bundled");
+/// assert_eq!(alanine.name(), "ALANINE");
+/// assert_eq!(alanine.atoms().len(), 13);
+/// assert!(alanine.atom("CA").is_some());
+/// assert!(ComponentLibrary::bundled().get("XYZ").is_none());
+/// ```
 pub mod components {
     pub use crate::io::{
         Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary,
@@ -696,6 +898,40 @@ pub mod macromolecular {
 /// Interpretation keeps selected `_atom_site` rows in source order as dense atom
 /// order, and writers emit `_atom_site` rows in dense atom order, so coordinate
 /// files in the same order address the same atoms after a round trip.
+///
+/// ```
+/// use kekule::mmcif;
+///
+/// let text = "\
+/// data_water
+/// loop_
+/// _atom_site.group_PDB
+/// _atom_site.id
+/// _atom_site.type_symbol
+/// _atom_site.label_atom_id
+/// _atom_site.label_comp_id
+/// _atom_site.label_asym_id
+/// _atom_site.label_entity_id
+/// _atom_site.label_seq_id
+/// _atom_site.Cartn_x
+/// _atom_site.Cartn_y
+/// _atom_site.Cartn_z
+/// _atom_site.auth_seq_id
+/// _atom_site.auth_asym_id
+/// _atom_site.pdbx_PDB_model_num
+/// HETATM 1 O O   HOH A 1 . 0.000 0.000 0.000 1 A 1
+/// HETATM 2 H H1  HOH A 1 . 0.960 0.000 0.000 1 A 1
+/// HETATM 3 H H2  HOH A 1 . -0.240 0.930 0.000 1 A 1
+/// ";
+/// let document = mmcif::parse_str(text, Default::default())?;
+/// let interpretation = document.interpret(Default::default())?;
+/// assert_eq!(interpretation.model().atom_count(), 3);
+///
+/// let written = mmcif::write([interpretation.model()], Default::default())?;
+/// let reread = mmcif::parse_str(&written, Default::default())?.interpret(Default::default())?;
+/// assert_eq!(reread.model().atom_count(), 3);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod mmcif {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
@@ -706,6 +942,16 @@ pub mod mmcif {
 
     /// Parses a structural mmCIF data document without assigning molecular
     /// meaning. `options` sets the syntax and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of kind
+    /// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
+    /// when the input exceeds `options`,
+    /// [`DiagnosticKind::Syntax`](crate::diagnostics::DiagnosticKind::Syntax)
+    /// for malformed CIF, and
+    /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
+    /// for contradictory structure, such as a repeated block or item.
     pub fn parse_str(
         input: &str,
         options: MmcifParseOptions,
@@ -715,9 +961,11 @@ pub mod mmcif {
 
     /// Reads and parses CIF/mmCIF text from `reader`.
     ///
-    /// The configured byte limit is enforced while reading, before the input
-    /// is held in memory; non-UTF-8 input fails with
-    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    /// # Errors
+    ///
+    /// As [`parse_str`]. The configured byte limit is enforced while reading,
+    /// before the input is held in memory; a read failure or non-UTF-8 input
+    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: MmcifParseOptions,
@@ -731,6 +979,14 @@ pub mod mmcif {
     /// block), and interpretations (keeping their source reports). Entity kinds
     /// derive from canonical topology classification unless a source carries
     /// explicit classifications or reports ([`MmcifBlockSource`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of kind
+    /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
+    /// when mmCIF cannot hold the content, and `Inconsistent`,
+    /// `InvalidReference` or `InvalidValue` when a source's classifications or
+    /// reports do not fit its topology.
     ///
     /// ```no_run
     /// use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
@@ -755,6 +1011,12 @@ pub mod mmcif {
     /// they are formatted, so memory stays bounded however large the
     /// structure; wrap an unbuffered sink such as a `File` in a
     /// [`BufWriter`](std::io::BufWriter).
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`write()`]; output before the failure has already
+    /// reached `writer`. A failing `writer` gives
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn write_to<'a, B: Into<MmcifBlockSource<'a>>>(
         writer: &mut impl std::io::Write,
         blocks: impl IntoIterator<Item = B>,
@@ -787,6 +1049,22 @@ pub mod mmcif {
 /// under the rule mmCIF `_cell` follows; otherwise the report says why not.
 ///
 /// Interpretation keeps coordinate records in source order as dense atom order.
+///
+/// ```
+/// use kekule::pdb;
+///
+/// let text = "\
+/// HETATM    1  O   HOH A   1       0.000   0.000   0.000  1.00  0.00           O
+/// HETATM    2  H1  HOH A   1       0.960   0.000   0.000  1.00  0.00           H
+/// HETATM    3  H2  HOH A   1      -0.240   0.930   0.000  1.00  0.00           H
+/// END
+/// ";
+/// let document = pdb::parse_str(text, Default::default())?;
+/// let interpretation = document.interpret(Default::default())?;
+/// assert_eq!(interpretation.model().atom_count(), 3);
+/// assert_eq!(interpretation.topology().instance_count(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod pdb {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
@@ -796,15 +1074,25 @@ pub mod pdb {
 
     /// Parses a PDB entry into typed records without assigning molecular
     /// meaning. `options` sets the resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of kind
+    /// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
+    /// when the input exceeds `options`, and `Syntax`, `InvalidValue`,
+    /// `Inconsistent` or `Unsupported` when a typed record is malformed,
+    /// contradicts another, or uses content Kekule does not read.
     pub fn parse_str(input: &str, options: PdbParseOptions) -> Result<PdbDocument, FormatError> {
         crate::io::parse_pdb_str(input, options)
     }
 
     /// Reads and parses a PDB entry from `reader`.
     ///
-    /// The configured byte limit is enforced while reading, before the input
-    /// is held in memory; non-UTF-8 input fails with
-    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    /// # Errors
+    ///
+    /// As [`parse_str`]. The configured byte limit is enforced while reading,
+    /// before the input is held in memory; a read failure or non-UTF-8 input
+    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: PdbParseOptions,
@@ -819,6 +1107,26 @@ pub mod pdb {
 /// profile. The nested modules expose the individual expert algorithms.
 /// Perception does not alter represented graph chemistry and is invalidated by
 /// relevant graph edits.
+///
+/// A [`Perception`](perception::Perception) holds one optional section per
+/// step (valence, rings, aromaticity, conjugation, resonance and CIP). Each
+/// section records the model or policy that produced it, and an absent
+/// section has not been perceived.
+///
+/// ```
+/// use kekule::smiles;
+///
+/// let mut phenol = smiles::to_molecules("Oc1ccccc1")?.remove(0);
+/// assert!(phenol.perception().aromaticity().is_none());
+/// phenol.perceive()?;
+///
+/// let perception = phenol.perception();
+/// let rings = perception.rings().and_then(|rings| rings.ring_set());
+/// assert_eq!(rings.map(|rings| rings.len()), Some(1));
+/// let aromaticity = perception.aromaticity().expect("perceived");
+/// assert_eq!(aromaticity.atoms().len(), 6);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod perception {
     /// Connected conjugated groups and explicit RDKit-like contributor enumeration.
     pub mod resonance {
@@ -891,6 +1199,22 @@ pub mod perception {
 /// ineligible assertions. Coordinate inference and candidate detection are
 /// read-only; coordinate materialization is an explicitly named representation
 /// transform.
+///
+/// ```
+/// use kekule::smiles;
+/// use kekule::stereo::{cip, StereoDescriptor};
+///
+/// // L-alanine.
+/// let mut alanine = smiles::to_molecules("C[C@H](N)C(=O)O")?.remove(0);
+/// assert_eq!(alanine.stereo_elements().count(), 1);
+///
+/// alanine.perceive()?;
+/// cip::assign_cip_descriptors(&mut alanine, Default::default())?;
+/// let (center, _) = alanine.stereo_elements().next().unwrap();
+/// let cip_state = alanine.perception().cip().expect("assigned");
+/// assert_eq!(cip_state.cip_descriptor(center), Some(StereoDescriptor::S));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod stereo {
     pub use crate::algorithms::{
         StereoSearchError, StereoSearchOptions, StereoValidationError, StereoValidationIssue,
@@ -950,6 +1274,22 @@ pub mod stereo {
 /// only when inference reproduces its collapsed count; otherwise it fixes it.
 /// Successful topology changes invalidate perception state; recompute it before
 /// reading inferred counts.
+///
+/// ```
+/// use kekule::smiles;
+///
+/// let mut ethanol = smiles::to_molecules("CCO")?.remove(0);
+/// ethanol.perceive()?;
+/// let added = ethanol.add_hydrogens(Default::default())?;
+/// assert_eq!(added.added().len(), 6);
+/// assert_eq!(ethanol.atom_count(), 9);
+///
+/// ethanol.perceive()?;
+/// let removed = ethanol.remove_hydrogens()?;
+/// assert_eq!(removed.removed().len(), 6);
+/// assert_eq!(ethanol.atom_count(), 3);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod hydrogens {
     pub use crate::algorithms::{
         AddHydrogensOptions, AddHydrogensReport, AddHydrogensScope, AddedHydrogen,

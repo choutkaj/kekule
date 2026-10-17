@@ -108,14 +108,17 @@ impl Positions {
         }
     }
 
+    /// Number of coordinate rows.
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
+    /// Whether the array holds no coordinates.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 
+    /// Borrows all coordinates in the canonical length unit (nm).
     pub fn values(&self) -> Quantity<&[Point3]> {
         Quantity::new(self.values.as_slice(), CANONICAL_LENGTH_UNIT)
     }

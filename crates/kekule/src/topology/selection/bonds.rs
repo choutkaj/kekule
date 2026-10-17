@@ -188,10 +188,12 @@ impl BondSelection {
         .expect("filter selects validated topology bonds")
     }
 
+    /// The number of selected bonds.
     pub fn len(&self) -> usize {
         self.indices.len()
     }
 
+    /// Whether no bond is selected.
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty()
     }
@@ -329,10 +331,12 @@ impl BondSelection {
         })
     }
 
+    /// The selected dense bond indices, sorted and unique.
     pub fn indices(&self) -> &[TopologyBondIndex] {
         &self.indices
     }
 
+    /// The topology snapshot this selection is bound to.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }

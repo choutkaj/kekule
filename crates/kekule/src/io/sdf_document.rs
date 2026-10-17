@@ -1,3 +1,6 @@
+//! Typed SDF documents: record framing, data fields, streaming record
+//! readers, and per-record interpretation.
+
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 
@@ -110,6 +113,7 @@ fn sdf_parse_error(
         .in_record(record)
 }
 
+/// One SDF data item: a `> <name>` header and its value lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdfDataField {
     name: String,
@@ -118,6 +122,7 @@ pub struct SdfDataField {
 }
 
 impl SdfDataField {
+    /// A data field for writing, without a source location.
     pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -126,15 +131,18 @@ impl SdfDataField {
         }
     }
 
+    /// The field name between `<` and `>` of the header, trimmed.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// The value lines joined with `\n`, without the terminating blank line.
     pub fn value(&self) -> &str {
         &self.value
     }
 
-    /// The field header line of a parsed field.
+    /// The field header line of a parsed field; `None` for a field built
+    /// with [`Self::new`].
     pub const fn location(&self) -> Option<SourceLocation> {
         self.location
     }
@@ -150,6 +158,7 @@ pub struct SdfRecord {
 }
 
 impl SdfRecord {
+    /// The Molfile title line of the record.
     pub fn title(&self) -> &str {
         self.molfile.header().title()
     }
@@ -159,6 +168,7 @@ impl SdfRecord {
         &self.molfile
     }
 
+    /// Data fields in source order; duplicate names are kept.
     pub fn data_fields(&self) -> &[SdfDataField] {
         &self.data_fields
     }
@@ -176,6 +186,11 @@ impl SdfRecord {
     /// Interprets this independently meaningful record once into its richest
     /// canonical one-structure state. Unsupported content fails or is omitted
     /// and reported, as `options` selects.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`MolfileDocument::interpret`], reported in
+    /// [`Format::Sdf`] with this record's number.
     pub fn interpret(
         &self,
         options: MolfileInterpretOptions,
@@ -208,10 +223,12 @@ pub struct SdfDocument {
 }
 
 impl SdfDocument {
+    /// The nonempty records in source order.
     pub fn records(&self) -> &[SdfRecord] {
         &self.records
     }
 
+    /// Consumes the document into its records, in source order.
     pub fn into_records(self) -> Vec<SdfRecord> {
         self.records
     }
@@ -244,6 +261,7 @@ impl SdfRecordInterpretation {
         }
     }
 
+    /// The record title, written as the Molfile title line.
     pub fn title(&self) -> &str {
         &self.title
     }
@@ -257,6 +275,8 @@ impl SdfRecordInterpretation {
             .map(|occurrence| occurrence.molecule())
     }
 
+    /// Clones one molecule per topology instance, in instance order, so a
+    /// reused definition appears once per occurrence.
     pub fn into_molecules(self) -> Vec<Molecule> {
         self.model
             .topology()
@@ -265,14 +285,17 @@ impl SdfRecordInterpretation {
             .collect()
     }
 
+    /// The authoritative model: topology and coordinates in angstroms.
     pub fn model(&self) -> &Model {
         &self.model
     }
 
+    /// The model's topology.
     pub fn topology(&self) -> &Topology {
         self.model.topology()
     }
 
+    /// Consumes the format wrapper into its model.
     pub fn into_model(self) -> Model {
         self.model
     }
@@ -283,14 +306,18 @@ impl SdfRecordInterpretation {
         self.model.shared_topology()
     }
 
+    /// Data fields in record order.
     pub fn data_fields(&self) -> &[SdfDataField] {
         &self.data_fields
     }
 
+    /// Source correspondence and omitted content of the record.
     pub fn report(&self) -> &SdfRecordInterpretationReport {
         &self.report
     }
 
+    /// Splits the interpretation into its title, model, data fields, and
+    /// report.
     pub fn into_parts(
         self,
     ) -> (
@@ -303,6 +330,8 @@ impl SdfRecordInterpretation {
     }
 }
 
+/// Source correspondence of one interpreted SDF record; empty (record 0, no
+/// location) for a record built with [`SdfRecordInterpretation::new`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SdfRecordInterpretationReport {
     record: usize,
@@ -317,11 +346,14 @@ impl SdfRecordInterpretationReport {
         self.record
     }
 
-    /// The first line of the source record.
+    /// The first line of the source record; `None` for records not produced
+    /// by parsing.
     pub const fn location(&self) -> Option<SourceLocation> {
         self.location
     }
 
+    /// Molfile source correspondence, one report per connected component in
+    /// topology instance order.
     pub fn molfile_components(&self) -> &[MolfileInterpretationReport] {
         &self.molfile_components
     }
@@ -381,6 +413,8 @@ pub struct SdfRecords<R> {
 }
 
 impl<R: Read> SdfRecords<R> {
+    /// Streams the records of `reader` under the record limits of `options`;
+    /// [`SdfParseOptions::max_input_bytes`] does not apply.
     pub fn new(reader: R, options: SdfParseOptions) -> Self {
         Self {
             reader: BufReader::new(reader),

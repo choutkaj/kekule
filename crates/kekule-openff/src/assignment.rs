@@ -196,6 +196,17 @@ impl ForceField {
         Ok(assigned)
     }
     /// Assign ordered SMIRKS rules using last-match-wins precedence, without loading NAGL.
+    ///
+    /// # Errors
+    ///
+    /// - [`ErrorKind::UnsupportedMolecule`] if the molecule has implicit
+    ///   hydrogens or radicals.
+    /// - [`ErrorKind::Unparameterized`] if a bond, angle, proper torsion or
+    ///   atom matches no rule.
+    /// - [`ErrorKind::ForceField`] if a rule matches invalid connectivity or a
+    ///   nonbonded constraint has no explicit distance.
+    /// - [`ErrorKind::ResourceLimit`] if a bounded match search exceeds its
+    ///   limit, and [`ErrorKind::Chemistry`] if perception or matching fails.
     pub fn label_molecule(&self, molecule: &Molecule) -> Result<MoleculeLabels> {
         let a = self.assign(molecule)?;
         Ok(MoleculeLabels {
@@ -238,6 +249,53 @@ impl ForceField {
     /// its instances. The result retains this exact topology snapshot.
     /// Hydrogens must already be explicit. Errors publish no partial result,
     /// and failures inside one molecule name its definition.
+    ///
+    /// ```
+    /// use kekule::smiles;
+    /// use kekule_openff::{ChargeMethod, ChargeSource, ForceField};
+    ///
+    /// // A minimal water force field whose LibraryCharges need no NAGL model.
+    /// let force_field = ForceField::from_offxml(
+    ///     r#"<SMIRNOFF version="0.3" aromaticity_model="OEAroModel_MDL">
+    /// <Bonds version="0.4">
+    ///   <Bond smirks="[#8:1]-[#1:2]" id="b" length="0.1*nanometer"
+    ///     k="100*kilojoule_per_mole/nanometer**2"/>
+    /// </Bonds>
+    /// <Angles version="0.3">
+    ///   <Angle smirks="[#1:1]-[#8:2]-[#1:3]" id="a" angle="104.5*degree"
+    ///     k="100*kilojoule_per_mole/radian**2"/>
+    /// </Angles>
+    /// <ProperTorsions version="0.4"/>
+    /// <vdW version="0.4">
+    ///   <Atom smirks="[*:1]" id="v" sigma="0.3*nanometer" epsilon="0.1*kilojoule_per_mole"/>
+    /// </vdW>
+    /// <Electrostatics version="0.4"/>
+    /// <LibraryCharges version="0.3">
+    ///   <LibraryCharge smirks="[#1:1]-[#8:2]-[#1:3]" id="q" charge1="0.5*elementary_charge"
+    ///     charge2="-1*elementary_charge" charge3="0.5*elementary_charge"/>
+    /// </LibraryCharges>
+    /// </SMIRNOFF>"#,
+    /// )?;
+    ///
+    /// // Two water molecules: H O H H O H in dense atom order.
+    /// let topology = smiles::to_topology("[H]O[H].[H]O[H]")?;
+    /// let parameters = force_field.parameterize(topology, ChargeMethod::LibraryOnly)?;
+    /// assert_eq!(parameters.bonds().len(), 4);
+    /// assert_eq!(parameters.angles().len(), 2);
+    /// assert_eq!(parameters.charges().value(), &[0.5, -1.0, 0.5, 0.5, -1.0, 0.5]);
+    /// let library = ChargeSource::Library { parameter_ids: vec!["q".to_owned()] };
+    /// assert_eq!(parameters.charge_sources(), &[library.clone(), library]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`ErrorKind::ModelMismatch`] if the model is not the one the
+    ///   NAGLCharges handler declares, or the force field declares none.
+    /// - [`ErrorKind::Charges`] if charges cannot be assigned, for example
+    ///   [`ChargeMethod::LibraryOnly`] without complete library coverage.
+    /// - Any error of [`Self::label_molecule`] or [`NaglModel::assign_charges`]
+    ///   for one definition, which [`Error::definition`] names.
     pub fn parameterize<'a>(
         &self,
         topology: impl Into<Arc<Topology>>,
@@ -283,6 +341,11 @@ impl ForceField {
 
     /// Parameterizes one molecule as a single-instance topology; see
     /// [`Self::parameterize`].
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Chemistry`] if the molecule cannot form a topology,
+    /// otherwise as [`Self::parameterize`].
     pub fn parameterize_molecule<'a>(
         &self,
         molecule: Molecule,

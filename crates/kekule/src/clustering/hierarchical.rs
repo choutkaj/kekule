@@ -26,6 +26,14 @@ pub struct DistanceMatrix {
 impl DistanceMatrix {
     /// Validates condensed distances between `members` members: exactly
     /// `members (members - 1) / 2` finite, nonnegative lengths.
+    ///
+    /// # Errors
+    ///
+    /// - [`ClusteringError::MatrixTooLarge`] when the pair count overflows.
+    /// - [`ClusteringError::Unit`] when `distances` are not lengths.
+    /// - [`ClusteringError::CondensedLength`] for the wrong number of
+    ///   distances, and [`ClusteringError::InvalidDistance`] naming the first
+    ///   negative or non-finite one.
     pub fn from_condensed(
         members: usize,
         distances: Quantity<Vec<f64>>,
@@ -53,6 +61,7 @@ impl DistanceMatrix {
         self.members
     }
 
+    /// Whether the matrix covers no members.
     pub fn is_empty(&self) -> bool {
         self.members == 0
     }
@@ -198,6 +207,7 @@ impl Merge {
 }
 
 impl Dendrogram {
+    /// The number of clustered members, the leaves of the tree.
     pub fn member_count(&self) -> usize {
         self.members
     }
@@ -209,6 +219,14 @@ impl Dendrogram {
 
     /// The flat cluster of every member after `cut`. Clusters are numbered
     /// in order of their lowest member.
+    ///
+    /// # Errors
+    ///
+    /// For [`Cut::Height`], [`ClusteringError::Unit`] when the height is not a
+    /// length and [`ClusteringError::InvalidHeight`] when it is negative or not
+    /// finite; for [`Cut::Count`], [`ClusteringError::InvalidClusterCount`]
+    /// when the count is outside one to the member count (zero only for no
+    /// members).
     pub fn cut(&self, cut: Cut) -> Result<Vec<usize>, ClusteringError> {
         let applied = match cut {
             Cut::Height(height) => {
@@ -293,8 +311,17 @@ impl Ensemble {
     /// ensemble's layout, so each distance is the same whichever member
     /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
     /// is rejected. Each unordered pair is fitted once, lower member moving,
-    /// so the cost is `n (n - 1) / 2` fits (times symmetry permutations). A
-    /// failed fit names both members.
+    /// so the cost is `n (n - 1) / 2` fits (times symmetry permutations).
+    ///
+    /// # Errors
+    ///
+    /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
+    ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
+    /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
+    ///   ensemble's layout, has fewer than three pairs, or the explicit
+    ///   weights of `options` are invalid.
+    /// - [`ClusteringError::PairFit`] naming both members when a fit fails.
+    /// - [`ClusteringError::MatrixTooLarge`] when the pair count overflows.
     pub fn pairwise_fitted_rmsd<'a>(
         &self,
         atoms: impl Into<FitAtoms<'a>>,
@@ -344,8 +371,12 @@ impl Ensemble {
     /// [`DistanceMatrix::dendrogram`]. The representative of a cluster is
     /// the member minimizing the weight-summed distance to the cluster's
     /// members, `sum_j w_j d(i, j)`, with ties to the lowest index. Clusters
-    /// are numbered in order of their lowest member. Fails when the matrix
-    /// covers a different member count.
+    /// are numbered in order of their lowest member.
+    ///
+    /// # Errors
+    ///
+    /// [`ClusteringError::MatrixMismatch`] when the matrix covers a different
+    /// member count, and the errors of [`Dendrogram::cut`] for `cut`.
     pub fn cluster_hierarchical(
         &self,
         distances: &DistanceMatrix,

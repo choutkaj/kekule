@@ -31,13 +31,18 @@ pub enum SmilesCxFieldKind {
     /// `^n:` radical declaration, decoded from its code into an unpaired
     /// electron count and, when the code states one, a spin multiplicity.
     Radical {
+        /// Unpaired electrons per atom, 1 to 3.
         electrons: u8,
+        /// Spin multiplicity; `None` when the code leaves it unstated.
         multiplicity: Option<u8>,
+        /// The atoms carrying the radical.
         atoms: Vec<usize>,
     },
     /// Enhanced stereo group membership.
     StereoGroup {
+        /// Kind and number of the group.
         kind: SmilesCxStereoGroupKind,
+        /// The group's member atoms.
         atoms: Vec<usize>,
     },
     /// `r`: tetrahedral centers outside stereo groups share one relative
@@ -55,10 +60,12 @@ pub struct SmilesCxField {
 }
 
 impl SmilesCxField {
+    /// What the field states.
     pub fn kind(&self) -> &SmilesCxFieldKind {
         &self.kind
     }
 
+    /// Byte range of the field in the record, excluding separating commas.
     pub fn span(&self) -> Range<usize> {
         self.span.clone()
     }

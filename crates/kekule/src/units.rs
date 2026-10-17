@@ -4,6 +4,23 @@
 //! is explicit and applies one scale factor to the complete scalar or
 //! collection value. Units use linear scale conversions and integer powers of
 //! the base dimensions supported by molecular structure and modelling.
+//!
+//! Named units such as [`ANGSTROM`] and [`KILOJOULE_PER_MOLE`] are constants;
+//! the `CANONICAL_*` constants name the units Kekule stores and returns
+//! (for example nm for length and kJ/mol for energy), and [`constants`] holds
+//! exact SI constants as quantities.
+//!
+//! # Example
+//!
+//! ```
+//! use kekule::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT, KELVIN, NANOMETER};
+//!
+//! let bond = Quantity::new(1.5, ANGSTROM);
+//! assert_eq!(CANONICAL_LENGTH_UNIT, NANOMETER);
+//! assert_eq!(bond.value_in(NANOMETER)?, 0.15);
+//! assert!(bond.value_in(KELVIN).is_err());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -18,12 +35,20 @@ const DIMENSION_COUNT: usize = 7;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(usize)]
 pub enum BaseDimension {
+    /// Length, with SI reference unit the metre.
     Length = 0,
+    /// Mass, with SI reference unit the kilogram.
     Mass = 1,
+    /// Time, with SI reference unit the second.
     Time = 2,
+    /// Thermodynamic temperature, with SI reference unit the kelvin.
     Temperature = 3,
+    /// Amount of substance, with SI reference unit the mole.
     Amount = 4,
+    /// Electric charge, with SI reference unit the coulomb.
     Charge = 5,
+    /// Plane angle, with reference unit the radian; tracked as a dimension so
+    /// that angles and dimensionless ratios are not interchangeable.
     Angle = 6,
 }
 
@@ -34,13 +59,21 @@ pub struct Dimension {
 }
 
 impl Dimension {
+    /// Every exponent zero.
     pub const DIMENSIONLESS: Self = Self::from_exponents([0; DIMENSION_COUNT]);
+    /// [`BaseDimension::Length`] to the first power.
     pub const LENGTH: Self = Self::base(BaseDimension::Length);
+    /// [`BaseDimension::Mass`] to the first power.
     pub const MASS: Self = Self::base(BaseDimension::Mass);
+    /// [`BaseDimension::Time`] to the first power.
     pub const TIME: Self = Self::base(BaseDimension::Time);
+    /// [`BaseDimension::Temperature`] to the first power.
     pub const TEMPERATURE: Self = Self::base(BaseDimension::Temperature);
+    /// [`BaseDimension::Amount`] to the first power.
     pub const AMOUNT: Self = Self::base(BaseDimension::Amount);
+    /// [`BaseDimension::Charge`] to the first power.
     pub const CHARGE: Self = Self::base(BaseDimension::Charge);
+    /// [`BaseDimension::Angle`] to the first power.
     pub const ANGLE: Self = Self::base(BaseDimension::Angle);
     /// Molar mass (`Mass / Amount`).
     pub const MOLAR_MASS: Self = Self::from_exponents([0, 1, 0, 0, -1, 0, 0]);
@@ -64,16 +97,19 @@ impl Dimension {
         self
     }
 
+    /// `dimension` to the first power, every other exponent zero.
     pub const fn base(dimension: BaseDimension) -> Self {
         let mut exponents = [0; DIMENSION_COUNT];
         exponents[dimension as usize] = 1;
         Self { exponents }
     }
 
+    /// The power of `dimension` in this dimension.
     pub const fn exponent(self, dimension: BaseDimension) -> i32 {
         self.exponents[dimension as usize]
     }
 
+    /// Whether every exponent is zero.
     pub const fn is_dimensionless(self) -> bool {
         let mut index = 0;
         while index < DIMENSION_COUNT {
@@ -160,6 +196,11 @@ impl Unit {
     ///
     /// The scale converts a value in this unit to the SI-scale reference for
     /// `dimension`. Symbols are static so [`Unit`] remains a small `Copy` value.
+    ///
+    /// # Errors
+    ///
+    /// [`UnitError::InvalidScale`] when `scale` is not finite and strictly
+    /// positive.
     pub fn new(
         dimension: Dimension,
         scale: f64,
@@ -183,6 +224,7 @@ impl Unit {
         }
     }
 
+    /// The physical dimension of the unit.
     pub const fn dimension(self) -> Dimension {
         self.dimension
     }
@@ -192,14 +234,21 @@ impl Unit {
         self.scale
     }
 
+    /// Whether the unit's dimension is dimensionless.
     pub const fn is_dimensionless(self) -> bool {
         self.dimension.is_dimensionless()
     }
 
+    /// Whether `other` has the same dimension, so that values convert between
+    /// the two units.
     pub fn is_compatible(self, other: Self) -> bool {
         self.dimension == other.dimension
     }
 
+    /// The display symbol, or `None` for an unnamed custom or composed unit.
+    ///
+    /// The symbol is presentational: equality compares dimension and scale
+    /// only.
     pub const fn symbol(self) -> Option<&'static str> {
         self.symbol
     }
@@ -209,6 +258,11 @@ impl Unit {
     /// A ratio that overflows or underflows to zero returns
     /// [`UnitError::UnrepresentableConversion`], even if a particular quantity
     /// could be converted using a different order of arithmetic operations.
+    ///
+    /// # Errors
+    ///
+    /// [`UnitError::IncompatibleUnits`] when the dimensions differ, and
+    /// [`UnitError::UnrepresentableConversion`] as above.
     pub fn conversion_factor_to(self, other: Self) -> Result<f64, UnitError> {
         if !self.is_compatible(other) {
             return Err(UnitError::IncompatibleUnits {
@@ -227,6 +281,12 @@ impl Unit {
     }
 
     /// Multiplies units, rejecting scale underflow/overflow or exponent overflow.
+    ///
+    /// # Errors
+    ///
+    /// [`UnitError::DimensionOverflow`] when an exponent overflows `i32`, and
+    /// [`UnitError::InvalidScale`] when the product scale is not finite and
+    /// strictly positive.
     pub fn try_mul(self, other: Self) -> Result<Self, UnitError> {
         let dimension = self
             .dimension
@@ -236,6 +296,10 @@ impl Unit {
     }
 
     /// Divides units, rejecting scale underflow/overflow or exponent overflow.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::try_mul`].
     pub fn try_div(self, other: Self) -> Result<Self, UnitError> {
         let dimension = self
             .dimension
@@ -245,6 +309,10 @@ impl Unit {
     }
 
     /// Raises a unit to an integer power, rejecting an unrepresentable result.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::try_mul`].
     pub fn try_powi(self, power: i32) -> Result<Self, UnitError> {
         let dimension = self
             .dimension
@@ -335,10 +403,12 @@ pub struct Quantity<T> {
 }
 
 impl<T> Quantity<T> {
+    /// Pairs `value` with `unit`, without conversion.
     pub const fn new(value: T, unit: Unit) -> Self {
         Self { value, unit }
     }
 
+    /// The stored value, in [`Self::unit`].
     pub const fn value(&self) -> &T {
         &self.value
     }
@@ -348,14 +418,18 @@ impl<T> Quantity<T> {
         self.value
     }
 
+    /// The unit of the stored value.
     pub const fn unit(&self) -> Unit {
         self.unit
     }
 
+    /// Borrows the value, keeping the unit.
     pub fn as_ref(&self) -> Quantity<&T> {
         Quantity::new(&self.value, self.unit)
     }
 
+    /// Transforms the stored value and keeps the unit unchanged; `map` must
+    /// return a value expressed in the same unit.
     pub fn map<U>(self, map: impl FnOnce(T) -> U) -> Quantity<U> {
         Quantity::new(map(self.value), self.unit)
     }
@@ -366,11 +440,20 @@ where
     T: Clone + ScaleValue,
 {
     /// Converts a cloned value, leaving the source quantity available and unchanged.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::conversion_factor_to`].
     pub fn to_unit(&self, unit: Unit) -> Result<Self, UnitError> {
         let factor = self.unit.conversion_factor_to(unit)?;
         Ok(Self::new(self.value.clone().scaled(factor), unit))
     }
 
+    /// The value converted to `unit`, leaving the quantity unchanged.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::conversion_factor_to`].
     pub fn value_in(&self, unit: Unit) -> Result<T, UnitError> {
         self.to_unit(unit).map(Self::into_value)
     }
@@ -381,6 +464,10 @@ where
     T: ScaleValue,
 {
     /// Consumes the quantity and converts its value without requiring a clone.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::conversion_factor_to`].
     pub fn into_unit(self, unit: Unit) -> Result<Self, UnitError> {
         let factor = self.unit.conversion_factor_to(unit)?;
         Ok(Self::new(self.value.scaled(factor), unit))
@@ -398,6 +485,10 @@ where
     T: Clone + PartialEq + ScaleValue,
 {
     /// Compares values after converting `other` to this quantity's unit.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::conversion_factor_to`].
     pub fn equivalent_to(&self, other: &Self) -> Result<bool, UnitError> {
         Ok(self.value == other.value_in(self.unit)?)
     }
@@ -408,6 +499,10 @@ impl Quantity<f64> {
     ///
     /// Magnitudes follow ordinary floating-point arithmetic, including its
     /// non-finite results; errors describe unrepresentable units.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::try_mul`].
     pub fn try_mul(self, other: Self) -> Result<Self, UnitError> {
         Ok(Self::new(
             self.value * other.value,
@@ -419,6 +514,10 @@ impl Quantity<f64> {
     ///
     /// Magnitudes follow ordinary floating-point arithmetic, including its
     /// non-finite results; errors describe unrepresentable units.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::try_div`].
     pub fn try_div(self, other: Self) -> Result<Self, UnitError> {
         Ok(Self::new(
             self.value / other.value,
@@ -426,11 +525,21 @@ impl Quantity<f64> {
         ))
     }
 
+    /// The sum, in this quantity's unit.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::conversion_factor_to`] for converting `other`.
     pub fn try_add(self, other: Self) -> Result<Self, UnitError> {
         let other_value = other.value_in(self.unit)?;
         Ok(Self::new(self.value + other_value, self.unit))
     }
 
+    /// The difference `self - other`, in this quantity's unit.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::conversion_factor_to`] for converting `other`.
     pub fn try_sub(self, other: Self) -> Result<Self, UnitError> {
         let other_value = other.value_in(self.unit)?;
         Ok(Self::new(self.value - other_value, self.unit))
@@ -442,6 +551,11 @@ impl Quantity<f64> {
     /// relative tolerance is dimensionless. Invalid tolerances and non-finite
     /// values (including values made non-finite by conversion) are never
     /// close, even to themselves.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unit::conversion_factor_to`] for converting `other` or
+    /// `absolute_tolerance` to this quantity's unit.
     pub fn is_close(
         &self,
         other: &Self,
@@ -528,6 +642,7 @@ pub(crate) mod sealed {
 /// arrays, `Option`s and `Vec`s of them, and cannot be implemented outside
 /// Kekule.
 pub trait ScaleValue: Sized + sealed::Sealed {
+    /// Multiplies every magnitude in the value by `factor`.
     fn scaled(self, factor: f64) -> Self;
 }
 
@@ -569,11 +684,16 @@ where
     }
 }
 
+/// The unit of a pure number, with scale 1.
 pub const DIMENSIONLESS: Unit = Unit::named(Dimension::DIMENSIONLESS, 1.0, "1");
 
+/// The metre, the SI length unit.
 pub const METER: Unit = Unit::named(Dimension::LENGTH, 1.0, "m");
+/// The nanometre, `1e-9 m`; Kekule's canonical length unit.
 pub const NANOMETER: Unit = Unit::named(Dimension::LENGTH, 1.0e-9, "nm");
+/// The ångström, `1e-10 m`, with symbol `A`.
 pub const ANGSTROM: Unit = Unit::named(Dimension::LENGTH, 1.0e-10, "A");
+/// The bohr, the atomic unit of length (CODATA 2018).
 pub const BOHR: Unit = Unit::named(Dimension::LENGTH, 5.291_772_109_03e-11, "bohr");
 /// The atomic unit of polarizability volume.
 pub const CUBIC_BOHR: Unit = Unit::named(
@@ -587,30 +707,38 @@ pub const PER_NANOMETER: Unit = Unit::named(
     1.0e9,
     "1/nm",
 );
+/// The square ångström, `1e-20 m^2`.
 pub const SQUARE_ANGSTROM: Unit = Unit::named(
     Dimension::from_exponents([2, 0, 0, 0, 0, 0, 0]),
     1.0e-20,
     "A^2",
 );
+/// The cubic nanometre, `1e-27 m^3`.
 pub const CUBIC_NANOMETER: Unit = Unit::named(
     Dimension::from_exponents([3, 0, 0, 0, 0, 0, 0]),
     1.0e-27,
     "nm^3",
 );
+/// The square nanometre, `1e-18 m^2`; Kekule's canonical area unit.
 pub const SQUARE_NANOMETER: Unit = Unit::named(
     Dimension::from_exponents([2, 0, 0, 0, 0, 0, 0]),
     1.0e-18,
     "nm^2",
 );
 
+/// The kilogram, the SI mass unit.
 pub const KILOGRAM: Unit = Unit::named(Dimension::MASS, 1.0, "kg");
 /// Molecular-scale molar mass, coherent with `1 Da = 1 g/mol`.
 pub const DALTON: Unit = Unit::named(Dimension::MOLAR_MASS, 1.0e-3, "Da");
 
+/// The second, the SI time unit.
 pub const SECOND: Unit = Unit::named(Dimension::TIME, 1.0, "s");
+/// The picosecond, `1e-12 s`; Kekule's canonical time unit.
 pub const PICOSECOND: Unit = Unit::named(Dimension::TIME, 1.0e-12, "ps");
+/// The femtosecond, `1e-15 s`.
 pub const FEMTOSECOND: Unit = Unit::named(Dimension::TIME, 1.0e-15, "fs");
 
+/// The kelvin, the SI temperature unit.
 pub const KELVIN: Unit = Unit::named(Dimension::TEMPERATURE, 1.0, "K");
 /// Amount concentration: one mole per liter (1000 mol/m^3).
 pub const MOLAR: Unit = Unit::named(
@@ -618,63 +746,91 @@ pub const MOLAR: Unit = Unit::named(
     1000.0,
     "M",
 );
+/// The mole, the SI amount-of-substance unit.
 pub const MOLE: Unit = Unit::named(Dimension::AMOUNT, 1.0, "mol");
 
+/// The coulomb, the SI charge unit.
 pub const COULOMB: Unit = Unit::named(Dimension::CHARGE, 1.0, "C");
+/// The elementary charge `e`, exactly `1.602 176 634e-19 C`.
 pub const ELEMENTARY_CHARGE: Unit = Unit::named(Dimension::CHARGE, 1.602_176_634e-19, "e");
 
+/// The radian, the reference angle unit.
 pub const RADIAN: Unit = Unit::named(Dimension::ANGLE, 1.0, "rad");
+/// The degree, `pi/180 rad`, with symbol `deg`.
 pub const DEGREE: Unit = Unit::named(Dimension::ANGLE, std::f64::consts::PI / 180.0, "deg");
 
+/// The joule, the SI energy unit.
 pub const JOULE: Unit = Unit::named(Dimension::from_exponents([2, 1, -2, 0, 0, 0, 0]), 1.0, "J");
+/// The kilojoule, `1e3 J`.
 pub const KILOJOULE: Unit = Unit::named(JOULE.dimension, 1.0e3, "kJ");
+/// The thermochemical kilocalorie, exactly `4.184 kJ`.
 pub const KILOCALORIE: Unit = Unit::named(JOULE.dimension, 4.184e3, "kcal");
+/// Molar energy in kJ/mol.
 pub const KILOJOULE_PER_MOLE: Unit = Unit::named(
     Dimension::from_exponents([2, 1, -2, 0, -1, 0, 0]),
     1.0e3,
     "kJ/mol",
 );
+/// Molar energy in thermochemical kcal/mol.
 pub const KILOCALORIE_PER_MOLE: Unit =
     Unit::named(KILOJOULE_PER_MOLE.dimension, 4.184e3, "kcal/mol");
+/// Molar force or energy gradient in kJ/(mol Å).
 pub const KILOJOULE_PER_MOLE_PER_ANGSTROM: Unit = Unit::named(
     Dimension::from_exponents([1, 1, -2, 0, -1, 0, 0]),
     1.0e13,
     "kJ/mol/A",
 );
+/// Molar force or energy gradient in kJ/(mol nm).
 pub const KILOJOULE_PER_MOLE_PER_NANOMETER: Unit = Unit::named(
     Dimension::from_exponents([1, 1, -2, 0, -1, 0, 0]),
     1.0e12,
     "kJ/mol/nm",
 );
+/// Molar force constant in kJ/(mol Å²).
 pub const KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM: Unit = Unit::named(
     Dimension::from_exponents([0, 1, -2, 0, -1, 0, 0]),
     1.0e23,
     "kJ/mol/A^2",
 );
+/// Molar force constant in kJ/(mol nm²).
 pub const KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER: Unit = Unit::named(
     Dimension::from_exponents([0, 1, -2, 0, -1, 0, 0]),
     1.0e21,
     "kJ/mol/nm^2",
 );
+/// Velocity in nm/ps.
 pub const NANOMETER_PER_PICOSECOND: Unit = Unit::named(
     Dimension::from_exponents([1, 0, -1, 0, 0, 0, 0]),
     1.0e3,
     "nm/ps",
 );
 
-/// Library-wide canonical units used for normalized internal numerical storage.
+/// Canonical length: nm.
+///
+/// The `CANONICAL_*` units are the library-wide units of normalized internal
+/// numerical storage, and of the quantities Kekule returns.
 pub const CANONICAL_LENGTH_UNIT: Unit = NANOMETER;
 /// Canonical molar mass; atomic masses are molar masses in daltons.
 pub const CANONICAL_MOLAR_MASS_UNIT: Unit = DALTON;
+/// Canonical area: nm².
 pub const CANONICAL_AREA_UNIT: Unit = SQUARE_NANOMETER;
+/// Canonical time: ps.
 pub const CANONICAL_TIME_UNIT: Unit = PICOSECOND;
+/// Canonical energy: molar energy in kJ/mol.
 pub const CANONICAL_ENERGY_UNIT: Unit = KILOJOULE_PER_MOLE;
+/// Canonical charge: the elementary charge `e`.
 pub const CANONICAL_CHARGE_UNIT: Unit = ELEMENTARY_CHARGE;
+/// Canonical temperature: K.
 pub const CANONICAL_TEMPERATURE_UNIT: Unit = KELVIN;
+/// Canonical angle: rad.
 pub const CANONICAL_ANGLE_UNIT: Unit = RADIAN;
+/// Canonical velocity: nm/ps.
 pub const CANONICAL_VELOCITY_UNIT: Unit = NANOMETER_PER_PICOSECOND;
+/// Canonical force: kJ/(mol nm).
 pub const CANONICAL_FORCE_UNIT: Unit = KILOJOULE_PER_MOLE_PER_NANOMETER;
+/// Canonical energy gradient: kJ/(mol nm), the negative of a force.
 pub const CANONICAL_GRADIENT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_NANOMETER;
+/// Canonical force constant: kJ/(mol nm²).
 pub const CANONICAL_FORCE_CONSTANT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER;
 
 /// Exact physical constants of the 2019 SI, as quantities.

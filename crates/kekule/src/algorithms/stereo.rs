@@ -115,6 +115,7 @@ pub struct CoordinateStereoMaterializationReport {
 }
 
 impl CoordinateStereoMaterializationReport {
+    /// The stereo elements added to the editor, in creation order.
     pub fn created_elements(&self) -> &[StereoElementId] {
         &self.created_elements
     }
@@ -126,18 +127,30 @@ impl CoordinateStereoMaterializationReport {
     }
 }
 
+/// A stereogenic site found by [`detect_stereo_candidates`], with the
+/// carriers a stereo element at that site would use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StereoCandidate {
+    /// A tetrahedral stereocenter.
     Tetrahedral {
+        /// The center atom.
         center: AtomId,
+        /// The center's ligand carriers, including implicit hydrogens and
+        /// lone pairs.
         carriers: Vec<StereoCarrier>,
     },
+    /// A stereogenic double bond.
     DoubleBond {
+        /// The double bond.
         bond: BondId,
+        /// The bond's first endpoint.
         left: AtomId,
+        /// The bond's second endpoint.
         right: AtomId,
+        /// One or two carriers on `left`, excluding `right`.
         left_carriers: Vec<StereoCarrier>,
+        /// One or two carriers on `right`, excluding `left`.
         right_carriers: Vec<StereoCarrier>,
     },
 }
@@ -598,6 +611,15 @@ impl From<StereoValidationError> for CoordinateStereoError {
 /// with the coordinates whether or not axis inference is enabled.
 ///
 /// `positions` must be dense and follow the molecule's atom iteration order.
+///
+/// # Errors
+///
+/// - [`CoordinateStereoError::PositionCountMismatch`] when `positions` does
+///   not hold one position per atom.
+/// - [`CoordinateStereoError::InvalidStereo`] when represented stereo fails
+///   stereo validation.
+/// - [`CoordinateStereoError::Perception`] when perceiving a temporary copy or
+///   detecting candidates fails; see [`detect_stereo_candidates`].
 pub fn infer_coordinate_stereo(
     mol: &Molecule,
     positions: &Positions,
@@ -636,7 +658,14 @@ pub fn infer_coordinate_stereo(
 /// [`infer_coordinate_stereo`].
 ///
 /// `positions` must be dense and follow the edited molecule's atom iteration
-/// order.
+/// order. The operation is transactional: on failure the editor is unchanged.
+///
+/// # Errors
+///
+/// The errors of [`infer_coordinate_stereo`];
+/// [`CoordinateStereoError::CouldNotCreateElement`] when the editor rejects an
+/// inferred element; and [`CoordinateStereoError::InvalidStereo`] when the
+/// result fails stereo validation.
 pub fn materialize_coordinate_stereo(
     editor: &mut MoleculeEditor,
     positions: &Positions,

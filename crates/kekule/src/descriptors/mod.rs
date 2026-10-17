@@ -1,5 +1,5 @@
-//! Read-only small-molecule descriptors: formula and masses, canonical atom
-//! ranking, and rotatable bonds.
+//! Read-only small-molecule descriptors: formula and masses, atomic masses,
+//! canonical atom ranking, and rotatable bonds.
 //!
 //! Descriptor calculation never mutates or perceives the input; a descriptor
 //! that needs perception it cannot reuse computes it on a temporary copy.
@@ -13,6 +13,22 @@
 //! calculations subtract the aggregate formal charge times the CODATA 2022
 //! electron mass. Missing standard weights or natural isotopes are reported as
 //! structured errors; no mass-number substitute is used.
+//!
+//! # Example
+//!
+//! ```
+//! use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+//!
+//! let mut ethanol = kekule::smiles::to_molecules("CCO")?.remove(0);
+//! // Stored counts omit the hydrogens SMILES leaves to inference.
+//! let stored = molecular_formula(&ethanol, HydrogenCountPolicy::StoredOnly)?;
+//! assert_eq!(stored.to_string(), "C2O");
+//!
+//! ethanol.perceive()?;
+//! let formula = molecular_formula(&ethanol, HydrogenCountPolicy::IncludePerceived)?;
+//! assert_eq!(formula.to_string(), "C2H6O");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod data;
 
@@ -24,6 +40,9 @@ pub use crate::algorithms::{
 /// Neutral atomic mass used for inertia and vibrational analysis. Unlabeled
 /// elements use standard atomic weights; labeled atoms use exact isotope masses.
 /// No implicit hydrogens or formal-charge electron corrections are included.
+///
+/// Returns `None` when the element has no standard atomic weight (unlabeled)
+/// or the isotope has no AME 2020 mass (labeled).
 pub fn atomic_mass(element: Element, isotope: Option<u16>) -> Option<Quantity<f64>> {
     let mass = match isotope {
         Some(number) => data::exact_isotope_mass(element, number),
@@ -237,6 +256,13 @@ impl fmt::Display for MolecularDescriptorError {
 impl Error for MolecularDescriptorError {}
 
 /// Constructs a structured molecular formula under an explicit hydrogen policy.
+///
+/// # Errors
+///
+/// [`MolecularDescriptorError::MissingImplicitHydrogens`] when
+/// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
+/// implicit-hydrogen state, and [`MolecularDescriptorError::CountOverflow`]
+/// when a count exceeds `u64`.
 pub fn molecular_formula(
     molecule: &Molecule,
     hydrogen_policy: HydrogenCountPolicy,
@@ -264,6 +290,16 @@ pub fn molecular_formula(
 }
 
 /// Calculates average molecular mass in daltons under an explicit hydrogen policy.
+///
+/// # Errors
+///
+/// [`MolecularDescriptorError::MissingImplicitHydrogens`] when
+/// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
+/// implicit-hydrogen state, [`MolecularDescriptorError::UnknownIsotope`] for an
+/// isotope label without an AME 2020 mass,
+/// [`MolecularDescriptorError::MissingStandardAtomicWeight`] for an
+/// unlabeled element without a standard atomic weight, and
+/// [`MolecularDescriptorError::MassOverflow`] when the mass is not finite.
 pub fn average_mass(
     molecule: &Molecule,
     hydrogen_policy: HydrogenCountPolicy,
@@ -272,6 +308,16 @@ pub fn average_mass(
 }
 
 /// Calculates monoisotopic molecular mass in daltons under an explicit hydrogen policy.
+///
+/// # Errors
+///
+/// [`MolecularDescriptorError::MissingImplicitHydrogens`] when
+/// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
+/// implicit-hydrogen state, [`MolecularDescriptorError::UnknownIsotope`] for an
+/// isotope label without an AME 2020 mass,
+/// [`MolecularDescriptorError::MissingNaturalIsotope`] for an
+/// unlabeled element without a naturally occurring isotope, and
+/// [`MolecularDescriptorError::MassOverflow`] when the mass is not finite.
 pub fn monoisotopic_mass(
     molecule: &Molecule,
     hydrogen_policy: HydrogenCountPolicy,

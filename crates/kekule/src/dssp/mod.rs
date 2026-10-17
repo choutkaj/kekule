@@ -1,11 +1,55 @@
 //! DSSP 4-compatible protein secondary-structure assignment.
 //!
-//! Assignment is a read-only analysis of one
-//! [`Model`](crate::structure::Model) coordinate snapshot.
-//! It does not parse structures, choose coordinate models or alternate
+//! [`assign`] is a read-only analysis of one
+//! [`Model`](crate::structure::Model) coordinate snapshot that returns a
+//! [`DsspResult`]: per-residue [`DsspResidue`] values (summary
+//! [`DsspSecondaryStructure`], backbone torsions, hydrogen-bond and beta
+//! partners, helix flags), aggregate [`DsspStatistics`], and a [`DsspReport`]
+//! of skipped residues and work counts. [`DsspOptions`] and [`DsspLimits`]
+//! configure the run; failures are [`DsspError`].
+//!
+//! Assignment does not parse structures, choose coordinate models or alternate
 //! locations, repair hierarchy data, or install derived state in the model.
 //! Geometry uses single-precision coordinates and arithmetic, matching DSSP 4;
 //! model coordinates are unchanged and result values are exposed as `f64`.
+//!
+//! # Example
+//!
+//! ```
+//! use kekule::dssp::{self, DsspChainBreak, DsspOptions, DsspSecondaryStructure};
+//! use kekule::pdb;
+//!
+//! // A glycine dipeptide: too short for any secondary structure.
+//! let entry = concat!(
+//!     "ATOM      1  N   GLY A   1       0.000   0.000   0.000  1.00  0.00           N\n",
+//!     "ATOM      2  CA  GLY A   1       1.458   0.000   0.000  1.00  0.00           C\n",
+//!     "ATOM      3  C   GLY A   1       2.009   1.420   0.000  1.00  0.00           C\n",
+//!     "ATOM      4  O   GLY A   1       1.251   2.390   0.000  1.00  0.00           O\n",
+//!     "ATOM      5  N   GLY A   2       3.332   1.536   0.000  1.00  0.00           N\n",
+//!     "ATOM      6  CA  GLY A   2       3.988   2.836   0.000  1.00  0.00           C\n",
+//!     "ATOM      7  C   GLY A   2       5.488   2.736   0.000  1.00  0.00           C\n",
+//!     "ATOM      8  O   GLY A   2       6.100   1.680   0.000  1.00  0.00           O\n",
+//!     "END\n",
+//! );
+//! let model = pdb::parse_str(entry, Default::default())?
+//!     .interpret(Default::default())?
+//!     .into_model();
+//!
+//! let result = dssp::assign(&model, DsspOptions::default())?;
+//! let residues = result.residues().collect::<Vec<_>>();
+//! assert_eq!(residues.len(), 2);
+//! assert_eq!(residues[0].chain_break(), DsspChainBreak::NewChain);
+//! assert_eq!(residues[1].chain_break(), DsspChainBreak::None);
+//! assert_eq!(residues[0].secondary_structure(), DsspSecondaryStructure::Loop);
+//! assert_eq!(residues[0].source().author_sequence_id(), Some("1"));
+//! assert!(residues[0].phi().is_none());
+//! assert_eq!(result.statistics().chain_segments(), 1);
+//! assert_eq!(
+//!     result.statistics().secondary_structure_count(DsspSecondaryStructure::Loop),
+//!     2
+//! );
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::BTreeMap;
@@ -29,6 +73,18 @@ mod kernel;
 /// `model` is any model view: a [`Model`](crate::structure::Model), an
 /// ensemble member, a trajectory frame, or a borrowed
 /// [`ModelView`](crate::structure::ModelView).
+///
+/// # Errors
+///
+/// - [`DsspError::NoAnalyzableProteinResidues`] when no residue has a complete
+///   `N`/`CA`/`C`/`O` backbone.
+/// - [`DsspError::AmbiguousBackboneAtom`] when a residue repeats a backbone
+///   atom name.
+/// - [`DsspError::CoordinateOutOfRange`], [`DsspError::DegenerateBackboneGeometry`]
+///   or [`DsspError::NonFiniteGeometry`] for backbone geometry DSSP cannot
+///   evaluate.
+/// - [`DsspError::LimitExceeded`] when the work exceeds a bound of
+///   [`DsspOptions::limits`].
 pub fn assign(
     model: &(impl AsModelView + ?Sized),
     options: DsspOptions,
@@ -40,18 +96,28 @@ pub fn assign(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum DsspSecondaryStructure {
+    /// No assigned structure, code `' '`.
     Loop,
+    /// Alpha helix, `H`.
     AlphaHelix,
+    /// Isolated beta bridge, `B`.
     BetaBridge,
+    /// Extended strand in a beta ladder, `E`.
     ExtendedStrand,
+    /// 3-10 helix, `G`.
     Helix3_10,
+    /// Pi helix, `I`.
     PiHelix,
+    /// Polyproline-II helix, `P`.
     PolyprolineIIHelix,
+    /// Hydrogen-bonded turn, `T`.
     Turn,
+    /// Bend, `S`.
     Bend,
 }
 
 impl DsspSecondaryStructure {
+    /// Every assignment, in declaration order.
     pub const ALL: [Self; 9] = [
         Self::Loop,
         Self::AlphaHelix,
@@ -80,6 +146,9 @@ impl DsspSecondaryStructure {
     }
 }
 
+/// Parses a one-character DSSP 4 code; `'-'` is accepted as an alias of
+/// [`DsspSecondaryStructure::Loop`]. Any other character fails with
+/// [`DsspCodeError`].
 impl TryFrom<char> for DsspSecondaryStructure {
     type Error = DsspCodeError;
 
@@ -106,6 +175,7 @@ pub struct DsspCodeError {
 }
 
 impl DsspCodeError {
+    /// The rejected character.
     pub const fn code(self) -> char {
         self.code
     }
@@ -131,26 +201,34 @@ pub struct DsspResidueSource {
 }
 
 impl DsspResidueSource {
+    /// Residue (component) name, such as `ALA`.
     pub fn residue_name(&self) -> &str {
         &self.residue_name
     }
 
+    /// Label chain identifier of the residue's hierarchy chain.
     pub fn chain_label_id(&self) -> &str {
         &self.chain_label_id
     }
 
+    /// Author chain identifier; `None` when the hierarchy carries none.
     pub fn chain_author_id(&self) -> Option<&str> {
         self.chain_author_id.as_deref()
     }
 
+    /// Label sequence number; `None` when the hierarchy carries none, as for
+    /// PDB input.
     pub const fn label_sequence_id(&self) -> Option<i32> {
         self.label_sequence_id
     }
 
+    /// Author sequence number as written; `None` when the hierarchy carries
+    /// none.
     pub fn author_sequence_id(&self) -> Option<&str> {
         self.author_sequence_id.as_deref()
     }
 
+    /// Insertion code; `None` when the residue has none.
     pub fn insertion_code(&self) -> Option<&str> {
         self.insertion_code.as_deref()
     }
@@ -160,8 +238,13 @@ impl DsspResidueSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DsspChainBreak {
+    /// The residue continues the segment of the preceding analyzed residue.
     None,
+    /// The residue is the first analyzed residue of its chain.
     NewChain,
+    /// The residue starts a new segment within its chain: the preceding
+    /// residue's `C` is more than 2.5 Å from this residue's `N`, or a skipped
+    /// or non-peptide residue lies between them.
     Gap,
 }
 
@@ -169,10 +252,15 @@ pub enum DsspChainBreak {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DsspHelixPosition {
+    /// The residue is not part of this helix pattern (DSSP blank).
     None,
+    /// The residue starts the pattern (DSSP `>`).
     Start,
+    /// The residue ends the pattern (DSSP `<`).
     End,
+    /// The residue ends one occurrence and starts another (DSSP `X`).
     StartAndEnd,
+    /// The residue lies inside the pattern (DSSP digit).
     Middle,
 }
 
@@ -189,6 +277,7 @@ pub struct DsspHydrogenBond {
 }
 
 impl DsspHydrogenBond {
+    /// The partner residue; it is always present in the same [`DsspResult`].
     pub const fn partner(&self) -> ResidueId {
         self.partner
     }
@@ -205,7 +294,9 @@ impl DsspHydrogenBond {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DsspBridgeDirection {
+    /// Both strands run in the same direction.
     Parallel,
+    /// The strands run in opposite directions.
     Antiparallel,
 }
 
@@ -218,6 +309,8 @@ pub struct DsspBetaPartner {
 }
 
 impl DsspBetaPartner {
+    /// The bridge partner residue; it is always present in the same
+    /// [`DsspResult`].
     pub const fn partner(&self) -> ResidueId {
         self.partner
     }
@@ -227,6 +320,7 @@ impl DsspBetaPartner {
         self.ladder
     }
 
+    /// Whether the bridge is parallel or antiparallel.
     pub const fn direction(&self) -> DsspBridgeDirection {
         self.direction
     }
@@ -254,43 +348,73 @@ pub struct DsspResidue {
 }
 
 impl DsspResidue {
+    /// The analyzed hierarchy residue of the input model.
     pub const fn key(&self) -> ResidueId {
         self.key
     }
 
+    /// Source hierarchy labels of the residue.
     pub fn source(&self) -> &DsspResidueSource {
         &self.source
     }
 
+    /// DSSP 4 summary assignment.
     pub const fn secondary_structure(&self) -> DsspSecondaryStructure {
         self.secondary_structure
     }
 
+    /// Whether the residue starts a chain or a new segment after a gap.
     pub const fn chain_break(&self) -> DsspChainBreak {
         self.chain_break
     }
 
+    /// Backbone torsion `C(i-1)-N-CA-C`, in degrees within (-180°, 180°].
+    ///
+    /// `None` for the first residue of a segment or when the torsion is
+    /// geometrically undefined.
     pub fn phi(&self) -> Option<Quantity<f64>> {
         self.phi.map(|angle| Quantity::new(angle, DEGREE))
     }
 
+    /// Backbone torsion `N-CA-C-N(i+1)`, in degrees.
+    ///
+    /// `None` for the last residue of a segment or when the torsion is
+    /// geometrically undefined.
     pub fn psi(&self) -> Option<Quantity<f64>> {
         self.psi.map(|angle| Quantity::new(angle, DEGREE))
     }
 
+    /// Peptide torsion `CA-C-N(i+1)-CA(i+1)`, in degrees.
+    ///
+    /// `None` for the last residue of a segment or when the torsion is
+    /// geometrically undefined.
     pub fn omega(&self) -> Option<Quantity<f64>> {
         self.omega.map(|angle| Quantity::new(angle, DEGREE))
     }
 
+    /// Virtual torsion `CA(i-1)-CA(i)-CA(i+1)-CA(i+2)`, in degrees.
+    ///
+    /// `None` unless the residue has one preceding and two following
+    /// residues in its segment, or when the torsion is geometrically
+    /// undefined.
     pub fn alpha(&self) -> Option<Quantity<f64>> {
         self.alpha.map(|angle| Quantity::new(angle, DEGREE))
     }
 
+    /// Virtual bend angle between `CA(i-2)->CA(i)` and `CA(i)->CA(i+2)`, in
+    /// degrees within [0°, 180°].
+    ///
+    /// `None` unless the residue has two residues on each side in its
+    /// segment whose label sequence numbers, when both are known, span
+    /// exactly four.
     pub fn kappa(&self) -> Option<Quantity<f64>> {
         self.kappa.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    /// Cosine of the angle between consecutive peptide carbonyl vectors.
+    /// Cosine of the angle between this residue's and the preceding residue's
+    /// `C->O` carbonyl vectors, in [-1, 1].
+    ///
+    /// `None` for the first residue of a segment or a zero-length carbonyl.
     pub const fn tco(&self) -> Option<f64> {
         self.tco
     }
@@ -305,21 +429,25 @@ impl DsspResidue {
         &self.donors
     }
 
+    /// Up to two beta-bridge partners, in DSSP's ladder order.
     pub const fn beta_partners(&self) -> &[Option<DsspBetaPartner>; 2] {
         &self.beta_partners
     }
 
-    /// One-based sheet identifier, matching DSSP's sheet construction.
+    /// One-based sheet identifier, matching DSSP's sheet construction; `None`
+    /// when the residue is in no ladder.
     pub const fn sheet(&self) -> Option<usize> {
         self.sheet
     }
 
-    /// One-based deterministic strand identifier.
+    /// One-based deterministic strand identifier; `None` when the residue is
+    /// in no ladder.
     pub const fn strand(&self) -> Option<usize> {
         self.strand
     }
 
-    /// Positions for 3-10, alpha, pi, and polyproline-II helices.
+    /// Positions in the 3-10 (`i+3`), alpha (`i+4`), pi (`i+5`), and
+    /// polyproline-II patterns, in that order.
     pub const fn helix_positions(&self) -> &[DsspHelixPosition; 4] {
         &self.helix_positions
     }
@@ -338,30 +466,39 @@ pub struct DsspStatistics {
 }
 
 impl DsspStatistics {
+    /// Number of residues in [`DsspResult::residues`].
     pub const fn analyzed_residues(&self) -> usize {
         self.analyzed_residues
     }
 
+    /// Number of continuous backbone segments, counting every
+    /// [`DsspChainBreak::NewChain`] and [`DsspChainBreak::Gap`] start.
     pub const fn chain_segments(&self) -> usize {
         self.chain_segments
     }
 
+    /// Number of donor hydrogen bonds below DSSP's -0.5 kcal/mol cutoff.
     pub const fn hydrogen_bonds(&self) -> usize {
         self.hydrogen_bonds
     }
 
+    /// Number of beta bridges before ladder merging.
     pub const fn beta_bridges(&self) -> usize {
         self.beta_bridges
     }
 
+    /// Number of beta bridges between residues of one chain.
     pub const fn intra_chain_beta_bridges(&self) -> usize {
         self.intra_chain_beta_bridges
     }
 
+    /// Number of beta bridges between residues of different chains.
     pub const fn inter_chain_beta_bridges(&self) -> usize {
         self.inter_chain_beta_bridges
     }
 
+    /// Number of analyzed residues with this summary assignment; zero when
+    /// none has it.
     pub fn secondary_structure_count(&self, structure: DsspSecondaryStructure) -> usize {
         self.secondary_structure_counts
             .get(&structure)
@@ -369,6 +506,8 @@ impl DsspStatistics {
             .unwrap_or_default()
     }
 
+    /// Residue counts for every [`DsspSecondaryStructure::ALL`] entry,
+    /// including zero counts.
     pub fn secondary_structure_counts(&self) -> &BTreeMap<DsspSecondaryStructure, usize> {
         &self.secondary_structure_counts
     }
@@ -420,6 +559,7 @@ pub enum DsspSkipReason {
     },
 }
 
+/// A peptide residue that was not analyzed; it also breaks its chain segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DsspSkippedResidue {
     pub(crate) key: ResidueId,
@@ -428,14 +568,17 @@ pub struct DsspSkippedResidue {
 }
 
 impl DsspSkippedResidue {
+    /// The skipped hierarchy residue of the input model.
     pub const fn key(&self) -> ResidueId {
         self.key
     }
 
+    /// Source hierarchy labels of the residue.
     pub fn source(&self) -> &DsspResidueSource {
         &self.source
     }
 
+    /// Why the residue was skipped.
     pub fn reason(&self) -> &DsspSkipReason {
         &self.reason
     }
@@ -454,30 +597,42 @@ pub struct DsspReport {
 }
 
 impl DsspReport {
+    /// Molecule instances with no atom in the topology hierarchy, in instance
+    /// order; their atoms are not analyzed.
     pub fn ignored_instances(&self) -> &[MoleculeInstanceId] {
         &self.ignored_instances
     }
 
+    /// Hierarchy residues ignored as non-peptide: residues classified as
+    /// neither amino acid nor other, and unclassified residues without any
+    /// backbone atom.
     pub const fn non_peptide_residues(&self) -> usize {
         self.non_peptide_residues
     }
 
+    /// Peptide residues skipped for an incomplete backbone, in analysis order.
     pub fn skipped_residues(&self) -> &[DsspSkippedResidue] {
         &self.skipped_residues
     }
 
+    /// Number of residues marked [`DsspChainBreak::Gap`].
     pub const fn detected_gaps(&self) -> usize {
         self.detected_gaps
     }
 
+    /// Number of amide hydrogens placed from the preceding residue's carbonyl;
+    /// prolines and the first analyzed residue get none.
     pub const fn reconstructed_amide_hydrogens(&self) -> usize {
         self.reconstructed_amide_hydrogens
     }
 
+    /// Number of residue pairs with `CA` atoms within 9 Å, the pairs whose
+    /// hydrogen-bond energies were evaluated.
     pub const fn candidate_hydrogen_bond_pairs(&self) -> usize {
         self.candidate_hydrogen_bond_pairs
     }
 
+    /// Number of provisional ladders before DSSP bulge merging.
     pub const fn generated_ladders(&self) -> usize {
         self.generated_ladders
     }
@@ -492,6 +647,7 @@ pub struct DsspLimits {
 }
 
 impl DsspLimits {
+    /// Maximum residues with a complete backbone analyzed in one run.
     pub const fn max_residues(&self) -> usize {
         self.max_residues
     }
@@ -503,6 +659,8 @@ impl DsspLimits {
         self
     }
 
+    /// Maximum residue pairs with `CA` atoms within 9 Å evaluated for
+    /// hydrogen bonds; see [`DsspReport::candidate_hydrogen_bond_pairs`].
     pub const fn max_candidate_pairs(&self) -> usize {
         self.max_candidate_pairs
     }
@@ -577,6 +735,7 @@ impl DsspOptions {
         Ok(self)
     }
 
+    /// Work bounds; exceeding one fails with [`DsspError::LimitExceeded`].
     pub const fn limits(&self) -> DsspLimits {
         self.limits
     }
@@ -680,20 +839,26 @@ pub struct DsspResult {
 }
 
 impl DsspResult {
+    /// Analyzed residues in DSSP order: chains by label identifier (shorter
+    /// first), residues in the chain order described on [`assign`].
     pub fn residues(&self) -> impl ExactSizeIterator<Item = &DsspResidue> {
         self.residues.iter()
     }
 
+    /// The values of one analyzed residue; `None` when `key` was not analyzed
+    /// (non-peptide, skipped, or not in the model).
     pub fn get(&self, key: ResidueId) -> Option<&DsspResidue> {
         self.lookup
             .get(&key)
             .and_then(|index| self.residues.get(*index))
     }
 
+    /// Aggregate counts of the assignment.
     pub fn statistics(&self) -> &DsspStatistics {
         &self.statistics
     }
 
+    /// Non-fatal extraction issues and work counts.
     pub fn report(&self) -> &DsspReport {
         &self.report
     }

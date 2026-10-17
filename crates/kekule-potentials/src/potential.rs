@@ -2,10 +2,11 @@
 //!
 //! [`Potential`] makes no assumption about how an energy is built, so pairwise
 //! force fields, machine-learned models, and quantum-chemical backends can all
-//! implement it. A prepared potential binds one topology layout and evaluates any
-//! [`ModelView`] sharing it, including perceived snapshots: a
-//! [`kekule::structure::Model`], an ensemble member, or a trajectory frame. Results are validated at this
-//! boundary and stored in Kekule's canonical units (kJ/mol and kJ/mol/nm).
+//! implement it. A prepared potential binds one topology layout and evaluates
+//! any [`ModelView`] sharing it, including perceived snapshots: a
+//! [`kekule::structure::Model`], an ensemble member, or a trajectory frame.
+//! Results are validated at this boundary and stored in Kekule's canonical
+//! units (kJ/mol and kJ/mol/nm).
 
 use std::fmt;
 use std::sync::Arc;
@@ -65,15 +66,22 @@ pub trait Potential: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ComponentKind {
+    /// Bond-stretch energy.
     Bonds,
+    /// Angle-bend energy.
     Angles,
+    /// Proper torsion energy.
     ProperTorsions,
+    /// Improper torsion energy.
     ImproperTorsions,
+    /// Van der Waals (dispersion and repulsion) energy.
     VanDerWaals,
+    /// Electrostatic energy.
     Electrostatics,
 }
 
 impl ComponentKind {
+    /// Lowercase human-readable name, also used by [`fmt::Display`].
     pub const fn name(self) -> &'static str {
         match self {
             Self::Bonds => "bonds",
@@ -100,10 +108,13 @@ pub struct EnergyComponent {
 }
 
 impl EnergyComponent {
+    /// Which contribution this is.
     pub const fn kind(&self) -> ComponentKind {
         self.kind
     }
 
+    /// The contribution's energy, finite and in kJ/mol when part of an
+    /// [`Energy`].
     pub const fn energy(&self) -> Quantity<f64> {
         self.energy
     }
@@ -121,6 +132,11 @@ pub struct Energy {
 
 impl Energy {
     /// An energy without a decomposition.
+    ///
+    /// # Errors
+    ///
+    /// [`EvaluationError::Unit`] if `total` is not an energy, and
+    /// [`EvaluationError::NonFiniteEnergy`] if it is not finite.
     pub fn new(total: Quantity<f64>) -> Result<Self, EvaluationError> {
         let total = total.into_unit(CANONICAL_ENERGY_UNIT)?;
         if !total.value().is_finite() {
@@ -133,6 +149,12 @@ impl Energy {
     }
 
     /// An energy whose total is the ordered sum of distinct components.
+    ///
+    /// # Errors
+    ///
+    /// [`EvaluationError::Unit`] if a component is not an energy,
+    /// [`EvaluationError::NonFiniteEnergy`] if a component or the total is not
+    /// finite, and [`EvaluationError::DuplicateComponent`] if a kind repeats.
     pub fn from_components(
         components: impl IntoIterator<Item = EnergyComponent>,
     ) -> Result<Self, EvaluationError> {
@@ -161,14 +183,19 @@ impl Energy {
         })
     }
 
+    /// The finite total energy in kJ/mol.
     pub fn total(&self) -> Quantity<f64> {
         self.total
     }
 
+    /// The decomposition in the order given, each in kJ/mol; empty when the
+    /// potential reports none.
     pub fn components(&self) -> &[EnergyComponent] {
         &self.components
     }
 
+    /// The energy of one component in kJ/mol, or `None` if the decomposition
+    /// does not contain `kind`.
     pub fn component(&self, kind: ComponentKind) -> Option<Quantity<f64>> {
         self.components
             .iter()
@@ -197,6 +224,17 @@ impl PartialEq for Evaluation {
 }
 
 impl Evaluation {
+    /// Validates a backend's result for `model`, which it binds by snapshot.
+    ///
+    /// `gradient` holds one vector per topology atom in dense order.
+    ///
+    /// # Errors
+    ///
+    /// - [`EvaluationError::Unit`] if `gradient` is not an energy per length.
+    /// - [`EvaluationError::GradientLengthMismatch`] if it does not have one
+    ///   vector per atom of `model`.
+    /// - [`EvaluationError::NonFiniteGradient`] naming the first atom whose
+    ///   gradient is not finite.
     pub fn new(
         model: ModelView<'_>,
         energy: Energy,
@@ -232,19 +270,24 @@ impl Evaluation {
         Arc::clone(&self.topology)
     }
 
+    /// The validated energy.
     pub fn energy(&self) -> &Energy {
         &self.energy
     }
 
+    /// The energy, discarding the gradient.
     pub fn into_energy(self) -> Energy {
         self.energy
     }
 
+    /// The finite gradient `dE/dx` in kJ/(mol nm), one vector per topology atom
+    /// in dense order.
     pub fn gradient(&self) -> Quantity<&[Vector3]> {
         Quantity::new(self.gradient.as_slice(), CANONICAL_GRADIENT_UNIT)
     }
 
-    /// The gradient of one atom, if `model` shares this evaluation's snapshot.
+    /// The gradient of one atom in kJ/(mol nm), or `None` if `model` does not
+    /// share this evaluation's topology layout or has no atom `atom`.
     pub fn gradient_for(
         &self,
         model: ModelView<'_>,

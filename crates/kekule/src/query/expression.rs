@@ -32,6 +32,7 @@ enum ExpressionNode<P> {
 }
 
 impl<P> QueryExpression<P> {
+    /// The expression that matches everything.
     pub const fn always() -> Self {
         Self {
             root: ExpressionNode::Constant(true),
@@ -40,6 +41,7 @@ impl<P> QueryExpression<P> {
         }
     }
 
+    /// The expression that matches nothing.
     pub const fn never() -> Self {
         Self {
             root: ExpressionNode::Constant(false),
@@ -48,6 +50,7 @@ impl<P> QueryExpression<P> {
         }
     }
 
+    /// An expression of one primitive predicate.
     pub const fn predicate(predicate: P) -> Self {
         Self {
             root: ExpressionNode::Predicate(predicate),
@@ -56,6 +59,13 @@ impl<P> QueryExpression<P> {
         }
     }
 
+    /// The logical negation. Constants are inverted and double negation is
+    /// removed rather than nested.
+    ///
+    /// # Errors
+    ///
+    /// [`QueryExpressionError::LimitExceeded`] when the result exceeds
+    /// [`MAX_QUERY_EXPRESSION_NODES`] or [`MAX_QUERY_EXPRESSION_DEPTH`].
     pub fn negate(self) -> Result<Self, QueryExpressionError> {
         let root = match self.root {
             ExpressionNode::Constant(value) => ExpressionNode::Constant(!value),
@@ -65,6 +75,15 @@ impl<P> QueryExpression<P> {
         Self::from_root(root)
     }
 
+    /// The conjunction of `expressions`; [`Self::always`] when there are none.
+    ///
+    /// `always` terms are dropped, any `never` term yields [`Self::never`], and
+    /// nested conjunctions are flattened.
+    ///
+    /// # Errors
+    ///
+    /// [`QueryExpressionError::LimitExceeded`] when the result exceeds
+    /// [`MAX_QUERY_EXPRESSION_NODES`] or [`MAX_QUERY_EXPRESSION_DEPTH`].
     pub fn all(expressions: impl IntoIterator<Item = Self>) -> Result<Self, QueryExpressionError> {
         let mut terms = Vec::new();
         for expression in expressions {
@@ -82,6 +101,15 @@ impl<P> QueryExpression<P> {
         }
     }
 
+    /// The disjunction of `expressions`; [`Self::never`] when there are none.
+    ///
+    /// `never` terms are dropped, any `always` term yields [`Self::always`], and
+    /// nested disjunctions are flattened.
+    ///
+    /// # Errors
+    ///
+    /// [`QueryExpressionError::LimitExceeded`] when the result exceeds
+    /// [`MAX_QUERY_EXPRESSION_NODES`] or [`MAX_QUERY_EXPRESSION_DEPTH`].
     pub fn any(expressions: impl IntoIterator<Item = Self>) -> Result<Self, QueryExpressionError> {
         let mut terms = Vec::new();
         for expression in expressions {
@@ -99,10 +127,14 @@ impl<P> QueryExpression<P> {
         }
     }
 
+    /// The number of expression nodes, counting constants, predicates, and
+    /// each `not`, `and`, and `or`; at most [`MAX_QUERY_EXPRESSION_NODES`].
     pub const fn node_count(&self) -> usize {
         self.node_count
     }
 
+    /// The nesting depth, 1 for a single constant or predicate; at most
+    /// [`MAX_QUERY_EXPRESSION_DEPTH`].
     pub const fn depth(&self) -> usize {
         self.depth
     }
@@ -288,13 +320,24 @@ fn any_predicate<P>(node: &ExpressionNode<P>, predicate: &mut impl FnMut(&P) -> 
     }
 }
 
+/// A primitive test on one target atom.
+///
+/// Predicates that read derived chemistry require the matching perception to
+/// be installed on the target; matching reports missing perception instead of
+/// perceiving it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AtomPredicate {
+    /// The element (`#n` or a symbol).
     Element(Element),
+    /// The mass number, with 0 matching an atom at natural abundance.
     Isotope(u16),
+    /// The formal charge (`+n`, `-n`).
     FormalCharge(i8),
+    /// Perceived aromatic membership (`a`, `A`).
+    /// Requires installed aromaticity.
     Aromatic(bool),
+    /// The number of graph neighbors (`D`), including explicit hydrogens.
     Degree(u8),
     /// Graph neighbors plus all implicit hydrogens (`X`).
     /// Requires installed valence perception.
@@ -314,26 +357,33 @@ pub enum AtomPredicate {
     /// Mapping-dependent tetrahedral parity relative to the query's carrier frame.
     /// `true` denotes the frame orientation, `false` its inverse.
     Tetrahedral(bool),
+    /// Membership in any ring (`R` or `r` without a count; `R0` or `r0` for
+    /// `false`). Requires installed ring membership.
     RingMembership(bool),
     /// Incident bonds belonging to any cycle (`x`), independent of ring basis.
     /// Requires installed ring membership.
     RingBondCount(u8),
 }
 
+/// A primitive test on one target bond.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum BondPredicate {
-    /// Relative SMARTS direction in a query bond carrier frame.
+    /// Relative SMARTS direction in a query bond carrier frame: `true` for `/`,
+    /// `false` for `\`.
     /// Evaluated jointly with other directions under a complete mapping.
     Direction(bool),
     /// Matches a canonical localized represented order.
     Order(BondOrder),
     /// Matches perceived aromatic bond membership.
     Aromatic(bool),
+    /// Membership in any ring (`@`). Requires installed ring membership.
     RingMembership(bool),
 }
 
+/// A boolean expression over [`AtomPredicate`]s.
 pub type AtomExpression = QueryExpression<AtomPredicate>;
+/// A boolean expression over [`BondPredicate`]s.
 pub type BondExpression = QueryExpression<BondPredicate>;
 
 /// Why a query expression cannot be constructed.

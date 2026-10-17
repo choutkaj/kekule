@@ -1,4 +1,59 @@
 //! Pure-Rust GROMACS TRR/XDR trajectory I/O.
+//!
+//! [`TrrReader`] and [`IndexedTrrReader`] read big-endian XDR frames with f32
+//! or f64 position, box, velocity and force blocks; [`TrrWriter`] writes them
+//! at one explicit [`TrrScalarPrecision`]. Every frame carries a step and a
+//! time; GROMACS nanometre, picosecond and kJ/(mol nm) units are converted at
+//! the codec boundary. The lambda scalar follows a [`TrrLambdaPolicy`].
+//!
+//! # Examples
+//!
+//! ```
+//! use std::io::Cursor;
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::{Point3, Vector3};
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame, Velocities};
+//! use kekule::units::{Quantity, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule_traj::io::trr::{
+//!     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter,
+//! };
+//! use kekule_traj::{TrajectoryReader, TrajectoryWriter};
+//!
+//! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let points = vec![Point3::new(0.25, 0.5, 0.0)];
+//! let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
+//! let velocity = Vector3::new(1.0, 0.0, 0.0);
+//! let mut frame = TrajectoryFrame::new(positions);
+//! let velocities = Velocities::new(Quantity::new([velocity], NANOMETER_PER_PICOSECOND))?;
+//! frame.set_velocities(Some(velocities))?;
+//! frame.set_step(Some(500));
+//! frame.set_time(Some(Quantity::new(1.0, PICOSECOND)))?;
+//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
+//!
+//! // Frames without a lambda property need the RequireZero policy.
+//! let options = TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
+//! let mut writer = TrrWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
+//! writer.write_frame(trajectory.get(0).unwrap())?;
+//! let bytes = writer.finish()?;
+//!
+//! let read_options = TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
+//! let mut reader = TrrReader::new(Cursor::new(bytes), topology, read_options)?;
+//! let mut buffer = reader.frame_buffer();
+//! assert!(reader.read_next(&mut buffer)?);
+//! assert_eq!(buffer.step(), Some(500));
+//! assert_eq!(buffer.time().unwrap().value_in(PICOSECOND)?, 1.0);
+//! let position = buffer.positions().get(0).unwrap().value_in(NANOMETER)?;
+//! assert_eq!(position, Point3::new(0.25, 0.5, 0.0));
+//! let read_velocities = buffer.velocities().unwrap().clone().into_values();
+//! let read_velocities = read_velocities.into_unit(NANOMETER_PER_PICOSECOND)?.into_value();
+//! assert_eq!(read_velocities, [velocity]);
+//! assert!(buffer.forces().is_none());
+//! assert!(!reader.read_next(&mut buffer)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use crate::TrajectoryField;
 use std::fmt;
@@ -33,7 +88,9 @@ pub const TRR_LAMBDA_PROPERTY: &str = "gromacs.trr.lambda";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TrrScalarPrecision {
+    /// IEEE 754 single precision (GROMACS mixed-precision builds).
     Float32,
+    /// IEEE 754 double precision.
     Float64,
 }
 
@@ -92,6 +149,7 @@ impl TrrReadOptions {
         self
     }
 
+    /// Sets [`Self::lambda_policy`].
     #[must_use]
     pub const fn with_lambda_policy(mut self, lambda_policy: TrrLambdaPolicy) -> Self {
         self.lambda_policy = lambda_policy;
@@ -108,6 +166,7 @@ impl TrrReadOptions {
         &self.source_label
     }
 
+    /// How lambda is published; [`TrrLambdaPolicy::FrameProperty`] by default.
     pub const fn lambda_policy(&self) -> TrrLambdaPolicy {
         self.lambda_policy
     }
@@ -139,16 +198,21 @@ impl TrrWriteOptions {
         self
     }
 
+    /// Sets [`Self::lambda_policy`].
     #[must_use]
     pub const fn with_lambda_policy(mut self, lambda_policy: TrrLambdaPolicy) -> Self {
         self.lambda_policy = lambda_policy;
         self
     }
 
+    /// The scalar width written; [`TrrScalarPrecision::Float32`] by default.
     pub const fn precision(&self) -> TrrScalarPrecision {
         self.precision
     }
 
+    /// Where lambda comes from; [`TrrLambdaPolicy::FrameProperty`] by default,
+    /// which requires every frame to carry exactly the
+    /// [`TRR_LAMBDA_PROPERTY`] frame property.
     pub const fn lambda_policy(&self) -> TrrLambdaPolicy {
         self.lambda_policy
     }
@@ -231,6 +295,18 @@ impl<R: Read + Seek> TrrReader<R> {
     /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
     /// format metadata are checked automatically; matching counts alone cannot
     /// establish atom identity. Limits and diagnostic labels are set in `options`.
+    /// The first frame header is read and validated here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidHeader`] for an empty stream or
+    /// malformed header, [`TrajectoryIoErrorKind::UnsupportedVariant`] for an
+    /// unsupported header layout, [`TrajectoryIoErrorKind::InconsistentAtomCount`]
+    /// when its atom count differs from the topology's,
+    /// [`TrajectoryIoErrorKind::InconsistentMetadata`] for a nonzero lambda
+    /// under [`TrrLambdaPolicy::RequireZero`],
+    /// [`TrajectoryIoErrorKind::LimitExceeded`] when the limits are exceeded,
+    /// and [`TrajectoryIoErrorKind::Io`] when reading fails.
     pub fn new(
         mut reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -310,6 +386,7 @@ impl<R: Read + Seek> TrrReader<R> {
         })
     }
 
+    /// The topology every frame belongs to.
     pub fn topology(&self) -> &Topology {
         self.topology.as_ref()
     }
@@ -725,6 +802,13 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
     /// the end is decoded and verified before the reader is returned, and both
     /// sequential and indexed reads then address frames from that start. Topology,
     /// limits, and diagnostic labels follow [`TrrReader::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`TrrReader::new`], the decoding error of the
+    /// first invalid frame, [`TrajectoryIoErrorKind::LimitExceeded`] when the
+    /// index outgrows the limits, and [`TrajectoryIoErrorKind::Io`] when
+    /// reading or seeking fails.
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -733,6 +817,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         TrrReader::new(reader, topology, options)?.index_frames()
     }
 
+    /// The topology every frame belongs to.
     pub fn topology(&self) -> &Topology {
         self.inner.topology()
     }
@@ -868,6 +953,13 @@ impl<W> fmt::Debug for TrrWriter<W> {
 }
 
 impl<W: Write> TrrWriter<W> {
+    /// A writer of `topology` frames to `writer`; `source_label` names the
+    /// destination in errors. Nothing is written until the first frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::LimitExceeded`] when the topology has
+    /// no atoms or more than `i32::MAX / 3`.
     pub fn new(
         writer: W,
         topology: impl Into<Arc<Topology>>,
@@ -896,14 +988,21 @@ impl<W: Write> TrrWriter<W> {
         })
     }
 
+    /// The topology every written frame must share.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
+    /// The underlying stream.
     pub fn writer(&self) -> &W {
         &self.writer
     }
 
+    /// Flushes the underlying stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the stream's flush error.
     pub fn flush(&mut self) -> std::io::Result<()> {
         self.writer.flush()
     }
@@ -919,6 +1018,12 @@ impl<W: Write> TrrWriter<W> {
     }
 
     /// Flushes and returns the completed nonempty TRR stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] when no frame was
+    /// written or an earlier write left a partial frame, and
+    /// [`TrajectoryIoErrorKind::Io`] when flushing fails.
     pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.validate_finish()?;
         self.writer.flush().map_err(|error| {

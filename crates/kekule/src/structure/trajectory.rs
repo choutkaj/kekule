@@ -72,10 +72,12 @@ impl Trajectory {
         Ok(trajectory)
     }
 
+    /// The topology shared by every frame.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
+    /// A shared handle to the topology; cloning the [`Arc`] copies no topology data.
     pub fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
     }
@@ -85,14 +87,18 @@ impl Trajectory {
         &self.properties
     }
 
+    /// Mutable trajectory-level annotations. Frame properties are edited through
+    /// [`Self::get_mut`].
     pub fn properties_mut(&mut self) -> &mut OwnerProperties {
         &mut self.properties
     }
 
+    /// Number of frames.
     pub fn len(&self) -> usize {
         self.frames.len()
     }
 
+    /// Whether the trajectory has no frames.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
@@ -241,6 +247,8 @@ impl Trajectory {
         (self.topology, self.properties, self.frames)
     }
 
+    /// Consumes the trajectory, returning its frames in temporal order and
+    /// dropping the topology and trajectory properties.
     pub fn into_items(self) -> Vec<TrajectoryFrame> {
         self.frames
     }
@@ -374,22 +382,28 @@ impl TrajectoryFrame {
         self
     }
 
+    /// Number of atoms, the length of every dense per-atom array of the frame.
     pub fn atom_count(&self) -> usize {
         self.positions.len()
     }
 
+    /// Per-atom velocities (nm/ps), or `None` when the frame has none.
     pub fn velocities(&self) -> Option<&Velocities> {
         self.velocities.as_ref()
     }
 
+    /// Per-atom forces (kJ/(mol·nm)), or `None` when the frame has none.
     pub fn forces(&self) -> Option<&Forces> {
         self.forces.as_ref()
     }
 
+    /// The simulation time in the canonical time unit (ps), or `None` when
+    /// unrecorded.
     pub const fn time(&self) -> Option<Quantity<f64>> {
         self.time
     }
 
+    /// The integration step number, or `None` when unrecorded.
     pub const fn step(&self) -> Option<u64> {
         self.step
     }
@@ -436,6 +450,7 @@ impl TrajectoryFrame {
         Ok(())
     }
 
+    /// Sets or clears the integration step number.
     pub fn set_step(&mut self, step: Option<u64>) {
         self.step = step;
     }
@@ -558,10 +573,12 @@ impl<'a> TrajectoryFrameView<'a> {
         Ok(Self { topology, frame })
     }
 
+    /// The topology the frame is bound to, with the view's full lifetime.
     pub fn topology(self) -> &'a Topology {
         self.topology
     }
 
+    /// A shared handle to the bound topology.
     pub fn shared_topology(self) -> Arc<Topology> {
         Arc::clone(self.topology)
     }
@@ -610,18 +627,38 @@ impl std::ops::Deref for TrajectoryFrameMut<'_> {
 }
 
 impl TrajectoryFrameMut<'_> {
+    /// Sets or clears velocities; see [`TrajectoryFrame::set_velocities`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StructureError::Array`] when the vector count differs from the
+    /// atom count; the frame is unchanged then.
     pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), StructureError> {
         self.frame.set_velocities(velocities)
     }
 
+    /// Sets or clears forces; see [`TrajectoryFrame::set_forces`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StructureError::Array`] when the vector count differs from the
+    /// atom count; the frame is unchanged then.
     pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), StructureError> {
         self.frame.set_forces(forces)
     }
 
+    /// Sets or clears a finite time; see [`TrajectoryFrame::set_time`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StructureError::Unit`] when the unit is not a time and
+    /// [`StructureError::NonFiniteTime`] when the converted time is not finite; the
+    /// frame is unchanged then.
     pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), StructureError> {
         self.frame.set_time(time)
     }
 
+    /// Sets or clears the integration step number.
     pub fn set_step(&mut self, step: Option<u64>) {
         self.frame.set_step(step);
     }

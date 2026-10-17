@@ -1,15 +1,55 @@
 //! Geometry-bearing structures of coordinate-free topologies.
 //!
-//! [`Positions`] is a topology-agnostic dense coordinate array. [`Model`]
-//! combines one immutable [`crate::topology::Topology`] with one complete set
-//! of positions, an optional periodic cell, and structure-scoped properties.
-//! [`Ensemble`] stores several non-temporal structures of one shared topology.
+//! - Dense per-atom arrays: [`Positions`] (canonical length unit, nm),
+//!   [`Velocities`] (nm/ps) and [`Forces`] (kJ/(mol·nm)). They carry no atom
+//!   identity and are validated against a topology by their owner.
+//! - [`Model`]: one shared, immutable [`Topology`](crate::topology::Topology)
+//!   plus one complete structure of it: positions, an optional periodic cell,
+//!   optional occupancies and B-factors, and structure-scoped properties.
+//! - Publication: [`ModelBuilder`] assembles a new topology and its positions
+//!   together; [`ModelEditor`] edits a detached draft of a model whose
+//!   positions follow atoms through structural edits, and
+//!   [`ModelEditor::append_model`] imports another structure
+//!   ([`ModelAppend`], [`ModelAppendReport`]). [`ModelEditor::topology_mut`]
+//!   ([`ModelEditorTopologyMut`]) and [`ModelEditor::properties_mut`]
+//!   ([`ModelEditorPropertiesMut`]) reach annotations without geometry.
+//! - Collections of one shared topology: [`Ensemble`] is a weighted,
+//!   unordered sample ([`EnsembleMember`]); [`Trajectory`] is a time-ordered
+//!   in-memory sequence of [`TrajectoryFrame`]s, which may carry time, step,
+//!   velocities and forces. File codecs and streaming live in `kekule-traj`.
+//! - Borrowed access: [`ModelView`] is the common input of coordinate-dependent
+//!   kernels. Models, ensemble members ([`EnsembleMemberView`]) and trajectory
+//!   frames ([`TrajectoryFrameView`]) all borrow as one without copying
+//!   ([`AsModelView`]); [`ModelAtomView`] pairs one topology atom with its
+//!   structure state. [`ModelView::kind`] says which structure a view borrows
+//!   ([`StructureKind`]), so member and frame state is never silently dropped.
+//! - [`measure`]: checked distances, angles, dihedrals, bond dihedrals and
+//!   distance-based selections.
+//! - Geometry edits: [`DistanceEdit`], [`AngleEdit`] and [`DihedralEdit`] (see
+//!   below), and rigid motions with [`Model::apply_rigid_transform`] and
+//!   [`Model::transform_atoms`].
 //!
-//! Dense arrays intentionally carry no atom identity. Topology-owning values
-//! validate their dimensions and translate semantic atom or bond identifiers to
-//! dense indexes. Coordinate-dependent algorithms accept [`ModelView`], which
-//! lets models, ensemble members, and companion-crate trajectory frames share
-//! kernels without copying coordinates.
+//! Owners accept semantic atom and bond IDs (and, in `*_at` methods, dense
+//! indexes), translate IDs to dense indexes, and check every array's length.
+//! Each owner has its own error type ([`ModelError`], [`ModelBuildError`],
+//! [`ModelEditError`], [`EnsembleError`], [`TrajectoryError`],
+//! [`GeometryEditError`]); [`StructureError`] and [`DenseArrayError`] report
+//! invalid structure state shared by all of them.
+//!
+//! ```
+//! use kekule::{geometry::Point3, smiles, units::{Quantity, NANOMETER}};
+//! use kekule::structure::{Model, Positions};
+//!
+//! let positions = Positions::new(Quantity::new(
+//!     [Point3::origin(), Point3::new(0.125, 0.0, 0.0)], NANOMETER,
+//! ))?;
+//! let model = Model::new(smiles::to_topology("CO")?, positions)?;
+//! assert_eq!(model.atom_count(), 2);
+//! let oxygen = model.topology().atom_ids()[1];
+//! let position = model.position(oxygen).unwrap().into_unit(NANOMETER)?;
+//! assert_eq!(position.into_value(), Point3::new(0.125, 0.0, 0.0));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 //!
 //! # Geometry editing and scans
 //!

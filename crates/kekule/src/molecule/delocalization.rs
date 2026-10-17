@@ -48,7 +48,9 @@ impl ConjugationPerception {
 /// or more than one contributor under a particular enumeration policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResonanceGroup {
+    /// The endpoints of the group's bonds, in ascending ID order.
     pub atoms: Vec<AtomId>,
+    /// The group's bonds, in ascending ID order.
     pub bonds: Vec<BondId>,
 }
 

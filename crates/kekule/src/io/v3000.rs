@@ -1,3 +1,5 @@
+//! V3000 (`M  V30`) connection-table parsing.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::{DiagnosticKind, LimitExceeded, Resource};

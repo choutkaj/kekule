@@ -63,7 +63,9 @@ impl MinimizeOptions {
     ///
     /// # Errors
     ///
-    /// [`MinimizationError::Unit`] for an incompatible unit and [`MinimizationError::InvalidOptions`] unless the value is finite and positive.
+    /// [`MinimizationError::Unit`] for an incompatible unit and
+    /// [`MinimizationError::InvalidOptions`] unless the value is finite and
+    /// positive.
     pub fn with_gradient_tolerance(
         mut self,
         gradient_tolerance: Quantity<f64>,
@@ -87,7 +89,9 @@ impl MinimizeOptions {
     ///
     /// # Errors
     ///
-    /// [`MinimizationError::Unit`] for an incompatible unit and [`MinimizationError::InvalidOptions`] unless the value is finite and positive.
+    /// [`MinimizationError::Unit`] for an incompatible unit and
+    /// [`MinimizationError::InvalidOptions`] unless the value is finite and
+    /// positive.
     pub fn with_max_step(mut self, max_step: Quantity<f64>) -> Result<Self, MinimizationError> {
         let value = max_step.value_in(CANONICAL_LENGTH_UNIT)?;
         if !(value.is_finite() && value > 0.0) {
@@ -157,6 +161,8 @@ impl Default for MinimizeOptions {
 pub enum MinimizationStatus {
     /// The largest per-atom gradient norm reached the tolerance.
     Converged,
+    /// [`MinimizeOptions::max_iterations`] steps were accepted without
+    /// convergence.
     MaxIterations,
     /// No step along a steepest-descent direction reduced the energy.
     LineSearchFailed,
@@ -179,14 +185,18 @@ impl<'a> MinimizationStep<'a> {
         self.iteration
     }
 
+    /// Energy at the accepted coordinates.
     pub const fn energy(&self) -> &'a Energy {
         self.energy
     }
 
+    /// Largest per-atom gradient norm at the accepted coordinates, in
+    /// kJ/(mol nm).
     pub const fn max_gradient(&self) -> Quantity<f64> {
         self.max_gradient
     }
 
+    /// The accepted coordinates in dense topology atom order.
     pub const fn positions(&self) -> &'a Positions {
         self.positions
     }
@@ -209,10 +219,12 @@ impl Minimization {
         &self.positions
     }
 
+    /// Takes the final coordinates.
     pub fn into_positions(self) -> Positions {
         self.positions
     }
 
+    /// Energy at the input coordinates.
     pub fn initial_energy(&self) -> &Energy {
         &self.initial_energy
     }
@@ -222,6 +234,7 @@ impl Minimization {
         &self.evaluation
     }
 
+    /// Number of accepted steps.
     pub fn iterations(&self) -> usize {
         self.iterations
     }
@@ -231,6 +244,7 @@ impl Minimization {
         self.evaluations
     }
 
+    /// Why the minimization stopped.
     pub fn status(&self) -> MinimizationStatus {
         self.status
     }
@@ -239,6 +253,12 @@ impl Minimization {
     ///
     /// `source` must share the minimized topology snapshot. Its cell and
     /// structure properties are retained unchanged.
+    ///
+    /// # Errors
+    ///
+    /// [`MinimizationError::IncompatibleTopology`] if `source` does not share
+    /// the minimized topology layout, and [`MinimizationError::Position`] if
+    /// the coordinates cannot be stored.
     pub fn to_model(&self, source: ModelView<'_>) -> Result<Model, MinimizationError> {
         if !self.evaluation.topology().shares_layout(source.topology()) {
             return Err(MinimizationError::IncompatibleTopology);
@@ -250,6 +270,20 @@ impl Minimization {
 }
 
 /// Minimizes the energy of `model` under `potential`.
+///
+/// A run that stops without converging is still `Ok`; check
+/// [`Minimization::status`].
+///
+/// # Errors
+///
+/// - [`MinimizationError::InvalidOptions`] or [`MinimizationError::Unit`] if
+///   `options` are unusable.
+/// - [`MinimizationError::Evaluation`] if the initial evaluation fails, or a
+///   trial fails for a reason other than singular geometry.
+/// - [`MinimizationError::NumericalFailure`] if finite evaluations cannot
+///   produce a representable descent step.
+/// - [`MinimizationError::Position`] or [`MinimizationError::Structure`] if
+///   trial coordinates cannot be stored.
 pub fn minimize<P: Potential + ?Sized>(
     potential: &P,
     model: ModelView<'_>,
@@ -263,6 +297,10 @@ pub fn minimize<P: Potential + ?Sized>(
 /// Returning [`ControlFlow::Break`] stops with [`MinimizationStatus::Stopped`]
 /// at the step just observed. Recording the observed positions, for example
 /// into a trajectory, is the caller's choice.
+///
+/// # Errors
+///
+/// As [`minimize`].
 pub fn minimize_with_observer<P: Potential + ?Sized>(
     potential: &P,
     model: ModelView<'_>,

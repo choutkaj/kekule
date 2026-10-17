@@ -14,12 +14,13 @@ mod v3000;
 
 use record::MolfileRecord;
 
+/// Connection-table version a Molfile or SDF writer emits.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MolfileWriteVersion {
-    /// V2000 when it can represent the content, otherwise V3000. Only an
-    /// [`UnsupportedRepresentation`](DiagnosticKind::Unsupported)
-    /// failure promotes; any other failure is returned as is.
+    /// V2000 when it can represent the content, otherwise V3000. Only a
+    /// [`DiagnosticKind::Unsupported`] failure promotes; any other failure is
+    /// returned as is.
     #[default]
     Auto,
     /// Fixed-width V2000, failing on content it cannot represent.
@@ -28,6 +29,8 @@ pub enum MolfileWriteVersion {
     V3000,
 }
 
+/// Options of Molfile writing; the default writes
+/// [`MolfileWriteVersion::Auto`] and fails on a periodic cell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MolfileWriteOptions {
     version: MolfileWriteVersion,
@@ -37,6 +40,7 @@ pub struct MolfileWriteOptions {
 }
 
 impl MolfileWriteOptions {
+    /// Connection-table version to emit.
     pub const fn version(&self) -> MolfileWriteVersion {
         self.version
     }
@@ -116,6 +120,7 @@ pub struct MolfileSource<'a> {
 #[derive(Debug, Clone, Copy)]
 enum MolfileContent<'a> {
     Molecule(&'a Molecule),
+    /// A model snapshot, written with its coordinates in angstroms.
     Model(ModelView<'a>),
 }
 

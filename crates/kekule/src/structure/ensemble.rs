@@ -134,10 +134,12 @@ impl Ensemble {
         }
     }
 
+    /// The topology shared by every member.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
+    /// A shared handle to the topology; cloning the [`Arc`] copies no topology data.
     pub fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
     }
@@ -147,14 +149,18 @@ impl Ensemble {
         &self.properties
     }
 
+    /// Mutable ensemble-level annotations. Member properties are edited through
+    /// [`Self::get_mut`].
     pub fn properties_mut(&mut self) -> &mut OwnerProperties {
         &mut self.properties
     }
 
+    /// Number of members.
     pub fn len(&self) -> usize {
         self.members.len()
     }
 
+    /// Whether the ensemble has no members.
     pub fn is_empty(&self) -> bool {
         self.members.is_empty()
     }
@@ -300,6 +306,8 @@ impl Ensemble {
         (self.topology, self.properties, self.members)
     }
 
+    /// Consumes the ensemble, returning its members in order and dropping the
+    /// topology and ensemble properties.
     pub fn into_items(self) -> Vec<EnsembleMember> {
         self.members
     }
@@ -609,6 +617,7 @@ impl EnsembleMember {
         self
     }
 
+    /// Number of atoms, the length of every dense per-atom array of the member.
     pub fn atom_count(&self) -> usize {
         self.positions.len()
     }
@@ -765,10 +774,12 @@ impl<'a> EnsembleMemberView<'a> {
         Ok(Self { topology, member })
     }
 
+    /// The topology the member is bound to, with the view's full lifetime.
     pub fn topology(self) -> &'a Topology {
         self.topology
     }
 
+    /// A shared handle to the bound topology.
     pub fn shared_topology(self) -> Arc<Topology> {
         Arc::clone(self.topology)
     }

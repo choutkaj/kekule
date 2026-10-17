@@ -1,3 +1,5 @@
+//! Parse a chiral SMILES, perceive it and assign CIP descriptors.
+
 use std::error::Error;
 
 use kekule::{smiles, stereo};

@@ -1,3 +1,6 @@
+//! CIF/mmCIF data documents: data blocks of scalar items and loops, parsed
+//! without molecular meaning, and the entry points that interpret them as
+//! macromolecular structures.
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
@@ -127,12 +130,18 @@ impl Span {
     }
 }
 
+/// A parsed CIF/mmCIF document: its data blocks as parsed, without
+/// molecular meaning.
+///
+/// Block names are unique, compared case-insensitively, and every document has
+/// at least one block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifDocument {
     blocks: Vec<MmcifBlock>,
 }
 
 impl MmcifDocument {
+    /// The data blocks in source order.
     pub fn blocks(&self) -> &[MmcifBlock] {
         &self.blocks
     }
@@ -141,6 +150,23 @@ impl MmcifDocument {
     /// supplied order. Repeated selections are retained. Exactly one atom-site
     /// block is required; atom identities, chemistry and topology layout must
     /// agree between selections. No combinations or statistical weights are inferred.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::interpret`] for each selection, with
+    /// [`FormatErrorDetail::Conformation`](crate::diagnostics::FormatErrorDetail::Conformation)
+    /// naming the failing one, and
+    /// [`Inconsistent`](DiagnosticKind::Inconsistent) errors whose
+    /// [`detail`](FormatError::detail) is
+    /// [`EmptyConformationSelection`](crate::diagnostics::FormatErrorDetail::EmptyConformationSelection)
+    /// for no selections,
+    /// [`NoCoordinateModels`](crate::diagnostics::FormatErrorDetail::NoCoordinateModels)
+    /// or
+    /// [`MultipleAtomSiteBlocks`](crate::diagnostics::FormatErrorDetail::MultipleAtomSiteBlocks)
+    /// without exactly one atom-site block, or, when selections disagree,
+    /// [`InconsistentAtomSet`](crate::diagnostics::FormatErrorDetail::InconsistentAtomSet),
+    /// [`InconsistentDenseAtomOrder`](crate::diagnostics::FormatErrorDetail::InconsistentDenseAtomOrder),
+    /// or [`InconsistentTopology`](crate::diagnostics::FormatErrorDetail::InconsistentTopology).
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
@@ -148,6 +174,8 @@ impl MmcifDocument {
         interpret_mmcif_conformations(self, selections)
     }
 
+    /// The block named `name` (without `data_`), compared case-insensitively;
+    /// `None` when there is none.
     pub fn block(&self, name: &str) -> Option<&MmcifBlock> {
         self.blocks
             .iter()
@@ -157,6 +185,24 @@ impl MmcifDocument {
     /// Interprets the exactly one structural block as one selected coordinate
     /// model under the model, alternate-location, and connectivity policy of
     /// `options`.
+    ///
+    /// # Errors
+    ///
+    /// An interpretation [`FormatError`] of kind
+    /// [`Inconsistent`](DiagnosticKind::Inconsistent) when no block or more
+    /// than one block has `_atom_site` rows, when the model or
+    /// alternate-location selection does not match the source, or when
+    /// records contradict each other;
+    /// [`InvalidValue`](DiagnosticKind::InvalidValue) or
+    /// [`InvalidReference`](DiagnosticKind::InvalidReference) for malformed or
+    /// dangling atom-site, entity, or connection fields;
+    /// [`Unsupported`](DiagnosticKind::Unsupported) for content outside the
+    /// supported model, such as alternate locations under
+    /// [`AltLocPolicy::ErrorOnAlternateLocations`](super::AltLocPolicy::ErrorOnAlternateLocations)
+    /// or a residue without bond evidence when distance inference is off;
+    /// [`Limit`](DiagnosticKind::Limit) for coordinates outside the supported
+    /// range; and [`Chemistry`](DiagnosticKind::Chemistry) when the molecules
+    /// cannot be published.
     pub fn interpret(
         &self,
         options: StructureInterpretOptions,
@@ -167,6 +213,22 @@ impl MmcifDocument {
     /// Interprets the coordinate models that `options` selects, by default
     /// all of them, in the exactly one structural block as an ensemble of
     /// equally weighted members.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::interpret`] for each member, with
+    /// [`FormatErrorDetail::Model`](crate::diagnostics::FormatErrorDetail::Model)
+    /// naming the failing model, and
+    /// [`Inconsistent`](DiagnosticKind::Inconsistent) errors whose
+    /// [`detail`](FormatError::detail) is
+    /// [`NoCoordinateModels`](crate::diagnostics::FormatErrorDetail::NoCoordinateModels),
+    /// [`MultipleAtomSiteBlocks`](crate::diagnostics::FormatErrorDetail::MultipleAtomSiteBlocks),
+    /// [`UnknownRequestedModel`](crate::diagnostics::FormatErrorDetail::UnknownRequestedModel),
+    /// [`DuplicateRequestedModel`](crate::diagnostics::FormatErrorDetail::DuplicateRequestedModel),
+    /// or, when members disagree,
+    /// [`InconsistentAtomSet`](crate::diagnostics::FormatErrorDetail::InconsistentAtomSet),
+    /// [`InconsistentDenseAtomOrder`](crate::diagnostics::FormatErrorDetail::InconsistentDenseAtomOrder),
+    /// or [`InconsistentTopology`](crate::diagnostics::FormatErrorDetail::InconsistentTopology).
     pub fn interpret_ensemble(
         &self,
         options: StructureEnsembleInterpretOptions,
@@ -179,6 +241,24 @@ impl MmcifDocument {
 ///
 /// The block shares one copy of the source text with its document; items and
 /// loops are read through borrowed views.
+///
+/// ```
+/// use kekule::mmcif::{self, MmcifParseOptions};
+///
+/// let cif = "data_demo\n_cell.length_a 10.5\nloop_\n_atom_site.id\n_atom_site.type_symbol\n\
+///            1 C\n2 'O'\n";
+/// let document = mmcif::parse_str(cif, MmcifParseOptions::default())?;
+/// let block = document.block("DEMO").unwrap();
+/// assert_eq!(block.name(), "demo");
+/// assert_eq!(block.item("_cell.length_a").unwrap().text(), "10.5");
+/// let atoms = block.loop_with_tag("_atom_site.type_symbol").unwrap();
+/// assert_eq!(atoms.row_count(), 2);
+/// let column = atoms.column_index("_atom_site.type_symbol").unwrap();
+/// let symbol = atoms.value_at(1, column).unwrap();
+/// assert_eq!((symbol.text(), symbol.line()), ("O", 7));
+/// assert_eq!(block.item("_cell.length_b"), None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct MmcifBlock {
     name: String,
@@ -215,12 +295,19 @@ impl fmt::Debug for MmcifBlock {
 }
 
 impl MmcifBlock {
+    /// The block name, without the `data_` prefix.
     pub fn name(&self) -> &str {
         &self.name
     }
 
     /// Interprets explicit selections from this block as an unweighted ensemble.
-    /// See [`MmcifDocument::interpret_conformations`] for compatibility requirements.
+    /// See [`MmcifDocument::interpret_conformations`] for compatibility
+    /// requirements.
+    ///
+    /// # Errors
+    ///
+    /// As [`MmcifDocument::interpret_conformations`], except that this block
+    /// is interpreted whatever the other blocks contain.
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
@@ -245,6 +332,13 @@ impl MmcifBlock {
     /// Inventories alternate labels and stable residue identities without
     /// selecting coordinates or changing the source document. Identities can be
     /// used in [`super::AltLocSelection`] overrides and residue groups.
+    ///
+    /// # Errors
+    ///
+    /// As [`MmcifDocument::interpret`] for reading the block's atom sites,
+    /// entities, and declared alternate-location combinations; a block
+    /// without `_atom_site` rows is
+    /// [`Inconsistent`](DiagnosticKind::Inconsistent).
     pub fn alternate_locations(&self) -> Result<Vec<super::AltLocResidue>, FormatError> {
         super::structure_interpret::alternate_location_inventory(self)
     }
@@ -267,6 +361,11 @@ impl MmcifBlock {
 
     /// Interprets one selected coordinate model of this block under the
     /// policy of `options`.
+    ///
+    /// # Errors
+    ///
+    /// As [`MmcifDocument::interpret`], except that this block is
+    /// interpreted whatever the other blocks contain.
     pub fn interpret(
         &self,
         options: StructureInterpretOptions,
@@ -276,6 +375,11 @@ impl MmcifBlock {
 
     /// Interprets the coordinate models that `options` selects, by default
     /// all of them, in this block as an ensemble of equally weighted members.
+    ///
+    /// # Errors
+    ///
+    /// As [`MmcifDocument::interpret_ensemble`], except that this block is
+    /// interpreted whatever the other blocks contain.
     pub fn interpret_ensemble(
         &self,
         options: StructureEnsembleInterpretOptions,
@@ -288,7 +392,9 @@ impl MmcifBlock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MmcifEntry<'a> {
+    /// A scalar `_tag value` item.
     Item(MmcifItem<'a>),
+    /// A `loop_` table.
     Loop(MmcifLoopTable<'a>),
 }
 
@@ -300,10 +406,12 @@ pub struct MmcifItem<'a> {
 }
 
 impl<'a> MmcifItem<'a> {
+    /// The tag as written, including its leading `_`.
     pub fn tag(&self) -> &'a str {
         &self.data.tag
     }
 
+    /// The item's value.
     pub fn value(&self) -> MmcifValue<'a> {
         MmcifValue::new(self.source, self.data.value)
     }
@@ -327,10 +435,12 @@ pub struct MmcifLoopTable<'a> {
 }
 
 impl<'a> MmcifLoopTable<'a> {
+    /// The column tags as written, in column order.
     pub fn tags(&self) -> &'a [String] {
         &self.data.tags
     }
 
+    /// The number of rows; parsed loops are never ragged.
     pub fn row_count(&self) -> usize {
         self.data.values.len() / self.data.tags.len()
     }
@@ -344,11 +454,14 @@ impl<'a> MmcifLoopTable<'a> {
             .position(|candidate| candidate.eq_ignore_ascii_case(tag))
     }
 
+    /// The cell at `row` in the column of `tag`, matching it
+    /// case-insensitively; `None` when the row or the tag is not in the table.
     pub fn value(&self, row: usize, tag: &str) -> Option<MmcifValue<'a>> {
         self.value_at(row, self.column_index(tag)?)
     }
 
-    /// The cell at a row and a column from [`Self::column_index`].
+    /// The cell at a row and a column from [`Self::column_index`]; `None`
+    /// when either is out of range.
     pub fn value_at(&self, row: usize, column: usize) -> Option<MmcifValue<'a>> {
         if row >= self.row_count() || column >= self.data.tags.len() {
             return None;
@@ -358,7 +471,7 @@ impl<'a> MmcifLoopTable<'a> {
         Some(MmcifValue::new(self.source, span))
     }
 
-    /// The cells of one row in tag order.
+    /// The cells of one row in tag order; `None` when `row` is out of range.
     pub fn row(&self, row: usize) -> Option<impl ExactSizeIterator<Item = MmcifValue<'a>> + 'a> {
         if row >= self.row_count() {
             return None;
@@ -397,14 +510,18 @@ impl<'a> MmcifValue<'a> {
         }
     }
 
+    /// The value text without its quotes or semicolon delimiters; a missing
+    /// value is its `.` or `?` marker.
     pub fn text(&self) -> &'a str {
         self.text
     }
 
+    /// The 1-based source line the value starts on.
     pub const fn line(&self) -> usize {
         self.line
     }
 
+    /// [`Self::line`] as a source location.
     pub const fn location(&self) -> SourceLocation {
         SourceLocation::at_line(self.line)
     }
@@ -414,6 +531,7 @@ impl<'a> MmcifValue<'a> {
         self.bare && matches!(self.text, "." | "?")
     }
 
+    /// The text, or `None` for a missing value (see [`Self::is_missing`]).
     pub fn optional_text(&self) -> Option<&'a str> {
         (!self.is_missing()).then_some(self.text)
     }

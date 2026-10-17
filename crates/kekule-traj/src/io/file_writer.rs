@@ -78,30 +78,35 @@ impl TrajectoryWriteOptions {
         }
     }
 
+    /// Sets [`Self::overwrite_policy`].
     #[must_use]
     pub fn with_overwrite_policy(mut self, overwrite: OverwritePolicy) -> Self {
         self.overwrite = overwrite;
         self
     }
 
+    /// Sets [`Self::xyz_options`].
     #[must_use]
     pub fn with_xyz_options(mut self, options: xyz::XyzWriteOptions) -> Self {
         self.xyz = options;
         self
     }
 
+    /// Sets [`Self::dcd_options`].
     #[must_use]
     pub fn with_dcd_options(mut self, options: dcd::DcdWriteOptions) -> Self {
         self.dcd = options;
         self
     }
 
+    /// Sets [`Self::trr_options`].
     #[must_use]
     pub fn with_trr_options(mut self, options: trr::TrrWriteOptions) -> Self {
         self.trr = options;
         self
     }
 
+    /// Sets [`Self::xtc_options`].
     #[must_use]
     pub fn with_xtc_options(mut self, options: xtc::XtcWriteOptions) -> Self {
         self.xtc = options;
@@ -113,22 +118,28 @@ impl TrajectoryWriteOptions {
         self.format
     }
 
+    /// What to do when the destination exists; [`OverwritePolicy::Forbid`] by
+    /// default.
     pub const fn overwrite_policy(&self) -> OverwritePolicy {
         self.overwrite
     }
 
+    /// Options for the XYZ writer, used when that format is selected.
     pub const fn xyz_options(&self) -> &xyz::XyzWriteOptions {
         &self.xyz
     }
 
+    /// Options for the DCD writer, used when that format is selected.
     pub const fn dcd_options(&self) -> &dcd::DcdWriteOptions {
         &self.dcd
     }
 
+    /// Options for the TRR writer, used when that format is selected.
     pub const fn trr_options(&self) -> &trr::TrrWriteOptions {
         &self.trr
     }
 
+    /// Options for the XTC writer, used when that format is selected.
     pub const fn xtc_options(&self) -> &xtc::XtcWriteOptions {
         &self.xtc
     }
@@ -244,6 +255,15 @@ impl FileTrajectoryWriter {
     ///
     /// Finishing before any successful frame write returns a structured error
     /// and removes the unpublished temporary sibling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] after an earlier failed
+    /// frame write, when no frame was written, or when the stream ends in a
+    /// partial frame; the codec's finalization errors; and
+    /// [`TrajectoryIoErrorKind::Io`] when flushing, synchronizing or
+    /// publishing fails, including when [`OverwritePolicy::Forbid`] finds the
+    /// destination created meanwhile.
     pub fn finish(mut self) -> Result<(), TrajectoryIoError> {
         let label = self.destination.display().to_string();
         if self.failed {
@@ -280,6 +300,7 @@ impl FileTrajectoryWriter {
         sync_parent_directory(&self.destination).map_err(finish_error)
     }
 
+    /// The format being written.
     pub const fn format(&self) -> TrajectoryFormat {
         self.format
     }
@@ -347,6 +368,15 @@ impl Drop for FileTrajectoryWriter {
 /// The destination is published atomically only after every frame and finalization
 /// succeeds. Empty trajectories are rejected by the writer.
 ///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when no format is given and
+/// the extension names none, [`TrajectoryIoErrorKind::UnsupportedField`] for
+/// collection properties or a frame field the format cannot store, and the
+/// errors of [`create_trajectory_writer`], the codec's
+/// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`]. No
+/// file is published on error.
+///
 /// ```no_run
 /// # use kekule::structure::Trajectory;
 /// # fn save(trajectory: &Trajectory) -> Result<(), kekule_traj::TrajectoryIoError> {
@@ -390,6 +420,16 @@ fn resolve_format(
 ///
 /// The codec is the format of `options` or, by default, the one the
 /// destination extension names, as for [`write_trajectory`].
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when no format is given and
+/// the extension names none, [`TrajectoryIoErrorKind::Io`] with
+/// [`std::io::ErrorKind::AlreadyExists`] when the destination exists under
+/// [`OverwritePolicy::Forbid`] or another I/O error when the temporary file
+/// cannot be created, [`TrajectoryIoErrorKind::UnsupportedVariant`] when
+/// [`OverwritePolicy::Forbid`] is used where hard links are unavailable, and
+/// the option errors of the selected codec writer's constructor.
 pub fn create_trajectory_writer(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,

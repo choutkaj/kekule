@@ -15,7 +15,8 @@ type RankingResult<T> = std::result::Result<T, CipRankingError>;
 #[non_exhaustive]
 pub enum CipRankingError {
     /// Expansion exceeded [`CipAssignmentOptions::max_depth`]
-    /// ([`Resource::DigraphDepth`](crate::diagnostics::Resource::DigraphDepth)) or [`CipAssignmentOptions::max_nodes`]
+    /// ([`Resource::DigraphDepth`](crate::diagnostics::Resource::DigraphDepth))
+    /// or [`CipAssignmentOptions::max_nodes`]
     /// ([`Resource::DigraphNodes`](crate::diagnostics::Resource::DigraphNodes)).
     LimitExceeded(LimitExceeded),
     /// The ligands could not be ordered, for example because a nested
@@ -121,6 +122,8 @@ impl Default for CipAssignmentOptions {
     }
 }
 
+/// The outcome of a successful [`assign_cip_descriptors`] call: every stereo
+/// element of the molecule is either assigned or skipped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CipAssignmentReport {
     pub(crate) assigned: Vec<CipAssignment>,
@@ -128,10 +131,12 @@ pub struct CipAssignmentReport {
 }
 
 impl CipAssignmentReport {
+    /// The installed descriptors, in stereo element order.
     pub fn assigned(&self) -> &[CipAssignment] {
         &self.assigned
     }
 
+    /// The stereo elements left without a descriptor, in stereo element order.
     pub fn skipped(&self) -> &[CipSkipped] {
         &self.skipped
     }
@@ -156,6 +161,7 @@ impl fmt::Display for CipAssignmentError {
 
 impl std::error::Error for CipAssignmentError {}
 
+/// A CIP descriptor installed on one stereo element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CipAssignment {
     pub(crate) element: StereoElementId,
@@ -163,15 +169,19 @@ pub struct CipAssignment {
 }
 
 impl CipAssignment {
+    /// The stereo element that received the descriptor.
     pub const fn element(&self) -> StereoElementId {
         self.element
     }
 
+    /// The assigned descriptor.
     pub const fn descriptor(&self) -> StereoDescriptor {
         self.descriptor
     }
 }
 
+/// A stereo element that [`assign_cip_descriptors`] left without a
+/// descriptor, and why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CipSkipped {
     pub(crate) element: StereoElementId,
@@ -179,10 +189,12 @@ pub struct CipSkipped {
 }
 
 impl CipSkipped {
+    /// The skipped stereo element.
     pub const fn element(&self) -> StereoElementId {
         self.element
     }
 
+    /// Why no descriptor was assigned.
     pub const fn reason(&self) -> CipSkippedReason {
         self.reason
     }
@@ -190,8 +202,12 @@ impl CipSkipped {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+/// Why a stereo element received no CIP descriptor.
 pub enum CipSkippedReason {
+    /// The element asserts stereo whose local configuration is unknown.
     UnknownConfiguration,
+    /// CIP ranking shows the element is not stereogenic: its configurations
+    /// are equivalent.
     NotStereogenic,
 }
 
@@ -243,6 +259,16 @@ pub enum CipAssignmentIssue {
 /// `options` bounds the expansion. Exceeding a bound returns an issue and
 /// preserves the previous perception; no label is inferred from a truncated
 /// tie.
+///
+/// # Errors
+///
+/// [`CipAssignmentError`] listing every issue; nothing is installed. Its
+/// issues are [`CipAssignmentIssue::InvalidStereo`] for every stereo
+/// validation failure, else [`CipAssignmentIssue::UnknownHydrogenCount`] for
+/// every atom with an unknown implicit hydrogen count, else
+/// [`CipAssignmentIssue::LimitExceeded`] and
+/// [`CipAssignmentIssue::UnresolvedPriority`] for each element that could not
+/// be ranked.
 pub fn assign_cip_descriptors(
     mol: &mut Molecule,
     options: CipAssignmentOptions,

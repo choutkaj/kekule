@@ -76,6 +76,12 @@ pub struct PeriodicGeometry {
 }
 
 impl PeriodicGeometry {
+    /// Prepares the reciprocal basis of `cell`.
+    ///
+    /// # Errors
+    ///
+    /// [`PeriodicGeometryError::NumericalFailure`] when the reciprocal basis is
+    /// not finite, such as for a nearly degenerate cell.
     pub fn new(cell: PeriodicCell) -> Result<Self, PeriodicGeometryError> {
         let [a, b, c] = cell.vectors().into_value();
         let inverse_volume = 1.0 / a.dot(b.cross(c));
@@ -95,6 +101,12 @@ impl PeriodicGeometry {
     }
 
     /// Fractional coordinates of a Cartesian vector.
+    ///
+    /// # Errors
+    ///
+    /// [`PeriodicGeometryError::Unit`] when `vector` is not a length, and
+    /// [`PeriodicGeometryError::NumericalFailure`] when a coordinate is not
+    /// finite.
     pub fn fractional(&self, vector: Quantity<Vector3>) -> Result<[f64; 3], PeriodicGeometryError> {
         self.fractional_canonical(canonical(vector)?)
     }
@@ -104,7 +116,12 @@ impl PeriodicGeometry {
         Quantity::new(self.cartesian_canonical(fractional), CANONICAL_LENGTH_UNIT)
     }
 
-    /// The shortest lattice image of a displacement.
+    /// The shortest lattice image of a displacement, translating only along
+    /// periodic axes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::nearest_image`].
     pub fn minimum_image(
         &self,
         delta: Quantity<Vector3>,
@@ -115,6 +132,17 @@ impl PeriodicGeometry {
 
     /// The shortest lattice image of a displacement and the lattice
     /// translation, in cell vectors, subtracted to reach it.
+    ///
+    /// Only periodic axes are translated; the index of a non-periodic axis is
+    /// zero.
+    ///
+    /// # Errors
+    ///
+    /// [`PeriodicGeometryError::Unit`] when `delta` is not a length,
+    /// [`PeriodicGeometryError::NumericalFailure`] when the search exceeds
+    /// numerical precision or range, and
+    /// [`PeriodicGeometryError::LimitExceeded`] when more than
+    /// [`MAX_LATTICE_IMAGES`] candidate images would need examination.
     pub fn nearest_image(
         &self,
         delta: Quantity<Vector3>,
@@ -124,7 +152,13 @@ impl PeriodicGeometry {
     }
 
     /// Shortest nonzero lattice translation along periodic axes.
-    /// Rejects searches requiring more than one million integer candidates.
+    ///
+    /// # Errors
+    ///
+    /// [`PeriodicGeometryError::NumericalFailure`] when the search exceeds
+    /// numerical precision or range, and
+    /// [`PeriodicGeometryError::LimitExceeded`] when more than
+    /// [`MAX_LATTICE_IMAGES`] integer candidates would need examination.
     pub fn shortest_translation(&self) -> Result<Quantity<Vector3>, PeriodicGeometryError> {
         self.shortest_translation_canonical()
             .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))

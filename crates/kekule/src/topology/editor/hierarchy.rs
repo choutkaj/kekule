@@ -8,9 +8,11 @@ pub struct EditChain {
     pub(super) slot: usize,
 }
 impl EditChain {
+    /// The label chain identifier.
     pub fn label_id(&self) -> &str {
         &self.label
     }
+    /// The author chain identifier, or `None`.
     pub fn author_id(&self) -> Option<&str> {
         self.author.as_deref()
     }
@@ -30,24 +32,31 @@ pub struct EditResidue {
     pub(super) slot: usize,
 }
 impl EditResidue {
+    /// The handle of the chain containing this residue.
     pub fn chain(&self) -> EditChainId {
         self.chain
     }
+    /// The residue (component) name.
     pub fn name(&self) -> &str {
         &self.name
     }
+    /// The label component identifier, or `None`.
     pub fn label_comp_id(&self) -> Option<&str> {
         self.label_comp.as_deref()
     }
+    /// The author component identifier, or `None`.
     pub fn author_comp_id(&self) -> Option<&str> {
         self.author_comp.as_deref()
     }
+    /// The label sequence number, or `None`.
     pub fn label_seq_id(&self) -> Option<i32> {
         self.label_seq
     }
+    /// The author sequence identifier, or `None`.
     pub fn author_seq_id(&self) -> Option<&str> {
         self.author_seq.as_deref()
     }
+    /// The insertion code, or `None`.
     pub fn insertion_code(&self) -> Option<&str> {
         self.insertion.as_deref()
     }
@@ -66,12 +75,15 @@ pub struct EditAtomSite {
     pub(super) slot: usize,
 }
 impl EditAtomSite {
+    /// The handle of the residue containing this site.
     pub fn residue(&self) -> EditResidueId {
         self.residue
     }
+    /// The handle of the atom placed by this site.
     pub fn atom(&self) -> EditAtomId {
         self.atom
     }
+    /// Source atom-site labels.
     pub fn metadata(&self) -> &AtomSiteMetadata {
         &self.metadata
     }
@@ -90,12 +102,15 @@ pub(super) struct EditHierarchy {
 }
 
 impl TopologyEditor {
+    /// Live draft chains in handle order.
     pub fn chains(&self) -> impl ExactSizeIterator<Item = (EditChainId, &EditChain)> {
         self.hierarchy.chains.iter().map(|(&id, c)| (id, c))
     }
+    /// Live draft residues in handle order.
     pub fn residues(&self) -> impl ExactSizeIterator<Item = (EditResidueId, &EditResidue)> {
         self.hierarchy.residues.iter().map(|(&id, r)| (id, r))
     }
+    /// Live draft atom sites in handle order.
     pub fn atom_sites(&self) -> impl ExactSizeIterator<Item = (EditAtomSiteId, &EditAtomSite)> {
         self.hierarchy.sites.iter().map(|(&id, s)| (id, s))
     }
@@ -147,6 +162,12 @@ impl TopologyEditor {
             .ok_or(TopologyEditError::InvalidAtomSite(id))
     }
 
+    /// The draft handle of a source atom site.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidSourceAtomSite`] when the site is not in the
+    /// source or was deleted.
     pub fn atom_site_handle(
         &self,
         source: AtomSiteId,
@@ -158,6 +179,11 @@ impl TopologyEditor {
             .filter(|id| self.hierarchy.sites.contains_key(id))
             .ok_or(TopologyEditError::InvalidSourceAtomSite(source))
     }
+    /// The site placing `atom`, or `None` when the atom has no site.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtom`] when `atom` is deleted or foreign.
     pub fn atom_site_for_atom(
         &self,
         atom: EditAtomId,
@@ -165,6 +191,11 @@ impl TopologyEditor {
         self.atom_location(atom)?;
         Ok(self.hierarchy.atom_sites.get(&atom).copied())
     }
+    /// Adds an empty chain with a label and optional author identifier.
+    ///
+    /// # Errors
+    ///
+    /// Currently never fails.
     pub fn add_chain(
         &mut self,
         label: impl Into<String>,
@@ -184,6 +215,12 @@ impl TopologyEditor {
         self.changed();
         Ok(id)
     }
+    /// Appends a residue to `chain`. `name` also becomes the label component ID;
+    /// the class is inferred at publication unless assigned.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidChain`] when `chain` is deleted or foreign.
     pub fn add_residue(
         &mut self,
         chain: EditChainId,
@@ -216,6 +253,14 @@ impl TopologyEditor {
         self.changed();
         Ok(id)
     }
+    /// Places `atom` in `residue`. Invalidates inferred classes the placement
+    /// affects.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidResidue`] or [`TopologyEditError::InvalidAtom`]
+    /// for deleted or foreign handles, or
+    /// [`TopologyEditError::DuplicateAtomPlacement`] when `atom` already has a site.
     pub fn add_atom_site(
         &mut self,
         residue: EditResidueId,
@@ -250,6 +295,11 @@ impl TopologyEditor {
         self.changed();
         Ok(id)
     }
+    /// Replaces a chain's label and author identifiers.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidChain`] when `id` is deleted or foreign.
     pub fn set_chain_identifiers(
         &mut self,
         id: EditChainId,
@@ -267,6 +317,12 @@ impl TopologyEditor {
         self.changed();
         Ok(())
     }
+    /// Replaces a residue's label and author component identifiers, invalidating
+    /// its inferred class.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidResidue`] when `id` is deleted or foreign.
     pub fn set_residue_component_ids(
         &mut self,
         id: EditResidueId,
@@ -284,6 +340,11 @@ impl TopologyEditor {
         self.changed();
         Ok(())
     }
+    /// Explicitly assigns a residue's class, overriding inference at publication.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidResidue`] when `id` is deleted or foreign.
     pub fn set_residue_class(
         &mut self,
         id: EditResidueId,
@@ -316,6 +377,12 @@ impl TopologyEditor {
         self.revision += 1;
         Ok(())
     }
+    /// Replaces one atom site's source metadata. Changed atom names invalidate
+    /// the inferred class of the atom's molecule.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtomSite`] when `id` is deleted or foreign.
     pub fn set_atom_site_metadata(
         &mut self,
         id: EditAtomSiteId,
@@ -334,6 +401,12 @@ impl TopologyEditor {
         self.changed();
         Ok(())
     }
+    /// Moves an atom site to another residue.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::InvalidAtomSite`] or [`TopologyEditError::InvalidResidue`]
+    /// for deleted or foreign handles.
     pub fn set_atom_site_residue(
         &mut self,
         id: EditAtomSiteId,

@@ -99,10 +99,13 @@ impl Default for MolfileParseOptions {
     }
 }
 
+/// Connection-table version declared on the counts line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MolfileVersion {
+    /// Fixed-width V2000 connection table.
     V2000,
+    /// Extended `M  V30` connection table.
     V3000,
 }
 
@@ -115,6 +118,7 @@ impl MolfileVersion {
     }
 }
 
+/// The three header lines of a Molfile, kept verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MolfileHeader {
     pub(super) title: String,
@@ -123,14 +127,17 @@ pub struct MolfileHeader {
 }
 
 impl MolfileHeader {
+    /// Header line 1, the molecule name; may be empty.
     pub fn title(&self) -> &str {
         &self.title
     }
 
+    /// Header line 2, the program/user/date line; may be empty.
     pub fn program(&self) -> &str {
         &self.program
     }
 
+    /// Header line 3, the comment line; may be empty.
     pub fn comment(&self) -> &str {
         &self.comment
     }
@@ -141,8 +148,11 @@ impl MolfileHeader {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum MolfileRadical {
+    /// Radical code 1: a singlet divalent radical (carbene).
     Singlet,
+    /// Radical code 2, or V2000 charge code 4: a monovalent doublet radical.
     Doublet,
+    /// Radical code 3: a triplet divalent radical.
     Triplet,
 }
 
@@ -202,6 +212,8 @@ impl MolfileAtom {
         self.position
     }
 
+    /// Formal charge in elementary charges (e), from the V2000 charge code,
+    /// an `M  CHG` record, or V3000 `CHG`; zero when none is declared.
     pub const fn formal_charge(&self) -> i32 {
         self.formal_charge
     }
@@ -218,6 +230,7 @@ impl MolfileAtom {
         self.mass_difference
     }
 
+    /// Declared radical state; `None` when none is declared.
     pub const fn radical(&self) -> Option<MolfileRadical> {
         self.radical
     }
@@ -228,10 +241,12 @@ impl MolfileAtom {
         self.valence
     }
 
+    /// Atom-atom mapping number; `None` when the field is absent or zero.
     pub const fn atom_map(&self) -> Option<u32> {
         self.atom_map
     }
 
+    /// Declared V3000 `CFG` parity; always `None` for V2000 atoms.
     pub const fn parity(&self) -> Option<MolfileAtomParity> {
         self.parity
     }
@@ -246,10 +261,15 @@ impl MolfileAtom {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum MolfileBondOrder {
+    /// Zero-order bond (type 0).
     Zero,
+    /// Single bond (type 1).
     Single,
+    /// Double bond (type 2).
     Double,
+    /// Triple bond (type 3).
     Triple,
+    /// Aromatic bond (type 4).
     Aromatic,
     /// Coordination bond (type 9).
     Dative,
@@ -282,14 +302,17 @@ impl MolfileBond {
         self.atoms
     }
 
+    /// Decoded bond type.
     pub const fn order(&self) -> MolfileBondOrder {
         self.order
     }
 
+    /// Stereo mark; `None` when the bond carries none.
     pub const fn stereo(&self) -> Option<MolfileBondStereo> {
         self.stereo
     }
 
+    /// The bond line; for a continued V3000 line, its first physical line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -301,9 +324,9 @@ impl MolfileBond {
 pub enum MolfileStereoGroupKind {
     /// `MDLV30/STEABS`.
     Absolute,
-    /// `MDLV30/STERELn`.
+    /// `MDLV30/STERELn`, carrying the positive group number `n`.
     Or(usize),
-    /// `MDLV30/STERACn`.
+    /// `MDLV30/STERACn`, carrying the positive group number `n`.
     And(usize),
 }
 
@@ -317,6 +340,7 @@ pub struct MolfileStereoGroup {
 }
 
 impl MolfileStereoGroup {
+    /// Kind and number of the group.
     pub const fn kind(&self) -> MolfileStereoGroupKind {
         self.kind
     }
@@ -346,17 +370,37 @@ pub enum MolfileUnsupportedContent {
     /// A V3000 atom option other than `CFG`, `CHG`, `MASS`, `RAD`, and `VAL`,
     /// including a nonzero `HCOUNT`, which is a query constraint. `atom`
     /// indexes [`MolfileDocument::atoms`].
-    AtomOption { atom: usize, key: String },
+    AtomOption {
+        /// Index into [`MolfileDocument::atoms`].
+        atom: usize,
+        /// The option keyword as written, such as `HCOUNT`.
+        key: String,
+    },
     /// A V3000 bond option other than `CFG`. `bond` indexes
     /// [`MolfileDocument::bonds`].
-    BondOption { bond: usize, key: String },
+    BondOption {
+        /// Index into [`MolfileDocument::bonds`].
+        bond: usize,
+        /// The option keyword as written, such as `TOPO`.
+        key: String,
+    },
     /// A nonzero V2000 atom-block query or reaction field: hydrogen count,
     /// stereo care, H0 designator, inversion/retention or exact change. `atom` indexes
     /// [`MolfileDocument::atoms`].
-    AtomField { atom: usize, field: String },
+    AtomField {
+        /// Index into [`MolfileDocument::atoms`].
+        atom: usize,
+        /// Human-readable name of the field.
+        field: String,
+    },
     /// A nonzero V2000 bond-block ring/chain topology or reacting-center
     /// field. `bond` indexes [`MolfileDocument::bonds`].
-    BondField { bond: usize, field: String },
+    BondField {
+        /// Index into [`MolfileDocument::bonds`].
+        bond: usize,
+        /// Human-readable name of the field.
+        field: String,
+    },
     /// A V3000 collection other than enhanced stereo groups, such as
     /// `MDLV30/HILITE`.
     Collection(String),
@@ -390,14 +434,17 @@ pub struct MolfileUnsupported {
 }
 
 impl MolfileUnsupported {
+    /// Pairs unsupported content with the source location it occurs at.
     pub const fn new(content: MolfileUnsupportedContent, location: SourceLocation) -> Self {
         Self { content, location }
     }
 
+    /// What is unsupported.
     pub fn content(&self) -> &MolfileUnsupportedContent {
         &self.content
     }
 
+    /// The line where the content occurs.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -425,10 +472,12 @@ pub struct MolfileDocument {
 }
 
 impl MolfileDocument {
+    /// Version declared on the counts line.
     pub const fn version(&self) -> MolfileVersion {
         self.version
     }
 
+    /// The three header lines.
     pub fn header(&self) -> &MolfileHeader {
         &self.header
     }
@@ -449,6 +498,8 @@ impl MolfileDocument {
         &self.ctab.bonds
     }
 
+    /// V3000 enhanced stereo groups in order of first appearance; always
+    /// empty for V2000.
     pub fn stereo_groups(&self) -> &[MolfileStereoGroup] {
         &self.ctab.stereo_groups
     }
@@ -461,6 +512,17 @@ impl MolfileDocument {
     /// Interprets this document once into connected chemistry with matching
     /// component geometry and source reports. Unsupported content fails or is
     /// omitted and reported, as `options` selects.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] located at the offending atom or record, with kind
+    /// [`DiagnosticKind::Unsupported`] for content in
+    /// [`Self::unsupported`] under the default rejecting policy or valences
+    /// Kekule cannot resolve, [`DiagnosticKind::InvalidValue`] for an unknown
+    /// element symbol or an out-of-range charge or mass,
+    /// [`DiagnosticKind::Inconsistent`] for a declared valence below the
+    /// bonded valence, and [`DiagnosticKind::Chemistry`] when the represented
+    /// chemistry cannot be published.
     pub fn interpret(
         &self,
         options: MolfileInterpretOptions,

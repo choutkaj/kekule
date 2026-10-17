@@ -29,17 +29,25 @@ impl fmt::Debug for MoleculeImager {
 }
 
 impl MoleculeImager {
+    /// Plans the bonded molecules of `topology` once for reuse across frames.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         let topology = topology.into();
         let plan = MoleculePlan::new(&topology);
         Self { topology, plan }
     }
 
+    /// The topology whose layout every frame must share.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
     /// Makes every bonded molecule of the buffered frame whole.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PeriodicError::TopologyMismatch`] when the frame does not
+    /// share the imager's layout, and otherwise the per-frame errors of
+    /// [`super::make_molecules_whole`]. On error the buffer is unchanged.
     pub fn make_whole(
         &self,
         frame_index: usize,
@@ -50,6 +58,13 @@ impl MoleculeImager {
     }
 
     /// Images whole molecules of the buffered frame around the selected anchors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PeriodicError::SelectionTopologyMismatch`],
+    /// [`PeriodicError::EmptyAnchors`] or [`PeriodicError::TopologyMismatch`]
+    /// for mismatched inputs, and otherwise the per-frame errors of
+    /// [`super::image_molecules`]. On error the buffer is unchanged.
     pub fn image(
         &self,
         frame_index: usize,
@@ -137,6 +152,7 @@ struct UnwrapStep {
 }
 
 impl TrajectoryUnwrapper {
+    /// An unwrapper for frames of `topology` that has seen no frame yet.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         Self {
             topology: topology.into(),
@@ -144,18 +160,30 @@ impl TrajectoryUnwrapper {
         }
     }
 
+    /// The topology whose layout every frame must share.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
+    /// The source index of the last successfully unwrapped frame; `None`
+    /// before the first frame or after [`Self::reset`].
     pub fn last_frame_index(&self) -> Option<usize> {
         self.previous.as_ref().map(|frame| frame.index)
     }
+    /// Forgets the previous frame, so the next frame starts a new sequence
+    /// and keeps its coordinates.
     pub fn reset(&mut self) {
         self.previous = None;
     }
 
     /// Transactionally unwraps a reusable buffer and advances the sequence
     /// only on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PeriodicError::TopologyMismatch`] when the frame does not
+    /// share the unwrapper's layout, [`PeriodicError::NonSequentialFrame`]
+    /// when `frame_index` does not follow [`Self::last_frame_index`], and
+    /// otherwise the per-frame errors of [`super::unwrap_trajectory`].
     pub fn unwrap(
         &mut self,
         frame_index: usize,

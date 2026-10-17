@@ -173,6 +173,7 @@ impl Default for MoleculeEditor {
 }
 
 impl MoleculeEditor {
+    /// An empty draft with no atoms, perception, or properties.
     pub fn new() -> Self {
         Self::default()
     }
@@ -193,6 +194,7 @@ impl MoleculeEditor {
         self.working.properties_mut()
     }
 
+    /// The draft's installed perception. Chemical edits clear it.
     pub fn perception(&self) -> &Perception {
         self.working.perception()
     }
@@ -212,6 +214,7 @@ impl MoleculeEditor {
         self.working.total_hydrogens(atom)
     }
 
+    /// Removes all installed perception without changing represented chemistry.
     pub fn clear_perception(&mut self) {
         self.working.clear_perception()
     }
@@ -258,6 +261,13 @@ impl MoleculeEditor {
             .ok_or(MoleculeError::InvalidBondId(bond))
     }
 
+    /// Adds an unbonded atom and returns its draft ID. Perception and owner
+    /// properties are cleared.
+    ///
+    /// # Errors
+    ///
+    /// [`MoleculeError::IdentifierCapacityExceeded`] when the draft already
+    /// holds the maximum number of atom slots.
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
         self.working.add_atom(atom)
     }
@@ -309,10 +319,34 @@ impl MoleculeEditor {
         std::mem::take(&mut self.pruned_stereo)
     }
 
+    /// Adds a represented stereo element after validating it against the draft
+    /// graph, and returns its draft ID. The element is stored in canonical
+    /// carrier order, and installed CIP descriptors are cleared.
+    ///
+    /// # Errors
+    ///
+    /// - [`MoleculeError::InvalidAtomId`] or [`MoleculeError::InvalidBondId`]
+    ///   when the element names a missing focus or carrier.
+    /// - [`MoleculeError::InvalidStereoReference`] when the element already
+    ///   names a group (use [`Self::add_stereo_group`]), its carriers are
+    ///   duplicated, non-adjacent or incomplete, its focus bond has the wrong
+    ///   order, or another element already describes the same focus.
+    /// - [`MoleculeError::IdentifierCapacityExceeded`] when no stereo element
+    ///   ID is left.
     pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
         self.working.add_stereo_element(element)
     }
 
+    /// Replaces a stereo element under the same validation as
+    /// [`Self::add_stereo_element`] and returns the previous element. Group
+    /// membership cannot change here: the replacement must name the same
+    /// group as the current element.
+    ///
+    /// # Errors
+    ///
+    /// [`MoleculeError::InvalidStereoElementId`] when `id` names no element;
+    /// otherwise as [`Self::add_stereo_element`], including
+    /// [`MoleculeError::InvalidStereoReference`] for a changed group.
     pub fn replace_stereo_element(
         &mut self,
         id: StereoElementId,
@@ -321,14 +355,38 @@ impl MoleculeEditor {
         self.working.replace_stereo_element(id, replacement)
     }
 
+    /// Removes a stereo element, drops it from its group, and returns it with
+    /// no group. The removal is not listed in
+    /// [`Self::pruned_stereo_elements`].
+    ///
+    /// # Errors
+    ///
+    /// [`MoleculeError::InvalidStereoElementId`] when `id` names no element.
     pub fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
         self.working.remove_stereo_element(id)
     }
 
+    /// Adds an enhanced stereo group, assigns its members to it, and returns
+    /// its draft ID.
+    ///
+    /// # Errors
+    ///
+    /// - [`MoleculeError::InvalidStereoReference`] when the group is empty,
+    ///   lists a member twice, or a member already belongs to a group.
+    /// - [`MoleculeError::InvalidStereoElementId`] when a member names no
+    ///   element.
+    /// - [`MoleculeError::IdentifierCapacityExceeded`] when no stereo group ID
+    ///   is left.
     pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
         self.working.add_stereo_group(group)
     }
 
+    /// Removes an enhanced stereo group and returns it. Its member elements
+    /// remain, ungrouped.
+    ///
+    /// # Errors
+    ///
+    /// [`MoleculeError::InvalidStereoGroupId`] when `id` names no group.
     pub fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup> {
         self.working.remove_stereo_group(id)
     }

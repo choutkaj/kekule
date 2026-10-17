@@ -69,6 +69,7 @@ impl Model {
 }
 
 impl ModelEditor {
+    /// An empty draft with no atoms, positions, cell or annotations.
     pub fn new() -> Self {
         Self::default()
     }
@@ -107,6 +108,17 @@ impl ModelEditor {
         self.structural(|topology| topology.replace_source_instance_stereo(instance, elements))
     }
 
+    /// Adds an isolated atom at `position`, accepting any length unit.
+    ///
+    /// Bond it to an existing atom or publish it as a new molecule instance; see
+    /// [`TopologyEditor::add_atom`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Position`] when the unit is not a length,
+    /// [`ModelEditError::NonFinitePosition`] when the converted position is not
+    /// finite, and [`ModelEditError::Structure`] when capacity is exhausted. The
+    /// draft is unchanged on error.
     pub fn add_atom(
         &mut self,
         atom: Atom,
@@ -120,6 +132,14 @@ impl ModelEditor {
             .set_position(atom_row(slot), Quantity::new(point, CANONICAL_LENGTH_UNIT))?;
         Ok(id)
     }
+    /// Adds a complete molecule occurrence with positions in the molecule's atom
+    /// order; see [`TopologyEditor::add_molecule`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Position`] when the position count differs from
+    /// the molecule's atom count, [`ModelEditError::Structure`] when capacity is
+    /// exhausted, and [`ModelEditError::Topology`] when the molecule is rejected.
     pub fn add_molecule(
         &mut self,
         molecule: Molecule,
@@ -143,18 +163,44 @@ impl ModelEditor {
         }
         Ok(added)
     }
+    /// Replaces the chemistry of one atom, keeping its position and annotations,
+    /// and returns the previous atom.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live atom.
     pub fn replace_atom(&mut self, id: EditAtomId, atom: Atom) -> Result<Atom, ModelEditError> {
         self.structural(|t| t.replace_atom(id, atom))
     }
+    /// Deletes one atom, its incident bonds, hierarchy site, position and
+    /// annotations, and returns the deleted atom.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live atom.
     pub fn delete_atom(&mut self, id: EditAtomId) -> Result<Atom, ModelEditError> {
         self.structural(|t| t.delete_atom(id))
     }
+    /// Deletes several atoms as [`Self::delete_atom`] does, returning them in
+    /// handle order. Every handle is validated before any atom is deleted;
+    /// duplicates are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when a handle names no live atom.
     pub fn delete_atoms(
         &mut self,
         ids: impl IntoIterator<Item = EditAtomId>,
     ) -> Result<Vec<(EditAtomId, Atom)>, ModelEditError> {
         self.structural(|t| t.delete_atoms(ids))
     }
+    /// Deletes every live atom not in `ids`, returning the deleted atoms in
+    /// handle order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when a handle names no live atom;
+    /// nothing is deleted then.
     pub fn retain_atoms(
         &mut self,
         ids: impl IntoIterator<Item = EditAtomId>,
@@ -169,6 +215,13 @@ impl ModelEditor {
     ) -> Result<Vec<(EditAtomId, Atom)>, ModelEditError> {
         self.structural(|t| t.delete_instance(id))
     }
+    /// Adds an asserted bond between two live atoms; atoms of different
+    /// occurrences are merged. See [`TopologyEditor::add_bond`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] for an invalid handle or a bond the
+    /// molecule rejects.
     pub fn add_bond(
         &mut self,
         a: EditAtomId,
@@ -177,15 +230,33 @@ impl ModelEditor {
     ) -> Result<EditBondId, ModelEditError> {
         self.structural(|t| t.add_bond(a, b, order))
     }
+    /// Deletes one bond and its annotations, returning it. Positions are kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live bond.
     pub fn delete_bond(&mut self, id: EditBondId) -> Result<EditBond, ModelEditError> {
         self.structural(|t| t.delete_bond(id))
     }
+    /// Deletes several bonds, returning them in handle order. Every handle is
+    /// validated first; duplicates are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when a handle names no live bond.
     pub fn delete_bonds(
         &mut self,
         ids: impl IntoIterator<Item = EditBondId>,
     ) -> Result<Vec<(EditBondId, EditBond)>, ModelEditError> {
         self.structural(|t| t.delete_bonds(ids))
     }
+    /// Changes the represented order of one bond; see
+    /// [`TopologyEditor::set_bond_order`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] for an invalid handle or an order the
+    /// molecule rejects.
     pub fn set_bond_order(
         &mut self,
         id: EditBondId,
@@ -193,6 +264,13 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         self.structural(|t| t.set_bond_order(id, order))
     }
+    /// Rewires one bond, keeping its handle and annotations; see
+    /// [`TopologyEditor::set_bond_endpoints`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] for an invalid handle or a rejected
+    /// bond.
     pub fn set_bond_endpoints(
         &mut self,
         id: EditBondId,
@@ -201,6 +279,13 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         self.structural(|t| t.set_bond_endpoints(id, a, b))
     }
+    /// Replaces the endpoints and order of one bond transactionally, returning
+    /// the previous bond.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] for an invalid handle or a rejected
+    /// bond; the draft is unchanged then.
     pub fn replace_bond(
         &mut self,
         id: EditBondId,
@@ -220,6 +305,13 @@ impl ModelEditor {
     pub fn position(&self, id: EditAtomId) -> Option<Quantity<Point3>> {
         self.slots.positions.get(self.topology.atom_slot(id).ok()?)
     }
+    /// Replaces the draft position of one atom, accepting any length unit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live atom and
+    /// [`ModelEditError::Structure`] when the unit is not a length or the converted
+    /// position is not finite.
     pub fn set_position(
         &mut self,
         id: EditAtomId,
@@ -264,9 +356,11 @@ impl ModelEditor {
             .collect::<Result<Vec<_>, ModelEditError>>()?;
         Ok(self.slots.positions.set_canonical_batch(&staged)?)
     }
+    /// The draft periodic cell, or `None` for a non-periodic structure.
     pub fn cell(&self) -> Option<&PeriodicCell> {
         self.slots.cell.as_ref()
     }
+    /// Replaces the draft periodic cell; positions are not wrapped or rescaled.
     pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
         self.slots.cell = cell;
     }
@@ -276,6 +370,12 @@ impl ModelEditor {
         self.slots
             .occupancy(atom_row(self.topology.atom_slot(id).ok()?))
     }
+    /// Sets or, with `None`, clears the draft occupancy of one atom.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live atom and
+    /// [`ModelEditError::Structure`] when the occupancy is not finite.
     pub fn set_occupancy(
         &mut self,
         id: EditAtomId,
@@ -290,6 +390,14 @@ impl ModelEditor {
         self.slots
             .b_factor(atom_row(self.topology.atom_slot(id).ok()?))
     }
+    /// Sets or, with `None`, clears the draft isotropic B-factor of one atom,
+    /// accepting any area unit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live atom and
+    /// [`ModelEditError::Structure`] when the unit is not an area or the value is
+    /// not finite.
     pub fn set_b_factor(
         &mut self,
         id: EditAtomId,
@@ -299,6 +407,12 @@ impl ModelEditor {
         Ok(self.slots.set_b_factor(atom_row(slot), value)?)
     }
 
+    /// Adds a hierarchy chain with a label and optional author identifier; see
+    /// [`TopologyEditor::add_chain`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when the hierarchy rejects the chain.
     pub fn add_chain(
         &mut self,
         label: impl Into<String>,
@@ -306,6 +420,11 @@ impl ModelEditor {
     ) -> Result<EditChainId, ModelEditError> {
         self.structural(|t| t.add_chain(label, author))
     }
+    /// Adds a residue to a chain; see [`TopologyEditor::add_residue`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `chain` names no live chain.
     pub fn add_residue(
         &mut self,
         chain: EditChainId,
@@ -316,6 +435,13 @@ impl ModelEditor {
     ) -> Result<EditResidueId, ModelEditError> {
         self.structural(|t| t.add_residue(chain, name, label_seq, author_seq, insertion))
     }
+    /// Places one atom in a residue as an atom site; see
+    /// [`TopologyEditor::add_atom_site`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] for an invalid handle, an atom that
+    /// already has a site, or a site the hierarchy rejects.
     pub fn add_atom_site(
         &mut self,
         residue: EditResidueId,
@@ -324,6 +450,7 @@ impl ModelEditor {
     ) -> Result<EditAtomSiteId, ModelEditError> {
         self.structural(|t| t.add_atom_site(residue, atom, metadata))
     }
+    /// See [`TopologyEditor::set_residue_component_ids`].
     pub fn set_residue_component_ids(
         &mut self,
         id: EditResidueId,
@@ -332,6 +459,12 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         self.structural(|t| t.set_residue_component_ids(id, label, author))
     }
+    /// Replaces the label and author identifiers of one chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] for an invalid handle or rejected
+    /// identifiers.
     pub fn set_chain_identifiers(
         &mut self,
         id: EditChainId,
@@ -340,6 +473,12 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         self.structural(|t| t.set_chain_identifiers(id, label, author))
     }
+    /// Replaces the metadata of one atom site.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] for an invalid handle or rejected
+    /// metadata.
     pub fn set_atom_site_metadata(
         &mut self,
         id: EditAtomSiteId,
@@ -347,6 +486,12 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         self.structural(|t| t.set_atom_site_metadata(id, metadata))
     }
+    /// Moves one atom site to another residue.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] for an invalid handle or a move the
+    /// hierarchy rejects.
     pub fn set_atom_site_residue(
         &mut self,
         id: EditAtomSiteId,
@@ -354,15 +499,38 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         self.structural(|t| t.set_atom_site_residue(id, residue))
     }
+    /// Deletes one hierarchy chain, returning it; see
+    /// [`TopologyEditor::delete_chain`]. Atoms and positions are kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live chain.
     pub fn delete_chain(&mut self, id: EditChainId) -> Result<EditChain, ModelEditError> {
         self.structural(|t| t.delete_chain(id))
     }
+    /// Deletes one hierarchy residue, returning it; see
+    /// [`TopologyEditor::delete_residue`]. Atoms and positions are kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live residue.
     pub fn delete_residue(&mut self, id: EditResidueId) -> Result<EditResidue, ModelEditError> {
         self.structural(|t| t.delete_residue(id))
     }
+    /// Removes one atom site from the hierarchy, returning it. The atom and its
+    /// position are kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelEditError::Topology`] when `id` names no live atom site.
     pub fn delete_atom_site(&mut self, id: EditAtomSiteId) -> Result<EditAtomSite, ModelEditError> {
         self.structural(|t| t.delete_atom_site(id))
     }
+    /// Checks that [`Self::finish`] would succeed, without consuming the draft.
+    ///
+    /// # Errors
+    ///
+    /// The error [`Self::finish`] would return.
     pub fn validate(&self) -> Result<(), ModelEditError> {
         self.clone().finish().map(|_| ())
     }
@@ -483,12 +651,14 @@ impl<'a> ModelEditorProperties<'a> {
     pub fn owner(&self) -> &'a OwnerProperties {
         self.editor.slots.properties.owner()
     }
+    /// Atom annotations, addressed by editing handle.
     pub fn atoms(&self) -> EditPropertyTable<'a, EditAtomId> {
         EditPropertyTable::new(
             self.editor.slots.properties.atoms().raw(),
             self.editor.topology.atom_rows(),
         )
     }
+    /// Bond annotations, addressed by editing handle.
     pub fn bonds(&self) -> EditPropertyTable<'a, EditBondId> {
         EditPropertyTable::new(
             self.editor.slots.properties.bonds().raw(),
@@ -505,6 +675,7 @@ pub struct ModelEditorPropertiesMut<'a> {
 }
 
 impl ModelEditorPropertiesMut<'_> {
+    /// Structure-level owner annotations.
     pub fn owner(&self) -> &OwnerProperties {
         self.editor.slots.properties.owner()
     }
@@ -512,6 +683,7 @@ impl ModelEditorPropertiesMut<'_> {
     pub fn owner_mut(&mut self) -> &mut OwnerProperties {
         self.editor.slots.properties.owner_mut()
     }
+    /// Atom annotations, addressed by editing handle.
     pub fn atoms_mut(&mut self) -> EditPropertyTableMut<'_, EditAtomId> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
@@ -520,6 +692,7 @@ impl ModelEditorPropertiesMut<'_> {
             None,
         )
     }
+    /// Bond annotations, addressed by editing handle.
     pub fn bonds_mut(&mut self) -> EditPropertyTableMut<'_, EditBondId> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(

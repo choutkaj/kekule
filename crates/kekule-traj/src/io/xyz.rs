@@ -1,4 +1,44 @@
 //! Strict bounded multi-frame XYZ trajectory I/O.
+//!
+//! [`XyzReader`] and [`IndexedXyzReader`] read constant-count
+//! element/x/y/z frames whose atom lines follow the topology's dense order and
+//! elements; [`XyzWriter`] writes them deterministically. XYZ stores
+//! positions only: the writer rejects cells, velocities, forces, time, step
+//! and properties instead of dropping them.
+//!
+//! # Examples
+//!
+//! ```
+//! use std::io::Cursor;
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::Point3;
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::units::{Quantity, ANGSTROM};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
+//! use kekule_traj::{TrajectoryReader, TrajectoryWriter};
+//!
+//! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let positions = Positions::from_vec(Quantity::new(vec![Point3::new(1.5, 0.0, 0.0)], ANGSTROM))?;
+//! let frame = TrajectoryFrame::new(positions);
+//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
+//!
+//! let options = XyzWriteOptions::default().with_decimal_places(3).with_comment("helium");
+//! let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
+//! writer.write_frame(trajectory.get(0).unwrap())?;
+//! let bytes = writer.finish()?;
+//! assert_eq!(String::from_utf8(bytes.clone())?, "1\nhelium\nHe 1.500 0.000 0.000\n");
+//!
+//! let mut reader = XyzReader::new(Cursor::new(bytes), topology, XyzReadOptions::default())?;
+//! let mut frame = reader.frame_buffer();
+//! assert!(reader.read_next(&mut frame)?);
+//! let position = frame.positions().get(0).unwrap().value_in(ANGSTROM)?;
+//! assert_eq!(position, Point3::new(1.5, 0.0, 0.0));
+//! assert!(!reader.read_next(&mut frame)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use crate::TrajectoryField;
 use kekule::diagnostics::{LimitExceeded, Resource};
@@ -61,12 +101,15 @@ impl XyzReadOptions {
         self
     }
 
+    /// Sets [`Self::length_unit`].
     #[must_use]
     pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
         self.length_unit = length_unit;
         self
     }
 
+    /// The length unit of file coordinates; angstrom by default. Positions are
+    /// converted to the canonical length unit on publication.
     pub const fn length_unit(&self) -> Unit {
         self.length_unit
     }
@@ -101,32 +144,39 @@ impl Default for XyzWriteOptions {
 }
 
 impl XyzWriteOptions {
+    /// Sets [`Self::length_unit`].
     #[must_use]
     pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
         self.length_unit = length_unit;
         self
     }
 
+    /// Sets [`Self::decimal_places`].
     #[must_use]
     pub const fn with_decimal_places(mut self, decimal_places: usize) -> Self {
         self.decimal_places = decimal_places;
         self
     }
 
+    /// Sets [`Self::comment`].
     #[must_use]
     pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
         self.comment = comment.into();
         self
     }
 
+    /// The length unit coordinates are written in; angstrom by default.
     pub const fn length_unit(&self) -> Unit {
         self.length_unit
     }
 
+    /// Fixed decimal places per coordinate, at most 17; 8 by default.
     pub const fn decimal_places(&self) -> usize {
         self.decimal_places
     }
 
+    /// The comment line written in every frame, without line breaks and at
+    /// most 1 MiB; `"written by kekule-traj"` by default.
     pub fn comment(&self) -> &str {
         &self.comment
     }
@@ -159,6 +209,13 @@ impl<R: BufRead> XyzReader<R> {
     /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
     /// format metadata are checked automatically; matching counts alone cannot
     /// establish atom identity. Limits and diagnostic labels are set in `options`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the length
+    /// unit is not a length, and [`TrajectoryIoErrorKind::LimitExceeded`] when
+    /// the atom count exceeds the limits or position scratch cannot be
+    /// reserved.
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -201,6 +258,7 @@ impl<R: BufRead> XyzReader<R> {
         })
     }
 
+    /// The topology every frame belongs to.
     pub fn topology(&self) -> &Topology {
         self.topology.as_ref()
     }
@@ -480,6 +538,15 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
 }
 
 impl<R: BufRead + Seek> XyzReader<R> {
+    /// Parses and validates the next frame without publishing it, then
+    /// restores the stream position and frame cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidHeader`] when the stream holds
+    /// no frame, the decoding or [`TrajectoryIoErrorKind::Io`] error of an
+    /// invalid frame, and an [`TrajectoryIoErrorKind::Io`] error when the
+    /// position cannot be restored.
     pub fn validate_first_frame(&mut self) -> Result<(), TrajectoryIoError> {
         let start = self.reader.stream_position().map_err(|error| {
             io_context(
@@ -619,6 +686,13 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
     /// the end is decoded and verified before the reader is returned, and both
     /// sequential and indexed reads then address frames from that start. Topology,
     /// limits, and diagnostic labels follow [`XyzReader::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`XyzReader::new`], the decoding error of the
+    /// first invalid frame, [`TrajectoryIoErrorKind::LimitExceeded`] when the
+    /// index outgrows the limits, and [`TrajectoryIoErrorKind::Io`] when
+    /// reading or seeking fails.
     pub fn new(
         mut reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -740,6 +814,16 @@ impl<W> fmt::Debug for XyzWriter<W> {
 }
 
 impl<W: Write> XyzWriter<W> {
+    /// A writer of `topology` frames to `writer`; `source_label` names the
+    /// destination in errors. Nothing is written until the first frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the length
+    /// unit is not a length or the comment contains a line break,
+    /// [`TrajectoryIoErrorKind::InvalidPrecision`] for more than 17 decimal
+    /// places, and [`TrajectoryIoErrorKind::LimitExceeded`] for a comment over
+    /// 1 MiB or a topology without atoms.
     pub fn new(
         writer: W,
         topology: impl Into<Arc<Topology>>,
@@ -806,14 +890,21 @@ impl<W: Write> XyzWriter<W> {
         })
     }
 
+    /// The topology every written frame must share.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
+    /// The underlying stream.
     pub fn writer(&self) -> &W {
         &self.writer
     }
 
+    /// Flushes the underlying stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the stream's flush error.
     pub fn flush(&mut self) -> io::Result<()> {
         self.writer.flush()
     }
@@ -829,6 +920,12 @@ impl<W: Write> XyzWriter<W> {
     }
 
     /// Flushes and returns the completed nonempty XYZ stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] when no frame was
+    /// written or an earlier write left a partial frame, and
+    /// [`TrajectoryIoErrorKind::Io`] when flushing fails.
     pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         self.validate_finish()?;
         self.flush().map_err(|error| {

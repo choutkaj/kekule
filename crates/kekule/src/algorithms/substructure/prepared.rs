@@ -10,6 +10,7 @@ pub struct PreparedTarget<'a> {
     data: engine::TargetData<'a>,
 }
 impl<'a> PreparedTarget<'a> {
+    /// Prepares `target` for repeated queries. No perception is run.
     pub fn new(target: &'a Molecule) -> Self {
         Self {
             data: engine::TargetData::new([target]),
@@ -34,6 +35,15 @@ impl<'a> PreparedTarget<'a> {
     /// The first match in search order, if any.
     ///
     /// Stops at the first embedding, so the match cap never applies.
+    ///
+    /// # Errors
+    ///
+    /// [`SubstructureMatchError::MissingPerception`] or
+    /// [`SubstructureMatchError::IncompatiblePerception`] when the query needs
+    /// target perception that is not installed or uses another model, and
+    /// [`SubstructureMatchError::LimitExceeded`] when the query exceeds
+    /// [`SubstructureMatchOptions::max_query_atoms`] or the search exceeds a
+    /// bound of `options`.
     pub fn first(
         &self,
         query: &QueryGraph,
@@ -51,6 +61,16 @@ impl<'a> PreparedTarget<'a> {
     ///
     /// The match cap is a resource bound: exceeding it returns an error, never
     /// a partial list. To stop early, use [`Self::visit`].
+    ///
+    /// # Errors
+    ///
+    /// [`SubstructureMatchError::MissingPerception`] or
+    /// [`SubstructureMatchError::IncompatiblePerception`] when the query needs
+    /// target perception that is not installed or uses another model, and
+    /// [`SubstructureMatchError::LimitExceeded`] when the query exceeds
+    /// [`SubstructureMatchOptions::max_query_atoms`] or the search exceeds a
+    /// bound of `options`, including
+    /// [`SubstructureMatchOptions::max_matches`].
     pub fn all(
         &self,
         query: &QueryGraph,
@@ -69,6 +89,16 @@ impl<'a> PreparedTarget<'a> {
     /// Streams matches until the visitor breaks. Delivered matches remain
     /// provisional until `Complete` is returned; a resource error may follow
     /// earlier callbacks.
+    ///
+    /// # Errors
+    ///
+    /// [`SubstructureMatchError::MissingPerception`] or
+    /// [`SubstructureMatchError::IncompatiblePerception`] when the query needs
+    /// target perception that is not installed or uses another model, and
+    /// [`SubstructureMatchError::LimitExceeded`] when the query exceeds
+    /// [`SubstructureMatchOptions::max_query_atoms`] or the search exceeds a
+    /// bound of `options`, including
+    /// [`SubstructureMatchOptions::max_matches`].
     pub fn visit(
         &self,
         query: &QueryGraph,
@@ -138,6 +168,13 @@ pub struct TaggedQuery<'a> {
     tags: Vec<(u32, QueryAtomId)>,
 }
 impl<'a> TaggedQuery<'a> {
+    /// Collects and validates the top-level tags of `query`.
+    ///
+    /// # Errors
+    ///
+    /// [`TaggedMatchError::MissingTags`] when no top-level atom is tagged,
+    /// [`TaggedMatchError::ZeroTag`] when a tag is zero, and
+    /// [`TaggedMatchError::DuplicateTag`] when two atoms share a tag.
     pub fn new(query: &'a QueryGraph) -> Result<Self, TaggedMatchError> {
         let mut tags = query.tagged_atoms().collect::<Vec<_>>();
         tags.sort_unstable();
@@ -154,13 +191,21 @@ impl<'a> TaggedQuery<'a> {
         }
         Ok(Self { query, tags })
     }
+    /// The tagged query.
     pub fn query(&self) -> &QueryGraph {
         self.query
     }
+    /// Every tag with its query atom, in ascending tag order.
     pub fn tags(&self) -> &[(u32, QueryAtomId)] {
         &self.tags
     }
-    /// Projects a full mapping of this query; callers must supply its matching query.
+    /// Projects a full mapping of this query onto its tagged atoms, in tag
+    /// order; callers must supply a match of this query.
+    ///
+    /// # Errors
+    ///
+    /// [`TaggedMatchError::MappingSize`] when the match does not have this
+    /// query's atom count.
     pub fn project(&self, matched: &QueryMatch) -> Result<Vec<AtomId>, TaggedMatchError> {
         if matched.atoms.len() != self.query.atom_count() {
             return Err(TaggedMatchError::MappingSize);
@@ -173,7 +218,12 @@ impl<'a> TaggedQuery<'a> {
     }
     /// Complete enumeration without atom-set deduplication.
     /// [`TupleMode::Distinct`] collapses only identical ordered tagged tuples,
-    /// never tag permutations.
+    /// never tag permutations. Each tuple lists target atoms in tag order.
+    ///
+    /// # Errors
+    ///
+    /// [`TaggedMatchError::Match`] wrapping the errors of
+    /// [`PreparedTarget::all`].
     pub fn find_matches(
         &self,
         target: &PreparedTarget<'_>,

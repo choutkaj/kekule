@@ -1,3 +1,5 @@
+//! Sparse coordinates staged while a format graph is built.
+
 use std::fmt;
 
 use crate::chemistry::AtomPositionSource;

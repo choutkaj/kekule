@@ -31,9 +31,13 @@ impl ModelIdentity {
             checkpoint_sha256: checkpoint_sha256.to_ascii_lowercase(),
         })
     }
+
+    /// The model checkpoint's file name, never blank.
     pub fn model_file(&self) -> &str {
         &self.model_file
     }
+
+    /// The original checkpoint's SHA-256 as 64 lowercase hexadecimal digits.
     pub fn checkpoint_sha256(&self) -> &str {
         &self.checkpoint_sha256
     }
@@ -66,10 +70,27 @@ fn model_error(detail: impl std::fmt::Display) -> Error {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ChargeSource {
-    Library { parameter_ids: Vec<String> },
-    Lookup { inchi: String, model: ModelIdentity },
-    Inference { model: ModelIdentity },
+    /// Complete LibraryCharges coverage.
+    Library {
+        /// The distinct IDs of the LibraryCharge rules that supplied the
+        /// charges, sorted; a rule without an `id` contributes an empty string.
+        parameter_ids: Vec<String>,
+    },
+    /// An exact entry of the NAGL model's lookup table, corrected to
+    /// conserve the formal charge.
+    Lookup {
+        /// The InChI string of the selected lookup entry, as stored in the bundle.
+        inchi: String,
+        /// The model whose lookup table supplied the charges.
+        model: ModelIdentity,
+    },
+    /// Neural inference, corrected to conserve the formal charge.
+    Inference {
+        /// The model that inferred the charges.
+        model: ModelIdentity,
+    },
 }
+/// Partial charges for one molecule with their provenance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChargeAssignment {
     pub(crate) charges: Quantity<Vec<f64>>,
@@ -77,10 +98,13 @@ pub struct ChargeAssignment {
 }
 
 impl ChargeAssignment {
+    /// One finite charge per atom in e, in the molecule's atom order. They sum
+    /// to the formal charge (library charges within 1e-6 e).
     pub fn charges(&self) -> &Quantity<Vec<f64>> {
         &self.charges
     }
 
+    /// Where the charges came from.
     pub fn source(&self) -> &ChargeSource {
         &self.source
     }
@@ -104,6 +128,11 @@ pub struct NaglModel {
 impl NaglModel {
     /// Load a schema-2 bundle, or the original checksum-pinned schema-1 Ash bundle.
     /// Unsupported configurations fail explicitly; no fallback model is selected.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Io`] if a bundle file cannot be read, and
+    /// [`ErrorKind::Model`] if the bundle is malformed, corrupt or unsupported.
     pub fn load(directory: impl AsRef<Path>) -> Result<Self> {
         Self::from_bundle(bundle::load(directory.as_ref())?)
     }
@@ -115,6 +144,11 @@ impl NaglModel {
     /// feature) and is validated exactly like [`Self::load`]. Decoding takes a
     /// fraction of a second, so load it once and reuse it. The weights are
     /// CC BY 4.0; retain their attribution when redistributing them.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Model`] if the bundled data fail validation, which
+    /// indicates a corrupted build.
     ///
     /// ```
     /// let model = kekule_openff::NaglModel::ash()?;
@@ -186,6 +220,8 @@ impl NaglModel {
             forbidden,
         })
     }
+
+    /// The checkpoint identity the bundle declares.
     pub fn identity(&self) -> &ModelIdentity {
         &self.identity
     }
@@ -219,6 +255,18 @@ impl NaglModel {
     /// charge. Charges follow the molecule's atom order. This ignores
     /// LibraryCharges; use [`crate::ForceField::parameterize`] for force-field
     /// charge precedence. There is no molecule size limit.
+    ///
+    /// # Errors
+    ///
+    /// - [`ErrorKind::UnsupportedMolecule`] if the molecule has implicit
+    ///   hydrogens or radicals, or is outside the model's element or pattern
+    ///   domain.
+    /// - [`ErrorKind::Chemistry`] if perceiving the private copy fails.
+    /// - [`ErrorKind::Identity`] or [`ErrorKind::Model`] if a lookup hit
+    ///   cannot be mapped onto its entry.
+    /// - [`ErrorKind::ResourceLimit`] if a bounded search exceeds its limit.
+    /// - [`ErrorKind::Charges`] if charge equilibration is singular or yields
+    ///   nonfinite charges.
     pub fn assign_charges(&self, molecule: &Molecule) -> Result<ChargeAssignment> {
         let molecule = lookup_molecule(molecule)?;
         // A full-graph lookup hit must have one charge for every input atom.
