@@ -32,7 +32,9 @@ impl<'a> Neighbors<'a> {
         })
     }
     fn cell(&self, point: Point3) -> Result<[usize; 3], PeriodicGeometryError> {
-        let fractional = self.geometry.fractional(point - Point3::origin())?;
+        let fractional = self
+            .geometry
+            .fractional_canonical(point - Point3::origin())?;
         if fractional.iter().any(|v| v.abs() >= 2.0_f64.powi(48)) {
             return Err(PeriodicGeometryError::NumericalFailure);
         }
@@ -77,7 +79,7 @@ impl<'a> Neighbors<'a> {
                         for &index in indices {
                             let distance = self
                                 .geometry
-                                .minimum_image(point - self.points[index])?
+                                .minimum_image_canonical(point - self.points[index])?
                                 .norm();
                             if !distance.is_finite() {
                                 return Err(PeriodicGeometryError::NumericalFailure);
@@ -129,7 +131,7 @@ mod tests {
                 let points: Vec<_> = (0..80)
                     .map(|i| {
                         Point3::origin()
-                            + geometry.cartesian([
+                            + geometry.cartesian_canonical([
                                 (i * 7 % 79) as f64 / 79.0,
                                 (i * 31 % 79) as f64 / 79.0,
                                 (i * 13 % 79) as f64 / 79.0,
@@ -141,7 +143,7 @@ mod tests {
                 }
                 for i in 0..95 {
                     let query = Point3::origin()
-                        + geometry.cartesian([
+                        + geometry.cartesian_canonical([
                             i as f64 / 95.0 - 1.0,
                             (i * 17 % 95) as f64 / 95.0,
                             1.999999,
@@ -160,7 +162,7 @@ mod tests {
                         .iter()
                         .enumerate()
                         .filter_map(|(j, p)| {
-                            (geometry.minimum_image(query - *p).unwrap().norm() < cutoff)
+                            (geometry.minimum_image_canonical(query - *p).unwrap().norm() < cutoff)
                                 .then_some(j)
                         })
                         .collect();

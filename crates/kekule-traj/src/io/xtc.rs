@@ -12,7 +12,7 @@ use crate::{
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
-use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
@@ -160,10 +160,21 @@ impl XtcWriteOptions {
         self
     }
 
-    /// Sets the coordinate scale in inverse nanometers.
+    /// Sets the coordinate scale, an inverse length such as `1000 1/nm`.
     ///
-    /// Compressed coordinates have nominal resolution `1 / precision` nm.
-    pub fn with_precision(mut self, precision: f32) -> Result<Self, TrajectoryIoError> {
+    /// Compressed coordinates have nominal resolution `1 / precision`. The
+    /// scale is stored as an `f32` in inverse nanometres, as XTC records it.
+    pub fn with_precision(mut self, precision: Quantity<f64>) -> Result<Self, TrajectoryIoError> {
+        let invalid = || {
+            codec_context(
+                TrajectoryIoErrorKind::InvalidPrecision,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xtc),
+                "XTC writer options",
+                "XTC precision must be an inverse length",
+            )
+        };
+        let precision = precision.value_in(PER_NANOMETER).map_err(|_| invalid())? as f32;
         validate_precision(precision, "XTC writer options")?;
         self.precision = precision;
         Ok(self)
@@ -183,8 +194,9 @@ impl XtcWriteOptions {
         self.magic
     }
 
-    pub const fn precision(self) -> f32 {
-        self.precision
+    /// The coordinate scale, in inverse nanometres.
+    pub fn precision(self) -> Quantity<f64> {
+        Quantity::new(f64::from(self.precision), PER_NANOMETER)
     }
 
     pub const fn cell_policy(self) -> XtcCellPolicy {

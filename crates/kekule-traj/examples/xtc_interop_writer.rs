@@ -7,7 +7,7 @@ use std::sync::Arc;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::topology::TopologyBuilder;
-use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 use kekule_traj::io::xtc::XtcWriteOptions;
 use kekule_traj::io::{create_trajectory_writer, OverwritePolicy, TrajectoryWriteOptions};
 use kekule_traj::{FrameBuffer, TrajectoryFormat, TrajectoryWriter};
@@ -35,7 +35,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let topology = Arc::new(builder.build()?);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc)
         .with_overwrite_policy(OverwritePolicy::Replace)
-        .with_xtc_options(XtcWriteOptions::default().with_precision(1000.0)?);
+        .with_xtc_options(
+            XtcWriteOptions::default().with_precision(Quantity::new(1000.0, PER_NANOMETER))?,
+        );
     let mut writer = create_trajectory_writer(&output, Arc::clone(&topology), options)?;
     let cell = PeriodicCell::new(
         Quantity::new(

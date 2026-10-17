@@ -425,7 +425,7 @@ pub(crate) fn kabsch_pairs(
     let moving_centroid = components_vector(moments.moving_centroid);
     let reference_centroid = components_vector(moments.reference_centroid);
     let translation = reference_centroid - rotation.transform_vector(moving_centroid);
-    let transform = RigidTransform::new(rotation, translation)
+    let transform = RigidTransform::from_canonical(rotation, translation)
         .map_err(AlignmentError::InvalidRigidTransform)?;
 
     let mut weighted_squared_residual = CompensatedSum::default();
@@ -1208,7 +1208,7 @@ mod tests {
                 cosine + axis.z * axis.z * one_minus_cosine,
             ),
         );
-        RigidTransform::new(rotation, Vector3::new(2.3, -4.1, 0.8)).unwrap()
+        RigidTransform::from_canonical(rotation, Vector3::new(2.3, -4.1, 0.8)).unwrap()
     }
 
     fn transform_points(points: &[Point3], transform: RigidTransform) -> Vec<Point3> {
@@ -1243,8 +1243,8 @@ mod tests {
             assert_close(left.y, right.y, tolerance);
             assert_close(left.z, right.z, tolerance);
         }
-        let left = left.translation();
-        let right = right.translation();
+        let left = left.translation().into_value();
+        let right = right.translation().into_value();
         assert_close(left.x, right.x, tolerance);
         assert_close(left.y, right.y, tolerance);
         assert_close(left.z, right.z, tolerance);
@@ -1286,7 +1286,8 @@ mod tests {
     fn translation_fit_maps_moving_to_reference_not_the_inverse() {
         let moving = fixture_points();
         let expected =
-            RigidTransform::new(Matrix3::identity(), Vector3::new(3.2, -1.7, 4.4)).unwrap();
+            RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(3.2, -1.7, 4.4))
+                .unwrap();
         let reference = transform_points(&moving, expected);
         let (topology, moving_model, reference_model) = models(&moving, &reference);
 
@@ -1525,7 +1526,7 @@ mod tests {
         // weighted centroids/cross-covariance and its general SVD, followed by
         // V * diag(1, 1, det(V * U^T)) * U^T. The 3e-12 transform and 5e-14
         // RMSD tolerances cover only f64 rounding relative to that reference.
-        let expected = RigidTransform::new(
+        let expected = RigidTransform::from_canonical(
             Matrix3::from_columns(
                 Vector3::new(
                     -0.23369675064066617,
@@ -1866,7 +1867,8 @@ mod tests {
         let moving = fixture_points().map(|point| point + offset);
         let rotation = non_axis_transform().rotation();
         let expected =
-            RigidTransform::new(rotation, Vector3::new(-4.0e11, 7.0e11, 2.0e11)).unwrap();
+            RigidTransform::from_canonical(rotation, Vector3::new(-4.0e11, 7.0e11, 2.0e11))
+                .unwrap();
         let reference = transform_points(&moving, expected);
         let (topology, moving, reference_model) = models(&moving, &reference);
 

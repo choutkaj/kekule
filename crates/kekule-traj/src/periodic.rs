@@ -435,20 +435,22 @@ impl Lattice {
     }
     fn fractional(&self, vector: Vector3) -> Result<[f64; 3], PeriodicError> {
         self.geometry
-            .fractional(vector)
+            .fractional(Quantity::new(vector, CANONICAL_LENGTH_UNIT))
             .map_err(|error| geometry_error(error, self.frame))
     }
     fn cartesian(&self, fractional: [f64; 3]) -> Vector3 {
-        self.geometry.cartesian(fractional)
+        self.geometry.cartesian(fractional).into_value()
     }
     fn minimum_image(&self, delta: Vector3) -> Result<Vector3, PeriodicError> {
         self.geometry
-            .minimum_image(delta)
+            .minimum_image(Quantity::new(delta, CANONICAL_LENGTH_UNIT))
+            .map(Quantity::into_value)
             .map_err(|error| geometry_error(error, self.frame))
     }
     fn nearest_image(&self, delta: Vector3) -> Result<(Vector3, [i64; 3]), PeriodicError> {
         self.geometry
-            .nearest_image(delta)
+            .nearest_image(Quantity::new(delta, CANONICAL_LENGTH_UNIT))
+            .map(|(vector, images)| (vector.into_value(), images))
             .map_err(|error| geometry_error(error, self.frame))
     }
 }

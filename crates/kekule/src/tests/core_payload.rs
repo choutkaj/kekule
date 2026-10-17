@@ -1,5 +1,6 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
+use crate::units::{Quantity, ANGSTROM};
 
 #[test]
 fn element_from_atomic_number_accepts_periodic_table_bounds() {
@@ -63,10 +64,19 @@ fn element_exposes_foundational_covalent_radii() {
     let curium = Element::from_symbol("Cm").expect("curium");
     let oganesson = Element::from_symbol("Og").expect("oganesson");
 
-    assert_eq!(hydrogen.covalent_radius_angstrom(), Some(0.31));
-    assert_eq!(carbon.covalent_radius_angstrom(), Some(0.76));
-    assert_eq!(curium.covalent_radius_angstrom(), Some(1.69));
-    assert_eq!(oganesson.covalent_radius_angstrom(), None);
+    assert_eq!(
+        hydrogen.covalent_radius(),
+        Some(Quantity::new(0.31, ANGSTROM))
+    );
+    assert_eq!(
+        carbon.covalent_radius(),
+        Some(Quantity::new(0.76, ANGSTROM))
+    );
+    assert_eq!(
+        curium.covalent_radius(),
+        Some(Quantity::new(1.69, ANGSTROM))
+    );
+    assert_eq!(oganesson.covalent_radius(), None);
 }
 
 #[test]

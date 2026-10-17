@@ -13,6 +13,7 @@ use std::fmt;
 
 use crate::structure::AsModelView;
 use crate::topology::{MoleculeInstanceId, ResidueId};
+use crate::units::{Quantity, DEGREE, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE};
 
 mod kernel;
 
@@ -183,6 +184,7 @@ pub enum DsspHelixPosition {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DsspHydrogenBond {
     pub(crate) partner: ResidueId,
+    /// DSSP electrostatic energy in kcal/mol, the unit DSSP computes in.
     pub(crate) energy_kcal_per_mol: f64,
 }
 
@@ -191,9 +193,11 @@ impl DsspHydrogenBond {
         self.partner
     }
 
-    /// DSSP electrostatic energy in kcal/mol.
-    pub const fn energy_kcal_per_mol(&self) -> f64 {
-        self.energy_kcal_per_mol
+    /// DSSP electrostatic energy, in the canonical kJ/mol.
+    pub fn energy(&self) -> Quantity<f64> {
+        Quantity::new(self.energy_kcal_per_mol, KILOCALORIE_PER_MOLE)
+            .into_unit(KILOJOULE_PER_MOLE)
+            .expect("kcal/mol converts to kJ/mol")
     }
 }
 
@@ -235,11 +239,11 @@ pub struct DsspResidue {
     source: DsspResidueSource,
     secondary_structure: DsspSecondaryStructure,
     chain_break: DsspChainBreak,
-    phi_degrees: Option<f64>,
-    psi_degrees: Option<f64>,
-    omega_degrees: Option<f64>,
-    alpha_degrees: Option<f64>,
-    kappa_degrees: Option<f64>,
+    phi: Option<f64>,
+    psi: Option<f64>,
+    omega: Option<f64>,
+    alpha: Option<f64>,
+    kappa: Option<f64>,
     tco: Option<f64>,
     acceptors: [Option<DsspHydrogenBond>; 2],
     donors: [Option<DsspHydrogenBond>; 2],
@@ -266,24 +270,24 @@ impl DsspResidue {
         self.chain_break
     }
 
-    pub const fn phi_degrees(&self) -> Option<f64> {
-        self.phi_degrees
+    pub fn phi(&self) -> Option<Quantity<f64>> {
+        self.phi.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    pub const fn psi_degrees(&self) -> Option<f64> {
-        self.psi_degrees
+    pub fn psi(&self) -> Option<Quantity<f64>> {
+        self.psi.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    pub const fn omega_degrees(&self) -> Option<f64> {
-        self.omega_degrees
+    pub fn omega(&self) -> Option<Quantity<f64>> {
+        self.omega.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    pub const fn alpha_degrees(&self) -> Option<f64> {
-        self.alpha_degrees
+    pub fn alpha(&self) -> Option<Quantity<f64>> {
+        self.alpha.map(|angle| Quantity::new(angle, DEGREE))
     }
 
-    pub const fn kappa_degrees(&self) -> Option<f64> {
-        self.kappa_degrees
+    pub fn kappa(&self) -> Option<Quantity<f64>> {
+        self.kappa.map(|angle| Quantity::new(angle, DEGREE))
     }
 
     /// Cosine of the angle between consecutive peptide carbonyl vectors.

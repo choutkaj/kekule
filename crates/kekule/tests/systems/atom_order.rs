@@ -167,7 +167,7 @@ fn model_builder_order_moves_positions_with_atoms() {
     assert_eq!(model.topology().atom_ids(), order);
     assert_eq!(xs(&model), [0.0, 1.0, 2.0]);
     for (atom, x) in order.into_iter().zip([0.0, 1.0, 2.0]) {
-        assert_eq!((model.position(atom).unwrap().x * 10.0).round(), x);
+        assert_eq!((model.position(atom).unwrap().value().x * 10.0).round(), x);
     }
 }
 

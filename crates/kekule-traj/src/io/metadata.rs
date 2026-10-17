@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 
-use kekule::units::Unit;
+use kekule::units::Quantity;
 
 use crate::{TrajectoryFormat, TrajectoryIoError};
 
@@ -85,8 +85,8 @@ pub enum CoordinateEncoding {
     },
     Lossy {
         precision: ScalarPrecision,
-        resolution: f64,
-        unit: Unit,
+        /// The nominal coordinate resolution, a length.
+        resolution: Quantity<f64>,
     },
 }
 
@@ -279,8 +279,7 @@ impl FileTrajectoryMetadata {
         let coordinate_encoding = match info.precision() {
             Some(precision) => CoordinateEncoding::Lossy {
                 precision: ScalarPrecision::Float32,
-                resolution: 1.0 / f64::from(precision),
-                unit: kekule::units::NANOMETER,
+                resolution: Quantity::new(1.0 / f64::from(precision), kekule::units::NANOMETER),
             },
             None => CoordinateEncoding::Lossless {
                 precision: ScalarPrecision::Float32,

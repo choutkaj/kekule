@@ -453,7 +453,8 @@ fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
     );
     assert_eq!(model, baseline);
     let transform =
-        RigidTransform::new(Matrix3::identity(), Vector3::new(f64::MAX, 0.0, 0.0)).unwrap();
+        RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(f64::MAX, 0.0, 0.0))
+            .unwrap();
     assert_eq!(
         model.apply_transform(&all, &transform),
         Err(GeometryEditError::NumericalFailure)
@@ -522,7 +523,8 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
     for atom in [a, b] {
         assert_eq!(point(&model, atom), point(&baseline, atom));
     }
-    let transform = RigidTransform::new(Matrix3::identity(), Vector3::new(1.0, 0.0, 0.0)).unwrap();
+    let transform =
+        RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(1.0, 0.0, 0.0)).unwrap();
     model.apply_transform(&selected, &transform).unwrap();
     close_point(point(&model, c), Point3::new(2.0, 3.0, 3.0));
     // Both huge and subnormal finite axes are accepted.
@@ -807,7 +809,7 @@ fn apply_transform_uses_rotation_and_translation_together() {
     let baseline = model.clone();
     let [a, b, c, d] = ids(&model);
     let selected = AtomSelection::from_atoms(&model.shared_topology(), [c, d]).unwrap();
-    let transform = RigidTransform::new(
+    let transform = RigidTransform::from_canonical(
         Matrix3::from_columns(
             Vector3::new(0.0, 1.0, 0.0),
             Vector3::new(-1.0, 0.0, 0.0),

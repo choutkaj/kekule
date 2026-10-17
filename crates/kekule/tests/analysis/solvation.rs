@@ -65,11 +65,11 @@ fn box_shapes_units_padding_and_snapshot_identity() {
             },
         )
         .unwrap();
-        assert!((m.cell().unwrap().signed_volume() - 27.0 * ratio).abs() < 1e-12);
+        assert!((m.cell().unwrap().signed_volume().into_value() - 27.0 * ratio).abs() < 1e-12);
         assert_eq!(m.positions(), source.positions());
         assert!(Arc::ptr_eq(&m.shared_topology(), &source.shared_topology()));
         let geometry = PeriodicGeometry::new(*m.cell().unwrap()).unwrap();
-        assert!((geometry.shortest_translation().unwrap().norm() - 3.0).abs() < 1e-12);
+        assert!((geometry.shortest_translation().unwrap().into_value().norm() - 3.0).abs() < 1e-12);
     }
     let mut single = model("[Na+]");
     solvation::add_periodic_box(
@@ -80,7 +80,7 @@ fn box_shapes_units_padding_and_snapshot_identity() {
         },
     )
     .unwrap();
-    assert_eq!(single.cell().unwrap().signed_volume(), 8.0);
+    assert_eq!(single.cell().unwrap().signed_volume().into_value(), 8.0);
     let cell = PeriodicCell::new(
         Quantity::new(
             [
@@ -100,7 +100,7 @@ fn box_shapes_units_padding_and_snapshot_identity() {
         &PeriodicBoxOptions::Dimensions(Quantity::new(Vector3::new(20.0, 30.0, 40.0), ANGSTROM)),
     )
     .unwrap();
-    assert!((m.cell().unwrap().signed_volume() - 24.0).abs() < 1e-12);
+    assert!((m.cell().unwrap().signed_volume().into_value() - 24.0).abs() < 1e-12);
 }
 #[test]
 fn invalid_box_inputs_are_atomic() {
@@ -146,9 +146,10 @@ fn invalid_box_inputs_are_atomic() {
 fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
     let radius = Element::from_symbol("C")
         .unwrap()
-        .van_der_waals_radius_angstrom(VanDerWaalsRadiusSource::Reference)
+        .van_der_waals_radius(VanDerWaalsRadiusSource::Reference)
         .unwrap()
-        * 0.1;
+        .value_in(NANOMETER)
+        .unwrap();
     let water_radius = 0.315_075_240_657_512_4 * 0.5612310241546865;
     for shape in [BoxShape::Cube, BoxShape::Dodecahedron, BoxShape::Octahedron] {
         let mut m = model("C");
@@ -189,14 +190,19 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
             assert!((cos.acos().to_degrees() - 104.52).abs() < 0.2);
             assert!(
                 geometry
-                    .minimum_image(p[0] - Point3::origin())
+                    .minimum_image(Quantity::new(p[0] - Point3::origin(), NANOMETER))
                     .unwrap()
+                    .into_value()
                     .norm()
                     >= radius + water_radius - 1e-12
             );
             for previous in &oxygens {
                 assert!(
-                    geometry.minimum_image(p[0] - *previous).unwrap().norm()
+                    geometry
+                        .minimum_image(Quantity::new(p[0] - *previous, NANOMETER))
+                        .unwrap()
+                        .into_value()
+                        .norm()
                         >= water_radius - 1e-12
                 );
             }
@@ -254,7 +260,13 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
             .collect();
         for i in 0..ions.len() {
             for j in i + 1..ions.len() {
-                assert!(geom.minimum_image(ions[i] - ions[j]).unwrap().norm() > 0.5);
+                assert!(
+                    geom.minimum_image(Quantity::new(ions[i] - ions[j], NANOMETER))
+                        .unwrap()
+                        .into_value()
+                        .norm()
+                        > 0.5
+                );
             }
         }
         let mut changed = initial;
@@ -509,7 +521,10 @@ fn rotated_skewed_and_left_handed_cells_fill_without_moving_solute() {
         for water in m.topology().molecules().skip(1) {
             let oxygen = water.atoms().next().unwrap().id();
             let f = geometry
-                .fractional(m.position(oxygen).unwrap().into_value() - position)
+                .fractional(Quantity::new(
+                    m.position(oxygen).unwrap().into_value() - position,
+                    NANOMETER,
+                ))
                 .unwrap();
             assert!(f.iter().all(|v| *v >= -0.5 - 1e-12 && *v < 0.5 + 1e-12));
         }
@@ -531,9 +546,12 @@ fn core_periodic_kernel_checks_limits_and_shortest_skew_translation() {
     )
     .unwrap();
     let geometry = PeriodicGeometry::new(cell).unwrap();
-    assert!((geometry.shortest_translation().unwrap().norm() - 0.1_f64.hypot(0.3)).abs() < 1e-12);
+    assert!(
+        (geometry.shortest_translation().unwrap().into_value().norm() - 0.1_f64.hypot(0.3)).abs()
+            < 1e-12
+    );
     assert!(matches!(
-        geometry.minimum_image(Vector3::new(f64::NAN, 0.0, 0.0)),
+        geometry.minimum_image(Quantity::new(Vector3::new(f64::NAN, 0.0, 0.0), NANOMETER)),
         Err(PeriodicGeometryError::NumericalFailure)
     ));
     let bad = PeriodicCell::new(

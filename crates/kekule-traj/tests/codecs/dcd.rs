@@ -404,7 +404,11 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
             .with_endian(endian)
             .with_cell_policy(DcdCellPolicy::Write)
             .with_step_sequence(10, 2)
-            .with_header_delta(0.5, DcdTimePolicy::HeaderDelta { unit: PICOSECOND });
+            .with_header_delta(
+                Quantity::new(0.5, PICOSECOND),
+                DcdTimePolicy::HeaderDelta { unit: PICOSECOND },
+            )
+            .unwrap();
         let mut writer = DcdWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
@@ -1006,7 +1010,8 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
         Arc::clone(&topology),
         DcdWriteOptions::default()
             .with_step_sequence(0, 1000)
-            .with_header_delta(TIMESTEP as f32, time_policy),
+            .with_header_delta(Quantity::new(TIMESTEP, PICOSECOND), time_policy)
+            .unwrap(),
         "timestep.dcd",
     )
     .unwrap();

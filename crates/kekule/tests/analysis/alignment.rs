@@ -54,7 +54,7 @@ fn quarter_turn() -> RigidTransform {
             Vector3::new(-1.0, 0.0, 0.0),
             Vector3::new(0.0, 0.0, 1.0),
         ),
-        Vector3::new(4.0, -2.0, 1.0),
+        Quantity::new(Vector3::new(4.0, -2.0, 1.0), NANOMETER),
     )
     .unwrap()
 }

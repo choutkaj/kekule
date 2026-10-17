@@ -15,7 +15,7 @@ use crate::topology::AtomSiteMetadata;
 use crate::topology::{
     InstanceAtomId, MoleculeClass, MoleculeInstanceId, TopologyAtomIndex, TopologyBuildError,
 };
-use crate::units::{Quantity, DIMENSIONLESS, NANOMETER, SQUARE_NANOMETER};
+use crate::units::{Quantity, DIMENSIONLESS, SQUARE_NANOMETER};
 
 const MIXED: &str = r#"
 data_mixed
@@ -1998,7 +1998,7 @@ covale A N 1 A CA 1 doub
     let first_atom = TopologyAtomIndex::new(0);
     original.set_occupancy(first_atom, Some(0.625)).unwrap();
     original
-        .set_b_factor(first_atom, Some(Quantity::new(0.125, NANOMETER.powi(2))))
+        .set_b_factor(first_atom, Some(Quantity::new(0.125, SQUARE_NANOMETER)))
         .unwrap();
     original
         .properties_mut()

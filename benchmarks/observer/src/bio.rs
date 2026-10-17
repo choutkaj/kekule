@@ -8,7 +8,7 @@ use kekule::macromolecular::{self, ModelSelection, StructureInterpretOptions};
 use kekule::mmcif::{self, MmcifDocument, MmcifEntry, MmcifValue};
 use kekule::molecule::BondOrder;
 use kekule::topology::{AtomSelection, InstanceAtomId, ResidueClass, ResidueId};
-use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
+use kekule::units::{ANGSTROM, DEGREE, KILOCALORIE_PER_MOLE, SQUARE_ANGSTROM};
 use serde_json::{json, Value};
 
 use crate::{Facts, Failure};
@@ -255,7 +255,7 @@ fn partner(
                         .label_sequence_id()
                         .map_or("?".to_owned(), |s| s.to_string())
                 )),
-                json!(bond.energy_kcal_per_mol()),
+                json!(bond.energy().value_in(KILOCALORIE_PER_MOLE).ok()),
             )
         }
         None => (Value::Null, Value::Null),
@@ -291,10 +291,14 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
                 } else {
                     code.to_string()
                 },
-                residue.phi_degrees(),
-                residue.psi_degrees(),
-                residue.kappa_degrees(),
-                residue.alpha_degrees(),
+                residue.phi().and_then(|angle| angle.value_in(DEGREE).ok()),
+                residue.psi().and_then(|angle| angle.value_in(DEGREE).ok()),
+                residue
+                    .kappa()
+                    .and_then(|angle| angle.value_in(DEGREE).ok()),
+                residue
+                    .alpha()
+                    .and_then(|angle| angle.value_in(DEGREE).ok()),
                 residue.tco(),
                 acceptor_1.0,
                 acceptor_1.1,

@@ -43,7 +43,7 @@ pub(super) fn solvate(
         return Err(SolvationError::NotFullyPeriodic);
     }
     let geometry = PeriodicGeometry::new(cell)?;
-    let shortest = geometry.shortest_translation()?.norm();
+    let shortest = geometry.shortest_translation_canonical()?.norm();
     if shortest < WATER_RADIUS {
         return Err(SolvationError::NoSolventSpace);
     }
@@ -311,7 +311,7 @@ fn pack(
                 );
                 for index in 0..895 {
                     let oxygen = template(index)[0] + shift;
-                    let fractional = geometry.fractional(oxygen - Point3::origin())?;
+                    let fractional = geometry.fractional_canonical(oxygen - Point3::origin())?;
                     if fractional.iter().any(|v| *v < -0.5 || *v >= 0.5) {
                         continue;
                     }

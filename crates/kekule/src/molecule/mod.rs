@@ -28,7 +28,7 @@ pub(crate) use delocalization::{
     ConjugationModel, ConjugationPerception, ResonanceGroup, ResonancePerception,
 };
 pub use element::Element;
-pub use element_reference::{ElementReferenceData, VanDerWaalsRadiusSource};
+pub use element_reference::VanDerWaalsRadiusSource;
 pub use graph::Graph;
 pub(crate) use ids::{checked_fixed_id_collection_len, checked_raw_id};
 pub use ids::{AtomId, BondId};

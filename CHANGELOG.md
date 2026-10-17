@@ -105,6 +105,44 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Every public value with a physical dimension is a `Quantity`,
+  and no public name carries a unit (ARCHITECTURE.md, "Units, topology
+  handles, and traits").
+  - `Element::{covalent_radius_angstrom, van_der_waals_radius_bohr,
+    van_der_waals_radius_angstrom, dipole_polarizability_bohr3}` become
+    `covalent_radius()`, `van_der_waals_radius(source)` and
+    `dipole_polarizability()`, each `Option<Quantity<f64>>` in the tabulated
+    unit (ångström, bohr, cubic bohr). `ElementReferenceData` and
+    `Element::reference_data` are removed; the citations moved to the
+    accessors.
+  - `DsspResidue::{phi, psi, omega, alpha, kappa}` (were `*_degrees`) return
+    `Option<Quantity<f64>>` in degrees, and `DsspHydrogenBond::energy()`
+    (was `energy_kcal_per_mol`) returns kJ/mol.
+  - `RigidTransform::new` takes the translation as a `Quantity<Vector3>` and
+    `translation()` returns one; `RigidTransformError` gains `Unit` and is
+    no longer `Copy` or `Eq`.
+  - `PeriodicGeometry::{fractional, minimum_image, nearest_image}` take and
+    `cartesian`, `minimum_image`, `nearest_image` and `shortest_translation`
+    return length quantities; `PeriodicGeometryError` gains `Unit` and is no
+    longer `Copy` or `Eq`. `PeriodicCell::signed_volume` returns a volume quantity.
+  - `Quantity::is_close` takes its absolute tolerance as a quantity.
+  - `kekule-traj`: `XtcWriteOptions::with_precision` takes and `precision()`
+    returns an inverse length (`units::PER_NANOMETER`);
+    `DcdWriteOptions::with_header_delta` takes `DELTA` as a time quantity,
+    stored in the time policy's unit (the canonical time unit for
+    `DcdTimePolicy::Absent`), and returns `Result`; `delta()` returns a
+    quantity; `CoordinateEncoding::Lossy` carries `resolution` as a length
+    quantity and loses `unit`.
+  - `Quantity` no longer implements `Deref` or `DerefMut` and has no
+    `value_mut`; read the stored value with `value()` or `into_value()`.
+  - The panicking `Mul` and `Div` between units, between scalar quantities,
+    and `Unit::powi` are removed; `try_mul`, `try_div` and `try_powi`
+    remain, so unit composition never panics.
+  - `Dimension::new([i32; 7])` is replaced by `Dimension::with_exponent`,
+    which does not depend on the number of base dimensions.
+  - `CANONICAL_MASS_UNIT` is `CANONICAL_MOLAR_MASS_UNIT`. New:
+    `CANONICAL_AREA_UNIT`, `CUBIC_BOHR`, `CUBIC_NANOMETER`, `PER_NANOMETER`
+    and `units::constants::{AVOGADRO, MOLAR_GAS_CONSTANT}`.
 - **Breaking:** Every public enum is `#[non_exhaustive]` (ARCHITECTURE.md,
   "Options, results, and enums"), so matches outside the crate need a
   wildcard arm. This now includes `BondOrder`, `StereoElementKind`,

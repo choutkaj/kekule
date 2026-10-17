@@ -14,7 +14,8 @@ use kekule::properties::{OwnerProperties, PropertyKey, PropertyValue, StructureP
 use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{
-    Quantity, CANONICAL_LENGTH_UNIT, DIMENSIONLESS, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
+    Quantity, CANONICAL_LENGTH_UNIT, DIMENSIONLESS, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
+    NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
 
 use super::{
@@ -560,10 +561,10 @@ impl<R: Read + Seek> TrrReader<R> {
             data = data.with_cell(cell);
         }
         if decoded.header.has_velocities() {
-            data = data.with_velocities(Quantity::new(velocities, NANOMETER / PICOSECOND));
+            data = data.with_velocities(Quantity::new(velocities, NANOMETER_PER_PICOSECOND));
         }
         if decoded.header.has_forces() {
-            data = data.with_forces(Quantity::new(forces, KILOJOULE_PER_MOLE / NANOMETER));
+            data = data.with_forces(Quantity::new(forces, KILOJOULE_PER_MOLE_PER_NANOMETER));
         }
         destination.replace_from_data(data).map_err(Into::into)
     }
@@ -1070,7 +1071,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 velocities
                     .values()
                     .unit()
-                    .conversion_factor_to(NANOMETER / PICOSECOND)
+                    .conversion_factor_to(NANOMETER_PER_PICOSECOND)
                     .map_err(|error| writer_unit(&self.source_label, "velocities", error))
             })
             .transpose()?;
@@ -1080,7 +1081,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 forces
                     .values()
                     .unit()
-                    .conversion_factor_to(KILOJOULE_PER_MOLE / NANOMETER)
+                    .conversion_factor_to(KILOJOULE_PER_MOLE_PER_NANOMETER)
                     .map_err(|error| writer_unit(&self.source_label, "forces", error))
             })
             .transpose()?;

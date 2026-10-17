@@ -1,4 +1,5 @@
 use super::Element;
+use crate::units::{Quantity, BOHR, CUBIC_BOHR};
 
 const BOHR_TO_ANGSTROM: f64 = 0.529_177_210_903;
 
@@ -13,43 +14,30 @@ pub enum VanDerWaalsRadiusSource {
     Reference,
 }
 
-/// Authoritative periodic-table reference values carried by Kekule.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ElementReferenceData {
-    pub covalent_radius_angstrom: Option<f64>,
-    pub dipole_polarizability_bohr3: Option<f64>,
-    pub free_atom_vdw_radius_bohr: Option<f64>,
-    pub reference_vdw_radius_bohr: Option<f64>,
-}
-
 impl Element {
-    /// Returns the archived element reference values.
+    /// Returns the static dipole polarizability, in cubic bohr as tabulated.
     ///
-    /// Covalent radii follow Cordero et al., Dalton Trans. 2008,
-    /// DOI 10.1039/B801115J. The van der Waals radii follow Charry and
-    /// Tkatchenko, J. Chem. Theory Comput. 2024,
-    /// DOI 10.1021/acs.jctc.4c00784. Dipole polarizabilities are the values
-    /// compiled there from Schwerdtfeger and Nagle, Mol. Phys. 2019,
+    /// Dipole polarizabilities are the values compiled by Charry and
+    /// Tkatchenko, J. Chem. Theory Comput. 2024, DOI 10.1021/acs.jctc.4c00784,
+    /// from Schwerdtfeger and Nagle, Mol. Phys. 2019,
     /// DOI 10.1080/00268976.2018.1535143.
-    pub fn reference_data(self) -> ElementReferenceData {
-        let index = usize::from(self.atomic_number());
-        ElementReferenceData {
-            covalent_radius_angstrom: self.covalent_radius_angstrom(),
-            dipole_polarizability_bohr3: DIPOLE_POLARIZABILITY_BOHR3[index],
-            free_atom_vdw_radius_bohr: TKATCHENKO_VDW_RADIUS_BOHR[index],
-            reference_vdw_radius_bohr: REFERENCE_VDW_RADIUS_BOHR[index],
-        }
-    }
-
-    pub fn dipole_polarizability_bohr3(self) -> Option<f64> {
+    pub fn dipole_polarizability(self) -> Option<Quantity<f64>> {
         DIPOLE_POLARIZABILITY_BOHR3[usize::from(self.atomic_number())]
+            .map(|value| Quantity::new(value, CUBIC_BOHR))
     }
 
-    /// Returns a van der Waals radius in bohr.
+    /// Returns a van der Waals radius, in bohr as tabulated.
     ///
-    /// If the requested reference column is unavailable, the other archived
-    /// column is used. `None` is returned only when Kekule has neither.
-    pub fn van_der_waals_radius_bohr(self, source: VanDerWaalsRadiusSource) -> Option<f64> {
+    /// The radii follow Charry and Tkatchenko, J. Chem. Theory Comput. 2024,
+    /// DOI 10.1021/acs.jctc.4c00784. If the requested reference column is
+    /// unavailable, the other archived column is used. `None` is returned
+    /// only when Kekule has neither.
+    pub fn van_der_waals_radius(self, source: VanDerWaalsRadiusSource) -> Option<Quantity<f64>> {
+        self.van_der_waals_radius_bohr(source)
+            .map(|radius| Quantity::new(radius, BOHR))
+    }
+
+    fn van_der_waals_radius_bohr(self, source: VanDerWaalsRadiusSource) -> Option<f64> {
         let index = usize::from(self.atomic_number());
         match source {
             VanDerWaalsRadiusSource::FreeAtom => {
@@ -61,7 +49,11 @@ impl Element {
         }
     }
 
-    pub fn van_der_waals_radius_angstrom(self, source: VanDerWaalsRadiusSource) -> Option<f64> {
+    /// The radius in ångström, converted as solvation has always converted it.
+    pub(crate) fn van_der_waals_radius_angstrom(
+        self,
+        source: VanDerWaalsRadiusSource,
+    ) -> Option<f64> {
         self.van_der_waals_radius_bohr(source)
             .map(|radius| radius * BOHR_TO_ANGSTROM)
     }
@@ -436,17 +428,25 @@ const REFERENCE_VDW_RADIUS_BOHR: [Option<f64>; 119] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::ANGSTROM;
 
     #[test]
     fn carbon_reference_values_match_archived_sources() {
         let carbon = Element::from_atomic_number(6).unwrap();
-        let reference = carbon.reference_data();
 
-        assert_eq!(reference.covalent_radius_angstrom, Some(0.76));
-        assert_eq!(reference.dipole_polarizability_bohr3, Some(11.3));
+        assert_eq!(
+            carbon.covalent_radius(),
+            Some(Quantity::new(0.76, ANGSTROM))
+        );
+        assert_eq!(
+            carbon.dipole_polarizability(),
+            Some(Quantity::new(11.3, CUBIC_BOHR))
+        );
         assert!(
             (carbon
-                .van_der_waals_radius_angstrom(VanDerWaalsRadiusSource::FreeAtom)
+                .van_der_waals_radius(VanDerWaalsRadiusSource::FreeAtom)
+                .unwrap()
+                .value_in(ANGSTROM)
                 .unwrap()
                 - 1.91)
                 .abs()
@@ -457,13 +457,12 @@ mod tests {
     #[test]
     fn requested_reference_radius_falls_back_to_free_atom_value() {
         let neodymium = Element::from_atomic_number(60).unwrap();
-        assert!(neodymium
-            .reference_data()
-            .reference_vdw_radius_bohr
-            .is_none());
+        assert!(REFERENCE_VDW_RADIUS_BOHR[60].is_none());
         assert!(
             (neodymium
-                .van_der_waals_radius_angstrom(VanDerWaalsRadiusSource::Reference)
+                .van_der_waals_radius(VanDerWaalsRadiusSource::Reference)
+                .unwrap()
+                .value_in(ANGSTROM)
                 .unwrap()
                 - 2.90)
                 .abs()
@@ -475,7 +474,7 @@ mod tests {
     fn missing_both_vdw_sources_is_explicit() {
         let livermorium = Element::from_atomic_number(116).unwrap();
         assert_eq!(
-            livermorium.van_der_waals_radius_bohr(VanDerWaalsRadiusSource::FreeAtom),
+            livermorium.van_der_waals_radius(VanDerWaalsRadiusSource::FreeAtom),
             None
         );
     }

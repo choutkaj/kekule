@@ -91,7 +91,7 @@ fn positions_convert_source_units_before_model_construction() {
         model.position(qualified).unwrap().unit(),
         CANONICAL_LENGTH_UNIT
     );
-    assert_eq!(model.position(qualified).unwrap().x, 0.15);
+    assert_eq!(model.position(qualified).unwrap().value().x, 0.15);
     assert_eq!(positions.values().unit(), CANONICAL_LENGTH_UNIT);
     assert_eq!(source[0].x, 0.15);
 }

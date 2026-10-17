@@ -1,3 +1,4 @@
+use crate::units::{Quantity, ANGSTROM};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -41,12 +42,22 @@ impl Element {
         self.atomic_number
     }
 
-    /// Returns the single-bond covalent radius in ångström when a reference
-    /// value is available.
+    /// Returns the single-bond covalent radius when a reference value is
+    /// available, in ångström as tabulated.
     ///
     /// Carbon uses the general-purpose sp3 value. Transition-metal values use
     /// the conservative low-spin entry where separate spin-state values exist.
-    pub const fn covalent_radius_angstrom(self) -> Option<f64> {
+    /// Covalent radii follow Cordero et al., Dalton Trans. 2008,
+    /// DOI 10.1039/B801115J.
+    pub const fn covalent_radius(self) -> Option<Quantity<f64>> {
+        match self.covalent_radius_angstrom() {
+            Some(radius) => Some(Quantity::new(radius, ANGSTROM)),
+            None => None,
+        }
+    }
+
+    /// The tabulated covalent radius in ångström, for internal geometry.
+    pub(crate) const fn covalent_radius_angstrom(self) -> Option<f64> {
         match self.atomic_number {
             1 => Some(0.31),
             2 => Some(0.28),

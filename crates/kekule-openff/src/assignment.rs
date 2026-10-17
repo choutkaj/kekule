@@ -446,7 +446,7 @@ impl ForceField {
                 })
             })
             .collect::<Result<_>>()?;
-        *result.charges.value_mut() = atom_charges;
+        result.charges = Quantity::new(atom_charges, result.charges.unit());
         Ok(result)
     }
     fn charges(

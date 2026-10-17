@@ -87,7 +87,7 @@ fn owned_vector_construction_keeps_allocations_and_validates_converted_values() 
     assert_eq!(values.unit(), CANONICAL_VELOCITY_UNIT);
     let values = vec![Vector3::new(1.0, 2.0, 3.0)];
     let pointer = values.as_ptr();
-    let source_unit = kekule::units::KILOJOULE_PER_MOLE / kekule::units::ANGSTROM;
+    let source_unit = kekule::units::KILOJOULE_PER_MOLE_PER_ANGSTROM;
     let forces = Forces::from_vec(Quantity::new(values, source_unit)).unwrap();
     assert_eq!(forces.values().value().as_ptr(), pointer);
     assert_eq!(forces.values().value(), &[Vector3::new(10.0, 20.0, 30.0)]);

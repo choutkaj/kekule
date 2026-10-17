@@ -7,7 +7,7 @@ pub use periodic::{PeriodicGeometry, PeriodicGeometryError, MAX_LATTICE_IMAGES};
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
-use crate::units::{Quantity, ScaleValue, UnitError, CANONICAL_LENGTH_UNIT};
+use crate::units::{Quantity, ScaleValue, UnitError, CANONICAL_LENGTH_UNIT, CUBIC_NANOMETER};
 
 /// A Cartesian point.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -298,8 +298,9 @@ impl PeriodicCell {
         self.periodic_axes
     }
 
-    pub fn signed_volume(self) -> f64 {
-        self.vectors.determinant()
+    /// The signed volume `a · (b × c)`; negative for a left-handed basis.
+    pub fn signed_volume(self) -> Quantity<f64> {
+        Quantity::new(self.vectors.determinant(), CUBIC_NANOMETER)
     }
 
     pub fn is_orthorhombic(self) -> bool {
@@ -323,7 +324,22 @@ impl RigidTransform {
         }
     }
 
-    pub fn new(rotation: Matrix3, translation: Vector3) -> Result<Self, RigidTransformError> {
+    /// A rotation followed by a translation of any length unit.
+    pub fn new(
+        rotation: Matrix3,
+        translation: Quantity<Vector3>,
+    ) -> Result<Self, RigidTransformError> {
+        let translation = translation
+            .value_in(CANONICAL_LENGTH_UNIT)
+            .map_err(|error| RigidTransformError::Unit(Box::new(error)))?;
+        Self::from_canonical(rotation, translation)
+    }
+
+    /// [`Self::new`] for a translation already in the canonical length unit.
+    pub(crate) fn from_canonical(
+        rotation: Matrix3,
+        translation: Vector3,
+    ) -> Result<Self, RigidTransformError> {
         if !rotation.is_finite() || !translation.is_finite() {
             return Err(RigidTransformError::NonFinite);
         }
@@ -353,8 +369,9 @@ impl RigidTransform {
         self.rotation
     }
 
-    pub const fn translation(self) -> Vector3 {
-        self.translation
+    /// The translation, in the canonical length unit.
+    pub fn translation(self) -> Quantity<Vector3> {
+        Quantity::new(self.translation, CANONICAL_LENGTH_UNIT)
     }
 
     pub fn transform_point(self, point: Point3) -> Point3 {
@@ -427,9 +444,11 @@ impl From<UnitError> for PeriodicCellError {
 }
 
 /// A rotation and translation do not form a proper rigid transform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum RigidTransformError {
+    /// The translation is not a length; see the source.
+    Unit(Box<UnitError>),
     /// A rotation or translation component is not finite.
     NonFinite,
     /// The rotation matrix is not orthonormal with determinant +1.
@@ -439,6 +458,7 @@ pub enum RigidTransformError {
 impl fmt::Display for RigidTransformError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Unit(_) => formatter.write_str("rigid translation is not a length"),
             Self::NonFinite => formatter.write_str("rigid transform must be finite"),
             Self::NonRigidRotation => {
                 formatter.write_str("rotation matrix must be right-handed and orthonormal")
@@ -447,7 +467,14 @@ impl fmt::Display for RigidTransformError {
     }
 }
 
-impl std::error::Error for RigidTransformError {}
+impl std::error::Error for RigidTransformError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unit(error) => Some(error.as_ref()),
+            Self::NonFinite | Self::NonRigidRotation => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -505,7 +532,7 @@ mod tests {
             Vector3::new(0.0, 0.0, 1.0),
         );
         assert_eq!(
-            RigidTransform::new(scaled, Vector3::zero()),
+            RigidTransform::new(scaled, Quantity::new(Vector3::zero(), NANOMETER)),
             Err(RigidTransformError::NonRigidRotation)
         );
     }

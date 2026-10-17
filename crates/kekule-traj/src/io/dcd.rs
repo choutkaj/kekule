@@ -213,14 +213,29 @@ impl DcdWriteOptions {
         self
     }
 
-    /// Stores `DELTA`, the duration of one step. With
-    /// [`DcdTimePolicy::HeaderDelta`], every frame time must equal its step
-    /// times `DELTA` to f32 precision, the precision `DELTA` has in the file.
-    #[must_use]
-    pub const fn with_header_delta(mut self, delta: f32, time_policy: DcdTimePolicy) -> Self {
-        self.delta = delta;
+    /// Stores `DELTA`, the duration of one step, as an `f32` in the time
+    /// unit of [`DcdTimePolicy::HeaderDelta`], or in the canonical time unit
+    /// for [`DcdTimePolicy::Absent`]. With `HeaderDelta`, every frame time
+    /// must equal its step times `DELTA` to f32 precision, the precision
+    /// `DELTA` has in the file.
+    pub fn with_header_delta(
+        mut self,
+        delta: Quantity<f64>,
+        time_policy: DcdTimePolicy,
+    ) -> Result<Self, TrajectoryIoError> {
+        let unit = header_delta_unit(time_policy);
+        let delta = delta.value_in(unit).map_err(|error| {
+            codec_context(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Dcd),
+                "DCD writer options",
+                format!("DCD DELTA must be a time: {error}"),
+            )
+        })?;
+        self.delta = delta as f32;
         self.time_policy = time_policy;
-        self
+        Ok(self)
     }
 
     pub const fn endian(&self) -> DcdEndian {
@@ -239,8 +254,9 @@ impl DcdWriteOptions {
         self.step_interval
     }
 
-    pub const fn delta(&self) -> f32 {
-        self.delta
+    /// `DELTA` in the unit [`Self::with_header_delta`] stores it in.
+    pub fn delta(&self) -> Quantity<f64> {
+        Quantity::new(f64::from(self.delta), header_delta_unit(self.time_policy))
     }
 
     pub const fn time_policy(&self) -> DcdTimePolicy {
@@ -1657,6 +1673,14 @@ fn validate_title_record(
         ));
     }
     Ok(())
+}
+
+/// The unit `DELTA` is written in under a time policy.
+const fn header_delta_unit(policy: DcdTimePolicy) -> Unit {
+    match policy {
+        DcdTimePolicy::HeaderDelta { unit } => unit,
+        DcdTimePolicy::Absent => CANONICAL_TIME_UNIT,
+    }
 }
 
 fn validate_time_policy(
