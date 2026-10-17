@@ -882,7 +882,7 @@ pub mod stereo {
 /// protonation states.
 ///
 /// Addition requires current inference for inferred counts, unless
-/// [`AddHydrogensScope::FixedOnly`] is selected. Fixed counts need no perception. Removal needs current inference
+/// [`AddHydrogensScope::FixedOnly`](hydrogens::AddHydrogensScope::FixedOnly) is selected. Fixed counts need no perception. Removal needs current inference
 /// on affected parents whose counts are inferred, and keeps a parent inferred
 /// only when inference reproduces its collapsed count; otherwise it fixes it.
 /// Successful topology changes invalidate perception state; recompute it before
