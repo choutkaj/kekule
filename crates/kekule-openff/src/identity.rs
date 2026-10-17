@@ -120,7 +120,14 @@ fn find(query: &Molecule, entry: &Molecule, mode: u8) -> Result<Option<Vec<AtomI
                         .expect("atom IDs come from this molecule")
                         .count()
                 && (mode > 0 || qa.formal_charge() == eb.formal_charge())
-                && query.atom_is_aromatic(a) == entry.atom_is_aromatic(b)
+                && query
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(a))
+                    == entry
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.atom_is_aromatic(b))
             {
                 row.push(b);
             }
@@ -190,7 +197,17 @@ impl Search<'_> {
                 match (qb, eb) {
                     (None, None) => {}
                     (Some(q), Some(e)) => {
-                        if self.query.bond_is_aromatic(q) != self.entry.bond_is_aromatic(e) {
+                        if self
+                            .query
+                            .perception()
+                            .aromaticity()
+                            .map(|aromaticity| aromaticity.bond_is_aromatic(q))
+                            != self
+                                .entry
+                                .perception()
+                                .aromaticity()
+                                .map(|aromaticity| aromaticity.bond_is_aromatic(e))
+                        {
                             compatible = false;
                             break;
                         }

@@ -2,18 +2,6 @@ use crate::molecule::*;
 use std::collections::BTreeMap;
 use std::fmt;
 
-/// How valence perception treats states RDKit's strict property cache rejects.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ValenceValidation {
-    /// Reject invalid valence and implicit-hydrogen states.
-    #[default]
-    Strict,
-    /// Follow RDKit's permissive rules: excess valence implies zero
-    /// additional hydrogens instead of an error.
-    Permissive,
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ValenceOptions {
     validation: ValenceValidation,
@@ -113,7 +101,7 @@ pub fn perceive_valence(
     let assignments = match model {
         ValenceModel::RdkitLike => rdkit_valence_assignments(mol, options)?,
     };
-    mol.install_valence(model, assignments);
+    mol.install_valence(model, options.validation(), assignments);
     Ok(())
 }
 

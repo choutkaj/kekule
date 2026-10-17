@@ -24,7 +24,12 @@ fn ring_set_reports_symmetric_cycles_for_fused_rings() {
 
     let ring_options = RingPerceptionOptions::for_molecule(&mol);
     rings_api::perceive_rings(&mut mol, ring_options).expect("ring perception should succeed");
-    let ring_set = mol.ring_set().expect("rings installed").clone();
+    let ring_set = mol
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
 
     assert_eq!(ring_set.len(), 3);
     assert!(ring_set.rings().iter().all(|ring| ring.atoms.len() >= 4));
@@ -51,7 +56,9 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
         .expect("long chain should perceive rings");
     let ring_set = molecule
         .working()
-        .ring_set()
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
         .expect("rings installed")
         .clone();
     assert!(ring_set.is_empty());
@@ -102,7 +109,11 @@ fn ring_input_and_work_limits_return_actionable_errors() {
                 expected.0, expected.2, expected.1
             ))
         );
-        assert!(molecule.ring_set().is_none());
+        assert!(molecule
+            .perception()
+            .rings()
+            .and_then(|rings| rings.ring_set())
+            .is_none());
     }
 }
 
@@ -131,7 +142,11 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
         RingPerceptionError::LimitExceeded(limit)
             if limit.resource() == Resource::CandidateCycles && limit.observed() > limit.limit()
     ));
-    assert!(mol.ring_set().is_none());
+    assert!(mol
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .is_none());
 }
 
 #[test]
@@ -156,7 +171,13 @@ fn theta_graph_with_acyclic_tail_is_deterministic() {
     let ring_options = RingPerceptionOptions::for_molecule(mol.working());
     rings_api::perceive_rings(mol.working_mut(), ring_options)
         .expect("theta graph should perceive rings");
-    let first = mol.working().ring_set().expect("rings installed").clone();
+    let first = mol
+        .working()
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
     let first_rings = first.rings().to_vec();
     assert_eq!(first.len(), 3);
     assert!(first.rings().iter().all(|ring| ring.atoms.len() == 4));
@@ -164,7 +185,13 @@ fn theta_graph_with_acyclic_tail_is_deterministic() {
     let ring_options = RingPerceptionOptions::for_molecule(mol.working());
     rings_api::perceive_rings(mol.working_mut(), ring_options)
         .expect("repeat should perceive rings");
-    let second = mol.working().ring_set().expect("rings installed").clone();
+    let second = mol
+        .working()
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
     assert_eq!(second.rings(), first_rings);
 }
 
@@ -194,7 +221,13 @@ fn decorated_theta_graph_does_not_overenumerate_equal_path_cycles() {
     let ring_options = RingPerceptionOptions::for_molecule(mol.working());
     rings_api::perceive_rings(mol.working_mut(), ring_options)
         .expect("decorated theta graph should perceive rings");
-    let ring_set = mol.working().ring_set().expect("rings installed").clone();
+    let ring_set = mol
+        .working()
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
     let mut atom_sets = ring_set
         .rings()
         .iter()
@@ -277,7 +310,12 @@ fn standalone_aromaticity_reuses_an_installed_ring_set() {
         .expect("valence perception");
     let ring_options = RingPerceptionOptions::for_molecule(&molecule);
     rings_api::perceive_rings(&mut molecule, ring_options).expect("ring perception should succeed");
-    let installed = molecule.ring_set().expect("rings installed").clone();
+    let installed = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
 
     aromaticity_api::perceive_aromaticity(
         &mut molecule,
@@ -287,8 +325,14 @@ fn standalone_aromaticity_reuses_an_installed_ring_set() {
     )
     .expect("installed rings should bypass the impossible ring limit");
 
-    assert_eq!(molecule.ring_set(), Some(&installed));
-    assert!(molecule.perception().has_aromaticity());
+    assert_eq!(
+        molecule
+            .perception()
+            .rings()
+            .and_then(|rings| rings.ring_set()),
+        Some(&installed)
+    );
+    assert!(molecule.perception().aromaticity().is_some());
 }
 
 #[test]
@@ -302,8 +346,16 @@ fn standalone_aromaticity_computes_a_missing_ring_set() {
         if membership_only {
             rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
                 .expect("membership perception cannot fail");
-            assert!(molecule.ring_membership().is_some());
-            assert!(molecule.ring_set().is_none());
+            assert!(molecule
+                .perception()
+                .rings()
+                .map(|rings| rings.membership())
+                .is_some());
+            assert!(molecule
+                .perception()
+                .rings()
+                .and_then(|rings| rings.ring_set())
+                .is_none());
         }
 
         aromaticity_api::perceive_aromaticity(
@@ -313,7 +365,15 @@ fn standalone_aromaticity_computes_a_missing_ring_set() {
         )
         .expect("aromaticity should compute a missing ring basis");
 
-        assert_eq!(molecule.ring_set().expect("computed ring basis").len(), 1);
-        assert!(molecule.perception().has_aromaticity());
+        assert_eq!(
+            molecule
+                .perception()
+                .rings()
+                .and_then(|rings| rings.ring_set())
+                .expect("computed ring basis")
+                .len(),
+            1
+        );
+        assert!(molecule.perception().aromaticity().is_some());
     }
 }

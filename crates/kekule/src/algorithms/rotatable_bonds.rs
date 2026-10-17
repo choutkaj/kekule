@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::chemistry::PerceptionError;
 use crate::molecule::{
     AromaticityModel, AtomId, Bond, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
-    RingBasisModel, ValenceModel,
+    RingBasisState, RingPerception, ValenceModel, ValenceValidation,
 };
 
 use super::rings::compute_ring_membership;
@@ -155,8 +155,9 @@ impl RotatableBondSet {
 /// Ring membership is reused or computed on demand. Resonance exclusions reuse
 /// installed RDKit-like valence and aromaticity with the default Figueras ring
 /// model, or compute the default profile on a temporary copy. Strict valence
-/// validation applies in either case. Model-neutral, incomplete, or
-/// incompatible perception is not reused. Valence and resource failures are
+/// validation applies in either case: installed valence is reused only when
+/// its provenance records strict validation. Incomplete or incompatible
+/// perception is not reused. Valence and resource failures are
 /// returned without changing the source graph or its perception. Disabling
 /// resonance exclusions requires only graph ring membership and does not run
 /// chemical perception.
@@ -166,31 +167,22 @@ pub fn rotatable_bonds(
 ) -> Result<RotatableBondSet, PerceptionError> {
     let mut perceived;
     let perception = molecule.perception();
-    // Cached state is reused only when it was produced by the models this
-    // descriptor would perceive itself.
-    let valence_matches = match perception.valence_model() {
-        Some(ValenceModel::RdkitLike) => true,
-        None => false,
-    };
-    let aromaticity_matches = match perception.aromaticity_model() {
-        Some(AromaticityModel::RdkitLike) => true,
-        Some(AromaticityModel::Mdl) | None => false,
-    };
-    let mut compatible = valence_matches
+    // Cached state is reused only when it was produced by the models and the
+    // strict validation this descriptor would perceive with itself, so it
+    // cannot hide a failure that an unperceived molecule would report.
+    let valence_matches = perception.valence().is_some_and(|valence| {
+        matches!(valence.model(), ValenceModel::RdkitLike)
+            && valence.validation() == ValenceValidation::Strict
+    });
+    let aromaticity_matches = perception
+        .aromaticity()
+        .is_some_and(|aromaticity| aromaticity.model() == AromaticityModel::RdkitLike);
+    let compatible = valence_matches
         && perception
-            .ring_basis_model()
-            .is_some_and(RingBasisModel::is_sssr_like)
+            .rings()
+            .and_then(RingPerception::basis)
+            .is_some_and(RingBasisState::is_sssr_like)
         && aromaticity_matches;
-    if !options.include_resonance_restricted_bonds && compatible {
-        // Model provenance does not distinguish strict from permissive valence
-        // installation. Revalidate before reuse so cached results cannot hide a
-        // failure that an unperceived molecule would report.
-        let assignments = super::valence::rdkit_valence_assignments(molecule, Default::default())
-            .map_err(PerceptionError::Valence)?;
-        compatible = assignments
-            .iter()
-            .all(|(&atom, &count)| perception.inferred_hydrogens(atom) == Some(count));
-    }
     let molecule = if !options.include_resonance_restricted_bonds && !compatible {
         perceived = molecule.clone();
         perceived.perceive()?;
@@ -199,7 +191,11 @@ pub fn rotatable_bonds(
         molecule
     };
     let computed_membership;
-    let ring_membership = match molecule.ring_membership() {
+    let ring_membership = match molecule
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
+    {
         Some(membership) => membership,
         None => {
             computed_membership = compute_ring_membership(molecule);
@@ -432,7 +428,11 @@ fn resonance_restricted_atoms(
             continue;
         };
         if center_atom.element.atomic_number() != CARBON
-            || molecule.perception().atom_is_aromatic(center) == Some(true)
+            || molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(center))
+                == Some(true)
             || profiles
                 .get(&center)
                 .is_none_or(|profile| profile.heavy_degree != 3)
@@ -452,7 +452,11 @@ fn resonance_restricted_atoms(
             };
             if bond.order == BondOrder::Double
                 && is_nitrogen_oxygen_or_sulfur(neighbor.element)
-                && molecule.perception().atom_is_aromatic(neighbor_id) == Some(false)
+                && molecule
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(neighbor_id))
+                    == Some(false)
             {
                 // The strict query's [N,O,S] tests element and aliphaticity,
                 // not charge. Charged imidates and amidines still have the
@@ -469,7 +473,11 @@ fn resonance_restricted_atoms(
                 .get(&neighbor_id)
                 .map_or(0, |profile| profile.heavy_degree);
             if atomic_number == NITROGEN
-                || (molecule.perception().atom_is_aromatic(neighbor_id) == Some(false)
+                || (molecule
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(neighbor_id))
+                    == Some(false)
                     && (atomic_number == OXYGEN || (atomic_number == SULFUR && heavy_degree != 1)))
             {
                 attachments.push(neighbor_id);

@@ -1,5 +1,6 @@
 use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
 use kekule::hydrogens::HydrogenTransformError;
+use kekule::perception::valence::{ValenceModel, ValenceValidation};
 use kekule::topology::{InstanceAtomId, TopologyBuilder};
 use kekule::{
     molecule::{AtomId, BondOrder, ImplicitHydrogens, Molecule},
@@ -56,7 +57,7 @@ fn fixed_counts_are_known_without_perception_and_unknown_is_not_zero() {
     ] {
         let molecule = parse(source);
         let atom = molecule.atom_ids().next().unwrap();
-        assert!(!molecule.perception().has_valence());
+        assert!(molecule.perception().valence().is_none());
         assert_eq!(molecule.implicit_hydrogens(atom), expected, "{source}");
         assert_eq!(molecule.total_hydrogens(atom), expected, "{source}");
         assert_eq!(molecule.explicit_hydrogens(atom).unwrap(), 0);
@@ -216,7 +217,11 @@ fn count_arithmetic_does_not_truncate_large_detached_assignments() {
     let mut molecule = parse("[H]C");
     let c = carbon(&molecule);
     let perception = Perception::builder()
-        .with_valence(None, vec![(c, 255)])
+        .with_valence(
+            ValenceModel::RdkitLike,
+            ValenceValidation::Permissive,
+            vec![(c, 255)],
+        )
         .unwrap()
         .build();
     molecule.install_perception(perception).unwrap();
@@ -239,7 +244,11 @@ fn installed_perception_cannot_infer_hydrogens_on_a_fixed_count() {
         let mut molecule = parse("[CH3]C");
         let before = molecule.perception().clone();
         let perception = Perception::builder()
-            .with_valence(None, assignments)
+            .with_valence(
+                ValenceModel::RdkitLike,
+                ValenceValidation::Permissive,
+                assignments,
+            )
             .unwrap()
             .build();
         let installed = molecule.install_perception(perception);
@@ -258,7 +267,11 @@ fn incomplete_perception_cannot_silently_drop_hydrogens_during_materialization()
     let mut molecule = parse("CC");
     let atoms = molecule.atom_ids().collect::<Vec<_>>();
     let state = Perception::builder()
-        .with_valence(None, vec![(atoms[0], 3)])
+        .with_valence(
+            ValenceModel::RdkitLike,
+            ValenceValidation::Permissive,
+            vec![(atoms[0], 3)],
+        )
         .unwrap()
         .build();
     molecule.install_perception(state).unwrap();

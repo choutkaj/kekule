@@ -81,7 +81,7 @@ Kekule 0.3.0 changes this API and its behavior from 0.2.1:
 | `explicit_count()` | `fixed_count()` (`None` when inferred) or `represented_count()` (zero when inferred) |
 | `allows_implicit()` | `is_inferred()` |
 | `with_explicit_count(n)` | Assign `Fixed(n)` |
-| `Molecule::implicit_hydrogens(atom)` and `Topology::implicit_hydrogens(atom)`, which returned only the perceived part | `implicit_hydrogens` now returns the complete non-graph count (on the topology, through the atom view); `perception().inferred_hydrogens(atom)` returns the raw assignment |
+| `Molecule::implicit_hydrogens(atom)` and `Topology::implicit_hydrogens(atom)`, which returned only the perceived part | `implicit_hydrogens` now returns the complete non-graph count (on the topology, through the atom view); `perception().valence()` and `ValencePerception::inferred_hydrogen_count(atom)` return the raw assignment |
 | `Perception::implicit_hydrogens(atom)`, `ValencePerception::implicit_hydrogens()` | `inferred_hydrogens` |
 | `AddHydrogensOptions::explicit_only` | `fixed_only` |
 | `AddedHydrogenOrigin::ExplicitCount` / `Implicit` | `Fixed` / `Inferred` |

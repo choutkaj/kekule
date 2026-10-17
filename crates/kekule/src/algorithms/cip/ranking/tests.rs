@@ -1227,7 +1227,7 @@ fn axial_auxiliary_labels_are_derived_from_the_local_digraph() {
             }),
             Some(&expected)
         );
-        assert!(!molecule.perception().has_stereo());
+        assert!(molecule.perception().cip().is_none());
     }
 }
 

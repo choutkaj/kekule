@@ -343,7 +343,9 @@ fn mdl_aromaticity_is_explicit_and_does_not_rewrite_chemistry() {
             .unwrap();
         assert_eq!(m.graph(), &graph);
         assert_eq!(
-            m.perception().aromaticity_model(),
+            m.perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.model()),
             Some(AromaticityModel::Mdl)
         );
         assert_eq!(
@@ -362,12 +364,16 @@ fn mdl_aromaticity_is_explicit_and_does_not_rewrite_chemistry() {
 
 #[test]
 fn incompatible_ring_models_fail_and_mdl_failure_is_transactional() {
-    for model in [Some(RingBasisModel::DepthFirstFallback), None] {
+    {
         let mut m = molecule("C1CC1");
+        let rings = m.perception().rings().unwrap();
         let state = Perception::builder()
             .with_rings(
-                m.ring_membership().unwrap().clone(),
-                Some(RingBasisState::new(model, m.ring_set().unwrap().clone())),
+                rings.membership().clone(),
+                Some(RingBasisState::with_depth_first_fallback(
+                    RingBasisModel::FiguerasSssrLike,
+                    rings.ring_set().unwrap().clone(),
+                )),
             )
             .build();
         m.install_perception(state).unwrap();

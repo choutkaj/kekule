@@ -105,6 +105,38 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `Perception` exposes only its sections (ARCHITECTURE.md,
+  "Represented and derived chemistry"): `valence()`, `rings()`,
+  `aromaticity()`, `conjugation()`, `resonance()` and `cip()`.
+  - Its 26 flat methods are removed: `has_valence`, `has_rings`,
+    `has_aromaticity`, `has_stereo`, `has_conjugation`, `has_resonance`,
+    `has_cip_descriptors`, `valence_state`, `ring_state`,
+    `aromaticity_state`, `stereo_state`, `conjugation_state`,
+    `resonance_state`, `valence_model`, `inferred_hydrogens`,
+    `ring_membership`, `ring_set`, `ring_basis_model`, `aromaticity_model`,
+    `atom_is_aromatic`, `bond_is_aromatic`, `atom_is_conjugated`,
+    `bond_is_conjugated`, `cip_descriptor` and `cip_descriptors`. So are the
+    duplicate reads on `Molecule` and `MoleculeEditor` (`atom_is_aromatic`,
+    `bond_is_aromatic`, `atom_is_conjugated`, `bond_is_conjugated`,
+    `cip_descriptor`, `ring_membership`, `ring_set`); the section queries
+    report membership, so an ID outside the molecule is `false` rather than
+    `None`.
+  - Sections own their queries: `ValencePerception::inferred_hydrogen_count`,
+    `AromaticityPerception::atom_is_aromatic`/`bond_is_aromatic` and
+    `ConjugationPerception::atom_is_conjugated`/`bond_is_conjugated` are
+    new.
+  - Provenance is mandatory. `ValencePerception::model` returns a
+    `ValenceModel`, and the new `validation()` records `ValenceValidation`
+    (which moves to `perception::valence`); `PerceptionBuilder::with_valence`
+    takes both, so model-neutral valence can no longer be built.
+    `RingBasisModel::DepthFirstFallback` is removed: `RingBasisState::model`
+    is the requested model and `used_depth_first_fallback()` records the
+    outcome (`RingBasisState::new` for a complete search,
+    `with_depth_first_fallback` otherwise).
+  - `descriptors::rotatable_bonds` reuses installed perception when its
+    provenance records RDKit-like models, an SSSR-like basis and strict
+    validation, instead of revalidating valence on every call; permissive
+    valence is reperceived on a copy as before.
 - **Breaking:** Editor properties go through guards (ARCHITECTURE.md,
   "Properties and units").
   - `TopologyEditor`'s flat property API (`owner_properties`,

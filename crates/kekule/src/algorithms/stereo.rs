@@ -934,7 +934,11 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = Vec::new();
     for (bond_id, bond) in mol.bonds() {
         if !double_bond_geometry_is_supported(mol, bond_id, bond)
-            || mol.bond_is_aromatic(bond_id) == Some(true)
+            || mol
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(bond_id))
+                == Some(true)
         {
             continue;
         }

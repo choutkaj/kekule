@@ -311,7 +311,9 @@ fn ring_facts(components: &mut [Component], facts: &mut Facts) -> Result<(), Fai
         .expect("membership perception cannot fail");
         let membership = component
             .molecule
-            .ring_membership()
+            .perception()
+            .rings()
+            .map(|rings| rings.membership())
             .expect("rings installed")
             .clone();
         let ring_options = RingPerceptionOptions::for_molecule(&component.molecule);
@@ -319,7 +321,9 @@ fn ring_facts(components: &mut [Component], facts: &mut Facts) -> Result<(), Fai
             .map_err(|e| Failure::new("rings", e))?;
         let ring_set = component
             .molecule
-            .ring_set()
+            .perception()
+            .rings()
+            .and_then(|rings| rings.ring_set())
             .expect("rings installed")
             .clone();
         for ring in ring_set.rings() {
@@ -368,12 +372,18 @@ fn aromaticity_facts(
         }
         let molecule = &component.molecule;
         for id in molecule.atom_ids() {
-            let aromatic = molecule.atom_is_aromatic(id);
+            let aromatic = molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(id));
             facts.push(json!(["atom", component.atom(id), "aromatic", aromatic]));
         }
         for (id, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
-            let aromatic = molecule.bond_is_aromatic(id);
+            let aromatic = molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(id));
             facts.push(json!(["bond", a, b, "aromatic", aromatic]));
         }
     }
@@ -385,7 +395,10 @@ fn conjugation(components: &[Component], facts: &mut Facts) -> Result<(), Failur
         let molecule = &component.molecule;
         for (id, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
-            let conjugated = molecule.bond_is_conjugated(id);
+            let conjugated = molecule
+                .perception()
+                .conjugation()
+                .map(|conjugation| conjugation.bond_is_conjugated(id));
             facts.push(json!(["bond", a, b, "conjugated", conjugated]));
         }
     }
@@ -402,7 +415,7 @@ fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<()
         let molecule = &component.molecule;
         let state = molecule
             .perception()
-            .resonance_state()
+            .resonance()
             .ok_or_else(|| Failure::new("resonance", "no resonance state after perception"))?;
         for group in state.groups() {
             let mut atoms = group
@@ -534,7 +547,11 @@ fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
         let component = &*component;
         let molecule = &component.molecule;
         for (id, element) in molecule.stereo_elements() {
-            let Some(label) = molecule.cip_descriptor(id) else {
+            let Some(label) = molecule
+                .perception()
+                .cip()
+                .and_then(|cip| cip.cip_descriptor(id))
+            else {
                 continue;
             };
             let (kind, focus) = match &element.kind {

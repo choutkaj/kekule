@@ -98,6 +98,14 @@ them or rewrites represented bond orders and charges. Task-specific
 descriptors, force-field typing, scoring, and analyses belong in separate result
 objects; attaching selected values as properties is deliberate.
 
+`Perception` exposes only its sections (valence, rings, aromaticity,
+conjugation, resonance, and CIP state); each section owns its queries and
+records mandatory provenance: the model, plus the policy where results depend
+on it. Valence records strict or permissive validation; a ring basis records
+the requested model separately from whether the depth-first fallback chose
+its rings. Consumers reuse installed state only when its provenance matches
+what they would perceive themselves, rather than revalidating it.
+
 Chemical edits invalidate dependent perception. Property changes do not.
 Detached perception is checked against graph references and dimensions before
 installation; installation must not repair or rewrite represented chemistry.

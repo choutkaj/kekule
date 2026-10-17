@@ -333,10 +333,10 @@ fn absent_perception_remains_absent_after_topology_mutation() {
 
     mol.add_atom(carbon()).expect("atom identifier capacity");
 
-    assert!(!mol.perception().has_valence());
-    assert!(!mol.perception().has_rings());
-    assert!(!mol.perception().has_aromaticity());
-    assert!(!mol.perception().has_stereo());
+    assert!(mol.perception().valence().is_none());
+    assert!(mol.perception().rings().is_none());
+    assert!(mol.perception().aromaticity().is_none());
+    assert!(mol.perception().cip().is_none());
 }
 
 #[test]
@@ -481,6 +481,14 @@ fn property_and_coordinate_edits_preserve_computed_state() {
         )
         .unwrap();
     assert_eq!(mol.perception(), &before);
-    assert!(mol.ring_membership().is_some());
-    assert!(mol.ring_set().is_some());
+    assert!(mol
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
+        .is_some());
+    assert!(mol
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .is_some());
 }

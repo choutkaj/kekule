@@ -36,7 +36,7 @@ fuzz_target!(|data: &[u8]| {
                     form.bond_ids().collect::<Vec<_>>(),
                     source.bond_ids().collect::<Vec<_>>()
                 );
-                assert!(!form.perception().has_conjugation());
+                assert!(form.perception().conjugation().is_none());
             }
         }
         assert_eq!(mol, source);

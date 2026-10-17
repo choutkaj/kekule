@@ -1182,7 +1182,9 @@ fn cip_atomic_number_fractions(mol: &Molecule) -> Vec<AtomicNumberFraction> {
     }
 
     let ring_membership = mol
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .cloned()
         .unwrap_or_else(|| compute_ring_membership(mol));
     let mut types = seed_mancude_atom_types(mol, &ring_membership);

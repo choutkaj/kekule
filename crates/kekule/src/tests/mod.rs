@@ -521,15 +521,20 @@ pub(super) fn mark_all_fresh(mol: &mut Molecule) {
     let _ = valence_api::perceive_valence(mol, ValenceModel::RdkitLike, Default::default());
     rings_api::perceive_rings(mol, RingPerceptionOptions::membership_only())
         .expect("membership perception cannot fail");
-    let _ = mol.ring_membership().expect("rings installed").clone();
+    let _ = mol
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
+        .expect("rings installed")
+        .clone();
     mol.begin_aromaticity(AromaticityModel::RdkitLike);
 }
 
 pub(super) fn assert_all_stale(mol: &Molecule) {
-    assert!(!mol.perception().has_valence());
-    assert!(!mol.perception().has_rings());
-    assert!(!mol.perception().has_aromaticity());
-    assert!(!mol.perception().has_stereo());
+    assert!(mol.perception().valence().is_none());
+    assert!(mol.perception().rings().is_none());
+    assert!(mol.perception().aromaticity().is_none());
+    assert!(mol.perception().cip().is_none());
 }
 
 pub(super) fn tetrahedral_marked_graph() -> (MoleculeEditor, AtomId, Vec<AtomId>, BondId) {

@@ -41,7 +41,7 @@ pub(crate) use owner::{Result, SlotCompaction};
 use perception::validate_perception;
 pub(crate) use perception::{
     AromaticityModel, AromaticityPerception, Ring, RingBasisModel, RingBasisState, RingMembership,
-    RingPerception, RingSet, ValenceModel, ValencePerception,
+    RingPerception, RingSet, ValenceModel, ValencePerception, ValenceValidation,
 };
 pub(crate) use perception::{CipPerception, Perception, PerceptionInstallError};
 use std::num::{NonZeroU16, NonZeroU32};

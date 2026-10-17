@@ -182,7 +182,7 @@ pub fn perceive_resonance(mol: &mut Molecule) -> Result<(), ResonanceError> {
 fn conjugated_groups(mol: &Molecule) -> Result<Vec<ResonanceGroup>, ResonanceError> {
     let state = mol
         .perception()
-        .conjugation_state()
+        .conjugation()
         .ok_or(ResonanceError::MissingConjugation)?;
     let mut remaining: BTreeSet<_> = state.bonds().collect();
     let mut groups = Vec::new();
@@ -303,7 +303,7 @@ impl ResonanceStructures<'_> {
 /// let forms = enumerate_resonance(&acetate, ResonanceOptions::default())?;
 /// assert_eq!(forms.contributors().len(), 2);
 /// let localized = forms.to_molecule(0)?;
-/// assert!(!localized.perception().has_conjugation());
+/// assert!(localized.perception().conjugation().is_none());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn enumerate_resonance(
@@ -312,7 +312,7 @@ pub fn enumerate_resonance(
 ) -> Result<ResonanceStructures<'_>, ResonanceError> {
     options.flags = options.flags.effective();
     options.max_structures = options.max_structures.min(ResonanceOptions::MAX_STRUCTURES);
-    let groups = match mol.perception().resonance_state() {
+    let groups = match mol.perception().resonance() {
         Some(state) => state.groups().to_vec(),
         None => conjugated_groups(mol)?,
     };

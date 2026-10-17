@@ -942,7 +942,7 @@ fn molfile_unmarked_3d_tetrahedra_use_shared_geometry_without_installing_percept
                 let source = coordinate_tetrahedron(v3000, &points[..=explicit_count], 0);
                 let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
                 assert_eq!(report.created_stereo_elements().len(), 1);
-                assert!(!molecule.perception().has_valence());
+                assert!(molecule.perception().valence().is_none());
                 assert!(report.warnings().is_empty());
                 if explicit_count == 3 {
                     assert_eq!(
@@ -1157,7 +1157,7 @@ fn molfile_ambiguous_wedge_geometry_never_invents_a_configuration() {
                     assert!(molecule.stereo_elements().next().is_none(), "{source}");
                     assert_eq!(report.warnings().len(), 1, "{source}");
                     assert!(report.created_stereo_elements().is_empty());
-                    assert!(!molecule.perception().has_valence());
+                    assert!(molecule.perception().valence().is_none());
                 }
             }
         }
@@ -1640,7 +1640,7 @@ M  V30 3 1 1 4\nM  V30 4 2 4 5\nM  V30 5 1 5 6\nM  V30 6 2 6 7\n\
 M  V30 7 1 7 8\nM  V30 8 2 8 9\nM  V30 9 1 9 4\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n"
             );
             let mut molecule = read_molfile(&source).unwrap();
-            assert!(!molecule.perception().has_valence());
+            assert!(molecule.perception().valence().is_none());
             let elements = molecule.stereo_elements().collect::<Vec<_>>();
             assert_eq!(elements.len(), 1);
             assert!(
@@ -1711,7 +1711,7 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         let (molecule, report) = read_molfile_with_report(&source).unwrap();
         assert_eq!(molecule, unmarked);
         assert!(molecule.stereo_elements().next().is_none());
-        assert!(!molecule.perception().has_valence());
+        assert!(molecule.perception().valence().is_none());
         assert!(report.created_stereo_elements().is_empty());
         let [molfile::MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
             axis,

@@ -359,9 +359,11 @@ impl Molecule {
     /// chemical edit; it also means `atom` names no atom of this molecule.
     /// This method never runs perception implicitly.
     pub fn implicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
-        self.atom(atom)?
-            .hydrogens
-            .resolve(self.perception.inferred_hydrogens(atom))
+        self.atom(atom)?.hydrogens.resolve(
+            self.perception
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom)),
+        )
     }
 
     /// Counts explicit hydrogen neighbors plus all implicit hydrogens.
@@ -371,49 +373,6 @@ impl Molecule {
         let explicit = self.explicit_hydrogens(atom)?;
         self.implicit_hydrogens(atom)
             .map(|implicit| explicit + implicit)
-    }
-
-    /// Reads installed aromaticity. `None` means it has not been computed or
-    /// `atom` names no atom of this molecule.
-    pub fn atom_is_aromatic(&self, atom: AtomId) -> Option<bool> {
-        self.atom(atom)?;
-        self.perception.atom_is_aromatic(atom)
-    }
-
-    /// Reads installed aromaticity. `None` means it has not been computed or
-    /// `bond` names no bond of this molecule.
-    pub fn bond_is_aromatic(&self, bond: BondId) -> Option<bool> {
-        self.bond(bond)?;
-        self.perception.bond_is_aromatic(bond)
-    }
-
-    /// Reads installed conjugation. `None` means it has not been computed or
-    /// `atom` names no atom of this molecule.
-    pub fn atom_is_conjugated(&self, atom: AtomId) -> Option<bool> {
-        self.atom(atom)?;
-        self.perception.atom_is_conjugated(atom)
-    }
-
-    /// Reads installed conjugation. Aromatic bonds are also conjugated. `None`
-    /// means it has not been computed or `bond` names no bond of this molecule.
-    pub fn bond_is_conjugated(&self, bond: BondId) -> Option<bool> {
-        self.bond(bond)?;
-        self.perception.bond_is_conjugated(bond)
-    }
-
-    /// Reads an installed CIP descriptor. `None` means none is installed or
-    /// `element` names no stereo element of this molecule.
-    pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
-        self.stereo_element(element)?;
-        self.perception.cip_descriptor(element)
-    }
-
-    pub fn ring_membership(&self) -> Option<&RingMembership> {
-        self.perception.ring_membership()
-    }
-
-    pub fn ring_set(&self) -> Option<&RingSet> {
-        self.perception.ring_set()
     }
 
     /// Inserts an ungrouped validated stereo element without narrowing its collection slot.
@@ -743,20 +702,26 @@ impl Molecule {
     pub(crate) fn install_valence(
         &mut self,
         model: ValenceModel,
+        validation: ValenceValidation,
         inferred_hydrogens: BTreeMap<AtomId, u8>,
     ) {
         self.perception.valence = Some(ValencePerception {
-            model: Some(model),
+            model,
+            validation,
             inferred_hydrogens,
         });
         self.invalidate_aromaticity();
     }
 
+    /// Overrides one inferred count of a private projection copy, keeping the
+    /// installed provenance. A copy without valence takes the permissive
+    /// RDKit-like provenance under which projected counts are written.
     pub(crate) fn set_inferred_hydrogens(&mut self, atom: AtomId, count: u8) {
         self.perception
             .valence
             .get_or_insert_with(|| ValencePerception {
-                model: None,
+                model: ValenceModel::RdkitLike,
+                validation: ValenceValidation::Permissive,
                 inferred_hydrogens: BTreeMap::new(),
             })
             .inferred_hydrogens
@@ -772,15 +737,10 @@ impl Molecule {
         self.invalidate_aromaticity();
     }
 
-    pub(crate) fn install_ring_basis(
-        &mut self,
-        membership: RingMembership,
-        model: RingBasisModel,
-        rings: RingSet,
-    ) {
+    pub(crate) fn install_ring_basis(&mut self, membership: RingMembership, basis: RingBasisState) {
         self.perception.rings = Some(RingPerception {
             membership,
-            basis: Some(RingBasisState::new(Some(model), rings)),
+            basis: Some(basis),
         });
         self.invalidate_aromaticity();
     }

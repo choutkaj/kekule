@@ -117,9 +117,13 @@ impl std::error::Error for StereoSearchError {
 }
 
 pub(super) fn prepared(mol: &Molecule) -> Result<Cow<'_, Molecule>, StereoSearchError> {
-    if mol.perception().has_valence()
-        && mol.perception().has_aromaticity()
-        && mol.ring_set().is_some()
+    if mol.perception().valence().is_some()
+        && mol.perception().aromaticity().is_some()
+        && mol
+            .perception()
+            .rings()
+            .and_then(|rings| rings.ring_set())
+            .is_some()
     {
         Ok(Cow::Borrowed(mol))
     } else {

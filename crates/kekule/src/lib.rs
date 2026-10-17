@@ -787,9 +787,8 @@ pub mod perception {
     pub mod valence {
         pub use crate::algorithms::{
             perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,
-            ValenceValidation,
         };
-        pub use crate::molecule::perception::{ValenceModel, ValencePerception};
+        pub use crate::molecule::perception::{ValenceModel, ValencePerception, ValenceValidation};
     }
 
     /// Ring membership and deterministic ring-basis perception.

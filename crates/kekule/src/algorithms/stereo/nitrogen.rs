@@ -27,7 +27,11 @@ pub(super) fn lone_pair_is_stereogenic(mol: &Molecule, center: AtomId) -> bool {
             .expect("live center")
             .any(|(id, bond)| {
                 bond.order != BondOrder::Single
-                    || mol.bond_is_aromatic(id) == Some(true)
+                    || mol
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.bond_is_aromatic(id))
+                        == Some(true)
                     || conjugated_neighbor(mol, center, bond.other_atom(center))
             })
     {
@@ -81,7 +85,11 @@ fn conjugated_neighbor(mol: &Molecule, center: AtomId, neighbor: AtomId) -> bool
             let other = bond.other_atom(neighbor);
             other != center
                 && (matches!(bond.order, BondOrder::Double | BondOrder::Triple)
-                    || mol.bond_is_aromatic(id) == Some(true))
+                    || mol
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.bond_is_aromatic(id))
+                        == Some(true))
                 && conjugation_donor(mol, other)
         })
 }
@@ -89,7 +97,8 @@ fn conjugated_neighbor(mol: &Molecule, center: AtomId, neighbor: AtomId) -> bool
 fn bridgehead(mol: &Molecule, center: AtomId) -> bool {
     let membership = mol
         .perception()
-        .ring_membership()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("prepared ring membership");
     if mol
         .incident_bonds(center)
@@ -101,7 +110,9 @@ fn bridgehead(mol: &Molecule, center: AtomId) -> bool {
         return false;
     }
     let rings: Vec<_> = mol
-        .ring_set()
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
         .expect("prepared ring set")
         .rings()
         .iter()

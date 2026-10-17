@@ -126,7 +126,11 @@ impl<'a> AtomView<'a> {
 
     /// Perceived aromaticity; `None` before perception.
     pub fn is_aromatic(self) -> Option<bool> {
-        self.instance().molecule().atom_is_aromatic(self.id.atom())
+        self.instance()
+            .molecule()
+            .perception()
+            .aromaticity()
+            .map(|aromaticity| aromaticity.atom_is_aromatic(self.id.atom()))
     }
 
     pub fn atom_site(self) -> Option<AtomSiteView<'a>> {
@@ -237,7 +241,11 @@ impl<'a> BondView<'a> {
 
     /// Perceived aromaticity; `None` before perception.
     pub fn is_aromatic(self) -> Option<bool> {
-        self.instance().molecule().bond_is_aromatic(self.id.bond())
+        self.instance()
+            .molecule()
+            .perception()
+            .aromaticity()
+            .map(|aromaticity| aromaticity.bond_is_aromatic(self.id.bond()))
     }
 
     /// One static topology annotation of this bond.

@@ -24,6 +24,14 @@ impl ConjugationPerception {
     pub const fn model(&self) -> ConjugationModel {
         self.model
     }
+    /// Whether one atom is an endpoint of a conjugated bond.
+    pub fn atom_is_conjugated(&self, atom: AtomId) -> bool {
+        self.atoms.contains(&atom)
+    }
+    /// Whether one bond is conjugated; aromatic bonds are.
+    pub fn bond_is_conjugated(&self, bond: BondId) -> bool {
+        self.bonds.contains(&bond)
+    }
     /// Iterates the endpoints of conjugated bonds in stable ID order.
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = AtomId> + DoubleEndedIterator + '_ {
         self.atoms.iter().copied()

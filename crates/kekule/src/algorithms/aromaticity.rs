@@ -208,26 +208,43 @@ fn perceive_localized_aromaticity(
     let mut work = AromaticityWork::new(options.max_total_work);
     work.charge(mol.graph.atom_slot_count())?;
     work.charge(mol.graph.bond_slot_count())?;
-    if mol.ring_set().is_none() {
+    if mol
+        .perception()
+        .rings()
+        .and_then(RingPerception::ring_set)
+        .is_none()
+    {
         let ring_options = options.ring_options.with_scope(RingPerceptionScope::Basis);
         perceive_rings(mol, ring_options).map_err(AromaticityError::RingPerception)?;
     }
     if model.is_mdl()
         && !mol
             .perception()
-            .ring_basis_model()
-            .is_some_and(RingBasisModel::is_sssr_like)
+            .rings()
+            .and_then(RingPerception::basis)
+            .is_some_and(RingBasisState::is_sssr_like)
     {
         return Err(AromaticityError::IncompatibleRingBasis);
     }
     // Charge the complete stored ring family before cloning it, including
     // expert-installed families that bypass ring enumeration limits.
-    for ring in mol.ring_set().expect("rings installed").rings() {
+    for ring in mol
+        .perception()
+        .rings()
+        .and_then(RingPerception::ring_set)
+        .expect("rings installed")
+        .rings()
+    {
         work.charge(1)?;
         work.charge(ring.atoms.len())?;
         work.charge(ring.bonds.len())?;
     }
-    let ring_set = mol.ring_set().expect("rings installed").clone();
+    let ring_set = mol
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed")
+        .clone();
     assign_localized_aromaticity(mol, &ring_set, model, &mut work)
 }
 
@@ -342,7 +359,9 @@ fn rdkit_localized_atom_donor_type(
 
 fn atom_noncyclic_pi_neighbor(mol: &Molecule, atom_id: AtomId) -> Option<AtomId> {
     let membership = mol
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("ring membership is computed before aromatic donor assignment");
     mol.incident_bonds(atom_id)?.find_map(|(bond_id, bond)| {
         (!membership.bond_in_ring(bond_id)
@@ -356,7 +375,9 @@ fn atom_noncyclic_pi_neighbor(mol: &Molecule, atom_id: AtomId) -> Option<AtomId>
 
 fn atom_has_cyclic_pi_bond(mol: &Molecule, atom_id: AtomId) -> bool {
     let membership = mol
-        .ring_membership()
+        .perception()
+        .rings()
+        .map(|rings| rings.membership())
         .expect("ring membership is computed before aromatic donor assignment");
     mol.incident_bonds(atom_id)
         .into_iter()
@@ -816,13 +837,23 @@ mod tests {
             .bond(protected_single)
             .expect("protected fusion bond");
         assert_eq!(protected.order, BondOrder::Single);
-        assert_eq!(molecule.bond_is_aromatic(protected_single), Some(false));
+        assert_eq!(
+            molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.bond_is_aromatic(protected_single)),
+            Some(false)
+        );
         assert_eq!(
             molecule
                 .atoms()
                 .filter(|(atom_id, atom)| {
                     atom.element.symbol() != "O"
-                        && molecule.atom_is_aromatic(*atom_id) == Some(true)
+                        && molecule
+                            .perception()
+                            .aromaticity()
+                            .map(|aromaticity| aromaticity.atom_is_aromatic(*atom_id))
+                            == Some(true)
                 })
                 .count(),
             9
@@ -833,7 +864,7 @@ mod tests {
     fn canonical_localized_dye_assigns_nitrogen_hydrogens_before_aromaticity() {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
         let mut molecule = crate::tests::read_smiles(input).expect("dye parses");
-        assert!(!molecule.perception().has_aromaticity());
+        assert!(molecule.perception().aromaticity().is_none());
         let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default());
         assert!(valence.is_ok(), "{valence:#?}");
         let valence_nitrogens = molecule
@@ -842,7 +873,7 @@ mod tests {
             .map(|(atom_id, _)| molecule.implicit_hydrogens(atom_id))
             .collect::<Vec<_>>();
         assert_eq!(valence_nitrogens, vec![Some(1), Some(1)]);
-        assert!(!molecule.perception().has_aromaticity());
+        assert!(molecule.perception().aromaticity().is_none());
         perceive_aromaticity(
             &mut molecule,
             AromaticityModel::RdkitLike,
@@ -855,7 +886,10 @@ mod tests {
             .filter(|(_, atom)| atom.element.symbol() == "N")
             .map(|(atom_id, _)| {
                 (
-                    molecule.atom_is_aromatic(atom_id),
+                    molecule
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.atom_is_aromatic(atom_id)),
                     molecule.implicit_hydrogens(atom_id),
                 )
             })
@@ -903,7 +937,11 @@ mod tests {
                 .atoms()
                 .filter(|(atom_id, atom)| {
                     atom.element.symbol() == "C"
-                        && molecule.atom_is_aromatic(*atom_id) == Some(true)
+                        && molecule
+                            .perception()
+                            .aromaticity()
+                            .map(|aromaticity| aromaticity.atom_is_aromatic(*atom_id))
+                            == Some(true)
                 })
                 .count(),
             6
@@ -916,9 +954,13 @@ mod tests {
             let mut molecule = crate::tests::read_smiles(smiles).expect("carbocation parses");
             molecule.perceive().expect("carbocation perceives");
             assert!(
-                molecule
-                    .atom_ids()
-                    .all(|atom_id| { molecule.atom_is_aromatic(atom_id) == Some(false) }),
+                molecule.atom_ids().all(|atom_id| {
+                    molecule
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.atom_is_aromatic(atom_id))
+                        == Some(false)
+                }),
                 "{smiles}"
             );
         }
@@ -942,15 +984,23 @@ mod tests {
             let mut molecule = crate::tests::read_smiles(source).expect(source);
             molecule.perceive().expect(source);
             assert!(
-                molecule
-                    .atom_ids()
-                    .all(|atom| { molecule.atom_is_aromatic(atom) == Some(aromatic) }),
+                molecule.atom_ids().all(|atom| {
+                    molecule
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.atom_is_aromatic(atom))
+                        == Some(aromatic)
+                }),
                 "atom mask for {source}"
             );
             assert!(
-                molecule
-                    .bond_ids()
-                    .all(|bond| { molecule.bond_is_aromatic(bond) == Some(aromatic) }),
+                molecule.bond_ids().all(|bond| {
+                    molecule
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
+                        == Some(aromatic)
+                }),
                 "bond mask for {source}"
             );
         }
@@ -975,7 +1025,10 @@ mod tests {
             molecule.perceive().expect(source);
             for atom in molecule.atom_ids() {
                 assert_eq!(
-                    molecule.atom_is_aromatic(atom),
+                    molecule
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.atom_is_aromatic(atom)),
                     Some(aromatic && atom.index() != 1),
                     "{source}: {atom}"
                 );
@@ -983,7 +1036,10 @@ mod tests {
             for (bond_id, bond) in molecule.bonds() {
                 let (left, right) = bond.endpoints();
                 assert_eq!(
-                    molecule.bond_is_aromatic(bond_id),
+                    molecule
+                        .perception()
+                        .aromaticity()
+                        .map(|aromaticity| aromaticity.bond_is_aromatic(bond_id)),
                     Some(aromatic && left.index() != 1 && right.index() != 1),
                     "{source}: {bond_id}"
                 );
@@ -1015,12 +1071,21 @@ mod tests {
         )
         .expect("aromaticity");
         for atom in molecule.atom_ids() {
-            assert_eq!(molecule.atom_is_aromatic(atom), Some(atom.index() != 1));
+            assert_eq!(
+                molecule
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(atom)),
+                Some(atom.index() != 1)
+            );
         }
         for (bond_id, bond) in molecule.bonds() {
             let (left, right) = bond.endpoints();
             assert_eq!(
-                molecule.bond_is_aromatic(bond_id),
+                molecule
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.bond_is_aromatic(bond_id)),
                 Some(left.index() != 1 && right.index() != 1)
             );
         }
@@ -1041,10 +1106,22 @@ mod tests {
         // explicit-valence-minus-degree is one, so the two double bonds do not
         // trigger the multiple-unsaturation exclusion and donate two electrons.
         for atom in molecule.atom_ids() {
-            assert_eq!(molecule.atom_is_aromatic(atom), Some(atom != helium));
+            assert_eq!(
+                molecule
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(atom)),
+                Some(atom != helium)
+            );
         }
         for bond in molecule.bond_ids() {
-            assert_eq!(molecule.bond_is_aromatic(bond), Some(bond != zero));
+            assert_eq!(
+                molecule
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.bond_is_aromatic(bond)),
+                Some(bond != zero)
+            );
         }
     }
 }

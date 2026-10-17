@@ -160,7 +160,12 @@ fn degree(mol: &Molecule, atom: AtomId) -> usize {
 }
 
 fn bond_code(mol: &Molecule, bond_id: BondId, bond: &Bond) -> (u8, bool) {
-    if mol.bond_is_aromatic(bond_id) == Some(true) {
+    if mol
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.bond_is_aromatic(bond_id))
+        == Some(true)
+    {
         return (5, true);
     }
     let order = match bond.order {
@@ -235,16 +240,24 @@ fn should_refine_ring_topology(mol: &Molecule, atoms: &[AtomId], ranks: &[u32]) 
     }
 
     let mut computed_ring_set = None;
-    let ring_set = if let Some(ring_set) = mol.ring_set() {
-        ring_set
-    } else {
-        let mut staged = mol.clone();
-        let options = super::RingPerceptionOptions::for_molecule(&staged);
-        if super::rings::perceive_rings(&mut staged, options).is_err() {
-            return false;
-        }
-        computed_ring_set.insert(staged.ring_set().expect("rings installed").clone())
-    };
+    let ring_set =
+        if let Some(ring_set) = mol.perception().rings().and_then(|rings| rings.ring_set()) {
+            ring_set
+        } else {
+            let mut staged = mol.clone();
+            let options = super::RingPerceptionOptions::for_molecule(&staged);
+            if super::rings::perceive_rings(&mut staged, options).is_err() {
+                return false;
+            }
+            computed_ring_set.insert(
+                staged
+                    .perception()
+                    .rings()
+                    .and_then(|rings| rings.ring_set())
+                    .expect("rings installed")
+                    .clone(),
+            )
+        };
     let mut ring_counts = vec![0usize; mol.graph.atom_slot_count()];
     for ring in ring_set.rings() {
         for atom in &ring.atoms {

@@ -160,15 +160,26 @@ fn phosphine_smiles_preserve_bracket_hydrogen_and_lone_pair() {
 }
 
 fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
-    molecule.atom_is_aromatic(atom) == Some(true)
+    molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.atom_is_aromatic(atom))
+        == Some(true)
 }
 
 fn aromatic_bond(molecule: &Molecule, bond: BondId) -> bool {
-    molecule.bond_is_aromatic(bond) == Some(true)
+    molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
+        == Some(true)
 }
 
 fn inferred_hydrogens(molecule: &Molecule, atom: AtomId) -> Option<u8> {
-    molecule.perception().inferred_hydrogens(atom)
+    molecule
+        .perception()
+        .valence()
+        .and_then(|valence| valence.inferred_hydrogen_count(atom))
 }
 
 fn aromatic_atom_count(molecule: &Molecule) -> usize {
@@ -258,7 +269,7 @@ fn smiles_record_preserves_name_extension_and_original_byte_spans() {
         assert_eq!(mapping.source_index(), index);
         assert_eq!(mapping.atom(), AtomId::new(0));
         assert_eq!(&source[mapping.source_span()], ["[Na+]", "[Cl-]"][index]);
-        assert!(!component.molecule().perception().has_valence());
+        assert!(component.molecule().perception().valence().is_none());
     }
 }
 
@@ -359,7 +370,7 @@ fn cxsmiles_radicals_preserve_electron_occupancy_and_explicit_spin() {
             let mut molecule = interpretation.into_molecule().unwrap();
             let atom = molecule.atom(AtomId::new(0)).unwrap();
             assert_eq!(atom.radical, AtomRadical::new(electrons, spin), "{source}");
-            assert!(!molecule.perception().has_valence());
+            assert!(molecule.perception().valence().is_none());
             perceive(&mut molecule).unwrap();
             assert_eq!(
                 molecule
@@ -369,7 +380,8 @@ fn cxsmiles_radicals_preserve_electron_occupancy_and_explicit_spin() {
                     .represented_count()
                     + molecule
                         .perception()
-                        .inferred_hydrogens(AtomId::new(0))
+                        .valence()
+                        .and_then(|valence| valence.inferred_hydrogen_count(AtomId::new(0)))
                         .unwrap(),
                 4 - electrons
             );
@@ -428,7 +440,10 @@ fn cxsmiles_radicals_override_inference_without_overwriting_source_assertions() 
             AtomRadical::new(1, None)
         );
         assert_eq!(
-            molecule.perception().inferred_hydrogens(AtomId::new(0)),
+            molecule
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(AtomId::new(0))),
             Some(0)
         );
         assert_eq!(
@@ -482,7 +497,7 @@ fn cxsmiles_enhanced_groups_preserve_members_and_legacy_relative_configuration()
     ] {
         let source = format!("{base} |{fields}|");
         let molecule = read_smiles(&source).unwrap();
-        assert!(!molecule.perception().has_valence());
+        assert!(molecule.perception().valence().is_none());
         let groups = molecule.stereo_groups().collect::<Vec<_>>();
         assert_eq!(groups.len(), kinds.len(), "{source}");
         for (((group_id, group), kind), expected_centers) in
@@ -817,7 +832,7 @@ fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
             .molecule()
             .validate_connected()
             .expect("each interpreted component is connected");
-        assert!(!component.molecule().perception().has_valence());
+        assert!(component.molecule().perception().valence().is_none());
         assert_eq!(component.report().atom_mappings().len(), 1);
         assert!(component.report().bond_mappings().is_empty());
     }
@@ -887,7 +902,7 @@ fn smiles_brackets_publish_exact_hydrogen_declarations() {
             .unwrap_or_else(|error| panic!("{source} should interpret: {error}"));
         let atom = molecule.atom(AtomId::new(0)).expect("source atom");
         assert_eq!(atom.hydrogens, declaration, "{source}");
-        assert!(!molecule.perception().has_valence(), "{source}");
+        assert!(molecule.perception().valence().is_none(), "{source}");
 
         perceive(&mut molecule).unwrap_or_else(|error| panic!("{source} should perceive: {error}"));
         assert_eq!(
@@ -899,7 +914,10 @@ fn smiles_brackets_publish_exact_hydrogen_declarations() {
             "perception must not rewrite {source}"
         );
         assert_eq!(
-            molecule.perception().inferred_hydrogens(AtomId::new(0)),
+            molecule
+                .perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(AtomId::new(0))),
             Some(perceived_implicit),
             "{source}"
         );
@@ -987,7 +1005,7 @@ fn aromatic_chalcogen_bracket_atoms_localize_without_perceiving() {
     );
     assert!(components
         .iter()
-        .all(|molecule| !molecule.perception().has_aromaticity()));
+        .all(|molecule| molecule.perception().aromaticity().is_none()));
     assert!(components.iter().all(|molecule| molecule
         .bonds()
         .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double))));
@@ -1311,7 +1329,7 @@ fn smiles_source_aromaticity_validation_preserves_supported_forms() {
         assert!(molecule
             .bonds()
             .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
-        assert!(!molecule.perception().has_aromaticity());
+        assert!(molecule.perception().aromaticity().is_none());
     }
 }
 
@@ -1754,7 +1772,13 @@ fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_s
         molecule.atom(center).expect("center").hydrogens,
         ImplicitHydrogens::Inferred
     );
-    assert_eq!(molecule.perception().inferred_hydrogens(center), Some(1));
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(center)),
+        Some(1)
+    );
     molecule
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
@@ -2048,7 +2072,12 @@ fn smiles_aromatic_arsenic_round_trip() {
             mol.atoms()
                 .map(|(id, atom)| {
                     usize::from(atom.hydrogens.represented_count())
-                        + usize::from(mol.perception().inferred_hydrogens(id).unwrap_or(0))
+                        + usize::from(
+                            mol.perception()
+                                .valence()
+                                .and_then(|valence| valence.inferred_hydrogen_count(id))
+                                .unwrap_or(0),
+                        )
                 })
                 .sum::<usize>()
         };

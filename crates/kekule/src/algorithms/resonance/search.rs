@@ -543,7 +543,11 @@ fn prepare(
             valence: i32::try_from(explicit_valence(mol, id) + h)
                 .map_err(|_| ResonanceError::InvalidElectronCount)?,
             charge: i32::from(atom.formal_charge),
-            aromatic: mol.perception().atom_is_aromatic(id) == Some(true),
+            aromatic: mol
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(id))
+                == Some(true),
             adjacent: Vec::new(),
         });
     }

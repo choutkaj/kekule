@@ -3,15 +3,18 @@ use super::*;
 #[test]
 fn interpretation_and_default_perception_are_separate() {
     let mut small = read_smiles("CCO").expect("smiles should parse");
-    assert!(!small.perception().has_valence());
+    assert!(small.perception().valence().is_none());
 
     small.perceive().expect("ethanol perception");
 
-    assert!(small.perception().has_valence());
-    assert!(small.perception().has_rings());
-    assert!(small.perception().has_aromaticity());
+    assert!(small.perception().valence().is_some());
+    assert!(small.perception().rings().is_some());
+    assert!(small.perception().aromaticity().is_some());
     assert_eq!(
-        small.perception().inferred_hydrogens(AtomId::new(2)),
+        small
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(AtomId::new(2))),
         Some(1)
     );
 }
@@ -21,17 +24,29 @@ fn default_perception_installs_one_ring_basis_for_aromaticity() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
     molecule.perceive().expect("benzene perception");
 
-    let ring_set = molecule.ring_set().expect("installed ring basis");
+    let ring_set = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("installed ring basis");
     assert_eq!(ring_set.len(), 1);
     assert_eq!(
-        molecule.perception().ring_basis_model(),
+        molecule
+            .perception()
+            .rings()
+            .and_then(|rings| rings.basis())
+            .map(|basis| basis.model()),
         Some(RingBasisModel::FiguerasSssrLike)
     );
-    assert!(molecule.perception().has_aromaticity());
+    assert!(molecule.perception().aromaticity().is_some());
     assert_eq!(
         molecule
             .atoms()
-            .filter(|(atom, _)| molecule.atom_is_aromatic(*atom) == Some(true))
+            .filter(|(atom, _)| molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(*atom))
+                == Some(true))
             .count(),
         6
     );
@@ -48,8 +63,8 @@ fn interpretation_owns_source_stereo_before_default_perception() {
     molecule.perceive().expect("directional perception");
 
     assert_eq!(molecule.stereo_elements().count(), 1);
-    assert!(!molecule.perception().has_stereo());
-    assert!(molecule.perception().stereo_state().is_none());
+    assert!(molecule.perception().cip().is_none());
+    assert!(molecule.perception().cip().is_none());
 }
 
 #[test]
@@ -254,9 +269,11 @@ fn direct_aromaticity_perception_accepts_localized_aromatic_input() {
     )
     .expect("localized aromatic representation should be perceived");
 
-    assert!(molecule
-        .bond_ids()
-        .all(|bond| molecule.bond_is_aromatic(bond) == Some(true)));
+    assert!(molecule.bond_ids().all(|bond| molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
+        == Some(true)));
 }
 
 #[test]
@@ -338,10 +355,15 @@ fn valence_reports_excess_common_valence() {
     valence_api::perceive_valence(
         mol.working_mut(),
         ValenceModel::RdkitLike,
-        ValenceOptions::default().with_validation(crate::algorithms::ValenceValidation::Permissive),
+        ValenceOptions::default().with_validation(crate::molecule::ValenceValidation::Permissive),
     )
     .expect("permissive valence inspection should succeed");
-    assert_eq!(mol.perception().inferred_hydrogens(c), Some(0));
+    assert_eq!(
+        mol.perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(c)),
+        Some(0)
+    );
 }
 
 #[test]
@@ -359,7 +381,8 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
     }
     let previous = Perception::builder()
         .with_valence(
-            Some(ValenceModel::RdkitLike),
+            ValenceModel::RdkitLike,
+            ValenceValidation::Strict,
             mol.atom_ids()
                 .map(|atom| (atom, if atom == carbon { 2 } else { 0 }))
                 .collect(),
@@ -391,7 +414,12 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
         [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon
     ));
     assert_eq!(mol.perception(), &previous);
-    assert_eq!(mol.perception().inferred_hydrogens(carbon), Some(2));
+    assert_eq!(
+        mol.perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
+        Some(2)
+    );
 }
 
 #[test]
@@ -407,16 +435,28 @@ fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
         Default::default(),
     )
     .expect("RDKit UpdatePropertyCache clamps the effective atomic number even when strict");
-    assert_eq!(molecule.perception().inferred_hydrogens(carbon), Some(0));
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
+        Some(0)
+    );
 
     valence_api::perceive_valence(
         molecule.working_mut(),
         ValenceModel::RdkitLike,
-        ValenceOptions::default().with_validation(crate::algorithms::ValenceValidation::Permissive),
+        ValenceOptions::default().with_validation(crate::molecule::ValenceValidation::Permissive),
     )
     .expect("permissive inspection should install");
-    assert!(molecule.perception().has_valence());
-    assert_eq!(molecule.perception().inferred_hydrogens(carbon), Some(0));
+    assert!(molecule.perception().valence().is_some());
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
+        Some(0)
+    );
 }
 
 #[test]
@@ -448,7 +488,12 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
             max_allowed: 4,
         }]
     );
-    assert_eq!(mol.perception().inferred_hydrogens(carbon), None);
+    assert_eq!(
+        mol.perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
+        None
+    );
 }
 
 #[test]
@@ -480,7 +525,9 @@ fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
 
         assert!(report.is_ok(), "neutral {symbol} should be supported");
         assert_eq!(
-            mol.perception().inferred_hydrogens(atom_id),
+            mol.perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
             Some(expected_inferred_hydrogens),
             "neutral {symbol} implicit hydrogens"
         );
@@ -621,7 +668,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
 
         assert!(report.is_ok(), "{symbol}{charge:+} should be supported");
         assert_eq!(
-            mol.perception().inferred_hydrogens(atom_id),
+            mol.perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
             Some(expected_inferred_hydrogens),
             "{symbol}{charge:+} implicit hydrogens"
         );
@@ -644,7 +693,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             "isolated unsupported spectator {symbol} should be accepted"
         );
         assert_eq!(
-            mol.perception().inferred_hydrogens(atom_id),
+            mol.perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
             Some(0),
             "{symbol} implicit hydrogens"
         );
@@ -675,7 +726,10 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     );
     assert!(report.is_ok(), "tetracyanomercurate should be supported");
     assert_eq!(
-        mercury_cyanide.perception().inferred_hydrogens(mercury),
+        mercury_cyanide
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(mercury)),
         Some(0)
     );
 
@@ -703,7 +757,10 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         "neutral trivalent aluminum should be supported"
     );
     assert_eq!(
-        covalent_aluminum.perception().inferred_hydrogens(aluminum),
+        covalent_aluminum
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(aluminum)),
         Some(0)
     );
 
@@ -731,7 +788,10 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         "neutral divalent magnesium should be supported"
     );
     assert_eq!(
-        neutral_magnesium.perception().inferred_hydrogens(magnesium),
+        neutral_magnesium
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(magnesium)),
         Some(0)
     );
 }

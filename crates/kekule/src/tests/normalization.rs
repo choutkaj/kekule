@@ -100,7 +100,11 @@ fn oxohalogen_cleanup_matches_rdkit_for_ester_and_declared_hydrogen_forms() {
         assert_eq!(
             molecule
                 .atom_ids()
-                .map(|atom| molecule.perception().inferred_hydrogens(atom).unwrap())
+                .map(|atom| molecule
+                    .perception()
+                    .valence()
+                    .and_then(|valence| valence.inferred_hydrogen_count(atom))
+                    .unwrap())
                 .collect::<Vec<_>>(),
             inferred_hydrogens,
             "{source}"
@@ -255,7 +259,7 @@ fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
 #[test]
 fn aromatic_smiles_is_localized_during_interpretation_then_perceived() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
-    assert!(!molecule.perception().has_aromaticity());
+    assert!(molecule.perception().aromaticity().is_none());
     assert!(molecule
         .bonds()
         .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
@@ -292,15 +296,22 @@ fn aromatic_smiles_is_localized_during_interpretation_then_perceived() {
     .expect("localized aromaticity should be perceived");
 
     assert_eq!(
-        molecule.perception().aromaticity_model(),
+        molecule
+            .perception()
+            .aromaticity()
+            .map(|aromaticity| aromaticity.model()),
         Some(AromaticityModel::RdkitLike)
     );
-    assert!(molecule
-        .atom_ids()
-        .all(|atom| molecule.atom_is_aromatic(atom) == Some(true)));
-    assert!(molecule
-        .bond_ids()
-        .all(|bond| molecule.bond_is_aromatic(bond) == Some(true)));
+    assert!(molecule.atom_ids().all(|atom| molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.atom_is_aromatic(atom))
+        == Some(true)));
+    assert!(molecule.bond_ids().all(|bond| molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
+        == Some(true)));
 }
 
 #[test]
@@ -385,7 +396,7 @@ fn aromaticity_perception_preserves_complete_primary_representation() {
     clear_test_derived_state(&mut represented_after);
 
     assert_eq!(represented_after, represented_before);
-    assert!(molecule.perception().has_aromaticity());
+    assert!(molecule.perception().aromaticity().is_some());
 }
 
 fn clear_test_derived_state(molecule: &mut Molecule) {

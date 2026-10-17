@@ -8,8 +8,7 @@ use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
 
 use super::{
     Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, MoleculeCorrespondence, Perception,
-    Result, RingMembership, RingSet, StereoDescriptor, StereoElement, StereoElementId, StereoGroup,
-    StereoGroupId,
+    Result, StereoElement, StereoElementId, StereoGroup, StereoGroupId,
 };
 
 /// Failure to publish checked molecule construction or editing state.
@@ -211,36 +210,6 @@ impl MoleculeEditor {
     /// See [`Molecule::total_hydrogens`].
     pub fn total_hydrogens(&self, atom: AtomId) -> Option<usize> {
         self.working.total_hydrogens(atom)
-    }
-
-    pub fn atom_is_aromatic(&self, atom: AtomId) -> Option<bool> {
-        self.working.atom_is_aromatic(atom)
-    }
-
-    pub fn bond_is_aromatic(&self, bond: BondId) -> Option<bool> {
-        self.working.bond_is_aromatic(bond)
-    }
-
-    /// See [`Molecule::atom_is_conjugated`]. Chemical edits invalidate this state.
-    pub fn atom_is_conjugated(&self, atom: AtomId) -> Option<bool> {
-        self.working.atom_is_conjugated(atom)
-    }
-
-    /// See [`Molecule::bond_is_conjugated`]. Chemical edits invalidate this state.
-    pub fn bond_is_conjugated(&self, bond: BondId) -> Option<bool> {
-        self.working.bond_is_conjugated(bond)
-    }
-
-    pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
-        self.working.cip_descriptor(element)
-    }
-
-    pub fn ring_membership(&self) -> Option<&RingMembership> {
-        self.working.ring_membership()
-    }
-
-    pub fn ring_set(&self) -> Option<&RingSet> {
-        self.working.ring_set()
     }
 
     pub fn clear_perception(&mut self) {

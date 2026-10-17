@@ -224,7 +224,7 @@ impl Model {
     /// let topology = smiles::to_topology("c1ccccc1")?;
     /// let mut model = Model::new(topology, Positions::zeros(6))?;
     /// model.perceive()?;
-    /// assert!(model.topology().instances().all(|m| m.molecule().perception().has_rings()));
+    /// assert!(model.topology().instances().all(|m| m.molecule().perception().rings().is_some()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {

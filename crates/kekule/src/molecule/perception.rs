@@ -7,8 +7,6 @@ use super::{
 };
 use super::{ConjugationModel, ConjugationPerception, ResonanceGroup, ResonancePerception};
 
-static EMPTY_CIP_DESCRIPTORS: BTreeMap<StereoElementId, StereoDescriptor> = BTreeMap::new();
-
 /// The valence model used to produce installed valence state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -29,29 +27,32 @@ pub enum AromaticityModel {
     Mdl,
 }
 
-/// The algorithm used to select an installed ring set.
+/// How valence perception treats states RDKit's strict property cache rejects.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ValenceValidation {
+    /// Reject invalid valence and implicit-hydrogen states.
+    #[default]
+    Strict,
+    /// Follow RDKit's permissive rules: excess valence implies zero
+    /// additional hydrogens instead of an error.
+    Permissive,
+}
+
+/// The requested algorithm for selecting an installed ring set.
+///
+/// Whether the selection fell back to depth-first cycles is recorded
+/// separately, by [`RingBasisState::used_depth_first_fallback`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RingBasisModel {
-    /// RDKit-like Figueras selection and symmetrization, with a deterministic
-    /// depth-first cycle fallback when the candidate search is incomplete.
+    /// RDKit-like Figueras selection and symmetrization. When the candidate
+    /// search is incomplete, a deterministic depth-first cycle fallback
+    /// chooses the rings instead.
     ///
     /// This follows the selected-ring model rather than promising a minimum
     /// cycle basis or that the selected rings span the complete cycle space.
     FiguerasSssrLike,
-    /// Deterministic cycle fallback; unsuitable for exact SMARTS R/r predicates.
-    DepthFirstFallback,
-}
-
-impl RingBasisModel {
-    /// Whether the selected rings follow the SSSR-like selection that MDL
-    /// aromaticity and SMARTS ring counts require.
-    pub(crate) const fn is_sssr_like(self) -> bool {
-        match self {
-            Self::FiguerasSssrLike => true,
-            Self::DepthFirstFallback => false,
-        }
-    }
 }
 
 impl AromaticityModel {
@@ -154,25 +155,33 @@ impl RingSet {
     }
 }
 
-/// One installed ring basis and its optional algorithm provenance.
+/// One installed ring basis and its provenance: the requested selection model
+/// and whether the depth-first fallback replaced an incomplete candidate
+/// search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingBasisState {
-    pub(super) model: Option<RingBasisModel>,
+    pub(super) model: RingBasisModel,
+    pub(super) depth_first_fallback: bool,
     pub(super) rings: RingSet,
 }
 
+/// Installed valence: the inferred implicit-hydrogen counts and the model and
+/// validation policy that produced them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValencePerception {
-    pub(super) model: Option<ValenceModel>,
+    pub(super) model: ValenceModel,
+    pub(super) validation: ValenceValidation,
     pub(super) inferred_hydrogens: BTreeMap<AtomId, u8>,
 }
 
+/// Installed ring membership and, when requested, a selected ring basis.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingPerception {
     pub(super) membership: RingMembership,
     pub(super) basis: Option<RingBasisState>,
 }
 
+/// Installed aromatic atoms and bonds and the model that perceived them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AromaticityPerception {
     pub(super) model: AromaticityModel,
@@ -189,6 +198,25 @@ pub struct CipPerception {
     pub(super) cip_descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
 }
 
+/// Reconstructible chemistry derived from a molecule's represented graph.
+///
+/// Each perception step installs one section, and each section owns its
+/// queries and records the model or policy that produced it:
+/// [`Self::valence`], [`Self::rings`], [`Self::aromaticity`],
+/// [`Self::conjugation`], [`Self::resonance`], and the CIP state
+/// [`Self::cip`]. An absent section has not been perceived, or a chemical
+/// edit invalidated it.
+///
+/// ```
+/// use kekule::smiles;
+/// let mut benzene = smiles::to_molecules("c1ccccc1")?.remove(0);
+/// benzene.perceive()?;
+/// let perception = benzene.perception();
+/// let aromaticity = perception.aromaticity().expect("perceived");
+/// assert_eq!(aromaticity.atoms().len(), 6);
+/// assert_eq!(perception.rings().and_then(|rings| rings.ring_set()).map(|set| set.len()), Some(1));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Perception {
     pub(super) valence: Option<ValencePerception>,
@@ -200,9 +228,23 @@ pub struct Perception {
 }
 
 impl ValencePerception {
-    /// Returns the named model, or `None` for an installed model-neutral section.
-    pub const fn model(&self) -> Option<ValenceModel> {
+    /// The valence model that inferred these counts.
+    pub const fn model(&self) -> ValenceModel {
         self.model
+    }
+
+    /// The validation policy the counts were inferred under: strict
+    /// perception rejected invalid valence states, permissive perception
+    /// gave them zero additional hydrogens.
+    pub const fn validation(&self) -> ValenceValidation {
+        self.validation
+    }
+
+    /// The model's inferred count for one atom. It is the implicit count of
+    /// an atom whose count is inferred and zero for a fixed count; chemical
+    /// callers use [`Molecule::implicit_hydrogens`], which resolves both.
+    pub fn inferred_hydrogen_count(&self, atom: AtomId) -> Option<u8> {
+        self.inferred_hydrogens.get(&atom).copied()
     }
 
     /// Iterates every installed inferred-hydrogen assignment.
@@ -236,19 +278,48 @@ impl RingPerception {
 }
 
 impl RingBasisState {
-    /// Constructs a detached ring basis with optional algorithm provenance.
-    pub const fn new(model: Option<RingBasisModel>, rings: RingSet) -> Self {
-        Self { model, rings }
+    /// A ring basis selected by `model` from a complete candidate search.
+    pub const fn new(model: RingBasisModel, rings: RingSet) -> Self {
+        Self {
+            model,
+            depth_first_fallback: false,
+            rings,
+        }
     }
 
-    /// Returns the named basis-selection model, if provenance is known.
-    pub const fn model(&self) -> Option<RingBasisModel> {
+    /// A ring basis requested from `model` whose incomplete candidate search
+    /// fell back to deterministic depth-first cycles.
+    pub const fn with_depth_first_fallback(model: RingBasisModel, rings: RingSet) -> Self {
+        Self {
+            model,
+            depth_first_fallback: true,
+            rings,
+        }
+    }
+
+    /// The requested basis-selection model.
+    pub const fn model(&self) -> RingBasisModel {
         self.model
+    }
+
+    /// Whether the candidate search was incomplete and the depth-first
+    /// fallback chose the rings. A fallback basis is unsuitable for MDL
+    /// aromaticity and exact SMARTS ring counts.
+    pub const fn used_depth_first_fallback(&self) -> bool {
+        self.depth_first_fallback
     }
 
     /// Returns the selected deterministic ring set.
     pub const fn ring_set(&self) -> &RingSet {
         &self.rings
+    }
+
+    /// Whether the selected rings follow the SSSR-like selection that MDL
+    /// aromaticity and SMARTS ring counts require.
+    pub(crate) const fn is_sssr_like(&self) -> bool {
+        match self.model {
+            RingBasisModel::FiguerasSssrLike => !self.depth_first_fallback,
+        }
     }
 }
 
@@ -256,6 +327,16 @@ impl AromaticityPerception {
     /// Returns the model that perceived this semantic aromaticity membership.
     pub const fn model(&self) -> AromaticityModel {
         self.model
+    }
+
+    /// Whether one atom is aromatic.
+    pub fn atom_is_aromatic(&self, atom: AtomId) -> bool {
+        self.atoms.contains(&atom)
+    }
+
+    /// Whether one bond is aromatic.
+    pub fn bond_is_aromatic(&self, bond: BondId) -> bool {
+        self.bonds.contains(&bond)
     }
 
     /// Iterates every installed aromatic atom.
@@ -287,153 +368,40 @@ impl CipPerception {
 }
 
 impl Perception {
-    /// Returns installed conjugation, including a successfully computed empty set.
-    pub const fn conjugation_state(&self) -> Option<&ConjugationPerception> {
-        self.conjugation.as_ref()
-    }
-    /// Returns the explicitly prepared conjugated-group partition.
-    pub const fn resonance_state(&self) -> Option<&ResonancePerception> {
-        self.resonance.as_ref()
-    }
-    /// Whether conjugation has been computed.
-    pub fn has_conjugation(&self) -> bool {
-        self.conjugation.is_some()
-    }
-    /// Whether resonance groups have been prepared (not enumerated).
-    pub fn has_resonance(&self) -> bool {
-        self.resonance.is_some()
-    }
-    /// Returns unknown before perception, otherwise bond membership.
-    pub fn bond_is_conjugated(&self, bond: BondId) -> Option<bool> {
-        self.conjugation.as_ref().map(|s| s.bonds.contains(&bond))
-    }
-    /// Returns unknown before perception, otherwise atom membership.
-    pub fn atom_is_conjugated(&self, atom: AtomId) -> Option<bool> {
-        self.conjugation.as_ref().map(|s| s.atoms.contains(&atom))
-    }
     /// Starts construction of a detached complete perception state.
     pub fn builder() -> PerceptionBuilder {
         PerceptionBuilder::default()
     }
 
-    /// Returns the exact installed valence section, including model-neutral state.
-    pub const fn valence_state(&self) -> Option<&ValencePerception> {
+    /// Installed valence, or `None` before valence perception.
+    pub const fn valence(&self) -> Option<&ValencePerception> {
         self.valence.as_ref()
     }
 
-    /// Returns the exact installed ring section.
-    pub const fn ring_state(&self) -> Option<&RingPerception> {
+    /// Installed ring membership and basis, or `None` before ring perception.
+    pub const fn rings(&self) -> Option<&RingPerception> {
         self.rings.as_ref()
     }
 
-    /// Returns the exact installed aromaticity section.
-    pub const fn aromaticity_state(&self) -> Option<&AromaticityPerception> {
+    /// Installed aromaticity, or `None` before aromaticity perception.
+    pub const fn aromaticity(&self) -> Option<&AromaticityPerception> {
         self.aromaticity.as_ref()
     }
 
-    /// Returns the exact installed stereo-perception section.
-    pub const fn stereo_state(&self) -> Option<&CipPerception> {
+    /// Installed conjugation, including a successfully computed empty set.
+    pub const fn conjugation(&self) -> Option<&ConjugationPerception> {
+        self.conjugation.as_ref()
+    }
+
+    /// The explicitly prepared conjugated-group partition.
+    pub const fn resonance(&self) -> Option<&ResonancePerception> {
+        self.resonance.as_ref()
+    }
+
+    /// Installed CIP state, including a successful derivation that assigned
+    /// no descriptors.
+    pub const fn cip(&self) -> Option<&CipPerception> {
         self.stereo.as_ref()
-    }
-
-    /// Iterates every installed CIP descriptor assignment.
-    pub fn cip_descriptors(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (StereoElementId, StereoDescriptor)> + DoubleEndedIterator + '_
-    {
-        self.stereo
-            .as_ref()
-            .map(|state| &state.cip_descriptors)
-            .unwrap_or(&EMPTY_CIP_DESCRIPTORS)
-            .iter()
-            .map(|(element, descriptor)| (*element, *descriptor))
-    }
-
-    pub fn has_valence(&self) -> bool {
-        self.valence.is_some()
-    }
-
-    pub fn has_rings(&self) -> bool {
-        self.rings.is_some()
-    }
-
-    pub fn has_aromaticity(&self) -> bool {
-        self.aromaticity.is_some()
-    }
-
-    /// Returns whether stereo perception, including an empty CIP result, is installed.
-    pub fn has_stereo(&self) -> bool {
-        self.stereo.is_some()
-    }
-
-    /// Returns whether the installed stereo section contains any CIP assignments.
-    ///
-    /// This is a payload query, not a section-presence query. Use
-    /// [`Self::has_stereo`] to distinguish an absent section from a successful
-    /// CIP derivation with no assignments.
-    pub fn has_cip_descriptors(&self) -> bool {
-        self.stereo
-            .as_ref()
-            .is_some_and(|state| !state.cip_descriptors.is_empty())
-    }
-
-    /// Returns the named valence model, if the installed section has provenance.
-    ///
-    /// Use [`Self::has_valence`] or [`Self::valence_state`] to distinguish an
-    /// absent section from installed model-neutral valence.
-    pub fn valence_model(&self) -> Option<ValenceModel> {
-        self.valence.as_ref().and_then(|state| state.model)
-    }
-
-    /// Reads the valence model's inferred count. It is the implicit count of an
-    /// atom whose count is inferred and zero for a fixed count; chemical callers
-    /// use [`Molecule::implicit_hydrogens`], which resolves both.
-    pub fn inferred_hydrogens(&self, atom: AtomId) -> Option<u8> {
-        self.valence
-            .as_ref()
-            .and_then(|state| state.inferred_hydrogens.get(&atom).copied())
-    }
-
-    pub fn ring_membership(&self) -> Option<&RingMembership> {
-        self.rings.as_ref().map(|state| &state.membership)
-    }
-
-    pub fn ring_set(&self) -> Option<&RingSet> {
-        self.rings.as_ref().and_then(RingPerception::ring_set)
-    }
-
-    /// Returns the named ring-basis model, if a named basis is installed.
-    ///
-    /// Use [`Self::ring_state`] and [`RingPerception::basis`] to
-    /// distinguish absent ring perception, membership-only state, and an
-    /// installed model-neutral basis.
-    pub fn ring_basis_model(&self) -> Option<RingBasisModel> {
-        self.rings
-            .as_ref()
-            .and_then(RingPerception::basis)
-            .and_then(RingBasisState::model)
-    }
-
-    pub fn aromaticity_model(&self) -> Option<AromaticityModel> {
-        self.aromaticity.as_ref().map(|state| state.model)
-    }
-
-    pub fn atom_is_aromatic(&self, atom: AtomId) -> Option<bool> {
-        self.aromaticity
-            .as_ref()
-            .map(|state| state.atoms.contains(&atom))
-    }
-
-    pub fn bond_is_aromatic(&self, bond: BondId) -> Option<bool> {
-        self.aromaticity
-            .as_ref()
-            .map(|state| state.bonds.contains(&bond))
-    }
-
-    pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
-        self.stereo
-            .as_ref()
-            .and_then(|state| state.cip_descriptor(element))
     }
 }
 
@@ -486,12 +454,14 @@ impl PerceptionBuilder {
         self.state.resonance = Some(ResonancePerception { groups });
         Ok(self)
     }
-    /// Installs exact inferred counts on the detached state.
-    /// Assignments exclude graph hydrogen neighbors. Installation rejects a
-    /// nonzero count on an atom whose implicit count is fixed.
+    /// Installs exact inferred counts with the model and validation policy
+    /// that produced them. Assignments exclude graph hydrogen neighbors.
+    /// Installation rejects a nonzero count on an atom whose implicit count is
+    /// fixed.
     pub fn with_valence(
         mut self,
-        model: Option<ValenceModel>,
+        model: ValenceModel,
+        validation: ValenceValidation,
         assignments: Vec<(AtomId, u8)>,
     ) -> std::result::Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(
@@ -506,6 +476,7 @@ impl PerceptionBuilder {
         }
         self.state.valence = Some(ValencePerception {
             model,
+            validation,
             inferred_hydrogens,
         });
         Ok(self)

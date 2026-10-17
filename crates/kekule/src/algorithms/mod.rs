@@ -60,5 +60,4 @@ pub(crate) use valence::{
 };
 pub use valence::{
     perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,
-    ValenceValidation,
 };

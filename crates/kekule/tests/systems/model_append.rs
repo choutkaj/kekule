@@ -111,8 +111,8 @@ fn annotated(conflict: Option<&str>) -> Model {
             .unwrap();
     }
     let molecule = chemistry.finish().unwrap();
-    assert!(molecule.perception().has_valence());
-    assert!(molecule.perception().has_stereo());
+    assert!(molecule.perception().valence().is_some());
+    assert!(molecule.perception().cip().is_some());
     assert!(molecule.stereo_elements().count() > 0);
     let mut builder = TopologyBuilder::new();
     let shared = builder.add_molecule_definition(molecule.clone()).unwrap();
@@ -873,7 +873,7 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
                     .unwrap(),
                 None
             );
-            assert!(!after.perception().has_valence());
+            assert!(after.perception().valence().is_none());
         } else {
             assert_eq!(before, after);
             assert_eq!(before.perception(), after.perception());

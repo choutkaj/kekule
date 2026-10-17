@@ -107,7 +107,7 @@ fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
         .all(|entry| entry.parent == carbon && entry.origin == AddedHydrogenOrigin::Inferred));
     assert_eq!(molecule.atom_count(), 5);
     assert_eq!(molecule.bond_count(), 4);
-    assert!(!molecule.perception().has_valence());
+    assert!(molecule.perception().valence().is_none());
     for entry in &report.added {
         assert_eq!(
             molecule
@@ -223,7 +223,7 @@ fn fixed_only_materializes_bracket_counts_without_inferred_hydrogens() {
 fn fixed_only_leaves_inferred_counts_implicit_without_perception() {
     let mut molecule = read_smiles("[CH3]C").expect("ethane parses");
     let (fixed, inferred) = (AtomId::new(0), AtomId::new(1));
-    assert!(!molecule.perception().has_valence());
+    assert!(molecule.perception().valence().is_none());
 
     let report = molecule
         .add_hydrogens(
@@ -277,7 +277,7 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
         removed.adjustments[0].hydrogens,
         ImplicitHydrogens::Inferred
     );
-    assert!(!molecule.perception().has_valence());
+    assert!(molecule.perception().valence().is_none());
     assert!(added
         .added
         .iter()
@@ -535,7 +535,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
     valence_api::perceive_valence(
         graph.working_mut(),
         ValenceModel::RdkitLike,
-        ValenceOptions::default().with_validation(crate::algorithms::ValenceValidation::Permissive),
+        ValenceOptions::default().with_validation(crate::molecule::ValenceValidation::Permissive),
     )
     .expect("permissive valence perception");
     let mut molecule = graph;
@@ -737,7 +737,7 @@ fn hydrogen_collapse_retains_a_double_bond_reference_beside_another_hydrogen() {
 #[test]
 fn hydrogen_collapse_requires_only_the_affected_parent_counts() {
     let mut fixed = crate::tests::read_smiles("[H][CH2]C").unwrap();
-    assert!(!fixed.perception().has_valence());
+    assert!(fixed.perception().valence().is_none());
     let report = fixed.remove_hydrogens().unwrap();
     assert_eq!(report.removed.len(), 1);
     let parent = report

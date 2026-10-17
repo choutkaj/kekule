@@ -452,7 +452,13 @@ pub(super) fn features(
     molecule: &Molecule,
     specifications: &[Feature],
 ) -> Result<ndarray::Array2<f32>> {
-    if molecule.perception().ring_basis_model() != Some(RingBasisModel::FiguerasSssrLike) {
+    let basis = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.basis());
+    if !basis.is_some_and(|basis| {
+        basis.model() == RingBasisModel::FiguerasSssrLike && !basis.used_depth_first_fallback()
+    }) {
         return Err(invariant("NAGL requires the selected SSSR ring basis"));
     }
     let averages = if specifications
@@ -469,7 +475,9 @@ pub(super) fn features(
     {
         let mut sizes = BTreeMap::<AtomId, BTreeSet<usize>>::new();
         let rings = molecule
-            .ring_set()
+            .perception()
+            .rings()
+            .and_then(|rings| rings.ring_set())
             .ok_or_else(|| invariant("NAGL ring features require perceived rings"))?;
         for ring in rings.rings() {
             for &atom in &ring.atoms {

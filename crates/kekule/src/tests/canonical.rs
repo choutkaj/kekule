@@ -93,8 +93,20 @@ fn canonical_ranking_uses_current_hydrogen_counts_without_changing_declarations(
     assert_ne!(unperceived.rank_of(fixed), unperceived.rank_of(inferred));
     perceive(&mut molecule).expect("ethane-like graph perceives");
 
-    assert_eq!(molecule.perception().inferred_hydrogens(fixed), Some(0));
-    assert_eq!(molecule.perception().inferred_hydrogens(inferred), Some(3));
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(fixed)),
+        Some(0)
+    );
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(inferred)),
+        Some(3)
+    );
     let before = molecule.clone();
     let ranking = descriptors::canonical_atom_ranking(&molecule);
     assert_eq!(ranking.rank_of(fixed), ranking.rank_of(inferred));

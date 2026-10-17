@@ -49,14 +49,21 @@ impl AnalysisGraph {
             atoms[id.index()] = signatures.len();
             signatures.push((
                 AtomIdentity::of(atom),
-                mol.atom_is_aromatic(id) == Some(true),
+                mol.perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.atom_is_aromatic(id))
+                    == Some(true),
             ));
         }
         let mut adjacency = vec![Vec::new(); size];
         for (id, bond) in mol.bonds() {
             let (a, b) = (atoms[bond.a().index()], atoms[bond.b().index()]);
             let order = if matches!(bond.order, BondOrder::Single | BondOrder::Double)
-                && mol.bond_is_aromatic(id) == Some(true)
+                && mol
+                    .perception()
+                    .aromaticity()
+                    .map(|aromaticity| aromaticity.bond_is_aromatic(id))
+                    == Some(true)
             {
                 7
             } else {
