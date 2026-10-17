@@ -29,6 +29,7 @@ pub(super) use select::{inventory, select_alt_locations};
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AltLocPolicy {
+    /// Rank alternatives by occupancy as described above; the default.
     HighestOccupancy,
     /// Require this label at every residue with alternatives; retain shared atoms.
     SelectLabel(String),
@@ -36,6 +37,8 @@ pub enum AltLocPolicy {
     PreferLabel(String),
     /// Reject any labelled alternate site, even when only one label is present.
     ErrorOnAlternateLocations,
+    /// Apply an [`AltLocSelection`]: a default preference, exact per-residue
+    /// overrides, and residue groups.
     Configured(AltLocSelection),
 }
 
@@ -44,9 +47,14 @@ pub enum AltLocPolicy {
 #[non_exhaustive]
 pub enum AltLocPreference {
     #[default]
+    /// Rank alternatives by occupancy, as [`AltLocPolicy::HighestOccupancy`].
     HighestOccupancy,
+    /// Require this label, as [`AltLocPolicy::SelectLabel`].
     SelectLabel(String),
+    /// Prefer this label, as [`AltLocPolicy::PreferLabel`].
     PreferLabel(String),
+    /// Reject labelled alternate sites, as
+    /// [`AltLocPolicy::ErrorOnAlternateLocations`].
     ErrorOnAlternateLocations,
 }
 
@@ -175,38 +183,52 @@ impl SourceResidueId {
         }
     }
 
+    /// The ID of the residue's source coordinate model.
     pub fn model_id(&self) -> &str {
         &self.model_id
     }
 
+    /// The residue's structural instance: `label_asym_id`, else
+    /// `auth_asym_id`; the chain (or segment) of a PDB entry.
     pub fn asym_id(&self) -> &str {
         &self.asym_id
     }
 
+    /// The residue's position within its structural instance.
     pub fn position(&self) -> &SourceResiduePosition {
         &self.position
     }
 
+    /// The residue's insertion code, if any.
     pub fn insertion_code(&self) -> Option<&str> {
         self.insertion_code.as_deref()
     }
 }
 
+/// The position part of a [`SourceResidueId`], in the first namespace the
+/// source provides.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum SourceResiduePosition {
+    /// The label sequence number, `_atom_site.label_seq_id`.
     Label(i32),
+    /// The author sequence number as text: `_atom_site.auth_seq_id`, or the
+    /// residue sequence number of a PDB entry.
     Author(String),
     /// An author sequence number that an earlier, separate residue of the same
     /// chain already uses, as in PDB files whose numbering wraps around;
     /// `repeat` counts the earlier residues with this number.
     RepeatedAuthor {
+        /// The author sequence number.
         sequence: String,
+        /// The number of earlier residues with this number.
         repeat: usize,
     },
     /// Zero-based source occurrence when neither sequence namespace is available.
     Occurrence {
+        /// The residue's component ID.
         component_id: String,
+        /// The zero-based occurrence of this component in its structural instance.
         index: usize,
     },
 }
@@ -264,6 +286,7 @@ pub struct AltLocResidue {
 }
 
 impl AltLocResidue {
+    /// The residue.
     pub fn residue(&self) -> &SourceResidueId {
         &self.residue
     }
@@ -278,12 +301,17 @@ impl AltLocResidue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AltLocSelectionReason {
+    /// Occupancy ranking chose the alternative.
     HighestOccupancy,
+    /// An override or a required label chose it.
     ExactSelection,
+    /// The preferred label was available and chosen.
     PreferredLabel,
+    /// The preferred label was unavailable, so occupancy ranking chose.
     PreferredLabelUnavailable,
     /// The source declared a combination containing the selected labels.
     SourceConformation {
+        /// The `_atom_sites_alt_gen.ens_id` of the combination.
         id: String,
     },
 }
@@ -300,10 +328,12 @@ pub struct AltLocDecision {
 }
 
 impl AltLocDecision {
+    /// The residue.
     pub fn residue(&self) -> &SourceResidueId {
         &self.residue
     }
 
+    /// Every label the residue has, in lexical order.
     pub fn available_labels(&self) -> &[String] {
         &self.available_labels
     }
@@ -314,6 +344,7 @@ impl AltLocDecision {
         &self.selected_labels
     }
 
+    /// How the selected labels were chosen.
     pub fn reason(&self) -> &AltLocSelectionReason {
         &self.reason
     }
@@ -323,6 +354,7 @@ impl AltLocDecision {
         &self.selected_source_lines
     }
 
+    /// One-based source lines of the rows not kept.
     pub fn omitted_source_lines(&self) -> &[usize] {
         &self.omitted_source_lines
     }

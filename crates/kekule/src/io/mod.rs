@@ -1,3 +1,7 @@
+//! Format parsing, interpretation, and writing. Items are published through
+//! the format modules of the crate root (`smiles`, `molfile`, `sdf`, `mmcif`,
+//! `pdb`, `components`, `macromolecular`); this module only organizes them.
+
 mod components;
 mod element_symbol;
 mod lines;

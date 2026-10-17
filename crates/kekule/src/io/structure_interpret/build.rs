@@ -1,3 +1,5 @@
+//! Builds molecules, provenance, and the topology hierarchy from the selected
+//! atom rows of one coordinate model.
 use super::types::structure_error;
 use crate::diagnostics::{DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};

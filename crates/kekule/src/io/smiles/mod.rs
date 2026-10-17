@@ -1,3 +1,6 @@
+//! SMILES and CXSMILES: record parsing, interpretation into connected
+//! molecules, and ordinary, isomeric, and canonical writing.
+
 mod canonical;
 mod cx;
 mod emit;

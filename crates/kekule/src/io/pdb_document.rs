@@ -82,7 +82,9 @@ fn pdb_parse_error(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PdbAtomKind {
+    /// An `ATOM` record.
     Atom,
+    /// A `HETATM` record.
     Hetatm,
 }
 
@@ -109,6 +111,7 @@ pub struct PdbAtom {
 }
 
 impl PdbAtom {
+    /// Whether the record is `ATOM` or `HETATM`.
     pub const fn kind(&self) -> PdbAtomKind {
         self.kind
     }
@@ -129,22 +132,27 @@ impl PdbAtom {
         &self.name_field
     }
 
+    /// The alternate-location indicator (column 17), or `None` when blank.
     pub const fn alternate_location(&self) -> Option<char> {
         self.alternate_location
     }
 
+    /// The residue name (columns 18-20), without blanks.
     pub fn residue_name(&self) -> &str {
         &self.residue_name
     }
 
+    /// The chain identifier (column 22), or `None` when blank.
     pub const fn chain_id(&self) -> Option<char> {
         self.chain_id
     }
 
+    /// The residue sequence number (columns 23-26).
     pub const fn residue_sequence(&self) -> i32 {
         self.residue_sequence
     }
 
+    /// The insertion code (column 27), or `None` when blank.
     pub const fn insertion_code(&self) -> Option<char> {
         self.insertion_code
     }
@@ -154,6 +162,7 @@ impl PdbAtom {
         self.position
     }
 
+    /// The occupancy (columns 55-60), or `None` when blank.
     pub const fn occupancy(&self) -> Option<f64> {
         self.occupancy
     }
@@ -163,6 +172,7 @@ impl PdbAtom {
         self.temperature_factor
     }
 
+    /// The segment identifier (columns 73-76), or `None` when blank.
     pub fn segment_id(&self) -> Option<&str> {
         self.segment_id.as_deref()
     }
@@ -172,6 +182,7 @@ impl PdbAtom {
         self.element.as_deref()
     }
 
+    /// The formal charge in e (columns 79-80), or `None` when blank.
     pub const fn formal_charge(&self) -> Option<i8> {
         self.formal_charge
     }
@@ -181,6 +192,7 @@ impl PdbAtom {
         self.model
     }
 
+    /// The record's source line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -201,22 +213,27 @@ pub struct PdbTer {
 }
 
 impl PdbTer {
+    /// The serial number, or `None` when blank or overflowed (`*****`).
     pub const fn serial(&self) -> Option<u32> {
         self.serial
     }
 
+    /// The residue name, or `None` when blank.
     pub fn residue_name(&self) -> Option<&str> {
         self.residue_name.as_deref()
     }
 
+    /// The chain identifier, or `None` when blank.
     pub const fn chain_id(&self) -> Option<char> {
         self.chain_id
     }
 
+    /// The residue sequence number, or `None` when blank.
     pub const fn residue_sequence(&self) -> Option<i32> {
         self.residue_sequence
     }
 
+    /// The insertion code, or `None` when blank.
     pub const fn insertion_code(&self) -> Option<char> {
         self.insertion_code
     }
@@ -227,10 +244,12 @@ impl PdbTer {
         self.preceding_atoms
     }
 
+    /// The serial number of the enclosing `MODEL`, if the entry has models.
     pub const fn model(&self) -> Option<u32> {
         self.model
     }
 
+    /// The record's source line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -244,10 +263,12 @@ pub struct PdbModel {
 }
 
 impl PdbModel {
+    /// The model serial number.
     pub const fn serial(&self) -> u32 {
         self.serial
     }
 
+    /// The record's source line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -265,6 +286,7 @@ pub struct PdbConect {
 }
 
 impl PdbConect {
+    /// The serial number of the atom whose bonds the record lists.
     pub const fn serial(&self) -> u32 {
         self.serial
     }
@@ -274,6 +296,7 @@ impl PdbConect {
         &self.bonded
     }
 
+    /// The record's source line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -297,22 +320,28 @@ impl PdbPartner {
         self.atom_name.as_deref()
     }
 
+    /// The alternate-location indicator, or `None` when blank; always `None`
+    /// for `SSBOND` partners.
     pub const fn alternate_location(&self) -> Option<char> {
         self.alternate_location
     }
 
+    /// The residue name.
     pub fn residue_name(&self) -> &str {
         &self.residue_name
     }
 
+    /// The chain identifier, or `None` when blank.
     pub const fn chain_id(&self) -> Option<char> {
         self.chain_id
     }
 
+    /// The residue sequence number.
     pub const fn residue_sequence(&self) -> i32 {
         self.residue_sequence
     }
 
+    /// The insertion code, or `None` when blank.
     pub const fn insertion_code(&self) -> Option<char> {
         self.insertion_code
     }
@@ -332,6 +361,7 @@ pub struct PdbLink {
 }
 
 impl PdbLink {
+    /// The two linked atoms, in column order.
     pub const fn partners(&self) -> &[PdbPartner; 2] {
         &self.partners
     }
@@ -341,6 +371,7 @@ impl PdbLink {
         self.distance
     }
 
+    /// The record's source line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -356,10 +387,12 @@ pub struct PdbSsbond {
 }
 
 impl PdbSsbond {
+    /// The serial number, or `None` when blank.
     pub const fn serial(&self) -> Option<u32> {
         self.serial
     }
 
+    /// The two bonded cysteine residues, in column order.
     pub const fn partners(&self) -> &[PdbPartner; 2] {
         &self.partners
     }
@@ -369,6 +402,7 @@ impl PdbSsbond {
         self.distance
     }
 
+    /// The record's source line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -406,6 +440,7 @@ impl PdbCryst1 {
         self.z
     }
 
+    /// The record's source line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
@@ -430,12 +465,36 @@ impl PdbRecord {
         &self.text
     }
 
+    /// The record's source line.
     pub const fn location(&self) -> SourceLocation {
         self.location
     }
 }
 
 /// One parsed PDB entry: its records, typed where interpretation reads them.
+///
+/// ```
+/// use kekule::pdb::{self, PdbAtomKind, PdbParseOptions};
+///
+/// let entry = "\
+/// HETATM    1  O   HOH A 101      11.104   6.134  -6.504  1.00 20.00           O
+/// HETATM    2 ZN    ZN A 102       1.000   2.000   3.000  0.50 30.00          ZN2+
+/// END
+/// ";
+/// let document = pdb::parse_str(entry, PdbParseOptions::default())?;
+/// let atoms = document.atoms();
+/// assert_eq!(atoms.len(), 2);
+/// let (water, zinc) = (&atoms[0], &atoms[1]);
+/// assert_eq!(water.kind(), PdbAtomKind::Hetatm);
+/// assert_eq!((water.name(), water.residue_name()), ("O", "HOH"));
+/// assert_eq!((water.chain_id(), water.residue_sequence()), (Some('A'), 101));
+/// assert_eq!(water.position().x, 11.104);
+/// assert_eq!((zinc.element(), zinc.formal_charge()), (Some("ZN"), Some(2)));
+/// assert_eq!(zinc.occupancy(), Some(0.5));
+/// assert_eq!(document.models().len(), 0);
+/// assert_eq!(document.other_records().len(), 0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct PdbDocument {
     id_code: Option<String>,
@@ -470,18 +529,22 @@ impl PdbDocument {
         &self.atoms
     }
 
+    /// `TER` records in source order.
     pub fn ter_records(&self) -> &[PdbTer] {
         &self.ter_records
     }
 
+    /// `CONECT` records in source order.
     pub fn conect_records(&self) -> &[PdbConect] {
         &self.conect_records
     }
 
+    /// `LINK` records in source order.
     pub fn link_records(&self) -> &[PdbLink] {
         &self.link_records
     }
 
+    /// `SSBOND` records in source order.
     pub fn ssbond_records(&self) -> &[PdbSsbond] {
         &self.ssbond_records
     }
@@ -493,6 +556,17 @@ impl PdbDocument {
 
     /// Interprets one selected coordinate model under the model,
     /// alternate-location, and connectivity policy of `options`.
+    ///
+    /// # Errors
+    ///
+    /// An interpretation [`FormatError`] in [`Format::Pdb`], with the kinds
+    /// [`MmcifDocument::interpret`](super::MmcifDocument::interpret) lists:
+    /// for example [`Inconsistent`](DiagnosticKind::Inconsistent) when the
+    /// entry has several models under
+    /// [`ModelSelection::RequireSingle`](super::ModelSelection::RequireSingle),
+    /// and always under
+    /// [`EntityMetadataPolicy::RequireDeclared`](super::EntityMetadataPolicy::RequireDeclared),
+    /// since PDB entries declare no entity types.
     pub fn interpret(
         &self,
         options: StructureInterpretOptions,
@@ -503,6 +577,12 @@ impl PdbDocument {
     /// Interprets the coordinate models that `options` selects, by default
     /// all of them, as an ensemble of equally weighted members (weight `1.0`);
     /// occupancy is not converted into a weight.
+    ///
+    /// # Errors
+    ///
+    /// As
+    /// [`MmcifDocument::interpret_ensemble`](super::MmcifDocument::interpret_ensemble),
+    /// in [`Format::Pdb`].
     pub fn interpret_ensemble(
         &self,
         options: StructureEnsembleInterpretOptions,
@@ -513,6 +593,12 @@ impl PdbDocument {
     /// Interprets explicit model and alternate-location selections, in the
     /// supplied order, as an unweighted ensemble. Atom identities, chemistry,
     /// and topology layout must agree between selections.
+    ///
+    /// # Errors
+    ///
+    /// As
+    /// [`MmcifDocument::interpret_conformations`](super::MmcifDocument::interpret_conformations),
+    /// in [`Format::Pdb`].
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
@@ -522,6 +608,12 @@ impl PdbDocument {
 
     /// Residues with alternate locations, by the identities that
     /// [`AltLocSelection`](super::AltLocSelection) overrides use.
+    ///
+    /// # Errors
+    ///
+    /// An interpretation [`FormatError`] in [`Format::Pdb`] when the
+    /// coordinate records cannot be read as residues, as for
+    /// [`Self::interpret`].
     pub fn alternate_locations(&self) -> Result<Vec<AltLocResidue>, FormatError> {
         pdb_alternate_locations(self).map_err(pdb)
     }

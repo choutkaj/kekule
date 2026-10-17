@@ -1,3 +1,5 @@
+//! Assembles interpreted coordinate models or explicit conformation
+//! selections into one shared-topology ensemble.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 

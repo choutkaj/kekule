@@ -27,6 +27,11 @@ use prepare::{prepare_model, validate_ensemble_member};
 
 const MAX_COORDINATE_PRECISION: usize = 15;
 
+/// Options of the mmCIF writer.
+///
+/// The default writes a block named `model` with coordinates to 3 decimal
+/// places and fails on ensemble metadata or a periodic cell mmCIF cannot
+/// carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifWriteOptions {
     block_name: String,
@@ -37,6 +42,8 @@ pub struct MmcifWriteOptions {
 }
 
 impl MmcifWriteOptions {
+    /// The name of the written data block, after `data_`; `model` by default.
+    /// Several sources are written as blocks `{name}_1`, `{name}_2`, and so on.
     pub fn block_name(&self) -> &str {
         &self.block_name
     }
@@ -45,7 +52,9 @@ impl MmcifWriteOptions {
     ///
     /// # Errors
     ///
-    /// A write [`FormatError`] with [`MmcifWriteIssue::InvalidBlockName`] unless the name is a nonempty run of ASCII letters, digits, `_`, `-` and `.`.
+    /// A write [`FormatError`] with [`MmcifWriteIssue::InvalidBlockName`]
+    /// unless the name is a nonempty run of ASCII letters, digits, `_`, `-`
+    /// and `.`.
     pub fn with_block_name(mut self, block_name: impl Into<String>) -> Result<Self, FormatError> {
         let block_name = block_name.into();
         if block_name.is_empty()
@@ -59,6 +68,8 @@ impl MmcifWriteOptions {
         Ok(self)
     }
 
+    /// Decimal places of written Cartesian coordinates, in Å; 3 by default and
+    /// at most 15.
     pub const fn coordinate_precision(&self) -> usize {
         self.coordinate_precision
     }
@@ -67,7 +78,8 @@ impl MmcifWriteOptions {
     ///
     /// # Errors
     ///
-    /// A write [`FormatError`] with [`MmcifWriteIssue::CoordinatePrecisionTooLarge`] above 15 digits.
+    /// A write [`FormatError`] with
+    /// [`MmcifWriteIssue::CoordinatePrecisionTooLarge`] above 15 digits.
     pub fn with_coordinate_precision(
         mut self,
         coordinate_precision: usize,
@@ -578,6 +590,7 @@ pub struct MmcifEntityClassifications {
 }
 
 impl MmcifEntityClassifications {
+    /// An empty collection; every instance keeps its derived kind.
     pub const fn new() -> Self {
         Self {
             kinds: BTreeMap::new(),
@@ -585,6 +598,12 @@ impl MmcifEntityClassifications {
     }
 
     /// Assigns one explicit mmCIF entity kind to a molecule instance.
+    ///
+    /// # Errors
+    ///
+    /// A write [`FormatError`] with
+    /// [`MmcifWriteIssue::DuplicateEntityClassification`] when the instance
+    /// already has a kind; the collection is unchanged.
     pub fn insert(
         &mut self,
         molecule: MoleculeInstanceId,

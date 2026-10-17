@@ -1,3 +1,4 @@
+//! Alternate-location selection and inventory over typed atom rows.
 use super::super::types::structure_error;
 use crate::diagnostics::{DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};

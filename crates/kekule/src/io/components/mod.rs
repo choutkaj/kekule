@@ -62,6 +62,7 @@ pub struct ComponentAtom {
 }
 
 impl ComponentAtom {
+    /// The atom name (`_chem_comp_atom.atom_id`), such as `CA`.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -71,6 +72,7 @@ impl ComponentAtom {
         self.alternate_name.as_deref()
     }
 
+    /// The element of the atom's type symbol.
     pub const fn element(&self) -> Element {
         self.element
     }
@@ -86,6 +88,7 @@ impl ComponentAtom {
         self.formal_charge
     }
 
+    /// Whether the dictionary flags the atom as aromatic.
     pub const fn aromatic(&self) -> bool {
         self.aromatic
     }
@@ -105,13 +108,21 @@ impl ComponentAtom {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ComponentBondOrder {
+    /// `SING`, the default when the order is not stated.
     Single,
+    /// `DOUB`.
     Double,
+    /// `TRIP`.
     Triple,
+    /// `QUAD`.
     Quadruple,
+    /// `AROM`.
     Aromatic,
+    /// `DELO`: a delocalized bond.
     Delocalized,
+    /// `PI`: a pi bond.
     Pi,
+    /// `POLY`: a polymeric link.
     Polymeric,
 }
 
@@ -130,10 +141,12 @@ impl ComponentBond {
         self.atoms
     }
 
+    /// The stated bond order (`_chem_comp_bond.value_order`).
     pub const fn order(&self) -> ComponentBondOrder {
         self.order
     }
 
+    /// Whether the dictionary flags the bond as aromatic.
     pub const fn aromatic(&self) -> bool {
         self.aromatic
     }
@@ -163,6 +176,8 @@ impl Component {
         &self.id
     }
 
+    /// The full component name (`_chem_comp.name`), such as `ALANINE`; empty
+    /// when not stated.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -172,6 +187,7 @@ impl Component {
         &self.kind
     }
 
+    /// The polymer linkage implied by [`Self::kind`].
     pub fn linking(&self) -> ComponentLinking {
         ComponentLinking::from_type(&self.kind)
     }
@@ -182,10 +198,12 @@ impl Component {
         self.variant.as_deref()
     }
 
+    /// Atoms in dictionary order; [`ComponentBond::atoms`] indexes them.
     pub fn atoms(&self) -> &[ComponentAtom] {
         &self.atoms
     }
 
+    /// Bonds in dictionary order.
     pub fn bonds(&self) -> &[ComponentBond] {
         &self.bonds
     }
@@ -205,6 +223,17 @@ impl Component {
     }
 
     /// Reads one dictionary entry from a CIF data block.
+    ///
+    /// # Errors
+    ///
+    /// An interpretation [`FormatError`] of kind
+    /// [`Syntax`](DiagnosticKind::Syntax) when the block has no
+    /// `_chem_comp_atom` category or a row lacks a required field,
+    /// [`InvalidValue`](DiagnosticKind::InvalidValue) for an unknown element,
+    /// charge, or bond order, [`InvalidReference`](DiagnosticKind::InvalidReference)
+    /// for a bond naming an unknown atom, and
+    /// [`Inconsistent`](DiagnosticKind::Inconsistent) for duplicate atoms or
+    /// bonds, self bonds, or rows of another component.
     pub fn from_mmcif_block(block: &super::MmcifBlock) -> Result<Self, FormatError> {
         ccd::component_from_block(block)
     }
@@ -235,6 +264,7 @@ pub struct ComponentLibrary {
 }
 
 impl ComponentLibrary {
+    /// An empty library.
     pub fn new() -> Self {
         Self::default()
     }
@@ -295,7 +325,12 @@ impl ComponentLibrary {
     }
 
     /// Reads every data block that defines component atoms, such as a CCD
-    /// entry file or the complete `components.cif`.
+    /// entry file or the complete `components.cif`. A later block replaces an
+    /// earlier one of the same identifier.
+    ///
+    /// # Errors
+    ///
+    /// The first error of [`Component::from_mmcif_block`] for any such block.
     pub fn from_mmcif(document: &MmcifDocument) -> Result<Self, FormatError> {
         let mut library = Self::new();
         for block in document.blocks() {
@@ -322,7 +357,16 @@ impl ComponentLibrary {
     }
 
     /// Adds a protonation variant of a component already in the library. The
-    /// variant must name the component and have a variant name.
+    /// variant must name the component and have a variant name; it replaces
+    /// an earlier variant of the same name.
+    ///
+    /// # Errors
+    ///
+    /// An interpretation [`FormatError`] of kind
+    /// [`InvalidValue`](DiagnosticKind::InvalidValue) when the variant has no
+    /// [`Component::variant`] name, or
+    /// [`InvalidReference`](DiagnosticKind::InvalidReference) when the library
+    /// has no component of its identifier.
     pub fn insert_variant(&mut self, variant: Component) -> Result<(), FormatError> {
         let Some(name) = variant.variant.clone() else {
             return Err(component_error(
@@ -374,10 +418,12 @@ impl ComponentLibrary {
         self.entries.values().map(|entry| entry.component.as_ref())
     }
 
+    /// The number of components, not counting variants.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Whether the library has no components.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
