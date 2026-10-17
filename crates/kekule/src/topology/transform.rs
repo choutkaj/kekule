@@ -22,18 +22,22 @@ pub struct TopologySubset {
 }
 
 impl TopologySubset {
+    /// The published subset topology.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
+    /// Clones the handle to the subset topology without copying topology data.
     pub fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
     }
 
+    /// The mapping from source entities to subset entities.
     pub const fn correspondence(&self) -> &TopologySubsetCorrespondence {
         &self.correspondence
     }
 
+    /// Splits into the subset topology and its correspondence.
     pub fn into_parts(self) -> (Arc<Topology>, TopologySubsetCorrespondence) {
         (self.topology, self.correspondence)
     }
@@ -51,18 +55,24 @@ pub struct TopologySubsetCorrespondence {
 }
 
 impl TopologySubsetCorrespondence {
+    /// The topology the subset was taken from.
     pub fn source_topology(&self) -> &Topology {
         &self.source
     }
 
+    /// The published subset topology.
     pub fn target_topology(&self) -> &Topology {
         &self.target
     }
 
+    /// The subset atom for a source atom, or `None` when the atom was not kept or
+    /// is not in the source.
     pub fn target_atom(&self, source: InstanceAtomId) -> Option<InstanceAtomId> {
         self.atom_targets.get(&source).copied()
     }
 
+    /// The subset bond for a source bond, or `None` when the bond was not kept or
+    /// is not in the source.
     pub fn target_bond(&self, source: InstanceBondId) -> Option<InstanceBondId> {
         self.bond_targets.get(&source).copied()
     }

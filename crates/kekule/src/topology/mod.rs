@@ -1,24 +1,53 @@
 //! Coordinate-free molecular systems and biological hierarchy.
 //!
-//! A [`Topology`] turns connected molecular definitions into explicit
-//! occurrences in one system. Repeated definitions can be reused—for example,
-//! a solvent box can contain many instances of one water definition—while each
-//! instance still receives distinct [`InstanceAtomId`] and [`InstanceBondId`]
-//! identities.
+//! A [`Topology`] turns connected molecular definitions
+//! ([`MoleculeDefinition`]) into explicit occurrences in one system. Repeated
+//! definitions can be reused—for example, a solvent box can contain many
+//! instances of one water definition—while each instance still receives
+//! distinct [`InstanceAtomId`] and [`InstanceBondId`] identities.
+//!
+//! Two kinds of number address a topology's atoms and bonds. Semantic IDs
+//! ([`MoleculeDefinitionId`], [`MoleculeInstanceId`], [`InstanceAtomId`],
+//! [`InstanceBondId`], [`ChainId`], [`ResidueId`], [`AtomSiteId`]) name
+//! entities. Dense indices ([`TopologyAtomIndex`], [`TopologyBondIndex`]) are
+//! the coordinate and property row order shared with structures. The topology
+//! translates between them in constant time; they are never interchangeable.
 //!
 //! The system-wide hierarchy organizes those atoms into chains, residues,
 //! and atom sites, read through [`ChainView`], [`ResidueView`], and
-//! [`AtomSiteView`] and staged through [`HierarchyBuilder`]. Hierarchy is independent of covalent connectedness: one
-//! chain may span several molecule instances, and one connected molecule may
-//! contribute to several chains.
+//! [`AtomSiteView`] and staged through [`HierarchyBuilder`]. Hierarchy is
+//! independent of covalent connectedness: one chain may span several molecule
+//! instances, and one connected molecule may contribute to several chains.
+//! Each definition has one [`MoleculeClass`] and each residue one
+//! [`ResidueClass`], inferred at publication or assigned explicitly
+//! ([`ClassAssignment`]).
+//!
+//! Read access is through borrowed views: [`InstanceView`], [`AtomView`],
+//! [`BondView`], [`ChainView`], [`ResidueView`], and [`AtomSiteView`].
 //!
 //! Topology structure is immutable after publication. Use [`TopologyBuilder`]
 //! for assembly, [`Topology::into_builder`] for append-oriented transformation,
-//! [`edit::TopologyEditor`] for structural edits, and [`Topology::subset`]
-//! with selections for checked structural subsets. Explicit
+//! the [`edit`] module's [`TopologyEditor`](edit::TopologyEditor) for
+//! structural edits, and [`Topology::subset`] with an [`AtomSelection`] or
+//! [`BondSelection`] for checked structural subsets. Explicit
 //! [`Topology::perceived`] derives chemistry in a new snapshot with the same
 //! layout, and [`Topology::properties_mut`] edits annotations without changing
 //! it.
+//!
+//! ```
+//! use kekule::{smiles, topology::{MoleculeClass, Topology}};
+//!
+//! // Two separate components become two instances of two definitions.
+//! let topology = Topology::from_molecules(smiles::to_molecules("CCO.[OH2]")?)?;
+//! assert_eq!(topology.instance_count(), 2);
+//! assert_eq!(topology.atom_count(), 4);
+//! let water = topology.instances().nth(1).unwrap();
+//! assert_eq!(water.class(), MoleculeClass::Water);
+//! let atom = topology.atom_ids()[3];
+//! assert_eq!(atom.instance(), water.id());
+//! assert_eq!(topology.atom_index(atom).map(|index| index.index()), Some(3));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod builder;
 mod classification;
@@ -59,11 +88,35 @@ pub use transform::{TopologySubset, TopologySubsetCorrespondence, TopologySubset
 
 /// Transactional structural editing of a published topology.
 ///
-/// A [`TopologyEditor`](edit::TopologyEditor) resolves source identifiers to stable draft-only
-/// handles, applies atom, bond, molecule, and hierarchy edits, and publishes a
-/// new topology through `finish()` together with an
-/// [`EditCorrespondence`](edit::EditCorrespondence) from source to target
-/// identities.
+/// A [`TopologyEditor`](edit::TopologyEditor) resolves source identifiers to
+/// stable draft-only handles ([`EditAtomId`](edit::EditAtomId),
+/// [`EditBondId`](edit::EditBondId), [`EditChainId`](edit::EditChainId),
+/// [`EditResidueId`](edit::EditResidueId), and
+/// [`EditAtomSiteId`](edit::EditAtomSiteId)), applies atom, bond, molecule,
+/// hierarchy, class, and property edits, and publishes a new topology through
+/// [`finish`](edit::TopologyEditor::finish), or through
+/// [`finish_with_correspondence`](edit::TopologyEditor::finish_with_correspondence)
+/// together with an [`EditCorrespondence`](edit::EditCorrespondence) from
+/// handles to published identities. Failures are
+/// [`TopologyEditError`](edit::TopologyEditError) values.
+///
+/// ```
+/// use kekule::{molecule::BondOrder, smiles, topology::{Topology, edit::TopologyEditor}};
+///
+/// // Bonding two separate occurrences merges them into one molecule.
+/// let topology = Topology::from_molecules(smiles::to_molecules("C.O")?)?;
+/// let [carbon, oxygen] = [topology.atom_ids()[0], topology.atom_ids()[1]];
+/// let mut editor = TopologyEditor::from_topology(topology);
+/// let a = editor.atom_handle(carbon).expect("source carbon");
+/// let b = editor.atom_handle(oxygen).expect("source oxygen");
+/// let bond = editor.add_bond(a, b, BondOrder::Single)?;
+/// let (edited, correspondence) = editor.finish_with_correspondence()?;
+/// assert_eq!(edited.instance_count(), 1);
+/// assert_eq!(edited.bond_count(), 1);
+/// let (_, index) = correspondence.bond(bond).expect("published bond");
+/// assert_eq!(index.index(), 0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub mod edit {
     pub use super::editor::{
         EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
@@ -72,10 +125,45 @@ pub mod edit {
     };
 }
 
-fixed_u32_id!(MoleculeDefinitionId, "definition");
-fixed_u32_id!(MoleculeInstanceId, "instance");
-fixed_u32_id!(TopologyAtomIndex, "atom index");
-fixed_u32_id!(TopologyBondIndex, "bond index");
+fixed_u32_id!(
+    /// Stable semantic identifier of one reusable [`MoleculeDefinition`] in a
+    /// [`Topology`].
+    ///
+    /// Not a dense atom or bond index. Published definition IDs are contiguous
+    /// from zero in definition order.
+    MoleculeDefinitionId,
+    "definition"
+);
+fixed_u32_id!(
+    /// Stable semantic identifier of one molecule instance (occurrence) in a
+    /// [`Topology`].
+    ///
+    /// Not a dense atom or bond index. Published instance IDs are contiguous
+    /// from zero in authoritative instance order, and qualify local IDs as
+    /// [`InstanceAtomId`] and [`InstanceBondId`].
+    MoleculeInstanceId,
+    "instance"
+);
+fixed_u32_id!(
+    /// Dense position of one atom in a [`Topology`]'s authoritative atom order.
+    ///
+    /// The coordinate and property row index shared with structures, not a
+    /// semantic ID; translate with [`Topology::atom_id`] and
+    /// [`Topology::atom_index`]. Meaningful only for topologies sharing one
+    /// layout ([`Topology::shares_layout`]).
+    TopologyAtomIndex,
+    "atom index"
+);
+fixed_u32_id!(
+    /// Dense position of one bond in a [`Topology`]'s authoritative bond order.
+    ///
+    /// The property row index shared with structures, not a semantic ID;
+    /// translate with [`Topology::bond_id`] and [`Topology::bond_index`].
+    /// Meaningful only for topologies sharing one layout
+    /// ([`Topology::shares_layout`]).
+    TopologyBondIndex,
+    "bond index"
+);
 
 /// Broad intrinsic classification of one reusable topology molecule definition.
 ///
@@ -86,13 +174,21 @@ fixed_u32_id!(TopologyBondIndex, "bond index");
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum MoleculeClass {
+    /// A polypeptide.
     Protein,
+    /// A DNA polymer.
     Dna,
+    /// An RNA polymer.
     Rna,
+    /// A saccharide or polysaccharide.
     Carbohydrate,
+    /// A water molecule.
     Water,
+    /// A free ion.
     Ion,
+    /// Any other recognized small molecule, such as a ligand or solvent.
     SmallMolecule,
+    /// Unclassified, or classified with conflicting strong evidence.
     Other,
 }
 
@@ -104,12 +200,19 @@ pub enum MoleculeClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ResidueClass {
+    /// An amino-acid residue.
     AminoAcid,
+    /// A deoxyribonucleotide residue.
     DnaNucleotide,
+    /// A ribonucleotide residue.
     RnaNucleotide,
+    /// A saccharide residue.
     Carbohydrate,
+    /// A water residue.
     Water,
+    /// An ion residue.
     Ion,
+    /// Any other or unrecognized residue.
     Other,
 }
 
@@ -144,12 +247,17 @@ impl<C: Copy> ClassAssignment<C> {
         }
     }
 
+    /// Whether the class was assigned explicitly rather than inferred.
     pub const fn is_explicit(self) -> bool {
         matches!(self, Self::Explicit(_))
     }
 }
 
 /// The local atom of one explicit molecule instance.
+///
+/// A stable semantic system atom ID: a definition-local [`AtomId`] qualified by
+/// the [`MoleculeInstanceId`] containing it. Not a dense index; see
+/// [`Topology::atom_index`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstanceAtomId {
     molecule: MoleculeInstanceId,
@@ -157,6 +265,7 @@ pub struct InstanceAtomId {
 }
 
 impl InstanceAtomId {
+    /// Qualifies local `atom` with instance `molecule`. Nothing is validated.
     pub const fn new(molecule: MoleculeInstanceId, atom: AtomId) -> Self {
         Self { molecule, atom }
     }
@@ -166,6 +275,7 @@ impl InstanceAtomId {
         self.molecule
     }
 
+    /// The definition-local atom ID.
     pub const fn atom(self) -> AtomId {
         self.atom
     }
@@ -178,6 +288,10 @@ impl fmt::Display for InstanceAtomId {
 }
 
 /// The local bond of one explicit molecule instance.
+///
+/// A stable semantic system bond ID: a definition-local [`BondId`] qualified by
+/// the [`MoleculeInstanceId`] containing it. Not a dense index; see
+/// [`Topology::bond_index`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstanceBondId {
     molecule: MoleculeInstanceId,
@@ -185,6 +299,7 @@ pub struct InstanceBondId {
 }
 
 impl InstanceBondId {
+    /// Qualifies local `bond` with instance `molecule`. Nothing is validated.
     pub const fn new(molecule: MoleculeInstanceId, bond: BondId) -> Self {
         Self { molecule, bond }
     }
@@ -194,6 +309,7 @@ impl InstanceBondId {
         self.molecule
     }
 
+    /// The definition-local bond ID.
     pub const fn bond(self) -> BondId {
         self.bond
     }
@@ -226,18 +342,22 @@ impl<'a> ChainView<'a> {
         Self { topology, id }
     }
 
+    /// This chain's identifier.
     pub const fn id(self) -> ChainId {
         self.id
     }
 
+    /// The label chain identifier (mmCIF `label_asym_id`).
     pub fn label_id(self) -> &'a str {
         self.local().label_id()
     }
 
+    /// The author chain identifier, or `None` when the source gave none.
     pub fn author_id(self) -> Option<&'a str> {
         self.local().author_id()
     }
 
+    /// This chain's residues in chain order.
     pub fn residues(self) -> impl ExactSizeIterator<Item = ResidueView<'a>> + 'a {
         let topology = self.topology;
         self.local()
@@ -290,14 +410,17 @@ impl<'a> ResidueView<'a> {
         Self { topology, id }
     }
 
+    /// This residue's identifier.
     pub const fn id(self) -> ResidueId {
         self.id
     }
 
+    /// The chain containing this residue.
     pub fn chain(self) -> ChainView<'a> {
         ChainView::new(self.topology, self.local().chain())
     }
 
+    /// The residue (component) name, such as `ALA` or `HOH`.
     pub fn name(self) -> &'a str {
         self.local().name()
     }
@@ -313,26 +436,32 @@ impl<'a> ResidueView<'a> {
         ClassAssignment::new(residue.class(), residue.explicit_class.is_some())
     }
 
+    /// The label component identifier, or `None` when absent.
     pub fn label_comp_id(self) -> Option<&'a str> {
         self.local().label_comp_id()
     }
 
+    /// The author component identifier, or `None` when absent.
     pub fn author_comp_id(self) -> Option<&'a str> {
         self.local().author_comp_id()
     }
 
+    /// The label sequence number, or `None` when absent.
     pub fn label_seq_id(self) -> Option<i32> {
         self.local().label_seq_id()
     }
 
+    /// The author sequence identifier as written by the source, or `None`.
     pub fn author_seq_id(self) -> Option<&'a str> {
         self.local().author_seq_id()
     }
 
+    /// The insertion code, or `None` when the residue has none.
     pub fn insertion_code(self) -> Option<&'a str> {
         self.local().insertion_code()
     }
 
+    /// This residue's atom sites in residue order.
     pub fn atom_sites(self) -> impl ExactSizeIterator<Item = AtomSiteView<'a>> + 'a {
         let topology = self.topology;
         self.local()
@@ -385,6 +514,7 @@ impl<'a> AtomSiteView<'a> {
         Self { topology, id }
     }
 
+    /// This atom site's identifier.
     pub const fn id(self) -> AtomSiteId {
         self.id
     }
@@ -396,10 +526,12 @@ impl<'a> AtomSiteView<'a> {
             .expect("atom sites name topology atoms")
     }
 
+    /// The residue containing this site.
     pub fn residue(self) -> ResidueView<'a> {
         ResidueView::new(self.topology, self.local().residue())
     }
 
+    /// Source atom-site labels.
     pub fn metadata(self) -> &'a AtomSiteMetadata {
         self.local().metadata()
     }
@@ -435,10 +567,12 @@ pub struct MoleculeDefinition {
 }
 
 impl MoleculeDefinition {
+    /// This definition's identifier.
     pub const fn id(&self) -> MoleculeDefinitionId {
         self.id
     }
 
+    /// The definition's molecule, with definition-local atom and bond IDs.
     pub fn molecule(&self) -> &Molecule {
         &self.molecule
     }
@@ -626,10 +760,12 @@ impl<'a> InstanceView<'a> {
             .collect()
     }
 
+    /// Qualifies a local atom ID with this occurrence. Nothing is validated.
     pub const fn qualify_atom(self, atom: AtomId) -> InstanceAtomId {
         InstanceAtomId::new(self.id, atom)
     }
 
+    /// Qualifies a local bond ID with this occurrence. Nothing is validated.
     pub const fn qualify_bond(self, bond: BondId) -> InstanceBondId {
         InstanceBondId::new(self.id, bond)
     }
@@ -702,6 +838,7 @@ impl LayoutId {
 }
 
 impl Topology {
+    /// An empty [`TopologyBuilder`].
     pub fn builder() -> TopologyBuilder {
         TopologyBuilder::new()
     }
@@ -724,6 +861,11 @@ impl Topology {
     ///
     /// The molecule is installed as its own definition and instance. No
     /// hierarchy is fabricated and no chemical perception is run.
+    ///
+    /// # Errors
+    ///
+    /// A [`TopologyBuildError`] when publication fails, as for
+    /// [`Self::from_molecules`].
     pub fn from_molecule(molecule: Molecule) -> Result<Self, TopologyBuildError> {
         Self::from_molecules([molecule])
     }
@@ -732,9 +874,14 @@ impl Topology {
     ///
     /// Input order becomes authoritative instance order. Each input is
     /// installed as a fresh definition; definition reuse and interning remain
-    /// explicit [`TopologyBuilder`] policies. Empty input fails with
-    /// [`TopologyBuildError::NoMoleculeInstances`]. No hierarchy is fabricated
-    /// and no chemical perception is run.
+    /// explicit [`TopologyBuilder`] policies. No hierarchy is fabricated and no
+    /// chemical perception is run.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyBuildError::NoMoleculeInstances`] for empty input,
+    /// [`TopologyBuildError::IdentifierCapacityExceeded`] when an ID space
+    /// overflows, or another [`TopologyBuildError`] when publication fails.
     pub fn from_molecules(
         molecules: impl IntoIterator<Item = Molecule>,
     ) -> Result<Self, TopologyBuildError> {
@@ -796,6 +943,7 @@ impl Topology {
         self.layout == other.layout
     }
 
+    /// One reusable definition, or `None` when `id` names no definition here.
     pub fn definition(&self, id: MoleculeDefinitionId) -> Option<&MoleculeDefinition> {
         self.definitions.get(id.index())
     }
@@ -805,15 +953,18 @@ impl Topology {
         self.definitions.iter()
     }
 
+    /// The number of reusable definitions.
     pub fn definition_count(&self) -> usize {
         self.definitions.len()
     }
 
+    /// The number of molecule instances (occurrences).
     pub fn instance_count(&self) -> usize {
         self.instances.len()
     }
 
-    /// One instance-qualified molecule occurrence.
+    /// One instance-qualified molecule occurrence, or `None` when `id` names no
+    /// instance here.
     pub fn instance(&self, id: MoleculeInstanceId) -> Option<InstanceView<'_>> {
         (id.index() < self.instances.len()).then(|| InstanceView::new(self, id))
     }
@@ -901,38 +1052,43 @@ impl Topology {
             .map(move |(id, _)| AtomSiteView::new(self, id))
     }
 
+    /// One hierarchy chain, or `None` when `id` names no chain here.
     pub fn chain(&self, id: ChainId) -> Option<ChainView<'_>> {
         self.hierarchy.chain(id).map(|_| ChainView::new(self, id))
     }
 
+    /// One hierarchy residue, or `None` when `id` names no residue here.
     pub fn residue(&self, id: ResidueId) -> Option<ResidueView<'_>> {
         self.hierarchy
             .residue(id)
             .map(|_| ResidueView::new(self, id))
     }
 
+    /// One hierarchy atom site, or `None` when `id` names no site here.
     pub fn atom_site(&self, id: AtomSiteId) -> Option<AtomSiteView<'_>> {
         self.hierarchy
             .atom_site(id)
             .map(|_| AtomSiteView::new(self, id))
     }
 
-    /// One atom by qualified ID.
+    /// One atom by qualified ID, or `None` when the atom is not in this topology.
     pub fn atom(&self, id: InstanceAtomId) -> Option<AtomView<'_>> {
         self.atom_index(id).map(|index| AtomView::new(self, index))
     }
 
-    /// One atom by dense index.
+    /// One atom by dense index, or `None` when `index` is not below
+    /// [`Self::atom_count`].
     pub fn atom_at(&self, index: TopologyAtomIndex) -> Option<AtomView<'_>> {
         (index.index() < self.atom_count()).then(|| AtomView::new(self, index))
     }
 
-    /// One bond by qualified ID.
+    /// One bond by qualified ID, or `None` when the bond is not in this topology.
     pub fn bond(&self, id: InstanceBondId) -> Option<BondView<'_>> {
         self.bond_index(id).map(|index| BondView::new(self, index))
     }
 
-    /// One bond by dense index.
+    /// One bond by dense index, or `None` when `index` is not below
+    /// [`Self::bond_count`].
     pub fn bond_at(&self, index: TopologyBondIndex) -> Option<BondView<'_>> {
         (index.index() < self.bond_count()).then(|| BondView::new(self, index))
     }
@@ -949,10 +1105,12 @@ impl Topology {
             .map(|index| BondView::new(self, TopologyBondIndex::new(index as u32)))
     }
 
+    /// The number of atoms across all instances.
     pub fn atom_count(&self) -> usize {
         self.atom_order.len()
     }
 
+    /// The number of bonds across all instances.
     pub fn bond_count(&self) -> usize {
         self.bond_order.len()
     }
@@ -967,22 +1125,30 @@ impl Topology {
         self.bond_order.order()
     }
 
+    /// The dense index of a qualified atom, or `None` when it is not in this
+    /// topology. Constant time.
     pub fn atom_index(&self, atom: InstanceAtomId) -> Option<TopologyAtomIndex> {
         self.atom_order
             .index(atom)
             .map(|index| TopologyAtomIndex::new(index as u32))
     }
 
+    /// The qualified atom at a dense index, or `None` when `index` is not below
+    /// [`Self::atom_count`].
     pub fn atom_id(&self, index: TopologyAtomIndex) -> Option<InstanceAtomId> {
         self.atom_order.id(index.index())
     }
 
+    /// The dense index of a qualified bond, or `None` when it is not in this
+    /// topology. Constant time.
     pub fn bond_index(&self, bond: InstanceBondId) -> Option<TopologyBondIndex> {
         self.bond_order
             .index(bond)
             .map(|index| TopologyBondIndex::new(index as u32))
     }
 
+    /// The qualified bond at a dense index, or `None` when `index` is not below
+    /// [`Self::bond_count`].
     pub fn bond_id(&self, index: TopologyBondIndex) -> Option<InstanceBondId> {
         self.bond_order.id(index.index())
     }

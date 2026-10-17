@@ -3,9 +3,33 @@ use std::fmt;
 
 use super::{InstanceAtomId, ResidueClass};
 
-fixed_u32_id!(ChainId, "chain");
-fixed_u32_id!(ResidueId, "residue");
-fixed_u32_id!(AtomSiteId, "atom site");
+fixed_u32_id!(
+    /// Stable topology-global semantic identifier of one hierarchy chain;
+    /// [`Topology::chain`](super::Topology::chain) resolves it.
+    ///
+    /// Not a dense coordinate index. Chains are numbered in creation order, and
+    /// the ID also selects the chain's row in topology chain properties.
+    ChainId,
+    "chain"
+);
+fixed_u32_id!(
+    /// Stable topology-global semantic identifier of one hierarchy residue;
+    /// [`Topology::residue`](super::Topology::residue) resolves it.
+    ///
+    /// Not a dense coordinate index. Residues are numbered in creation order,
+    /// and the ID also selects the residue's row in topology residue properties.
+    ResidueId,
+    "residue"
+);
+fixed_u32_id!(
+    /// Stable topology-global semantic identifier of one hierarchy atom site;
+    /// [`Topology::atom_site`](super::Topology::atom_site) resolves it.
+    ///
+    /// Not a dense atom index: sites are numbered in creation order,
+    /// independently of [`TopologyAtomIndex`](super::TopologyAtomIndex).
+    AtomSiteId,
+    "atom site"
+);
 
 /// Topology-owned storage of coordinate-independent residue, chain, and
 /// atom-site organization.
@@ -281,14 +305,17 @@ impl HierarchyBuilder {
         self.hierarchy.is_empty()
     }
 
+    /// The number of staged chains.
     pub fn chain_count(&self) -> usize {
         self.hierarchy.chains.len()
     }
 
+    /// The number of staged residues.
     pub fn residue_count(&self) -> usize {
         self.hierarchy.residues.len()
     }
 
+    /// The number of staged atom sites.
     pub fn atom_site_count(&self) -> usize {
         self.hierarchy.atom_sites.len()
     }
@@ -383,6 +410,7 @@ impl Chain {
     }
 }
 
+/// One hierarchy residue: its chain, class, source identifiers, and atom sites.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Residue {
     pub(crate) id: ResidueId,
@@ -441,6 +469,7 @@ impl Residue {
     }
 }
 
+/// One hierarchy atom site: the placement of one topology atom in a residue.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AtomSite {
     pub(crate) id: AtomSiteId,
@@ -467,6 +496,9 @@ impl AtomSite {
     }
 }
 
+/// Optional source labels of one atom site, named after mmCIF `atom_site` items.
+///
+/// Every field defaults to `None` and is set with the `with_*` methods.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AtomSiteMetadata {
     pub(crate) type_symbol: Option<String>,
@@ -477,6 +509,7 @@ pub struct AtomSiteMetadata {
 }
 
 impl AtomSiteMetadata {
+    /// The element type symbol (`type_symbol`), or `None` when absent.
     pub fn type_symbol(&self) -> Option<&str> {
         self.type_symbol.as_deref()
     }
@@ -488,6 +521,7 @@ impl AtomSiteMetadata {
         self
     }
 
+    /// The label chain identifier (`label_asym_id`), or `None` when absent.
     pub fn label_asym_id(&self) -> Option<&str> {
         self.label_asym_id.as_deref()
     }
@@ -499,6 +533,7 @@ impl AtomSiteMetadata {
         self
     }
 
+    /// The author chain identifier (`auth_asym_id`), or `None` when absent.
     pub fn auth_asym_id(&self) -> Option<&str> {
         self.auth_asym_id.as_deref()
     }
@@ -510,6 +545,7 @@ impl AtomSiteMetadata {
         self
     }
 
+    /// The label atom name (`label_atom_id`), or `None` when absent.
     pub fn label_atom_id(&self) -> Option<&str> {
         self.label_atom_id.as_deref()
     }
@@ -521,6 +557,7 @@ impl AtomSiteMetadata {
         self
     }
 
+    /// The author atom name (`auth_atom_id`), or `None` when absent.
     pub fn auth_atom_id(&self) -> Option<&str> {
         self.auth_atom_id.as_deref()
     }

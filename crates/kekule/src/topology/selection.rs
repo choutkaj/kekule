@@ -98,10 +98,12 @@ impl AtomSelection {
         }
     }
 
+    /// The number of selected atoms.
     pub fn len(&self) -> usize {
         self.indices.len()
     }
 
+    /// Whether no atom is selected.
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty()
     }
@@ -412,6 +414,11 @@ impl AtomSelection {
         }
     }
 
+    /// Selects the given qualified atoms; order and duplicates are ignored.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::InvalidAtomId`] when an atom is not in `topology`.
     pub fn from_atoms(
         topology: impl Into<Arc<Topology>>,
         atoms: impl IntoIterator<Item = InstanceAtomId>,
@@ -433,6 +440,13 @@ impl AtomSelection {
         })
     }
 
+    /// Selects the atoms at the given dense indices; order and duplicates are
+    /// ignored.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::InvalidAtomIndex`] when an index is not below the
+    /// topology's atom count.
     pub fn from_indices(
         topology: impl Into<Arc<Topology>>,
         indices: impl IntoIterator<Item = TopologyAtomIndex>,
@@ -449,6 +463,12 @@ impl AtomSelection {
         Self::from_atoms(Arc::clone(topology), atoms)
     }
 
+    /// Selects every atom of the given molecule instances.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::InvalidMoleculeInstanceId`] when an instance is not in
+    /// `topology`.
     pub fn for_instances(
         topology: impl Into<Arc<Topology>>,
         instances: impl IntoIterator<Item = MoleculeInstanceId>,
@@ -470,6 +490,12 @@ impl AtomSelection {
         )
     }
 
+    /// Selects every atom of every instance of the given definitions.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::InvalidMoleculeDefinitionId`] when a definition is not
+    /// in `topology`.
     pub fn for_definitions(
         topology: impl Into<Arc<Topology>>,
         definitions: impl IntoIterator<Item = MoleculeDefinitionId>,
@@ -489,6 +515,10 @@ impl AtomSelection {
     }
 
     /// Selects all atoms in molecule instances having one of `classes`.
+    ///
+    /// # Errors
+    ///
+    /// Currently never fails; every selected atom comes from `topology` itself.
     pub fn for_molecule_classes(
         topology: impl Into<Arc<Topology>>,
         classes: impl IntoIterator<Item = MoleculeClass>,
@@ -504,6 +534,11 @@ impl AtomSelection {
         )
     }
 
+    /// Selects every atom whose element is one of `elements`.
+    ///
+    /// # Errors
+    ///
+    /// Currently never fails; every selected atom comes from `topology` itself.
     pub fn for_elements(
         topology: impl Into<Arc<Topology>>,
         elements: impl IntoIterator<Item = Element>,
@@ -519,6 +554,11 @@ impl AtomSelection {
         )
     }
 
+    /// Selects the atoms placed by the given hierarchy atom sites.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::InvalidAtomSiteId`] when a site is not in `topology`.
     pub fn for_atom_sites(
         topology: impl Into<Arc<Topology>>,
         atom_sites: impl IntoIterator<Item = AtomSiteId>,
@@ -537,6 +577,11 @@ impl AtomSelection {
         Self::from_atoms(Arc::clone(topology), atoms)
     }
 
+    /// Selects the atoms placed in the given residues.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::InvalidResidueId`] when a residue is not in `topology`.
     pub fn for_residues(
         topology: impl Into<Arc<Topology>>,
         residues: impl IntoIterator<Item = ResidueId>,
@@ -558,6 +603,10 @@ impl AtomSelection {
     }
 
     /// Selects all atoms in residues having one of `classes`.
+    ///
+    /// # Errors
+    ///
+    /// Currently never fails; every selected atom comes from `topology` itself.
     pub fn for_residue_classes(
         topology: impl Into<Arc<Topology>>,
         classes: impl IntoIterator<Item = ResidueClass>,
@@ -573,6 +622,11 @@ impl AtomSelection {
         )
     }
 
+    /// Selects the atoms placed in the residues of the given chains.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::InvalidChainId`] when a chain is not in `topology`.
     pub fn for_chains(
         topology: impl Into<Arc<Topology>>,
         chains: impl IntoIterator<Item = ChainId>,
@@ -593,6 +647,13 @@ impl AtomSelection {
         )
     }
 
+    /// Selects the atoms of every chain whose label identifier equals `label`.
+    ///
+    /// An unmatched label selects nothing.
+    ///
+    /// # Errors
+    ///
+    /// Currently never fails; every selected atom comes from `topology` itself.
     pub fn for_chain_label(
         topology: impl Into<Arc<Topology>>,
         label: &str,
@@ -611,6 +672,12 @@ impl AtomSelection {
     /// The caller must match against that instance's molecule: `QueryMatch`
     /// carries local IDs, so target provenance cannot be checked here.
     /// Use [`Self::from_topology_query_matches`] for snapshot-checked matches.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::InvalidMoleculeInstanceId`] when `instance` is not in
+    /// `topology`, or [`SelectionError::InvalidAtomId`] when a matched atom is not
+    /// in that instance.
     pub fn from_query_matches(
         topology: impl Into<Arc<Topology>>,
         instance: MoleculeInstanceId,
@@ -636,6 +703,11 @@ impl AtomSelection {
     /// match's exact snapshot. An empty match list produces a bound empty set.
     /// Query ordering, tags, and individual match boundaries are intentionally
     /// discarded; retain the original matches when those associations matter.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::TopologyMismatch`] when a match was made against a
+    /// topology that does not share this layout.
     pub fn from_topology_query_matches(
         topology: impl Into<Arc<Topology>>,
         matches: &[TopologyQueryMatch],
@@ -654,6 +726,12 @@ impl AtomSelection {
         )
     }
 
+    /// Checks that `topology` shares this selection's layout
+    /// ([`Topology::shares_layout`]), so its dense indices address the same atoms.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::TopologyMismatch`] when the layouts differ.
     pub fn ensure_compatible(&self, topology: &Topology) -> Result<(), SelectionError> {
         if !self.topology.shares_layout(topology) {
             return Err(SelectionError::TopologyMismatch);
@@ -661,6 +739,7 @@ impl AtomSelection {
         Ok(())
     }
 
+    /// The topology snapshot this selection is bound to.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
@@ -670,10 +749,17 @@ impl AtomSelection {
         Arc::clone(&self.topology)
     }
 
+    /// The selected dense atom indices, sorted and unique.
     pub fn indices(&self) -> &[TopologyAtomIndex] {
         &self.indices
     }
 
+    /// The selected qualified atom IDs in dense order, resolved in `topology`.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::TopologyMismatch`] when `topology` does not share this
+    /// selection's layout.
     pub fn semantic_ids(&self, topology: &Topology) -> Result<Vec<InstanceAtomId>, SelectionError> {
         self.ensure_compatible(topology)?;
         Ok(self

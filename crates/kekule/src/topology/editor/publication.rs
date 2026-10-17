@@ -25,12 +25,16 @@ pub struct EditCorrespondence {
     bonds: BTreeMap<EditBondId, (InstanceBondId, super::super::TopologyBondIndex)>,
 }
 impl EditCorrespondence {
+    /// The published qualified ID and dense index of a draft atom, or `None` when
+    /// the handle was deleted or is foreign.
     pub fn atom(
         &self,
         id: EditAtomId,
     ) -> Option<(InstanceAtomId, super::super::TopologyAtomIndex)> {
         self.atoms.get(&id).copied()
     }
+    /// The published qualified ID and dense index of a draft bond, or `None` when
+    /// the handle was deleted or is foreign.
     pub fn bond(
         &self,
         id: EditBondId,
@@ -41,6 +45,10 @@ impl EditCorrespondence {
 
 impl TopologyEditor {
     /// Publishes a topology with mappings for every surviving editing handle.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::finish`].
     pub fn finish_with_correspondence(
         self,
     ) -> Result<(Arc<Topology>, EditCorrespondence), TopologyEditError> {
@@ -87,6 +95,14 @@ impl TopologyEditor {
     /// uniquely owned source definitions. Shared source definitions are cloned.
     /// Inferred classes are refreshed only when their hierarchy or chemical
     /// evidence changes. Editing handles are draft-only.
+    ///
+    /// # Errors
+    ///
+    /// [`TopologyEditError::EmptyTopology`] when no atoms remain, or a
+    /// [`TopologyEditError::Molecule`], [`TopologyEditError::Publication`],
+    /// [`TopologyEditError::Topology`], or [`TopologyEditError::Property`]
+    /// error when a component, the topology, or its properties cannot be
+    /// published.
     pub fn finish(self) -> Result<Arc<Topology>, TopologyEditError> {
         self.into_publication().map(|r| r.topology)
     }

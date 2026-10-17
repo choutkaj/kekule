@@ -150,6 +150,7 @@ impl<'a, H> EditPropertyTableMut<'a, H> {
         }
     }
 
+    /// Whether any column is present.
     pub fn has_data(&self) -> bool {
         self.table.has_data()
     }
@@ -238,6 +239,7 @@ macro_rules! edit_table_rows {
                 Ok(())
             }
 
+/// Clears one cell; the same as [`Self::set_value`] with `None`.
             pub fn clear_value(
                 &mut self,
                 key: PropertyKey,
@@ -294,6 +296,7 @@ impl<'a> EditProperties<'a> {
         self.editor.properties.owner()
     }
 
+    /// Atom annotations, addressed by editing handle.
     pub fn atoms(&self) -> EditPropertyTable<'a, EditAtomId> {
         EditPropertyTable::new(
             self.editor.properties.atoms().raw(),
@@ -301,6 +304,7 @@ impl<'a> EditProperties<'a> {
         )
     }
 
+    /// Bond annotations, addressed by editing handle.
     pub fn bonds(&self) -> EditPropertyTable<'a, EditBondId> {
         EditPropertyTable::new(
             self.editor.properties.bonds().raw(),
@@ -308,6 +312,7 @@ impl<'a> EditProperties<'a> {
         )
     }
 
+    /// Chain annotations, addressed by editing handle.
     pub fn chains(&self) -> EditPropertyTable<'a, EditChainId> {
         EditPropertyTable::new(
             self.editor.properties.chains().raw(),
@@ -315,6 +320,7 @@ impl<'a> EditProperties<'a> {
         )
     }
 
+    /// Residue annotations, addressed by editing handle.
     pub fn residues(&self) -> EditPropertyTable<'a, EditResidueId> {
         EditPropertyTable::new(
             self.editor.properties.residues().raw(),
@@ -322,6 +328,7 @@ impl<'a> EditProperties<'a> {
         )
     }
 
+    /// Atom-site annotations, addressed by editing handle.
     pub fn atom_sites(&self) -> EditPropertyTable<'a, EditAtomSiteId> {
         EditPropertyTable::new(
             self.editor.properties.atom_sites().raw(),
@@ -355,6 +362,7 @@ pub struct EditPropertiesMut<'a> {
 }
 
 impl EditPropertiesMut<'_> {
+    /// Topology-level owner annotations.
     pub fn owner(&self) -> &OwnerProperties {
         self.editor.properties.owner()
     }
@@ -365,6 +373,7 @@ impl EditPropertiesMut<'_> {
         self.editor.properties.owner_mut()
     }
 
+    /// Atom annotations, addressed by editing handle.
     pub fn atoms_mut(&mut self) -> EditPropertyTableMut<'_, EditAtomId> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
@@ -374,6 +383,7 @@ impl EditPropertiesMut<'_> {
         )
     }
 
+    /// Bond annotations, addressed by editing handle.
     pub fn bonds_mut(&mut self) -> EditPropertyTableMut<'_, EditBondId> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
@@ -383,6 +393,7 @@ impl EditPropertiesMut<'_> {
         )
     }
 
+    /// Chain annotations, addressed by editing handle.
     pub fn chains_mut(&mut self) -> EditPropertyTableMut<'_, EditChainId> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
@@ -392,6 +403,7 @@ impl EditPropertiesMut<'_> {
         )
     }
 
+    /// Residue annotations, addressed by editing handle.
     pub fn residues_mut(&mut self) -> EditPropertyTableMut<'_, EditResidueId> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
@@ -401,6 +413,7 @@ impl EditPropertiesMut<'_> {
         )
     }
 
+    /// Atom-site annotations, addressed by editing handle.
     pub fn atom_sites_mut(&mut self) -> EditPropertyTableMut<'_, EditAtomSiteId> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
