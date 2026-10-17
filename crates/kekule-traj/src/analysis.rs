@@ -9,9 +9,61 @@
 //! accumulators.
 
 use kekule::alignment::{self, AlignmentError, AlignmentOptions, FitAtoms, RigidAlignment};
-use kekule::structure::{AsModelView, ModelView};
+use kekule::structure::{AsModelView, ModelView, TrajectoryFrameView};
 
 use crate::FrameBuffer;
+
+mod sealed {
+    /// Restricts [`super::AsFrameView`] to trajectory frames and buffers.
+    pub trait Sealed {}
+}
+
+/// A trajectory frame that reductions can observe: a borrowed
+/// [`TrajectoryFrameView`] or a [`FrameBuffer`].
+///
+/// Reductions count every frame once, so they accept trajectory frames only.
+/// Ensemble members are weighted samples whose statistics must use their
+/// weights, and a [`ModelView`] may borrow either kind of structure, so
+/// neither implements this sealed trait:
+///
+/// ```compile_fail,E0277
+/// # use kekule::{structure::Ensemble, topology::AtomSelection};
+/// # use kekule_traj::analysis::RmsfAccumulator;
+/// fn unweighted(ensemble: &Ensemble, atoms: &AtomSelection) {
+///     let mut rmsf = RmsfAccumulator::new(atoms).unwrap();
+///     let _ = rmsf.observe(0, &ensemble.get(0).unwrap());
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// # use kekule::{structure::Ensemble, topology::InstanceAtomId, units::{Quantity, ANGSTROM}};
+/// # use kekule_traj::analysis::ContactOccupancyAccumulator;
+/// fn unweighted(ensemble: &Ensemble, pairs: Vec<(InstanceAtomId, InstanceAtomId)>) {
+///     let topology = ensemble.shared_topology();
+///     let cutoff = Quantity::new(4.0, ANGSTROM);
+///     let mut contacts = ContactOccupancyAccumulator::new(&topology, pairs, cutoff).unwrap();
+///     let _ = contacts.observe(0, &ensemble.get(0).unwrap().as_model_view());
+/// }
+/// ```
+pub trait AsFrameView: sealed::Sealed {
+    /// Borrows the frame.
+    fn as_frame_view(&self) -> TrajectoryFrameView<'_>;
+}
+
+impl sealed::Sealed for TrajectoryFrameView<'_> {}
+impl sealed::Sealed for FrameBuffer {}
+
+impl AsFrameView for TrajectoryFrameView<'_> {
+    fn as_frame_view(&self) -> TrajectoryFrameView<'_> {
+        *self
+    }
+}
+
+impl AsFrameView for FrameBuffer {
+    fn as_frame_view(&self) -> TrajectoryFrameView<'_> {
+        self.frame_view()
+    }
+}
 
 mod reductions;
 pub use reductions::{

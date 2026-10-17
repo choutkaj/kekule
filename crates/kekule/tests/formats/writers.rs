@@ -2,7 +2,8 @@ use std::sync::Arc;
 use std::{io, io::Write};
 
 use kekule::diagnostics::{
-    DiagnosticKind, Format, FormatError, FormatErrorDetail, FormatStage, UnrepresentablePolicy,
+    DiagnosticKind, Format, FormatError, FormatErrorDetail, FormatStage, StructureField,
+    UnrepresentablePolicy,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::EntityKind;
@@ -10,9 +11,14 @@ use kekule::mmcif::{self, MmcifEntityClassifications, MmcifWriteIssue, MmcifWrit
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
-use kekule::structure::{Ensemble, Model, Positions};
+use kekule::structure::{
+    Ensemble, Forces, Model, ModelView, Positions, Trajectory, TrajectoryFrame, Velocities,
+};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
+use kekule::units::{
+    Quantity, ANGSTROM, KILOJOULE_PER_MOLE, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
+    NANOMETER_PER_PICOSECOND, PICOSECOND,
+};
 
 fn molecule(source: &str) -> kekule::molecule::Molecule {
     let mut molecules = smiles::to_molecules(source).expect("SMILES interprets");
@@ -620,6 +626,149 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
     // Equal weights without energies are what interpretation gives back.
     ensemble.get_mut(1).unwrap().set_weight(1.0).unwrap();
     mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap();
+}
+
+/// One-atom methane frames with exactly one piece of frame state each:
+/// none, time, step, velocities, forces.
+fn stateful_trajectory() -> Trajectory {
+    let topology = model("C", &[[0.0; 3]]).shared_topology();
+    let mut trajectory = Trajectory::new(topology);
+    for _ in 0..5 {
+        trajectory
+            .push(TrajectoryFrame::new(Positions::zeros(1)))
+            .unwrap();
+    }
+    let zero = || vec![Vector3::new(0.0, 0.0, 0.0)];
+    trajectory
+        .get_mut(1)
+        .unwrap()
+        .set_time(Some(Quantity::new(2.0, PICOSECOND)))
+        .unwrap();
+    trajectory.get_mut(2).unwrap().set_step(Some(7));
+    let velocities = Velocities::from_vec(Quantity::new(zero(), NANOMETER_PER_PICOSECOND)).unwrap();
+    trajectory
+        .get_mut(3)
+        .unwrap()
+        .set_velocities(Some(velocities))
+        .unwrap();
+    let forces = Forces::from_vec(Quantity::new(zero(), KILOJOULE_PER_MOLE_PER_NANOMETER)).unwrap();
+    trajectory
+        .get_mut(4)
+        .unwrap()
+        .set_forces(Some(forces))
+        .unwrap();
+    trajectory
+}
+
+/// Writes one structure view as a Molfile, an SDF record and an mmCIF model
+/// block, each with member and frame state set to `policy`.
+fn write_structure(
+    view: ModelView<'_>,
+    policy: UnrepresentablePolicy,
+) -> [Result<String, FormatError>; 3] {
+    [
+        molfile::write(
+            molfile::MolfileSource::model(&view),
+            MolfileWriteOptions::default()
+                .with_ensemble_metadata(policy)
+                .with_frame_metadata(policy),
+        ),
+        sdf::write(
+            [sdf::SdfRecordSource::model(&view)],
+            SdfWriteOptions::default().with_frame_metadata(policy),
+        ),
+        mmcif::write(
+            [mmcif::MmcifBlockSource::model(&view)],
+            MmcifWriteOptions::default()
+                .with_ensemble_metadata(policy)
+                .with_frame_metadata(policy),
+        ),
+    ]
+}
+
+#[test]
+fn structure_writers_fail_on_member_and_frame_state_unless_told_to_omit_it() {
+    use StructureField::{
+        Energy, Forces as ForceField, Step, Time, Velocities as VelocityField, Weight,
+    };
+    let mut ensemble = weighted_ensemble();
+    ensemble.get_mut(1).unwrap().set_energy(None).unwrap();
+    let trajectory = stateful_trajectory();
+    // Expected detail per writer (Molfile, SDF, mmCIF); SDF writes member
+    // weights and energies as data fields.
+    let rows: [(ModelView<'_>, [Option<StructureField>; 3]); 7] = [
+        (
+            ensemble.get(0).unwrap().as_model_view(),
+            [Some(Energy), None, Some(Energy)],
+        ),
+        (
+            ensemble.get(1).unwrap().as_model_view(),
+            [Some(Weight), None, Some(Weight)],
+        ),
+        (trajectory.get(0).unwrap().as_model_view(), [None; 3]),
+        (trajectory.get(1).unwrap().as_model_view(), [Some(Time); 3]),
+        (trajectory.get(2).unwrap().as_model_view(), [Some(Step); 3]),
+        (
+            trajectory.get(3).unwrap().as_model_view(),
+            [Some(VelocityField); 3],
+        ),
+        (
+            trajectory.get(4).unwrap().as_model_view(),
+            [Some(ForceField); 3],
+        ),
+    ];
+    let formats = [Format::Molfile, Format::Sdf, Format::Mmcif];
+    for (row, (view, expected)) in rows.into_iter().enumerate() {
+        let model = view.to_model();
+        let plain = write_structure(model.as_model_view(), UnrepresentablePolicy::Fail);
+        let failed = write_structure(view, UnrepresentablePolicy::Fail);
+        let omitted = write_structure(view, UnrepresentablePolicy::Omit);
+        for (writer, field) in expected.into_iter().enumerate() {
+            let format = formats[writer];
+            match field {
+                Some(field) => {
+                    let error = failed[writer].as_ref().unwrap_err();
+                    assert_eq!(
+                        (error.format(), error.kind(), error.detail()),
+                        (
+                            format,
+                            DiagnosticKind::Unsupported,
+                            Some(&FormatErrorDetail::UnrepresentableState(field)),
+                        ),
+                        "row {row}, {format}"
+                    );
+                    // Omitting the state writes exactly the bare model.
+                    assert_eq!(
+                        omitted[writer].as_ref().unwrap(),
+                        plain[writer].as_ref().unwrap(),
+                        "row {row}, {format}"
+                    );
+                }
+                None if format == Format::Sdf && row < 2 => {
+                    // Both SDF paths write the member's own data fields.
+                    let member = ensemble.get(row).unwrap();
+                    let typed = sdf::write([member], SdfWriteOptions::default()).unwrap();
+                    assert_eq!(failed[writer].as_ref().unwrap(), &typed);
+                    assert!(typed.contains(
+                        ">  <kekule.weight>
+"
+                    ));
+                    assert_ne!(&typed, plain[writer].as_ref().unwrap());
+                }
+                None => assert_eq!(
+                    failed[writer].as_ref().unwrap(),
+                    plain[writer].as_ref().unwrap(),
+                    "row {row}, {format}"
+                ),
+            }
+        }
+    }
+    let error = sdf::write(&trajectory, SdfWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "SDF write error in record 2: SDF cannot represent the trajectory frame time; \
+         choose to omit it explicitly"
+    );
 }
 
 /// One methane carbon in a 2 x 3 x 4 nm box periodic along `periodic`.

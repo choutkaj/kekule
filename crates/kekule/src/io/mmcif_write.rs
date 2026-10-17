@@ -6,6 +6,7 @@ use crate::io::structure_interpret::{
     EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
     StructureInterpretationReport,
 };
+use crate::io::write_error::check_structure_state;
 use crate::io::UnrepresentablePolicy;
 use crate::molecule::BondOrder;
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
@@ -31,6 +32,7 @@ pub struct MmcifWriteOptions {
     block_name: String,
     coordinate_precision: usize,
     ensemble_metadata: UnrepresentablePolicy,
+    frame_metadata: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
 }
 
@@ -80,7 +82,9 @@ impl MmcifWriteOptions {
     }
 
     /// Ensemble member weights and energies, which mmCIF cannot carry: by
-    /// default an ensemble with unequal weights or any energy fails to write.
+    /// default an ensemble with unequal weights or any energy fails to write,
+    /// and so does a model block of one ensemble member, whose weight is
+    /// relative to members the block does not hold.
     pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
         self.ensemble_metadata
     }
@@ -89,6 +93,20 @@ impl MmcifWriteOptions {
     #[must_use]
     pub fn with_ensemble_metadata(mut self, ensemble_metadata: UnrepresentablePolicy) -> Self {
         self.ensemble_metadata = ensemble_metadata;
+        self
+    }
+
+    /// A trajectory frame's time, step, velocities, and forces, which mmCIF
+    /// cannot carry: by default a model block of a frame with any of them
+    /// fails to write.
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
+    }
+
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
         self
     }
 
@@ -114,6 +132,7 @@ impl Default for MmcifWriteOptions {
             block_name: "model".to_owned(),
             coordinate_precision: 3,
             ensemble_metadata: UnrepresentablePolicy::Fail,
+            frame_metadata: UnrepresentablePolicy::Fail,
             cell: UnrepresentablePolicy::Fail,
         }
     }
@@ -606,7 +625,9 @@ impl MmcifEntityClassifications {
 ///
 /// Convert from `&Model`, `&Ensemble`, `&StructureInterpretation`, or
 /// `&StructureEnsembleInterpretation`; interpretations keep their source reports.
-/// [`Self::model`] accepts any borrowed model view, such as an ensemble member.
+/// [`Self::model`] accepts any borrowed model view; an ensemble member's
+/// weight and energy and a trajectory frame's time, step, velocities, and
+/// forces fail to write unless the write options omit them.
 #[derive(Debug, Clone, Copy)]
 pub struct MmcifBlockSource<'a> {
     content: BlockContent<'a>,
@@ -744,6 +765,12 @@ fn write_model_block_to(
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
 ) -> Result<(), FormatError> {
+    check_structure_state(
+        Format::Mmcif,
+        view.kind(),
+        Some(options.ensemble_metadata),
+        options.frame_metadata,
+    )?;
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {

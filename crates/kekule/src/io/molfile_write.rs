@@ -4,9 +4,9 @@ use std::io::Write;
 use crate::molecule::Molecule;
 use crate::structure::{AsModelView, Model, ModelView};
 
-use super::write_error::MOLFILE_WRITE;
+use super::write_error::{check_structure_state, MOLFILE_WRITE};
 use super::{MolfileVersion, UnrepresentablePolicy};
-use crate::diagnostics::{DiagnosticKind, FormatError};
+use crate::diagnostics::{DiagnosticKind, Format, FormatError};
 
 mod record;
 mod v2000;
@@ -32,6 +32,8 @@ pub enum MolfileWriteVersion {
 pub struct MolfileWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
+    ensemble_metadata: UnrepresentablePolicy,
+    frame_metadata: UnrepresentablePolicy,
 }
 
 impl MolfileWriteOptions {
@@ -56,6 +58,36 @@ impl MolfileWriteOptions {
     #[must_use]
     pub const fn with_cell(mut self, cell: UnrepresentablePolicy) -> Self {
         self.cell = cell;
+        self
+    }
+
+    /// An ensemble member's weight and energy, which a Molfile cannot carry:
+    /// by default writing a view of an ensemble member fails.
+    pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
+        self.ensemble_metadata
+    }
+
+    /// Sets [`Self::ensemble_metadata`].
+    #[must_use]
+    pub const fn with_ensemble_metadata(
+        mut self,
+        ensemble_metadata: UnrepresentablePolicy,
+    ) -> Self {
+        self.ensemble_metadata = ensemble_metadata;
+        self
+    }
+
+    /// A trajectory frame's time, step, velocities, and forces, which a
+    /// Molfile cannot carry: by default writing a frame with any of them
+    /// fails.
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
+    }
+
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
         self
     }
 }
@@ -103,6 +135,12 @@ pub(crate) fn write_molfile<'a>(
         }
         MolfileSource::Model(model) => {
             check_cell(model, options.cell)?;
+            check_structure_state(
+                Format::Molfile,
+                model.kind(),
+                Some(options.ensemble_metadata),
+                options.frame_metadata,
+            )?;
             render_model(model, "", options.version)
         }
     }

@@ -15,7 +15,7 @@ use super::state::{
 };
 use super::{
     AsModelView, Ensemble, EnsembleMember, Forces, Model, ModelView, Positions, StructureError,
-    Velocities,
+    StructureKind, Velocities,
 };
 
 /// Whether [`Trajectory::validate_monotonic_time`] accepts frames without time.
@@ -468,6 +468,12 @@ impl TrajectoryFrame {
             &ABSENT,
             &ABSENT,
             &self.properties,
+            StructureKind::Frame {
+                time: self.time,
+                step: self.step,
+                velocities: self.velocities.as_ref(),
+                forces: self.forces.as_ref(),
+            },
         )
     }
 

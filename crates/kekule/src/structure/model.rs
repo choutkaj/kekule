@@ -19,7 +19,7 @@ use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     validate_binding,
 };
-use super::{DenseArrayError, Positions, StructureError};
+use super::{DenseArrayError, Forces, Positions, StructureError, Velocities};
 
 /// One concrete structure of one topology.
 ///
@@ -175,6 +175,7 @@ impl Model {
             &self.occupancies,
             &self.b_factors,
             &self.properties,
+            StructureKind::Model,
         )
     }
 
@@ -339,13 +340,46 @@ impl<'a> From<&'a Model> for ModelView<'a> {
     }
 }
 
+/// What a [`ModelView`] borrows: a model, an ensemble member, or a trajectory
+/// frame, with the state only that kind of structure owns.
+///
+/// Kernels that only need coordinates ignore it. Writers and reductions read
+/// it so that member and frame state is written, rejected, or deliberately
+/// omitted, never silently dropped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum StructureKind<'a> {
+    /// A [`Model`], or a view materialized as one.
+    Model,
+    /// An [`EnsembleMember`](super::EnsembleMember).
+    #[non_exhaustive]
+    Member {
+        /// The member's finite, positive relative weight.
+        weight: f64,
+        /// The member's energy, when recorded.
+        energy: Option<Quantity<f64>>,
+    },
+    /// A [`TrajectoryFrame`](super::TrajectoryFrame) or a frame buffer.
+    #[non_exhaustive]
+    Frame {
+        /// The frame's simulation time, when recorded.
+        time: Option<Quantity<f64>>,
+        /// The frame's integration step, when recorded.
+        step: Option<u64>,
+        /// The frame's velocities, when recorded.
+        velocities: Option<&'a Velocities>,
+        /// The frame's forces, when recorded.
+        forces: Option<&'a Forces>,
+    },
+}
+
 /// A borrowed topology plus the structure state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
 /// Models, ensemble members, trajectory frames, and frame buffers all borrow
-/// as a view. Accessors return borrows with the view's full lifetime. A view of
-/// a trajectory frame has no occupancies or B-factors. Views preserve exact
-/// topology identity.
+/// as a view, and [`Self::kind`] says which one it is. Accessors return
+/// borrows with the view's full lifetime. A view of a trajectory frame has no
+/// occupancies or B-factors. Views preserve exact topology identity.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,
@@ -354,6 +388,7 @@ pub struct ModelView<'a> {
     occupancies: &'a AtomScalars,
     b_factors: &'a AtomScalars,
     properties: &'a StructureProperties,
+    kind: StructureKind<'a>,
 }
 
 impl<'a> ModelView<'a> {
@@ -365,6 +400,7 @@ impl<'a> ModelView<'a> {
         occupancies: &'a AtomScalars,
         b_factors: &'a AtomScalars,
         properties: &'a StructureProperties,
+        kind: StructureKind<'a>,
     ) -> Self {
         debug_assert!(is_bound(positions.len(), properties, topology));
         Self {
@@ -374,7 +410,20 @@ impl<'a> ModelView<'a> {
             occupancies,
             b_factors,
             properties,
+            kind,
         }
+    }
+
+    /// Which structure this view borrows, with its member or frame state.
+    ///
+    /// ```
+    /// use kekule::{smiles, structure::{Model, Positions, StructureKind}};
+    /// let model = Model::new(smiles::to_topology("O")?, Positions::zeros(1))?;
+    /// assert_eq!(model.as_model_view().kind(), StructureKind::Model);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub const fn kind(self) -> StructureKind<'a> {
+        self.kind
     }
 
     pub fn topology(self) -> &'a Topology {
@@ -461,7 +510,8 @@ impl<'a> ModelView<'a> {
             .map(move |atom| ModelAtomView { atom, model: self })
     }
 
-    /// Materializes this borrowed structure as an owned model. A view of a
+    /// Materializes this borrowed structure as an owned model, dropping any
+    /// member or frame state reported by [`Self::kind`]. A view of a
     /// trajectory frame yields a model without occupancies or B-factors.
     pub fn to_model(self) -> Model {
         Model {

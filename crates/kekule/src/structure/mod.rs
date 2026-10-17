@@ -75,7 +75,7 @@ pub use ensemble::{
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
 pub use model::{
     AsModelView, Model, ModelAtomView, ModelBuildError, ModelBuilder, ModelError, ModelTopologyMut,
-    ModelView,
+    ModelView, StructureKind,
 };
 pub use model_editor::{ModelAppend, ModelAppendReport, ModelEditError, ModelEditor};
 pub use positions::{DenseArrayError, Positions};

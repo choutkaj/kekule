@@ -105,6 +105,13 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `kekule-traj` reductions accept only trajectory frames
+  (ARCHITECTURE.md, "Trajectories and streaming").
+  `RmsfAccumulator::observe` and `ContactOccupancyAccumulator::observe` take
+  the new sealed `analysis::AsFrameView`, implemented by
+  `TrajectoryFrameView` and `FrameBuffer`, instead of any `AsModelView`, so
+  passing an ensemble member or a `ModelView` no longer compiles. Pass
+  `&buffer` where `&buffer.as_model_view()` was passed.
 - **Breaking:** `Atom` has private fields. Build one with `Atom::new` and
   `with_element`, `with_isotope`, `with_formal_charge`, `with_radical`,
   `with_hydrogens` and `with_atom_map`; read it with the same-named getters;
@@ -893,6 +900,24 @@ All notable changes to Kekule are documented in this file.
 
 ### Fixed
 
+- Structure writers no longer silently drop what an item is. `ModelView`
+  gains `kind()`, a `StructureKind` of `Model`, `Member { weight, energy }`
+  or `Frame { time, step, velocities, forces }`. Before, `sdf::write(&trajectory, …)`
+  dropped each frame's time and step, and `SdfRecordSource::model(&member)`
+  dropped the weight and energy that `SdfRecordSource::from(member)` wrote.
+  - SDF writes a member's weight and energy as data fields however its view
+    is passed, and fails on a frame's time, step, velocities or forces
+    unless the new `SdfWriteOptions::with_frame_metadata(UnrepresentablePolicy::Omit)`.
+  - Molfile fails on an ensemble member (its weight is relative to members
+    the record does not hold, and it may have an energy) and on frame state,
+    unless `MolfileWriteOptions::with_ensemble_metadata` or
+    `with_frame_metadata` omits it.
+  - An mmCIF model block of an ensemble member fails unless
+    `MmcifWriteOptions::with_ensemble_metadata` omits its weight and energy,
+    as ensemble blocks with unequal weights already did; a frame's state
+    fails unless the new `with_frame_metadata` omits it.
+  - The failure is `DiagnosticKind::Unsupported` with the new
+    `FormatErrorDetail::UnrepresentableState(StructureField)`.
 - CIP assignment no longer ranks an unperceived inferred hydrogen count as
   zero hydrogens. Unperceived `C[C@@H](O)[CH3]` was labelled R, although the
   centre carries two methyls. `assign_cip_descriptors` now fails with the new

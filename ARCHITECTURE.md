@@ -293,7 +293,10 @@ store flat payloads, not nested models; a detached payload has
 atom rows only and acquires bond rows when its collection binds it. Borrowed
 `ModelView` access, obtained through the sealed `AsModelView` (or a frame
 buffer's `as_model_view`), lets coordinate algorithms and writers share
-kernels across models, members, frames, and buffers. Owned
+kernels across models, members, frames, and buffers. A view's `kind()`
+says which structure it borrows and carries that structure's own state (a
+member's weight and energy, a frame's time, step, velocities, and forces), so
+writers and reductions never lose it silently. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
 one shared layout; there is no special single-member ownership model.
@@ -369,7 +372,9 @@ change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
 RMSF and contact-occupancy reductions are trajectory statistics in which every
 frame counts once; they do not accept ensembles, whose statistics must be
-weighted. They consume borrowed frames sharing the source
+weighted. Their accumulators take frames through the sealed `AsFrameView`,
+implemented only by trajectory frame views and frame buffers, so an ensemble
+member or an untyped `ModelView` does not compile. They consume borrowed frames sharing the source
 topology's layout with memory bounded by selected atoms or pairs, not frame count. Failed
 observations leave accumulators unchanged. Results retain atom/pair associations;
 frame indices are diagnostic labels, not statistical weights. Preprocessing,
@@ -562,7 +567,10 @@ source type converts from the inputs that format can represent: molecules,
 models, collection items, interpreted records, or mmCIF block sources carrying
 classifications or reports. Models and collection items share a borrowed
 structure path. Coordinate-bearing writers emit atoms in dense order.
-Unsupported representational content must fail explicitly. There is no
+Unsupported representational content must fail explicitly. Writers read the
+view's `kind()`: member or frame state the format cannot carry fails unless
+the caller sets `UnrepresentablePolicy::Omit` for it, and a format that can
+carry it writes it whichever path supplied the view. There is no
 universal save trait or implicit trajectory-to-structure export.
 
 - SMILES exports represented chemistry and supported stereo. Canonical output
@@ -577,10 +585,12 @@ universal save trait or implicit trajectory-to-structure export.
   one fails unless the caller chooses to omit it.
 - SDF represents independent records; an ensemble member's weight and energy
   travel as data fields, and only the explicit `sdf::ensemble` assembles
-  records into an ensemble. mmCIF distinguishes independent model blocks
+  records into an ensemble. A Molfile, an SDF record, and an mmCIF block
+  cannot carry a frame's time, step, velocities, or forces. A Molfile cannot
+  carry a member's weight or energy. mmCIF distinguishes independent model blocks
   from one ensemble's multi-model block, and cannot carry member weights or
-  energies, so writing unequal weights or any energy fails unless the
-  caller chooses to omit them. mmCIF writes a cell periodic along all three
+  energies, so writing unequal weights, any energy, or one member as a model
+  block fails unless the caller chooses to omit them. mmCIF writes a cell periodic along all three
   axes in the standard crystallographic frame as `_cell` in space group P 1,
   and reads `_cell` as the model's cell only in P 1 (or with no space group),
   where the coordinates are a whole unit cell; PDB reads `CRYST1` by the same

@@ -1108,3 +1108,40 @@ fn energy_ranking_and_windows_are_relative_to_the_lowest_member() {
         Err(EnsembleError::MissingEnergy { index: 3 })
     );
 }
+
+#[test]
+fn model_views_report_which_structure_they_borrow() {
+    let topology = Arc::new(single_atom_topology());
+    let model = Model::new(Arc::clone(&topology), single_position(0.0)).unwrap();
+    assert_eq!(model.as_model_view().kind(), StructureKind::Model);
+
+    let ensemble = energy_ensemble(&[2.5]);
+    let member = ensemble.get(0).unwrap();
+    assert_eq!(
+        member.as_model_view().kind(),
+        StructureKind::Member {
+            weight: 1.0,
+            energy: Some(Quantity::new(2.5, KILOJOULE_PER_MOLE)),
+        }
+    );
+    // Materializing a member as a model drops its member state.
+    assert_eq!(
+        member.to_model().as_model_view().kind(),
+        StructureKind::Model
+    );
+
+    let mut trajectory = Trajectory::new(topology);
+    let mut frame = TrajectoryFrame::new(single_position(0.0));
+    frame.set_step(Some(4));
+    trajectory.push(frame).unwrap();
+    let frame = trajectory.get(0).unwrap();
+    assert_eq!(
+        frame.as_model_view().kind(),
+        StructureKind::Frame {
+            time: None,
+            step: Some(4),
+            velocities: None,
+            forces: None,
+        }
+    );
+}

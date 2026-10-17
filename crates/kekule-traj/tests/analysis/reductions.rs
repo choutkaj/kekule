@@ -90,10 +90,8 @@ fn loaded_and_reused_streaming_buffers_agree_with_independent_statistics() {
     let mut index = 0;
     for frame in t.iter() {
         buffer.copy_from(frame).unwrap();
-        online_rmsf.observe(index, &buffer.as_model_view()).unwrap();
-        online_contacts
-            .observe(index, &buffer.as_model_view())
-            .unwrap();
+        online_rmsf.observe(index, &buffer).unwrap();
+        online_contacts.observe(index, &buffer).unwrap();
         index += 1;
     }
     assert_eq!(index, 3);
