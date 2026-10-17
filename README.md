@@ -17,7 +17,7 @@
 The architectural contract lives in [`ARCHITECTURE.md`](https://github.com/choutkaj/kekule/blob/main/ARCHITECTURE.md).
 
 > [!NOTE]
-> `kekule` is in early development and should be considered unstable. Breaking API changes will happen without notice.
+> `kekule` is in early development and should be considered unstable.
 
 ## Installation
 
@@ -36,20 +36,23 @@ Sister crates add the rest of the workspace:
 
 ## Concepts
 
-`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. `Topology` is a collection of one or more `Molecule`s together with their hierarchy of chains, residues, and atom sites, read through `ChainView`, `ResidueView`, and `AtomSiteView`. Molecules in `Topology` are not stored naively, but as `MoleculeDefinition`s and instances. For example, a hundred water molecules will be stored as one definition and a hundred instances. Coordinates are detached from `Molecule` and `Topology`: they live in structures. A structure is one set of coordinates and per-atom state of a topology: `Positions`, an optional periodic cell, and structure properties, plus fields specific to the kind of structure.
+`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. `Topology` is a collection of one or more `Molecule`s together with their hierarchy of chains, residues, and atom sites, read through `ChainView`, `ResidueView`, and `AtomSiteView`. `Molecule`s in `Topology` are not stored naively, but as `MoleculeDefinition`s and instances. For example, a hundred water molecules will be stored as one definition and a hundred instances. Coordinates are detached from `Molecule` and `Topology`: they live in structures. A structure is one set of coordinates and per-atom state of a topology: `Positions`, an optional periodic cell, and structure properties, plus fields specific to the kind of structure.
 ```text
-Molecule = Graph + Perception + Properties
-Topology = collection of Molecules (stored as definitions and instances) + Hierarchy
+Molecule  = Graph + Perception + Properties
+Topology  = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
-Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `Ensemble` and `Trajectory` are distinct collections of structures of one system: an ensemble is a weighted, unordered sample (conformers, Monte Carlo samples, NMR models), and every member carries a statistical weight; a trajectory is a time-ordered sequence of frames produced by dynamics.
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `Ensemble` and `Trajectory` are distinct collections of structures of one system: an ensemble is a weighted, unordered set of members with statistical weight; a trajectory is a time-ordered sequence of frames produced by a simulation.
+
 ```text
-Model           = Topology + positions, cell, occupancies, B-factors, properties
-Ensemble        = Topology + weighted EnsembleMembers (positions, cell, occupancies, B-factors, properties, weight)
-Trajectory      = Topology + time-ordered TrajectoryFrames (positions, cell, properties, velocities, forces, time, step)
+Model      = Topology + positions, cell, occupancies, B-factors, properties
+Ensemble   = Topology + weighted EnsembleMembers (positions, cell, occupancies, B-factors, properties, weight)
+Trajectory = Topology + time-ordered TrajectoryFrames (positions, cell, properties, velocities, forces, time, step)
 ```
 
 ## Formats
+
+Supported formats:
 
 | Format | Read | Write |
 | --- | --- | --- |
@@ -58,12 +61,6 @@ Trajectory      = Topology + time-ordered TrajectoryFrames (positions, cell, pro
 | SDF, streamed record by record | yes | yes |
 | mmCIF | yes | yes |
 | PDB | yes | no |
-
-Macromolecular formats rarely state every bond, so mmCIF and PDB interpretation
-resolves connectivity from the file's own records, bundled templates from the
-wwPDB Chemical Component Dictionary (`kekule::components`), polymer linkage, and,
-for residues nothing else covers, covalent radii. The sister crate `kekule-traj`
-reads and writes XYZ, DCD, TRR, and XTC trajectories.
 
 ## Examples
 
@@ -90,24 +87,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("atoms: {}", molecule.atom_count());
     println!("bonds: {}", molecule.bond_count());
     println!("formal charge: {}", molecule.formal_charge());
-    
+
     // Print canonical and isomeric SMILES
     let canonical = smiles::write(&molecule, SmilesWriteOptions::canonical())?;
     let isomeric = smiles::write(&molecule, SmilesWriteOptions::isomeric())?;
     println!("canonical SMILES: {canonical}");
     println!("isomeric SMILES: {isomeric}");
-    
+
     // Assign and print stereochemistry
     let stereochemistry = stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())?;
     for assignment in stereochemistry.assigned() {
-        println!("stereo {}: {:?}", assignment.element(), assignment.descriptor());
+        println!("{}: {:?}", assignment.element(), assignment.descriptor());
     }
-    
+
     // Assign and print rotatable bonds
     let rotatable = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)?;
     for &bond_id in rotatable.bond_ids() {
         let bond = molecule.bond(bond_id).expect("detected bonds are in the molecule");
-        println!("rotatable bond {bond_id}: {}-{}", bond.a(), bond.b());
+        println!("rotatable {bond_id}: {}-{}", bond.a(), bond.b());
     }
     Ok(())
 }
@@ -193,56 +190,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 ```
 The combined-model example intentionally requires one connected small molecule per input. Multi-record SDF documents, multi-block or multi-model mmCIF documents, and macromolecular systems require explicit source selection.
 
-### PDB structures
-
-Read a PDB entry, see where its bonds came from, and read every coordinate model
-as an ensemble. The example reads `1ake.pdb`
-([1AKE](https://www.rcsb.org/structure/1AKE)) from the working directory:
-
-```rust,no_run
-use std::{error::Error, fs};
-
-use kekule::macromolecular::{BondEvidence, StructureInterpretIssue};
-use kekule::pdb;
-
-fn main() -> Result<(), Box<dyn Error>> {
-    // A PDB file holds one entry. Bonds it does not state come from residue
-    // templates, polymer linkage, and its CONECT, LINK, and SSBOND records.
-    let document = pdb::parse_str(&fs::read_to_string("1ake.pdb")?, Default::default())?;
-    let interpretation = document.interpret(Default::default())?;
-    let report = interpretation.report();
-    println!("entry: {}", report.block_name());
-    println!(
-        "macromolecules: {}, small molecules: {}, waters: {}",
-        report.macromolecules(),
-        report.small_molecules(),
-        report.solvent_molecules(),
-    );
-
-    // Every bond records its evidence; residues without a template have
-    // their bonds inferred from covalent radii.
-    let inferred = report
-        .instances()
-        .iter()
-        .flat_map(|instance| instance.bonds())
-        .filter(|bond| matches!(bond.evidence(), BondEvidence::Distance))
-        .count();
-    println!("bonds inferred from distance: {inferred}");
-
-    // Non-fatal findings, such as chain breaks, are listed in the report.
-    for issue in report.issues() {
-        if let StructureInterpretIssue::ChainBreak { residue, next } = issue {
-            println!("chain break between {residue:?} and {next:?}");
-        }
-    }
-
-    // Entries with several MODEL records, such as NMR ensembles, read as one
-    // ensemble of equally weighted members.
-    let ensemble = document.interpret_ensemble(Default::default())?;
-    println!("models: {}", ensemble.ensemble().len());
-    Ok(())
-}
-```
 
 ## Contributing
 
