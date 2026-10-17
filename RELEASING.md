@@ -65,7 +65,7 @@ cargo +1.89 check --workspace --all-targets --all-features --locked
 cargo deny check
 cargo audit --file Cargo.lock
 cargo audit --file fuzz/Cargo.lock --no-fetch
-cargo package --workspace --locked
+cargo package --workspace --exclude kekule-bench --locked
 ```
 
 `cargo package --workspace` resolves the unpublished member versions from the
@@ -75,7 +75,8 @@ packages it builds, so it verifies each crate as it will be uploaded.
 
 crates.io rejects a `.crate` above 10,485,760 bytes. CI fails above that and
 warns above 90 %. Check the sizes and review each file list; every crate
-declares an explicit `include` list:
+declares an explicit `include` list, and integration tests are not shipped
+(cargo notes each ignored test target):
 
 ```bash
 ls -l target/package/*.crate

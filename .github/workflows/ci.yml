@@ -65,7 +65,8 @@ jobs:
           done
       # Workspace packaging resolves unpublished member versions from the
       # packages it builds, so every crate is built and verified as uploaded.
-      - run: cargo package --workspace --locked
+      # Integration tests are not shipped, so cargo notes each ignored test.
+      - run: cargo package --workspace --exclude kekule-bench --locked
       - name: Check package sizes against the crates.io limit
         shell: bash
         run: |
