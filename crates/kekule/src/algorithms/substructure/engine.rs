@@ -288,7 +288,7 @@ impl Context<'_, '_> {
         let f = &target.facts;
         Ok(match p {
             AtomPredicate::Element(e) => atom.element == *e,
-            AtomPredicate::Isotope(i) => atom.isotope.unwrap_or(0) == *i,
+            AtomPredicate::Isotope(i) => atom.isotope.map_or(0, std::num::NonZero::get) == *i,
             AtomPredicate::FormalCharge(c) => atom.formal_charge == *c,
             AtomPredicate::Aromatic(a) => m.perception().atom_is_aromatic(id) == Some(*a),
             AtomPredicate::Degree(n) => f.degree == usize::from(*n),

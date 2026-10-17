@@ -144,7 +144,7 @@ fn annotated(conflict: Option<&str>) -> Model {
                     residue,
                     InstanceAtomId::new(instance, id),
                     AtomSiteMetadata::default()
-                        .with_type_symbol(Some(value.element.symbol().into()))
+                        .with_type_symbol(Some(value.element().symbol().into()))
                         .with_label_asym_id(Some("A".into()))
                         .with_auth_asym_id(Some("source-A".into()))
                         .with_label_atom_id(Some(format!("L{}", id.index())))
@@ -527,7 +527,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     let oxygen = linked
         .topology()
         .atoms()
-        .find(|a| a.element.symbol() == "O")
+        .find(|a| a.element().symbol() == "O")
         .unwrap()
         .id();
     assert_eq!(
@@ -537,7 +537,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     let h = linked
         .topology()
         .atoms()
-        .find(|a| a.element.symbol() == "H")
+        .find(|a| a.element().symbol() == "H")
         .unwrap()
         .id();
     assert_eq!(
@@ -556,7 +556,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     let oxygen = split
         .topology()
         .atoms()
-        .find(|a| a.element.symbol() == "O")
+        .find(|a| a.element().symbol() == "O")
         .unwrap()
         .id();
     let oxygen_molecule = split
@@ -581,7 +581,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
         deleted
             .topology()
             .atoms()
-            .map(|a| a.element.symbol())
+            .map(|a| a.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "H"]
     );
@@ -623,7 +623,7 @@ fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recov
             .topology()
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .element
+            .element()
             .symbol(),
         "Na"
     );
@@ -849,8 +849,13 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
     let mut editor = ModelEditor::new();
     let imported = editor.append_model(&source).unwrap();
     let source_atom = source.topology().atom_ids()[0];
-    let mut replacement = source.topology().atom(source_atom).unwrap().atom().clone();
-    replacement.formal_charge = 1;
+    let replacement = source
+        .topology()
+        .atom(source_atom)
+        .unwrap()
+        .atom()
+        .clone()
+        .with_formal_charge(1);
     editor
         .replace_atom(imported.atom(source_atom).unwrap(), replacement)
         .unwrap();
@@ -858,7 +863,7 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
     assert_eq!(result.topology().definition_count(), 3);
     assert_eq!(result.positions(), source.positions());
     assert_eq!(
-        result.topology().atom(source_atom).unwrap().formal_charge,
+        result.topology().atom(source_atom).unwrap().formal_charge(),
         1
     );
     for molecule in source.topology().instances() {

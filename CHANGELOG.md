@@ -105,6 +105,16 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `Atom` has private fields. Build one with `Atom::new` and
+  `with_element`, `with_isotope`, `with_formal_charge`, `with_radical`,
+  `with_hydrogens` and `with_atom_map`; read it with the same-named getters;
+  change an atom in a molecule through the `AtomMut` setters (`set_element`,
+  `set_isotope`, …).
+  - The isotope is `Option<NonZeroU16>` and the atom map
+    `Option<NonZeroU32>`, so mass number 0 and atom map 0 are not
+    representable. SMILES `[0C]` and `[CH4:0]` and Molfile atom map 0 read
+    as no isotope and no atom map, as isotope 0 already did, so `[CH4:0]`
+    now writes `[CH4]`; Molfile writers no longer have an atom-map-0 error.
 - **Breaking:** Stereo carriers have a fixed count:
   `TetrahedralStereo::carriers` is `[StereoCarrier; 4]` and
   `AxisStereo::carriers` is `[StereoCarrier; 2]`, so

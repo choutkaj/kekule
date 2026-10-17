@@ -433,7 +433,7 @@ impl MoleculeEditor {
     /// ));
     /// assert_eq!(editor.normalize_oxohalogens(), [chlorine]);
     /// let perchlorate = editor.finish()?;
-    /// assert_eq!(perchlorate.atom(chlorine).map(|atom| atom.formal_charge), Some(3));
+    /// assert_eq!(perchlorate.atom(chlorine).map(|atom| atom.formal_charge()), Some(3));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn normalize_oxohalogens(&mut self) -> Vec<AtomId> {

@@ -47,8 +47,8 @@ fn failing_topology() -> Arc<Topology> {
 
     // Publication permits represented chemistry rejected by the default valence model.
     let mut editor = MoleculeEditor::new();
-    let mut carbon = Atom::new(Element::from_symbol("C").unwrap());
-    carbon.hydrogens = ImplicitHydrogens::Fixed(5);
+    let carbon =
+        Atom::new(Element::from_symbol("C").unwrap()).with_hydrogens(ImplicitHydrogens::Fixed(5));
     editor.add_atom(carbon).unwrap();
     let mut bad = editor.finish().unwrap();
     perception::rings::perceive_rings(

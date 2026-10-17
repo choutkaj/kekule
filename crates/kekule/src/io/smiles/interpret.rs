@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::{NonZeroU16, NonZeroU32};
 use std::ops::Range;
 
 use crate::chemistry::{
@@ -716,14 +717,14 @@ fn interpret_smiles_atom(
         )
     })?;
     let mut atom = Atom::new(element);
-    atom.isotope = syntax.isotope;
+    atom.isotope = syntax.isotope.and_then(NonZeroU16::new);
     atom.formal_charge = syntax.formal_charge;
     atom.hydrogens = if syntax.bracketed {
         ImplicitHydrogens::Fixed(syntax.specified_hydrogens)
     } else {
         ImplicitHydrogens::Inferred
     };
-    atom.atom_map = syntax.atom_map;
+    atom.atom_map = syntax.atom_map.and_then(NonZeroU32::new);
     Ok(atom)
 }
 

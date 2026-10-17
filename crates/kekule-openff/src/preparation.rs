@@ -24,7 +24,7 @@ pub(crate) fn explicit(molecule: &Molecule) -> Result<Molecule> {
                 format!("{id} has implicit hydrogens; expand hydrogens before parameterization"),
             ));
         }
-        if atom.radical.is_some() {
+        if atom.radical().is_some() {
             return Err(Error::new(
                 ErrorKind::UnsupportedMolecule,
                 "radicals are outside the supported parameterization domain",
@@ -38,7 +38,7 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
     let mut copy = input.clone();
     let mut nitrogen = Vec::new();
     for (id, atom) in input.atoms() {
-        if atom.element.atomic_number() != 7 || atom.formal_charge != 0 {
+        if atom.element().atomic_number() != 7 || atom.formal_charge() != 0 {
             continue;
         }
         let valence: u32 = input
@@ -73,8 +73,8 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
                 .find_map(|next| {
                     let atom = copy.atom(next).unwrap();
                     let bond = copy.bond_between(id, next).unwrap();
-                    (atom.element.atomic_number() == element
-                        && atom.formal_charge == 0
+                    (atom.element().atomic_number() == element
+                        && atom.formal_charge() == 0
                         && copy.bond(bond).unwrap().order == old)
                         .then_some((next, bond))
                 });
@@ -83,11 +83,11 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
                 editor
                     .atom_mut(id)
                     .expect("atom IDs come from this molecule")
-                    .formal_charge = 1;
+                    .set_formal_charge(1);
                 editor
                     .atom_mut(next)
                     .expect("atom IDs come from this molecule")
-                    .formal_charge = -1;
+                    .set_formal_charge(-1);
                 editor
                     .bond_mut(bond)
                     .expect("bond IDs come from this molecule")
@@ -112,7 +112,7 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
 pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
     let mut edits = Vec::new();
     for (id, atom) in input.atoms() {
-        if atom.element.atomic_number() != 15 || atom.formal_charge != 0 {
+        if atom.element().atomic_number() != 15 || atom.formal_charge() != 0 {
             continue;
         }
         let neighbors = input
@@ -138,9 +138,9 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
             };
             let neighbor = input.atom(next).expect("atom IDs come from this molecule");
             if bond.order == BondOrder::Double {
-                if neighbor.element.atomic_number() == 8 && neighbor.formal_charge == 0 {
+                if neighbor.element().atomic_number() == 8 && neighbor.formal_charge() == 0 {
                     oxygen = Some((next, bond_id));
-                } else if matches!(neighbor.element.atomic_number(), 6 | 7)
+                } else if matches!(neighbor.element().atomic_number(), 6 | 7)
                     && input
                         .neighbors(next)
                         .expect("atom IDs come from this molecule")
@@ -165,11 +165,11 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
         editor
             .atom_mut(p)
             .expect("atom IDs come from this molecule")
-            .formal_charge = 1;
+            .set_formal_charge(1);
         editor
             .atom_mut(o)
             .expect("atom IDs come from this molecule")
-            .formal_charge = -1;
+            .set_formal_charge(-1);
         editor
             .bond_mut(bond)
             .expect("bond IDs come from this molecule")
@@ -196,7 +196,7 @@ mod tests {
             let input = kekule::smiles::to_molecules(s).unwrap().remove(0);
             let prepared = crate::explicit(&input).unwrap();
             assert!(same_graph(&prepared, expected), "{s}");
-            assert!(input.atoms().all(|(_, a)| a.formal_charge == 0));
+            assert!(input.atoms().all(|(_, a)| a.formal_charge() == 0));
         }
     }
     #[test]
@@ -206,7 +206,7 @@ mod tests {
             .remove(0);
         let normalized = crate::explicit(&input).unwrap();
         assert!(same_graph(&normalized, "[H]N=[P+]([H])[O-]"));
-        assert!(input.atoms().all(|(_, a)| a.formal_charge == 0));
+        assert!(input.atoms().all(|(_, a)| a.formal_charge() == 0));
         assert_eq!(
             input.atom_ids().collect::<Vec<_>>(),
             normalized.atom_ids().collect::<Vec<_>>()

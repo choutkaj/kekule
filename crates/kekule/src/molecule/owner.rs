@@ -77,6 +77,38 @@ impl DerefMut for AtomMut<'_> {
     }
 }
 
+impl AtomMut<'_> {
+    /// Changes the element.
+    pub fn set_element(&mut self, element: Element) {
+        self.element = element;
+    }
+
+    /// Changes the mass number, or natural abundance for `None`.
+    pub fn set_isotope(&mut self, isotope: Option<NonZeroU16>) {
+        self.isotope = isotope;
+    }
+
+    /// Changes the formal charge.
+    pub fn set_formal_charge(&mut self, formal_charge: i8) {
+        self.formal_charge = formal_charge;
+    }
+
+    /// Changes the radical electrons, or removes them for `None`.
+    pub fn set_radical(&mut self, radical: Option<AtomRadical>) {
+        self.radical = radical;
+    }
+
+    /// Changes the implicit-hydrogen declaration.
+    pub fn set_hydrogens(&mut self, hydrogens: ImplicitHydrogens) {
+        self.hydrogens = hydrogens;
+    }
+
+    /// Changes the reaction atom map, or removes it for `None`.
+    pub fn set_atom_map(&mut self, atom_map: Option<NonZeroU32>) {
+        self.atom_map = atom_map;
+    }
+}
+
 pub struct BondMut<'a> {
     molecule: &'a mut Molecule,
     id: BondId,

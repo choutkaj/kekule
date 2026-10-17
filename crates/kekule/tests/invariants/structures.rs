@@ -35,7 +35,7 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
                 .iter()
                 .map(|&id| {
                     let atom = model.topology().atom(id).unwrap();
-                    (atom.element.symbol(), atom.formal_charge)
+                    (atom.element().symbol(), atom.formal_charge())
                 })
                 .collect::<Vec<_>>()
         };

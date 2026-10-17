@@ -564,7 +564,7 @@ mod tests {
         molecule.add_hydrogens(Default::default()).unwrap();
         let carbons = molecule
             .atoms()
-            .filter(|(_, a)| a.element.atomic_number() == 6)
+            .filter(|(_, a)| a.element().atomic_number() == 6)
             .map(|(a, _)| a)
             .collect::<Vec<_>>();
         let topology = Arc::new(Topology::from_molecule(molecule.clone()).unwrap());
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(p.improper_torsions().len(), 6);
         for t in p.improper_torsions() {
             let center = topology.atom(t.atoms[0]).unwrap();
-            assert_eq!(center.element.atomic_number(), 6);
+            assert_eq!(center.element().atomic_number(), 6);
             assert!(t.parameter.terms.iter().all(|term| term.idivf == 3.0));
         }
         assert_eq!(p.constraints().len(), 4);

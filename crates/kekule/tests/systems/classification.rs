@@ -94,8 +94,7 @@ fn ordinary_connected_molecule_defaults_to_small_molecule() {
 #[test]
 fn water_and_monoatomic_ions_use_strong_local_evidence() {
     let mut water_editor = MoleculeEditor::new();
-    let mut oxygen = atom("O");
-    oxygen.hydrogens = ImplicitHydrogens::Fixed(2);
+    let oxygen = atom("O").with_hydrogens(ImplicitHydrogens::Fixed(2));
     water_editor.add_atom(oxygen).unwrap();
     let explicit_water = Topology::from_molecule(water_editor.finish().unwrap().clone()).unwrap();
     assert_eq!(
@@ -116,8 +115,7 @@ fn water_and_monoatomic_ions_use_strong_local_evidence() {
     );
 
     let mut ion_editor = MoleculeEditor::new();
-    let mut sodium = atom("Na");
-    sodium.formal_charge = 1;
+    let sodium = atom("Na").with_formal_charge(1);
     ion_editor.add_atom(sodium).unwrap();
     let ion = Topology::from_molecule(ion_editor.finish().unwrap().clone()).unwrap();
     assert_eq!(ion.instances().next().unwrap().class(), MoleculeClass::Ion);

@@ -177,7 +177,7 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
             assert_eq!(water.molecule().atom_count(), 3);
             assert_eq!(water.molecule().bond_count(), 2);
             let atoms: Vec<_> = water.atoms().collect();
-            assert_eq!(atoms[0].element.symbol(), "O");
+            assert_eq!(atoms[0].element().symbol(), "O");
             let p: Vec<_> = atoms
                 .iter()
                 .map(|view| m.position(view.id()).unwrap().into_value())
@@ -243,7 +243,7 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
         assert_eq!(
             a.topology()
                 .atoms()
-                .map(|atom| i64::from(atom.formal_charge))
+                .map(|atom| i64::from(atom.formal_charge()))
                 .sum::<i64>(),
             0
         );
@@ -321,7 +321,7 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
             report.negative_ions_added() + 2
         );
         assert_eq!(report.charge_basis(), SolvationChargeBasis::Override);
-        assert_eq!(m.topology().atoms().next().unwrap().formal_charge, 0);
+        assert_eq!(m.topology().atoms().next().unwrap().formal_charge(), 0);
     }
     let composed = MOLE.try_div(METER.try_powi(3).unwrap()).unwrap();
     assert_eq!(

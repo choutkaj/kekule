@@ -7,6 +7,7 @@ use kekule::topology::{
     TopologyBuilder,
 };
 use kekule::units::{Quantity, ANGSTROM, BOHR, NANOMETER};
+use std::num::NonZeroU16;
 use std::sync::Arc;
 
 fn molecule(text: &str) -> Molecule {
@@ -18,9 +19,8 @@ fn atom(symbol: &str) -> Atom {
 /// An atom whose hydrogen count is fixed at zero, so publication needs no
 /// perception.
 fn bare_atom(atomic_number: u8) -> Atom {
-    let mut atom = Atom::new(Element::from_atomic_number(atomic_number).unwrap());
-    atom.hydrogens = kekule::molecule::ImplicitHydrogens::Fixed(0);
-    atom
+    Atom::new(Element::from_atomic_number(atomic_number).unwrap())
+        .with_hydrogens(kekule::molecule::ImplicitHydrogens::Fixed(0))
 }
 fn key(name: &str) -> PropertyKey {
     PropertyKey::new(name).unwrap()
@@ -282,7 +282,7 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
             .definition_id()
     );
     for atom in untouched {
-        assert_eq!(result.atom(atom).unwrap().element.symbol(), "O");
+        assert_eq!(result.atom(atom).unwrap().element().symbol(), "O");
         assert_eq!(
             result
                 .instance(atom.instance())
@@ -293,14 +293,14 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
         );
     }
     let changed = result.atom_ids()[1];
-    assert_eq!(result.atom(changed).unwrap().element.symbol(), "N");
+    assert_eq!(result.atom(changed).unwrap().element().symbol(), "N");
     assert_ne!(
         result.instance(changed.instance()).unwrap().class(),
         MoleculeClass::Water
     );
     assert_eq!(topology.definition_count(), 1);
     assert_eq!(
-        topology.atom(source_atoms[1]).unwrap().element.symbol(),
+        topology.atom(source_atoms[1]).unwrap().element().symbol(),
         "O"
     );
 }
@@ -426,7 +426,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         Some(PropertyValue::Int(8))
     );
     assert_eq!(result.atom_count(), 2);
-    assert_eq!(result.topology().atom(new).unwrap().element.symbol(), "O");
+    assert_eq!(result.topology().atom(new).unwrap().element().symbol(), "O");
     assert_eq!(result.positions(), &positions(&[9.0, 5.0]));
     assert_eq!(
         result
@@ -567,7 +567,7 @@ fn append_preserves_sparse_local_ids_dense_order_and_definition_order() {
             .topology()
             .atom(result.topology().atom_ids()[2])
             .unwrap()
-            .element
+            .element()
             .symbol(),
         "O"
     );
@@ -782,7 +782,7 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
         result
             .topology()
             .atoms()
-            .map(|a| a.element.symbol())
+            .map(|a| a.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "C", "O"]
     );
@@ -1071,7 +1071,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
             .topology()
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .element
+            .element()
             .symbol(),
         "N"
     );
@@ -1317,7 +1317,7 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
     let mut editor = source.to_editor();
     let terminal = editor
         .atoms()
-        .find(|(id, a)| a.element.symbol() == "C" && editor.neighbors(*id).unwrap().count() == 1)
+        .find(|(id, a)| a.element().symbol() == "C" && editor.neighbors(*id).unwrap().count() == 1)
         .unwrap()
         .0;
     let cut = editor.incident_bonds(terminal).unwrap().next().unwrap();
@@ -1333,7 +1333,7 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
     );
     let fluorine = editor
         .atoms()
-        .find(|(_, a)| a.element.symbol() == "F")
+        .find(|(_, a)| a.element().symbol() == "F")
         .unwrap()
         .0;
     editor.delete_atom(fluorine).unwrap();
@@ -1465,8 +1465,11 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
     let id = changed
         .atom_handle(original.topology().atom_ids()[0])
         .unwrap();
-    let mut a = changed.atom(id).unwrap().clone();
-    a.isotope = Some(19);
+    let a = changed
+        .atom(id)
+        .unwrap()
+        .clone()
+        .with_isotope(NonZeroU16::new(19));
     changed.replace_atom(id, a).unwrap();
     assert!(changed
         .replace_source_instance_stereo(instances[0], &[])

@@ -132,7 +132,9 @@ fn validate_graph_chemistry(
     }
     for (atom_id, atom) in molecule_definition.atoms() {
         let atom_id = molecule.qualify_atom(atom_id);
-        if structure_element_symbol(atom.element, atom.isotope).is_none() {
+        if structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
+            .is_none()
+        {
             return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
                 atom: atom_id,
                 field: MmcifAtomField::Isotope,
@@ -333,7 +335,7 @@ fn water_atom_name(molecule: &crate::molecule::Molecule, atom: AtomId) -> String
 /// The atom's `type_symbol`; validation has already rejected isotopes the
 /// format cannot name.
 fn type_symbol(atom: &Atom) -> &'static str {
-    structure_element_symbol(atom.element, atom.isotope)
+    structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
         .expect("validated atoms have a structure element symbol")
 }
 

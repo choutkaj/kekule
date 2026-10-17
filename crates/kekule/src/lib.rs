@@ -908,8 +908,7 @@ pub mod hydrogens {
 ///
 /// let mut editor = MoleculeEditor::new();
 /// let carbon = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
-/// let mut oxygen = Atom::new(Element::from_symbol("O").unwrap());
-/// oxygen.hydrogens = ImplicitHydrogens::Fixed(1);
+/// let oxygen = Atom::new(Element::O).with_hydrogens(ImplicitHydrogens::Fixed(1));
 /// let oxygen = editor.add_atom(oxygen)?;
 /// editor.add_bond(carbon, oxygen, BondOrder::Single)?;
 /// let molecule: Molecule = editor.finish()?;

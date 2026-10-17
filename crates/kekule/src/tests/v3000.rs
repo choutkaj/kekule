@@ -1,5 +1,6 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
+use std::num::{NonZeroU16, NonZeroU32};
 
 #[test]
 fn v3000_fixed_hydrogens_use_molecular_valence_not_query_constraints() {
@@ -781,8 +782,8 @@ M  END
     assert_eq!(atom0.element.symbol(), "N");
     assert_eq!(atom0.formal_charge, 1);
     assert_eq!(atom0.radical, AtomRadical::new(1, Some(2)));
-    assert_eq!(atom0.atom_map, Some(7));
-    assert_eq!(atom1.isotope, Some(13));
+    assert_eq!(atom0.atom_map, NonZeroU32::new(7));
+    assert_eq!(atom1.isotope, NonZeroU16::new(13));
     assert_eq!(atom2.formal_charge, -1);
     let bond0 = mol.bond(BondId::new(0)).expect("bond exists");
     let bond1 = mol.bond(BondId::new(1)).expect("bond exists");
@@ -1262,13 +1263,13 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     let mut nitrogen = Atom::new(Element::from_symbol("N").expect("N"));
     nitrogen.formal_charge = 1;
     nitrogen.radical = AtomRadical::new(1, Some(2));
-    nitrogen.atom_map = Some(42);
+    nitrogen.atom_map = NonZeroU32::new(42);
     let n = molecule
         .add_atom(nitrogen)
         .expect("atom identifier capacity");
 
     let mut carbon = carbon();
-    carbon.isotope = Some(13);
+    carbon.isotope = NonZeroU16::new(13);
     let c = molecule.add_atom(carbon).expect("atom identifier capacity");
 
     let mut oxygen = oxygen();
@@ -1309,11 +1310,11 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     );
     assert_eq!(
         reparsed.atom(AtomId::new(0)).expect("atom").atom_map,
-        Some(42)
+        NonZeroU32::new(42)
     );
     assert_eq!(
         reparsed.atom(AtomId::new(1)).expect("atom").isotope,
-        Some(13)
+        NonZeroU16::new(13)
     );
     assert_eq!(reparsed.atom_count(), 3);
 }

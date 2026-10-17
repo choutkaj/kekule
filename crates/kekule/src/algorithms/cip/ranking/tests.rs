@@ -1,5 +1,6 @@
 use super::*;
 use crate::diagnostics::Resource;
+use std::num::NonZeroU16;
 
 fn node_priority(atomic_number: u8, rule1b: u32, isotope: u16) -> NodePriority {
     NodePriority {
@@ -961,7 +962,7 @@ fn ligand_tree_compares_immediate_sibling_list_before_recursing() {
 fn duplicate_nodes_have_no_isotope_priority() {
     let mut mol = crate::molecule::MoleculeEditor::new();
     let mut isotope = Atom::new(Element::from_symbol("C").expect("carbon"));
-    isotope.isotope = Some(13);
+    isotope.isotope = NonZeroU16::new(13);
     let atom = mol.add_atom(isotope).expect("atom identifier capacity");
 
     let normal = LigandNode::Atom {

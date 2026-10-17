@@ -335,7 +335,7 @@ impl<R: BufRead> XyzReader<R> {
                 .topology()
                 .atom(atom_id)
                 .expect("dense topology atom IDs name topology atoms")
-                .element;
+                .element();
             let Some((line, consumed)) = read_line(
                 &mut self.reader,
                 &mut self.line,
@@ -940,7 +940,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             writeln!(
                 self.writer,
                 "{} {x:.precision$} {y:.precision$} {z:.precision$}",
-                element.element.symbol(),
+                element.element().symbol(),
                 x = point.x * factor,
                 y = point.y * factor,
                 z = point.z * factor,

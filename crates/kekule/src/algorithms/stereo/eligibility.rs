@@ -62,7 +62,7 @@ impl AtomIdentity {
     pub(super) fn of(atom: &Atom) -> Self {
         Self {
             element: atom.element.atomic_number(),
-            isotope: atom.isotope,
+            isotope: atom.isotope.map(std::num::NonZero::get),
             charge: atom.formal_charge,
             radical: atom
                 .radical

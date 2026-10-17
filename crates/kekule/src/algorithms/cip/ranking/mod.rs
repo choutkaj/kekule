@@ -1045,7 +1045,7 @@ impl LigandNode {
                     };
                     atom.isotope.map_or_else(
                         || Rule2Mass::natural(atom.element.atomic_number()),
-                        |isotope| Rule2Mass::isotope(atom.element.atomic_number(), isotope),
+                        |isotope| Rule2Mass::isotope(atom.element.atomic_number(), isotope.get()),
                     )
                 }
             }

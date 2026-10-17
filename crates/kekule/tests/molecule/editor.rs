@@ -37,9 +37,12 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
     assert_eq!(editor.neighbors(a).unwrap().collect::<Vec<_>>(), vec![b]);
     assert_eq!(editor.incident_bonds(b).unwrap().next().unwrap().0, bond);
     assert_eq!(editor.bond_between(a, b), Some(bond));
-    editor.atom_mut(a).unwrap().formal_charge = 1;
+    editor.atom_mut(a).unwrap().set_formal_charge(1);
     assert_eq!(editor.formal_charge(), 1);
-    assert_eq!(editor.replace_atom(a, atom("N")).unwrap().formal_charge, 1);
+    assert_eq!(
+        editor.replace_atom(a, atom("N")).unwrap().formal_charge(),
+        1
+    );
     editor.bond_mut(bond).unwrap().set_order(BondOrder::Double);
     assert_eq!(editor.bond(bond).unwrap().order, BondOrder::Double);
     editor
@@ -50,8 +53,8 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
     editor.validate().unwrap();
     let published = editor.finish().unwrap();
     let mut edited = published.to_editor();
-    edited.atom_mut(a).unwrap().formal_charge = 1;
-    assert_eq!(published.atom(a).unwrap().formal_charge, 0);
+    edited.atom_mut(a).unwrap().set_formal_charge(1);
+    assert_eq!(published.atom(a).unwrap().formal_charge(), 0);
     assert!(edited.properties().owner().get(&key("label")).is_none());
     let atom_pointer = published.atom(a).unwrap() as *const Atom;
     let moved = published.into_editor();
@@ -503,7 +506,7 @@ fn forgetting_mutation_guards_cannot_preserve_stale_annotations() {
         if change_atom {
             let id = editor.atom_ids().next().unwrap();
             let mut guard = editor.atom_mut(id).unwrap();
-            guard.element = Element::from_symbol("N").unwrap();
+            guard.set_element(Element::from_symbol("N").unwrap());
             std::mem::forget(guard);
         } else {
             let id = editor.bond_ids().next().unwrap();

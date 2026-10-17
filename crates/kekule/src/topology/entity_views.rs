@@ -12,7 +12,7 @@ use super::{
 /// chemistry, with perception, connectivity, hierarchy, and static
 /// annotations of this occurrence.
 ///
-/// Atom fields read through `Deref` (`atom.element`, `atom.formal_charge`).
+/// Atom accessors read through `Deref` (`atom.element()`, `atom.formal_charge()`).
 #[derive(Clone, Copy)]
 pub struct AtomView<'a> {
     topology: &'a Topology,

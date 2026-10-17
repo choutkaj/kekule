@@ -474,7 +474,7 @@ fn prepared_results_follow_identity_after_source_atom_reordering() {
         assert_eq!(
             matches[0]
                 .iter()
-                .map(|id| m.atom(*id).unwrap().atom_map)
+                .map(|id| m.atom(*id).unwrap().atom_map().map(std::num::NonZero::get))
                 .collect::<Vec<_>>(),
             vec![Some(5), Some(6)]
         );

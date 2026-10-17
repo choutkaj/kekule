@@ -152,46 +152,6 @@ fn molfile_rejects_asserted_stereo_its_coordinates_contradict() {
 }
 
 #[test]
-fn molfile_rejects_atom_map_zero_which_both_versions_read_as_no_map() {
-    let source = molecule("[CH4:0]");
-    assert_eq!(source.atoms().next().unwrap().1.atom_map, Some(0));
-    let model = model("C[CH4:0]", &[[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]);
-    for version in [
-        MolfileWriteVersion::Auto,
-        MolfileWriteVersion::V2000,
-        MolfileWriteVersion::V3000,
-    ] {
-        for (error, atom) in [
-            (
-                molfile::write(
-                    &source,
-                    MolfileWriteOptions::default().with_version(version),
-                )
-                .unwrap_err(),
-                1,
-            ),
-            (
-                molfile::write(&model, MolfileWriteOptions::default().with_version(version))
-                    .unwrap_err(),
-                2,
-            ),
-        ] {
-            assert_eq!(
-                (error.kind(), error.message()),
-                (
-                    DiagnosticKind::Unsupported,
-                    format!(
-                        "Molfile cannot encode atom map 0 on atom {atom}, which it reads as no atom map"
-                    )
-                    .as_str()
-                ),
-                "{version:?}"
-            );
-        }
-    }
-}
-
-#[test]
 fn molfile_v3000_continues_records_past_80_columns() {
     // CTfile lines hold at most 80 characters; a longer V3000 record ends
     // each line but its last with `-` and breaks after a space, because
@@ -483,7 +443,7 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
             .atoms()
             .next()
             .unwrap()
-            .element
+            .element()
             .symbol(),
         "C"
     );
@@ -494,7 +454,7 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
             .atoms()
             .next()
             .unwrap()
-            .element
+            .element()
             .symbol(),
         "O"
     );
@@ -973,8 +933,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
     let waters = (0..3)
         .map(|_| builder.add_instance(definition).unwrap())
         .collect::<Vec<_>>();
-    let mut sodium = Atom::new(Element::from_symbol("Na").unwrap());
-    sodium.formal_charge = 1;
+    let sodium = Atom::new(Element::from_symbol("Na").unwrap()).with_formal_charge(1);
     let mut ion = MoleculeEditor::new();
     ion.add_atom(sodium).unwrap();
     builder.add_molecule(ion.finish().unwrap().clone()).unwrap();

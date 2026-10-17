@@ -269,7 +269,7 @@ impl Search {
                     instance: instance.index(),
                     selected: false,
                     element: atom.atom().element,
-                    isotope: atom.atom().isotope,
+                    isotope: atom.atom().isotope.map(std::num::NonZero::get),
                     hydrogens: atom.total_hydrogens().ok_or(atom.index())?,
                 });
             }

@@ -481,7 +481,7 @@ impl<'a> ModelView<'a> {
 /// ```
 /// use kekule::{smiles, structure::{Model, Positions}};
 /// let model = Model::new(smiles::to_topology("CO")?, Positions::zeros(2))?;
-/// let oxygen = model.atoms().find(|atom| atom.element.symbol() == "O").unwrap();
+/// let oxygen = model.atoms().find(|atom| atom.element().symbol() == "O").unwrap();
 /// assert_eq!(oxygen.occupancy(), None);
 /// assert_eq!(oxygen.position().into_value(), kekule::geometry::Point3::origin());
 /// # Ok::<(), Box<dyn std::error::Error>>(())

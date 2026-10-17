@@ -63,10 +63,10 @@ fn ranks(mol: &Molecule, work: &mut super::search::Work) -> Result<Vec<usize>, R
                         id,
                         (
                             rank[id.index()],
-                            a.atom_map.unwrap_or(0),
+                            a.atom_map.map_or(0, std::num::NonZero::get),
                             neighbors.len(),
                             a.element.atomic_number(),
-                            a.isotope.unwrap_or(0),
+                            a.isotope.map_or(0, std::num::NonZero::get),
                             mol.implicit_hydrogens(id).unwrap_or(0),
                             a.formal_charge as u32,
                             atom_stereo(mol, id, &rank),

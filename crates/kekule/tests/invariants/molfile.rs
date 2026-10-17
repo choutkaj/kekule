@@ -20,10 +20,10 @@ fn chemistry(molecule: &Molecule) -> String {
             let hydrogens = molecule.total_hydrogens(id).unwrap();
             format!(
                 "{}:{:?}:{}:{:?}:{hydrogens:?}",
-                atom.element.symbol(),
-                atom.isotope,
-                atom.formal_charge,
-                atom.radical
+                atom.element().symbol(),
+                atom.isotope(),
+                atom.formal_charge(),
+                atom.radical()
             )
         })
         .collect::<Vec<_>>();
@@ -59,7 +59,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
             None => continue,
         };
         let unspecified_spin = sample.molecule.atoms().any(|(_, atom)| {
-            atom.radical
+            atom.radical()
                 .is_some_and(|r| r.spin_multiplicity().is_none())
         });
         // Molfiles store angstroms in `%10.4f` columns.

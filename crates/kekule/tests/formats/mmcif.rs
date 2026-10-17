@@ -459,8 +459,8 @@ fn mmcif_connectivity_matches_an_independent_reference() {
             let charges = topology
                 .instances()
                 .flat_map(|instance| instance.molecule().atoms())
-                .filter(|(_, atom)| atom.formal_charge != 0)
-                .map(|(_, atom)| atom.formal_charge)
+                .filter(|(_, atom)| atom.formal_charge() != 0)
+                .map(|(_, atom)| atom.formal_charge())
                 .collect::<Vec<_>>();
             let case = format!("{name} stripped={stripped}");
             assert_eq!(topology.atom_count(), atoms, "{case}");

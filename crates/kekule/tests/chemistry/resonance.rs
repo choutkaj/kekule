@@ -6,6 +6,7 @@ use kekule::{
     },
     smiles,
 };
+use std::num::NonZeroU16;
 
 fn molecule(smi: &str) -> Molecule {
     let mut m = smiles::to_molecules(smi).unwrap().remove(0);
@@ -286,7 +287,7 @@ fn present_empty_sections_and_prerequisite_invalidation() {
     m.perceive().unwrap();
     perceive_resonance(&mut m).unwrap();
     let mut edit = m.to_editor();
-    edit.atom_mut(a).unwrap().isotope = Some(13);
+    edit.atom_mut(a).unwrap().set_isotope(NonZeroU16::new(13));
     let edited = edit.finish().unwrap();
     assert!(!edited.perception().has_conjugation());
     assert!(!edited.perception().has_resonance());
@@ -382,8 +383,8 @@ fn explicit_hydrogens_and_atom_renumbering_preserve_membership() {
             .map(|id| {
                 let b = m.bond(id).unwrap();
                 let mut ends = [
-                    m.atom(b.a()).unwrap().atom_map.unwrap(),
-                    m.atom(b.b()).unwrap().atom_map.unwrap(),
+                    m.atom(b.a()).unwrap().atom_map().unwrap().get(),
+                    m.atom(b.b()).unwrap().atom_map().unwrap().get(),
                 ];
                 ends.sort();
                 ends

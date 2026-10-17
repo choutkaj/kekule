@@ -1,4 +1,5 @@
 use super::*;
+use std::num::NonZeroU16;
 
 fn assign_cip(mol: &mut Molecule) -> CipAssignmentReport {
     stereo_api::cip::assign_cip_descriptors(mol, Default::default())
@@ -1401,7 +1402,7 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
         .add_atom(element_atom("Br"))
         .expect("atom identifier capacity");
     let mut carbon_13 = carbon();
-    carbon_13.isotope = Some(13);
+    carbon_13.isotope = NonZeroU16::new(13);
     let isotope_carbon = mol.add_atom(carbon_13).expect("atom identifier capacity");
     let substituted_carbon = mol.add_atom(carbon()).expect("atom identifier capacity");
     let iodine = mol

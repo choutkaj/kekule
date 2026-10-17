@@ -106,13 +106,13 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 if editor
                     .atom(id)
                     .expect("atom IDs come from this molecule")
-                    .formal_charge
+                    .formal_charge()
                     != *charge
                 {
                     editor
                         .atom_mut(id)
                         .expect("atom IDs come from this molecule")
-                        .formal_charge = *charge;
+                        .set_formal_charge(*charge);
                     changed = true;
                 }
             }
@@ -299,8 +299,8 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
     let mut charges = Vec::with_capacity(ids.len());
     for &id in &ids {
         let atom = molecule.atom(id).expect("atom IDs come from this molecule");
-        elements.push(atom.element.atomic_number());
-        charges.push(atom.formal_charge);
+        elements.push(atom.element().atomic_number());
+        charges.push(atom.formal_charge());
     }
     let mut neighbors = vec![vec![]; ids.len()];
     let mut orders = Vec::new();
@@ -492,14 +492,14 @@ pub(super) fn features(
                     let column = categories
                         .iter()
                         .position(|s| {
-                            kekule::molecule::Element::from_symbol(s) == Some(atom.element)
+                            kekule::molecule::Element::from_symbol(s) == Some(atom.element())
                         })
                         .ok_or_else(|| {
                             Error::new(
                                 ErrorKind::UnsupportedMolecule,
                                 format!(
                                     "element {} absent from NAGL feature categories",
-                                    atom.element
+                                    atom.element()
                                 ),
                             )
                         })?;
@@ -586,12 +586,12 @@ mod tests {
         assert_eq!(
             molecule
                 .atoms()
-                .filter(|(_, a)| a.formal_charge != 0)
+                .filter(|(_, a)| a.formal_charge() != 0)
                 .count(),
             500
         );
         let normalized = super::normalize(&molecule).unwrap();
-        assert!(normalized.atoms().all(|(_, a)| a.formal_charge == 0));
+        assert!(normalized.atoms().all(|(_, a)| a.formal_charge() == 0));
         assert_eq!(normalized.atom_count(), molecule.atom_count());
     }
 
@@ -614,7 +614,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let actual = super::features(&m, &specs).unwrap();
             for (i, (_, atom)) in m.atoms().enumerate() {
-                let index = atom.atom_map.unwrap() as usize - 1;
+                let index = atom.atom_map().unwrap().get() as usize - 1;
                 let expected = r["features"]["values"]
                     .as_array()
                     .unwrap()

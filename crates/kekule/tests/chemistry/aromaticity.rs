@@ -64,7 +64,7 @@ fn protonated_thiophene_with_inferred_hydrogen() -> Molecule {
         .map(|(index, symbol)| {
             let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
             if index == 0 {
-                atom.formal_charge = 1;
+                atom = atom.with_formal_charge(1);
             }
             editor.add_atom(atom).unwrap()
         })

@@ -228,7 +228,7 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
         removed
             .topology()
             .atoms()
-            .map(|atom| atom.element.symbol())
+            .map(|atom| atom.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "O"]
     );
@@ -252,7 +252,7 @@ fn appending_a_model_keeps_its_dense_order_and_positions() {
         model
             .topology()
             .atoms()
-            .map(|atom| atom.element.symbol())
+            .map(|atom| atom.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "O", "O"]
     );
@@ -277,7 +277,7 @@ fn subsets_and_instance_filters_keep_relative_source_order() {
     assert_eq!(
         methanol
             .atoms()
-            .map(|atom| atom.element.symbol())
+            .map(|atom| atom.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "O"]
     );

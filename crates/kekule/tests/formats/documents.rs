@@ -111,7 +111,7 @@ fn element(molecule: &Molecule) -> Element {
         .next()
         .expect("one-atom component")
         .1
-        .element
+        .element()
 }
 
 fn model_molecules(model: &kekule::structure::Model) -> Vec<&Molecule> {
@@ -270,7 +270,7 @@ fn molfile_model_keeps_interleaved_source_atom_order() {
     assert_eq!(
         molecules[0]
             .atoms()
-            .map(|(_, atom)| atom.element.symbol())
+            .map(|(_, atom)| atom.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "O"]
     );
@@ -282,7 +282,7 @@ fn molfile_model_keeps_interleaved_source_atom_order() {
         model
             .topology()
             .atoms()
-            .map(|atom| atom.element.symbol())
+            .map(|atom| atom.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "Na", "O", "Cl"]
     );

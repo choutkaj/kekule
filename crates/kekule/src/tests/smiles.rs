@@ -1,4 +1,5 @@
 use super::*;
+use std::num::{NonZeroU16, NonZeroU32};
 
 fn assigned_descriptors(molecule: &mut Molecule) -> Vec<StereoDescriptor> {
     stereo_api::cip::assign_cip_descriptors(molecule, Default::default())
@@ -32,11 +33,12 @@ fn smiles_accepts_zero_counts_and_explicit_tetrahedral_classes() {
                 .collect::<Vec<_>>()
         );
     }
-    let mapped = read_smiles("[CH4:0]").unwrap();
-    assert_eq!(mapped.atoms().next().unwrap().1.atom_map, Some(0));
+    // OpenSMILES gives an atom without a class the class 0, so `:0` is no map.
+    let unmapped = read_smiles("[CH4:0]").unwrap();
+    assert_eq!(unmapped.atoms().next().unwrap().1.atom_map, None);
     assert_eq!(
-        smiles_api::write(&mapped, smiles_api::SmilesWriteOptions::isomeric()).unwrap(),
-        "[CH4:0]"
+        smiles_api::write(&unmapped, smiles_api::SmilesWriteOptions::isomeric()).unwrap(),
+        "[CH4]"
     );
 }
 
@@ -537,7 +539,10 @@ fn cxsmiles_stereo_references_use_source_indices_and_respect_component_ownership
         panic!("tetrahedral member")
     };
     assert_eq!(stereo.center, AtomId::new(1));
-    assert_eq!(molecule.atom(stereo.center).unwrap().atom_map, Some(17));
+    assert_eq!(
+        molecule.atom(stereo.center).unwrap().atom_map,
+        NonZeroU32::new(17)
+    );
     assert_eq!(
         interpreted.components()[1]
             .molecule()
@@ -842,10 +847,10 @@ fn smiles_interprets_branches_rings_brackets_and_fragments_canonically_without_p
         assert_all_stale(molecule);
     }
     let bracket_atom = components[2].atom(AtomId::new(0)).expect("bracket atom");
-    assert_eq!(bracket_atom.isotope, Some(13));
+    assert_eq!(bracket_atom.isotope, NonZeroU16::new(13));
     assert_eq!(bracket_atom.hydrogens, ImplicitHydrogens::Fixed(4));
     assert_eq!(bracket_atom.formal_charge, 1);
-    assert_eq!(bracket_atom.atom_map, Some(7));
+    assert_eq!(bracket_atom.atom_map, NonZeroU32::new(7));
     let chiral_atom = components[3]
         .atom(AtomId::new(1))
         .expect("chiral bracket atom");
@@ -1478,7 +1483,7 @@ fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
 fn all_smiles_writers_require_perception_for_bracketed_inferred_hydrogens() {
     // The isotope forces a bracket, which must spell out the inferred count.
     let mut atom = carbon();
-    atom.isotope = Some(13);
+    atom.isotope = NonZeroU16::new(13);
     let mut graph = crate::molecule::MoleculeEditor::new();
     graph.add_atom(atom).expect("carbon");
     let molecule = graph.finish().expect("single atom molecule");

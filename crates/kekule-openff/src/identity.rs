@@ -26,7 +26,7 @@ fn signature(molecule: &Molecule) -> Result<Signature> {
         .atoms()
         .map(|(id, atom)| {
             Ok((
-                atom.element.atomic_number(),
+                atom.element().atomic_number(),
                 molecule
                     .neighbors(id)
                     .expect("atom IDs come from this molecule")
@@ -112,14 +112,14 @@ fn find(query: &Molecule, entry: &Molecule, mode: u8) -> Result<Option<Vec<AtomI
         let mut row = Vec::new();
         for &b in &targets {
             let eb = entry.atom(b).expect("atom IDs come from this molecule");
-            if qa.element == eb.element
-                && qa.isotope == eb.isotope
+            if qa.element() == eb.element()
+                && qa.isotope() == eb.isotope()
                 && degree
                     == entry
                         .neighbors(b)
                         .expect("atom IDs come from this molecule")
                         .count()
-                && (mode > 0 || qa.formal_charge == eb.formal_charge)
+                && (mode > 0 || qa.formal_charge() == eb.formal_charge())
                 && query.atom_is_aromatic(a) == entry.atom_is_aromatic(b)
             {
                 row.push(b);
@@ -318,7 +318,7 @@ mod tests {
         let map = mapping(&query, &entry).unwrap();
         let elements = |m: &Molecule, ids: Vec<AtomId>| {
             ids.into_iter()
-                .map(|a| m.atom(a).unwrap().element)
+                .map(|a| m.atom(a).unwrap().element())
                 .collect::<Vec<_>>()
         };
         assert_eq!(

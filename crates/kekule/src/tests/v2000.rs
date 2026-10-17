@@ -1,5 +1,6 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
+use std::num::{NonZeroU16, NonZeroU32};
 
 #[test]
 fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
@@ -24,7 +25,7 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
         let molecule = interpreted.molecules().next().unwrap();
         let (_, atom) = molecule.atoms().next().unwrap();
         assert_eq!(atom.formal_charge, -1);
-        assert_eq!(atom.atom_map, Some(17));
+        assert_eq!(atom.atom_map, NonZeroU32::new(17));
         assert_eq!(atom.hydrogens, ImplicitHydrogens::Fixed(0));
     }
 }
@@ -451,8 +452,8 @@ M  END
     let atom1 = small.atom(AtomId::new(1)).expect("atom exists");
     assert_eq!(atom0.formal_charge, 1);
     assert_eq!(atom0.radical, AtomRadical::new(1, Some(2)));
-    assert_eq!(atom0.atom_map, Some(7));
-    assert_eq!(atom1.isotope, Some(13));
+    assert_eq!(atom0.atom_map, NonZeroU32::new(7));
+    assert_eq!(atom1.isotope, NonZeroU16::new(13));
     assert_eq!(small.atom_count(), 2);
 }
 
@@ -890,9 +891,9 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
     for index in 0..9u32 {
         let mut atom = carbon();
         atom.formal_charge = 1;
-        atom.isotope = Some(13 + index as u16);
+        atom.isotope = NonZeroU16::new(13 + index as u16);
         atom.radical = AtomRadical::new(1, Some(2));
-        atom.atom_map = Some(index + 1);
+        atom.atom_map = NonZeroU32::new(index + 1);
         let atom_id = graph_builder
             .add_atom(atom)
             .expect("atom identifier capacity");
@@ -968,9 +969,9 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         for index in 0..9u32 {
             let atom = record.molecule().atom(AtomId::new(index)).expect("atom");
             assert_eq!(atom.formal_charge, 1);
-            assert_eq!(atom.isotope, Some(13 + index as u16));
+            assert_eq!(atom.isotope, NonZeroU16::new(13 + index as u16));
             assert_eq!(atom.radical, AtomRadical::new(1, Some(2)));
-            assert_eq!(atom.atom_map, Some(index + 1));
+            assert_eq!(atom.atom_map, NonZeroU32::new(index + 1));
         }
     }
 }
@@ -1008,7 +1009,7 @@ fn v2000_atom_fields_are_read_from_their_ctfile_columns() {
         assert_eq!(document.atoms()[0].atom_map(), Some(atom_map), "{written}");
         let reread = document.interpret(Default::default()).unwrap();
         let (_, atom) = reread.molecules().next().unwrap().atoms().next().unwrap();
-        assert_eq!(atom.atom_map, Some(atom_map));
+        assert_eq!(atom.atom_map, NonZeroU32::new(atom_map));
     }
 }
 
@@ -1219,7 +1220,7 @@ fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
             .map(|interpretation| {
                 interpretation
                     .molecules()
-                    .flat_map(|molecule| molecule.atoms().map(|(_, atom)| atom.isotope))
+                    .flat_map(|molecule| molecule.atoms().map(|(_, atom)| atom.isotope.map(std::num::NonZero::get)))
                     .collect::<Vec<_>>()
             })
             .map_err(|error| (error.kind(), error.message().to_owned()));

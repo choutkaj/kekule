@@ -89,7 +89,6 @@ impl<'a> MolfileRecord<'a> {
                 position: Point3::default(),
             })
             .collect::<Vec<_>>();
-        reject_zero_atom_maps(&atoms)?;
         let indexes = molecule
             .atom_ids()
             .zip(1u64..)
@@ -167,7 +166,6 @@ impl<'a> MolfileRecord<'a> {
             });
         }
 
-        reject_zero_atom_maps(&atoms)?;
         let mut projections = BTreeMap::new();
         for occurrence in topology.instances() {
             let geometry = ModelStereoPositions {
@@ -224,17 +222,6 @@ impl<'a> MolfileRecord<'a> {
                 .instances()
                 .any(|occurrence| asserts_absolute_stereo(occurrence.molecule())),
         })
-    }
-}
-
-/// Both Molfile versions write and read atom map 0 as no atom map.
-fn reject_zero_atom_maps(atoms: &[MolfileAtom<'_>]) -> Result<(), FormatError> {
-    match atoms.iter().position(|atom| atom.atom.atom_map == Some(0)) {
-        Some(index) => Err(MOLFILE_WRITE.unsupported(format!(
-            "Molfile cannot encode atom map 0 on atom {}, which it reads as no atom map",
-            index + 1
-        ))),
-        None => Ok(()),
     }
 }
 

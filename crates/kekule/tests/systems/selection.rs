@@ -340,7 +340,7 @@ fn bond_to_atom_round_trip_may_add_unselected_ring_bonds() {
 fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
     let top = topology();
     let oxygen =
-        AtomSelection::from_predicate(Arc::clone(&top), |atom| atom.element.symbol() == "O");
+        AtomSelection::from_predicate(Arc::clone(&top), |atom| atom.element().symbol() == "O");
     assert_eq!(oxygen, atoms(&top, 0b100100));
     assert_eq!(
         oxygen.filter(|atom| atom.id().instance() == top.atom_ids()[0].instance()),

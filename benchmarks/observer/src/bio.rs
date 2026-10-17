@@ -145,7 +145,7 @@ fn hierarchy(document: &MmcifDocument) -> Result<Facts, Failure> {
                     atom.insertion_code(),
                     atom.label_component_id(),
                     atom.label_atom_name(),
-                    view.atom().element.symbol().to_ascii_uppercase(),
+                    view.atom().element().symbol().to_ascii_uppercase(),
                     atom.selected_alternate_location(),
                     view.occupancy(),
                     b_factor,
@@ -330,7 +330,7 @@ fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
         .filter(|atom| {
             topology
                 .atom(atom.atom())
-                .is_some_and(|view| view.atom().element.symbol() == "C")
+                .is_some_and(|view| view.atom().element().symbol() == "C")
         })
         .map(|atom| atom.atom())
         .collect::<Vec<_>>();

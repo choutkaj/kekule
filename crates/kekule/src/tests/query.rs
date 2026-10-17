@@ -257,6 +257,33 @@ fn double_bond_query_builder_requires_live_adjacent_carriers() {
 }
 
 #[test]
+fn query_graph_builder_bounds_total_atoms() {
+    let graph = |atoms: usize| {
+        let mut builder = QueryGraphBuilder::with_capacity(atoms, 0);
+        for _ in 0..atoms {
+            builder
+                .add_atom(AtomExpression::predicate(AtomPredicate::Element(
+                    Element::C,
+                )))
+                .unwrap();
+        }
+        builder.build()
+    };
+    assert_eq!(
+        graph(MAX_QUERY_TOTAL_ATOMS).map(|graph| graph.atom_count()),
+        Ok(4_096)
+    );
+    assert_eq!(
+        graph(MAX_QUERY_TOTAL_ATOMS + 1).map(|graph| graph.atom_count()),
+        Err(QueryGraphError::LimitExceeded(LimitExceeded::new(
+            Resource::Atoms,
+            4_096,
+            4_097
+        )))
+    );
+}
+
+#[test]
 fn query_graph_is_distinct_from_the_concrete_molecule_kernel() {
     let mut builder = QueryGraphBuilder::with_capacity(2, 1);
     let carbon = builder

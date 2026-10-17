@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::chemistry::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
@@ -82,7 +83,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
     let mut value = Atom::new(element);
     value.formal_charge = i8::try_from(atom.formal_charge)
         .map_err(|_| invalid("formal charge is outside i8 range".to_owned()))?;
-    value.isotope = atom.isotope;
+    value.isotope = atom.isotope.and_then(NonZeroU16::new);
     if let Some(difference) = atom.mass_difference {
         let nominal = crate::descriptors::mass_difference_reference(element).ok_or_else(|| {
             interpret_error_at(
@@ -97,7 +98,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
         value.isotope = Some(
             nominal
                 .checked_add_signed(i16::from(difference))
-                .filter(|&mass| mass > 0)
+                .and_then(std::num::NonZeroU16::new)
                 .ok_or_else(|| {
                     invalid(format!(
                         "V2000 mass difference {difference} gives no mass number for {}",
@@ -118,7 +119,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
     } else {
         ImplicitHydrogens::Inferred
     };
-    value.atom_map = atom.atom_map;
+    value.atom_map = atom.atom_map.and_then(NonZeroU32::new);
     Ok(value)
 }
 

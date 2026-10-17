@@ -44,6 +44,7 @@ pub(crate) use perception::{
     RingPerception, RingSet, ValenceModel, ValencePerception,
 };
 pub(crate) use perception::{CipPerception, Perception, PerceptionInstallError};
+use std::num::{NonZeroU16, NonZeroU32};
 pub(crate) use stereo::{has_axis_stereo, has_double_bond_stereo, has_tetrahedral_stereo};
 pub(crate) use stereo::{
     AxisOrientation, AxisStereo, DoubleBondOrientation, DoubleBondStereo, StereoCarrier,

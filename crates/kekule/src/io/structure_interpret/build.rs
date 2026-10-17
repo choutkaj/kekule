@@ -394,7 +394,7 @@ pub(super) fn build_molecule(
     }
     for (key, row) in &representative {
         let mut atom = Atom::new(row.element);
-        atom.isotope = row.isotope;
+        atom.isotope = row.isotope.and_then(std::num::NonZeroU16::new);
         atom.formal_charge = row.formal_charge.unwrap_or_default();
         atoms.insert(key.clone(), editor.add_atom(atom).map_err(graph_error)?);
     }

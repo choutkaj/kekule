@@ -1,6 +1,7 @@
 use super::*;
 use crate::properties::{PropertyKey, PropertyValue};
 use crate::units::{Quantity, ANGSTROM};
+use std::num::NonZeroU32;
 
 #[test]
 fn element_from_atomic_number_accepts_periodic_table_bounds() {
@@ -1038,7 +1039,7 @@ fn atom_map_only_mutation_invalidates_perception_and_owner_properties() {
         .unwrap();
     mark_all_fresh(molecule.working_mut());
 
-    molecule.atom_mut(atom).unwrap().atom_map = Some(7);
+    molecule.atom_mut(atom).unwrap().atom_map = NonZeroU32::new(7);
 
     assert_all_stale(molecule.working());
     assert_eq!(molecule.properties().owner().get(&owner_key), None);

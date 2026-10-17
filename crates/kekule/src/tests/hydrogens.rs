@@ -3,6 +3,7 @@ use crate::hydrogens::{
     AddHydrogensOptions, AddedHydrogenOrigin, HydrogenTransformError, RetainedHydrogenReason,
 };
 use crate::properties::{PropertyKey, PropertyValue};
+use std::num::{NonZeroU16, NonZeroU32};
 
 fn perceived_smiles(input: &str) -> Molecule {
     let mut molecule = read_smiles(input).expect("SMILES should parse");
@@ -456,7 +457,7 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
     let first_carbon = graph.add_atom(carbon()).expect("atom identifier capacity");
 
     let mut isotope = element_atom("H");
-    isotope.isotope = Some(2);
+    isotope.isotope = NonZeroU16::new(2);
     let isotope = graph.add_atom(isotope).expect("atom identifier capacity");
     graph
         .add_bond(first_carbon, isotope, BondOrder::Single)
@@ -464,7 +465,7 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
 
     let second_carbon = graph.add_atom(carbon()).expect("atom identifier capacity");
     let mut mapped = element_atom("H");
-    mapped.atom_map = Some(7);
+    mapped.atom_map = NonZeroU32::new(7);
     let mapped = graph.add_atom(mapped).expect("atom identifier capacity");
     graph
         .add_bond(second_carbon, mapped, BondOrder::Single)

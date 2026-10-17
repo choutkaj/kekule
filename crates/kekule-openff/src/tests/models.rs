@@ -41,7 +41,7 @@ fn charges(actual: &[f64], expected: &Value, molecule: &Molecule, atol: f64) {
     for (i, (_, atom)) in molecule.atoms().enumerate() {
         close(
             actual[i],
-            expected[atom.atom_map.unwrap() as usize - 1]
+            expected[atom.atom_map().unwrap().get() as usize - 1]
                 .as_f64()
                 .unwrap(),
             atol,
@@ -56,7 +56,7 @@ fn parameters(actual: &ParameterizedTopology, expected: &Value, molecule: &Molec
     let maps = |atoms: &[kekule::topology::InstanceAtomId]| {
         atoms
             .iter()
-            .map(|a| molecule.atom(a.atom()).unwrap().atom_map.unwrap())
+            .map(|a| molecule.atom(a.atom()).unwrap().atom_map().unwrap().get())
             .collect::<Vec<_>>()
     };
     let mut observed: BTreeMap<&str, Vec<(Vec<u32>, Value)>> = BTreeMap::new();
@@ -106,7 +106,7 @@ fn parameters(actual: &ParameterizedTopology, expected: &Value, molecule: &Molec
             .zip(actual.vdw())
             .map(|((_, a), p)| {
                 (
-                    vec![a.atom_map.unwrap()],
+                    vec![a.atom_map().unwrap().get()],
                     json!({"sigma":p.sigma.value(), "epsilon":p.epsilon.value()}),
                 )
             })
@@ -259,7 +259,8 @@ fn both_models_reproduce_complete_openff_parameterization() {
                 );
                 let f = model.atom_features(&molecule).unwrap();
                 for (i, (_, atom)) in molecule.atoms().enumerate() {
-                    let expected = r["inference"]["features"][atom.atom_map.unwrap() as usize - 1]
+                    let expected = r["inference"]["features"]
+                        [atom.atom_map().unwrap().get() as usize - 1]
                         .as_array()
                         .unwrap();
                     assert_eq!(f[i].len(), expected.len());

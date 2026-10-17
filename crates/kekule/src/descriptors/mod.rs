@@ -322,7 +322,12 @@ fn visit_constituents(
     let graph = molecule;
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a supported element");
     for (atom_id, atom) in graph.atoms() {
-        visit(atom_id, atom.element, atom.isotope, 1)?;
+        visit(
+            atom_id,
+            atom.element,
+            atom.isotope.map(std::num::NonZero::get),
+            1,
+        )?;
         let implicit = match hydrogen_policy {
             HydrogenCountPolicy::StoredOnly => usize::from(atom.hydrogens.represented_count()),
             HydrogenCountPolicy::IncludePerceived => graph
@@ -456,9 +461,9 @@ mod tests {
     fn hill_order_isotope_order_and_accessors_are_stable() {
         let mut graph = crate::molecule::MoleculeEditor::new();
         let mut carbon_13_atom = Atom::new(element("C"));
-        carbon_13_atom.isotope = Some(13);
+        carbon_13_atom.isotope = std::num::NonZeroU16::new(13);
         let mut carbon_12_atom = carbon_13_atom.clone();
-        carbon_12_atom.isotope = Some(12);
+        carbon_12_atom.isotope = std::num::NonZeroU16::new(12);
         let carbon_13 = graph
             .add_atom(carbon_13_atom)
             .expect("atom identifier capacity");
@@ -642,7 +647,7 @@ mod tests {
 
         let mut graph = crate::molecule::MoleculeEditor::new();
         let mut impossible = Atom::new(element("C"));
-        impossible.isotope = Some(999);
+        impossible.isotope = std::num::NonZeroU16::new(999);
         graph
             .add_atom(impossible)
             .expect("atom identifier capacity");

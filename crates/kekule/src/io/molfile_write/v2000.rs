@@ -58,7 +58,7 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
     for record_atom in &record.atoms {
         let atom = record_atom.atom;
         let point = record_atom.position;
-        if atom.atom_map.is_some_and(|atom_map| atom_map > 999) {
+        if atom.atom_map.is_some_and(|atom_map| atom_map.get() > 999) {
             return Err(MOLFILE_WRITE.unsupported(format!(
                 "V2000 cannot encode atom-map number {} above 999",
                 atom.atom_map.expect("atom map was checked")
@@ -82,7 +82,7 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
             0,
             v2000_charge_code(atom.formal_charge),
             valence_code,
-            atom.atom_map.unwrap_or(0)
+            atom.atom_map.map_or(0, std::num::NonZero::get)
         ));
     }
 
@@ -121,7 +121,7 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
                 record_atom
                     .atom
                     .isotope
-                    .map(|isotope| ((index + 1) as u64, i32::from(isotope)))
+                    .map(|isotope| ((index + 1) as u64, i32::from(isotope.get())))
             })
             .collect(),
     );

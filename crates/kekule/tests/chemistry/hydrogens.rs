@@ -14,7 +14,7 @@ fn parse(source: &str) -> Molecule {
 fn carbon(molecule: &Molecule) -> AtomId {
     molecule
         .atoms()
-        .find(|(_, a)| a.element.symbol() == "C")
+        .find(|(_, a)| a.element().symbol() == "C")
         .unwrap()
         .0
 }
@@ -86,7 +86,7 @@ fn edits_invalidate_inference_and_preserve_fixed_counts() {
             // report it rather than silently removing a fixed hydrogen.
             assert!(molecule.perceive().is_err());
             assert_eq!(
-                molecule.atom(c).unwrap().hydrogens,
+                molecule.atom(c).unwrap().hydrogens(),
                 ImplicitHydrogens::Fixed(3)
             );
         } else {

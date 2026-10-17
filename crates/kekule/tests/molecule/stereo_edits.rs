@@ -234,8 +234,10 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
         ungrouped.remove_stereo_group(group).unwrap();
         // Deleting the bond leaves the fixed-H carbon under-coordinated without
         // asserting a radical. Explicitly cap that site for the export check.
-        ungrouped.atom_mut(stereo.center).unwrap().hydrogens =
-            kekule::molecule::ImplicitHydrogens::Fixed(1);
+        ungrouped
+            .atom_mut(stereo.center)
+            .unwrap()
+            .set_hydrogens(kekule::molecule::ImplicitHydrogens::Fixed(1));
         let text = kekule::smiles::write(
             &ungrouped.finish().unwrap(),
             kekule::smiles::SmilesWriteOptions::isomeric(),
@@ -257,8 +259,10 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
     for group in result.molecule().stereo_groups().map(|(id, _)| id) {
         ungrouped.remove_stereo_group(group).unwrap();
     }
-    ungrouped.atom_mut(stereo.center).unwrap().hydrogens =
-        kekule::molecule::ImplicitHydrogens::Fixed(1);
+    ungrouped
+        .atom_mut(stereo.center)
+        .unwrap()
+        .set_hydrogens(kekule::molecule::ImplicitHydrogens::Fixed(1));
     kekule::smiles::write(
         &ungrouped.finish().unwrap(),
         kekule::smiles::SmilesWriteOptions::isomeric(),

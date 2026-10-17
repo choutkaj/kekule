@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 
 use kekule::{
     molecule::{Molecule, MoleculeEditor, MoleculeError},
@@ -71,8 +72,11 @@ fn mapped_polyene(source: &Molecule, reverse: bool) -> Molecule {
     let atoms = atom_ids
         .into_iter()
         .map(|id| {
-            let mut atom = source.atom(id).unwrap().clone();
-            atom.atom_map = Some(id.raw() + 1);
+            let atom = source
+                .atom(id)
+                .unwrap()
+                .clone()
+                .with_atom_map(NonZeroU32::new(id.raw() + 1));
             (id, editor.add_atom(atom).unwrap())
         })
         .collect::<BTreeMap<_, _>>();
@@ -119,8 +123,18 @@ fn mapped_cip(molecule: &mut Molecule) -> BTreeMap<(u32, u32), StereoDescriptor>
             let StereoElementKind::DoubleBond(stereo) = &element.kind else {
                 panic!("expected double-bond assertion");
             };
-            let left = molecule.atom(stereo.left).unwrap().atom_map.unwrap();
-            let right = molecule.atom(stereo.right).unwrap().atom_map.unwrap();
+            let left = molecule
+                .atom(stereo.left)
+                .unwrap()
+                .atom_map()
+                .unwrap()
+                .get();
+            let right = molecule
+                .atom(stereo.right)
+                .unwrap()
+                .atom_map()
+                .unwrap()
+                .get();
             (
                 (left.min(right), left.max(right)),
                 molecule.cip_descriptor(id).unwrap(),

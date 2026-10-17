@@ -68,7 +68,7 @@ fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
             .molecule()
             .atom(local)
             .unwrap()
-            .element,
+            .element(),
         Element::from_symbol("O").unwrap()
     );
 }

@@ -248,7 +248,7 @@ fn charges(result: &StructureInterpretation) -> Vec<(String, i8)> {
                 .instance(atom.atom().instance())
                 .unwrap()
                 .molecule();
-            let charge = molecule.atom(atom.atom().atom()).unwrap().formal_charge;
+            let charge = molecule.atom(atom.atom().atom()).unwrap().formal_charge();
             (charge != 0).then(|| (atom.atom_name().to_owned(), charge))
         })
         .collect()
@@ -1144,7 +1144,11 @@ fn atom_names_imply_elements_without_element_columns() {
                 .instance(atom.atom().instance())
                 .unwrap()
                 .molecule();
-            molecule.atom(atom.atom().atom()).unwrap().element.symbol()
+            molecule
+                .atom(atom.atom().atom())
+                .unwrap()
+                .element()
+                .symbol()
         })
         .collect::<Vec<_>>();
     assert_eq!(elements, ["C", "Ca", "Zn"]);
@@ -1172,8 +1176,8 @@ fn isotopes(result: &StructureInterpretation) -> Vec<(String, &'static str, Opti
             let element = molecule.atom(atom.atom().atom()).unwrap();
             (
                 atom.atom_name().to_owned(),
-                element.element.symbol(),
-                element.isotope,
+                element.element().symbol(),
+                element.isotope().map(std::num::NonZero::get),
             )
         })
         .collect()

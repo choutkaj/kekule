@@ -132,7 +132,7 @@ mod tests {
                 let symbols = c
                     .molecule
                     .atoms()
-                    .map(|(id, atom)| (c.atom(id), atom.element.symbol()))
+                    .map(|(id, atom)| (c.atom(id), atom.element().symbol()))
                     .collect::<Vec<_>>();
                 (symbols, c.positions.as_ref().map(Positions::len))
             })

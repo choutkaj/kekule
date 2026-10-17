@@ -106,7 +106,7 @@ fn all_reference_rule_labels_match_in_atom_map_space() {
                         .map(|(a, p)| {
                             (
                                 a.iter()
-                                    .map(|&a| m.atom(a).unwrap().atom_map.unwrap())
+                                    .map(|&a| m.atom(a).unwrap().atom_map().unwrap().get())
                                     .collect(),
                                 p.id().to_owned(),
                                 p.smirks().to_owned(),

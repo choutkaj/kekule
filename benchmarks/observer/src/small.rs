@@ -128,13 +128,13 @@ fn parse(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
         for (id, atom) in molecule.atoms() {
             let i = component.atom(id);
             let hydrogens = molecule.total_hydrogens(id);
-            let radicals = atom.radical.map(|r| r.electron_count()).unwrap_or(0);
-            facts.push(json!(["atom", i, "element", atom.element.symbol()]));
-            facts.push(json!(["atom", i, "isotope", atom.isotope]));
-            facts.push(json!(["atom", i, "charge", atom.formal_charge]));
+            let radicals = atom.radical().map(|r| r.electron_count()).unwrap_or(0);
+            facts.push(json!(["atom", i, "element", atom.element().symbol()]));
+            facts.push(json!(["atom", i, "isotope", atom.isotope()]));
+            facts.push(json!(["atom", i, "charge", atom.formal_charge()]));
             facts.push(json!(["atom", i, "radicals", radicals]));
             facts.push(json!(["atom", i, "hydrogens", hydrogens]));
-            facts.push(json!(["atom", i, "map", atom.atom_map]));
+            facts.push(json!(["atom", i, "map", atom.atom_map()]));
         }
         for (_, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
