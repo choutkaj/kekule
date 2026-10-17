@@ -342,10 +342,7 @@ fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() 
     stereo_api::coordinates::materialize_coordinate_stereo(
         &mut editor,
         &positions,
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .unwrap();
     let axis = editor.finish().unwrap();

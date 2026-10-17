@@ -35,12 +35,36 @@ pub enum AromaticityError {
 /// grow with the molecule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AromaticityOptions {
+    ring_options: RingPerceptionOptions,
+    max_total_work: usize,
+}
+
+impl AromaticityOptions {
     /// Used only when no ring set is installed. Aromaticity always needs a
     /// ring basis, so the [`scope`](RingPerceptionOptions::scope) is ignored.
-    pub ring_options: RingPerceptionOptions,
+    pub const fn ring_options(&self) -> RingPerceptionOptions {
+        self.ring_options
+    }
+
+    /// Sets [`Self::ring_options`].
+    #[must_use]
+    pub const fn with_ring_options(mut self, ring_options: RingPerceptionOptions) -> Self {
+        self.ring_options = ring_options;
+        self
+    }
+
     /// Bounds graph slots, ring entries, fusion comparisons, and subset search
     /// visits and workspace copies. Applies even to an installed ring set.
-    pub max_total_work: usize,
+    pub const fn max_total_work(&self) -> usize {
+        self.max_total_work
+    }
+
+    /// Sets [`Self::max_total_work`].
+    #[must_use]
+    pub const fn with_max_total_work(mut self, max_total_work: usize) -> Self {
+        self.max_total_work = max_total_work;
+        self
+    }
 }
 
 impl Default for AromaticityOptions {
@@ -185,10 +209,7 @@ fn perceive_localized_aromaticity(
     work.charge(mol.graph.atom_slot_count())?;
     work.charge(mol.graph.bond_slot_count())?;
     if mol.ring_set().is_none() {
-        let ring_options = RingPerceptionOptions {
-            scope: RingPerceptionScope::Basis,
-            ..options.ring_options
-        };
+        let ring_options = options.ring_options.with_scope(RingPerceptionScope::Basis);
         perceive_rings(mol, ring_options).map_err(AromaticityError::RingPerception)?;
     }
     if model == AromaticityModel::Mdl

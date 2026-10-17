@@ -212,10 +212,7 @@ fn cip_assigns_axis_descriptor_after_coordinate_stereo_materialization() {
     let materialization_report = stereo_api::coordinates::materialize_coordinate_stereo(
         &mut mol,
         &positions,
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .expect("coordinate axis materialization");
     assert_eq!(materialization_report.created_elements.len(), 1);
@@ -288,10 +285,7 @@ fn cip_default_depth_resolves_a_remote_constitutional_difference() {
     let previous = molecule.perception().clone();
     let error = stereo_api::cip::assign_cip_descriptors(
         &mut molecule,
-        CipAssignmentOptions {
-            max_depth: 32,
-            ..CipAssignmentOptions::default()
-        },
+        CipAssignmentOptions::default().with_max_depth(32),
     )
     .expect_err("the distinguishing atom is beyond depth 32");
     assert!(matches!(
@@ -322,20 +316,18 @@ fn cip_stops_at_the_first_distinguishing_shell_within_the_node_budget() {
         assert_eq!(expected.assigned.len(), 1);
         let actual = stereo_api::cip::assign_cip_descriptors(
             &mut molecule,
-            CipAssignmentOptions {
-                max_depth: 32,
-                max_nodes: 10,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(32)
+                .with_max_nodes(10),
         )
         .expect("ten ligand nodes suffice to reach the distinguishing oxygen");
         assert_eq!(actual, expected);
         let previous = molecule.perception().clone();
         let error = stereo_api::cip::assign_cip_descriptors(
             &mut molecule,
-            CipAssignmentOptions {
-                max_depth: 32,
-                max_nodes: 9,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(32)
+                .with_max_nodes(9),
         )
         .expect_err("the first distinguishing shell must fit in its entirety");
         assert!(matches!(
@@ -358,10 +350,7 @@ fn cip_depth_limit_cannot_promote_isotope_rule_or_claim_nonstereogenicity() {
         let previous = molecule.perception().clone();
         let error = stereo_api::cip::assign_cip_descriptors(
             &mut molecule,
-            CipAssignmentOptions {
-                max_depth: 0,
-                ..CipAssignmentOptions::default()
-            },
+            CipAssignmentOptions::default().with_max_depth(0),
         )
         .expect_err("a truncated constitutional tie cannot be resolved");
         assert!(matches!(
@@ -1624,7 +1613,7 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
 
 #[test]
 fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
-    let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
+    let chain_length = CipAssignmentOptions::default().max_depth() / 2 + 2;
     let mut mol = crate::molecule::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let fluorine = mol
@@ -1648,7 +1637,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
             previous = next;
         }
     }
-    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
+    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth());
 
     let stereo = mol
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
@@ -1671,7 +1660,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
 
 #[test]
 fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() {
-    let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
+    let chain_length = CipAssignmentOptions::default().max_depth() / 2 + 2;
     let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -1697,7 +1686,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
     for chain in [chain_a, chain_b] {
         add_carbon_chain(mol.working_mut(), chain, chain_length);
     }
-    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
+    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth());
 
     let stereo = mol
         .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
@@ -1718,7 +1707,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
 
 #[test]
 fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
-    let chain_length = CipAssignmentOptions::default().max_depth / 2 + 2;
+    let chain_length = CipAssignmentOptions::default().max_depth() / 2 + 2;
     let mut mol = crate::molecule::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -1742,7 +1731,7 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
     for chain in [chain_a, chain_b] {
         add_carbon_chain(mol.working_mut(), chain, chain_length);
     }
-    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
+    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth());
 
     let stereo = mol
         .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
@@ -1853,10 +1842,7 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
 
     let error = stereo_api::cip::assign_cip_descriptors(
         &mut molecule,
-        CipAssignmentOptions {
-            max_nodes: 1,
-            ..CipAssignmentOptions::default()
-        },
+        CipAssignmentOptions::default().with_max_nodes(1),
     )
     .expect_err("the constrained reassignment should fail");
 
@@ -1883,10 +1869,7 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
         .expect("present-empty baseline");
     stereo_api::cip::assign_cip_descriptors(
         &mut molecule,
-        CipAssignmentOptions {
-            max_nodes: 1,
-            ..CipAssignmentOptions::default()
-        },
+        CipAssignmentOptions::default().with_max_nodes(1),
     )
     .expect_err("the constrained reassignment should still fail");
     assert_eq!(molecule.perception(), &present_empty);
@@ -1895,10 +1878,7 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
 #[test]
 fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
     const FIXTURE: &str = "F[C@](Cl)(Br)C[C@@H](N)C(=O)O";
-    let options = CipAssignmentOptions {
-        max_nodes: 1,
-        ..CipAssignmentOptions::default()
-    };
+    let options = CipAssignmentOptions::default().with_max_nodes(1);
 
     let mut first_only = read_smiles(FIXTURE).expect("fixture parses");
     perceive(&mut first_only).expect("fixture perceives");

@@ -175,10 +175,7 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
     let inferred = stereo_api::coordinates::infer_coordinate_stereo(
         &mol,
         &positions,
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .expect("3D axis stereo should be inferred");
     assert_eq!(mol, before);
@@ -207,10 +204,7 @@ fn coordinate_stereo_inference_skips_axis_without_3d_handedness() {
     let result = stereo_api::coordinates::infer_coordinate_stereo(
         &mol,
         &positions,
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .expect("flat coordinates should be a successful non-assignment");
     assert!(result.elements.is_empty());
@@ -447,10 +441,7 @@ fn coordinate_axis_inference_respects_pyramidal_lone_pair_endpoints() {
         let result = stereo_api::coordinates::infer_coordinate_stereo(
             &molecule,
             &test_positions(points),
-            CoordinateStereoOptions {
-                infer_axes: true,
-                ..Default::default()
-            },
+            CoordinateStereoOptions::default().with_infer_axes(true),
         )
         .unwrap();
         assert!(result.elements.iter().any(|element| matches!(
@@ -480,10 +471,7 @@ fn coordinate_axis_inference_does_not_treat_saturated_rings_as_sp2() {
     let result = stereo_api::coordinates::infer_coordinate_stereo(
         &molecule,
         &test_positions(points),
-        CoordinateStereoOptions {
-            infer_axes: true,
-            ..Default::default()
-        },
+        CoordinateStereoOptions::default().with_infer_axes(true),
     )
     .unwrap();
     assert!(result
@@ -506,10 +494,7 @@ fn coordinate_axis_handedness_is_scale_and_rotation_invariant() {
         let result = stereo_api::coordinates::infer_coordinate_stereo(
             &molecule,
             &test_positions(points),
-            CoordinateStereoOptions {
-                infer_axes: true,
-                ..Default::default()
-            },
+            CoordinateStereoOptions::default().with_infer_axes(true),
         )
         .unwrap();
         assert_eq!(result.elements.len(), 1);
@@ -584,10 +569,8 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
         Point3::new(1.0, -1.0, 0.0),
     ]);
     let (axis, axis_positions, _) = coordinate_axis_graph(true);
-    let axis_options = stereo_api::coordinates::CoordinateStereoOptions {
-        infer_axes: true,
-        ..stereo_api::coordinates::CoordinateStereoOptions::default()
-    };
+    let axis_options =
+        stereo_api::coordinates::CoordinateStereoOptions::default().with_infer_axes(true);
 
     for (label, mut molecule, positions, options) in [
         (

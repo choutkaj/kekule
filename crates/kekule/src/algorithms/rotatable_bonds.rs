@@ -20,16 +20,65 @@ const BROMINE: u8 = 35;
 /// Options controlling which represented single bonds are returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RotatableBondOptions {
+    include_terminal_bonds: bool,
+    include_resonance_restricted_bonds: bool,
+    include_symmetric_bonds: bool,
+    include_ring_bonds: bool,
+}
+
+impl RotatableBondOptions {
     /// Includes bonds whose endpoint has no other covalently connected
     /// non-hydrogen neighbor.
-    pub include_terminal_bonds: bool,
+    pub const fn include_terminal_bonds(&self) -> bool {
+        self.include_terminal_bonds
+    }
+
+    /// Sets [`Self::include_terminal_bonds`].
+    #[must_use]
+    pub const fn with_include_terminal_bonds(mut self, include_terminal_bonds: bool) -> Self {
+        self.include_terminal_bonds = include_terminal_bonds;
+        self
+    }
+
     /// Includes resonance-restricted linkages such as amides and esters.
-    pub include_resonance_restricted_bonds: bool,
+    pub const fn include_resonance_restricted_bonds(&self) -> bool {
+        self.include_resonance_restricted_bonds
+    }
+
+    /// Sets [`Self::include_resonance_restricted_bonds`].
+    #[must_use]
+    pub const fn with_include_resonance_restricted_bonds(
+        mut self,
+        include_resonance_restricted_bonds: bool,
+    ) -> Self {
+        self.include_resonance_restricted_bonds = include_resonance_restricted_bonds;
+        self
+    }
+
     /// Includes axes involving symmetric groups such as trihalomethyl and
     /// tert-butyl-like centers.
-    pub include_symmetric_bonds: bool,
+    pub const fn include_symmetric_bonds(&self) -> bool {
+        self.include_symmetric_bonds
+    }
+
+    /// Sets [`Self::include_symmetric_bonds`].
+    #[must_use]
+    pub const fn with_include_symmetric_bonds(mut self, include_symmetric_bonds: bool) -> Self {
+        self.include_symmetric_bonds = include_symmetric_bonds;
+        self
+    }
+
     /// Includes represented single bonds that are members of graph cycles.
-    pub include_ring_bonds: bool,
+    pub const fn include_ring_bonds(&self) -> bool {
+        self.include_ring_bonds
+    }
+
+    /// Sets [`Self::include_ring_bonds`].
+    #[must_use]
+    pub const fn with_include_ring_bonds(mut self, include_ring_bonds: bool) -> Self {
+        self.include_ring_bonds = include_ring_bonds;
+        self
+    }
 }
 
 impl RotatableBondOptions {

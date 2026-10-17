@@ -23,10 +23,34 @@ use super::{
 /// Syntax and resource limits for parsing a PDB entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdbParseOptions {
+    max_input_bytes: usize,
+    max_atom_records: usize,
+}
+
+impl PdbParseOptions {
     /// Maximum UTF-8 byte length of the input.
-    pub max_input_bytes: usize,
+    pub const fn max_input_bytes(&self) -> usize {
+        self.max_input_bytes
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub const fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Self {
+        self.max_input_bytes = max_input_bytes;
+        self
+    }
+
     /// Maximum number of `ATOM` and `HETATM` records.
-    pub max_atom_records: usize,
+    pub const fn max_atom_records(&self) -> usize {
+        self.max_atom_records
+    }
+
+    /// Sets [`Self::max_atom_records`].
+    #[must_use]
+    pub const fn with_max_atom_records(mut self, max_atom_records: usize) -> Self {
+        self.max_atom_records = max_atom_records;
+        self
+    }
 }
 
 impl PdbParseOptions {

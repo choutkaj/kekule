@@ -135,10 +135,7 @@ fn added_hydrogens_use_ordinary_atom_defaults_and_do_not_expand_again() {
                 .atoms()
                 .map(|(id, atom)| (id, atom.hydrogens))
                 .collect::<Vec<_>>();
-            let options = AddHydrogensOptions {
-                fixed_only,
-                ..Default::default()
-            };
+            let options = AddHydrogensOptions::default().with_fixed_only(fixed_only);
             let added = molecule.add_hydrogens(options).unwrap();
             for entry in &added.added {
                 let atom = molecule.atom(entry.hydrogen).unwrap();
@@ -177,10 +174,7 @@ fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
 
     let mut perceived = perceived_smiles("C");
     let original = perceived.clone();
-    let options = AddHydrogensOptions {
-        max_added_hydrogens: 3,
-        ..AddHydrogensOptions::default()
-    };
+    let options = AddHydrogensOptions::default().with_max_added_hydrogens(3);
     assert_eq!(
         perceived.add_hydrogens(options),
         Err(HydrogenTransformError::LimitExceeded(
@@ -195,10 +189,7 @@ fn fixed_only_materializes_bracket_counts_without_inferred_hydrogens() {
     let mut molecule = perceived_smiles("[CH3]");
     let carbon = molecule.atom_ids().next().expect("carbon");
     let report = molecule
-        .add_hydrogens(AddHydrogensOptions {
-            fixed_only: true,
-            ..AddHydrogensOptions::default()
-        })
+        .add_hydrogens(AddHydrogensOptions::default().with_fixed_only(true))
         .expect("materialize fixed count");
 
     assert_eq!(report.added.len(), 3);
@@ -228,10 +219,7 @@ fn fixed_only_leaves_inferred_counts_implicit_without_perception() {
     assert!(!molecule.perception().has_valence());
 
     let report = molecule
-        .add_hydrogens(AddHydrogensOptions {
-            fixed_only: true,
-            ..AddHydrogensOptions::default()
-        })
+        .add_hydrogens(AddHydrogensOptions::default().with_fixed_only(true))
         .expect("fixed count materializes without perception");
 
     assert_eq!(
@@ -333,10 +321,7 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
         .find_map(|(id, atom)| (atom.element.symbol() == "N").then_some(id))
         .expect("nitrogen");
     let added = molecule
-        .add_hydrogens(AddHydrogensOptions {
-            fixed_only: true,
-            ..AddHydrogensOptions::default()
-        })
+        .add_hydrogens(AddHydrogensOptions::default().with_fixed_only(true))
         .expect("materialize bracket hydrogen");
     assert_eq!(added.added.len(), 1);
     assert_eq!(added.added[0].parent, nitrogen);
@@ -537,7 +522,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
     valence_api::perceive_valence(
         graph.working_mut(),
         ValenceModel::RdkitLike,
-        ValenceOptions { strict: false },
+        ValenceOptions::default().with_strict(false),
     )
     .expect("permissive valence perception");
     let mut molecule = graph;

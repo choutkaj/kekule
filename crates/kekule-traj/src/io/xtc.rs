@@ -98,17 +98,20 @@ impl XtcReadOptions {
     /// The scratch limit covers the combined retained capacities of encoded
     /// bytes, decoded scalar coordinates, and dense positions. Indexed and
     /// sequential access share these buffers; index offsets have a separate limit.
+    #[must_use]
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
     }
 
     /// Sets the source label used in decoding errors.
+    #[must_use]
     pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
         self.source_label = source_label.into();
         self
     }
 
+    #[must_use]
     pub const fn with_cell_policy(mut self, cell_policy: XtcCellPolicy) -> Self {
         self.cell_policy = cell_policy;
         self
@@ -116,6 +119,16 @@ impl XtcReadOptions {
 
     pub const fn cell_policy(&self) -> XtcCellPolicy {
         self.cell_policy
+    }
+
+    /// Limits applied before allocation, scanning, and seeking.
+    pub const fn limits(&self) -> &TrajectoryIoLimits {
+        &self.limits
+    }
+
+    /// The source label used in decoding errors.
+    pub fn source_label(&self) -> &str {
+        &self.source_label
     }
 }
 
@@ -141,6 +154,7 @@ impl Default for XtcWriteOptions {
 }
 
 impl XtcWriteOptions {
+    #[must_use]
     pub const fn with_magic(mut self, magic: XtcMagic) -> Self {
         self.magic = magic;
         self
@@ -159,6 +173,7 @@ impl XtcWriteOptions {
     /// [`XtcCellPolicy`]. [`XtcCellPolicy::ZeroMatrixAsAbsent`] writes the
     /// zero box that GROMACS uses for non-periodic systems; the default,
     /// [`XtcCellPolicy::RequirePeriodic`], rejects such frames.
+    #[must_use]
     pub const fn with_cell_policy(mut self, cell_policy: XtcCellPolicy) -> Self {
         self.cell_policy = cell_policy;
         self
@@ -428,8 +443,8 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             }
             let compressed_bytes = read_nbytes(&mut self.reader, magic, source_label, frame_index)?;
             if compressed_bytes == 0
-                || compressed_bytes as u64 > limits.max_record_bytes
-                || compressed_bytes > limits.max_scratch_bytes
+                || compressed_bytes as u64 > limits.max_record_bytes()
+                || compressed_bytes > limits.max_scratch_bytes()
             {
                 return Err(resource_error(
                     source_label,
@@ -480,7 +495,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let frame_bytes = end
             .checked_sub(start)
             .ok_or_else(|| resource_error(source_label, None, "XTC frame size underflows"))?;
-        if frame_bytes > limits.max_frame_bytes {
+        if frame_bytes > limits.max_frame_bytes() {
             return Err(resource_error(
                 source_label,
                 Some(frame_index),
@@ -581,7 +596,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             coordinate_scalars,
             position_bytes
                 .and_then(|bytes| bytes.checked_add(self.scratch.capacity().max(raw_bytes))),
-            limits.max_scratch_bytes,
+            limits.max_scratch_bytes(),
             error,
         )?;
         reserve_scratch(
@@ -589,7 +604,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             raw_bytes,
             position_bytes
                 .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.decoded_positions)?)),
-            limits.max_scratch_bytes,
+            limits.max_scratch_bytes(),
             error,
         )?;
         self.decoded_positions.clear();
@@ -696,7 +711,7 @@ impl<R: Read + Seek> XtcReader<R> {
             &mut positions,
             atom_count,
             Some(0),
-            limits.max_scratch_bytes,
+            limits.max_scratch_bytes(),
             |detail| resource_error(source_label, None, detail),
         )?;
         positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
@@ -757,7 +772,7 @@ impl<R: Read + Seek> XtcReader<R> {
     }
 
     fn parse_next(&mut self) -> Result<Option<XtcFrameInfo>, TrajectoryIoError> {
-        if self.frame_cursor >= self.options.limits.max_frames {
+        if self.frame_cursor >= self.options.limits.max_frames() {
             let clean_eof = if self.pending_info.is_some() {
                 false
             } else {
@@ -2048,7 +2063,7 @@ fn validate_atom_count(
     limits: &TrajectoryIoLimits,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {
-    if atom_count == 0 || atom_count > limits.max_atoms || atom_count > u32::MAX as usize {
+    if atom_count == 0 || atom_count > limits.max_atoms() || atom_count > u32::MAX as usize {
         return Err(resource_error(
             source_label,
             None,

@@ -51,14 +51,49 @@ impl std::ops::BitOr for ResonanceFlags {
 /// Bounds and contributor policy for explicit enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResonanceOptions {
-    pub flags: ResonanceFlags,
+    flags: ResonanceFlags,
+    max_structures: usize,
+    max_total_work: usize,
+}
+
+impl ResonanceOptions {
+    pub const fn flags(&self) -> ResonanceFlags {
+        self.flags
+    }
+
+    /// Sets [`Self::flags`].
+    #[must_use]
+    pub const fn with_flags(mut self, flags: ResonanceFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
     /// Maximum returned contributors, clamped to RDKit's ceiling of 1,000,000.
     /// Zero returns an empty collection. The pinned reference cannot produce a
     /// valid conjugated contributor at a limit of one; use at least two.
-    pub max_structures: usize,
+    pub const fn max_structures(&self) -> usize {
+        self.max_structures
+    }
+
+    /// Sets [`Self::max_structures`].
+    #[must_use]
+    pub const fn with_max_structures(mut self, max_structures: usize) -> Self {
+        self.max_structures = max_structures;
+        self
+    }
+
     /// Bounds search visits, copied state, and permutation construction/sorting.
     /// Exhaustion returns an error without a partial result.
-    pub max_total_work: usize,
+    pub const fn max_total_work(&self) -> usize {
+        self.max_total_work
+    }
+
+    /// Sets [`Self::max_total_work`].
+    #[must_use]
+    pub const fn with_max_total_work(mut self, max_total_work: usize) -> Self {
+        self.max_total_work = max_total_work;
+        self
+    }
 }
 impl ResonanceOptions {
     /// The [`Default`] bound of [`Self::max_structures`].

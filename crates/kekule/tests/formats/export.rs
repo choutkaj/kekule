@@ -194,10 +194,7 @@ fn molfile_control_text_in_positional_headers_is_not_a_terminator() {
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         let written = molfile::write(
             &original,
-            MolfileWriteOptions {
-                version,
-                ..Default::default()
-            },
+            MolfileWriteOptions::default().with_version(version),
         )
         .unwrap();
         for header in 0..3 {
@@ -222,10 +219,7 @@ fn molfile_control_text_in_positional_headers_is_not_a_terminator() {
 fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
     let mol = molfile::write(
         &molecule("CO"),
-        molfile::MolfileWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        },
+        molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
     .unwrap();
     let model = molfile::parse_str(&mol, Default::default())
@@ -234,10 +228,7 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
         .unwrap()
         .into_model();
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
-        let options = SdfWriteOptions {
-            version,
-            ..Default::default()
-        };
+        let options = SdfWriteOptions::default().with_version(version);
         let record = SdfRecordInterpretation::new("M  END", model.clone(), Vec::new());
         let written = sdf::write(&[record], options).unwrap();
         let document = sdf::parse_str(&written, Default::default()).unwrap();
@@ -278,10 +269,8 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
         let mut original = editor.finish().unwrap();
         let written = molfile::write(
             &original,
-            molfile::MolfileWriteOptions {
-                version: molfile::MolfileWriteVersion::V3000,
-                ..Default::default()
-            },
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V3000),
         )
         .unwrap();
         let mut restored = molfile::parse_str(&written, Default::default())

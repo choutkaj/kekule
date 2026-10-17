@@ -26,12 +26,36 @@ pub enum ModelSelection {
 /// fails otherwise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectivityOptions {
+    components: Option<Arc<ComponentLibrary>>,
+    infer_bonds_from_distance: bool,
+}
+
+impl ConnectivityOptions {
     /// Templates consulted before the bundled ones, such as
     /// [`ComponentLibrary::amber`] for structures with AMBER residue names.
-    pub components: Option<Arc<ComponentLibrary>>,
+    pub fn components(&self) -> Option<&Arc<ComponentLibrary>> {
+        self.components.as_ref()
+    }
+
+    /// Sets [`Self::components`].
+    #[must_use]
+    pub fn with_components(mut self, components: Option<Arc<ComponentLibrary>>) -> Self {
+        self.components = components;
+        self
+    }
+
     /// Infer the bonds of residues without a template or bond table from
     /// covalent radii. Inferred bonds are single and reported. On by default.
-    pub infer_bonds_from_distance: bool,
+    pub const fn infer_bonds_from_distance(&self) -> bool {
+        self.infer_bonds_from_distance
+    }
+
+    /// Sets [`Self::infer_bonds_from_distance`].
+    #[must_use]
+    pub fn with_infer_bonds_from_distance(mut self, infer_bonds_from_distance: bool) -> Self {
+        self.infer_bonds_from_distance = infer_bonds_from_distance;
+        self
+    }
 }
 
 impl Default for ConnectivityOptions {
@@ -45,10 +69,56 @@ impl Default for ConnectivityOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureInterpretOptions {
-    pub strict_entity_metadata: bool,
-    pub altloc_policy: AltLocPolicy,
-    pub model_selection: ModelSelection,
-    pub connectivity: ConnectivityOptions,
+    strict_entity_metadata: bool,
+    altloc_policy: AltLocPolicy,
+    model_selection: ModelSelection,
+    connectivity: ConnectivityOptions,
+}
+
+impl StructureInterpretOptions {
+    pub const fn strict_entity_metadata(&self) -> bool {
+        self.strict_entity_metadata
+    }
+
+    /// Sets [`Self::strict_entity_metadata`].
+    #[must_use]
+    pub fn with_strict_entity_metadata(mut self, strict_entity_metadata: bool) -> Self {
+        self.strict_entity_metadata = strict_entity_metadata;
+        self
+    }
+
+    pub fn altloc_policy(&self) -> &AltLocPolicy {
+        &self.altloc_policy
+    }
+
+    /// Sets [`Self::altloc_policy`].
+    #[must_use]
+    pub fn with_altloc_policy(mut self, altloc_policy: AltLocPolicy) -> Self {
+        self.altloc_policy = altloc_policy;
+        self
+    }
+
+    pub fn model_selection(&self) -> &ModelSelection {
+        &self.model_selection
+    }
+
+    /// Sets [`Self::model_selection`].
+    #[must_use]
+    pub fn with_model_selection(mut self, model_selection: ModelSelection) -> Self {
+        self.model_selection = model_selection;
+        self
+    }
+
+    pub fn connectivity(&self) -> &ConnectivityOptions {
+        &self.connectivity
+    }
+
+    /// Sets [`Self::connectivity`].
+    #[must_use]
+    pub fn with_connectivity(mut self, connectivity: ConnectivityOptions) -> Self {
+        self.connectivity = connectivity;
+        self
+    }
 }
 
 impl Default for StructureInterpretOptions {
@@ -668,12 +738,64 @@ pub(in crate::io) fn ensemble_error(
 /// statistical weights. A single coordinate model yields a single member.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureEnsembleInterpretOptions {
-    pub strict_entity_metadata: bool,
-    pub altloc_policy: AltLocPolicy,
-    pub connectivity: ConnectivityOptions,
+    strict_entity_metadata: bool,
+    altloc_policy: AltLocPolicy,
+    connectivity: ConnectivityOptions,
+    model_ids: Option<Vec<String>>,
+}
+
+impl StructureEnsembleInterpretOptions {
+    pub const fn strict_entity_metadata(&self) -> bool {
+        self.strict_entity_metadata
+    }
+
+    /// Sets [`Self::strict_entity_metadata`].
+    #[must_use]
+    pub fn with_strict_entity_metadata(mut self, strict_entity_metadata: bool) -> Self {
+        self.strict_entity_metadata = strict_entity_metadata;
+        self
+    }
+
+    pub fn altloc_policy(&self) -> &AltLocPolicy {
+        &self.altloc_policy
+    }
+
+    /// Sets [`Self::altloc_policy`].
+    #[must_use]
+    pub fn with_altloc_policy(mut self, altloc_policy: AltLocPolicy) -> Self {
+        self.altloc_policy = altloc_policy;
+        self
+    }
+
+    pub fn connectivity(&self) -> &ConnectivityOptions {
+        &self.connectivity
+    }
+
+    /// Sets [`Self::connectivity`].
+    #[must_use]
+    pub fn with_connectivity(mut self, connectivity: ConnectivityOptions) -> Self {
+        self.connectivity = connectivity;
+        self
+    }
+
     /// `None` selects all coordinate models in source order. `Some` must
     /// contain at least one model ID.
-    pub model_ids: Option<Vec<String>>,
+    pub fn model_ids(&self) -> Option<&[String]> {
+        self.model_ids.as_deref()
+    }
+
+    /// Sets [`Self::model_ids`].
+    ///
+    /// # Errors
+    ///
+    /// An interpretation [`FormatError`] with [`FormatErrorDetail::EmptyModelSelection`](crate::diagnostics::FormatErrorDetail::EmptyModelSelection) for `Some` of an empty list.
+    pub fn with_model_ids(mut self, model_ids: Option<Vec<String>>) -> Result<Self, FormatError> {
+        if model_ids.as_ref().is_some_and(Vec::is_empty) {
+            return Err(super::ensemble::empty_model_selection());
+        }
+        self.model_ids = model_ids;
+        Ok(self)
+    }
 }
 
 impl Default for StructureEnsembleInterpretOptions {

@@ -15,22 +15,135 @@ pub const MAX_SUBSTRUCTURE_QUERY_ATOMS: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubstructureMatchOptions {
+    max_matches: usize,
+    max_search_states: usize,
+    max_query_atoms: usize,
+    max_candidate_pairs: usize,
+    uniquify: bool,
+    use_enhanced_stereo: bool,
+}
+
+impl SubstructureMatchOptions {
     /// Maximum matches. Complete enumeration (`all`) reports
     /// exceeding it as [`SubstructureMatchError::LimitExceeded`]; a visitor
     /// stops successfully once it is reached.
-    pub max_matches: usize,
+    pub const fn max_matches(&self) -> usize {
+        self.max_matches
+    }
+
+    /// Sets [`Self::max_matches`].
+    ///
+    /// # Errors
+    ///
+    /// [`SubstructureMatchError::InvalidLimit`] when `max_matches` is zero.
+    pub fn with_max_matches(mut self, max_matches: usize) -> Result<Self, SubstructureMatchError> {
+        if max_matches == 0 {
+            return Err(SubstructureMatchError::InvalidLimit {
+                resource: Resource::Matches,
+                limit: max_matches,
+            });
+        }
+        self.max_matches = max_matches;
+        Ok(self)
+    }
+
     /// Maximum candidate assignments visited by backtracking.
-    pub max_search_states: usize,
+    pub const fn max_search_states(&self) -> usize {
+        self.max_search_states
+    }
+
+    /// Sets [`Self::max_search_states`].
+    ///
+    /// # Errors
+    ///
+    /// [`SubstructureMatchError::InvalidLimit`] when `max_search_states` is zero.
+    pub fn with_max_search_states(
+        mut self,
+        max_search_states: usize,
+    ) -> Result<Self, SubstructureMatchError> {
+        if max_search_states == 0 {
+            return Err(SubstructureMatchError::InvalidLimit {
+                resource: Resource::SearchStates,
+                limit: max_search_states,
+            });
+        }
+        self.max_search_states = max_search_states;
+        Ok(self)
+    }
+
     /// Maximum query size accepted by the recursive search.
-    pub max_query_atoms: usize,
+    pub const fn max_query_atoms(&self) -> usize {
+        self.max_query_atoms
+    }
+
+    /// Sets [`Self::max_query_atoms`].
+    ///
+    /// # Errors
+    ///
+    /// [`SubstructureMatchError::InvalidLimit`] when `max_query_atoms` is zero or exceeds [`MAX_SUBSTRUCTURE_QUERY_ATOMS`].
+    pub fn with_max_query_atoms(
+        mut self,
+        max_query_atoms: usize,
+    ) -> Result<Self, SubstructureMatchError> {
+        if max_query_atoms == 0 || max_query_atoms > MAX_SUBSTRUCTURE_QUERY_ATOMS {
+            return Err(SubstructureMatchError::InvalidLimit {
+                resource: Resource::Atoms,
+                limit: max_query_atoms,
+            });
+        }
+        self.max_query_atoms = max_query_atoms;
+        Ok(self)
+    }
+
     /// Maximum query-atom by target-atom compatibility matrix size.
-    pub max_candidate_pairs: usize,
+    pub const fn max_candidate_pairs(&self) -> usize {
+        self.max_candidate_pairs
+    }
+
+    /// Sets [`Self::max_candidate_pairs`].
+    ///
+    /// # Errors
+    ///
+    /// [`SubstructureMatchError::InvalidLimit`] when `max_candidate_pairs` is zero.
+    pub fn with_max_candidate_pairs(
+        mut self,
+        max_candidate_pairs: usize,
+    ) -> Result<Self, SubstructureMatchError> {
+        if max_candidate_pairs == 0 {
+            return Err(SubstructureMatchError::InvalidLimit {
+                resource: Resource::CandidatePairs,
+                limit: max_candidate_pairs,
+            });
+        }
+        self.max_candidate_pairs = max_candidate_pairs;
+        Ok(self)
+    }
+
     /// Collapse query-automorphism duplicates by target atom set.
-    pub uniquify: bool,
+    pub const fn uniquify(&self) -> bool {
+        self.uniquify
+    }
+
+    /// Sets [`Self::uniquify`].
+    #[must_use]
+    pub const fn with_uniquify(mut self, uniquify: bool) -> Self {
+        self.uniquify = uniquify;
+        self
+    }
+
     /// Honor target enhanced groups as correlated configuration choices.
     /// Query stereo groups always enable this behavior. Plain SMARTS retains
     /// literal local-parity matching by default for backward compatibility.
-    pub use_enhanced_stereo: bool,
+    pub const fn use_enhanced_stereo(&self) -> bool {
+        self.use_enhanced_stereo
+    }
+
+    /// Sets [`Self::use_enhanced_stereo`].
+    #[must_use]
+    pub const fn with_use_enhanced_stereo(mut self, use_enhanced_stereo: bool) -> Self {
+        self.use_enhanced_stereo = use_enhanced_stereo;
+        self
+    }
 }
 
 impl SubstructureMatchOptions {
@@ -161,27 +274,4 @@ impl std::error::Error for SubstructureMatchError {}
 pub enum MatchCompletion {
     Complete,
     Stopped,
-}
-
-fn validate_options(options: SubstructureMatchOptions) -> Result<(), SubstructureMatchError> {
-    for (name, value) in [
-        (Resource::Matches, options.max_matches),
-        (Resource::SearchStates, options.max_search_states),
-        (Resource::Atoms, options.max_query_atoms),
-        (Resource::CandidatePairs, options.max_candidate_pairs),
-    ] {
-        if value == 0 {
-            return Err(SubstructureMatchError::InvalidLimit {
-                resource: name,
-                limit: value,
-            });
-        }
-    }
-    if options.max_query_atoms > MAX_SUBSTRUCTURE_QUERY_ATOMS {
-        return Err(SubstructureMatchError::InvalidLimit {
-            resource: Resource::Atoms,
-            limit: options.max_query_atoms,
-        });
-    }
-    Ok(())
 }

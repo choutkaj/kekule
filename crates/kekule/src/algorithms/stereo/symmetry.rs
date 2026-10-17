@@ -36,10 +36,10 @@ impl AnalysisGraph {
                 .atom_ids()
                 .map(|id| usize::from(atom_hydrogen_count(mol, id)))
                 .sum::<usize>();
-        if size > options.max_atoms {
+        if size > options.max_atoms() {
             return Err(StereoSearchError::LimitExceeded(LimitExceeded::new(
                 Resource::Atoms,
-                options.max_atoms,
+                options.max_atoms(),
                 size,
             )));
         }
@@ -340,7 +340,7 @@ pub(super) fn filter(
             });
             if can_reverse
                 && Search::new(&graph, &sites, &active, focus, colors)
-                    .reverses(&mut work, options.max_search_states)?
+                    .reverses(&mut work, options.max_search_states())?
             {
                 removed.push(focus);
             }

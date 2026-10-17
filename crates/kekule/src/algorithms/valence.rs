@@ -4,10 +4,23 @@ use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValenceOptions {
+    strict: bool,
+}
+
+impl ValenceOptions {
     /// Reject valence and implicit-hydrogen states that RDKit's strict property
     /// cache calculation rejects. With `false`, excess valence implies zero
     /// additional hydrogens instead of an error.
-    pub strict: bool,
+    pub const fn strict(&self) -> bool {
+        self.strict
+    }
+
+    /// Sets [`Self::strict`].
+    #[must_use]
+    pub const fn with_strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
 }
 
 impl Default for ValenceOptions {

@@ -68,38 +68,23 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
 fn ring_input_and_work_limits_return_actionable_errors() {
     let options_and_error = [
         (
-            RingPerceptionOptions {
-                max_atoms: 2,
-                ..RingPerceptionOptions::default()
-            },
+            RingPerceptionOptions::default().with_max_atoms(2),
             (Resource::Atoms, 3, 2),
         ),
         (
-            RingPerceptionOptions {
-                max_bonds: 2,
-                ..RingPerceptionOptions::default()
-            },
+            RingPerceptionOptions::default().with_max_bonds(2),
             (Resource::Bonds, 3, 2),
         ),
         (
-            RingPerceptionOptions {
-                max_total_work: 5,
-                ..RingPerceptionOptions::default()
-            },
+            RingPerceptionOptions::default().with_max_total_work(5),
             (Resource::Work, 6, 5),
         ),
         (
-            RingPerceptionOptions {
-                max_path_expansions: 0,
-                ..RingPerceptionOptions::default()
-            },
+            RingPerceptionOptions::default().with_max_path_expansions(0),
             (Resource::PathExpansions, 1, 0),
         ),
         (
-            RingPerceptionOptions {
-                max_equivalent_shortest_paths: 0,
-                ..RingPerceptionOptions::default()
-            },
+            RingPerceptionOptions::default().with_max_equivalent_shortest_paths(0),
             (Resource::ShortestPaths, 1, 0),
         ),
     ];
@@ -138,10 +123,7 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
     }
     let error = rings_api::perceive_rings(
         mol.working_mut(),
-        RingPerceptionOptions {
-            max_candidates: 2,
-            ..RingPerceptionOptions::default()
-        },
+        RingPerceptionOptions::default().with_max_candidates(2),
     )
     .expect_err("symmetric cage should hit candidate limit");
     assert!(matches!(
@@ -242,10 +224,7 @@ fn cycle_size_limit_returns_structured_error() {
     );
     let error = rings_api::perceive_rings(
         &mut mol,
-        RingPerceptionOptions {
-            max_cycle_size: 5,
-            ..RingPerceptionOptions::default()
-        },
+        RingPerceptionOptions::default().with_max_cycle_size(5),
     )
     .expect_err("large cycle should hit cycle-size limit");
     assert!(matches!(
@@ -271,10 +250,7 @@ fn focused_ring_resource_errors_are_transactional() {
             .expect("triangle bond should be valid");
     }
     let original = molecule.clone();
-    let ring_options = RingPerceptionOptions {
-        max_path_expansions: 0,
-        ..RingPerceptionOptions::default()
-    };
+    let ring_options = RingPerceptionOptions::default().with_max_path_expansions(0);
     let error = rings_api::perceive_rings(molecule.working_mut(), ring_options)
         .expect_err("ring limit should fail focused perception");
     assert!(matches!(error, RingPerceptionError::LimitExceeded(_)));
@@ -287,13 +263,8 @@ fn focused_ring_resource_errors_are_transactional() {
     let error = aromaticity_api::perceive_aromaticity(
         &mut aromatic,
         AromaticityModel::RdkitLike,
-        AromaticityOptions {
-            ring_options: RingPerceptionOptions {
-                max_atoms: 0,
-                ..RingPerceptionOptions::default()
-            },
-            ..AromaticityOptions::default()
-        },
+        AromaticityOptions::default()
+            .with_ring_options(RingPerceptionOptions::default().with_max_atoms(0)),
     )
     .expect_err("aromaticity should propagate ring limit");
     assert!(matches!(error, AromaticityError::RingPerception(_)));
@@ -311,13 +282,8 @@ fn standalone_aromaticity_reuses_an_installed_ring_set() {
     aromaticity_api::perceive_aromaticity(
         &mut molecule,
         AromaticityModel::RdkitLike,
-        AromaticityOptions {
-            ring_options: RingPerceptionOptions {
-                max_atoms: 0,
-                ..RingPerceptionOptions::default()
-            },
-            ..AromaticityOptions::default()
-        },
+        AromaticityOptions::default()
+            .with_ring_options(RingPerceptionOptions::default().with_max_atoms(0)),
     )
     .expect("installed rings should bypass the impossible ring limit");
 

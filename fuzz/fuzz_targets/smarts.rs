@@ -8,14 +8,17 @@ fuzz_target!(|data: &[u8]| {
     };
     let result = smarts::parse_str(
         input,
-        SmartsParseOptions {
-            max_input_bytes: 4096,
-            max_atoms: 64,
-            max_bonds: 128,
-            max_recursive_depth: 8,
-            max_total_expression_nodes: 1024,
-            ..Default::default()
-        },
+        SmartsParseOptions::default()
+            .with_max_input_bytes(4096)
+            .expect("positive fuzz bounds")
+            .with_max_atoms(64)
+            .expect("positive fuzz bounds")
+            .with_max_bonds(128)
+            .expect("positive fuzz bounds")
+            .with_max_recursive_depth(8)
+            .expect("positive fuzz bounds")
+            .with_max_total_expression_nodes(1024)
+            .expect("positive fuzz bounds"),
     );
     if let Err(error) = result {
         let location = error.location().expect("SMARTS errors are located");

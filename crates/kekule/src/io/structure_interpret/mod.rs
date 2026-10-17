@@ -67,8 +67,8 @@ fn interpret_source(
     source: StructureSource,
     options: &StructureInterpretOptions,
 ) -> Result<StructureInterpretation, FormatError> {
-    let mut prepared = PreparedSource::new(source, &options.altloc_policy)?;
-    let model_id = match &options.model_selection {
+    let mut prepared = PreparedSource::new(source, options.altloc_policy())?;
+    let model_id = match &options.model_selection() {
         ModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
             prepared.model_sizes[0].0.clone()
         }

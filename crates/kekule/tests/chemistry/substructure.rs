@@ -23,12 +23,12 @@ fn connected_query_extensions_scale_with_local_adjacency() {
     let matches = PreparedTarget::new(&m)
         .all(
             &q,
-            SubstructureMatchOptions {
-                max_matches: 10_000,
-                max_search_states: 30_000,
-                uniquify: false,
-                ..Default::default()
-            },
+            SubstructureMatchOptions::default()
+                .with_max_matches(10_000)
+                .unwrap()
+                .with_max_search_states(30_000)
+                .unwrap()
+                .with_uniquify(false),
         )
         .unwrap();
     assert_eq!(matches.len(), 2 * (1500 - 2));
@@ -50,11 +50,10 @@ fn molecule(source: &str) -> Molecule {
     m
 }
 fn options() -> SubstructureMatchOptions {
-    SubstructureMatchOptions {
-        max_matches: 100_000,
-        uniquify: false,
-        ..Default::default()
-    }
+    SubstructureMatchOptions::default()
+        .with_max_matches(100_000)
+        .unwrap()
+        .with_uniquify(false)
 }
 fn count(source: &str, pattern: &str) -> usize {
     PreparedTarget::new(&molecule(source))
@@ -197,10 +196,7 @@ fn complete_enumeration_never_silently_truncates() {
         PreparedTarget::new(&m).all(&q, options()).unwrap().len(),
         34 * 33
     );
-    let capped = SubstructureMatchOptions {
-        max_matches: 1000,
-        ..options()
-    };
+    let capped = options().with_max_matches(1000).unwrap();
     // A match limit is a resource bound, never a silent truncation; callers
     // that want a prefix stop the visitor explicitly.
     let mut prefix = 0;
@@ -236,13 +232,7 @@ fn complete_enumeration_never_silently_truncates() {
     let small = molecule("CC");
     assert_eq!(
         PreparedTarget::new(&small)
-            .all(
-                &q,
-                SubstructureMatchOptions {
-                    max_matches: 2,
-                    ..options()
-                }
-            )
+            .all(&q, options().with_max_matches(2).unwrap())
             .unwrap()
             .len(),
         2
@@ -260,43 +250,30 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
         ))
     ));
     assert!(matches!(
-        PreparedTarget::new(&molecule("CCCC")).all(
-            &q,
-            SubstructureMatchOptions {
-                max_search_states: 1,
-                ..options()
-            }
-        ),
+        PreparedTarget::new(&molecule("CCCC"))
+            .all(&q, options().with_max_search_states(1).unwrap()),
         Err(SubstructureMatchError::LimitExceeded { .. })
     ));
     for (source, opts) in [
         (
             "[$(CC)]",
-            SmartsParseOptions {
-                max_atoms: 2,
-                ..Default::default()
-            },
+            SmartsParseOptions::default().with_max_atoms(2).unwrap(),
         ),
         (
             "[$(C-C)]-C",
-            SmartsParseOptions {
-                max_bonds: 1,
-                ..Default::default()
-            },
+            SmartsParseOptions::default().with_max_bonds(1).unwrap(),
         ),
         (
             "[$([$([C])])]",
-            SmartsParseOptions {
-                max_recursive_depth: 1,
-                ..Default::default()
-            },
+            SmartsParseOptions::default()
+                .with_max_recursive_depth(1)
+                .unwrap(),
         ),
         (
             "[$([C,N])]",
-            SmartsParseOptions {
-                max_total_expression_nodes: 2,
-                ..Default::default()
-            },
+            SmartsParseOptions::default()
+                .with_max_total_expression_nodes(2)
+                .unwrap(),
         ),
     ] {
         assert_eq!(
@@ -433,11 +410,11 @@ fn topology_reuses_connected_matches_and_shares_budgets() {
     }
     let topology = Arc::new(builder.build().unwrap());
     let query = smarts::parse_str("[#6:1]-[#6:2]", Default::default()).unwrap();
-    let small_budget = SubstructureMatchOptions {
-        max_candidate_pairs: 4,
-        max_search_states: 20,
-        ..options()
-    };
+    let small_budget = options()
+        .with_max_candidate_pairs(4)
+        .unwrap()
+        .with_max_search_states(20)
+        .unwrap();
     assert_eq!(
         PreparedTopologyTarget::new(&topology)
             .all(&query, small_budget)
@@ -446,15 +423,14 @@ fn topology_reuses_connected_matches_and_shares_budgets() {
         200
     );
     assert!(matches!(
-        PreparedTopologyTarget::new(&topology).all(
-            &query,
-            SubstructureMatchOptions {
-                max_matches: 199,
-                ..small_budget
-            }
-        ),
-        Err(SubstructureMatchError::LimitExceeded { limit, .. }) if limit.resource() == Resource::Matches
-    ));
+            PreparedTopologyTarget::new(&topology).all(
+                &query,
+                small_budget
+    .with_max_matches(199)
+    .unwrap()
+            ),
+            Err(SubstructureMatchError::LimitExceeded { limit, .. }) if limit.resource() == Resource::Matches
+        ));
 }
 
 #[test]
@@ -515,12 +491,13 @@ fn graph_complexity_exhaustion_remains_a_resource_error() {
     let input = "*".repeat(4097);
     let error = smarts::parse_str(
         &input,
-        SmartsParseOptions {
-            max_atoms: 5000,
-            max_bonds: 5000,
-            max_total_expression_nodes: 65536,
-            ..Default::default()
-        },
+        SmartsParseOptions::default()
+            .with_max_atoms(5000)
+            .unwrap()
+            .with_max_bonds(5000)
+            .unwrap()
+            .with_max_total_expression_nodes(65536)
+            .unwrap(),
     )
     .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Limit);

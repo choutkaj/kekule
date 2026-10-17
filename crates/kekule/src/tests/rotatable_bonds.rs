@@ -100,10 +100,7 @@ fn resonance_restriction_does_not_require_a_neutral_double_bond_partner() {
             );
             assert!(descriptors::rotatable_bonds(
                 &molecule,
-                RotatableBondOptions {
-                    include_resonance_restricted_bonds: true,
-                    ..RotatableBondOptions::STRICT
-                }
+                RotatableBondOptions::STRICT.with_include_resonance_restricted_bonds(true)
             )
             .unwrap()
             .contains(axis));
@@ -317,7 +314,7 @@ fn strict_detection_reports_valence_failures_even_with_permissive_cached_state()
     crate::algorithms::perceive_valence(
         &mut molecule,
         ValenceModel::RdkitLike,
-        crate::algorithms::ValenceOptions { strict: false },
+        crate::algorithms::ValenceOptions::default().with_strict(false),
     )
     .unwrap();
     crate::algorithms::perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
@@ -342,12 +339,11 @@ fn strict_detection_reports_valence_failures_even_with_permissive_cached_state()
 fn general_enables_every_optional_category() {
     assert_eq!(
         RotatableBondOptions::GENERAL,
-        RotatableBondOptions {
-            include_terminal_bonds: true,
-            include_resonance_restricted_bonds: true,
-            include_symmetric_bonds: true,
-            include_ring_bonds: true,
-        }
+        RotatableBondOptions::default()
+            .with_include_terminal_bonds(true)
+            .with_include_resonance_restricted_bonds(true)
+            .with_include_symmetric_bonds(true)
+            .with_include_ring_bonds(true)
     );
     assert_eq!(
         detected_with_options("CC", RotatableBondOptions::GENERAL),
@@ -368,40 +364,28 @@ fn each_option_independently_relaxes_strict_detection() {
     assert_eq!(
         detected_with_options(
             "CC",
-            RotatableBondOptions {
-                include_terminal_bonds: true,
-                ..RotatableBondOptions::STRICT
-            },
+            RotatableBondOptions::STRICT.with_include_terminal_bonds(true),
         ),
         vec![BondId::new(0)]
     );
     assert_eq!(
         detected_with_options(
             "CC(=O)NC",
-            RotatableBondOptions {
-                include_resonance_restricted_bonds: true,
-                ..RotatableBondOptions::STRICT
-            },
+            RotatableBondOptions::STRICT.with_include_resonance_restricted_bonds(true),
         ),
         vec![BondId::new(2)]
     );
     assert_eq!(
         detected_with_options(
             "FC(F)(F)CC",
-            RotatableBondOptions {
-                include_symmetric_bonds: true,
-                ..RotatableBondOptions::STRICT
-            },
+            RotatableBondOptions::STRICT.with_include_symmetric_bonds(true),
         ),
         vec![BondId::new(3)]
     );
     assert_eq!(
         detected_with_options(
             "C1CCCCC1",
-            RotatableBondOptions {
-                include_ring_bonds: true,
-                ..RotatableBondOptions::STRICT
-            },
+            RotatableBondOptions::STRICT.with_include_ring_bonds(true),
         ),
         (0..6).map(BondId::new).collect::<Vec<_>>()
     );
@@ -415,10 +399,7 @@ fn resonance_filter_also_applies_when_ring_bonds_are_enabled() {
         .expect("valid atom IDs");
     let rings_without_restricted = descriptors::rotatable_bonds(
         &molecule,
-        RotatableBondOptions {
-            include_ring_bonds: true,
-            ..RotatableBondOptions::STRICT
-        },
+        RotatableBondOptions::STRICT.with_include_ring_bonds(true),
     )
     .unwrap();
 

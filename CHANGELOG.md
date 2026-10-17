@@ -105,6 +105,34 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Options structs have private fields, `Default`, getters and
+  `#[must_use]` chainable `with_*` setters (ARCHITECTURE.md, "Options,
+  results, and enums"); struct literals such as
+  `SubstructureMatchOptions { max_matches: 5, ..Default::default() }` become
+  `SubstructureMatchOptions::default().with_max_matches(5)?`. Presets stay:
+  `RotatableBondOptions::{STRICT, GENERAL}`, `SmilesWriteOptions::{ordinary,
+  isomeric, canonical}`, `RingPerceptionOptions::{membership_only, for_graph,
+  for_molecule}` and `AromaticityOptions::{for_graph, for_molecule}`. This
+  covers every `kekule` options and limits struct, `MinimizeOptions` in
+  `kekule-potentials` and `TrajectoryIoLimits` in `kekule-traj`.
+  - Setters that can receive an invalid value return `Result` with the error
+    the operation used to report, so an invalid options value cannot be
+    built: `StereoSearchOptions::{with_max_atoms, with_max_search_states}`
+    (`StereoSearchError::InvalidLimit`), `SubstructureMatchOptions::{with_max_matches,
+    with_max_search_states, with_max_query_atoms, with_max_candidate_pairs}`
+    (`SubstructureMatchError::InvalidLimit`),
+    `DsspOptions::with_min_polyproline_stretch`
+    (`DsspError::InvalidPolyprolineStretch`),
+    `MmcifWriteOptions::{with_block_name, with_coordinate_precision}`,
+    `SmilesParseOptions::{with_max_atoms, with_max_bonds}`, every
+    `SmartsParseOptions` bound, and
+    `StructureEnsembleInterpretOptions::with_model_ids` (all `FormatError`
+    with the former kind and detail), and
+    `MinimizeOptions::{with_gradient_tolerance, with_max_step, with_memory,
+    with_max_line_search_evaluations}` (`MinimizationError`).
+  - The `kekule-traj` options gain getters for every setting, and
+    `DcdWriteOptions::with_cells(bool)` becomes
+    `with_cell_policy(DcdCellPolicy::{Omit, Write})`.
 - **Breaking:** Identity lookups return `Option` (ARCHITECTURE.md, "Lookups,
   errors, and panics"); `None` means the ID names nothing in the owner.
   Searches by label or name keep `Result`.

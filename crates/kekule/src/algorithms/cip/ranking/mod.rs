@@ -1620,10 +1620,7 @@ fn auxiliary_descriptor_for_occurrence(
     let aux_context = LigandBuildContext {
         mol,
         descriptor_context,
-        options: CipAssignmentOptions {
-            max_depth: graph.nodes.len(),
-            ..options
-        },
+        options: options.with_max_depth(graph.nodes.len()),
         atomic_number_fractions,
         atropisomer_mode,
     };

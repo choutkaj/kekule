@@ -57,7 +57,11 @@ fn topology_export_has_one_extension_and_record_global_indices() {
         smiles::SmilesWriteMode::Canonical,
     ] {
         let topology = Topology::from_molecules([first.clone(), second.clone()].clone()).unwrap();
-        let text = smiles::write(&topology, smiles::SmilesWriteOptions { mode }).unwrap();
+        let text = smiles::write(
+            &topology,
+            smiles::SmilesWriteOptions::default().with_mode(mode),
+        )
+        .unwrap();
         assert_eq!(text.matches('|').count(), 2, "{text}");
         let restored = smiles::to_molecules(&text).unwrap();
         assert_eq!(restored.len(), 2);
@@ -109,10 +113,7 @@ fn matches(target: &str, query: &str) -> bool {
     !PreparedTarget::new(&molecule(target))
         .all(
             &query,
-            SubstructureMatchOptions {
-                use_enhanced_stereo: true,
-                ..Default::default()
-            },
+            SubstructureMatchOptions::default().with_use_enhanced_stereo(true),
         )
         .unwrap()
         .is_empty()
@@ -297,10 +298,7 @@ fn topology_matching_does_not_correlate_reused_definitions() {
     let matches = PreparedTopologyTarget::new(&topology)
         .all(
             &query,
-            SubstructureMatchOptions {
-                use_enhanced_stereo: true,
-                ..Default::default()
-            },
+            SubstructureMatchOptions::default().with_use_enhanced_stereo(true),
         )
         .unwrap();
     assert!(!matches.is_empty());

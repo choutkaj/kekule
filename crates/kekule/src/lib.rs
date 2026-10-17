@@ -238,7 +238,20 @@ pub mod smiles {
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     pub struct SmilesWriteOptions {
-        pub mode: SmilesWriteMode,
+        mode: SmilesWriteMode,
+    }
+
+    impl SmilesWriteOptions {
+        pub const fn mode(&self) -> SmilesWriteMode {
+            self.mode
+        }
+
+        /// Sets [`Self::mode`].
+        #[must_use]
+        pub const fn with_mode(mut self, mode: SmilesWriteMode) -> Self {
+            self.mode = mode;
+            self
+        }
     }
 
     impl SmilesWriteOptions {

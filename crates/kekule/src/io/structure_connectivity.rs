@@ -159,8 +159,8 @@ impl ConnectivityCatalog {
     /// A catalog of templates alone, for sources without block-level evidence.
     pub(crate) fn new(options: &raw::ConnectivityOptions) -> Self {
         Self {
-            components: options.components.clone(),
-            infer_bonds_from_distance: options.infer_bonds_from_distance,
+            components: options.components().cloned(),
+            infer_bonds_from_distance: options.infer_bonds_from_distance(),
             ..Self::default()
         }
     }
@@ -2156,13 +2156,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             }]
         );
 
-        let strict = StructureInterpretOptions {
-            connectivity: ConnectivityOptions {
-                infer_bonds_from_distance: false,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let strict = StructureInterpretOptions::default().with_connectivity(
+            ConnectivityOptions::default().with_infer_bonds_from_distance(false),
+        );
         let error = crate::mmcif::parse_str(&text, Default::default())
             .unwrap()
             .interpret(strict.clone())
@@ -2182,13 +2178,12 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .unwrap(),
         )
         .unwrap();
-        let with_library = StructureInterpretOptions {
-            connectivity: ConnectivityOptions {
-                components: Some(std::sync::Arc::new(library)),
-                ..strict.connectivity
-            },
-            ..strict
-        };
+        let with_library = strict.clone().with_connectivity(
+            strict
+                .connectivity()
+                .clone()
+                .with_components(Some(std::sync::Arc::new(library))),
+        );
         let templated = crate::mmcif::parse_str(&text, Default::default())
             .unwrap()
             .interpret(with_library)

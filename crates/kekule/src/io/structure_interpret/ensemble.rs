@@ -17,15 +17,12 @@ pub(super) fn interpret_ensemble(
     options: StructureEnsembleInterpretOptions,
     source: impl FnOnce(&StructureEnsembleInterpretOptions) -> Result<StructureSource, FormatError>,
 ) -> Result<StructureEnsembleInterpretation, FormatError> {
-    if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
-        return Err(empty_model_selection());
-    }
     if available.is_empty() {
         return Err(no_coordinate_models());
     }
     let selected = options
-        .model_ids
-        .clone()
+        .model_ids()
+        .map(<[String]>::to_vec)
         .unwrap_or_else(|| available.clone());
     let mut seen = BTreeSet::new();
     for model in &selected {
@@ -50,7 +47,7 @@ pub(super) fn interpret_ensemble(
     }
 
     let mut prepared = source(&options)
-        .and_then(|source| PreparedSource::new(source, &options.altloc_policy))
+        .and_then(|source| PreparedSource::new(source, options.altloc_policy()))
         .map_err(|error| in_model(error, selected[0].clone()))?;
     let mut selected = selected.into_iter();
     let first_id = selected.next().expect("validated nonempty model selection");

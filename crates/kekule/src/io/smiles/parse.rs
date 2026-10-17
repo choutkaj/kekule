@@ -203,12 +203,67 @@ pub enum SmilesDocumentTokenKind {
 /// Resource limits for parsing one SMILES record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SmilesParseOptions {
+    max_input_bytes: usize,
+    max_atoms: usize,
+    max_bonds: usize,
+}
+
+impl SmilesParseOptions {
     /// Maximum UTF-8 byte length of the complete SMILES record.
-    pub max_input_bytes: usize,
+    pub const fn max_input_bytes(&self) -> usize {
+        self.max_input_bytes
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub const fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Self {
+        self.max_input_bytes = max_input_bytes;
+        self
+    }
+
     /// Maximum parsed atom count.
-    pub max_atoms: usize,
+    pub const fn max_atoms(&self) -> usize {
+        self.max_atoms
+    }
+
+    /// Sets [`Self::max_atoms`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound exceeds the identifier range (`u32::MAX`).
+    pub fn with_max_atoms(mut self, max_atoms: usize) -> Result<Self, FormatError> {
+        if max_atoms > u32::MAX as usize {
+            return Err(parse_error(
+                DiagnosticKind::Limit,
+                0,
+                "configured atom and bond limits must fit the public identifier range",
+            ));
+        }
+        self.max_atoms = max_atoms;
+        Ok(self)
+    }
+
     /// Maximum parsed bond count.
-    pub max_bonds: usize,
+    pub const fn max_bonds(&self) -> usize {
+        self.max_bonds
+    }
+
+    /// Sets [`Self::max_bonds`].
+    ///
+    /// # Errors
+    ///
+    /// [`DiagnosticKind::Limit`] when the bound exceeds the identifier range (`u32::MAX`).
+    pub fn with_max_bonds(mut self, max_bonds: usize) -> Result<Self, FormatError> {
+        if max_bonds > u32::MAX as usize {
+            return Err(parse_error(
+                DiagnosticKind::Limit,
+                0,
+                "configured atom and bond limits must fit the public identifier range",
+            ));
+        }
+        self.max_bonds = max_bonds;
+        Ok(self)
+    }
 }
 
 impl SmilesParseOptions {
@@ -270,13 +325,6 @@ fn parse_smiles_record_text(
     line: usize,
     options: SmilesParseOptions,
 ) -> std::result::Result<SmilesDocument, FormatError> {
-    if options.max_atoms > u32::MAX as usize || options.max_bonds > u32::MAX as usize {
-        return Err(parse_error(
-            DiagnosticKind::Limit,
-            0,
-            "configured atom and bond limits must fit the public identifier range",
-        ));
-    }
     if input.len() > options.max_input_bytes {
         return Err(parse_error(
             DiagnosticKind::Limit,

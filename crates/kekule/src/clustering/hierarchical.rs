@@ -315,16 +315,22 @@ impl Ensemble {
         };
         let sets = atoms.pair_sets(*first, *first)?;
         check_fit_count(atoms.len())?;
-        let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+        let weights = NormalizedWeights::new(options.weighting(), atoms.len())?;
         let mut values = Vec::with_capacity(expected);
         for (index, moving) in views.iter().enumerate() {
             for (offset, reference) in views[index + 1..].iter().enumerate() {
-                let fit = best_kabsch(*moving, *reference, &sets, weights, options.periodic_policy)
-                    .map_err(|source| ClusteringError::PairFit {
-                        first: index,
-                        second: index + 1 + offset,
-                        source: Box::new(source),
-                    })?;
+                let fit = best_kabsch(
+                    *moving,
+                    *reference,
+                    &sets,
+                    weights,
+                    options.periodic_policy(),
+                )
+                .map_err(|source| ClusteringError::PairFit {
+                    first: index,
+                    second: index + 1 + offset,
+                    source: Box::new(source),
+                })?;
                 values.push(fit.rmsd().into_value());
             }
         }

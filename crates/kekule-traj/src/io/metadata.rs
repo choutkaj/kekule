@@ -386,33 +386,64 @@ impl Default for TrajectoryOpenOptions {
 }
 
 impl TrajectoryOpenOptions {
+    #[must_use]
     pub fn with_format_hint(mut self, format_hint: TrajectoryFormatHint) -> Self {
         self.format_hint = format_hint;
         self
     }
 
+    #[must_use]
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
     }
 
+    #[must_use]
     pub fn with_xyz_options(mut self, options: xyz::XyzReadOptions) -> Self {
         self.xyz = options;
         self
     }
 
+    #[must_use]
     pub fn with_dcd_options(mut self, options: dcd::DcdReadOptions) -> Self {
         self.dcd = options;
         self
     }
 
+    #[must_use]
     pub fn with_trr_options(mut self, options: trr::TrrReadOptions) -> Self {
         self.trr = options;
         self
     }
 
+    #[must_use]
     pub fn with_xtc_options(mut self, options: xtc::XtcReadOptions) -> Self {
         self.xtc = options;
         self
+    }
+
+    pub const fn format_hint(&self) -> TrajectoryFormatHint {
+        self.format_hint
+    }
+
+    /// Limits for path readers, which override those of the format options.
+    pub const fn limits(&self) -> &TrajectoryIoLimits {
+        &self.limits
+    }
+
+    pub const fn xyz_options(&self) -> &xyz::XyzReadOptions {
+        &self.xyz
+    }
+
+    pub const fn dcd_options(&self) -> &dcd::DcdReadOptions {
+        &self.dcd
+    }
+
+    pub const fn trr_options(&self) -> &trr::TrrReadOptions {
+        &self.trr
+    }
+
+    pub const fn xtc_options(&self) -> &xtc::XtcReadOptions {
+        &self.xtc
     }
 }

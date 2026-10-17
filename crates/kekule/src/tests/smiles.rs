@@ -185,32 +185,21 @@ fn aromatic_bond_count(molecule: &Molecule) -> usize {
 
 #[test]
 fn smiles_parse_options_bound_input_atoms_and_bonds() {
-    let input_error = smiles_api::parse_str(
-        "CC",
-        SmilesParseOptions {
-            max_input_bytes: 1,
-            ..SmilesParseOptions::default()
-        },
-    )
-    .expect_err("SMILES input byte limit should apply");
+    let input_error =
+        smiles_api::parse_str("CC", SmilesParseOptions::default().with_max_input_bytes(1))
+            .expect_err("SMILES input byte limit should apply");
     assert!(input_error.message().contains("input"));
 
     let atom_error = smiles_api::parse_str(
         "CC",
-        SmilesParseOptions {
-            max_atoms: 1,
-            ..SmilesParseOptions::default()
-        },
+        SmilesParseOptions::default().with_max_atoms(1).unwrap(),
     )
     .expect_err("SMILES atom limit should apply");
     assert!(atom_error.message().contains("atom count"));
 
     let bond_error = smiles_api::parse_str(
         "CC",
-        SmilesParseOptions {
-            max_bonds: 0,
-            ..SmilesParseOptions::default()
-        },
+        SmilesParseOptions::default().with_max_bonds(0).unwrap(),
     )
     .expect_err("SMILES bond limit should apply");
     assert!(bond_error.message().contains("bond count"));
@@ -667,9 +656,7 @@ fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
     assert_eq!(error.location(), Some(SourceLocation::at_column(1, 19)));
     assert_eq!(error.message(), "unsupported CXSMILES field `c:1`");
 
-    let report = SmilesInterpretOptions {
-        unsupported: UnsupportedContent::Report,
-    };
+    let report = SmilesInterpretOptions::default().with_unsupported(UnsupportedContent::Report);
     let interpretation = document.interpret(report).unwrap();
     let omitted = interpretation
         .omitted_cx_fields()
@@ -728,10 +715,7 @@ fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
         )
     );
 
-    let options = SmilesParseOptions {
-        max_input_bytes: 8,
-        ..SmilesParseOptions::default()
-    };
+    let options = SmilesParseOptions::default().with_max_input_bytes(8);
     let limited = smiles_api::records(b"CCO\nCCCCCCCCCCCC\nO\n".as_slice(), options)
         .map(|record| record.map(|document| document.base_smiles().to_owned()))
         .map(|record| record.map_err(|error| (error.kind(), error.location())))
@@ -769,34 +753,17 @@ fn smiles_record_rejects_malformed_framing_and_multiple_records() {
 #[test]
 fn smiles_record_limits_cover_metadata_and_syntax_errors_point_into_base() {
     let source = "\tCC |unknown:999| molecule";
-    let options = SmilesParseOptions {
-        max_input_bytes: source.len(),
-        max_atoms: 2,
-        max_bonds: 1,
-    };
+    let options = SmilesParseOptions::default()
+        .with_max_input_bytes(source.len())
+        .with_max_atoms(2)
+        .unwrap()
+        .with_max_bonds(1)
+        .unwrap();
     assert!(smiles_api::parse_str(source, options).is_ok());
     for (options, message) in [
-        (
-            SmilesParseOptions {
-                max_input_bytes: source.len() - 1,
-                ..options
-            },
-            "byte limit",
-        ),
-        (
-            SmilesParseOptions {
-                max_atoms: 1,
-                ..options
-            },
-            "atom count",
-        ),
-        (
-            SmilesParseOptions {
-                max_bonds: 0,
-                ..options
-            },
-            "bond count",
-        ),
+        (options.with_max_input_bytes(source.len() - 1), "byte limit"),
+        (options.with_max_atoms(1).unwrap(), "atom count"),
+        (options.with_max_bonds(0).unwrap(), "bond count"),
     ] {
         assert!(smiles_api::parse_str(source, options)
             .unwrap_err()

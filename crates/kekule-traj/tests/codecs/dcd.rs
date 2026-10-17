@@ -6,7 +6,7 @@ use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
 use kekule_traj::io::dcd::{
-    DcdEndian, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
+    DcdCellPolicy, DcdEndian, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
     IndexedDcdReader,
 };
 use kekule_traj::io::TrajectoryIoLimits;
@@ -65,7 +65,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
             Arc::clone(&topology),
             DcdWriteOptions::default()
                 .with_endian(endian)
-                .with_cells(true),
+                .with_cell_policy(DcdCellPolicy::Write),
             "acute.dcd",
         )
         .unwrap();
@@ -184,20 +184,16 @@ fn dcd_scratch_limit_includes_records_fixed_atoms_and_indexed_reuse() {
             DcdReader::new(
                 Cursor::new(bytes.clone()),
                 Arc::clone(&topology),
-                DcdReadOptions::default().with_limits(TrajectoryIoLimits {
-                    max_scratch_bytes: limit,
-                    ..TrajectoryIoLimits::default()
-                }),
+                DcdReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit)),
             )
         };
         let open_indexed = |limit| {
             IndexedDcdReader::new(
                 Cursor::new(bytes.clone()),
                 Arc::clone(&topology),
-                DcdReadOptions::default().with_limits(TrajectoryIoLimits {
-                    max_scratch_bytes: limit,
-                    ..TrajectoryIoLimits::default()
-                }),
+                DcdReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit)),
             )
         };
         assert_eq!(
@@ -242,10 +238,8 @@ fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
     let mut reader = DcdReader::new(
         stream,
         Arc::clone(&topology),
-        DcdReadOptions::default().with_limits(TrajectoryIoLimits {
-            max_scratch_bytes: required - 1,
-            ..TrajectoryIoLimits::default()
-        }),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(required - 1)),
     )
     .unwrap();
     let mut destination = reader.frame_buffer();
@@ -263,10 +257,8 @@ fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
     let mut reader = IndexedDcdReader::new(
         Cursor::new(bytes),
         topology,
-        DcdReadOptions::default().with_limits(TrajectoryIoLimits {
-            max_scratch_bytes: required,
-            ..TrajectoryIoLimits::default()
-        }),
+        DcdReadOptions::default()
+            .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(required)),
     )
     .unwrap();
     reader.read_frame(0, &mut destination).unwrap();
@@ -307,7 +299,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        DcdWriteOptions::default().with_cells(true),
+        DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write),
         "oriented.dcd",
     )
     .unwrap();
@@ -410,7 +402,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         let topology = topology();
         let options = DcdWriteOptions::default()
             .with_endian(endian)
-            .with_cells(true)
+            .with_cell_policy(DcdCellPolicy::Write)
             .with_step_sequence(10, 2)
             .with_header_delta(0.5, DcdTimePolicy::HeaderDelta { unit: PICOSECOND });
         let mut writer = DcdWriter::new(
@@ -561,12 +553,10 @@ fn indexed_dcd_addresses_frames_from_the_stream_position_it_was_opened_at() {
 fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
     let topology = topology();
     let bytes = fixed_atom_fixture(DcdEndian::Little);
-    let limits = TrajectoryIoLimits {
-        max_frames: 2,
-        max_index_entries: 2,
-        max_index_bytes: 2 * std::mem::size_of::<u64>(),
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default()
+        .with_max_frames(2)
+        .with_max_index_entries(2)
+        .with_max_index_bytes(2 * std::mem::size_of::<u64>());
     let mut reader = DcdReader::new(
         Cursor::new(bytes.clone()),
         Arc::clone(&topology),
@@ -699,10 +689,7 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
 
-    let sequential_limits = TrajectoryIoLimits {
-        max_frames: 1,
-        ..TrajectoryIoLimits::default()
-    };
+    let sequential_limits = TrajectoryIoLimits::default().with_max_frames(1);
     let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
     let mut reader = DcdReader::new(
         stream,
@@ -722,18 +709,9 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     assert_eq!(control.probed_bytes(), 1);
 
     for limits in [
-        TrajectoryIoLimits {
-            max_frames: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_entries: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_bytes: std::mem::size_of::<u64>(),
-            ..TrajectoryIoLimits::default()
-        },
+        TrajectoryIoLimits::default().with_max_frames(1),
+        TrajectoryIoLimits::default().with_max_index_entries(1),
+        TrajectoryIoLimits::default().with_max_index_bytes(std::mem::size_of::<u64>()),
     ] {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
         let error = IndexedDcdReader::new(
@@ -846,10 +824,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
         Some(TrajectoryIoErrorKind::TruncatedRecord)
     );
 
-    let limits = TrajectoryIoLimits {
-        max_frame_bytes: 8,
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default().with_max_frame_bytes(8);
     let mut reader = DcdReader::new(
         Cursor::new(valid),
         Arc::clone(&topology),
@@ -869,7 +844,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
 fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
     let topology = topology();
     let options = DcdWriteOptions::default()
-        .with_cells(true)
+        .with_cell_policy(DcdCellPolicy::Write)
         .with_step_sequence(0, 1);
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),

@@ -12,10 +12,7 @@ fn crambin_model() -> kekule::structure::Model {
     let document = mmcif::parse_str(CRAMBIN_MMCIF, Default::default())
         .expect("checked-in RCSB 1CRN fixture parses");
     document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .expect("checked-in RCSB 1CRN fixture interprets")
         .into_model()
 }
@@ -87,22 +84,12 @@ fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_model() {
 #[test]
 fn dssp_rejects_invalid_options_and_residue_limits() {
     let model = crambin_model();
-    let options = DsspOptions {
-        min_polyproline_stretch: 4,
-        ..DsspOptions::default()
-    };
     assert_eq!(
-        dssp::assign(&model, options),
+        DsspOptions::default().with_min_polyproline_stretch(4),
         Err(DsspError::InvalidPolyprolineStretch { value: 4 })
     );
 
-    let options = DsspOptions {
-        limits: DsspLimits {
-            max_residues: 2,
-            ..DsspLimits::default()
-        },
-        ..DsspOptions::default()
-    };
+    let options = DsspOptions::default().with_limits(DsspLimits::default().with_max_residues(2));
     assert_eq!(
         dssp::assign(&model, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
@@ -111,13 +98,8 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         )))
     );
 
-    let options = DsspOptions {
-        limits: DsspLimits {
-            max_candidate_pairs: 0,
-            ..DsspLimits::default()
-        },
-        ..DsspOptions::default()
-    };
+    let options =
+        DsspOptions::default().with_limits(DsspLimits::default().with_max_candidate_pairs(0));
     assert_eq!(
         dssp::assign(&model, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
@@ -126,13 +108,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         )))
     );
 
-    let options = DsspOptions {
-        limits: DsspLimits {
-            max_ladders: 0,
-            ..DsspLimits::default()
-        },
-        ..DsspOptions::default()
-    };
+    let options = DsspOptions::default().with_limits(DsspLimits::default().with_max_ladders(0));
     assert_eq!(
         dssp::assign(&model, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
@@ -181,10 +157,7 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
     let source = CRAMBIN_MMCIF.replace("_atom_site.label_seq_id", "_atom_site.audit_sequence");
     let document = mmcif::parse_str(&source, Default::default()).unwrap();
     let model = document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap()
         .into_model();
     assert!(model

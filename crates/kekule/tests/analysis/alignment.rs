@@ -131,10 +131,7 @@ fn direct_rmsd_does_not_fit_and_explicit_weights_follow_pair_order() {
         .rmsd(
             0,
             &all,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&[3.0, 1.0]),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&[3.0, 1.0])),
         )
         .unwrap();
     assert_close(weighted.value()[1], 3.0_f64.sqrt(), 1.0e-14);
@@ -142,10 +139,7 @@ fn direct_rmsd_does_not_fit_and_explicit_weights_follow_pair_order() {
         .rmsd(
             0,
             &all,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&[30.0, 10.0]),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&[30.0, 10.0])),
         )
         .unwrap();
     assert_eq!(scaled, weighted);
@@ -372,10 +366,7 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
         trajectory.rmsd(
             0,
             &all,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(weights),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(weights)),
         )
     };
     assert_eq!(
@@ -397,10 +388,7 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
         trajectory.rmsd(
             0,
             &all,
-            AlignmentOptions {
-                periodic_policy: PeriodicPolicy::RejectPeriodic,
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic),
         ),
         Err(AlignmentError::Item {
             index: 0,
@@ -466,10 +454,7 @@ fn split_and_fused_workflows_keep_collection_and_item_properties() {
     let owner_properties = trajectory.properties().clone();
     let item_properties = trajectory.get(1).unwrap().properties().clone();
     let all = AtomSelection::all(&topology);
-    let reject = AlignmentOptions {
-        periodic_policy: PeriodicPolicy::RejectPeriodic,
-        ..AlignmentOptions::default()
-    };
+    let reject = AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic);
 
     assert!(trajectory.rmsd(0, &all, reject).unwrap().value()[1] > 0.4);
     let fused = trajectory
@@ -477,10 +462,7 @@ fn split_and_fused_workflows_keep_collection_and_item_properties() {
             0,
             &all,
             &all,
-            AlignedRmsdOptions {
-                fit: reject,
-                ..AlignedRmsdOptions::default()
-            },
+            AlignedRmsdOptions::default().with_fit(reject),
         )
         .unwrap();
     assert!(fused.value()[1] < 1.0e-12);
@@ -519,10 +501,7 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
         .superpose(
             0,
             &all,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&[1.0, 2.0, 3.0]),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&[1.0, 2.0, 3.0])),
         )
         .unwrap();
     assert!(weighted.rmsd(0, &all, Default::default()).unwrap().value()[1] < 1.0e-12);
@@ -532,10 +511,7 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
         .superpose(
             0,
             &all,
-            AlignmentOptions {
-                periodic_policy: PeriodicPolicy::RejectPeriodic,
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic),
         )
         .is_err());
     assert_eq!(payloads(&rejected), payloads(&original));
@@ -729,10 +705,7 @@ fn correspondence_superposition_keeps_identity_and_transforms_every_vector_field
         .superpose(
             &reference,
             &fit,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&weights),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&weights)),
         )
         .unwrap();
     assert_eq!(report.reference_index(), None);
@@ -806,10 +779,8 @@ fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order
             &reference,
             &fit,
             &measured,
-            AlignedRmsdOptions {
-                measurement_weighting: Weighting::Explicit(&[3.0, 1.0]),
-                ..AlignedRmsdOptions::default()
-            },
+            AlignedRmsdOptions::default()
+                .with_measurement_weighting(Weighting::Explicit(&[3.0, 1.0])),
         )
         .unwrap();
     assert!((weighted.value()[1] - 0.75_f64.sqrt()).abs() < 1.0e-12);
@@ -818,10 +789,7 @@ fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order
         reference.as_model_view(),
         &fit,
         &measured,
-        AlignedRmsdOptions {
-            measurement_weighting: Weighting::Explicit(&[3.0, 1.0]),
-            ..AlignedRmsdOptions::default()
-        },
+        AlignedRmsdOptions::default().with_measurement_weighting(Weighting::Explicit(&[3.0, 1.0])),
     )
     .unwrap();
     assert_eq!(single.into_value(), weighted.value()[1]);
@@ -899,35 +867,27 @@ fn correspondence_measurement_validates_weights_empty_pairs_and_periodic_policy(
         trajectory.rmsd(
             &reference,
             &measurement,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(&[]),
-                ..AlignmentOptions::default()
-            },
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(&[])),
         ),
         Err(AlignmentError::WeightCountMismatch { .. })
     ));
-    let reject = AlignmentOptions {
-        periodic_policy: PeriodicPolicy::RejectPeriodic,
-        ..AlignmentOptions::default()
-    };
+    let reject = AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic);
     assert!(matches!(
         trajectory.rmsd(&reference, &measurement, reject),
         Err(AlignmentError::Item { index: 0, source })
             if matches!(*source, AlignmentError::PeriodicCoordinates { moving: true, reference: false })
     ));
     assert!(matches!(
-        trajectory.aligned_rmsd(
-            &reference,
-            &fit,
-            &measurement,
-            AlignedRmsdOptions {
-                fit: reject,
-                ..AlignedRmsdOptions::default()
-            },
-        ),
-        Err(AlignmentError::Item { index: 0, source })
-            if matches!(*source, AlignmentError::PeriodicCoordinates { .. })
-    ));
+            trajectory.aligned_rmsd(
+                &reference,
+                &fit,
+                &measurement,
+                AlignedRmsdOptions::default()
+    .with_fit(reject),
+            ),
+            Err(AlignmentError::Item { index: 0, source })
+                if matches!(*source, AlignmentError::PeriodicCoordinates { .. })
+        ));
 }
 
 /// Acetate (C0, C1, O2, O3) with its oxygens mirrored across the xz plane

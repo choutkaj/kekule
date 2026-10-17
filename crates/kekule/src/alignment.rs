@@ -262,10 +262,10 @@ pub fn aligned_rmsd<'a>(
     let measurement_sets = measurement.pair_sets(moving, reference)?;
     check_fit_count(fit.len())?;
     check_measurement_count(measurement.len())?;
-    let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.len())?;
+    let fit_weights = NormalizedWeights::new(options.fit().weighting, fit.len())?;
     let measurement_weights =
-        NormalizedWeights::new(options.measurement_weighting, measurement.len())?;
-    let policy = options.fit.periodic_policy;
+        NormalizedWeights::new(options.measurement_weighting(), measurement.len())?;
+    let policy = options.fit().periodic_policy;
     let alignment = best_kabsch(moving, reference, &fit_sets, fit_weights, policy)?;
     let value = best_measure(
         moving,
@@ -452,10 +452,34 @@ pub(crate) fn kabsch_pairs(
 /// Options shared by fitting and RMSD measurement.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlignmentOptions<'a> {
+    weighting: Weighting<'a>,
+    periodic_policy: PeriodicPolicy,
+}
+
+impl<'a> AlignmentOptions<'a> {
     /// Per-pair weighting.
-    pub weighting: Weighting<'a>,
+    pub const fn weighting(&self) -> Weighting<'a> {
+        self.weighting
+    }
+
+    /// Sets [`Self::weighting`].
+    #[must_use]
+    pub const fn with_weighting(mut self, weighting: Weighting<'a>) -> Self {
+        self.weighting = weighting;
+        self
+    }
+
     /// Handling of views carrying periodic cells.
-    pub periodic_policy: PeriodicPolicy,
+    pub const fn periodic_policy(&self) -> PeriodicPolicy {
+        self.periodic_policy
+    }
+
+    /// Sets [`Self::periodic_policy`].
+    #[must_use]
+    pub const fn with_periodic_policy(mut self, periodic_policy: PeriodicPolicy) -> Self {
+        self.periodic_policy = periodic_policy;
+        self
+    }
 }
 
 /// Per-pair weighting for fitting and RMSD.

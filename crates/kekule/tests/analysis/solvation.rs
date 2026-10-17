@@ -26,10 +26,7 @@ fn boxed(smiles: &str) -> Model {
     m
 }
 fn options() -> SolventOptions {
-    SolventOptions {
-        neutralize: false,
-        ..Default::default()
-    }
+    SolventOptions::default().with_neutralize(false)
 }
 fn points(m: &Model) -> Vec<Point3> {
     m.positions().values().value().to_vec()
@@ -220,10 +217,7 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
         let nw = solvation::solvate(&mut water_only, &options())
             .unwrap()
             .waters_added;
-        let opts = SolventOptions {
-            ionic_strength: Quantity::new(0.2, MOLAR),
-            ..Default::default()
-        };
+        let opts = SolventOptions::default().with_ionic_strength(Quantity::new(0.2, MOLAR));
         let mut a = initial.clone();
         let mut b = initial.clone();
         let report = solvation::solvate(&mut a, &opts).unwrap();
@@ -264,7 +258,7 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
             }
         }
         let mut changed = initial;
-        solvation::solvate(&mut changed, &SolventOptions { seed: 42, ..opts }).unwrap();
+        solvation::solvate(&mut changed, &opts.with_seed(42)).unwrap();
         assert_ne!(changed.positions(), a.positions());
     }
 }
@@ -281,10 +275,7 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
     assert!(matches!(
         solvation::solvate(
             &mut m,
-            &SolventOptions {
-                solute_radii: Some(wrong),
-                ..Default::default()
-            }
+            &SolventOptions::default().with_solute_radii(Some(wrong))
         ),
         Err(SolvationError::RadiusTopologyMismatch)
     ));
@@ -305,14 +296,12 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
         let mut m = before.clone();
         let report = solvation::solvate(
             &mut m,
-            &SolventOptions {
-                solute_radii: Some(radii.clone()),
-                net_charge: Some(-2),
-                positive_ion: pos,
-                negative_ion: neg,
-                ionic_strength: Quantity::new(0.1, MOLAR),
-                ..Default::default()
-            },
+            &SolventOptions::default()
+                .with_solute_radii(Some(radii.clone()))
+                .with_net_charge(Some(-2))
+                .with_positive_ion(pos)
+                .with_negative_ion(neg)
+                .with_ionic_strength(Quantity::new(0.1, MOLAR)),
         )
         .unwrap();
         assert_eq!(report.positive_ions_added, report.negative_ions_added + 2);
@@ -341,39 +330,16 @@ fn errors_leave_every_part_of_model_unchanged() {
     let mut m = boxed("C");
     let before = m.clone();
     let bad = [
-        SolventOptions {
-            ionic_strength: Quantity::new(-1.0, MOLAR),
-            ..options()
-        },
-        SolventOptions {
-            ionic_strength: Quantity::new(f64::NAN, MOLAR),
-            ..options()
-        },
-        SolventOptions {
-            ionic_strength: Quantity::new(0.1, NANOMETER),
-            ..options()
-        },
-        SolventOptions {
-            ion_separation: Quantity::new(0.0, NANOMETER),
-            ..options()
-        },
-        SolventOptions {
-            max_candidates: 1,
-            ..options()
-        },
-        SolventOptions {
-            net_charge: Some(i64::MAX),
-            ..Default::default()
-        },
-        SolventOptions {
-            net_charge: Some(1),
-            ion_separation: Quantity::new(100.0, NANOMETER),
-            ..Default::default()
-        },
-        SolventOptions {
-            ionic_strength: Quantity::new(1000.0, MOLAR),
-            ..options()
-        },
+        options().with_ionic_strength(Quantity::new(-1.0, MOLAR)),
+        options().with_ionic_strength(Quantity::new(f64::NAN, MOLAR)),
+        options().with_ionic_strength(Quantity::new(0.1, NANOMETER)),
+        options().with_ion_separation(Quantity::new(0.0, NANOMETER)),
+        options().with_max_candidates(1),
+        SolventOptions::default().with_net_charge(Some(i64::MAX)),
+        SolventOptions::default()
+            .with_net_charge(Some(1))
+            .with_ion_separation(Quantity::new(100.0, NANOMETER)),
+        options().with_ionic_strength(Quantity::new(1000.0, MOLAR)),
     ];
     for opts in bad {
         assert!(solvation::solvate(&mut m, &opts).is_err());
@@ -602,23 +568,10 @@ fn absent_elemental_radius_requires_an_explicit_override() {
     assert_eq!(m, before);
     let radii =
         SolvationRadii::new(m.shared_topology(), Quantity::new(vec![0.2], NANOMETER)).unwrap();
-    solvation::solvate(
-        &mut m,
-        &SolventOptions {
-            solute_radii: Some(radii.clone()),
-            ..options()
-        },
-    )
-    .unwrap();
+    solvation::solvate(&mut m, &options().with_solute_radii(Some(radii.clone()))).unwrap();
     let after = m.clone();
     assert!(matches!(
-        solvation::solvate(
-            &mut m,
-            &SolventOptions {
-                solute_radii: Some(radii),
-                ..options()
-            }
-        ),
+        solvation::solvate(&mut m, &options().with_solute_radii(Some(radii))),
         Err(SolvationError::RadiusTopologyMismatch)
     ));
     assert_eq!(m, after);
@@ -634,11 +587,9 @@ fn all_candidate_waters_can_be_replaced_without_unused_definitions() {
     let mut m = initial;
     let report = solvation::solvate(
         &mut m,
-        &SolventOptions {
-            net_charge: Some(count as i64),
-            ion_separation: Quantity::new(0.01, NANOMETER),
-            ..Default::default()
-        },
+        &SolventOptions::default()
+            .with_net_charge(Some(count as i64))
+            .with_ion_separation(Quantity::new(0.01, NANOMETER)),
     )
     .unwrap();
     assert_eq!(report.waters_added, 0);
@@ -676,10 +627,7 @@ fn salt_rounds_half_up_and_molarity_accepts_composed_units() {
         let mut m = initial.clone();
         let report = solvation::solvate(
             &mut m,
-            &SolventOptions {
-                ionic_strength: Quantity::new(concentration, MOLAR),
-                ..options()
-            },
+            &options().with_ionic_strength(Quantity::new(concentration, MOLAR)),
         )
         .unwrap();
         assert_eq!(report.positive_ions_added, expected);
@@ -690,18 +638,12 @@ fn salt_rounds_half_up_and_molarity_accepts_composed_units() {
     let mut b = initial;
     let a_report = solvation::solvate(
         &mut a,
-        &SolventOptions {
-            ionic_strength: Quantity::new(150.0, composed),
-            ..options()
-        },
+        &options().with_ionic_strength(Quantity::new(150.0, composed)),
     )
     .unwrap();
     let b_report = solvation::solvate(
         &mut b,
-        &SolventOptions {
-            ionic_strength: Quantity::new(0.15, MOLAR),
-            ..options()
-        },
+        &options().with_ionic_strength(Quantity::new(0.15, MOLAR)),
     )
     .unwrap();
     assert_eq!(a_report, b_report);

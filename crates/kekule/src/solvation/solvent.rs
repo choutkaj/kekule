@@ -89,20 +89,132 @@ impl SolvationRadii {
 /// fallback), not force-field radii; this is not OpenMM parameterization parity.
 #[derive(Debug, Clone)]
 pub struct SolventOptions {
-    pub water_model: WaterModel,
-    pub neutralize: bool,
-    pub ionic_strength: Quantity<f64>,
-    pub positive_ion: PositiveIon,
-    pub negative_ion: NegativeIon,
+    water_model: WaterModel,
+    neutralize: bool,
+    ionic_strength: Quantity<f64>,
+    positive_ion: PositiveIon,
+    negative_ion: NegativeIon,
+    seed: u64,
+    ion_separation: Quantity<f64>,
+    solute_radii: Option<SolvationRadii>,
+    net_charge: Option<i64>,
+    max_candidates: usize,
+}
+
+impl SolventOptions {
+    pub const fn water_model(&self) -> WaterModel {
+        self.water_model
+    }
+
+    /// Sets [`Self::water_model`].
+    #[must_use]
+    pub fn with_water_model(mut self, water_model: WaterModel) -> Self {
+        self.water_model = water_model;
+        self
+    }
+
+    pub const fn neutralize(&self) -> bool {
+        self.neutralize
+    }
+
+    /// Sets [`Self::neutralize`].
+    #[must_use]
+    pub fn with_neutralize(mut self, neutralize: bool) -> Self {
+        self.neutralize = neutralize;
+        self
+    }
+
+    pub const fn ionic_strength(&self) -> Quantity<f64> {
+        self.ionic_strength
+    }
+
+    /// Sets [`Self::ionic_strength`].
+    #[must_use]
+    pub fn with_ionic_strength(mut self, ionic_strength: Quantity<f64>) -> Self {
+        self.ionic_strength = ionic_strength;
+        self
+    }
+
+    pub const fn positive_ion(&self) -> PositiveIon {
+        self.positive_ion
+    }
+
+    /// Sets [`Self::positive_ion`].
+    #[must_use]
+    pub fn with_positive_ion(mut self, positive_ion: PositiveIon) -> Self {
+        self.positive_ion = positive_ion;
+        self
+    }
+
+    pub const fn negative_ion(&self) -> NegativeIon {
+        self.negative_ion
+    }
+
+    /// Sets [`Self::negative_ion`].
+    #[must_use]
+    pub fn with_negative_ion(mut self, negative_ion: NegativeIon) -> Self {
+        self.negative_ion = negative_ion;
+        self
+    }
+
     /// Stable deterministic ion-site shuffle. Identical inputs and seeds reproduce placement.
-    pub seed: u64,
+    pub const fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Sets [`Self::seed`].
+    #[must_use]
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
+        self
+    }
+
     /// Minimum periodic distance between added ions and other added/existing monatomic ions.
-    pub ion_separation: Quantity<f64>,
-    pub solute_radii: Option<SolvationRadii>,
+    pub const fn ion_separation(&self) -> Quantity<f64> {
+        self.ion_separation
+    }
+
+    /// Sets [`Self::ion_separation`].
+    #[must_use]
+    pub fn with_ion_separation(mut self, ion_separation: Quantity<f64>) -> Self {
+        self.ion_separation = ion_separation;
+        self
+    }
+
+    pub fn solute_radii(&self) -> Option<&SolvationRadii> {
+        self.solute_radii.as_ref()
+    }
+
+    /// Sets [`Self::solute_radii`].
+    #[must_use]
+    pub fn with_solute_radii(mut self, solute_radii: Option<SolvationRadii>) -> Self {
+        self.solute_radii = solute_radii;
+        self
+    }
+
     /// Integer charge in elementary-charge units; does not rewrite represented atom charges.
-    pub net_charge: Option<i64>,
+    pub const fn net_charge(&self) -> Option<i64> {
+        self.net_charge
+    }
+
+    /// Sets [`Self::net_charge`].
+    #[must_use]
+    pub fn with_net_charge(mut self, net_charge: Option<i64>) -> Self {
+        self.net_charge = net_charge;
+        self
+    }
+
     /// Bound on tiled candidate waters examined, before cropping and clash removal.
-    pub max_candidates: usize,
+    pub const fn max_candidates(&self) -> usize {
+        self.max_candidates
+    }
+
+    /// Sets [`Self::max_candidates`].
+    #[must_use]
+    pub fn with_max_candidates(mut self, max_candidates: usize) -> Self {
+        self.max_candidates = max_candidates;
+        self
+    }
 }
 impl SolventOptions {
     /// The [`Default`] bound of [`Self::max_candidates`].
@@ -280,9 +392,10 @@ from_error!(HierarchyError, Hierarchy);
 /// solvation::add_periodic_box(&mut model, &PeriodicBoxOptions::Padding {
 ///     padding: Quantity::new(1.0, NANOMETER), shape: BoxShape::Cube,
 /// })?;
-/// solvation::solvate(&mut model, &SolventOptions {
-///     ionic_strength: Quantity::new(0.15, MOLAR), ..Default::default()
-/// })?; // The successful report can simply be discarded.
+/// solvation::solvate(
+///     &mut model,
+///     &SolventOptions::default().with_ionic_strength(Quantity::new(0.15, MOLAR)),
+/// )?; // The successful report can simply be discarded.
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn solvate(

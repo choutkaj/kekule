@@ -66,13 +66,14 @@ pub(crate) fn matching(error: TaggedMatchError) -> Error {
 /// to parameterize; the floors and per-atom factors only stop a pathological
 /// pattern whose matches grow faster than the molecule.
 pub(crate) fn options(atoms: usize) -> SubstructureMatchOptions {
-    SubstructureMatchOptions {
-        max_matches: 1_000_000_usize.max(atoms.saturating_mul(64)),
-        max_search_states: 10_000_000_usize.max(atoms.saturating_mul(1_000)),
-        max_candidate_pairs: 16_000_000_usize.max(atoms.saturating_mul(64)),
-        uniquify: false,
-        ..Default::default()
-    }
+    SubstructureMatchOptions::default()
+        .with_max_matches(1_000_000_usize.max(atoms.saturating_mul(64)))
+        .expect("parameterization bounds are positive")
+        .with_max_search_states(10_000_000_usize.max(atoms.saturating_mul(1_000)))
+        .expect("parameterization bounds are positive")
+        .with_max_candidate_pairs(16_000_000_usize.max(atoms.saturating_mul(64)))
+        .expect("parameterization bounds are positive")
+        .with_uniquify(false)
 }
 fn ordered<const N: usize>(mut a: [AtomId; N]) -> [AtomId; N] {
     let mut reverse = a;

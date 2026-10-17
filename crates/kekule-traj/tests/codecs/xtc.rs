@@ -230,10 +230,8 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             let first_total = dense_bytes + raw_sizes[0];
             let total = dense_bytes + raw_sizes.iter().max().unwrap();
             let options = |limit| {
-                XtcReadOptions::default().with_limits(TrajectoryIoLimits {
-                    max_scratch_bytes: limit,
-                    ..TrajectoryIoLimits::default()
-                })
+                XtcReadOptions::default()
+                    .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit))
             };
             let open = |limit| {
                 XtcReader::new(
@@ -468,12 +466,10 @@ fn xtc_round_trips_frames_whose_packed_integers_exceed_64_bits() {
 #[test]
 fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     let (topology, bytes) = encoded(12, XtcMagic::Xtc1995);
-    let limits = TrajectoryIoLimits {
-        max_frames: 2,
-        max_index_entries: 2,
-        max_index_bytes: 2 * std::mem::size_of::<u64>(),
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default()
+        .with_max_frames(2)
+        .with_max_index_entries(2)
+        .with_max_index_bytes(2 * std::mem::size_of::<u64>());
     let mut reader = XtcReader::new(
         Cursor::new(bytes.clone()),
         Arc::clone(&topology),
@@ -567,10 +563,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         Cursor::new(maximum_count),
         Arc::clone(&topology),
         XtcReadOptions::default()
-            .with_limits(TrajectoryIoLimits {
-                max_atoms: i32::MAX as usize,
-                ..TrajectoryIoLimits::default()
-            })
+            .with_limits(TrajectoryIoLimits::default().with_max_atoms(i32::MAX as usize))
             .with_source_label("maximum-count.xtc"),
     )
     .err()
@@ -671,10 +664,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         stream,
         Arc::clone(&topology),
         XtcReadOptions::default()
-            .with_limits(TrajectoryIoLimits {
-                max_frames: 1,
-                ..TrajectoryIoLimits::default()
-            })
+            .with_limits(TrajectoryIoLimits::default().with_max_frames(1))
             .with_source_label("guarded-sequential.xtc"),
     )
     .unwrap();
@@ -688,18 +678,9 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     assert_eq!(control.probed_bytes(), 1);
 
     for limits in [
-        TrajectoryIoLimits {
-            max_frames: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_entries: 1,
-            ..TrajectoryIoLimits::default()
-        },
-        TrajectoryIoLimits {
-            max_index_bytes: std::mem::size_of::<u64>(),
-            ..TrajectoryIoLimits::default()
-        },
+        TrajectoryIoLimits::default().with_max_frames(1),
+        TrajectoryIoLimits::default().with_max_index_entries(1),
+        TrajectoryIoLimits::default().with_max_index_bytes(std::mem::size_of::<u64>()),
     ] {
         let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
         let error = IndexedXtcReader::new(
@@ -818,10 +799,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
         Some(TrajectoryIoErrorKind::TruncatedRecord)
     );
 
-    let limits = TrajectoryIoLimits {
-        max_frame_bytes: 100,
-        ..TrajectoryIoLimits::default()
-    };
+    let limits = TrajectoryIoLimits::default().with_max_frame_bytes(100);
     let error = XtcReader::new(
         Cursor::new(valid),
         Arc::clone(&topology),

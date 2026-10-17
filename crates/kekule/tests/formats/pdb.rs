@@ -868,10 +868,10 @@ fn coordinate_models_become_ensemble_members() {
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
 
     let second = document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::Select("2".to_owned()),
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(
+            StructureInterpretOptions::default()
+                .with_model_selection(ModelSelection::Select("2".to_owned())),
+        )
         .unwrap();
     assert_eq!(second.report().selected_model(), Some("2"));
     assert_eq!(second.report().ignored_coordinate_models(), ["1"]);
@@ -946,10 +946,7 @@ fn recurring_numbers_and_alternate_locations_identify_residues() {
     ];
     for (policy, label, unresolved, bonds) in cases {
         let interpreted = document
-            .interpret(StructureInterpretOptions {
-                altloc_policy: policy,
-                ..StructureInterpretOptions::default()
-            })
+            .interpret(StructureInterpretOptions::default().with_altloc_policy(policy))
             .unwrap();
         let [decision] = interpreted.report().alternate_locations() else {
             panic!("one alternate-location decision");
@@ -1435,10 +1432,7 @@ fn pdb_parse_errors_locate_the_record() {
 
     let limited = pdb::parse_str(
         &format!("{water}\n{water}"),
-        PdbParseOptions {
-            max_atom_records: 1,
-            ..PdbParseOptions::default()
-        },
+        PdbParseOptions::default().with_max_atom_records(1),
     )
     .unwrap_err();
     assert_eq!(
@@ -1472,10 +1466,7 @@ fn pdb_interpretation_rejects_contradictory_records() {
         ),
         (
             water.clone(),
-            StructureInterpretOptions {
-                strict_entity_metadata: true,
-                ..StructureInterpretOptions::default()
-            },
+            StructureInterpretOptions::default().with_strict_entity_metadata(true),
             DiagnosticKind::Inconsistent,
             None,
         ),
@@ -1603,12 +1594,10 @@ fn force_field_libraries_interpret_their_residue_names() {
         (" HT2", "H", [-2.256, 0.622, 0.572]),
         (" HT3", "H", [-2.300, 0.950, -1.100]),
     ];
-    let with = |library: ComponentLibrary| StructureInterpretOptions {
-        connectivity: ConnectivityOptions {
-            components: Some(Arc::new(library)),
-            ..ConnectivityOptions::default()
-        },
-        ..StructureInterpretOptions::default()
+    let with = |library: ComponentLibrary| {
+        StructureInterpretOptions::default().with_connectivity(
+            ConnectivityOptions::default().with_components(Some(Arc::new(library))),
+        )
     };
 
     // AMBER: the NE2-protonated histidine, an aspartate without hydrogens,
@@ -1815,13 +1804,9 @@ fn force_field_termini_carry_their_charges() {
     for (library, lines, expected_charges, expected_attached) in cases {
         let document = pdb::parse_str(&entry(&lines), Default::default()).unwrap();
         let interpreted = document
-            .interpret(StructureInterpretOptions {
-                connectivity: ConnectivityOptions {
-                    components: Some(Arc::new(library)),
-                    ..ConnectivityOptions::default()
-                },
-                ..StructureInterpretOptions::default()
-            })
+            .interpret(StructureInterpretOptions::default().with_connectivity(
+                ConnectivityOptions::default().with_components(Some(Arc::new(library))),
+            ))
             .unwrap();
         let attached = interpreted
             .report()

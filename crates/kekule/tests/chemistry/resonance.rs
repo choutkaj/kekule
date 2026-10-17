@@ -63,10 +63,7 @@ fn default_contributors_and_all_kekule_forms() {
     let m = molecule("c1ccccc1");
     let all = enumerate_resonance(
         &m,
-        ResonanceOptions {
-            flags: ResonanceFlags::KEKULE_ALL,
-            ..Default::default()
-        },
+        ResonanceOptions::default().with_flags(ResonanceFlags::KEKULE_ALL),
     )
     .unwrap();
     assert_eq!(all.contributors().len(), 2);
@@ -81,13 +78,7 @@ fn group_preparation_is_separate_and_transactional() {
     assert_eq!(m, original);
     let before = m.perception().clone();
     assert!(matches!(
-        enumerate_resonance(
-            &m,
-            ResonanceOptions {
-                max_total_work: 0,
-                ..Default::default()
-            }
-        ),
+        enumerate_resonance(&m, ResonanceOptions::default().with_max_total_work(0)),
         Err(ResonanceError::LimitExceeded(_))
     ));
     assert_eq!(m.perception(), &before);
@@ -156,10 +147,8 @@ fn all_flag_combinations_match_pinned_reference_counts() {
         for (mask, count) in counts.into_iter().enumerate() {
             let forms = enumerate_resonance(
                 &m,
-                ResonanceOptions {
-                    flags: ResonanceFlags::from_bits(mask as u8).unwrap(),
-                    ..Default::default()
-                },
+                ResonanceOptions::default()
+                    .with_flags(ResonanceFlags::from_bits(mask as u8).unwrap()),
             )
             .unwrap();
             assert_eq!(forms.contributors().len(), count, "{smi}, flags {mask}");
@@ -522,35 +511,21 @@ fn structure_caps_and_unknown_hydrogens_are_explicit() {
     let m = molecule("CC(=O)[O-]");
     assert!(enumerate_resonance(
         &m,
-        ResonanceOptions {
-            max_structures: 0,
-            max_total_work: 0,
-            ..Default::default()
-        }
+        ResonanceOptions::default()
+            .with_max_structures(0)
+            .with_max_total_work(0)
     )
     .unwrap()
     .contributors()
     .is_empty());
     for (cap, count, reached) in [(0, 0, true), (2, 2, true), (3, 2, false)] {
-        let forms = enumerate_resonance(
-            &m,
-            ResonanceOptions {
-                max_structures: cap,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let forms =
+            enumerate_resonance(&m, ResonanceOptions::default().with_max_structures(cap)).unwrap();
         assert_eq!(forms.contributors().len(), count);
         assert_eq!(forms.limit_reached(), reached);
     }
     assert!(matches!(
-        enumerate_resonance(
-            &m,
-            ResonanceOptions {
-                max_structures: 1,
-                ..Default::default()
-            }
-        ),
+        enumerate_resonance(&m, ResonanceOptions::default().with_max_structures(1)),
         Err(ResonanceError::InvalidStructureLimit)
     ));
     let mut m = smiles::to_molecules("CC").unwrap().remove(0);

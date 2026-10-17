@@ -146,10 +146,7 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
     let order = [(3, 3), (0, 0), (2, 2), (1, 1)];
     let correspondence = pairs(&moving, &reference, &order);
     let weights = [8., 1., 4., 2.];
-    let options = AlignmentOptions {
-        weighting: Weighting::Explicit(&weights),
-        ..Default::default()
-    };
+    let options = AlignmentOptions::default().with_weighting(Weighting::Explicit(&weights));
     let fit = crate::alignment::fit(
         moving.as_model_view(),
         reference.as_model_view(),
@@ -164,10 +161,7 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
         moving.as_model_view(),
         reference_on_shared_topology.as_model_view(),
         &AtomSelection::all(&moving.shared_topology()),
-        AlignmentOptions {
-            weighting: Weighting::Explicit(&reordered_weights),
-            ..Default::default()
-        },
+        AlignmentOptions::default().with_weighting(Weighting::Explicit(&reordered_weights)),
     )
     .unwrap();
     assert!((fit.rmsd().into_value() - expected.rmsd().into_value()).abs() < 1e-12);
@@ -183,10 +177,7 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
             moving.as_model_view(),
             reference.as_model_view(),
             &correspondence,
-            AlignmentOptions {
-                weighting: Weighting::Explicit(weights),
-                ..Default::default()
-            }
+            AlignmentOptions::default().with_weighting(Weighting::Explicit(weights))
         )
         .is_err());
     }
@@ -343,10 +334,7 @@ fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
             moving.as_model_view(),
             reference.as_model_view(),
             &correspondence,
-            AlignmentOptions {
-                periodic_policy: PeriodicPolicy::RejectPeriodic,
-                ..Default::default()
-            }
+            AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic)
         ),
         Err(AlignmentError::PeriodicCoordinates { moving: true, .. })
     ));

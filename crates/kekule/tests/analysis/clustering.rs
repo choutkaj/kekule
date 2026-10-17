@@ -117,10 +117,7 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
             .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
             .unwrap();
     }
-    let by_energy = ClusteringOptions {
-        order: ClusterOrder::Energy,
-        ..ClusteringOptions::default()
-    };
+    let by_energy = ClusteringOptions::default().with_order(ClusterOrder::Energy);
     assert_eq!(
         ensemble
             .cluster_by_radius(radius(0.5), &atoms, by_energy)

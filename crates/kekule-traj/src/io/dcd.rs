@@ -94,6 +94,17 @@ pub enum DcdTimePolicy {
     HeaderDelta { unit: Unit },
 }
 
+/// Whether a DCD writer stores periodic cells.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DcdCellPolicy {
+    /// Write no unit-cell records; a frame with a cell is rejected.
+    #[default]
+    Omit,
+    /// Write one unit-cell record per frame; a frame without a cell is rejected.
+    Write,
+}
+
 /// DCD reader policy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DcdReadOptions {
@@ -118,17 +129,20 @@ impl DcdReadOptions {
     /// The scratch limit covers the combined retained capacities of coordinates,
     /// record bytes, and fixed-atom reconstruction/validation buffers. Indexed
     /// and sequential reads share those buffers; index offsets have a separate limit.
+    #[must_use]
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
     }
 
     /// Sets the source label used in decoding errors.
+    #[must_use]
     pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
         self.source_label = source_label.into();
         self
     }
 
+    #[must_use]
     pub const fn with_time_policy(mut self, time_policy: DcdTimePolicy) -> Self {
         self.time_policy = time_policy;
         self
@@ -137,13 +151,23 @@ impl DcdReadOptions {
     pub const fn time_policy(&self) -> DcdTimePolicy {
         self.time_policy
     }
+
+    /// Limits applied before allocation, scanning, and seeking.
+    pub const fn limits(&self) -> &TrajectoryIoLimits {
+        &self.limits
+    }
+
+    /// The source label used in decoding errors.
+    pub fn source_label(&self) -> &str {
+        &self.source_label
+    }
 }
 
 /// Canonical DCD writer policy.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DcdWriteOptions {
     endian: DcdEndian,
-    write_cell: bool,
+    cell_policy: DcdCellPolicy,
     start_step: u64,
     step_interval: u64,
     delta: f32,
@@ -154,7 +178,7 @@ impl Default for DcdWriteOptions {
     fn default() -> Self {
         Self {
             endian: DcdEndian::Little,
-            write_cell: false,
+            cell_policy: DcdCellPolicy::Omit,
             start_step: 0,
             step_interval: 1,
             delta: 1.0,
@@ -164,6 +188,7 @@ impl Default for DcdWriteOptions {
 }
 
 impl DcdWriteOptions {
+    #[must_use]
     pub const fn with_endian(mut self, endian: DcdEndian) -> Self {
         self.endian = endian;
         self
@@ -174,11 +199,13 @@ impl DcdWriteOptions {
     /// Other orientations are rejected because DCD lengths and angles cannot
     /// preserve their relation to the stored Cartesian coordinates.
     /// Angles are written using the unambiguous supported cosine convention.
-    pub const fn with_cells(mut self, write_cell: bool) -> Self {
-        self.write_cell = write_cell;
+    #[must_use]
+    pub const fn with_cell_policy(mut self, cell_policy: DcdCellPolicy) -> Self {
+        self.cell_policy = cell_policy;
         self
     }
 
+    #[must_use]
     pub const fn with_step_sequence(mut self, start_step: u64, step_interval: u64) -> Self {
         self.start_step = start_step;
         self.step_interval = step_interval;
@@ -188,10 +215,42 @@ impl DcdWriteOptions {
     /// Stores `DELTA`, the duration of one step. With
     /// [`DcdTimePolicy::HeaderDelta`], every frame time must equal its step
     /// times `DELTA` to f32 precision, the precision `DELTA` has in the file.
+    #[must_use]
     pub const fn with_header_delta(mut self, delta: f32, time_policy: DcdTimePolicy) -> Self {
         self.delta = delta;
         self.time_policy = time_policy;
         self
+    }
+
+    pub const fn endian(&self) -> DcdEndian {
+        self.endian
+    }
+
+    pub const fn cell_policy(&self) -> DcdCellPolicy {
+        self.cell_policy
+    }
+
+    pub const fn start_step(&self) -> u64 {
+        self.start_step
+    }
+
+    pub const fn step_interval(&self) -> u64 {
+        self.step_interval
+    }
+
+    pub const fn delta(&self) -> f32 {
+        self.delta
+    }
+
+    pub const fn time_policy(&self) -> DcdTimePolicy {
+        self.time_policy
+    }
+
+    const fn writes_cells(&self) -> bool {
+        match self.cell_policy {
+            DcdCellPolicy::Omit => false,
+            DcdCellPolicy::Write => true,
+        }
     }
 }
 
@@ -450,7 +509,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut free_indices,
                 free_count,
                 scratch_bytes(&record),
-                limits.max_scratch_bytes,
+                limits.max_scratch_bytes(),
                 reserve_error,
             )?;
             let mut seen = Vec::new();
@@ -459,7 +518,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 atom_count,
                 scratch_bytes(&record)
                     .and_then(|bytes| bytes.checked_add(scratch_bytes(&free_indices)?)),
-                limits.max_scratch_bytes,
+                limits.max_scratch_bytes(),
                 reserve_error,
             )?;
             seen.resize(atom_count, false);
@@ -489,7 +548,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 scratch_bytes(&record)
                     .and_then(|bytes| bytes.checked_add(scratch_bytes(&free_indices)?))
                     .and_then(|bytes| bytes.checked_add(scratch_bytes(&seen)?)),
-                limits.max_scratch_bytes,
+                limits.max_scratch_bytes(),
                 reserve_error,
             )?;
             fixed_indices.extend(
@@ -505,7 +564,7 @@ impl<R: Read + Seek> DcdReader<R> {
             &mut fixed_reference,
             fixed_count,
             index_bytes.and_then(|bytes| bytes.checked_add(scratch_bytes(&record)?)),
-            limits.max_scratch_bytes,
+            limits.max_scratch_bytes(),
             reserve_error,
         )?;
         let mut positions = Vec::new();
@@ -515,7 +574,7 @@ impl<R: Read + Seek> DcdReader<R> {
             index_bytes
                 .and_then(|bytes| bytes.checked_add(scratch_bytes(&fixed_reference)?))
                 .and_then(|bytes| bytes.checked_add(scratch_bytes(&record)?)),
-            limits.max_scratch_bytes,
+            limits.max_scratch_bytes(),
             reserve_error,
         )?;
         positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
@@ -613,7 +672,7 @@ impl<R: Read + Seek> DcdReader<R> {
             )
             .with_detail("DCD contains a frame beyond its declared NSET count"));
         }
-        if self.frame_cursor >= self.options.limits.max_frames {
+        if self.frame_cursor >= self.options.limits.max_frames() {
             if probe_seekable_eof(
                 &mut self.reader,
                 TrajectoryIoOperation::ReadFrame,
@@ -673,7 +732,7 @@ impl<R: Read + Seek> DcdReader<R> {
         let coordinate_count = coordinate_indices.map_or(self.header.atom_count, <[usize]>::len);
         let coordinate_bytes =
             checked_coordinate_bytes(coordinate_count, &self.options.source_label)?;
-        if coordinate_bytes as u64 > self.options.limits.max_frame_bytes {
+        if coordinate_bytes as u64 > self.options.limits.max_frame_bytes() {
             return Err(resource_error(
                 TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
@@ -739,7 +798,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 "DCD frame end precedes its start",
             )
         })?;
-        if frame_bytes > self.options.limits.max_frame_bytes {
+        if frame_bytes > self.options.limits.max_frame_bytes() {
             return Err(resource_error(
                 TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
@@ -1421,7 +1480,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             }
         }
         let cell = frame.cell().copied();
-        if self.options.write_cell != cell.is_some() {
+        if self.options.writes_cells() != cell.is_some() {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
@@ -1537,7 +1596,7 @@ fn encode_header(options: DcdWriteOptions, frames: i32) -> [u8; HEADER_BYTES] {
         0,
         0,
         i32::from_ne_bytes(options.delta.to_bits().to_ne_bytes()),
-        i32::from(options.write_cell),
+        i32::from(options.writes_cells()),
         0,
         0,
         0,
@@ -1817,7 +1876,7 @@ fn read_record<R: Read>(
             "DCD record size does not fit usize",
         )
     })?;
-    if size as u64 > limits.max_record_bytes || size > limits.max_scratch_bytes {
+    if size as u64 > limits.max_record_bytes() || size > limits.max_scratch_bytes() {
         return Err(resource_error(
             operation,
             source_label,
@@ -1829,7 +1888,7 @@ fn read_record<R: Read>(
         scratch,
         size,
         other_scratch_bytes,
-        limits.max_scratch_bytes,
+        limits.max_scratch_bytes(),
         |detail| resource_error(operation, source_label, frame, detail),
     )?;
     scratch.resize(size, 0);
@@ -1905,7 +1964,7 @@ fn validate_atom_count(
     limits: &TrajectoryIoLimits,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {
-    if count == 0 || count > limits.max_atoms || count > i32::MAX as usize {
+    if count == 0 || count > limits.max_atoms() || count > i32::MAX as usize {
         return Err(resource_error(
             TrajectoryIoOperation::ReadHeader,
             source_label,

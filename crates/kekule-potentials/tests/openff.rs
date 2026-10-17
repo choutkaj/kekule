@@ -455,11 +455,13 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let model = model(&topology);
     let original = model.clone();
-    let options = MinimizeOptions {
-        gradient_tolerance: Quantity::new(1e-3, kekule::units::KILOJOULE_PER_MOLE_PER_NANOMETER),
-        max_iterations: 5_000,
-        ..MinimizeOptions::default()
-    };
+    let options = MinimizeOptions::default()
+        .with_gradient_tolerance(Quantity::new(
+            1e-3,
+            kekule::units::KILOJOULE_PER_MOLE_PER_NANOMETER,
+        ))
+        .unwrap()
+        .with_max_iterations(5_000);
     let result = minimize(&potential, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
     assert_eq!(model, original);

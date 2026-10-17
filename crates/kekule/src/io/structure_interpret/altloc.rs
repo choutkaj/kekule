@@ -71,10 +71,10 @@ pub enum AltLocPreference {
 /// {
 ///     selection.overrides.insert(residue.residue, "B".into());
 /// }
-/// block.interpret(StructureInterpretOptions {
-///     altloc_policy: AltLocPolicy::Configured(selection),
-///     ..Default::default()
-/// })
+/// block.interpret(
+///     StructureInterpretOptions::default()
+///         .with_altloc_policy(AltLocPolicy::Configured(selection)),
+/// )
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

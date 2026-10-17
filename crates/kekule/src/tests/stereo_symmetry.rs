@@ -122,10 +122,9 @@ fn stereo_symmetry_does_not_enumerate_unconstrained_hydrogen_permutations() {
         let molecule = read_smiles(&source).unwrap();
         let candidates = stereo_api::cleanup::detect_stereo_candidates(
             &molecule,
-            stereo_api::StereoSearchOptions {
-                max_search_states: 20_000,
-                ..Default::default()
-            },
+            stereo_api::StereoSearchOptions::default()
+                .with_max_search_states(20_000)
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(candidates.len(), 2, "{source}");
@@ -230,14 +229,12 @@ fn stereo_cleanup_is_explicit_transactional_and_preserves_surviving_groups() {
         .collect();
     let mut editor = molecule.to_editor();
     for options in [
-        stereo_api::StereoSearchOptions {
-            max_atoms: 1,
-            ..Default::default()
-        },
-        stereo_api::StereoSearchOptions {
-            max_search_states: 1,
-            ..Default::default()
-        },
+        stereo_api::StereoSearchOptions::default()
+            .with_max_atoms(1)
+            .unwrap(),
+        stereo_api::StereoSearchOptions::default()
+            .with_max_search_states(1)
+            .unwrap(),
     ] {
         assert!(matches!(
             stereo_api::cleanup::cleanup_stereo(&mut editor, options),

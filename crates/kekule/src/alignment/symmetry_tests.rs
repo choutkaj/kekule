@@ -111,26 +111,17 @@ fn identical_molecule_instances_are_never_exchanged() {
 fn searches_beyond_their_limits_fail_instead_of_truncating() {
     let neopentane = topology("CC(C)(C)C");
     let selection = AtomSelection::all(&neopentane);
-    let limits = SymmetryLimits {
-        max_permutations: 23,
-        ..SymmetryLimits::default()
-    };
+    let limits = SymmetryLimits::default().with_max_permutations(23);
     assert_eq!(
         SymmetricSelection::with_limits(&selection, limits).unwrap_err(),
         SymmetryError::LimitExceeded(LimitExceeded::new(Resource::Permutations, 23, 24))
     );
-    let limits = SymmetryLimits {
-        max_search_steps: 10,
-        ..SymmetryLimits::default()
-    };
+    let limits = SymmetryLimits::default().with_max_search_steps(10);
     assert_eq!(
         SymmetricSelection::with_limits(&selection, limits).unwrap_err(),
         SymmetryError::LimitExceeded(LimitExceeded::new(Resource::SearchStates, 10, 11))
     );
-    let exact = SymmetryLimits {
-        max_permutations: 24,
-        ..SymmetryLimits::default()
-    };
+    let exact = SymmetryLimits::default().with_max_permutations(24);
     assert_eq!(
         SymmetricSelection::with_limits(&selection, exact)
             .unwrap()

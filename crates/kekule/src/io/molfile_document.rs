@@ -18,14 +18,63 @@ use super::v3000::parse_v3000_ctab;
 /// Resource limits shared by version-autodetected Molfile parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MolfileParseOptions {
+    max_input_bytes: usize,
+    max_v3000_atoms: usize,
+    max_v3000_bonds: usize,
+    max_v3000_logical_line_bytes: usize,
+}
+
+impl MolfileParseOptions {
     /// Maximum UTF-8 byte length of the complete Molfile document.
-    pub max_input_bytes: usize,
+    pub const fn max_input_bytes(&self) -> usize {
+        self.max_input_bytes
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub const fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Self {
+        self.max_input_bytes = max_input_bytes;
+        self
+    }
+
     /// Maximum declared V3000 atom count.
-    pub max_v3000_atoms: usize,
+    pub const fn max_v3000_atoms(&self) -> usize {
+        self.max_v3000_atoms
+    }
+
+    /// Sets [`Self::max_v3000_atoms`].
+    #[must_use]
+    pub const fn with_max_v3000_atoms(mut self, max_v3000_atoms: usize) -> Self {
+        self.max_v3000_atoms = max_v3000_atoms;
+        self
+    }
+
     /// Maximum declared V3000 bond count.
-    pub max_v3000_bonds: usize,
+    pub const fn max_v3000_bonds(&self) -> usize {
+        self.max_v3000_bonds
+    }
+
+    /// Sets [`Self::max_v3000_bonds`].
+    #[must_use]
+    pub const fn with_max_v3000_bonds(mut self, max_v3000_bonds: usize) -> Self {
+        self.max_v3000_bonds = max_v3000_bonds;
+        self
+    }
+
     /// Maximum byte length after joining one continued `M  V30` logical line.
-    pub max_v3000_logical_line_bytes: usize,
+    pub const fn max_v3000_logical_line_bytes(&self) -> usize {
+        self.max_v3000_logical_line_bytes
+    }
+
+    /// Sets [`Self::max_v3000_logical_line_bytes`].
+    #[must_use]
+    pub const fn with_max_v3000_logical_line_bytes(
+        mut self,
+        max_v3000_logical_line_bytes: usize,
+    ) -> Self {
+        self.max_v3000_logical_line_bytes = max_v3000_logical_line_bytes;
+        self
+    }
 }
 
 impl MolfileParseOptions {

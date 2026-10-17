@@ -117,13 +117,12 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
     let options = TrajectoryOpenOptions::default()
         .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Xyz))
         .with_xyz_options(XyzReadOptions::default().with_length_unit(NANOMETER))
-        .with_limits(TrajectoryIoLimits {
-            max_frames: 2,
-            // Whole-file loading must not require an index.
-            max_index_entries: 0,
-            max_index_bytes: 0,
-            ..Default::default()
-        });
+        .with_limits(
+            TrajectoryIoLimits::default()
+                .with_max_frames(2)
+                .with_max_index_entries(0)
+                .with_max_index_bytes(0),
+        );
     let owned = Arc::try_unwrap(linear_carbon_topology(1)).unwrap();
     let trajectory = read_trajectory(&input.0, owned, options).unwrap();
     assert_eq!(trajectory.len(), 2);
@@ -161,10 +160,8 @@ fn loading_reports_a_late_decode_error_instead_of_returning_a_prefix() {
 fn loading_preserves_resource_limits_and_topology_validation() {
     let path = fixture("ase-3.26.0-water.xyz");
     let water = topology(&["O", "H", "H"], &[(0, 1), (0, 2)]);
-    let options = TrajectoryOpenOptions::default().with_limits(TrajectoryIoLimits {
-        max_frames: 1,
-        ..Default::default()
-    });
+    let options = TrajectoryOpenOptions::default()
+        .with_limits(TrajectoryIoLimits::default().with_max_frames(1));
     let error = read_trajectory(&path, water, options).unwrap_err();
     assert_eq!(
         codec_kind(&error),

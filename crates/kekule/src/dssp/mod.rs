@@ -409,10 +409,45 @@ impl DsspReport {
 /// Bounded work limits for DSSP analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspLimits {
-    pub max_residues: usize,
-    pub max_candidate_pairs: usize,
+    max_residues: usize,
+    max_candidate_pairs: usize,
+    max_ladders: usize,
+}
+
+impl DsspLimits {
+    pub const fn max_residues(&self) -> usize {
+        self.max_residues
+    }
+
+    /// Sets [`Self::max_residues`].
+    #[must_use]
+    pub const fn with_max_residues(mut self, max_residues: usize) -> Self {
+        self.max_residues = max_residues;
+        self
+    }
+
+    pub const fn max_candidate_pairs(&self) -> usize {
+        self.max_candidate_pairs
+    }
+
+    /// Sets [`Self::max_candidate_pairs`].
+    #[must_use]
+    pub const fn with_max_candidate_pairs(mut self, max_candidate_pairs: usize) -> Self {
+        self.max_candidate_pairs = max_candidate_pairs;
+        self
+    }
+
     /// Maximum provisional ladders retained before DSSP bulge merging.
-    pub max_ladders: usize,
+    pub const fn max_ladders(&self) -> usize {
+        self.max_ladders
+    }
+
+    /// Sets [`Self::max_ladders`].
+    #[must_use]
+    pub const fn with_max_ladders(mut self, max_ladders: usize) -> Self {
+        self.max_ladders = max_ladders;
+        self
+    }
 }
 
 impl DsspLimits {
@@ -437,9 +472,44 @@ impl Default for DsspLimits {
 /// DSSP 4 assignment options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspOptions {
+    min_polyproline_stretch: usize,
+    limits: DsspLimits,
+}
+
+impl DsspOptions {
     /// DSSP4 accepts two or three qualifying residues; the reference default is three.
-    pub min_polyproline_stretch: usize,
-    pub limits: DsspLimits,
+    pub const fn min_polyproline_stretch(&self) -> usize {
+        self.min_polyproline_stretch
+    }
+
+    /// Sets [`Self::min_polyproline_stretch`].
+    ///
+    /// # Errors
+    ///
+    /// [`DsspError::InvalidPolyprolineStretch`] unless the stretch is 2 or 3.
+    pub fn with_min_polyproline_stretch(
+        mut self,
+        min_polyproline_stretch: usize,
+    ) -> Result<Self, DsspError> {
+        if !matches!(min_polyproline_stretch, 2 | 3) {
+            return Err(DsspError::InvalidPolyprolineStretch {
+                value: min_polyproline_stretch,
+            });
+        }
+        self.min_polyproline_stretch = min_polyproline_stretch;
+        Ok(self)
+    }
+
+    pub const fn limits(&self) -> DsspLimits {
+        self.limits
+    }
+
+    /// Sets [`Self::limits`].
+    #[must_use]
+    pub const fn with_limits(mut self, limits: DsspLimits) -> Self {
+        self.limits = limits;
+        self
+    }
 }
 
 impl Default for DsspOptions {

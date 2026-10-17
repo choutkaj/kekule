@@ -8,7 +8,7 @@ use std::sync::Arc;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
-use kekule_traj::io::dcd::{DcdWriteOptions, DcdWriter};
+use kekule_traj::io::dcd::{DcdCellPolicy, DcdWriteOptions, DcdWriter};
 use kekule_traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions, TrrWriter};
 use kekule_traj::io::xtc::{XtcWriteOptions, XtcWriter};
 use kekule_traj::io::xyz::{XyzWriteOptions, XyzWriter};
@@ -75,7 +75,7 @@ fn open<W: Write + Seek + 'static>(
             DcdWriter::new(
                 sink,
                 topology,
-                DcdWriteOptions::default().with_cells(true),
+                DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write),
                 label,
             )
             .unwrap(),

@@ -271,14 +271,8 @@ fn losing_reference_ties_do_not_exhaust_ranking_bounds() {
         let model = make_model(smiles, true);
         let ids = model.topology().atom_ids();
         for options in [
-            CipAssignmentOptions {
-                max_depth: 1,
-                ..Default::default()
-            },
-            CipAssignmentOptions {
-                max_nodes: 4,
-                ..Default::default()
-            },
+            CipAssignmentOptions::default().with_max_depth(1),
+            CipAssignmentOptions::default().with_max_nodes(4),
         ] {
             let selected =
                 BondDihedral::new(&model.shared_topology(), bond(&model, b, 5), options).unwrap();
@@ -306,10 +300,9 @@ fn only_possible_maxima_consume_further_ranking_budget() {
     let selected = BondDihedral::new(
         &model.shared_topology(),
         axis,
-        CipAssignmentOptions {
-            max_depth: 2,
-            max_nodes: 7,
-        },
+        CipAssignmentOptions::default()
+            .with_max_depth(2)
+            .with_max_nodes(7),
     )
     .unwrap();
     assert_eq!(selected.atoms(), Some([ids[5], ids[0], ids[11], ids[12]]));
@@ -317,17 +310,15 @@ fn only_possible_maxima_consume_further_ranking_budget() {
     // an atom-ID tie, for either kind of resource bound.
     for (options, expected) in [
         (
-            CipAssignmentOptions {
-                max_depth: 1,
-                max_nodes: 7,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(1)
+                .with_max_nodes(7),
             CipRankingError::LimitExceeded(LimitExceeded::first_beyond(Resource::DigraphDepth, 1)),
         ),
         (
-            CipAssignmentOptions {
-                max_depth: 2,
-                max_nodes: 4,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(2)
+                .with_max_nodes(4),
             CipRankingError::LimitExceeded(LimitExceeded::first_beyond(Resource::DigraphNodes, 4)),
         ),
     ] {
@@ -344,17 +335,15 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
     let axis = bond(&model, 1, 4);
     for (options, expected) in [
         (
-            CipAssignmentOptions {
-                max_depth: 0,
-                max_nodes: 100_000,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(0)
+                .with_max_nodes(100_000),
             CipRankingError::LimitExceeded(LimitExceeded::first_beyond(Resource::DigraphDepth, 0)),
         ),
         (
-            CipAssignmentOptions {
-                max_depth: 64,
-                max_nodes: 1,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(64)
+                .with_max_nodes(1),
             CipRankingError::LimitExceeded(LimitExceeded::first_beyond(Resource::DigraphNodes, 1)),
         ),
     ] {
@@ -379,10 +368,9 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
     let tiny = BondDihedral::new(
         &model.shared_topology(),
         bond(&model, 1, 3),
-        CipAssignmentOptions {
-            max_depth: 0,
-            max_nodes: 1,
-        },
+        CipAssignmentOptions::default()
+            .with_max_depth(0)
+            .with_max_nodes(1),
     )
     .unwrap();
     assert_eq!(tiny.atoms(), definition(&model, 1, 3).atoms());
@@ -393,19 +381,18 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
     );
     let tied = make_model("CC(C)C(C)C", true);
     assert!(matches!(
-        BondDihedral::new(
-            &tied.shared_topology(),
-            bond(&tied, 1, 3),
-            CipAssignmentOptions {
-                max_depth: 0,
-                max_nodes: 100_000
-            }
-        ),
-        Err(BondDihedralError::Ranking {
-            error: CipRankingError::LimitExceeded(limit),
-            ..
-        }) if limit.resource() == Resource::DigraphDepth
-    ));
+            BondDihedral::new(
+                &tied.shared_topology(),
+                bond(&tied, 1, 3),
+                CipAssignmentOptions::default()
+    .with_max_depth(0)
+    .with_max_nodes(100_000)
+            ),
+            Err(BondDihedralError::Ranking {
+                error: CipRankingError::LimitExceeded(limit),
+                ..
+            }) if limit.resource() == Resource::DigraphDepth
+        ));
     assert!(measure::bond_dihedrals(unperceived.as_model_view())
         .any(|(_, result)| matches!(result, Err(BondDihedralError::Ranking { .. }))));
 }

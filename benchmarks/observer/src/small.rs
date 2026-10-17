@@ -617,11 +617,10 @@ fn smarts(components: Vec<Component>, options: &Value, facts: &mut Facts) -> Res
             .map_err(|e| Failure::new("smarts", e))?,
     );
     let target = PreparedTopologyTarget::new(&topology);
-    let match_options = SubstructureMatchOptions {
-        max_matches: MAX_MATCHES,
-        uniquify: false,
-        ..Default::default()
-    };
+    let match_options = SubstructureMatchOptions::default()
+        .with_max_matches(MAX_MATCHES)
+        .unwrap()
+        .with_uniquify(false);
     for (index, smarts) in queries.iter().enumerate() {
         let smarts = smarts.as_str().unwrap_or_default();
         let graph = match kekule::smarts::parse_str(smarts, Default::default()) {
@@ -671,8 +670,11 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
             } else {
                 smiles::SmilesWriteMode::Isomeric
             };
-            smiles::write(&topology, smiles::SmilesWriteOptions { mode })
-                .map_err(|e| Failure::new("write", e))?
+            smiles::write(
+                &topology,
+                smiles::SmilesWriteOptions::default().with_mode(mode),
+            )
+            .map_err(|e| Failure::new("write", e))?
         }
         "molfile-v2000" | "molfile-v3000" | "sdf" => {
             let model = match format {
@@ -703,10 +705,8 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 let record = sdf::SdfRecordInterpretation::new("", model, vec![]);
                 sdf::write(
                     &[record],
-                    sdf::SdfWriteOptions {
-                        version: molfile::MolfileWriteVersion::V2000,
-                        ..Default::default()
-                    },
+                    sdf::SdfWriteOptions::default()
+                        .with_version(molfile::MolfileWriteVersion::V2000),
                 )
                 .map_err(|e| Failure::new("write", e))?
             } else {
@@ -717,10 +717,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 };
                 molfile::write(
                     &model,
-                    molfile::MolfileWriteOptions {
-                        version,
-                        ..Default::default()
-                    },
+                    molfile::MolfileWriteOptions::default().with_version(version),
                 )
                 .map_err(|e| Failure::new("write", e))?
             }

@@ -15,12 +15,13 @@ fuzz_target!(|data: &[u8]| {
     }
     let Ok(query) = smarts::parse_str(
         pattern,
-        smarts::SmartsParseOptions {
-            max_input_bytes: 1024,
-            max_atoms: 32,
-            max_recursive_depth: 4,
-            ..Default::default()
-        },
+        smarts::SmartsParseOptions::default()
+            .with_max_input_bytes(1024)
+            .expect("positive fuzz bounds")
+            .with_max_atoms(32)
+            .expect("positive fuzz bounds")
+            .with_max_recursive_depth(4)
+            .expect("positive fuzz bounds"),
     ) else {
         return;
     };
@@ -31,13 +32,14 @@ fuzz_target!(|data: &[u8]| {
         if target.perceive().is_err() {
             continue;
         }
-        let options = SubstructureMatchOptions {
-            max_matches: 64,
-            max_search_states: 4096,
-            max_candidate_pairs: 8192,
-            uniquify: false,
-            ..Default::default()
-        };
+        let options = SubstructureMatchOptions::default()
+            .with_max_matches(64)
+            .expect("positive fuzz bounds")
+            .with_max_search_states(4096)
+            .expect("positive fuzz bounds")
+            .with_max_candidate_pairs(8192)
+            .expect("positive fuzz bounds")
+            .with_uniquify(false);
         let collected = PreparedTarget::new(&target).all(&query, options);
         let mut streamed = Vec::new();
         let completion = PreparedTarget::new(&target).visit(&query, options, |m| {

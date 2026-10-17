@@ -68,6 +68,11 @@ pub(crate) use ranking::bond_reference_atoms;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Explicit bounds on rooted ligand expansion.
 pub struct CipAssignmentOptions {
+    max_depth: usize,
+    max_nodes: usize,
+}
+
+impl CipAssignmentOptions {
     /// Maximum number of bonds explored beyond a carrier atom.
     ///
     /// Constitutional comparisons retain their digraphs and compare at
@@ -76,9 +81,28 @@ pub struct CipAssignmentOptions {
     /// complete digraph. A tied, truncated digraph cannot advance to
     /// later sequence rules or establish that a center is nonstereogenic.
     /// Defaults to 64; the independent node bound also applies.
-    pub max_depth: usize,
+    pub const fn max_depth(&self) -> usize {
+        self.max_depth
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub const fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
     /// Maximum nodes in one ligand expansion or shared auxiliary digraph.
-    pub max_nodes: usize,
+    pub const fn max_nodes(&self) -> usize {
+        self.max_nodes
+    }
+
+    /// Sets [`Self::max_nodes`].
+    #[must_use]
+    pub const fn with_max_nodes(mut self, max_nodes: usize) -> Self {
+        self.max_nodes = max_nodes;
+        self
+    }
 }
 
 impl CipAssignmentOptions {

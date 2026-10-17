@@ -17,15 +17,64 @@ use super::structure_documents::{MolfileInterpretOptions, MolfileInterpretationR
 /// Resource and record-boundary policy for SDF parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SdfParseOptions {
+    allow_missing_final_delimiter: bool,
+    max_input_bytes: usize,
+    max_records: usize,
+    max_record_bytes: usize,
+}
+
+impl SdfParseOptions {
     /// Accept a nonempty final record without its terminating `$$$$` line.
-    pub allow_missing_final_delimiter: bool,
+    pub const fn allow_missing_final_delimiter(&self) -> bool {
+        self.allow_missing_final_delimiter
+    }
+
+    /// Sets [`Self::allow_missing_final_delimiter`].
+    #[must_use]
+    pub const fn with_allow_missing_final_delimiter(
+        mut self,
+        allow_missing_final_delimiter: bool,
+    ) -> Self {
+        self.allow_missing_final_delimiter = allow_missing_final_delimiter;
+        self
+    }
+
     /// Maximum UTF-8 byte length of a complete input parsed as one document.
     /// Streaming record readers hold one record at a time and ignore it.
-    pub max_input_bytes: usize,
+    pub const fn max_input_bytes(&self) -> usize {
+        self.max_input_bytes
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub const fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Self {
+        self.max_input_bytes = max_input_bytes;
+        self
+    }
+
     /// Maximum number of nonempty records.
-    pub max_records: usize,
+    pub const fn max_records(&self) -> usize {
+        self.max_records
+    }
+
+    /// Sets [`Self::max_records`].
+    #[must_use]
+    pub const fn with_max_records(mut self, max_records: usize) -> Self {
+        self.max_records = max_records;
+        self
+    }
+
     /// Maximum normalized byte length of one record, excluding its delimiter.
-    pub max_record_bytes: usize,
+    pub const fn max_record_bytes(&self) -> usize {
+        self.max_record_bytes
+    }
+
+    /// Sets [`Self::max_record_bytes`].
+    #[must_use]
+    pub const fn with_max_record_bytes(mut self, max_record_bytes: usize) -> Self {
+        self.max_record_bytes = max_record_bytes;
+        self
+    }
 }
 
 impl SdfParseOptions {

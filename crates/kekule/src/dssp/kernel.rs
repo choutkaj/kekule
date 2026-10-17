@@ -187,12 +187,6 @@ struct BetaCounts {
 }
 
 pub(super) fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspResult, DsspError> {
-    if !matches!(options.min_polyproline_stretch, 2 | 3) {
-        return Err(DsspError::InvalidPolyprolineStretch {
-            value: options.min_polyproline_stretch,
-        });
-    }
-
     let (mut residues, mut report, chain_segments) = extract_backbones(model, options.limits)?;
     if residues.is_empty() {
         return Err(DsspError::NoAnalyzableProteinResidues);

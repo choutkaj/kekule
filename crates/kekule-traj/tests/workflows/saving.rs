@@ -7,7 +7,7 @@ use std::{
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::Positions;
 use kekule::structure::{Forces, Trajectory, TrajectoryFrame, TrajectoryFrameView, Velocities};
-use kekule_traj::io::dcd::DcdWriteOptions;
+use kekule_traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule_traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule_traj::io::{
     create_trajectory_writer, read_trajectory, write_trajectory, OverwritePolicy,
@@ -150,8 +150,9 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
             "dcd",
             topology(&["C", "H", "O"], &[(0, 1), (0, 2)]),
             Some(
-                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
-                    .with_dcd_options(DcdWriteOptions::default().with_cells(true)),
+                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_dcd_options(
+                    DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write),
+                ),
             ),
         ),
     ] {

@@ -269,10 +269,7 @@ fn correspondence_streaming_matches_loaded_superposition_and_keeps_failed_buffer
         [(0, 1), (1, 3), (2, 0)].map(|(a, b)| (moving.atom_ids()[a], reference_ids[b])),
     )
     .unwrap();
-    let options = AlignmentOptions {
-        weighting: Weighting::Explicit(&[4.0, 1.0, 2.0]),
-        ..AlignmentOptions::default()
-    };
+    let options = AlignmentOptions::default().with_weighting(Weighting::Explicit(&[4.0, 1.0, 2.0]));
     let mut loaded = trajectory.clone();
     loaded.superpose(&reference, &fit, options).unwrap();
     let superposer = FrameSuperposer::new(&reference, &fit, options);

@@ -125,7 +125,6 @@ pub(super) fn visit_with_work(
     visitor: &mut dyn FnMut(&[usize]) -> bool,
     work: &mut SubstructureMatchWork,
 ) -> Result<MatchCompletion, SubstructureMatchError> {
-    validate_options(options)?;
     let mut context = Context {
         data,
         options,

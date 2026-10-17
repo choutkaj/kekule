@@ -103,10 +103,9 @@ fn centers() -> Vec<Point3> {
 }
 
 fn tight(tolerance: f64) -> MinimizeOptions {
-    MinimizeOptions {
-        gradient_tolerance: Quantity::new(tolerance, KILOJOULE_PER_MOLE_PER_NANOMETER),
-        ..MinimizeOptions::default()
-    }
+    MinimizeOptions::default()
+        .with_gradient_tolerance(Quantity::new(tolerance, KILOJOULE_PER_MOLE_PER_NANOMETER))
+        .unwrap()
 }
 
 #[test]
@@ -163,20 +162,14 @@ fn every_accepted_step_is_observed_and_observers_can_stop() {
 fn iteration_limit_is_reported() {
     let model = start();
     let bowl = Bowl::new(&model, centers());
-    let options = MinimizeOptions {
-        max_iterations: 2,
-        ..tight(1e-9)
-    };
+    let options = tight(1e-9).with_max_iterations(2);
     let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::MaxIterations);
     assert_eq!(result.iterations(), 2);
     let converged = minimize(
         &bowl,
         model.as_model_view(),
-        &MinimizeOptions {
-            max_iterations: 0,
-            ..tight(1e9)
-        },
+        &tight(1e9).with_max_iterations(0),
     )
     .unwrap();
     assert_eq!(converged.status(), MinimizationStatus::Converged);
@@ -189,10 +182,9 @@ fn singular_trials_are_backtracked_but_other_failures_abort() {
     let mut bowl = Bowl::new(&model, centers());
     // The minimum at x = 0.4 lies just inside a wall the long trial steps cross.
     bowl.wall = 0.401;
-    let options = MinimizeOptions {
-        max_step: Quantity::new(1.0, NANOMETER),
-        ..tight(1e-6)
-    };
+    let options = tight(1e-6)
+        .with_max_step(Quantity::new(1.0, NANOMETER))
+        .unwrap();
     let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
 
@@ -233,10 +225,9 @@ fn displacements_that_round_away_stop_the_line_search() {
     let model = model(&[far; 3]);
     let mut bowl = Bowl::new(&model, vec![Point3::new(1e15 + 1.0, 1e15, 1e15); 3]);
     bowl.stiffness = [1.0; 3];
-    let options = MinimizeOptions {
-        max_step: Quantity::new(1e-6, NANOMETER),
-        ..MinimizeOptions::default()
-    };
+    let options = MinimizeOptions::default()
+        .with_max_step(Quantity::new(1e-6, NANOMETER))
+        .unwrap();
     let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::LineSearchFailed);
     assert_eq!(result.positions(), model.positions());
@@ -248,10 +239,7 @@ fn progress_is_independent_of_the_gradient_scale() {
     let ratio = |scale: f64| {
         let mut bowl = Bowl::new(&model, centers());
         bowl.scale = scale;
-        let options = MinimizeOptions {
-            max_iterations: 3,
-            ..tight(1e-300)
-        };
+        let options = tight(1e-300).with_max_iterations(3);
         let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
         assert_eq!(result.iterations(), 3, "scale {scale}");
         let initial = result.initial_energy().total().into_value();
@@ -269,45 +257,36 @@ fn progress_is_independent_of_the_gradient_scale() {
 }
 
 #[test]
-fn invalid_options_are_rejected_before_evaluation() {
-    let model = start();
-    let bowl = Bowl::new(&model, centers());
-    for (options, option) in [
-        (tight(0.0), MinimizeOption::GradientTolerance),
-        (tight(f64::NAN), MinimizeOption::GradientTolerance),
+fn invalid_options_are_rejected_when_set() {
+    let tolerance = |value: f64| {
+        MinimizeOptions::default()
+            .with_gradient_tolerance(Quantity::new(value, KILOJOULE_PER_MOLE_PER_NANOMETER))
+            .unwrap_err()
+    };
+    for (error, option) in [
+        (tolerance(0.0), MinimizeOption::GradientTolerance),
+        (tolerance(f64::NAN), MinimizeOption::GradientTolerance),
         (
-            MinimizeOptions {
-                max_step: Quantity::new(0.0, NANOMETER),
-                ..MinimizeOptions::default()
-            },
+            MinimizeOptions::default()
+                .with_max_step(Quantity::new(0.0, NANOMETER))
+                .unwrap_err(),
             MinimizeOption::MaxStep,
         ),
         (
-            MinimizeOptions {
-                memory: 0,
-                ..MinimizeOptions::default()
-            },
+            MinimizeOptions::default().with_memory(0).unwrap_err(),
             MinimizeOption::Memory,
         ),
         (
-            MinimizeOptions {
-                max_line_search_evaluations: 0,
-                ..MinimizeOptions::default()
-            },
+            MinimizeOptions::default()
+                .with_max_line_search_evaluations(0)
+                .unwrap_err(),
             MinimizeOption::MaxLineSearchEvaluations,
         ),
     ] {
-        assert_eq!(
-            minimize(&bowl, model.as_model_view(), &options).unwrap_err(),
-            MinimizationError::InvalidOptions(option)
-        );
+        assert_eq!(error, MinimizationError::InvalidOptions(option));
     }
-    let wrong_unit = MinimizeOptions {
-        max_step: Quantity::new(1.0, CANONICAL_ENERGY_UNIT),
-        ..MinimizeOptions::default()
-    };
     assert!(matches!(
-        minimize(&bowl, model.as_model_view(), &wrong_unit),
+        MinimizeOptions::default().with_max_step(Quantity::new(1.0, CANONICAL_ENERGY_UNIT)),
         Err(MinimizationError::Unit(_))
     ));
 }

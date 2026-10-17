@@ -129,18 +129,16 @@ fn auxiliary_ranking_stops_at_a_proven_order_but_never_promotes_a_truncated_tie(
     for (smiles, options, resolved) in [
         (
             "[C@H](F)(Cl)CCCC",
-            CipAssignmentOptions {
-                max_depth: 32,
-                max_nodes: 1,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(32)
+                .with_max_nodes(1),
             true,
         ),
         (
             "N[C@@H]([13CH2]CCC)CCCCO",
-            CipAssignmentOptions {
-                max_depth: 0,
-                max_nodes: 100_000,
-            },
+            CipAssignmentOptions::default()
+                .with_max_depth(0)
+                .with_max_nodes(100_000),
             false,
         ),
     ] {

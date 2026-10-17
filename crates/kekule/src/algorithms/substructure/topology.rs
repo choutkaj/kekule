@@ -95,7 +95,6 @@ impl<'a> PreparedTopologyTarget<'a> {
         mut visitor: impl FnMut(&TopologyQueryMatch) -> ControlFlow<()>,
     ) -> Result<MatchCompletion, SubstructureMatchError> {
         if query.is_component_local() {
-            validate_options(options)?;
             let mut count = 0usize;
             let mut work = SubstructureMatchWork {
                 query_atoms: query.atom_count(),
@@ -106,10 +105,9 @@ impl<'a> PreparedTopologyTarget<'a> {
                 let completion = engine::visit_with_work(
                     data,
                     query,
-                    SubstructureMatchOptions {
-                        max_matches: usize::MAX,
-                        ..options
-                    },
+                    options
+                        .with_max_matches(usize::MAX)
+                        .expect("usize::MAX is a positive match bound"),
                     true,
                     &mut |indices| {
                         for &instance in instances {

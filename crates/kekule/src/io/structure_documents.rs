@@ -27,10 +27,23 @@ use super::staged_coordinates::StagedCoordinates;
 /// Policy for Molfile and SDF record interpretation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MolfileInterpretOptions {
+    unsupported: UnsupportedContent,
+}
+
+impl MolfileInterpretOptions {
     /// What to do with [`MolfileDocument::unsupported`] content. It fails
     /// interpretation by default; [`UnsupportedContent::Report`] omits it and
     /// lists it in [`MolfileInterpretation::omitted`].
-    pub unsupported: UnsupportedContent,
+    pub const fn unsupported(&self) -> UnsupportedContent {
+        self.unsupported
+    }
+
+    /// Sets [`Self::unsupported`].
+    #[must_use]
+    pub const fn with_unsupported(mut self, unsupported: UnsupportedContent) -> Self {
+        self.unsupported = unsupported;
+        self
+    }
 }
 
 /// A Molfile interpretation failure, located at the source line it concerns

@@ -53,11 +53,35 @@ impl AtomPositionSource for MoleculePositions<'_> {
 /// Options for read-only coordinate-derived stereo inference.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CoordinateStereoOptions {
+    infer_axes: bool,
+    perception: StereoSearchOptions,
+}
+
+impl CoordinateStereoOptions {
     /// Infer the conservative coordinate-axis subset in addition to
     /// tetrahedral and double-bond stereo.
-    pub infer_axes: bool,
+    pub const fn infer_axes(&self) -> bool {
+        self.infer_axes
+    }
+
+    /// Sets [`Self::infer_axes`].
+    #[must_use]
+    pub const fn with_infer_axes(mut self, infer_axes: bool) -> Self {
+        self.infer_axes = infer_axes;
+        self
+    }
+
     /// Bounds for chemical candidate perception before coordinate inference.
-    pub perception: StereoSearchOptions,
+    pub const fn perception(&self) -> StereoSearchOptions {
+        self.perception
+    }
+
+    /// Sets [`Self::perception`].
+    #[must_use]
+    pub const fn with_perception(mut self, perception: StereoSearchOptions) -> Self {
+        self.perception = perception;
+        self
+    }
 }
 
 /// Coordinate-derived stereo for the foci the molecule leaves unasserted, and

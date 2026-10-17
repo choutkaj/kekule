@@ -125,10 +125,34 @@ impl SymmetricSelection {
 /// Bounds on the symmetry search of a [`SymmetricSelection`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SymmetryLimits {
+    max_permutations: usize,
+    max_search_steps: usize,
+}
+
+impl SymmetryLimits {
     /// Most admitted permutations, including the identity.
-    pub max_permutations: usize,
+    pub const fn max_permutations(&self) -> usize {
+        self.max_permutations
+    }
+
+    /// Sets [`Self::max_permutations`].
+    #[must_use]
+    pub const fn with_max_permutations(mut self, max_permutations: usize) -> Self {
+        self.max_permutations = max_permutations;
+        self
+    }
+
     /// Most candidate atom mappings examined by the search.
-    pub max_search_steps: usize,
+    pub const fn max_search_steps(&self) -> usize {
+        self.max_search_steps
+    }
+
+    /// Sets [`Self::max_search_steps`].
+    #[must_use]
+    pub const fn with_max_search_steps(mut self, max_search_steps: usize) -> Self {
+        self.max_search_steps = max_search_steps;
+        self
+    }
 }
 
 impl SymmetryLimits {

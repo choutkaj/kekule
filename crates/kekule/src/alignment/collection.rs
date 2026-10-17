@@ -40,10 +40,37 @@ impl<'a, T: AsModelView + ?Sized> From<&'a T> for Reference<'a> {
 /// Options for fitting on one set of pairs and measuring another.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlignedRmsdOptions<'a> {
+    fit: AlignmentOptions<'a>,
+    measurement_weighting: Weighting<'a>,
+}
+
+impl<'a> AlignedRmsdOptions<'a> {
     /// Fit weighting and the periodic policy applied to both steps.
-    pub fit: AlignmentOptions<'a>,
+    pub const fn fit(&self) -> AlignmentOptions<'a> {
+        self.fit
+    }
+
+    /// Sets [`Self::fit`].
+    #[must_use]
+    pub const fn with_fit(mut self, fit: AlignmentOptions<'a>) -> Self {
+        self.fit = fit;
+        self
+    }
+
     /// Weights of the measured pairs, in pair order.
-    pub measurement_weighting: Weighting<'a>,
+    pub const fn measurement_weighting(&self) -> Weighting<'a> {
+        self.measurement_weighting
+    }
+
+    /// Sets [`Self::measurement_weighting`].
+    #[must_use]
+    pub const fn with_measurement_weighting(
+        mut self,
+        measurement_weighting: Weighting<'a>,
+    ) -> Self {
+        self.measurement_weighting = measurement_weighting;
+        self
+    }
 }
 
 /// Complete record of one successful collection superposition.

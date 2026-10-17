@@ -13,11 +13,35 @@ use super::rdkit_inferred_hydrogen_count;
 /// Controls which encoded hydrogens are materialized and bounds graph growth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddHydrogensOptions {
+    fixed_only: bool,
+    max_added_hydrogens: usize,
+}
+
+impl AddHydrogensOptions {
     /// Materialize only fixed implicit counts and leave inferred counts
     /// implicit; this mode needs no perception.
-    pub fixed_only: bool,
+    pub const fn fixed_only(&self) -> bool {
+        self.fixed_only
+    }
+
+    /// Sets [`Self::fixed_only`].
+    #[must_use]
+    pub const fn with_fixed_only(mut self, fixed_only: bool) -> Self {
+        self.fixed_only = fixed_only;
+        self
+    }
+
     /// Bound topology growth before any mutation is committed.
-    pub max_added_hydrogens: usize,
+    pub const fn max_added_hydrogens(&self) -> usize {
+        self.max_added_hydrogens
+    }
+
+    /// Sets [`Self::max_added_hydrogens`].
+    #[must_use]
+    pub const fn with_max_added_hydrogens(mut self, max_added_hydrogens: usize) -> Self {
+        self.max_added_hydrogens = max_added_hydrogens;
+        self
+    }
 }
 
 impl AddHydrogensOptions {

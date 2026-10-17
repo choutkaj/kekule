@@ -160,10 +160,7 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
         // been installed and after aromaticity has replaced the old section.
         for max_total_work in (0..1_000).step_by(7) {
             let mut actual = original.clone();
-            let options = AromaticityOptions {
-                max_total_work,
-                ..Default::default()
-            };
+            let options = AromaticityOptions::default().with_max_total_work(max_total_work);
             match perceive_aromaticity(&mut actual, AromaticityModel::RdkitLike, options) {
                 Err(error) => {
                     assert!(matches!(
@@ -204,26 +201,19 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
 fn installed_rings_skip_enumeration_limits_but_not_aromaticity_limits() {
     let mut actual = molecule("c1ccccc1");
     actual.perceive().unwrap();
-    let options = AromaticityOptions {
-        ring_options: RingPerceptionOptions {
-            max_atoms: 0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let options = AromaticityOptions::default()
+        .with_ring_options(RingPerceptionOptions::default().with_max_atoms(0));
     perceive_aromaticity(&mut actual, AromaticityModel::RdkitLike, options).unwrap();
     let before = actual.perception().clone();
     assert!(matches!(
-        perceive_aromaticity(
-            &mut actual,
-            AromaticityModel::RdkitLike,
-            AromaticityOptions {
-                max_total_work: 0,
-                ..options
-            }
-        ),
-        Err(AromaticityError::LimitExceeded(limit))
-            if limit.resource() == Resource::Work && limit.limit() == 0
-    ));
+            perceive_aromaticity(
+                &mut actual,
+                AromaticityModel::RdkitLike,
+                options
+    .with_max_total_work(0)
+            ),
+            Err(AromaticityError::LimitExceeded(limit))
+                if limit.resource() == Resource::Work && limit.limit() == 0
+        ));
     assert_eq!(actual.perception(), &before);
 }

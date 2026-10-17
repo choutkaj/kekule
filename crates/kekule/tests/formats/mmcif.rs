@@ -281,21 +281,14 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let custom_written = mmcif::write(
         [mmcif::MmcifBlockSource::model(interpreted.model())
             .with_reports(std::slice::from_ref(interpreted.report()))],
-        MmcifWriteOptions {
-            block_name: "custom".to_owned(),
-            ..MmcifWriteOptions::default()
-        },
+        MmcifWriteOptions::default()
+            .with_block_name("custom".to_owned())
+            .unwrap(),
     )?;
     assert!(custom_written.starts_with("data_custom\n"));
-    let unnamed = mmcif::write(
-        [mmcif::MmcifBlockSource::model(interpreted.model())
-            .with_reports(std::slice::from_ref(interpreted.report()))],
-        MmcifWriteOptions {
-            block_name: String::new(),
-            ..MmcifWriteOptions::default()
-        },
-    )
-    .unwrap_err();
+    let unnamed = MmcifWriteOptions::default()
+        .with_block_name(String::new())
+        .unwrap_err();
     assert_eq!(
         unnamed.detail(),
         Some(&kekule::diagnostics::FormatErrorDetail::MmcifWrite(

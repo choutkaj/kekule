@@ -1,8 +1,6 @@
 #![no_main]
 
-use kekule::macromolecular::{
-    ModelSelection, StructureEnsembleInterpretOptions, StructureInterpretOptions,
-};
+use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif::{parse_str, MmcifEntry, MmcifParseOptions};
 use libfuzzer_sys::fuzz_target;
 
@@ -12,13 +10,11 @@ fuzz_target!(|data: &[u8]| {
     };
     if let Ok(document) = parse_str(
         input,
-        MmcifParseOptions {
-            max_input_bytes: 64 * 1024,
-            max_tokens: 16 * 1024,
-            max_token_bytes: 16 * 1024,
-            max_atom_site_rows: 4 * 1024,
-            ..MmcifParseOptions::default()
-        },
+        MmcifParseOptions::default()
+            .with_max_input_bytes(64 * 1024)
+            .with_max_tokens(16 * 1024)
+            .with_max_token_bytes(16 * 1024)
+            .with_max_atom_site_rows(4 * 1024),
     ) {
         for block in document.blocks() {
             let _ = document.block(block.name());
@@ -40,10 +36,8 @@ fuzz_target!(|data: &[u8]| {
             }
         }
 
-        let options = StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..StructureInterpretOptions::default()
-        };
+        let options =
+            StructureInterpretOptions::default().with_model_selection(ModelSelection::First);
         if let Ok(interpreted) = document.interpret(options) {
             for atom in interpreted.model().topology().atom_ids() {
                 let _ = interpreted.model().topology().atom(*atom);
@@ -62,9 +56,5 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
         }
-        let _ = document.interpret_ensemble(StructureEnsembleInterpretOptions {
-            model_ids: Some(Vec::new()),
-            ..StructureEnsembleInterpretOptions::default()
-        });
     }
 });

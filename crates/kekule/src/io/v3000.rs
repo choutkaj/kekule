@@ -142,7 +142,7 @@ pub(super) fn parse_v3000_ctab(
             }
             let parsed = parse_v3000_counts(&record.body)
                 .ok_or_else(|| syntax("invalid V3000 COUNTS line"))?;
-            if parsed.atoms > options.max_v3000_atoms {
+            if parsed.atoms > options.max_v3000_atoms() {
                 return Err(lines
                     .error(
                         record.index,
@@ -151,11 +151,11 @@ pub(super) fn parse_v3000_ctab(
                     )
                     .exceeding(LimitExceeded::new(
                         Resource::Atoms,
-                        options.max_v3000_atoms,
+                        options.max_v3000_atoms(),
                         parsed.atoms,
                     )));
             }
-            if parsed.bonds > options.max_v3000_bonds {
+            if parsed.bonds > options.max_v3000_bonds() {
                 return Err(lines
                     .error(
                         record.index,
@@ -164,7 +164,7 @@ pub(super) fn parse_v3000_ctab(
                     )
                     .exceeding(LimitExceeded::new(
                         Resource::Bonds,
-                        options.max_v3000_bonds,
+                        options.max_v3000_bonds(),
                         parsed.bonds,
                     )));
             }
@@ -223,7 +223,7 @@ fn collect_v3000_lines(
             )
             .exceeding(LimitExceeded::first_beyond(
                 Resource::RecordBytes,
-                options.max_v3000_logical_line_bytes,
+                options.max_v3000_logical_line_bytes(),
             ))
     };
     let mut records = Vec::new();
@@ -235,7 +235,7 @@ fn collect_v3000_lines(
         }
         let body = v3000_body(line)
             .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "expected M  V30 record"))?;
-        if body.len() > options.max_v3000_logical_line_bytes {
+        if body.len() > options.max_v3000_logical_line_bytes() {
             return Err(limit(start));
         }
         let mut body = body.to_owned();
@@ -254,7 +254,8 @@ fn collect_v3000_lines(
                     lines.error(index, DiagnosticKind::Syntax, "invalid V3000 continuation")
                 })?
                 .trim_start();
-            if body.len().saturating_add(continuation.len()) > options.max_v3000_logical_line_bytes
+            if body.len().saturating_add(continuation.len())
+                > options.max_v3000_logical_line_bytes()
             {
                 return Err(limit(start));
             }

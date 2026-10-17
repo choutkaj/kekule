@@ -78,29 +78,59 @@ impl TrajectoryWriteOptions {
         }
     }
 
+    #[must_use]
     pub fn with_overwrite_policy(mut self, overwrite: OverwritePolicy) -> Self {
         self.overwrite = overwrite;
         self
     }
 
+    #[must_use]
     pub fn with_xyz_options(mut self, options: xyz::XyzWriteOptions) -> Self {
         self.xyz = options;
         self
     }
 
+    #[must_use]
     pub fn with_dcd_options(mut self, options: dcd::DcdWriteOptions) -> Self {
         self.dcd = options;
         self
     }
 
+    #[must_use]
     pub fn with_trr_options(mut self, options: trr::TrrWriteOptions) -> Self {
         self.trr = options;
         self
     }
 
+    #[must_use]
     pub fn with_xtc_options(mut self, options: xtc::XtcWriteOptions) -> Self {
         self.xtc = options;
         self
+    }
+
+    /// The explicit format, or `None` to take it from the destination extension.
+    pub const fn format(&self) -> Option<TrajectoryFormat> {
+        self.format
+    }
+
+    pub const fn overwrite_policy(&self) -> OverwritePolicy {
+        self.overwrite
+    }
+
+    pub const fn xyz_options(&self) -> &xyz::XyzWriteOptions {
+        &self.xyz
+    }
+
+    pub const fn dcd_options(&self) -> &dcd::DcdWriteOptions {
+        &self.dcd
+    }
+
+    pub const fn trr_options(&self) -> &trr::TrrWriteOptions {
+        &self.trr
+    }
+
+    pub const fn xtc_options(&self) -> &xtc::XtcWriteOptions {
+        &self.xtc
     }
 }
 

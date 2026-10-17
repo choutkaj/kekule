@@ -417,10 +417,7 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
 
     let written = sdf::write(
         &[interpretations[1].clone()],
-        sdf::SdfWriteOptions {
-            version: molfile::MolfileWriteVersion::V2000,
-            ..Default::default()
-        },
+        sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
     .expect("single-component rich record writes");
     let round_trip_document =
@@ -701,9 +698,8 @@ fn molfile_unsupported_content_is_rejected_by_default_and_reported_on_request() 
             14,
         ),
     ];
-    let report = molfile::MolfileInterpretOptions {
-        unsupported: UnsupportedContent::Report,
-    };
+    let report =
+        molfile::MolfileInterpretOptions::default().with_unsupported(UnsupportedContent::Report);
     for (input, content, line) in cases {
         let expected = [molfile::MolfileUnsupported::new(
             content.clone(),
@@ -950,10 +946,7 @@ fn sdf_record_stream_isolates_malformed_records_and_resumes() {
         carbon_record(&long_title),
         carbon_record("third")
     );
-    let options = sdf::SdfParseOptions {
-        max_record_bytes: 150,
-        ..sdf::SdfParseOptions::default()
-    };
+    let options = sdf::SdfParseOptions::default().with_max_record_bytes(150);
     assert_eq!(
         stream(sdf::records(input.as_bytes(), options)),
         [
@@ -964,10 +957,7 @@ fn sdf_record_stream_isolates_malformed_records_and_resumes() {
     );
 
     // Exceeding the record count ends the stream.
-    let options = sdf::SdfParseOptions {
-        max_records: 1,
-        ..sdf::SdfParseOptions::default()
-    };
+    let options = sdf::SdfParseOptions::default().with_max_records(1);
     assert_eq!(
         stream(sdf::records(input.as_bytes(), options)),
         [
@@ -1039,10 +1029,7 @@ fn format_readers_match_string_parsing_and_enforce_limits() {
         smiles::parse_reader(smiles_text.as_bytes(), Default::default()).unwrap(),
         smiles::parse_str(smiles_text, Default::default()).unwrap()
     );
-    let limited = smiles::SmilesParseOptions {
-        max_input_bytes: smiles_text.len() - 1,
-        ..smiles::SmilesParseOptions::default()
-    };
+    let limited = smiles::SmilesParseOptions::default().with_max_input_bytes(smiles_text.len() - 1);
     let error = smiles::parse_reader(smiles_text.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
@@ -1056,10 +1043,7 @@ fn format_readers_match_string_parsing_and_enforce_limits() {
         molfile::parse_reader(molfile.as_bytes(), Default::default()).unwrap(),
         molfile::parse_str(molfile, Default::default()).unwrap()
     );
-    let limited = molfile::MolfileParseOptions {
-        max_input_bytes: molfile.len() - 1,
-        ..molfile::MolfileParseOptions::default()
-    };
+    let limited = molfile::MolfileParseOptions::default().with_max_input_bytes(molfile.len() - 1);
     let error = molfile::parse_reader(molfile.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.kind(), error.location()),
@@ -1073,10 +1057,7 @@ fn format_readers_match_string_parsing_and_enforce_limits() {
         sdf::parse_reader(sdf_text.as_bytes(), Default::default()).unwrap(),
         sdf::parse_str(&sdf_text, Default::default()).unwrap()
     );
-    let limited = sdf::SdfParseOptions {
-        max_input_bytes: sdf_text.len() - 1,
-        ..sdf::SdfParseOptions::default()
-    };
+    let limited = sdf::SdfParseOptions::default().with_max_input_bytes(sdf_text.len() - 1);
     let error = sdf::parse_reader(sdf_text.as_bytes(), limited).unwrap_err();
     assert_eq!(
         (error.record(), error.kind(), error.location()),

@@ -96,10 +96,7 @@ fn first_model(
     document: &MmcifDocument,
 ) -> Result<macromolecular::StructureInterpretation, Failure> {
     document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..Default::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .map_err(|e| Failure::new("interpret", e))
 }
 

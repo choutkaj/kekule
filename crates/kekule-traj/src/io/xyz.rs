@@ -48,17 +48,20 @@ impl XyzReadOptions {
     /// array and the reusable line buffer, which grows to hold the longest
     /// line read so far, terminator included, in both sequential and indexed
     /// modes. The frame index has its own `max_index_bytes` limit.
+    #[must_use]
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
     }
 
     /// Sets the source label used in decoding errors.
+    #[must_use]
     pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
         self.source_label = source_label.into();
         self
     }
 
+    #[must_use]
     pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
         self.length_unit = length_unit;
         self
@@ -66,6 +69,16 @@ impl XyzReadOptions {
 
     pub const fn length_unit(&self) -> Unit {
         self.length_unit
+    }
+
+    /// Limits applied before allocation, scanning, and seeking.
+    pub const fn limits(&self) -> &TrajectoryIoLimits {
+        &self.limits
+    }
+
+    /// The source label used in decoding errors.
+    pub fn source_label(&self) -> &str {
+        &self.source_label
     }
 }
 
@@ -88,19 +101,34 @@ impl Default for XyzWriteOptions {
 }
 
 impl XyzWriteOptions {
+    #[must_use]
     pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
         self.length_unit = length_unit;
         self
     }
 
+    #[must_use]
     pub const fn with_decimal_places(mut self, decimal_places: usize) -> Self {
         self.decimal_places = decimal_places;
         self
     }
 
+    #[must_use]
     pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
         self.comment = comment.into();
         self
+    }
+
+    pub const fn length_unit(&self) -> Unit {
+        self.length_unit
+    }
+
+    pub const fn decimal_places(&self) -> usize {
+        self.decimal_places
+    }
+
+    pub fn comment(&self) -> &str {
+        &self.comment
     }
 }
 
@@ -183,7 +211,7 @@ impl<R: BufRead> XyzReader<R> {
         } else {
             TrajectoryIoOperation::ReadFrame
         };
-        if self.frame_cursor >= self.options.limits.max_frames {
+        if self.frame_cursor >= self.options.limits.max_frames() {
             if self
                 .reader
                 .fill_buf()
@@ -213,7 +241,7 @@ impl<R: BufRead> XyzReader<R> {
         let Some((count_line, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
-            self.options.limits.max_text_line_bytes,
+            self.options.limits.max_text_line_bytes(),
             position_bytes,
             &self.options.limits,
             &self.options.source_label,
@@ -269,7 +297,7 @@ impl<R: BufRead> XyzReader<R> {
         let Some((_, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
-            self.options.limits.max_comment_bytes,
+            self.options.limits.max_comment_bytes(),
             position_bytes,
             &self.options.limits,
             &self.options.source_label,
@@ -311,7 +339,7 @@ impl<R: BufRead> XyzReader<R> {
             let Some((line, consumed)) = read_line(
                 &mut self.reader,
                 &mut self.line,
-                self.options.limits.max_text_line_bytes,
+                self.options.limits.max_text_line_bytes(),
                 position_bytes,
                 &self.options.limits,
                 &self.options.source_label,
@@ -946,7 +974,7 @@ fn validate_atom_limit(
     limits: &TrajectoryIoLimits,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {
-    if atom_count > limits.max_atoms {
+    if atom_count > limits.max_atoms() {
         return Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::ReadHeader,
@@ -954,12 +982,12 @@ fn validate_atom_limit(
             source_label,
             format!(
                 "XYZ atom count {atom_count} exceeds configured maximum {}",
-                limits.max_atoms
+                limits.max_atoms()
             ),
         )
         .with_limit(LimitExceeded::new(
             Resource::Atoms,
-            limits.max_atoms,
+            limits.max_atoms(),
             atom_count,
         )));
     }
@@ -974,7 +1002,7 @@ fn validate_atom_limit(
                 "XYZ position scratch size overflows",
             )
         })?;
-    if scratch_bytes > limits.max_scratch_bytes {
+    if scratch_bytes > limits.max_scratch_bytes() {
         return Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::ReadHeader,
@@ -982,12 +1010,12 @@ fn validate_atom_limit(
             source_label,
             format!(
                 "XYZ position scratch requires {scratch_bytes} bytes, exceeding configured maximum {}",
-                limits.max_scratch_bytes
+                limits.max_scratch_bytes()
             ),
         )
         .with_limit(LimitExceeded::new(
             Resource::RecordBytes,
-            limits.max_scratch_bytes,
+            limits.max_scratch_bytes(),
             scratch_bytes,
         )));
     }
@@ -1001,7 +1029,7 @@ fn validate_frame_bytes(
     frame: u64,
     operation: TrajectoryIoOperation,
 ) -> Result<(), TrajectoryIoError> {
-    if frame_bytes > limits.max_frame_bytes {
+    if frame_bytes > limits.max_frame_bytes() {
         return Err(frame_codec_error(
             TrajectoryIoErrorKind::LimitExceeded,
             operation,
@@ -1009,12 +1037,12 @@ fn validate_frame_bytes(
             frame,
             format!(
                 "XYZ frame exceeds configured {}-byte limit",
-                limits.max_frame_bytes
+                limits.max_frame_bytes()
             ),
         )
         .with_limit(LimitExceeded::new(
             Resource::RecordBytes,
-            usize::try_from(limits.max_frame_bytes).unwrap_or(usize::MAX),
+            usize::try_from(limits.max_frame_bytes()).unwrap_or(usize::MAX),
             usize::try_from(frame_bytes).unwrap_or(usize::MAX),
         )));
     }
@@ -1098,7 +1126,7 @@ fn read_line<'a, R: BufRead>(
             // Grow geometrically so a long line is not copied once per buffered
             // chunk, but never past the line limit or the remaining budget.
             let remaining = other_scratch_bytes
-                .and_then(|bytes| limits.max_scratch_bytes.checked_sub(bytes))
+                .and_then(|bytes| limits.max_scratch_bytes().checked_sub(bytes))
                 .unwrap_or(0);
             let target = line
                 .capacity()
@@ -1110,7 +1138,7 @@ fn read_line<'a, R: BufRead>(
                 line,
                 target,
                 other_scratch_bytes,
-                limits.max_scratch_bytes,
+                limits.max_scratch_bytes(),
                 |detail| {
                     frame_codec_error(
                         TrajectoryIoErrorKind::LimitExceeded,

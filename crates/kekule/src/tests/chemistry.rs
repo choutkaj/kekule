@@ -338,7 +338,7 @@ fn valence_reports_excess_common_valence() {
     valence_api::perceive_valence(
         mol.working_mut(),
         ValenceModel::RdkitLike,
-        ValenceOptions { strict: false },
+        ValenceOptions::default().with_strict(false),
     )
     .expect("permissive valence inspection should succeed");
     assert_eq!(mol.perception().inferred_hydrogens(c), Some(0));
@@ -412,7 +412,7 @@ fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
     valence_api::perceive_valence(
         molecule.working_mut(),
         ValenceModel::RdkitLike,
-        ValenceOptions { strict: false },
+        ValenceOptions::default().with_strict(false),
     )
     .expect("permissive inspection should install");
     assert!(molecule.perception().has_valence());

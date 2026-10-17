@@ -90,9 +90,7 @@ fn smiles_writes_molecules_and_repeated_topology_instances_in_authoritative_orde
     assert_eq!(
         smiles::write(
             &chiral,
-            SmilesWriteOptions {
-                mode: SmilesWriteMode::Isomeric,
-            }
+            SmilesWriteOptions::default().with_mode(SmilesWriteMode::Isomeric)
         )
         .unwrap(),
         smiles::write(&chiral, smiles::SmilesWriteOptions::isomeric()).unwrap()
@@ -100,9 +98,7 @@ fn smiles_writes_molecules_and_repeated_topology_instances_in_authoritative_orde
     assert_eq!(
         smiles::write(
             &molecule("OCC"),
-            SmilesWriteOptions {
-                mode: SmilesWriteMode::Canonical,
-            }
+            SmilesWriteOptions::default().with_mode(SmilesWriteMode::Canonical)
         )
         .unwrap(),
         "CCO"
@@ -136,18 +132,12 @@ fn molfile_rejects_asserted_stereo_its_coordinates_contradict() {
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         molfile::write(
             &model("F[C@H](Cl)Br", &points),
-            MolfileWriteOptions {
-                version,
-                ..Default::default()
-            },
+            MolfileWriteOptions::default().with_version(version),
         )
         .unwrap();
         let error = molfile::write(
             &model("F[C@@H](Cl)Br", &points),
-            MolfileWriteOptions {
-                version,
-                ..Default::default()
-            },
+            MolfileWriteOptions::default().with_version(version),
         )
         .unwrap_err();
         assert_eq!(
@@ -175,23 +165,14 @@ fn molfile_rejects_atom_map_zero_which_both_versions_read_as_no_map() {
             (
                 molfile::write(
                     &source,
-                    MolfileWriteOptions {
-                        version,
-                        ..Default::default()
-                    },
+                    MolfileWriteOptions::default().with_version(version),
                 )
                 .unwrap_err(),
                 1,
             ),
             (
-                molfile::write(
-                    &model,
-                    MolfileWriteOptions {
-                        version,
-                        ..Default::default()
-                    },
-                )
-                .unwrap_err(),
+                molfile::write(&model, MolfileWriteOptions::default().with_version(version))
+                    .unwrap_err(),
                 2,
             ),
         ] {
@@ -221,10 +202,7 @@ fn molfile_v3000_continues_records_past_80_columns() {
     );
     let text = molfile::write(
         &charged,
-        MolfileWriteOptions {
-            version: MolfileWriteVersion::V3000,
-            ..Default::default()
-        },
+        MolfileWriteOptions::default().with_version(MolfileWriteVersion::V3000),
     )
     .unwrap();
     let stored = charged
@@ -275,10 +253,7 @@ fn molfile_chiral_flag_states_whether_stereo_is_absolute() {
     ] {
         let text = molfile::write(
             &model(source, &layout),
-            MolfileWriteOptions {
-                version,
-                ..Default::default()
-            },
+            MolfileWriteOptions::default().with_version(version),
         )
         .unwrap();
         let document = molfile::parse_str(&text, Default::default()).unwrap();
@@ -308,10 +283,7 @@ fn automatic_molfile_version_writes_what_explicit_v3000_writes_when_v2000_cannot
     for model in [&enhanced, &large] {
         let explicit = molfile::write(
             model,
-            MolfileWriteOptions {
-                version: MolfileWriteVersion::V3000,
-                ..Default::default()
-            },
+            MolfileWriteOptions::default().with_version(MolfileWriteVersion::V3000),
         )
         .unwrap();
         assert_eq!(
@@ -364,10 +336,7 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
 
     let error = molfile::write(
         &model,
-        MolfileWriteOptions {
-            version: MolfileWriteVersion::V2000,
-            ..Default::default()
-        },
+        MolfileWriteOptions::default().with_version(MolfileWriteVersion::V2000),
     )
     .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
@@ -416,14 +385,8 @@ fn molfile_header_dimension_code_states_the_emitted_coordinate_kind() {
         ((&coordinate_free).into(), V2000, DRAWING_HEADER),
         ((&coordinate_free).into(), V3000, DRAWING_HEADER),
     ] {
-        let text = molfile::write(
-            source,
-            MolfileWriteOptions {
-                version,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let text =
+            molfile::write(source, MolfileWriteOptions::default().with_version(version)).unwrap();
         assert_eq!(text.lines().nth(1), Some(expected), "{version:?}\n{text}");
         assert_eq!(text.lines().nth(2), Some(""));
     }
@@ -467,10 +430,7 @@ fn molfile_writes_a_marked_flat_drawing_on_the_z_zero_plane() {
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         let text = molfile::write(
             &raised_drawing,
-            MolfileWriteOptions {
-                version,
-                ..Default::default()
-            },
+            MolfileWriteOptions::default().with_version(version),
         )
         .unwrap();
         assert_eq!(
@@ -685,10 +645,7 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
     );
     let omitted = mmcif::write(
         [&weighted_ensemble()],
-        MmcifWriteOptions {
-            ensemble_metadata: UnrepresentablePolicy::Omit,
-            ..MmcifWriteOptions::default()
-        },
+        MmcifWriteOptions::default().with_ensemble_metadata(UnrepresentablePolicy::Omit),
     )
     .unwrap();
     let reread = mmcif::parse_str(&omitted, Default::default())
@@ -729,19 +686,13 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
         MolfileWriteVersion::V2000,
         MolfileWriteVersion::V3000,
     ] {
-        let options = MolfileWriteOptions {
-            version,
-            ..Default::default()
-        };
+        let options = MolfileWriteOptions::default().with_version(version);
         let error = molfile::write(&boxed, options).unwrap_err();
         assert_eq!(
             (error.kind(), error.message()),
             (DiagnosticKind::Unsupported, message)
         );
-        let omitted = MolfileWriteOptions {
-            cell: UnrepresentablePolicy::Omit,
-            ..options
-        };
+        let omitted = options.with_cell(UnrepresentablePolicy::Omit);
         assert_eq!(
             molfile::write(&boxed, omitted).unwrap(),
             molfile::write(&open, options).unwrap()
@@ -752,10 +703,7 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
         error.to_string(),
         format!("SDF write error in record 1: {message}")
     );
-    let omitted = SdfWriteOptions {
-        cell: UnrepresentablePolicy::Omit,
-        ..Default::default()
-    };
+    let omitted = SdfWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
     assert_eq!(
         sdf::write([&boxed], omitted).unwrap(),
         sdf::write([&open], SdfWriteOptions::default()).unwrap()
@@ -797,10 +745,7 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
             .to_string(),
         "mmCIF write error: mmCIF cannot represent the periodic cell: an mmCIF cell is periodic along all three axes"
     );
-    let omit = MmcifWriteOptions {
-        cell: UnrepresentablePolicy::Omit,
-        ..MmcifWriteOptions::default()
-    };
+    let omit = MmcifWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
     assert_eq!(cell_of(&mmcif::write([&slab], omit.clone()).unwrap()), None);
 
     let mut ensemble = Ensemble::from_models([boxed.clone(), boxed]).unwrap();

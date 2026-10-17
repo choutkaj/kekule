@@ -438,26 +438,19 @@ fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
             std::panic::catch_unwind(|| {
                 let Ok(document) = mmcif::parse_str(
                     &input,
-                    MmcifParseOptions {
-                        max_input_bytes: 64 * 1024,
-                        max_tokens: 16 * 1024,
-                        max_token_bytes: 16 * 1024,
-                        max_atom_site_rows: 4 * 1024,
-                    },
+                    MmcifParseOptions::default()
+                        .with_max_input_bytes(64 * 1024)
+                        .with_max_tokens(16 * 1024)
+                        .with_max_token_bytes(16 * 1024)
+                        .with_max_atom_site_rows(4 * 1024),
                 ) else {
                     return;
                 };
-                let _ = document.interpret(StructureInterpretOptions {
-                    model_selection: ModelSelection::First,
-                    ..StructureInterpretOptions::default()
-                });
-                let _ = document.interpret_ensemble(Default::default());
-                let _ = document.interpret_ensemble(
-                    macromolecular::StructureEnsembleInterpretOptions {
-                        model_ids: Some(Vec::new()),
-                        ..macromolecular::StructureEnsembleInterpretOptions::default()
-                    },
+                let _ = document.interpret(
+                    StructureInterpretOptions::default()
+                        .with_model_selection(ModelSelection::First),
                 );
+                let _ = document.interpret_ensemble(Default::default());
             })
             .expect("mmCIF parser or interpreter smoke mutation panicked");
         }
@@ -1142,10 +1135,10 @@ fn multiple_coordinate_models_require_explicit_selection() {
     assert!(error.message().contains("select one explicitly"));
 
     let selected = document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::Select("2".into()),
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(
+            StructureInterpretOptions::default()
+                .with_model_selection(ModelSelection::Select("2".into())),
+        )
         .unwrap();
     assert_eq!(selected.report().selected_model.as_deref(), Some("2"));
     assert_eq!(selected.model().atom_count(), 1);
@@ -1153,28 +1146,17 @@ fn multiple_coordinate_models_require_explicit_selection() {
     assert_eq!(selected.report().ignored_coordinate_models, vec!["1"]);
 
     let first = document
-        .interpret(StructureInterpretOptions {
-            model_selection: ModelSelection::First,
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap();
     assert_eq!(first.report().selected_model.as_deref(), Some("1"));
 }
 
 #[test]
-fn ensemble_interpretation_rejects_empty_explicit_model_selection_without_panicking() {
-    let document = parse(MULTI_MODEL);
-    let result = std::panic::catch_unwind(|| {
-        document.interpret_ensemble(macromolecular::StructureEnsembleInterpretOptions {
-            model_ids: Some(Vec::new()),
-            ..macromolecular::StructureEnsembleInterpretOptions::default()
-        })
-    });
+fn ensemble_options_reject_an_empty_explicit_model_selection() {
+    let result = macromolecular::StructureEnsembleInterpretOptions::default()
+        .with_model_ids(Some(Vec::new()));
     assert_eq!(
-        result
-            .expect("no panic")
-            .err()
-            .and_then(|error| error.detail().cloned()),
+        result.err().and_then(|error| error.detail().cloned()),
         Some(FormatErrorDetail::EmptyModelSelection)
     );
 }
@@ -1283,10 +1265,11 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
     let document = parse(&input);
     for model_ids in [vec!["2", "1"], vec!["2"]] {
         let interpreted = document
-            .interpret_ensemble(macromolecular::StructureEnsembleInterpretOptions {
-                model_ids: Some(model_ids.iter().map(|id| (*id).to_owned()).collect()),
-                ..macromolecular::StructureEnsembleInterpretOptions::default()
-            })
+            .interpret_ensemble(
+                macromolecular::StructureEnsembleInterpretOptions::default()
+                    .with_model_ids(Some(model_ids.iter().map(|id| (*id).to_owned()).collect()))
+                    .unwrap(),
+            )
             .unwrap();
         assert_eq!(interpreted.ensemble().len(), model_ids.len());
         assert_eq!(interpreted.topology().bond_count(), 1);
@@ -1311,10 +1294,10 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
             .zip(model_ids)
         {
             let single = document
-                .interpret(StructureInterpretOptions {
-                    model_selection: ModelSelection::Select(model_id.to_owned()),
-                    ..StructureInterpretOptions::default()
-                })
+                .interpret(
+                    StructureInterpretOptions::default()
+                        .with_model_selection(ModelSelection::Select(model_id.to_owned())),
+                )
                 .unwrap();
             assert_eq!(report, single.report());
             assert_eq!(report.coordinate_models(), 2);
@@ -1336,10 +1319,11 @@ fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
     );
     let invalid = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 Xx C1");
     let error = (parse(&invalid))
-        .interpret_ensemble(macromolecular::StructureEnsembleInterpretOptions {
-            model_ids: Some(vec!["1".into()]),
-            ..macromolecular::StructureEnsembleInterpretOptions::default()
-        })
+        .interpret_ensemble(
+            macromolecular::StructureEnsembleInterpretOptions::default()
+                .with_model_ids(Some(vec!["1".into()]))
+                .unwrap(),
+        )
         .unwrap_err();
     assert_eq!(
         error.detail(),
@@ -1549,10 +1533,10 @@ fn alternate_location_policy_is_explicit_and_reported() {
         macromolecular::StructureInterpretIssue::AlternateLocationOmitted { alt_id: Some(id), .. } if id == "A"
     )));
     assert!(document
-        .interpret(StructureInterpretOptions {
-            altloc_policy: AltLocPolicy::ErrorOnAlternateLocations,
-            ..StructureInterpretOptions::default()
-        })
+        .interpret(
+            StructureInterpretOptions::default()
+                .with_altloc_policy(AltLocPolicy::ErrorOnAlternateLocations)
+        )
         .is_err());
 }
 
@@ -2029,11 +2013,11 @@ covale A N 1 A CA 1 doub
         .unwrap();
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::model(&original).with_reports(std::slice::from_ref(&report))],
-        MmcifWriteOptions {
-            block_name: "round_trip".to_owned(),
-            coordinate_precision: 4,
-            ..Default::default()
-        },
+        MmcifWriteOptions::default()
+            .with_block_name("round_trip".to_owned())
+            .unwrap()
+            .with_coordinate_precision(4)
+            .unwrap(),
     )
     .expect("supported model should write");
     assert!(written.starts_with("data_round_trip\n"));

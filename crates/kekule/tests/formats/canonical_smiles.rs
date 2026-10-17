@@ -48,9 +48,7 @@ fn canonical_smiles_matches_rdkit_charge_closures_stereo_and_cx_radicals() {
             let topology = kekule::topology::Topology::from_molecules(molecules.clone()).unwrap();
             smiles::write(
                 &topology,
-                smiles::SmilesWriteOptions {
-                    mode: smiles::SmilesWriteMode::Canonical,
-                },
+                smiles::SmilesWriteOptions::default().with_mode(smiles::SmilesWriteMode::Canonical),
             )
             .unwrap()
         };
@@ -488,9 +486,8 @@ fn canonical_stereo_is_invariant_under_atom_and_bond_permutations() {
 
 #[test]
 fn canonical_topology_sorts_components_without_collapsing_instances() {
-    let options = smiles::SmilesWriteOptions {
-        mode: smiles::SmilesWriteMode::Canonical,
-    };
+    let options =
+        smiles::SmilesWriteOptions::default().with_mode(smiles::SmilesWriteMode::Canonical);
     let canonical = |source: &str| {
         let mut molecules = smiles::to_molecules(source).unwrap();
         for molecule in &mut molecules {

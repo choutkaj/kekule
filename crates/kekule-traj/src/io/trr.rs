@@ -78,20 +78,37 @@ impl TrrReadOptions {
     /// `max_scratch_bytes` bounds the combined capacities of the three dense
     /// decode arrays and the reusable raw record buffer, in both sequential and
     /// indexed modes. The frame index has its own `max_index_bytes` limit.
+    #[must_use]
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
         self
     }
 
     /// Sets the source label used in decoding errors.
+    #[must_use]
     pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
         self.source_label = source_label.into();
         self
     }
 
+    #[must_use]
     pub const fn with_lambda_policy(mut self, lambda_policy: TrrLambdaPolicy) -> Self {
         self.lambda_policy = lambda_policy;
         self
+    }
+
+    /// Limits applied before allocation, scanning, and seeking.
+    pub const fn limits(&self) -> &TrajectoryIoLimits {
+        &self.limits
+    }
+
+    /// The source label used in decoding errors.
+    pub fn source_label(&self) -> &str {
+        &self.source_label
+    }
+
+    pub const fn lambda_policy(&self) -> TrrLambdaPolicy {
+        self.lambda_policy
     }
 }
 
@@ -115,14 +132,24 @@ impl TrrWriteOptions {
     /// Selects the precision for every scalar, including periodic-cell vectors.
     /// Cells that become degenerate at that precision are rejected before any
     /// frame bytes are written; use Float64 when Float32 cannot preserve a cell.
+    #[must_use]
     pub const fn with_precision(mut self, precision: TrrScalarPrecision) -> Self {
         self.precision = precision;
         self
     }
 
+    #[must_use]
     pub const fn with_lambda_policy(mut self, lambda_policy: TrrLambdaPolicy) -> Self {
         self.lambda_policy = lambda_policy;
         self
+    }
+
+    pub const fn precision(&self) -> TrrScalarPrecision {
+        self.precision
+    }
+
+    pub const fn lambda_policy(&self) -> TrrLambdaPolicy {
+        self.lambda_policy
     }
 }
 
@@ -233,7 +260,7 @@ impl<R: Read + Seek> TrrReader<R> {
         let scratch_bytes = vector_bytes.checked_mul(3).ok_or_else(|| {
             resource_error(source_label, None, "TRR aggregate vector scratch overflows")
         })?;
-        if scratch_bytes > limits.max_scratch_bytes {
+        if scratch_bytes > limits.max_scratch_bytes() {
             return Err(resource_error(
                 source_label,
                 None,
@@ -318,7 +345,7 @@ impl<R: Read + Seek> TrrReader<R> {
     }
 
     fn parse_next(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryIoError> {
-        if self.frame_cursor >= self.options.limits.max_frames {
+        if self.frame_cursor >= self.options.limits.max_frames() {
             let clean_eof = if self.pending_header.is_some() {
                 false
             } else {
@@ -370,7 +397,7 @@ impl<R: Read + Seek> TrrReader<R> {
                     "TRR frame size overflows",
                 )
             })?;
-        if frame_bytes > self.options.limits.max_frame_bytes {
+        if frame_bytes > self.options.limits.max_frame_bytes() {
             return Err(resource_error(
                 &self.options.source_label,
                 Some(self.frame_cursor),
@@ -404,7 +431,7 @@ impl<R: Read + Seek> TrrReader<R> {
                     .and_then(|vectors| bytes.checked_add(vectors))
             })
             .and_then(|bytes| bytes.checked_add(raw_bytes));
-        if scratch_bytes.is_none_or(|bytes| bytes > self.options.limits.max_scratch_bytes) {
+        if scratch_bytes.is_none_or(|bytes| bytes > self.options.limits.max_scratch_bytes()) {
             return Err(resource_error(
                 &self.options.source_label,
                 Some(self.frame_cursor),
@@ -1274,7 +1301,7 @@ fn read_header<R: Read>(
         let value = read_i32(reader, source_label, None, "TRR size field")?;
         *size = usize::try_from(value)
             .map_err(|_| header_error(source_label, "TRR block size is negative"))?;
-        if *size as u64 > limits.max_record_bytes {
+        if *size as u64 > limits.max_record_bytes() {
             return Err(resource_error(
                 source_label,
                 None,
@@ -1426,7 +1453,8 @@ fn read_xdr_string<R: Read>(
 ) -> Result<(bool, u64), TrajectoryIoError> {
     let length = usize::try_from(read_i32(reader, source_label, None, "TRR version length")?)
         .map_err(|_| header_error(source_label, "TRR version length is negative"))?;
-    if length > 256 || length > limits.max_text_line_bytes || length > limits.max_scratch_bytes {
+    if length > 256 || length > limits.max_text_line_bytes() || length > limits.max_scratch_bytes()
+    {
         return Err(resource_error(
             source_label,
             None,
@@ -1463,7 +1491,7 @@ fn read_raw<R: Read>(
     frame: u64,
     field: &str,
 ) -> Result<(), TrajectoryIoError> {
-    if length > limits.max_scratch_bytes || length as u64 > limits.max_record_bytes {
+    if length > limits.max_scratch_bytes() || length as u64 > limits.max_record_bytes() {
         return Err(resource_error(
             source_label,
             Some(frame),
@@ -1853,7 +1881,7 @@ fn validate_atom_count(
     limits: &TrajectoryIoLimits,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {
-    if atom_count == 0 || atom_count > limits.max_atoms || atom_count > i32::MAX as usize / 3 {
+    if atom_count == 0 || atom_count > limits.max_atoms() || atom_count > i32::MAX as usize / 3 {
         return Err(resource_error(
             source_label,
             None,
