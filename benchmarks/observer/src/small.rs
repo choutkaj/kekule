@@ -650,7 +650,7 @@ fn smarts(components: Vec<Component>, options: &Value, facts: &mut Facts) -> Res
                 found
                     .atoms()
                     .iter()
-                    .map(|atom| sources[atom.molecule().index()][atom.atom().index()])
+                    .map(|atom| sources[atom.instance().index()][atom.atom().index()])
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();

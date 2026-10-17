@@ -4,7 +4,7 @@ use crate::{TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, Trajecto
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrajectoryIoLimits {
     max_atoms: usize,
-    max_frames: u64,
+    max_frames: usize,
     max_frame_bytes: u64,
     max_record_bytes: u64,
     max_scratch_bytes: usize,
@@ -27,13 +27,13 @@ impl TrajectoryIoLimits {
         self
     }
 
-    pub const fn max_frames(&self) -> u64 {
+    pub const fn max_frames(&self) -> usize {
         self.max_frames
     }
 
     /// Sets [`Self::max_frames`].
     #[must_use]
-    pub const fn with_max_frames(mut self, max_frames: u64) -> Self {
+    pub const fn with_max_frames(mut self, max_frames: usize) -> Self {
         self.max_frames = max_frames;
         self
     }
@@ -191,7 +191,7 @@ pub(crate) fn projected_index_limit(
     current_entries: usize,
     limits: &TrajectoryIoLimits,
 ) -> Option<&'static str> {
-    if u64::try_from(current_entries).map_or(true, |entries| entries >= limits.max_frames) {
+    if current_entries >= limits.max_frames {
         return Some("frame count");
     }
     let Some(projected_entries) = current_entries.checked_add(1) else {
@@ -210,8 +210,8 @@ pub(crate) fn projected_index_limit(
 }
 
 pub(super) fn index_hard_capacity(limits: &TrajectoryIoLimits) -> usize {
-    usize::try_from(limits.max_frames)
-        .unwrap_or(usize::MAX)
+    limits
+        .max_frames
         .min(limits.max_index_entries)
         .min(limits.max_index_bytes / std::mem::size_of::<u64>())
 }
@@ -241,7 +241,7 @@ pub(crate) fn reserve_index_for_push(
     limits: &TrajectoryIoLimits,
     format: TrajectoryFormat,
     source_label: &str,
-    frame: u64,
+    frame: usize,
 ) -> Result<(), TrajectoryIoError> {
     if offsets.len() < offsets.capacity() {
         return Ok(());

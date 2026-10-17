@@ -38,8 +38,8 @@ fn transformed(p: Point3) -> Point3 {
 
 fn pairs(moving: &Model, reference: &Model, order: &[(usize, usize)]) -> AtomCorrespondence {
     AtomCorrespondence::from_pairs(
-        &moving.shared_topology(),
-        &reference.shared_topology(),
+        moving.shared_topology(),
+        reference.shared_topology(),
         order.iter().map(|&(a, b)| {
             (
                 moving.topology().atom_ids()[a],
@@ -55,14 +55,12 @@ fn independent_layouts_align_without_changing_identity_or_coordinates() {
     let moving = model(&points());
     let reference = model(&points().map(transformed));
     let before = (moving.clone(), reference.clone());
-    let correspondence = AtomCorrespondence::from_same_layout(
-        &moving.shared_topology(),
-        &reference.shared_topology(),
-    )
-    .unwrap();
+    let correspondence =
+        AtomCorrespondence::from_same_layout(moving.shared_topology(), reference.shared_topology())
+            .unwrap();
     assert_eq!(correspondence.len(), 4);
     assert!(!correspondence.is_empty());
-    let selection = AtomSelection::all(&moving.shared_topology());
+    let selection = AtomSelection::all(moving.shared_topology());
     assert_eq!(
         crate::alignment::fit(
             moving.as_model_view(),
@@ -109,10 +107,7 @@ fn explicit_pairs_preserve_order_and_fit_reordered_partial_models_in_mixed_units
     )
     .unwrap();
     assert!(matches!(
-        AtomCorrespondence::from_same_layout(
-            &moving.shared_topology(),
-            &reference.shared_topology()
-        ),
+        AtomCorrespondence::from_same_layout(moving.shared_topology(), reference.shared_topology()),
         Err(AtomCorrespondenceError::LayoutMismatch)
     ));
     let order = [(3, 3), (0, 1), (2, 0), (1, 4)];
@@ -160,7 +155,7 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
     let expected = crate::alignment::fit(
         moving.as_model_view(),
         reference_on_shared_topology.as_model_view(),
-        &AtomSelection::all(&moving.shared_topology()),
+        &AtomSelection::all(moving.shared_topology()),
         AlignmentOptions::default().with_weighting(Weighting::Explicit(&reordered_weights)),
     )
     .unwrap();
@@ -189,15 +184,15 @@ fn correspondence_rejects_invalid_and_duplicate_atoms_on_each_side() {
     let reference = model(&points());
     let a = moving.topology().atom_ids()[0];
     let b = reference.topology().atom_ids()[0];
-    let invalid = InstanceAtomId::new(a.molecule(), AtomId::new(99));
+    let invalid = InstanceAtomId::new(a.instance(), AtomId::new(99));
     for (side, input) in [
         (CorrespondenceSide::Moving, [(invalid, b)]),
         (CorrespondenceSide::Reference, [(a, invalid)]),
     ] {
         assert_eq!(
             AtomCorrespondence::from_pairs(
-                &moving.shared_topology(),
-                &reference.shared_topology(),
+                moving.shared_topology(),
+                reference.shared_topology(),
                 input
             )
             .unwrap_err(),
@@ -219,7 +214,7 @@ fn correspondence_rejects_invalid_and_duplicate_atoms_on_each_side() {
         ),
     ] {
         assert!(
-            matches!(AtomCorrespondence::from_pairs(&moving.shared_topology(), &reference.shared_topology(), [(a,b), repeated]), Err(AtomCorrespondenceError::DuplicateAtom { side: actual, pair_index: 1, .. }) if actual == side)
+            matches!(AtomCorrespondence::from_pairs(moving.shared_topology(), reference.shared_topology(), [(a,b), repeated]), Err(AtomCorrespondenceError::DuplicateAtom { side: actual, pair_index: 1, .. }) if actual == side)
         );
     }
 }
@@ -228,11 +223,9 @@ fn correspondence_rejects_invalid_and_duplicate_atoms_on_each_side() {
 fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() {
     let mut moving = model(&points());
     let mut reference = model(&points());
-    let correspondence = AtomCorrespondence::from_same_layout(
-        &moving.shared_topology(),
-        &reference.shared_topology(),
-    )
-    .unwrap();
+    let correspondence =
+        AtomCorrespondence::from_same_layout(moving.shared_topology(), reference.shared_topology())
+            .unwrap();
     // Perception installs new snapshots that keep each layout.
     moving.perceive().unwrap();
     reference.perceive().unwrap();

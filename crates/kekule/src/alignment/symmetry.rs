@@ -193,7 +193,7 @@ impl fmt::Display for SymmetryError {
         match self {
             Self::Perception(_) => formatter.write_str("cannot perceive hydrogen counts"),
             Self::UnknownHydrogenCount { atom } => {
-                write!(formatter, "hydrogen count of atom {atom} is unknown")
+                write!(formatter, "hydrogen count of {atom} is unknown")
             }
             Self::LimitExceeded(limit) => write!(formatter, "symmetry search {limit}"),
         }
@@ -249,7 +249,7 @@ impl Search {
                     .atom_at(*index)
                     .expect("selection is bound to this topology")
                     .id()
-                    .molecule()
+                    .instance()
             })
             .collect::<Vec<_>>();
         instances.sort_unstable();
@@ -260,7 +260,7 @@ impl Search {
         let mut keys = Vec::new();
         for instance in &instances {
             let molecule = topology
-                .molecule(*instance)
+                .instance(*instance)
                 .expect("selected atom has an instance");
             for atom in molecule.atoms() {
                 local[atom.index().index()] = atoms.len();
@@ -282,7 +282,7 @@ impl Search {
         }
         let mut adjacency = vec![Vec::new(); atoms.len()];
         for instance in &instances {
-            let molecule = topology.molecule(*instance).expect("collected instance");
+            let molecule = topology.instance(*instance).expect("collected instance");
             for bond in molecule.bonds() {
                 let [a, b] = bond.atoms().map(|atom| local[atom.index().index()]);
                 adjacency[a].push(b);

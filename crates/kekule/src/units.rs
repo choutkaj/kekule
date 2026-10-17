@@ -517,10 +517,24 @@ impl Mul<Unit> for f64 {
     }
 }
 
+pub(crate) mod sealed {
+    /// Restricts [`super::ScaleValue`] to the value types Kekule converts.
+    pub trait Sealed {}
+}
+
 /// Scaling operation used to convert complete [`Quantity`] values.
-pub trait ScaleValue: Sized {
+///
+/// This trait is sealed: it is implemented for `f64`, the geometry types, and
+/// arrays, `Option`s and `Vec`s of them, and cannot be implemented outside
+/// Kekule.
+pub trait ScaleValue: Sized + sealed::Sealed {
     fn scaled(self, factor: f64) -> Self;
 }
+
+impl sealed::Sealed for f64 {}
+impl<T: ScaleValue> sealed::Sealed for Option<T> {}
+impl<T: ScaleValue, const N: usize> sealed::Sealed for [T; N] {}
+impl<T: ScaleValue> sealed::Sealed for Vec<T> {}
 
 impl ScaleValue for f64 {
     fn scaled(self, factor: f64) -> Self {

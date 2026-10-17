@@ -263,9 +263,9 @@ fn extract_backbones(
     let hierarchy = model.topology().hierarchy();
     let represented_instances = hierarchy
         .atom_sites()
-        .map(|(_, site)| site.atom().molecule())
+        .map(|(_, site)| site.atom().instance())
         .collect::<BTreeSet<_>>();
-    for molecule_id in model.topology().molecules().map(|molecule| molecule.id()) {
+    for molecule_id in model.topology().instances().map(|molecule| molecule.id()) {
         if !represented_instances.contains(&molecule_id) {
             report.ignored_instances.push(molecule_id);
         }

@@ -28,7 +28,7 @@ pub(crate) fn write_topology(
 ) -> Result<String, crate::diagnostics::FormatError> {
     use crate::smiles::SmilesWriteMode;
     let mut parts = topology
-        .molecules()
+        .instances()
         .map(|m| match options.mode() {
             SmilesWriteMode::Canonical => canonical::write_canonical_emission(m.molecule()),
             SmilesWriteMode::Isomeric => write::write_source_order_emission(

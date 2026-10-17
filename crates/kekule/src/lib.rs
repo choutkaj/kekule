@@ -112,7 +112,7 @@ macro_rules! fixed_u32_id {
 
         impl std::fmt::Display for $name {
             fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(formatter, concat!($display, "{}"), self.0)
+                write!(formatter, concat!($display, " {}"), self.0)
             }
         }
     };

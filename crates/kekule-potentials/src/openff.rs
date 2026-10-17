@@ -92,7 +92,7 @@ impl OpenFfPotential {
     /// The potential binds `parameters.topology()`; it does not copy rule
     /// identities, constraints, or charge provenance.
     pub fn new(parameters: &ParameterizedTopology) -> Result<Self, OpenFfPotentialError> {
-        let topology = Arc::clone(parameters.topology());
+        let topology = parameters.shared_topology();
         let settings = parameters.nonbonded_settings();
         if settings.vdw_nonperiodic_method() != VdwMethod::NoCutoff {
             return Err(OpenFfPotentialError::UnsupportedVdwMethod(
@@ -320,8 +320,15 @@ impl OpenFfPotential {
     }
 }
 
+impl OpenFfPotential {
+    /// Clones the handle to the bound snapshot, without copying topology data.
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+}
+
 impl Potential for OpenFfPotential {
-    fn topology(&self) -> &Arc<Topology> {
+    fn topology(&self) -> &Topology {
         &self.topology
     }
 
@@ -528,7 +535,7 @@ impl fmt::Display for OpenFfPotentialError {
                 "unsupported nonperiodic Electrostatics method {:?}; only no-cutoff vdW and Coulomb electrostatics are implemented",
                 method.smirnoff_name()
             ),
-            Self::InvalidAtom(atom) => write!(f, "interaction refers to unknown atom {atom}"),
+            Self::InvalidAtom(atom) => write!(f, "interaction refers to unknown {atom}"),
             Self::AtomCountMismatch {
                 array,
                 expected,

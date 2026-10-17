@@ -163,7 +163,7 @@ fn connectivity(document: &MmcifDocument) -> Result<Facts, Failure> {
     let ids = site_ids(&interpretation);
     let topology = interpretation.topology();
     let mut facts = Facts::new();
-    for instance in topology.molecules() {
+    for instance in topology.instances() {
         let molecule = instance.molecule();
         let id = |atom| ids[&InstanceAtomId::new(instance.id(), atom)].clone();
         for (_, bond) in molecule.bonds() {
@@ -335,8 +335,8 @@ fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
         .map(|atom| atom.atom())
         .collect::<Vec<_>>();
     let count = alpha.len();
-    let selection =
-        AtomSelection::from_atoms(&topology, alpha).map_err(|e| Failure::new("selection", e))?;
+    let selection = AtomSelection::from_atoms(Arc::clone(&topology), alpha)
+        .map_err(|e| Failure::new("selection", e))?;
     let rmsd = ensemble
         .aligned_rmsd(0usize, &selection, &selection, Default::default())
         .map_err(|e| Failure::new("superposition", e))?

@@ -289,15 +289,15 @@ impl fmt::Display for HydrogenTransformError {
             Self::LimitExceeded(limit) => write!(f, "hydrogen addition {limit}"),
             Self::HydrogenCountOverflow { atom, count } => write!(
                 f,
-                "atom {atom} requires {count} encoded hydrogens, which exceeds the supported count"
+                "{atom} requires {count} encoded hydrogens, which exceeds the supported count"
             ),
             Self::InconsistentStereoHydrogen { element, atom } => write!(
                 f,
-                "stereo element {element} has an inconsistent implicit hydrogen at atom {atom}"
+                "{element} has an inconsistent implicit hydrogen at {atom}"
             ),
             Self::UnsupportedImplicitAxisHydrogen { element } => write!(
                 f,
-                "axis stereo element {element} cannot materialize an implicit hydrogen carrier"
+                "axis {element} cannot materialize an implicit hydrogen carrier"
             ),
             Self::Molecule(_) => f.write_str("cannot edit the molecule"),
             Self::Publication(_) => f.write_str("cannot publish the transformed molecule"),

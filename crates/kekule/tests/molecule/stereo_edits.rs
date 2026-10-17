@@ -128,11 +128,11 @@ fn topology_order_changes_publish_without_stale_double_bond_stereo() {
             editor.set_bond_order(id, BondOrder::Single).unwrap();
         }
         let target = editor.finish().unwrap();
-        let definition = target.molecules().next().unwrap();
+        let definition = target.instances().next().unwrap();
         assert_eq!(definition.molecule().stereo_elements().count(), 0);
         assert_eq!(
             source
-                .molecules()
+                .instances()
                 .next()
                 .unwrap()
                 .molecule()
@@ -241,14 +241,14 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
         assert_eq!(molecule(&text).stereo_elements().count(), 1);
     }
     let topology = Arc::new(Topology::from_molecule(source.clone()).unwrap());
-    let instance = topology.molecules().next().unwrap().id();
+    let instance = topology.instances().next().unwrap().id();
     let mut editor = topology.to_editor();
     let bond = editor
         .bond_handle(InstanceBondId::new(instance, removed))
         .unwrap();
     editor.delete_bond(bond).unwrap();
     let result = editor.finish().unwrap();
-    let result = result.molecules().next().unwrap();
+    let result = result.instances().next().unwrap();
     assert_eq!(result.molecule().stereo_elements().count(), 1);
     let mut ungrouped = result.molecule().to_editor();
     for group in result.molecule().stereo_groups().map(|(id, _)| id) {

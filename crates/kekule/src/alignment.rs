@@ -58,7 +58,7 @@
 //!     topology.clone(),
 //!     Positions::new(Quantity::new(reference_points, ANGSTROM))?,
 //! )?;
-//! let selection = AtomSelection::all(&topology);
+//! let selection = AtomSelection::all(topology.clone());
 //!
 //! let result = fit(
 //!     moving.as_model_view(),
@@ -142,7 +142,7 @@ impl<'a> From<&'a SymmetricSelection> for FitAtoms<'a> {
 
 impl FitAtoms<'_> {
     /// Number of atom pairs.
-    pub fn len(self) -> usize {
+    pub fn pair_count(self) -> usize {
         match self {
             Self::Selection(selection) => selection.indices().len(),
             Self::Correspondence(correspondence) => correspondence.len(),
@@ -151,7 +151,7 @@ impl FitAtoms<'_> {
     }
 
     pub fn is_empty(self) -> bool {
-        self.len() == 0
+        self.pair_count() == 0
     }
 
     /// Validates the pairing against both views and returns its candidate
@@ -214,7 +214,7 @@ pub fn fit<'a>(
 ) -> Result<RigidAlignment, AlignmentError> {
     let atoms = atoms.into();
     let sets = atoms.pair_sets(moving, reference)?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     best_kabsch(moving, reference, &sets, weights, options.periodic_policy)
 }
 
@@ -230,7 +230,7 @@ pub fn rmsd<'a>(
 ) -> Result<Quantity<f64>, AlignmentError> {
     let atoms = atoms.into();
     let sets = atoms.pair_sets(moving, reference)?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     let value = best_measure(
         moving,
         reference,
@@ -261,11 +261,11 @@ pub fn aligned_rmsd<'a>(
     let measurement = measurement.into();
     let fit_sets = fit.pair_sets(moving, reference)?;
     let measurement_sets = measurement.pair_sets(moving, reference)?;
-    check_fit_count(fit.len())?;
-    check_measurement_count(measurement.len())?;
-    let fit_weights = NormalizedWeights::new(options.fit().weighting, fit.len())?;
+    check_fit_count(fit.pair_count())?;
+    check_measurement_count(measurement.pair_count())?;
+    let fit_weights = NormalizedWeights::new(options.fit().weighting, fit.pair_count())?;
     let measurement_weights =
-        NormalizedWeights::new(options.measurement_weighting(), measurement.len())?;
+        NormalizedWeights::new(options.measurement_weighting(), measurement.pair_count())?;
     let policy = options.fit().periodic_policy;
     let alignment = best_kabsch(moving, reference, &fit_sets, fit_weights, policy)?;
     let value = best_measure(
@@ -1171,7 +1171,7 @@ mod tests {
     }
 
     fn all(topology: &Arc<Topology>) -> AtomSelection {
-        AtomSelection::from_atoms(topology, topology.atom_ids().iter().copied()).unwrap()
+        AtomSelection::from_atoms(topology.clone(), topology.atom_ids().iter().copied()).unwrap()
     }
 
     fn fixture_points() -> [Point3; 5] {
@@ -1338,7 +1338,8 @@ mod tests {
         reference[4] = Point3::new(-70.0, 60.0, -30.0);
         let (topology, moving_model, reference_model) = models(&moving, &reference);
         let selection =
-            AtomSelection::from_atoms(&topology, topology.atom_ids()[..3].iter().copied()).unwrap();
+            AtomSelection::from_atoms(topology.clone(), topology.atom_ids()[..3].iter().copied())
+                .unwrap();
 
         let result = crate::alignment::fit(
             moving_model.as_model_view(),
@@ -1449,7 +1450,7 @@ mod tests {
         let (topology, moving_model, reference_model) = models(&moving, &reference);
         let atom_ids = topology.atom_ids();
         let selection = AtomSelection::from_atoms(
-            &topology,
+            topology.clone(),
             [atom_ids[4], atom_ids[1], atom_ids[3], atom_ids[0]],
         )
         .unwrap();
@@ -1642,9 +1643,11 @@ mod tests {
         let points = fixture_points();
         let (topology, moving, reference) = models(&points, &points);
         for count in 0..3 {
-            let selection =
-                AtomSelection::from_atoms(&topology, topology.atom_ids()[..count].iter().copied())
-                    .unwrap();
+            let selection = AtomSelection::from_atoms(
+                topology.clone(),
+                topology.atom_ids()[..count].iter().copied(),
+            )
+            .unwrap();
             assert_eq!(
                 crate::alignment::fit(
                     moving.as_model_view(),

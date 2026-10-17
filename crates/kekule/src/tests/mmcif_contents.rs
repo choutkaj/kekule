@@ -404,11 +404,11 @@ fn assert_declared_bond(
     right: crate::topology::InstanceAtomId,
     order: BondOrder,
 ) {
-    assert_eq!(left.molecule(), right.molecule());
+    assert_eq!(left.instance(), right.instance());
     let definition = interpretation
         .model()
         .topology()
-        .molecule(left.molecule())
+        .instance(left.instance())
         .expect("connection molecule definition")
         .definition();
     let bond = definition
@@ -617,7 +617,7 @@ ATOM 2 C C1 LIG Z 1 1 1.0 0.0 0.0 1
     assert_eq!(hierarchy.atom_sites().count(), 2);
     assert!(hierarchy
         .atom_sites()
-        .all(|(_, site)| site.atom().molecule() == MoleculeInstanceId::new(0)));
+        .all(|(_, site)| site.atom().instance() == MoleculeInstanceId::new(0)));
 
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::model(result.model())
@@ -684,7 +684,7 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
         .residues()
         .iter()
         .flat_map(|residue| hierarchy.residue(*residue).unwrap().atom_sites())
-        .map(|site| hierarchy.atom_site(*site).unwrap().atom().molecule())
+        .map(|site| hierarchy.atom_site(*site).unwrap().atom().instance())
         .collect::<Vec<_>>();
     chain_a_instances.sort_unstable();
     chain_a_instances.dedup();
@@ -1276,7 +1276,7 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
         assert_eq!(
             interpreted
                 .topology()
-                .molecules()
+                .instances()
                 .next()
                 .unwrap()
                 .molecule()
@@ -1882,11 +1882,11 @@ hydrog A N 1 W O .
                 && instance.entity_kinds().contains(&EntityKind::NonPolymer)
         })
         .expect("covalently linked entities should share one instance");
-    let merged_id = merged.molecule();
+    let merged_id = merged.instance();
     assert!(result
         .model()
         .topology()
-        .molecule(merged_id)
+        .instance(merged_id)
         .unwrap()
         .atom_sites()
         .next()
@@ -2043,11 +2043,16 @@ covale A N 1 A CA 1 doub
         .atoms()
         .get(&PropertyKey::new("analysis_score").unwrap())
         .is_none());
-    let (first_id, _) = round_trip.model().topology().instances().next().unwrap();
+    let (first_id, _) = round_trip
+        .model()
+        .topology()
+        .instance_records()
+        .next()
+        .unwrap();
     let first = round_trip
         .model()
         .topology()
-        .molecule(first_id)
+        .instance(first_id)
         .unwrap()
         .definition();
     assert!(round_trip.report().instances()[0]
@@ -2121,7 +2126,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
     let mut generic = MmcifEntityClassifications::new();
     for molecule in interpreted
         .topology()
-        .molecules()
+        .instances()
         .map(|molecule| molecule.id())
     {
         generic.insert(molecule, EntityKind::Polymer).unwrap();
@@ -2143,7 +2148,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
     let mut conflicting = MmcifEntityClassifications::new();
     let molecules = interpreted
         .topology()
-        .instances()
+        .instance_records()
         .map(|(molecule, _)| molecule)
         .collect::<Vec<_>>();
     conflicting
@@ -2207,7 +2212,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
     let molecule = reread
         .model()
         .topology()
-        .molecules()
+        .instances()
         .next()
         .unwrap()
         .molecule();
@@ -2452,7 +2457,7 @@ fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
     let graph_branched =
         carbohydrate_model(&["GLC", "GAL", "GLC", "MAN"], &[(0, 1), (0, 2), (0, 3)]);
     for model in [&linear, &graph_branched] {
-        let molecule = model.topology().molecules().next().unwrap().id();
+        let molecule = model.topology().instances().next().unwrap().id();
         assert_eq!(
             mmcif_issue(mmcif::write([model], MmcifWriteOptions::default())),
             Some(MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
@@ -2469,7 +2474,7 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
         .interpret(Default::default())
         .unwrap();
     let model = interpreted.model();
-    let molecule = model.topology().molecules().next().unwrap();
+    let molecule = model.topology().instances().next().unwrap();
     assert_eq!(molecule.class(), MoleculeClass::Carbohydrate);
     assert_eq!(molecule.residues().count(), 3);
     assert!(matches!(
@@ -2492,7 +2497,7 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
 #[test]
 fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classifications() {
     let model = hierarchical_single_atom_model("NAG", "C1", "C");
-    let molecule = model.topology().instances().next().unwrap().0;
+    let molecule = model.topology().instance_records().next().unwrap().0;
     let report = report_with_entity_kinds(&model, &[EntityKind::Polymer, EntityKind::Branched]);
     assert!(matches!(
         mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))], MmcifWriteOptions::default())),
@@ -2563,7 +2568,7 @@ fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
     );
     let interpreted = (parse(&input)).interpret(Default::default()).unwrap();
     let model = interpreted.model();
-    let mut instances = model.topology().instances().map(|(id, _)| id);
+    let mut instances = model.topology().instance_records().map(|(id, _)| id);
     let classified = instances.next().unwrap();
     instances.next().unwrap();
     let mut classifications = MmcifEntityClassifications::new();
@@ -2593,7 +2598,7 @@ fn written_entity_types(text: &str) -> Vec<String> {
 
 fn classifications_for(model: &Model, kind: EntityKind) -> MmcifEntityClassifications {
     let mut classifications = MmcifEntityClassifications::new();
-    for molecule in model.topology().molecules().map(|molecule| molecule.id()) {
+    for molecule in model.topology().instances().map(|molecule| molecule.id()) {
         classifications.insert(molecule, kind.clone()).unwrap();
     }
     classifications
@@ -2603,7 +2608,7 @@ fn report_with_entity_kinds(model: &Model, kinds: &[EntityKind]) -> StructureInt
     StructureInterpretationReport {
         instances: model
             .topology()
-            .instances()
+            .instance_records()
             .map(|(molecule, _)| InstanceProvenance {
                 molecule,
                 coordinate_model_id: "1".to_owned(),

@@ -79,10 +79,10 @@ fn one_residue_topology(
 fn ordinary_connected_molecule_defaults_to_small_molecule() {
     let molecule = kekule::smiles::to_molecules("CCO").unwrap().pop().unwrap();
     let (topology, residue) = one_residue_topology(&molecule, "UNL");
-    let instance = topology.molecules().next().unwrap();
+    let instance = topology.instances().next().unwrap();
     assert_eq!(instance.class(), MoleculeClass::SmallMolecule);
     assert_eq!(
-        topology.molecule(instance.id()).unwrap().class(),
+        topology.instance(instance.id()).unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     assert_eq!(
@@ -99,7 +99,7 @@ fn water_and_monoatomic_ions_use_strong_local_evidence() {
     water_editor.add_atom(oxygen).unwrap();
     let explicit_water = Topology::from_molecule(water_editor.finish().unwrap().clone()).unwrap();
     assert_eq!(
-        explicit_water.molecules().next().unwrap().class(),
+        explicit_water.instances().next().unwrap().class(),
         MoleculeClass::Water
     );
 
@@ -111,7 +111,7 @@ fn water_and_monoatomic_ions_use_strong_local_evidence() {
         ResidueClass::Water
     );
     assert_eq!(
-        oxygen_only.molecules().next().unwrap().class(),
+        oxygen_only.instances().next().unwrap().class(),
         MoleculeClass::Water
     );
 
@@ -120,14 +120,14 @@ fn water_and_monoatomic_ions_use_strong_local_evidence() {
     sodium.formal_charge = 1;
     ion_editor.add_atom(sodium).unwrap();
     let ion = Topology::from_molecule(ion_editor.finish().unwrap().clone()).unwrap();
-    assert_eq!(ion.molecules().next().unwrap().class(), MoleculeClass::Ion);
+    assert_eq!(ion.instances().next().unwrap().class(), MoleculeClass::Ion);
 }
 
 #[test]
 fn peptide_and_modified_peptide_classify_as_protein() {
     let (peptide, _) = linear_residue_topology(&["ALA", "GLY"], ("N", "C"));
     assert_eq!(
-        peptide.molecules().next().unwrap().class(),
+        peptide.instances().next().unwrap().class(),
         MoleculeClass::Protein
     );
     assert!(peptide
@@ -136,7 +136,7 @@ fn peptide_and_modified_peptide_classify_as_protein() {
 
     let (modified, _) = linear_residue_topology(&["ALA", "MSE", "GLY"], ("N", "C"));
     assert_eq!(
-        modified.molecules().next().unwrap().class(),
+        modified.instances().next().unwrap().class(),
         MoleculeClass::Protein
     );
     assert_eq!(
@@ -148,24 +148,24 @@ fn peptide_and_modified_peptide_classify_as_protein() {
 #[test]
 fn dna_rna_and_modified_backbones_classify_from_phosphodiester_links() {
     let (dna, _) = linear_residue_topology(&["DA", "DC"], ("P", "O3'"));
-    assert_eq!(dna.molecules().next().unwrap().class(), MoleculeClass::Dna);
+    assert_eq!(dna.instances().next().unwrap().class(), MoleculeClass::Dna);
     let (rna, _) = linear_residue_topology(&["A", "U"], ("P", "O3'"));
-    assert_eq!(rna.molecules().next().unwrap().class(), MoleculeClass::Rna);
+    assert_eq!(rna.instances().next().unwrap().class(), MoleculeClass::Rna);
 
     let (modified_dna, _) = linear_residue_topology(&["DA", "5MC", "DG"], ("P", "O3'"));
     assert_eq!(
-        modified_dna.molecules().next().unwrap().class(),
+        modified_dna.instances().next().unwrap().class(),
         MoleculeClass::Dna
     );
     let (modified_rna, _) = linear_residue_topology(&["A", "PSU", "G"], ("P", "O3'"));
     assert_eq!(
-        modified_rna.molecules().next().unwrap().class(),
+        modified_rna.instances().next().unwrap().class(),
         MoleculeClass::Rna
     );
 
     let (hybrid, _) = linear_residue_topology(&["DA", "A"], ("P", "O3'"));
     assert_eq!(
-        hybrid.molecules().next().unwrap().class(),
+        hybrid.instances().next().unwrap().class(),
         MoleculeClass::Other
     );
 }
@@ -180,7 +180,7 @@ fn recognized_carbohydrate_component_classifies_its_molecule() {
         ResidueClass::Carbohydrate
     );
     assert_eq!(
-        topology.molecules().next().unwrap().class(),
+        topology.instances().next().unwrap().class(),
         MoleculeClass::Carbohydrate
     );
 }
@@ -226,7 +226,7 @@ fn explicit_definition_and_residue_overrides_win() {
 #[test]
 fn reused_definition_shares_class_and_conflicting_strong_instances_become_other() {
     let (template, _) = linear_residue_topology(&["ALA", "GLY"], ("N", "C"));
-    let molecule = template.molecules().next().unwrap().molecule().clone();
+    let molecule = template.instances().next().unwrap().molecule().clone();
     let atoms = molecule.atom_ids().collect::<Vec<_>>();
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
@@ -261,7 +261,7 @@ fn reused_definition_shares_class_and_conflicting_strong_instances_become_other(
         MoleculeClass::Other
     );
     assert!(topology
-        .molecules()
+        .instances()
         .all(|instance| instance.class() == MoleculeClass::Other));
 }
 
@@ -270,27 +270,27 @@ fn append_preserves_class_and_structural_subset_reinfers() {
     let (protein, residue_atoms) = linear_residue_topology(&["ALA", "GLY"], ("N", "C"));
     let source = Arc::new(protein);
     assert_eq!(
-        source.molecules().next().unwrap().class(),
+        source.instances().next().unwrap().class(),
         MoleculeClass::Protein
     );
-    let instance = source.molecules().next().unwrap().id();
+    let instance = source.instances().next().unwrap().id();
     let first_residue = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         residue_atoms[0]
             .iter()
             .copied()
             .map(|atom| InstanceAtomId::new(instance, atom)),
     )
     .unwrap();
-    let subset = source.subset(&first_residue).unwrap();
+    let subset = kekule::topology::Topology::subset(source.clone(), &first_residue).unwrap();
     assert_eq!(
-        subset.topology().molecules().next().unwrap().class(),
+        subset.topology().instances().next().unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     drop(subset);
     drop(first_residue);
 
-    let existing_class = source.molecules().next().unwrap().class();
+    let existing_class = source.instances().next().unwrap().class();
     let existing_residue_classes = source
         .residues()
         .map(|residue| residue.class())
@@ -299,7 +299,7 @@ fn append_preserves_class_and_structural_subset_reinfers() {
     let ligand = kekule::smiles::to_molecules("CCO").unwrap().pop().unwrap();
     builder.add_molecule(ligand.clone()).unwrap();
     let appended = builder.build().unwrap();
-    assert_eq!(appended.molecules().next().unwrap().class(), existing_class);
+    assert_eq!(appended.instances().next().unwrap().class(), existing_class);
     assert_eq!(
         appended
             .residues()
@@ -355,7 +355,7 @@ fn subsets_reuse_compact_definitions_and_preserve_only_complete_entity_classes()
     }
     let source = Arc::new(builder.build().unwrap());
     let selection = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         instances.iter().enumerate().flat_map(|(index, &instance)| {
             [first, second]
                 .into_iter()
@@ -364,10 +364,10 @@ fn subsets_reuse_compact_definitions_and_preserve_only_complete_entity_classes()
         }),
     )
     .unwrap();
-    let subset = source.subset(&selection).unwrap();
+    let subset = kekule::topology::Topology::subset(source.clone(), &selection).unwrap();
     let target = subset.topology();
     assert_eq!(target.definition_count(), 2);
-    let molecules = target.molecules().collect::<Vec<_>>();
+    let molecules = target.instances().collect::<Vec<_>>();
     assert_eq!(molecules[0].definition_id(), molecules[1].definition_id());
     assert_ne!(molecules[0].definition_id(), molecules[2].definition_id());
     assert_eq!(
@@ -430,14 +430,14 @@ fn typed_class_selections_select_instances_and_residues() {
     let (protein, _) = linear_residue_topology(&["ALA", "GLY"], ("N", "C"));
     let topology = Arc::new(protein);
     assert_eq!(
-        AtomSelection::for_molecule_classes(&topology, [MoleculeClass::Protein])
+        AtomSelection::for_molecule_classes(Arc::clone(&topology), [MoleculeClass::Protein])
             .unwrap()
             .indices()
             .len(),
         topology.atom_count()
     );
     assert_eq!(
-        AtomSelection::for_residue_classes(&topology, [ResidueClass::AminoAcid])
+        AtomSelection::for_residue_classes(Arc::clone(&topology), [ResidueClass::AminoAcid])
             .unwrap()
             .indices()
             .len(),
@@ -479,11 +479,11 @@ fn readme_combined_model_workflow_needs_no_mmcif_classification_sidecar() {
         .unwrap();
     let combined = builder.build().unwrap();
     assert_eq!(
-        combined.topology().molecule(first_id).unwrap().class(),
+        combined.topology().instance(first_id).unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     assert_eq!(
-        combined.topology().molecule(second_id).unwrap().class(),
+        combined.topology().instance(second_id).unwrap().class(),
         MoleculeClass::SmallMolecule
     );
     let mut output = Vec::new();

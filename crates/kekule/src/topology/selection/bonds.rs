@@ -42,7 +42,7 @@ pub enum BondSelectionMode {
 /// use kekule::{smiles, topology::BondSelection};
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let topology = smiles::to_topology("CCC")?;
-/// let selected = BondSelection::from_bonds(&topology, [topology.bond_ids()[0]])?;
+/// let selected = BondSelection::from_bonds(topology.clone(), [topology.bond_ids()[0]])?;
 /// selected.ensure_compatible(&topology)?;
 /// let mut editor = topology.to_editor();
 /// let handles = selected.bond_ids()
@@ -73,7 +73,8 @@ impl Eq for BondSelection {}
 
 impl BondSelection {
     /// An empty selection bound to this exact snapshot.
-    pub fn empty(topology: &Arc<Topology>) -> Self {
+    pub fn empty(topology: impl Into<Arc<Topology>>) -> Self {
+        let topology = &topology.into();
         Self {
             topology: Arc::clone(topology),
             indices: Vec::new(),
@@ -82,7 +83,8 @@ impl BondSelection {
 
     /// Selects every bond in authoritative dense order. A topology containing
     /// only isolated atoms has an empty bond selection.
-    pub fn all(topology: &Arc<Topology>) -> Self {
+    pub fn all(topology: impl Into<Arc<Topology>>) -> Self {
+        let topology = &topology.into();
         Self {
             topology: Arc::clone(topology),
             indices: (0..topology.bond_count())
@@ -93,9 +95,10 @@ impl BondSelection {
 
     /// Validates IDs, removes duplicates, and orders bonds by dense index.
     pub fn from_bonds(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         bonds: impl IntoIterator<Item = InstanceBondId>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let indices = bonds
             .into_iter()
             .map(|id| {
@@ -104,14 +107,15 @@ impl BondSelection {
                     .ok_or(SelectionError::InvalidBondId(id))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Self::from_indices(topology, indices)
+        Self::from_indices(Arc::clone(topology), indices)
     }
 
     /// Validates indices, removes duplicates, and orders bonds by dense index.
     pub fn from_indices(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         indices: impl IntoIterator<Item = TopologyBondIndex>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         let mut indices = indices
             .into_iter()
             .map(|index| {
@@ -131,33 +135,38 @@ impl BondSelection {
 
     /// Selects bonds in the requested complete molecule instances.
     pub fn for_instances(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         instances: impl IntoIterator<Item = MoleculeInstanceId>,
     ) -> Result<Self, SelectionError> {
+        let topology = &topology.into();
         Ok(
-            AtomSelection::for_instances(topology, instances)?
+            AtomSelection::for_instances(Arc::clone(topology), instances)?
                 .to_bonds(BondSelectionMode::Internal),
         )
     }
 
     /// Selects bonds in all instances of the requested reusable definitions.
     pub fn for_definitions(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         definitions: impl IntoIterator<Item = MoleculeDefinitionId>,
     ) -> Result<Self, SelectionError> {
-        Ok(AtomSelection::for_definitions(topology, definitions)?
-            .to_bonds(BondSelectionMode::Internal))
+        let topology = &topology.into();
+        Ok(
+            AtomSelection::for_definitions(Arc::clone(topology), definitions)?
+                .to_bonds(BondSelectionMode::Internal),
+        )
     }
 
     /// Selects bonds satisfying a predicate, in dense order. The [`BondView`]
     /// exposes chemistry, endpoints, properties, and stored perception;
     /// perception is never computed implicitly.
     pub fn from_predicate(
-        topology: &Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         mut predicate: impl FnMut(BondView<'_>) -> bool,
     ) -> Self {
+        let topology = &topology.into();
         Self::from_bonds(
-            topology,
+            Arc::clone(topology),
             topology
                 .bonds()
                 .filter(|bond| predicate(*bond))
@@ -169,7 +178,7 @@ impl BondSelection {
     /// Keeps selected bonds satisfying a predicate, preserving dense order.
     pub fn filter(&self, mut predicate: impl FnMut(BondView<'_>) -> bool) -> Self {
         Self::from_bonds(
-            &self.topology,
+            Arc::clone(&self.topology),
             self.indices
                 .iter()
                 .map(|index| self.topology.bond_at(*index).expect("validated bond"))
@@ -275,7 +284,7 @@ impl BondSelection {
 
     /// Inverts membership within this exact topology.
     pub fn complement(&self) -> Self {
-        Self::all(&self.topology)
+        Self::all(Arc::clone(&self.topology))
             .difference(self)
             .expect("same snapshot")
     }
@@ -299,12 +308,12 @@ impl BondSelection {
     /// between those atoms, so this is not generally a lossless round trip.
     pub fn to_atoms(&self) -> AtomSelection {
         AtomSelection::from_atoms(
-            &self.topology,
+            Arc::clone(&self.topology),
             self.bond_ids().flat_map(|id| {
                 let bond = self.topology.bond(id).expect("validated bond");
                 [
-                    InstanceAtomId::new(id.molecule(), bond.a()),
-                    InstanceAtomId::new(id.molecule(), bond.b()),
+                    InstanceAtomId::new(id.instance(), bond.a()),
+                    InstanceAtomId::new(id.instance(), bond.b()),
                 ]
             }),
         )
@@ -334,7 +343,7 @@ impl BondSelection {
     }
 
     /// Rejects even layout-equal snapshots unless the shared owner is identical.
-    pub fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), SelectionError> {
+    pub fn ensure_compatible(&self, topology: &Topology) -> Result<(), SelectionError> {
         if !self.topology.shares_layout(topology) {
             return Err(SelectionError::TopologyMismatch);
         }

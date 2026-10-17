@@ -31,6 +31,8 @@ impl Point3 {
     }
 }
 
+impl crate::units::sealed::Sealed for Point3 {}
+
 impl ScaleValue for Point3 {
     fn scaled(self, factor: f64) -> Self {
         Self::new(self.x * factor, self.y * factor, self.z * factor)
@@ -79,6 +81,8 @@ impl Vector3 {
         self.x.hypot(self.y).hypot(self.z)
     }
 }
+
+impl crate::units::sealed::Sealed for Vector3 {}
 
 impl ScaleValue for Vector3 {
     fn scaled(self, factor: f64) -> Self {
@@ -229,6 +233,8 @@ impl Default for Matrix3 {
         Self::identity()
     }
 }
+
+impl crate::units::sealed::Sealed for Matrix3 {}
 
 impl ScaleValue for Matrix3 {
     fn scaled(self, factor: f64) -> Self {

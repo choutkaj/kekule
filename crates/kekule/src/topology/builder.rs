@@ -753,37 +753,33 @@ impl fmt::Display for TopologyHierarchyError {
                 formatter,
                 "hierarchy atom-site slot {slot} stores non-matching identifier {id}"
             ),
-            Self::InvalidChainResidue { chain, residue } => write!(
-                formatter,
-                "hierarchy chain {chain} references missing residue {residue}"
-            ),
-            Self::InvalidResidueChain { residue, chain } => write!(
-                formatter,
-                "hierarchy residue {residue} references missing chain {chain}"
-            ),
+            Self::InvalidChainResidue { chain, residue } => {
+                write!(formatter, "hierarchy {chain} references missing {residue}")
+            }
+            Self::InvalidResidueChain { residue, chain } => {
+                write!(formatter, "hierarchy {residue} references missing {chain}")
+            }
             Self::InconsistentChainResidue { chain, residue } => write!(
                 formatter,
-                "hierarchy chain {chain} and residue {residue} do not reference each other"
+                "hierarchy {chain} and {residue} do not reference each other"
             ),
-            Self::InvalidResidueAtomSite { residue, site } => write!(
-                formatter,
-                "hierarchy residue {residue} references missing atom site {site}"
-            ),
-            Self::InvalidAtomSiteResidue { site, residue } => write!(
-                formatter,
-                "hierarchy atom site {site} references missing residue {residue}"
-            ),
+            Self::InvalidResidueAtomSite { residue, site } => {
+                write!(formatter, "hierarchy {residue} references missing {site}")
+            }
+            Self::InvalidAtomSiteResidue { site, residue } => {
+                write!(formatter, "hierarchy {site} references missing {residue}")
+            }
             Self::InconsistentResidueAtomSite { residue, site } => write!(
                 formatter,
-                "hierarchy residue {residue} and atom site {site} do not reference each other"
+                "hierarchy {residue} and {site} do not reference each other"
             ),
             Self::InvalidAtomSiteAtom { site, atom } => write!(
                 formatter,
-                "hierarchy atom site {site} references missing topology atom {atom}"
+                "hierarchy {site} references missing topology {atom}"
             ),
             Self::InconsistentAtomLookup { site, atom } => write!(
                 formatter,
-                "hierarchy atom lookup for {atom} is inconsistent with atom site {site}"
+                "hierarchy atom lookup for {atom} is inconsistent with {site}"
             ),
         }
     }
@@ -992,14 +988,11 @@ impl fmt::Display for TopologyBuildError {
             }
             Self::InvalidResidueId(id) => write!(formatter, "invalid topology residue: {id}"),
             Self::UnusedMoleculeDefinition(id) => {
-                write!(
-                    formatter,
-                    "molecule definition {id} is not referenced by any instance"
-                )
+                write!(formatter, "{id} is not referenced by any instance")
             }
             Self::MissingHierarchyAtom { site, atom } => write!(
                 formatter,
-                "hierarchy atom site {site} places {atom}, which the topology does not contain"
+                "hierarchy {site} places {atom}, which the topology does not contain"
             ),
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(formatter, "{kind} identifier capacity exceeded")
@@ -1009,13 +1002,10 @@ impl fmt::Display for TopologyBuildError {
                 "dense atom order must list {expected} staged atoms, but lists {actual}"
             ),
             Self::InvalidAtomOrderEntry(atom) => {
-                write!(formatter, "dense atom order names unknown atom {atom}")
+                write!(formatter, "dense atom order names unknown {atom}")
             }
             Self::DuplicateAtomOrderEntry(atom) => {
-                write!(
-                    formatter,
-                    "dense atom order lists atom {atom} more than once"
-                )
+                write!(formatter, "dense atom order lists {atom} more than once")
             }
         }
     }

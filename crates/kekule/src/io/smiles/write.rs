@@ -1411,7 +1411,7 @@ fn smiles_atom_with_style_and_chirality(
     };
     if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() && written.starts_with('[') {
         return Err(SMILES_WRITE.missing_perception(format!(
-            "SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
+            "SMILES bracket {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
         )));
     }
     if written.starts_with('[') {
@@ -1441,7 +1441,7 @@ pub(super) fn validate_smiles_bracket_radical(
     );
     if atom.radical != AtomRadical::new(electrons, None) {
         return Err(SMILES_WRITE.unsupported(format!(
-            "SMILES bracket atom {atom_id} would change radical electron count or spin"
+            "SMILES bracket {atom_id} would change radical electron count or spin"
         )));
     }
     Ok(())

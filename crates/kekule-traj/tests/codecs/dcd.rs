@@ -208,7 +208,7 @@ fn dcd_scratch_limit_includes_records_fixed_atoms_and_indexed_reuse() {
         }
         let mut indexed = open_indexed(required).unwrap();
         for (random, next) in [(1, 0), (0, 1)] {
-            indexed.read_frame(random as u64, &mut destination).unwrap();
+            indexed.read_frame(random, &mut destination).unwrap();
             assert_eq!(destination.frame_view().payload().clone(), expected[random]);
             assert!(indexed.read_next(&mut destination).unwrap());
             assert_eq!(destination.frame_view().payload().clone(), expected[next]);

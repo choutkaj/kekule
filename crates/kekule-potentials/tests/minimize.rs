@@ -39,12 +39,12 @@ impl Bowl {
 }
 
 impl Potential for Bowl {
-    fn topology(&self) -> &Arc<Topology> {
+    fn topology(&self) -> &Topology {
         &self.topology
     }
 
     fn evaluate(&self, model: ModelView<'_>) -> Result<Evaluation, EvaluationError> {
-        if !std::ptr::eq(self.topology.as_ref(), model.topology()) {
+        if !self.topology.shares_layout(model.topology()) {
             return Err(EvaluationError::IncompatibleTopology);
         }
         let x = model.positions().values().into_value();

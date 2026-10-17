@@ -148,7 +148,7 @@ impl fmt::Display for ResonanceError {
         match self {
             Self::MissingConjugation => f.write_str("resonance requires installed conjugation"),
             Self::UnknownHydrogens(a) => write!(f, "resonance requires known hydrogens at {a}"),
-            Self::UnsupportedBond(b) => write!(f, "resonance group contains unsupported bond {b}"),
+            Self::UnsupportedBond(b) => write!(f, "resonance group contains unsupported {b}"),
             Self::InvalidElectronCount => f.write_str("invalid electron count in resonance search"),
             Self::InvalidStructureLimit => f.write_str("RDKit-compatible conjugated enumeration requires a structure limit of zero or at least two"),
             Self::LimitExceeded(limit) => write!(f, "resonance {limit}"),

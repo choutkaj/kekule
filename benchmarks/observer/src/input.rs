@@ -86,7 +86,7 @@ fn read_smiles(text: &str) -> Result<Vec<Component>, Failure> {
 fn from_model(model: &Model) -> Result<Vec<Component>, Failure> {
     let topology = model.topology();
     topology
-        .molecules()
+        .instances()
         .map(|instance| {
             let molecule = instance.molecule().clone();
             let mut source = Vec::with_capacity(molecule.atom_count());

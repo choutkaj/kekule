@@ -253,14 +253,14 @@ impl SdfRecordInterpretation {
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.model
             .topology()
-            .molecules()
+            .instances()
             .map(|occurrence| occurrence.molecule())
     }
 
     pub fn into_molecules(self) -> Vec<Molecule> {
         self.model
             .topology()
-            .molecules()
+            .instances()
             .map(|occurrence| occurrence.molecule().clone())
             .collect()
     }

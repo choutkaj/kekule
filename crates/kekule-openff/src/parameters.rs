@@ -308,8 +308,15 @@ pub struct ParameterizedTopology {
     pub(crate) settings: NonbondedSettings,
 }
 impl ParameterizedTopology {
-    pub fn topology(&self) -> &Arc<Topology> {
+    /// The exact topology snapshot that was parameterized.
+    pub fn topology(&self) -> &Topology {
         &self.topology
+    }
+
+    /// Clones the handle to the parameterized snapshot, without copying
+    /// topology data.
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
     }
     pub fn bonds(&self) -> &[Interaction<2, BondParameter>] {
         &self.bonds

@@ -52,7 +52,7 @@
 //! )?;
 //! ensemble.assign_boltzmann_weights(Quantity::new(298.15, KELVIN))?;
 //!
-//! let atoms = SymmetricSelection::new(&AtomSelection::all(&topology))?;
+//! let atoms = SymmetricSelection::new(&AtomSelection::all(topology.clone()))?;
 //! let rotamers = ensemble.cluster_by_radius(Quantity::new(0.125, ANGSTROM), &atoms, Default::default())?;
 //! assert_eq!(rotamers.assignments(), [0, 0, 1]);
 //!
@@ -250,8 +250,8 @@ impl Ensemble {
             });
         };
         let sets = atoms.pair_sets(*first, *first)?;
-        check_fit_count(atoms.len())?;
-        let weights = NormalizedWeights::new(options.alignment.weighting(), atoms.len())?;
+        check_fit_count(atoms.pair_count())?;
+        let weights = NormalizedWeights::new(options.alignment.weighting(), atoms.pair_count())?;
         let policy = options.alignment.periodic_policy();
 
         let mut assignments = vec![0; views.len()];

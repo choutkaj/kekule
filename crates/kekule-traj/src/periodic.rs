@@ -27,7 +27,7 @@
 //! periodic::unwrap_trajectory(&mut continuous)?;
 //!
 //! // A separate per-frame view with molecules centered around selected anchors.
-//! let anchors = AtomSelection::all(&topology); // Or select the solute's atoms.
+//! let anchors = AtomSelection::all(topology.clone()); // Or select the solute's atoms.
 //! periodic::image_molecules(&mut trajectory, &anchors)?;
 //! trajectory.superpose(0, &anchors, Default::default())?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -153,9 +153,9 @@ impl fmt::Display for PeriodicError {
             Self::NonSequentialFrame { previous, frame } => write!(f, "frame {frame} must immediately follow frame {previous} for temporal unwrapping"),
             Self::NonMonotonicTime { frame } => write!(f, "time decreases at frame {frame} during temporal unwrapping"),
             Self::EmptyAnchors => f.write_str("imaging requires at least one anchor atom"),
-            Self::InconsistentBondImages { frame, bond } => write!(f, "frame {frame} has inconsistent periodic images around bond {bond}"),
+            Self::InconsistentBondImages { frame, bond } => write!(f, "frame {frame} has inconsistent periodic images around {bond}"),
             Self::PeriodicAxesChanged { frame } => write!(f, "periodic axes change at frame {frame}"),
-            Self::AmbiguousDisplacement { frame, atom, axis } => write!(f, "frame {frame}, atom {atom}, cell axis {axis}: ambiguous half-cell displacement"),
+            Self::AmbiguousDisplacement { frame, atom, axis } => write!(f, "frame {frame}, {atom}, cell axis {axis}: ambiguous half-cell displacement"),
             Self::LimitExceeded { frame, limit } => write!(f, "frame {frame}: nearest-image search {limit}"),
             Self::NumericalFailure { frame } => write!(f, "frame {frame}: periodic coordinate calculation exceeds numerical precision or range"),
             Self::Position { frame, .. } => write!(f, "frame {frame} has invalid positions"),
@@ -285,7 +285,7 @@ impl MoleculePlan {
         let mut atom_group = vec![0; topology.atom_count()];
         let mut tree = Vec::new();
         let mut visited = vec![false; topology.atom_count()];
-        for molecule in topology.molecules() {
+        for molecule in topology.instances() {
             let atoms: Vec<_> = molecule.atoms().map(|atom| atom.index().index()).collect();
             for &atom in &atoms {
                 atom_group[atom] = groups.len();

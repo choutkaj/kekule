@@ -108,8 +108,8 @@ pub enum RandomAccessCapability {
 pub struct FileTrajectoryMetadata {
     format: TrajectoryFormat,
     atom_count: usize,
-    declared_frame_count: Option<u64>,
-    indexed_frame_count: Option<u64>,
+    declared_frame_count: Option<usize>,
+    indexed_frame_count: Option<usize>,
     fields: TrajectoryFieldAvailability,
     coordinate_encoding: CoordinateEncoding,
     random_access: RandomAccessCapability,
@@ -125,11 +125,11 @@ impl FileTrajectoryMetadata {
         self.atom_count
     }
 
-    pub const fn declared_frame_count(&self) -> Option<u64> {
+    pub const fn declared_frame_count(&self) -> Option<usize> {
         self.declared_frame_count
     }
 
-    pub const fn indexed_frame_count(&self) -> Option<u64> {
+    pub const fn indexed_frame_count(&self) -> Option<usize> {
         self.indexed_frame_count
     }
 
@@ -149,7 +149,7 @@ impl FileTrajectoryMetadata {
         self.variant.as_deref()
     }
 
-    pub(super) fn xyz(atom_count: usize, indexed_frame_count: Option<u64>) -> Self {
+    pub(super) fn xyz(atom_count: usize, indexed_frame_count: Option<usize>) -> Self {
         Self {
             format: TrajectoryFormat::Xyz,
             atom_count,
@@ -176,7 +176,7 @@ impl FileTrajectoryMetadata {
         }
     }
 
-    pub(super) fn dcd(header: &dcd::DcdHeader, indexed_frame_count: Option<u64>) -> Self {
+    pub(super) fn dcd(header: &dcd::DcdHeader, indexed_frame_count: Option<usize>) -> Self {
         Self {
             format: TrajectoryFormat::Dcd,
             atom_count: header.atom_count(),
@@ -209,7 +209,7 @@ impl FileTrajectoryMetadata {
 
     pub(super) fn trr(
         header: &trr::TrrFrameHeader,
-        indexed_frame_count: Option<u64>,
+        indexed_frame_count: Option<usize>,
         precision_mixed: bool,
     ) -> Self {
         let precision = if precision_mixed {
@@ -274,7 +274,7 @@ impl FileTrajectoryMetadata {
     pub(super) fn xtc(
         info: &xtc::XtcFrameInfo,
         cell_policy: xtc::XtcCellPolicy,
-        indexed_frame_count: Option<u64>,
+        indexed_frame_count: Option<usize>,
     ) -> Self {
         let coordinate_encoding = match info.precision() {
             Some(precision) => CoordinateEncoding::Lossy {

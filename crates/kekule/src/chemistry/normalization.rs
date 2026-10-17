@@ -105,10 +105,10 @@ impl fmt::Display for NormalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAromaticRepresentation(atom) => {
-                write!(f, "invalid imported aromatic representation at atom {atom}")
+                write!(f, "invalid imported aromatic representation at {atom}")
             }
             Self::AromaticLocalizationLimit { atom, limit } => {
-                write!(f, "imported aromatic localization at atom {atom}: {limit}")
+                write!(f, "imported aromatic localization at {atom}: {limit}")
             }
             Self::SourceStereo(_) => f.write_str("source stereo cannot be represented canonically"),
         }

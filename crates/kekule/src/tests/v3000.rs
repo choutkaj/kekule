@@ -687,7 +687,7 @@ fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
     );
     assert_eq!(
         error.message(),
-        "cannot encode specified double-bond stereo at bond b0: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands"
+        "cannot encode specified double-bond stereo at bond 0: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands"
     );
 }
 

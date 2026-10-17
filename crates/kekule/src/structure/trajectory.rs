@@ -199,7 +199,7 @@ impl Trajectory {
     /// Publishes one induced topology subset and projects every frame onto
     /// it. Trajectory and per-frame owner properties are dropped.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, TrajectoryError> {
-        let subset = self.topology.subset(selection)?;
+        let subset = crate::topology::Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
         let frames = self
             .frames
@@ -577,6 +577,8 @@ impl<'a> TrajectoryFrameView<'a> {
         self.as_model_view().to_model()
     }
 }
+
+impl super::model::sealed::Sealed for TrajectoryFrameView<'_> {}
 
 impl AsModelView for TrajectoryFrameView<'_> {
     fn as_model_view(&self) -> ModelView<'_> {

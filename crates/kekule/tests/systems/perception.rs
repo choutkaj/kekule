@@ -154,8 +154,8 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
     assert_eq!(target.properties(), source.properties());
     assert_eq!(target.definition_count(), 1);
     assert_eq!(target.instance_count(), 2);
-    let first = target.molecule(first).unwrap();
-    let second = target.molecule(second).unwrap();
+    let first = target.instance(first).unwrap();
+    let second = target.instance(second).unwrap();
     assert!(std::ptr::eq(first.molecule(), second.molecule()));
     assert_eq!(first.class(), MoleculeClass::Other);
     assert_eq!(first.molecule(), &molecule);
@@ -178,7 +178,8 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
 #[test]
 fn model_perception_changes_snapshot_preserving_structure_and_existing_bindings() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
-    let selection = AtomSelection::from_atoms(&topology, [topology.atom_ids()[0]]).unwrap();
+    let selection =
+        AtomSelection::from_atoms(Arc::clone(&topology), [topology.atom_ids()[0]]).unwrap();
     let positions = Positions::new(Quantity::new(
         (0..6)
             .map(|i| Point3::new(f64::from(i), 1.0, 2.0))
@@ -267,7 +268,7 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
     ));
     assert_default_perception(model.topology());
     assert_eq!(
-        model.topology().molecules().next().unwrap().molecule(),
+        model.topology().instances().next().unwrap().molecule(),
         &molecule
     );
 }
@@ -412,14 +413,16 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     assert!(rebuilt.same_layout(&source) && !rebuilt.shares_layout(&source));
     let republished = Topology::from_molecules(
         (source
-            .molecules()
+            .instances()
             .map(|m| m.molecule().clone())
             .collect::<Vec<_>>())
         .clone(),
     )
     .unwrap();
     assert!(!republished.shares_layout(&source));
-    let unchanged = perceived.to_editor().finish().unwrap();
+    let unchanged = TopologyEditor::from_topology(Arc::clone(&perceived))
+        .finish()
+        .unwrap();
     assert!(Arc::ptr_eq(&unchanged, &perceived));
     let mut editor = TopologyEditor::from_topology(Arc::clone(&perceived));
     let sodium = editor.atom_handle(perceived.atom_ids()[6]).unwrap();
@@ -427,11 +430,19 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     assert!(!editor.finish().unwrap().shares_layout(&source));
 
     // Selections from either snapshot combine, compare equal, and subset both.
-    let ring = AtomSelection::from_atoms(&source, source.atom_ids()[..6].iter().copied()).unwrap();
-    let ion = AtomSelection::from_atoms(&perceived, [perceived.atom_ids()[6]]).unwrap();
-    assert_eq!(ring.union(&ion).unwrap(), AtomSelection::all(&perceived));
-    assert_eq!(AtomSelection::all(&source), AtomSelection::all(&perceived));
-    let subset = perceived.subset(&ring).unwrap();
+    let ring =
+        AtomSelection::from_atoms(Arc::clone(&source), source.atom_ids()[..6].iter().copied())
+            .unwrap();
+    let ion = AtomSelection::from_atoms(Arc::clone(&perceived), [perceived.atom_ids()[6]]).unwrap();
+    assert_eq!(
+        ring.union(&ion).unwrap(),
+        AtomSelection::all(Arc::clone(&perceived))
+    );
+    assert_eq!(
+        AtomSelection::all(Arc::clone(&source)),
+        AtomSelection::all(Arc::clone(&perceived))
+    );
+    let subset = kekule::topology::Topology::subset(perceived.clone(), &ring).unwrap();
     assert_eq!(subset.topology().atom_count(), 6);
     // The correspondence keeps the receiver snapshot, not the selection's.
     assert!(std::ptr::eq(
@@ -439,7 +450,7 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
         perceived.as_ref()
     ));
     assert_eq!(
-        ring.union(&AtomSelection::all(&rebuilt)),
+        ring.union(&AtomSelection::all(Arc::clone(&rebuilt))),
         Err(SelectionError::TopologyMismatch)
     );
 
@@ -452,13 +463,13 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     assert_eq!(matches.len(), 6);
     assert!(matches
         .iter()
-        .all(|m| Arc::ptr_eq(m.topology(), &perceived)));
+        .all(|m| Arc::ptr_eq(&m.shared_topology(), &perceived)));
     assert_eq!(
-        AtomSelection::from_topology_query_matches(&source, &matches).unwrap(),
+        AtomSelection::from_topology_query_matches(Arc::clone(&source), &matches).unwrap(),
         ring
     );
     assert_eq!(
-        AtomSelection::from_topology_query_matches(&rebuilt, &matches),
+        AtomSelection::from_topology_query_matches(Arc::clone(&rebuilt), &matches),
         Err(SelectionError::TopologyMismatch)
     );
 }

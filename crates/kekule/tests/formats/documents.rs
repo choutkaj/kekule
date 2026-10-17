@@ -117,7 +117,7 @@ fn element(molecule: &Molecule) -> Element {
 fn model_molecules(model: &kekule::structure::Model) -> Vec<&Molecule> {
     model
         .topology()
-        .molecules()
+        .instances()
         .map(|instance| instance.molecule())
         .collect()
 }
@@ -173,7 +173,7 @@ fn molfile_document_model_retains_published_component_geometry() {
     ];
     for ((instance, report), expected) in interpretation
         .topology()
-        .molecules()
+        .instances()
         .zip(interpretation.reports())
         .zip(expected)
     {
@@ -290,7 +290,7 @@ fn molfile_model_keeps_interleaved_source_atom_order() {
         .topology()
         .atom_ids()
         .iter()
-        .map(|atom| atom.molecule().index())
+        .map(|atom| atom.instance().index())
         .collect::<Vec<_>>();
     assert_eq!(instances, [0, 1, 0, 2]);
     assert_points_close(
@@ -348,7 +348,7 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     assert!(projected_topology.same_layout(projected_model.topology()));
     assert_eq!(
         projected_topology
-            .molecules()
+            .instances()
             .map(|occurrence| occurrence.molecule())
             .collect::<Vec<_>>(),
         projected_molecules.iter().collect::<Vec<_>>()
@@ -525,7 +525,7 @@ fn smiles_default_options_and_topology_projection_are_consistent() {
     assert_eq!(topology.atom_count(), 4);
     assert_eq!(
         topology
-            .molecules()
+            .instances()
             .map(|occurrence| occurrence.molecule().atom_count())
             .collect::<Vec<_>>(),
         vec![3, 1]

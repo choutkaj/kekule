@@ -143,7 +143,7 @@ fn topology_atom<'a>(
     definitions: &'a [MoleculeDefinition],
     instances: &[MoleculeInstance],
 ) -> Option<&'a crate::molecule::Atom> {
-    let instance = instances.get(atom.molecule().index())?;
+    let instance = instances.get(atom.instance().index())?;
     definitions
         .get(instance.definition().index())?
         .molecule()

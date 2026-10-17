@@ -172,7 +172,7 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
         assert!(!Arc::ptr_eq(&m.shared_topology(), &old.shared_topology()));
         let geometry = PeriodicGeometry::new(*m.cell().unwrap()).unwrap();
         let mut oxygens = vec![];
-        for water in m.topology().molecules().skip(1) {
+        for water in m.topology().instances().skip(1) {
             assert_eq!(water.class(), MoleculeClass::Water);
             assert_eq!(water.molecule().atom_count(), 3);
             assert_eq!(water.molecule().bond_count(), 2);
@@ -250,7 +250,7 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
         let geom = PeriodicGeometry::new(*a.cell().unwrap()).unwrap();
         let ions: Vec<_> = a
             .topology()
-            .molecules()
+            .instances()
             .filter(|m| m.class() == MoleculeClass::Ion)
             .map(|m| {
                 a.position(m.atoms().next().unwrap().id())
@@ -518,7 +518,7 @@ fn rotated_skewed_and_left_handed_cells_fill_without_moving_solute() {
         assert!(report.waters_added() > 100);
         assert_eq!(m.position(atom).unwrap().into_value(), position);
         let geometry = PeriodicGeometry::new(cell).unwrap();
-        for water in m.topology().molecules().skip(1) {
+        for water in m.topology().instances().skip(1) {
             let oxygen = water.atoms().next().unwrap().id();
             let f = geometry
                 .fractional(Quantity::new(

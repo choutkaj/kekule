@@ -201,7 +201,7 @@ impl fmt::Display for MolecularDescriptorError {
         match self {
             Self::MissingImplicitHydrogens { atom } => write!(
                 formatter,
-                "implicit-hydrogen state is not installed for atom {atom}"
+                "implicit-hydrogen state is not installed for {atom}"
             ),
             Self::UnknownIsotope {
                 atom,
@@ -209,15 +209,15 @@ impl fmt::Display for MolecularDescriptorError {
                 mass_number,
             } => write!(
                 formatter,
-                "AME 2020 has no atomic mass for [{mass_number}{element}] at atom {atom}"
+                "AME 2020 has no atomic mass for [{mass_number}{element}] at {atom}"
             ),
             Self::MissingStandardAtomicWeight { atom, element } => write!(
                 formatter,
-                "CIAAW 2024 has no abridged standard atomic weight for {element} at atom {atom}"
+                "CIAAW 2024 has no abridged standard atomic weight for {element} at {atom}"
             ),
             Self::MissingNaturalIsotope { atom, element } => write!(
                 formatter,
-                "CIAAW 2024 has no naturally occurring isotope for {element} at atom {atom}"
+                "CIAAW 2024 has no naturally occurring isotope for {element} at {atom}"
             ),
             Self::CountOverflow {
                 element,

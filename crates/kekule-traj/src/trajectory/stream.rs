@@ -11,6 +11,20 @@ use super::{TrajectoryIoError, TrajectoryIoErrorKind};
 ///
 /// `read_next` returns `Ok(false)` only at clean end-of-stream. Implementations
 /// validate a frame completely before replacing the destination buffer.
+///
+/// # Implementing this trait
+///
+/// This trait is an extension point for codecs outside this crate. An
+/// implementation must keep this contract:
+///
+/// - [`Self::topology`] and [`Self::shared_topology`] return the same snapshot
+///   for the reader's whole life, and every published frame belongs to it.
+/// - [`Self::read_next`] rejects a destination whose topology does not share
+///   that layout, and on any error leaves the destination unchanged.
+/// - A frame is published only after every field it carries has been decoded
+///   and validated; coordinates are stored in canonical units.
+/// - `Ok(false)` means a clean end of stream with no partial frame; a
+///   truncated frame is an error.
 pub trait TrajectoryReader {
     fn topology(&self) -> &Topology;
 
@@ -33,12 +47,24 @@ pub trait TrajectoryReader {
 /// topology mismatches, and recoverable decoding errors also preserve the cursor.
 /// An I/O failure while seeking or restoring the stream can leave its position
 /// unspecified; callers should reopen the reader before continuing in that case.
+///
+/// # Implementing this trait
+///
+/// Besides the [`TrajectoryReader`] contract, an implementation must:
+///
+/// - number frames from zero in stream order, matching the order
+///   [`TrajectoryReader::read_next`] publishes them;
+/// - return the same frame from [`Self::read_frame`] that sequential reading
+///   would publish at that index;
+/// - preserve the sequential cursor across random reads, as described above;
+/// - report [`Self::frame_count`] as `None` only when the count is unknown
+///   without reading the whole stream.
 pub trait SeekableTrajectoryReader: TrajectoryReader {
-    fn frame_count(&self) -> Option<u64>;
+    fn frame_count(&self) -> Option<usize>;
 
     fn read_frame(
         &mut self,
-        index: u64,
+        index: usize,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError>;
 }
@@ -51,6 +77,19 @@ pub trait SeekableTrajectoryReader: TrajectoryReader {
 /// an I/O error, may leave a partial frame in the stream; the writer then
 /// refuses every further frame and finishing, rather than extend or report a
 /// corrupt stream as complete.
+///
+/// # Implementing this trait
+///
+/// This trait is an extension point for codecs outside this crate. An
+/// implementation must keep this contract:
+///
+/// - [`Self::topology`] and [`Self::shared_topology`] return the snapshot the
+///   writer was opened for, and [`Self::write_frame`] rejects a frame whose
+///   topology does not share its layout.
+/// - A frame field the format cannot represent is an error, never silently
+///   dropped or approximated beyond the format's documented precision.
+/// - A rejected frame writes nothing; only a failure part-way through writing
+///   may poison the writer, which then refuses every further frame.
 pub trait TrajectoryWriter {
     fn topology(&self) -> &Topology;
 
@@ -77,7 +116,8 @@ impl fmt::Debug for MemoryTrajectoryWriter {
 }
 
 impl MemoryTrajectoryWriter {
-    pub fn new(topology: Arc<Topology>) -> Self {
+    pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
+        let topology = topology.into();
         Self {
             trajectory: Trajectory::new(topology),
         }

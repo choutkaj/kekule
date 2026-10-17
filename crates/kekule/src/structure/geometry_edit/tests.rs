@@ -54,7 +54,7 @@ fn distance_moves_entire_branched_fragment_and_preserves_other_instances() {
     );
     let atoms = model.topology().atom_ids().to_vec();
     let baseline = model.clone();
-    let edit = DistanceEdit::new(&model.shared_topology(), [atoms[0], atoms[1]]).unwrap();
+    let edit = DistanceEdit::new(model.shared_topology(), [atoms[0], atoms[1]]).unwrap();
     assert_eq!(
         edit.moving_atoms().atom_ids().collect::<Vec<_>>(),
         atoms[1..4]
@@ -89,7 +89,7 @@ fn distance_moves_entire_branched_fragment_and_preserves_other_instances() {
 fn angle_moves_fragment_rigidly_and_reversal_moves_opposite_side() {
     let baseline = chain();
     let [a, b, c, d] = ids(&baseline);
-    let edit = AngleEdit::new(&baseline.shared_topology(), [a, b, c]).unwrap();
+    let edit = AngleEdit::new(baseline.shared_topology(), [a, b, c]).unwrap();
     assert_eq!(edit.atoms(), [a, b, c]);
     for target in [0.0, 35.0, 120.0, 180.0] {
         let mut model = baseline.clone();
@@ -125,7 +125,7 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
     let mut model = chain();
     let baseline = model.clone();
     let [a, b, c, d] = ids(&model);
-    let edit = DihedralEdit::new(&model.shared_topology(), [a, b, c, d]).unwrap();
+    let edit = DihedralEdit::new(model.shared_topology(), [a, b, c, d]).unwrap();
     assert_eq!(edit.atoms(), [a, b, c, d]);
     close(
         edit.measure(model.as_model_view())
@@ -201,7 +201,7 @@ fn half_turn_ties_and_large_finite_targets_wrap_without_overflow() {
     assert_eq!(signed_angle(PI), PI);
     let mut model = chain();
     let [a, b, c, d] = ids(&model);
-    let edit = DihedralEdit::new(&model.shared_topology(), [a, b, c, d]).unwrap();
+    let edit = DihedralEdit::new(model.shared_topology(), [a, b, c, d]).unwrap();
     for target in [PI, -PI, f64::MAX, -f64::MAX] {
         edit.apply(&mut model, Quantity::new(target, RADIAN))
             .unwrap();
@@ -228,20 +228,20 @@ fn rings_reject_automatic_edits_but_explicit_edits_can_deform_them() {
     let [a, b, c, d] = ids(&ring);
     let topology = ring.shared_topology();
     assert_eq!(
-        DistanceEdit::new(&topology, [a, b]).unwrap_err(),
+        DistanceEdit::new(topology.clone(), [a, b]).unwrap_err(),
         GeometryEditError::InseparableFragment
     );
     assert_eq!(
-        AngleEdit::new(&topology, [a, b, c]).unwrap_err(),
+        AngleEdit::new(topology.clone(), [a, b, c]).unwrap_err(),
         GeometryEditError::InseparableFragment
     );
     assert_eq!(
-        DihedralEdit::new(&topology, [a, b, c, d]).unwrap_err(),
+        DihedralEdit::new(topology.clone(), [a, b, c, d]).unwrap_err(),
         GeometryEditError::InseparableFragment
     );
     let baseline = ring.clone();
-    let selected = AtomSelection::from_atoms(&topology, [b, c, d]).unwrap();
-    let edit = DihedralEdit::with_moving_atoms(&topology, [a, b, c, d], &selected).unwrap();
+    let selected = AtomSelection::from_atoms(topology.clone(), [b, c, d]).unwrap();
+    let edit = DihedralEdit::with_moving_atoms(topology.clone(), [a, b, c, d], &selected).unwrap();
     edit.apply(&mut ring, Quantity::new(90.0, DEGREE)).unwrap();
     for atom in [a, b, c] {
         assert_eq!(point(&ring, atom), point(&baseline, atom));
@@ -269,9 +269,9 @@ fn explicit_distance_and_angle_allow_disconnected_atoms_and_keep_pivots() {
     );
     let [a, b, c, d] = ids(&model);
     let topology = model.shared_topology();
-    let moving = AtomSelection::from_atoms(&topology, [b, c]).unwrap();
+    let moving = AtomSelection::from_atoms(topology.clone(), [b, c]).unwrap();
     let baseline = model.clone();
-    let angle = AngleEdit::with_moving_atoms(&topology, [a, b, c], &moving).unwrap();
+    let angle = AngleEdit::with_moving_atoms(topology.clone(), [a, b, c], &moving).unwrap();
     angle
         .apply(&mut model, Quantity::new(45.0, DEGREE))
         .unwrap();
@@ -286,7 +286,7 @@ fn explicit_distance_and_angle_allow_disconnected_atoms_and_keep_pivots() {
             .unwrap(),
         45.0,
     );
-    let distance = DistanceEdit::with_moving_atoms(&topology, [a, c], &moving).unwrap();
+    let distance = DistanceEdit::with_moving_atoms(topology.clone(), [a, c], &moving).unwrap();
     distance
         .apply(&mut model, Quantity::new(2.0, NANOMETER))
         .unwrap();
@@ -307,46 +307,46 @@ fn preparation_validates_references_connectivity_and_selections() {
     let [a, b, c, d] = ids(&model);
     let topology = model.shared_topology();
     assert_eq!(
-        DistanceEdit::new(&topology, [a, a]).unwrap_err(),
+        DistanceEdit::new(topology.clone(), [a, a]).unwrap_err(),
         GeometryEditError::RepeatedAtom(a)
     );
     assert_eq!(
-        AngleEdit::new(&topology, [a, c, d]).unwrap_err(),
+        AngleEdit::new(topology.clone(), [a, c, d]).unwrap_err(),
         GeometryEditError::MissingBond { a, b: c }
     );
     assert_eq!(
-        DihedralEdit::new(&topology, [a, b, d, c]).unwrap_err(),
+        DihedralEdit::new(topology.clone(), [a, b, d, c]).unwrap_err(),
         GeometryEditError::MissingBond { a: b, b: d }
     );
     let larger = fixture("CCCCC", &[Point3::origin(); 5]);
     let invalid = larger.topology().atom_ids()[4];
     assert_eq!(
-        DistanceEdit::new(&topology, [a, invalid]).unwrap_err(),
+        DistanceEdit::new(topology.clone(), [a, invalid]).unwrap_err(),
         GeometryEditError::InvalidAtomId(invalid)
     );
     for selected in [vec![], vec![a, d], vec![b, c]] {
-        let moving = AtomSelection::from_atoms(&topology, selected).unwrap();
+        let moving = AtomSelection::from_atoms(topology.clone(), selected).unwrap();
         assert_eq!(
-            DihedralEdit::with_moving_atoms(&topology, [a, b, c, d], &moving).unwrap_err(),
+            DihedralEdit::with_moving_atoms(topology.clone(), [a, b, c, d], &moving).unwrap_err(),
             GeometryEditError::InvalidMovingSelection
         );
     }
     let different = chain();
-    let foreign = AtomSelection::all(&different.shared_topology());
+    let foreign = AtomSelection::all(different.shared_topology());
     assert_eq!(
-        DistanceEdit::with_moving_atoms(&topology, [a, b], &foreign).unwrap_err(),
+        DistanceEdit::with_moving_atoms(topology.clone(), [a, b], &foreign).unwrap_err(),
         GeometryEditError::TopologyMismatch
     );
     // Consecutive bonds need not be single or chemically rotatable.
     let unsaturated = fixture("C=CC#N", model.positions().values().value());
-    assert!(DihedralEdit::new(&unsaturated.shared_topology(), ids(&unsaturated)).is_ok());
+    assert!(DihedralEdit::new(unsaturated.shared_topology(), ids(&unsaturated)).is_ok());
 }
 
 #[test]
 fn prepared_edits_reject_independently_equal_topologies_atomically() {
     let model = chain();
     let [a, b, c, d] = ids(&model);
-    let edit = DihedralEdit::new(&model.shared_topology(), [a, b, c, d]).unwrap();
+    let edit = DihedralEdit::new(model.shared_topology(), [a, b, c, d]).unwrap();
     let mut other = chain();
     let baseline = other.clone();
     assert_eq!(
@@ -443,7 +443,7 @@ fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
         Err(GeometryEditError::NumericalFailure)
     );
     assert_eq!(model, baseline);
-    let all = AtomSelection::all(&model.shared_topology());
+    let all = AtomSelection::all(model.shared_topology());
     assert_eq!(
         model.translate(
             &all,
@@ -502,7 +502,7 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
     let mut model = chain();
     let [a, b, c, d] = ids(&model);
     let baseline = model.clone();
-    let selected = AtomSelection::from_atoms(&model.shared_topology(), [c, d]).unwrap();
+    let selected = AtomSelection::from_atoms(model.shared_topology(), [c, d]).unwrap();
     model
         .translate(
             &selected,
@@ -546,7 +546,7 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
 fn empty_selections_still_validate_binding_and_motion_arguments() {
     let mut model = chain();
     let baseline = model.clone();
-    let empty = AtomSelection::empty(&model.shared_topology());
+    let empty = AtomSelection::empty(model.shared_topology());
     let zero = Quantity::new(Point3::origin(), NANOMETER);
     let axis = Vector3::new(0.0, 0.0, 1.0);
     model
@@ -603,7 +603,7 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
         ),
         Err(GeometryEditError::NonFiniteInput)
     );
-    let foreign = AtomSelection::empty(&chain().shared_topology());
+    let foreign = AtomSelection::empty(chain().shared_topology());
     assert_eq!(
         model.translate(&foreign, Quantity::new(Vector3::zero(), NANOMETER)),
         Err(GeometryEditError::TopologyMismatch)
@@ -641,7 +641,7 @@ fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
     let a_index = model.topology().atom_index(a).unwrap();
     model.set_occupancy(a_index, Some(0.75)).unwrap();
     let baseline = model.clone();
-    let all = AtomSelection::all(&model.shared_topology());
+    let all = AtomSelection::all(model.shared_topology());
     model
         .set_distance(b, c, Quantity::new(2.0, NANOMETER))
         .unwrap();
@@ -688,7 +688,7 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
         model
             .set_positions(Quantity::new(points, NANOMETER))
             .unwrap();
-        let all = AtomSelection::all(&model.shared_topology());
+        let all = AtomSelection::all(model.shared_topology());
         model
             .rotate(
                 &all,
@@ -765,7 +765,7 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
 fn automatic_fragments_may_contain_a_ring_on_the_moving_side() {
     let model = fixture("CCC1CC1", &[Point3::origin(); 5]);
     let atoms = model.topology().atom_ids();
-    let edit = AngleEdit::new(&model.shared_topology(), [atoms[0], atoms[1], atoms[2]]).unwrap();
+    let edit = AngleEdit::new(model.shared_topology(), [atoms[0], atoms[1], atoms[2]]).unwrap();
     assert_eq!(
         edit.moving_atoms().atom_ids().collect::<Vec<_>>(),
         atoms[2..]
@@ -788,8 +788,8 @@ fn prepared_selection_is_a_snapshot_and_repeated_definitions_stay_independent() 
     .unwrap();
     let topology = model.shared_topology();
     let [a, b, c, d] = model.topology().atom_ids()[..4].try_into().unwrap();
-    let mut moving = AtomSelection::from_atoms(&topology, [d]).unwrap();
-    let edit = DihedralEdit::with_moving_atoms(&topology, [a, b, c, d], &moving).unwrap();
+    let mut moving = AtomSelection::from_atoms(topology.clone(), [d]).unwrap();
+    let edit = DihedralEdit::with_moving_atoms(topology.clone(), [a, b, c, d], &moving).unwrap();
     moving.clear();
     assert_eq!(edit.moving_atoms().len(), 1);
     let before = model.clone();
@@ -808,7 +808,7 @@ fn apply_transform_uses_rotation_and_translation_together() {
     let mut model = chain();
     let baseline = model.clone();
     let [a, b, c, d] = ids(&model);
-    let selected = AtomSelection::from_atoms(&model.shared_topology(), [c, d]).unwrap();
+    let selected = AtomSelection::from_atoms(model.shared_topology(), [c, d]).unwrap();
     let transform = RigidTransform::from_canonical(
         Matrix3::from_columns(
             Vector3::new(0.0, 1.0, 0.0),

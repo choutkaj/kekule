@@ -122,8 +122,8 @@ fn fit_items<'a>(
     };
     let reference = reference_view(items, reference)?;
     let sets = item_pair_sets(topology, items, reference, atoms)?;
-    check_fit_count(atoms.len())?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    check_fit_count(atoms.pair_count())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     let alignments = items
         .iter()
         .enumerate()
@@ -148,8 +148,8 @@ fn item_rmsd<'a>(
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let reference = reference_view(items, reference)?;
     let sets = item_pair_sets(topology, items, reference, atoms)?;
-    check_measurement_count(atoms.len())?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.len())?;
+    check_measurement_count(atoms.pair_count())?;
+    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     let values = items
         .iter()
         .enumerate()
@@ -180,11 +180,11 @@ fn item_aligned_rmsd<'a>(
     let reference = reference_view(items, reference)?;
     let fit_sets = item_pair_sets(topology, items, reference, fit)?;
     let measurement_sets = item_pair_sets(topology, items, reference, measurement)?;
-    check_fit_count(fit.len())?;
-    check_measurement_count(measurement.len())?;
-    let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.len())?;
+    check_fit_count(fit.pair_count())?;
+    check_measurement_count(measurement.pair_count())?;
+    let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.pair_count())?;
     let measurement_weights =
-        NormalizedWeights::new(options.measurement_weighting, measurement.len())?;
+        NormalizedWeights::new(options.measurement_weighting, measurement.pair_count())?;
     let policy = options.fit.periodic_policy;
     // The best fit fixes the transform; the measurement then takes its own
     // best permutation under that transform.

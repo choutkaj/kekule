@@ -219,7 +219,7 @@ fn bonds(result: &StructureInterpretation) -> Vec<(String, String, BondOrder, Bo
         .flat_map(|instance| instance.bonds())
         .map(|bond| {
             let [a, b] = bond.atoms();
-            let molecule = result.topology().molecule(a.molecule()).unwrap().molecule();
+            let molecule = result.topology().instance(a.instance()).unwrap().molecule();
             let id = molecule.bond_between(a.atom(), b.atom()).unwrap();
             let (a, b) = (name(a), name(b));
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
@@ -245,7 +245,7 @@ fn charges(result: &StructureInterpretation) -> Vec<(String, i8)> {
         .filter_map(|atom| {
             let molecule = result
                 .topology()
-                .molecule(atom.atom().molecule())
+                .instance(atom.atom().instance())
                 .unwrap()
                 .molecule();
             let charge = molecule.atom(atom.atom().atom()).unwrap().formal_charge;
@@ -1141,7 +1141,7 @@ fn atom_names_imply_elements_without_element_columns() {
         .map(|atom| {
             let molecule = interpreted
                 .topology()
-                .molecule(atom.atom().molecule())
+                .instance(atom.atom().instance())
                 .unwrap()
                 .molecule();
             molecule.atom(atom.atom().atom()).unwrap().element.symbol()
@@ -1166,7 +1166,7 @@ fn isotopes(result: &StructureInterpretation) -> Vec<(String, &'static str, Opti
         .map(|atom| {
             let molecule = result
                 .topology()
-                .molecule(atom.atom().molecule())
+                .instance(atom.atom().instance())
                 .unwrap()
                 .molecule();
             let element = molecule.atom(atom.atom().atom()).unwrap();
@@ -1857,7 +1857,7 @@ fn pdb_connectivity_matches_an_independent_reference() {
         let interpreted = interpret(text);
         let topology = interpreted.topology();
         let mut sizes = topology
-            .molecules()
+            .instances()
             .map(|instance| instance.molecule().atom_count())
             .collect::<Vec<_>>();
         sizes.sort_unstable_by(|a, b| b.cmp(a));

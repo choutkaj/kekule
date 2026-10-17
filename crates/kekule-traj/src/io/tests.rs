@@ -6,7 +6,7 @@ use crate::TrajectoryFormat;
 fn bounded_index_reservation_grows_logarithmically() {
     let entry_count = 100_000;
     let limits = TrajectoryIoLimits::default()
-        .with_max_frames(entry_count as u64)
+        .with_max_frames(entry_count)
         .with_max_index_entries(entry_count)
         .with_max_index_bytes(entry_count * std::mem::size_of::<u64>());
     let mut offsets = Vec::new();
@@ -19,7 +19,7 @@ fn bounded_index_reservation_grows_logarithmically() {
             &limits,
             TrajectoryFormat::Xyz,
             "capacity-test.xyz",
-            frame as u64,
+            frame,
         )
         .unwrap();
         growth_events += usize::from(offsets.capacity() != previous_capacity);

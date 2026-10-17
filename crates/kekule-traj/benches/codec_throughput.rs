@@ -268,7 +268,7 @@ where
         state = state
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1);
-        let index = state % profile.frames as u64;
+        let index = (state % profile.frames as u64) as usize;
         indexed.read_frame(index, &mut destination)?;
         black_box(destination.frame_view());
     }

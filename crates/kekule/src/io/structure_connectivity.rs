@@ -1543,7 +1543,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 .expect("interpret peptide");
         let graph = interpretation
             .topology()
-            .molecule(MoleculeInstanceId::new(0))
+            .instance(MoleculeInstanceId::new(0))
             .expect("peptide instance")
             .molecule();
         assert_eq!(graph.bond_count(), 7);
@@ -1583,10 +1583,10 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(interpretation.topology().instance_count(), 2);
         assert!(interpretation
             .topology()
-            .instances()
+            .instance_records()
             .all(|(instance, _)| interpretation
                 .topology()
-                .molecule(instance)
+                .instance(instance)
                 .expect("partitioned peptide instance")
                 .molecule()
                 .is_connected()));
@@ -1604,7 +1604,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 .expect("interpret branch");
         let graph = interpretation
             .topology()
-            .molecule(MoleculeInstanceId::new(0))
+            .instance(MoleculeInstanceId::new(0))
             .expect("branch instance")
             .molecule();
         assert_eq!(graph.bond_count(), 3);
@@ -1791,14 +1791,14 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 let [a, b] = bond.atoms();
                 let order = result
                     .topology()
-                    .molecule(a.molecule())
+                    .instance(a.instance())
                     .unwrap()
                     .molecule()
                     .bond_between(a.atom(), b.atom())
                     .map(|id| {
                         result
                             .topology()
-                            .molecule(a.molecule())
+                            .instance(a.instance())
                             .unwrap()
                             .molecule()
                             .bond(id)
@@ -1829,7 +1829,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .filter_map(|atom| {
                 let charge = result
                     .topology()
-                    .molecule(atom.atom().molecule())
+                    .instance(atom.atom().instance())
                     .unwrap()
                     .molecule()
                     .atom(atom.atom().atom())

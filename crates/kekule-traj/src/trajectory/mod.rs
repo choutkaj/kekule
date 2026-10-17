@@ -229,7 +229,7 @@ struct TrajectoryIoErrorData {
     operation: Option<TrajectoryIoOperation>,
     format: Option<TrajectoryFormat>,
     source_label: Option<String>,
-    frame: Option<u64>,
+    frame: Option<usize>,
     byte_offset: Option<u64>,
     expected: Option<u64>,
     actual: Option<u64>,
@@ -276,7 +276,7 @@ impl TrajectoryIoError {
     }
 
     /// No frame has index `index`.
-    pub fn frame_index_out_of_range(index: u64) -> Self {
+    pub fn frame_index_out_of_range(index: usize) -> Self {
         let mut error = Self::new(TrajectoryIoErrorKind::FrameIndexOutOfRange);
         error.0.frame = Some(index);
         error
@@ -303,7 +303,7 @@ impl TrajectoryIoError {
 
     #[must_use]
     /// Names the zero-based frame.
-    pub fn with_frame(mut self, frame: u64) -> Self {
+    pub fn with_frame(mut self, frame: usize) -> Self {
         self.0.frame = Some(frame);
         self
     }
@@ -372,7 +372,7 @@ impl TrajectoryIoError {
     }
 
     /// The zero-based frame the failure concerns.
-    pub fn frame(&self) -> Option<u64> {
+    pub fn frame(&self) -> Option<usize> {
         self.0.frame
     }
 
@@ -478,9 +478,7 @@ impl From<kekule::structure::DenseArrayError> for TrajectoryIoError {
 impl From<TrajectoryError> for TrajectoryIoError {
     fn from(error: TrajectoryError) -> Self {
         match error {
-            TrajectoryError::IndexOutOfRange { index, .. } => {
-                Self::frame_index_out_of_range(index as u64)
-            }
+            TrajectoryError::IndexOutOfRange { index, .. } => Self::frame_index_out_of_range(index),
             TrajectoryError::Structure(error) => error.into(),
             error => Self::new(TrajectoryIoErrorKind::InvalidTrajectory).with_source(error),
         }

@@ -274,7 +274,7 @@ impl DcdWriteOptions {
 #[derive(Debug, Clone)]
 pub(crate) struct DcdHeader {
     endian: DcdEndian,
-    declared_frames: u64,
+    declared_frames: usize,
     start_step: u64,
     step_interval: u64,
     delta: f32,
@@ -286,7 +286,7 @@ pub(crate) struct DcdHeader {
 }
 
 impl DcdHeader {
-    pub(crate) const fn declared_frames(&self) -> u64 {
+    pub(crate) const fn declared_frames(&self) -> usize {
         self.declared_frames
     }
 
@@ -324,7 +324,7 @@ pub struct DcdReader<R> {
     fixed_reference: Vec<Point3>,
     positions: Vec<Point3>,
     record: Vec<u8>,
-    frame_cursor: u64,
+    frame_cursor: usize,
 }
 
 impl<R> fmt::Debug for DcdReader<R> {
@@ -422,7 +422,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 "DCD 4D or charge coordinate records are not supported",
             ));
         }
-        let declared_frames = nonnegative_u64(controls[0], "NSET", source_label)?;
+        let declared_frames = nonnegative_u64(controls[0], "NSET", source_label)? as usize;
         let start_step = nonnegative_u64(controls[1], "ISTART", source_label)?;
         let step_interval = positive_u64(controls[2], "NSAVC", source_label)?;
         let fixed_count = nonnegative_usize(controls[8], "NAMNF", source_label)?;
@@ -646,7 +646,7 @@ impl<R: Read + Seek> DcdReader<R> {
         .with_source_label(&self.options.source_label)
         .with_frame(self.frame_cursor)
         .with_byte_offset(frame_start)
-        .with_counts(self.header.declared_frames, self.frame_cursor)
+        .with_counts(self.header.declared_frames as u64, self.frame_cursor as u64)
         .with_detail("DCD ended before its declared NSET count")
     }
 
@@ -684,8 +684,8 @@ impl<R: Read + Seek> DcdReader<R> {
             .with_frame(self.frame_cursor)
             .with_byte_offset(frame_start)
             .with_counts(
-                self.header.declared_frames,
-                self.frame_cursor.saturating_add(1),
+                self.header.declared_frames as u64,
+                (self.frame_cursor as u64).saturating_add(1),
             )
             .with_detail("DCD contains a frame beyond its declared NSET count"));
         }
@@ -835,7 +835,7 @@ impl<R: Read + Seek> DcdReader<R> {
             .header
             .start_step
             .checked_add(
-                self.frame_cursor
+                (self.frame_cursor as u64)
                     .checked_mul(self.header.step_interval)
                     .ok_or_else(|| {
                         frame_error(
@@ -901,7 +901,7 @@ impl<R: Read + Seek> DcdReader<R> {
     fn index_frames(mut self) -> Result<IndexedDcdReader<R>, TrajectoryIoError> {
         let mut offsets = Vec::new();
         loop {
-            if offsets.len() as u64 == self.header.declared_frames {
+            if offsets.len() == self.header.declared_frames {
                 if probe_seekable_eof(
                     &mut self.reader,
                     TrajectoryIoOperation::Index,
@@ -917,7 +917,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 )
                 .with_source_label(&self.options.source_label)
                 .with_counts(
-                    self.header.declared_frames,
+                    self.header.declared_frames as u64,
                     (offsets.len() as u64).saturating_add(1),
                 )
                 .with_detail("DCD contains frames beyond its declared NSET count"));
@@ -935,13 +935,13 @@ impl<R: Read + Seek> DcdReader<R> {
                         Some(TrajectoryFormat::Dcd),
                     )
                     .with_source_label(&self.options.source_label)
-                    .with_counts(self.header.declared_frames, offsets.len() as u64)
+                    .with_counts(self.header.declared_frames as u64, offsets.len() as u64)
                     .with_detail("DCD ended before its declared NSET count"));
                 }
                 return Err(resource_error(
                     TrajectoryIoOperation::Index,
                     &self.options.source_label,
-                    Some(offsets.len() as u64),
+                    Some(offsets.len()),
                     format!("DCD index {limit} exceeds the configured limit"),
                 ));
             }
@@ -964,7 +964,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     Some(TrajectoryFormat::Dcd),
                 )
                 .with_source_label(&self.options.source_label)
-                .with_counts(self.header.declared_frames, offsets.len() as u64)
+                .with_counts(self.header.declared_frames as u64, offsets.len() as u64)
                 .with_detail("DCD ended before its declared NSET count"));
             }
             reserve_index_for_push(
@@ -1087,13 +1087,13 @@ impl<R: Read + Seek> TrajectoryReader for IndexedDcdReader<R> {
 }
 
 impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
-    fn frame_count(&self) -> Option<u64> {
-        Some(self.offsets.len() as u64)
+    fn frame_count(&self) -> Option<usize> {
+        Some(self.offsets.len())
     }
 
     fn read_frame(
         &mut self,
-        index: u64,
+        index: usize,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
@@ -1103,10 +1103,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         }
         let offset = self
             .offsets
-            .get(
-                usize::try_from(index)
-                    .map_err(|_| TrajectoryIoError::frame_index_out_of_range(index))?,
-            )
+            .get(index)
             .copied()
             .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
         let saved_offset = self.inner.reader.stream_position().map_err(|error| {
@@ -1162,7 +1159,7 @@ pub struct DcdWriter<W> {
     options: DcdWriteOptions,
     source_label: String,
     header_start: u64,
-    frame_count: u64,
+    frame_count: usize,
     /// Set while a frame's bytes are being written and left set if writing
     /// fails, so a stream that may end in a partial frame is never extended
     /// or reported as finished.
@@ -1188,10 +1185,11 @@ impl<W> fmt::Debug for DcdWriter<W> {
 impl<W: Write + Seek> DcdWriter<W> {
     pub fn new(
         mut writer: W,
-        topology: Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         options: DcdWriteOptions,
         source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryIoError> {
+        let topology = topology.into();
         let source_label = source_label.into();
         if options.step_interval == 0
             || options.start_step > i32::MAX as u64
@@ -1299,7 +1297,7 @@ impl<W: Write + Seek> DcdWriter<W> {
             &self.source_label,
         )?;
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Dcd, &self.source_label)?;
-        if self.frame_count > i32::MAX as u64 {
+        if self.frame_count > i32::MAX as usize {
             return Err(codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Finish,
@@ -1430,7 +1428,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 TrajectoryField::Properties,
             ));
         }
-        if self.frame_count >= i32::MAX as u64 {
+        if self.frame_count >= i32::MAX as usize {
             return Err(writer_overflow(
                 &self.source_label,
                 "DCD frame count exceeds i32 header capacity",
@@ -1440,7 +1438,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             .options
             .start_step
             .checked_add(
-                self.frame_count
+                (self.frame_count as u64)
                     .checked_mul(self.options.step_interval)
                     .ok_or_else(|| writer_overflow(&self.source_label, "DCD step overflow"))?,
             )
@@ -1706,7 +1704,7 @@ fn decode_cell(
     record: &[u8],
     endian: DcdEndian,
     source_label: &str,
-    frame: u64,
+    frame: usize,
 ) -> Result<PeriodicCell, TrajectoryIoError> {
     let mut values = [0_f64; 6];
     for (target, chunk) in values.iter_mut().zip(record.as_chunks::<8>().0.iter()) {
@@ -1861,7 +1859,7 @@ fn read_record<R: Read>(
     limits: &TrajectoryIoLimits,
     source_label: &str,
     operation: TrajectoryIoOperation,
-    frame: Option<u64>,
+    frame: Option<usize>,
     clean_eof: bool,
 ) -> Result<bool, TrajectoryIoError> {
     let mut marker = [0_u8; 4];
@@ -1956,7 +1954,7 @@ fn read_exact_required<R: Read>(
     bytes: &mut [u8],
     operation: TrajectoryIoOperation,
     source_label: &str,
-    frame: Option<u64>,
+    frame: Option<usize>,
     detail: &str,
 ) -> Result<(), TrajectoryIoError> {
     reader.read_exact(bytes).map_err(|error| {
@@ -2048,7 +2046,7 @@ fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoEr
 fn record_error(
     source_label: &str,
     operation: TrajectoryIoOperation,
-    frame: Option<u64>,
+    frame: Option<usize>,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
     let mut context = TrajectoryIoError::codec(
@@ -2067,7 +2065,7 @@ fn record_error(
 fn frame_error(
     kind: TrajectoryIoErrorKind,
     source_label: &str,
-    frame: u64,
+    frame: usize,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
     TrajectoryIoError::codec(
@@ -2083,7 +2081,7 @@ fn frame_error(
 fn resource_error(
     operation: TrajectoryIoOperation,
     source_label: &str,
-    frame: Option<u64>,
+    frame: Option<usize>,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
     let mut context = TrajectoryIoError::codec(
@@ -2109,7 +2107,11 @@ fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryI
     )
 }
 
-fn writer_field_error(source_label: &str, frame: u64, field: TrajectoryField) -> TrajectoryIoError {
+fn writer_field_error(
+    source_label: &str,
+    frame: usize,
+    field: TrajectoryField,
+) -> TrajectoryIoError {
     TrajectoryIoError::codec(
         TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

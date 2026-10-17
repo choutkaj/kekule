@@ -105,6 +105,51 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Topology handles follow one convention (ARCHITECTURE.md,
+  "Units, topology handles, and traits"): `topology()` returns `&Topology`
+  and `shared_topology()` returns `Arc<Topology>`.
+  - `TopologyQueryMatch`, `ParameterizedTopology` and potentials
+    `Evaluation` return `&Topology` from `topology()` and gain
+    `shared_topology()`; `Potential::topology` returns `&Topology`, and
+    `OpenFfPotential::shared_topology` returns the handle.
+    `ModelEditor::topology()` is `topology_editor()`.
+  - Constructors that store the topology take `impl Into<Arc<Topology>>`
+    instead of `&Arc<Topology>`: every `AtomSelection` and `BondSelection`
+    constructor, `AtomCorrespondence::{from_pairs, from_same_layout}`,
+    `BondDihedral::new`, `{Distance,Angle,Dihedral}Edit::{new,
+    with_moving_atoms}`, `SolvationRadii::new`, `FrameBuffer::new`,
+    `MemoryTrajectoryWriter::new` and the `kekule-traj` writers; pass
+    `Arc::clone(&topology)` or an owned topology. `ensure_compatible` and
+    `semantic_ids` take `&Topology`.
+  - `Topology::subset(self: &Arc<Self>, ..)` is the associated function
+    `Topology::subset(source, selection)`, and `Topology::to_editor` takes
+    `&self` and copies the topology; edit a shared snapshot without copying
+    through `TopologyEditor::from_topology(Arc::clone(&topology))`.
+  - `Model` and `Evaluation` equality compare topologies with
+    `shares_layout` instead of `Arc` pointer identity.
+- **Breaking:** `AsModelView` and `ScaleValue` are sealed. `FrameBuffer` no
+  longer implements `AsModelView`; pass `buffer.as_model_view()`. The
+  extension traits `TrajectoryReader`, `SeekableTrajectoryReader`,
+  `TrajectoryWriter` and `Potential` document the contract implementors
+  keep.
+- **Breaking:** Frame indices and counts are `usize`:
+  `SeekableTrajectoryReader::{frame_count, read_frame}`,
+  `TrajectoryIoError::{frame, with_frame, frame_index_out_of_range}`,
+  `FileTrajectoryMetadata::{declared_frame_count, indexed_frame_count}` and
+  `TrajectoryIoLimits::max_frames`; `u64` remains for byte offsets.
+- **Breaking:** Identifiers display in one style, `<kind> <number>`:
+  `atom 5`, `bond 5`, `stereo element 5`, `stereo group 5`, `query atom 5`,
+  `query bond 5`, `chain 5`, `residue 5`, `atom site 5`, `definition 5`,
+  `instance 5`, `atom index 5`, `bond index 5`, `instance 2:atom 5`, and
+  `edit atom 5` and so on for editor handles (were `a5`, `molecule2:a5`,
+  `atom-index5`, `edit-atom5`, …).
+- **Breaking:** Names follow the instance and definition vocabulary, and
+  counts are `*_count()`: `Topology::{molecule, molecules}` are
+  `Topology::{instance, instances}`, `AtomView::molecule` and
+  `BondView::molecule` are `instance` (they return an `InstanceView`), and
+  `InstanceAtomId::molecule`, `InstanceBondId::molecule` and
+  `InstanceProvenance::molecule` are `instance`. `FitAtoms::len` is
+  `pair_count` and `DistanceMatrix::len` is `member_count`.
 - **Breaking:** Every public value with a physical dimension is a `Quantity`,
   and no public name carries a unit (ARCHITECTURE.md, "Units, topology
   handles, and traits").

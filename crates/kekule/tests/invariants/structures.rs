@@ -48,7 +48,7 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
                 .map(|&id| {
                     let bond = model.topology().bond(id).unwrap();
                     let index = |atom| {
-                        let atom = kekule::topology::InstanceAtomId::new(id.molecule(), atom);
+                        let atom = kekule::topology::InstanceAtomId::new(id.instance(), atom);
                         model.topology().atom_index(atom).unwrap().index()
                     };
                     let (a, b) = (index(bond.a()), index(bond.b()));

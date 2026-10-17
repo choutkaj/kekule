@@ -574,7 +574,7 @@ pub struct InstanceProvenance {
 }
 
 impl InstanceProvenance {
-    pub const fn molecule(&self) -> MoleculeInstanceId {
+    pub const fn instance(&self) -> MoleculeInstanceId {
         self.molecule
     }
 
@@ -714,14 +714,14 @@ impl StructureInterpretation {
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.model
             .topology()
-            .molecules()
+            .instances()
             .map(|occurrence| occurrence.molecule())
     }
 
     pub fn into_molecules(self) -> Vec<Molecule> {
         self.model
             .topology()
-            .molecules()
+            .instances()
             .map(|occurrence| occurrence.molecule().clone())
             .collect()
     }

@@ -49,7 +49,7 @@ impl DistanceMatrix {
     }
 
     /// The number of members.
-    pub fn len(&self) -> usize {
+    pub fn member_count(&self) -> usize {
         self.members
     }
 
@@ -314,8 +314,8 @@ impl Ensemble {
             });
         };
         let sets = atoms.pair_sets(*first, *first)?;
-        check_fit_count(atoms.len())?;
-        let weights = NormalizedWeights::new(options.weighting(), atoms.len())?;
+        check_fit_count(atoms.pair_count())?;
+        let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
         let mut values = Vec::with_capacity(expected);
         for (index, moving) in views.iter().enumerate() {
             for (offset, reference) in views[index + 1..].iter().enumerate() {
@@ -352,10 +352,10 @@ impl Ensemble {
         linkage: Linkage,
         cut: Cut,
     ) -> Result<EnsemblePartition, ClusteringError> {
-        if distances.len() != self.len() {
+        if distances.member_count() != self.len() {
             return Err(ClusteringError::MatrixMismatch {
                 expected: self.len(),
-                actual: distances.len(),
+                actual: distances.member_count(),
             });
         }
         let assignments = distances.dendrogram(linkage).cut(cut)?;
@@ -542,7 +542,7 @@ mod tests {
     /// The textbook O(n^3) algorithm: recompute every cluster distance from
     /// member distances and merge the closest pair.
     fn naive_heights(matrix: &DistanceMatrix, linkage: Linkage) -> Vec<(f64, usize)> {
-        let mut clusters = (0..matrix.len())
+        let mut clusters = (0..matrix.member_count())
             .map(|member| vec![member])
             .collect::<Vec<_>>();
         let mut heights = Vec::new();

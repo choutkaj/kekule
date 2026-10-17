@@ -155,10 +155,10 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
     let model = builder.build().unwrap();
     assert_ne!(small_id, macro_id);
     assert!(std::ptr::eq(
-        model.topology().molecule(small_id).unwrap().molecule(),
+        model.topology().instance(small_id).unwrap().molecule(),
         model
             .topology()
-            .molecule(small_id)
+            .instance(small_id)
             .unwrap()
             .definition()
             .molecule()

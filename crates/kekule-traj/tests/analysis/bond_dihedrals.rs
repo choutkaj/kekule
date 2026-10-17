@@ -28,7 +28,7 @@ fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry()
     .unwrap();
     let topology = model.shared_topology();
     let axis = model.topology().bond_ids()[2];
-    let definition = BondDihedral::new(&topology, axis, Default::default()).unwrap();
+    let definition = BondDihedral::new(topology.clone(), axis, Default::default()).unwrap();
     let atoms = definition.atoms().unwrap();
     assert_eq!(
         atoms,
@@ -54,7 +54,7 @@ fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry()
             let prepared = definition.measure(view).unwrap();
             assert_eq!(prepared, measure::bond_dihedral(view, axis).unwrap());
             assert_eq!(
-                BondDihedral::new(&view.shared_topology(), axis, Default::default())
+                BondDihedral::new(view.shared_topology(), axis, Default::default())
                     .unwrap()
                     .atoms(),
                 Some(atoms)

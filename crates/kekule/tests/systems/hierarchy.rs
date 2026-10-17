@@ -82,7 +82,7 @@ fn editor_hierarchy_membership_stays_aligned_during_bulk_assembly_and_site_edits
     assert_eq!(topology.residues().count(), 256);
     assert_eq!(
         topology
-            .molecules()
+            .instances()
             .filter(|m| m.class() == MoleculeClass::Water)
             .count(),
         256

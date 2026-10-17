@@ -11,7 +11,7 @@ fn topology(smiles: &str) -> Arc<Topology> {
 
 fn symmetric(topology: &Arc<Topology>, indices: &[usize]) -> SymmetricSelection {
     let selection = AtomSelection::from_indices(
-        topology,
+        Arc::clone(topology),
         indices
             .iter()
             .map(|index| crate::topology::TopologyAtomIndex::new(u32::try_from(*index).unwrap())),
@@ -21,7 +21,7 @@ fn symmetric(topology: &Arc<Topology>, indices: &[usize]) -> SymmetricSelection 
 }
 
 fn all(topology: &Arc<Topology>) -> SymmetricSelection {
-    SymmetricSelection::new(&AtomSelection::all(topology)).unwrap()
+    SymmetricSelection::new(&AtomSelection::all(Arc::clone(topology))).unwrap()
 }
 
 fn permutations(selection: &SymmetricSelection) -> Vec<Vec<usize>> {
@@ -110,7 +110,7 @@ fn identical_molecule_instances_are_never_exchanged() {
 #[test]
 fn searches_beyond_their_limits_fail_instead_of_truncating() {
     let neopentane = topology("CC(C)(C)C");
-    let selection = AtomSelection::all(&neopentane);
+    let selection = AtomSelection::all(Arc::clone(&neopentane));
     let limits = SymmetryLimits::default().with_max_permutations(23);
     assert_eq!(
         SymmetricSelection::with_limits(&selection, limits).unwrap_err(),
@@ -129,7 +129,7 @@ fn searches_beyond_their_limits_fail_instead_of_truncating() {
         24
     );
 
-    let empty = SymmetricSelection::new(&AtomSelection::empty(&neopentane)).unwrap();
+    let empty = SymmetricSelection::new(&AtomSelection::empty(Arc::clone(&neopentane))).unwrap();
     assert!(empty.is_empty());
     assert_eq!(permutations(&empty), [Vec::<usize>::new()]);
 }

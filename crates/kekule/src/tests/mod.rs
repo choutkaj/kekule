@@ -188,7 +188,7 @@ pub(super) fn read_molfile_with_report(
     }
     let molecule = model
         .topology()
-        .molecules()
+        .instances()
         .next()
         .expect("one component")
         .molecule()

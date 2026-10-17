@@ -87,7 +87,7 @@ impl ModelEditor {
         self.slots = ModelState::default();
     }
     /// The coordinate-free structural draft, also reachable through `Deref`.
-    pub fn topology(&self) -> &TopologyEditor {
+    pub fn topology_editor(&self) -> &TopologyEditor {
         &self.topology
     }
     /// Replaces represented stereo for an intact source occurrence; see

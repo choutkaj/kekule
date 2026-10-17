@@ -1397,7 +1397,7 @@ impl fmt::Display for MoleculeError {
             Self::InvalidStereoElementId(id) => write!(f, "invalid stereo element id: {id}"),
             Self::InvalidStereoGroupId(id) => write!(f, "invalid stereo group id: {id}"),
             Self::InvalidStereoReference(issue) => write!(f, "invalid stereo: {issue}"),
-            Self::SelfBond(id) => write!(f, "cannot create a bond from atom {id} to itself"),
+            Self::SelfBond(id) => write!(f, "cannot create a bond from {id} to itself"),
             Self::DuplicateBond { a, b } => write!(f, "duplicate bond between {a} and {b}"),
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(f, "{kind} identifier capacity exceeded")

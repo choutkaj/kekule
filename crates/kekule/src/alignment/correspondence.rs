@@ -29,10 +29,12 @@ impl AtomCorrespondence {
     /// scientific correspondence. Empty or short correspondences are permitted;
     /// each calculation enforces its own minimum size and geometry requirements.
     pub fn from_pairs(
-        moving: &Arc<Topology>,
-        reference: &Arc<Topology>,
+        moving: impl Into<Arc<Topology>>,
+        reference: impl Into<Arc<Topology>>,
         pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
     ) -> Result<Self, AtomCorrespondenceError> {
+        let moving = &moving.into();
+        let reference = &reference.into();
         let mut moving_seen = BTreeSet::new();
         let mut reference_seen = BTreeSet::new();
         let mut indices = Vec::new();
@@ -82,9 +84,11 @@ impl AtomCorrespondence {
     /// infer graph isomorphism, reorder atoms, or resolve symmetry. Perception,
     /// properties, and coordinate differences do not prevent layout matching.
     pub fn from_same_layout(
-        moving: &Arc<Topology>,
-        reference: &Arc<Topology>,
+        moving: impl Into<Arc<Topology>>,
+        reference: impl Into<Arc<Topology>>,
     ) -> Result<Self, AtomCorrespondenceError> {
+        let moving = &moving.into();
+        let reference = &reference.into();
         if !moving.same_layout(reference) {
             return Err(AtomCorrespondenceError::LayoutMismatch);
         }

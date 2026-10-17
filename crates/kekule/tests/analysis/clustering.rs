@@ -90,7 +90,7 @@ fn partition(assignments: &[usize], representatives: &[usize]) -> EnsemblePartit
 #[test]
 fn radius_clustering_groups_members_around_the_first_visited_leaders() {
     let (topology, mut ensemble) = two_shapes();
-    let atoms = AtomSelection::all(&topology);
+    let atoms = AtomSelection::all(Arc::clone(&topology));
     let distance = shape_distance(&ensemble, &atoms);
     let radius = |factor: f64| Quantity::new(distance * factor, NANOMETER);
 
@@ -144,7 +144,7 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
 #[test]
 fn radius_clustering_rejects_invalid_radii_and_unfittable_members() {
     let (topology, ensemble) = two_shapes();
-    let atoms = AtomSelection::all(&topology);
+    let atoms = AtomSelection::all(Arc::clone(&topology));
     for value in [-1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
             ensemble.cluster_by_radius(Quantity::new(value, NANOMETER), &atoms, Default::default()),
@@ -161,8 +161,11 @@ fn radius_clustering_rejects_invalid_radii_and_unfittable_members() {
         )))
     );
     let radius = Quantity::new(0.1, NANOMETER);
-    let two_atoms =
-        AtomSelection::from_atoms(&topology, topology.atom_ids()[..2].iter().copied()).unwrap();
+    let two_atoms = AtomSelection::from_atoms(
+        Arc::clone(&topology),
+        topology.atom_ids()[..2].iter().copied(),
+    )
+    .unwrap();
     assert_eq!(
         ensemble.cluster_by_radius(radius, &two_atoms, Default::default()),
         Err(ClusteringError::Alignment(Box::new(
@@ -214,7 +217,7 @@ fn symmetric_radius_clustering_merges_rotamers() {
         ],
     )
     .unwrap();
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
     let radius = Quantity::new(0.01, NANOMETER);
     assert_eq!(
         ensemble
@@ -370,7 +373,7 @@ fn merges(dendrogram: &Dendrogram) -> Vec<([usize; 2], f64, usize)> {
 fn distance_matrices_store_each_unordered_pair_once() {
     let matrix =
         DistanceMatrix::from_condensed(3, Quantity::new(vec![1.0, 2.0, 3.0], NANOMETER)).unwrap();
-    assert_eq!(matrix.len(), 3);
+    assert_eq!(matrix.member_count(), 3);
     assert_eq!(
         matrix.condensed(),
         Quantity::new(&[1.0, 2.0, 3.0][..], NANOMETER)
@@ -527,11 +530,11 @@ fn dendrogram_cuts_apply_merges_by_height_or_cluster_count() {
 #[test]
 fn pairwise_rmsd_fits_every_unordered_pair_once() {
     let (topology, ensemble) = two_shapes();
-    let atoms = AtomSelection::all(&topology);
+    let atoms = AtomSelection::all(Arc::clone(&topology));
     let matrix = ensemble
         .pairwise_fitted_rmsd(&atoms, Default::default())
         .unwrap();
-    assert_eq!(matrix.len(), 4);
+    assert_eq!(matrix.member_count(), 4);
     for first in 0..4 {
         for second in first + 1..4 {
             let fit = alignment::fit(
@@ -625,7 +628,7 @@ fn hierarchical_clusters_are_represented_by_weighted_medoids() {
 
     // Fitted RMSDs separate the two shapes under a complete-linkage cut.
     let (topology, shapes) = two_shapes();
-    let atoms = AtomSelection::all(&topology);
+    let atoms = AtomSelection::all(Arc::clone(&topology));
     let distance = shape_distance(&shapes, &atoms);
     let matrix = shapes
         .pairwise_fitted_rmsd(&atoms, Default::default())
@@ -644,7 +647,7 @@ fn hierarchical_clusters_are_represented_by_weighted_medoids() {
 fn member_distances_do_not_depend_on_member_order() {
     let (topology, ensemble) = two_shapes();
     let reversed = ensemble.select([3, 2, 1, 0]).unwrap();
-    let all = AtomSelection::all(&topology);
+    let all = AtomSelection::all(Arc::clone(&topology));
     let symmetric = SymmetricSelection::new(&all).unwrap();
     for atoms in [FitAtoms::from(&all), FitAtoms::from(&symmetric)] {
         let forward = ensemble
@@ -667,8 +670,8 @@ fn member_distances_do_not_depend_on_member_order() {
     // Exchanging two atoms makes each fit depend on which member moves.
     let ids = topology.atom_ids();
     let exchanged = AtomCorrespondence::from_pairs(
-        &topology,
-        &topology,
+        Arc::clone(&topology),
+        Arc::clone(&topology),
         [
             (ids[0], ids[1]),
             (ids[1], ids[0]),
@@ -794,7 +797,10 @@ fn k_medoids_rejects_invalid_cluster_counts_and_matrices() {
     // Fitted RMSDs separate the two shapes into two medoid clusters.
     let (topology, shapes) = two_shapes();
     let matrix = shapes
-        .pairwise_fitted_rmsd(&AtomSelection::all(&topology), Default::default())
+        .pairwise_fitted_rmsd(
+            &AtomSelection::all(Arc::clone(&topology)),
+            Default::default(),
+        )
         .unwrap();
     assert_eq!(
         shapes.cluster_k_medoids(&matrix, 2).unwrap().assignments(),

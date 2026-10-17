@@ -35,7 +35,7 @@ fn model(source: &str, points: &[[f64; 3]]) -> Model {
 
 fn classifications(model: &Model) -> MmcifEntityClassifications {
     let mut classifications = MmcifEntityClassifications::new();
-    for instance in model.topology().molecules().map(|molecule| molecule.id()) {
+    for instance in model.topology().instances().map(|molecule| molecule.id()) {
         classifications
             .insert(instance, EntityKind::NonPolymer)
             .unwrap();
@@ -144,7 +144,7 @@ fn molfile_rejects_asserted_stereo_its_coordinates_contradict() {
             (error.kind(), error.message()),
             (
                 DiagnosticKind::Unsupported,
-                "specified tetrahedral stereo at atom a1 contradicts the emitted coordinates, which readers take as the configuration"
+                "specified tetrahedral stereo at atom 1 contradicts the emitted coordinates, which readers take as the configuration"
             ),
             "{version:?}"
         );

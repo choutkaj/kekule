@@ -65,8 +65,8 @@ use super::{
     AtomExpression, AtomPredicate, BondExpression, QueryStereoConstraint, QueryStereoGroup,
 };
 
-fixed_u32_id!(QueryAtomId, "qa");
-fixed_u32_id!(QueryBondId, "qb");
+fixed_u32_id!(QueryAtomId, "query atom");
+fixed_u32_id!(QueryBondId, "query bond");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryAtom {

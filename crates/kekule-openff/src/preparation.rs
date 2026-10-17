@@ -21,9 +21,7 @@ pub(crate) fn explicit(molecule: &Molecule) -> Result<Molecule> {
         if copy.implicit_hydrogens(id) != Some(0) {
             return Err(Error::new(
                 ErrorKind::UnsupportedMolecule,
-                format!(
-                    "atom {id} has implicit hydrogens; expand hydrogens before parameterization"
-                ),
+                format!("{id} has implicit hydrogens; expand hydrogens before parameterization"),
             ));
         }
         if atom.radical.is_some() {

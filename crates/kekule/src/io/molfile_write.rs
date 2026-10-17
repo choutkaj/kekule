@@ -168,7 +168,7 @@ pub(super) fn render_model(
                 topology.atom_count(),
                 topology.bond_count(),
                 topology
-                    .molecules()
+                    .instances()
                     .any(|occurrence| occurrence.molecule().stereo_groups().next().is_some()),
             );
             if fits.is_ok() {

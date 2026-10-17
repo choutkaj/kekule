@@ -187,7 +187,7 @@ fn energy_components_match_an_independent_smirnoff_reference() {
 
     let evaluation = potential.evaluate(model.as_model_view()).unwrap();
     assert_eq!(evaluation.energy(), &energy);
-    assert!(Arc::ptr_eq(evaluation.topology(), &topology));
+    assert!(Arc::ptr_eq(&evaluation.shared_topology(), &topology));
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn energy_is_rigid_motion_invariant_and_gradient_has_no_net_force() {
 fn potential_binds_its_layout_and_rejects_periodic_cells() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
-    assert!(Arc::ptr_eq(potential.topology(), &topology));
+    assert!(Arc::ptr_eq(&potential.shared_topology(), &topology));
     let model = model(&topology);
     // An independently published equal topology is a different layout.
     let other = self::model(&self::topology(1));
@@ -305,7 +305,7 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
     perceived.perceive().unwrap();
     let evaluation = potential.evaluate(perceived.as_model_view()).unwrap();
     assert!(Arc::ptr_eq(
-        evaluation.topology(),
+        &evaluation.shared_topology(),
         &perceived.shared_topology()
     ));
     assert_eq!(

@@ -50,7 +50,7 @@ pub struct Model {
 
 impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology)
+        self.topology.shares_layout(&other.topology)
             && self.positions == other.positions
             && self.cell == other.cell
             && self.occupancies == other.occupancies
@@ -191,7 +191,7 @@ impl Model {
     /// let topology = smiles::to_topology("c1ccccc1")?;
     /// let mut model = Model::new(topology, Positions::zeros(6))?;
     /// model.perceive()?;
-    /// assert!(model.topology().molecules().all(|m| m.molecule().perception().has_rings()));
+    /// assert!(model.topology().instances().all(|m| m.molecule().perception().has_rings()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
@@ -212,7 +212,7 @@ impl Model {
     /// Publishes an induced topology subset and projects structure state
     /// onto it. Structure owner properties are dropped.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, ModelError> {
-        let subset = self.topology.subset(selection)?;
+        let subset = crate::topology::Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
         let state = ModelState {
             positions: self.positions.select_indices(&atoms)?,
@@ -302,14 +302,24 @@ pub(super) fn atom_index(
         .ok_or(ModelError::InvalidAtomId(atom))
 }
 
+pub(crate) mod sealed {
+    /// Restricts [`super::AsModelView`] to Kekule's structure owners and views.
+    pub trait Sealed {}
+}
+
 /// Anything that can be borrowed as a [`ModelView`] without copying: models,
-/// views, ensemble members, trajectory frames, and frame buffers.
+/// views, ensemble members and trajectory frames.
 ///
 /// Each implementor also has an inherent `as_model_view` method, so the trait
-/// only needs importing for generic code.
-pub trait AsModelView {
+/// only needs importing for generic code. This trait is sealed; other
+/// structure-like types, such as a `kekule-traj` frame buffer, are passed
+/// through their own `as_model_view()`.
+pub trait AsModelView: sealed::Sealed {
     fn as_model_view(&self) -> ModelView<'_>;
 }
+
+impl sealed::Sealed for Model {}
+impl sealed::Sealed for ModelView<'_> {}
 
 impl AsModelView for Model {
     fn as_model_view(&self) -> ModelView<'_> {

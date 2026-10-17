@@ -202,7 +202,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
                 unreachable!("only double-bond stereo is conformation-dependent");
             };
             return Err(MOLFILE_WRITE.unsupported(format!(
-                "cannot encode specified double-bond stereo at bond {}: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands",
+                "cannot encode specified double-bond stereo at {}: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands",
                 stereo.bond
             )));
         }
@@ -237,13 +237,13 @@ pub(crate) fn project_molfile_stereo_bond_marks(
             }) {
                 let focus = match &target.kind {
                     StereoElementKind::Tetrahedral(stereo) => {
-                        format!("tetrahedral stereo at atom {}", stereo.center)
+                        format!("tetrahedral stereo at {}", stereo.center)
                     }
                     StereoElementKind::DoubleBond(stereo) => {
-                        format!("double-bond stereo at bond {}", stereo.bond)
+                        format!("double-bond stereo at {}", stereo.bond)
                     }
                     StereoElementKind::Axis(stereo) => {
-                        format!("axial stereo at bond {}", stereo.axis)
+                        format!("axial stereo at {}", stereo.axis)
                     }
                 };
                 return Err(MOLFILE_WRITE.unsupported(format!(

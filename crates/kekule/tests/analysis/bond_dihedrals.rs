@@ -39,7 +39,7 @@ fn make_model(smiles: &str, perceive: bool) -> Model {
 
 fn bond(model: &Model, b: usize, c: usize) -> InstanceBondId {
     let ids = model.topology().atom_ids();
-    let instance = model.topology().molecule(ids[b].molecule()).unwrap();
+    let instance = model.topology().instance(ids[b].instance()).unwrap();
     instance.qualify_bond(
         instance
             .molecule()
@@ -50,7 +50,7 @@ fn bond(model: &Model, b: usize, c: usize) -> InstanceBondId {
 
 fn definition(model: &Model, b: usize, c: usize) -> BondDihedral {
     BondDihedral::new(
-        &model.shared_topology(),
+        model.shared_topology(),
         bond(model, b, c),
         Default::default(),
     )
@@ -71,7 +71,7 @@ fn references_follow_cip_elements_isotopes_deep_ligands_and_rings() {
         let model = make_model(smiles, true);
         let topology = model.shared_topology();
         let before = topology
-            .molecule(model.topology().atom_ids()[b].molecule())
+            .instance(model.topology().atom_ids()[b].instance())
             .unwrap()
             .molecule()
             .perception()
@@ -99,7 +99,7 @@ fn references_follow_cip_elements_isotopes_deep_ligands_and_rings() {
         );
         assert_eq!(
             topology
-                .molecule(ids[b].molecule())
+                .instance(ids[b].instance())
                 .unwrap()
                 .molecule()
                 .perception(),
@@ -250,11 +250,11 @@ fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
         Err(BondDihedralError::TopologyMismatch)
     );
     for invalid in [
-        InstanceBondId::new(ids[0].molecule(), BondId::new(99)),
+        InstanceBondId::new(ids[0].instance(), BondId::new(99)),
         InstanceBondId::new(MoleculeInstanceId::new(99), BondId::new(0)),
     ] {
         assert!(
-            matches!(BondDihedral::new(&model.shared_topology(), invalid, Default::default()), Err(BondDihedralError::InvalidBondId(id)) if id == invalid)
+            matches!(BondDihedral::new(model.shared_topology(), invalid, Default::default()), Err(BondDihedralError::InvalidBondId(id)) if id == invalid)
         );
     }
 }
@@ -275,7 +275,7 @@ fn losing_reference_ties_do_not_exhaust_ranking_bounds() {
             CipAssignmentOptions::default().with_max_nodes(4),
         ] {
             let selected =
-                BondDihedral::new(&model.shared_topology(), bond(&model, b, 5), options).unwrap();
+                BondDihedral::new(model.shared_topology(), bond(&model, b, 5), options).unwrap();
             assert_eq!(selected.atoms(), Some([ids[a], ids[b], ids[5], ids[6]]));
         }
     }
@@ -298,7 +298,7 @@ fn only_possible_maxima_consume_further_ranking_budget() {
     let axis = bond(&model, 0, 11);
     let ids = model.topology().atom_ids();
     let selected = BondDihedral::new(
-        &model.shared_topology(),
+        model.shared_topology(),
         axis,
         CipAssignmentOptions::default()
             .with_max_depth(2)
@@ -323,7 +323,7 @@ fn only_possible_maxima_consume_further_ranking_budget() {
         ),
     ] {
         assert!(matches!(
-            BondDihedral::new(&model.shared_topology(), axis, options),
+            BondDihedral::new(model.shared_topology(), axis, options),
             Err(BondDihedralError::Ranking { error, .. }) if error == expected
         ));
     }
@@ -348,13 +348,13 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
         ),
     ] {
         assert!(
-            matches!(BondDihedral::new(&model.shared_topology(), axis, options), Err(BondDihedralError::Ranking { bond, error }) if bond == axis && error == expected)
+            matches!(BondDihedral::new(model.shared_topology(), axis, options), Err(BondDihedralError::Ranking { bond, error }) if bond == axis && error == expected)
         );
     }
     let unperceived = make_model("CC(CO)CC", false);
     assert!(matches!(
         BondDihedral::new(
-            &unperceived.shared_topology(),
+            unperceived.shared_topology(),
             bond(&unperceived, 1, 4),
             Default::default()
         ),
@@ -366,7 +366,7 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
     // A proved element ordering needs no complete digraph or deep exploration.
     let model = make_model("FC(Cl)C(Br)I", true);
     let tiny = BondDihedral::new(
-        &model.shared_topology(),
+        model.shared_topology(),
         bond(&model, 1, 3),
         CipAssignmentOptions::default()
             .with_max_depth(0)
@@ -382,7 +382,7 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
     let tied = make_model("CC(C)C(C)C", true);
     assert!(matches!(
             BondDihedral::new(
-                &tied.shared_topology(),
+                tied.shared_topology(),
                 bond(&tied, 1, 3),
                 CipAssignmentOptions::default()
     .with_max_depth(0)
@@ -400,7 +400,7 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
 #[test]
 fn references_preserve_instance_identity_and_work_on_ensemble_views() {
     let source = make_model("CCCC", true);
-    let molecule = source.topology().molecules().next().unwrap().molecule();
+    let molecule = source.topology().instances().next().unwrap().molecule();
     let mut builder = Model::builder();
     let definition_id = builder.add_molecule_definition(molecule.clone()).unwrap();
     let first = builder
@@ -411,7 +411,7 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
         .unwrap();
     let model = builder.build().unwrap();
     let axis = InstanceBondId::new(second, BondId::new(1));
-    let selected = BondDihedral::new(&model.shared_topology(), axis, Default::default()).unwrap();
+    let selected = BondDihedral::new(model.shared_topology(), axis, Default::default()).unwrap();
     assert_eq!(
         selected.atoms().unwrap(),
         [0, 1, 2, 3].map(|i| InstanceAtomId::new(second, AtomId::new(i)))
@@ -464,7 +464,7 @@ fn represented_remote_stereo_distinguishes_constitutionally_tied_ligands() {
         for (model, atoms) in [(&left, left_atoms), (&right, right_atoms)] {
             let mut labelled = model
                 .topology()
-                .molecules()
+                .instances()
                 .next()
                 .unwrap()
                 .molecule()

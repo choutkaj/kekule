@@ -293,7 +293,7 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             // capacity still counts. Random reads must not duplicate any array
             // or reuse cached coordinates for the wrong pending frame.
             for (random, next) in [(1, 0), (0, 1), (1, 2)] {
-                indexed.read_frame(random as u64, &mut destination).unwrap();
+                indexed.read_frame(random, &mut destination).unwrap();
                 assert_eq!(destination.frame_view().payload().clone(), expected[random]);
                 assert!(indexed.read_next(&mut destination).unwrap());
                 assert_eq!(destination.frame_view().payload().clone(), expected[next]);

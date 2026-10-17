@@ -15,9 +15,10 @@
 //! This crate adds what needs files or bounded memory: format codecs, the
 //! [`TrajectoryReader`] and [`TrajectoryWriter`] contracts, and the reusable,
 //! topology-bound [`FrameBuffer`]. A buffer reads frame state through `Deref`
-//! and implements [`kekule::structure::AsModelView`], so analyses and prepared
-//! potentials operate on models, ensemble members, trajectory frames, and
-//! buffered frames through one contract.
+//! and lends a [`kekule::structure::ModelView`] through
+//! [`FrameBuffer::as_model_view`], so analyses and prepared potentials operate
+//! on models, ensemble members, trajectory frames, and buffered frames through
+//! one contract.
 //!
 //! # In-memory trajectory
 //!
@@ -53,7 +54,7 @@
 //! let mut trajectory = read_trajectory("trajectory.xyz", topology.clone(), Default::default())?;
 //! println!("{} frames, {} atoms", trajectory.len(), topology.atom_count());
 //!
-//! let fit = AtomSelection::all(&topology);
+//! let fit = AtomSelection::all(topology.clone());
 //! // Requires a nonempty trajectory and a non-collinear fitting selection.
 //! // Coordinates are fitted as stored; repair split molecules first if needed.
 //! trajectory.superpose(0, &fit, Default::default())?;

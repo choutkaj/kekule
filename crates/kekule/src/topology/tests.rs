@@ -12,8 +12,8 @@ fn instance_subset(
     source: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
 ) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
-    let selection = AtomSelection::for_instances(source, instances)?;
-    Ok(source.subset(&selection)?.shared_topology())
+    let selection = AtomSelection::for_instances(Arc::clone(source), instances)?;
+    Ok(crate::topology::Topology::subset(source.clone(), &selection)?.shared_topology())
 }
 
 fn perceived_molecule(smiles: &str) -> Molecule {
@@ -28,10 +28,10 @@ fn hierarchy_errors_have_diagnostic_display_messages() {
         residue: ResidueId::new(2),
         site: AtomSiteId::new(7),
     };
-    let message = error.to_string();
-    assert!(message.contains("residue2"));
-    assert!(message.contains("atom-site7"));
-    assert!(message.contains("do not reference each other"));
+    assert_eq!(
+        error.to_string(),
+        "hierarchy residue 2 and atom site 7 do not reference each other"
+    );
 }
 
 /// Publishes a draft whose deleted atom and bond slots precede live entities,
@@ -101,8 +101,8 @@ fn topology_reuses_definitions_and_preserves_qualified_dense_order() {
     let first = MoleculeInstanceId::new(0);
     let second = MoleculeInstanceId::new(1);
     assert!(std::ptr::eq(
-        topology.molecule(first).unwrap().definition(),
-        topology.molecule(second).unwrap().definition()
+        topology.instance(first).unwrap().definition(),
+        topology.instance(second).unwrap().definition()
     ));
     assert_eq!(
         topology.atom_ids(),
@@ -135,7 +135,7 @@ fn topology_reuses_definitions_and_preserves_qualified_dense_order() {
 #[test]
 fn molecule_views_are_instance_qualified_and_share_definition_state() {
     let (topology, carbon, oxygen, bond) = topology_with_reused_definition();
-    let molecules = topology.molecules().collect::<Vec<_>>();
+    let molecules = topology.instances().collect::<Vec<_>>();
     assert_eq!(molecules.len(), 2);
     assert_eq!(molecules[0].id(), MoleculeInstanceId::new(0));
     assert_eq!(molecules[1].id(), MoleculeInstanceId::new(1));
@@ -162,7 +162,7 @@ fn molecule_views_are_instance_qualified_and_share_definition_state() {
         vec![InstanceBondId::new(molecules[1].id(), bond)]
     );
     assert_eq!(
-        topology.molecule(molecules[1].id()).unwrap().id(),
+        topology.instance(molecules[1].id()).unwrap().id(),
         molecules[1].id()
     );
 }
@@ -197,7 +197,7 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
     assert_eq!(single.bond_count(), 1);
     assert!(single.hierarchy().is_empty());
     assert_eq!(
-        single.molecules().next().unwrap().molecule().perception(),
+        single.instances().next().unwrap().molecule().perception(),
         &crate::perception::Perception::default()
     );
 
@@ -209,14 +209,14 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
     assert_eq!(several.bond_count(), 1);
     assert_eq!(
         several
-            .molecules()
+            .instances()
             .map(|occurrence| occurrence.molecule().atom_count())
             .collect::<Vec<_>>(),
         vec![1, 2, 1]
     );
     assert!(several.hierarchy().is_empty());
     assert!(several
-        .molecules()
+        .instances()
         .all(|occurrence| occurrence.molecule().perception()
             == &crate::perception::Perception::default()));
 
@@ -235,7 +235,7 @@ fn builder_add_molecule_is_the_concise_single_instance_path() {
     assert_eq!(instance, MoleculeInstanceId::new(0));
     assert_eq!(topology.definition_count(), 1);
     assert_eq!(topology.instance_count(), 1);
-    assert_eq!(topology.molecule(instance).unwrap().molecule(), &molecule);
+    assert_eq!(topology.instance(instance).unwrap().molecule(), &molecule);
 }
 
 fn annotated_topology() -> Topology {
@@ -363,7 +363,10 @@ fn into_builder_appends_after_preserved_layout_hierarchy_and_properties() {
     assert_eq!(extended.definition_count(), old_definitions.len() + 1);
     assert_eq!(extended.instance_count(), old_instances.len() + 1);
     assert_eq!(
-        extended.instance(appended_instance).unwrap().definition(),
+        extended
+            .instance_record(appended_instance)
+            .unwrap()
+            .definition(),
         MoleculeDefinitionId::new(1)
     );
     assert_eq!(
@@ -470,7 +473,7 @@ fn topology_owns_instances_and_dense_orders_beside_definitions() {
 #[test]
 fn property_edits_and_clones_keep_layout_identity_while_publication_mints_one() {
     let (source, ..) = topology_with_reused_definition();
-    let selection = AtomSelection::all(&source);
+    let selection = AtomSelection::all(Arc::clone(&source));
     let key = PropertyKey::new("tag").unwrap();
 
     let mut edited = (*source).clone();
@@ -606,7 +609,7 @@ fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
     assert_eq!(enriched.properties().residues().len(), 1);
     assert_eq!(enriched.properties().atom_sites().len(), 1);
     assert_eq!(
-        enriched.molecule(instance).unwrap().property(&value_key),
+        enriched.instance(instance).unwrap().property(&value_key),
         Some(PropertyValue::Int(1))
     );
     assert_eq!(
@@ -839,14 +842,18 @@ fn selections_distinguish_instances_elements_and_queries() {
     let topology = Arc::new(builder.build().unwrap());
 
     let selected =
-        AtomSelection::for_instances(&topology, [ethane_instance, water_instance]).unwrap();
+        AtomSelection::for_instances(Arc::clone(&topology), [ethane_instance, water_instance])
+            .unwrap();
     assert_eq!(selected.indices().len(), 3);
-    let ethane_selection = AtomSelection::for_instances(&topology, [ethane_instance]).unwrap();
-    let water_selection = AtomSelection::for_instances(&topology, [water_instance]).unwrap();
+    let ethane_selection =
+        AtomSelection::for_instances(Arc::clone(&topology), [ethane_instance]).unwrap();
+    let water_selection =
+        AtomSelection::for_instances(Arc::clone(&topology), [water_instance]).unwrap();
     assert_eq!(ethane_selection.indices().len(), 2);
     assert_eq!(water_selection.indices().len(), 1);
     let oxygen =
-        AtomSelection::for_elements(&topology, [Element::from_symbol("O").unwrap()]).unwrap();
+        AtomSelection::for_elements(Arc::clone(&topology), [Element::from_symbol("O").unwrap()])
+            .unwrap();
     assert_eq!(oxygen.indices().len(), 1);
 
     let query = crate::smarts::parse_str("O", Default::default()).unwrap();
@@ -854,7 +861,7 @@ fn selections_distinguish_instances_elements_and_queries() {
         .all(&query, Default::default())
         .unwrap();
     let from_query =
-        AtomSelection::from_query_matches(&topology, water_instance, &matches).unwrap();
+        AtomSelection::from_query_matches(Arc::clone(&topology), water_instance, &matches).unwrap();
     assert_eq!(
         from_query.semantic_ids(&topology).unwrap(),
         oxygen.semantic_ids(&topology).unwrap()
@@ -912,7 +919,7 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
     let topology = Arc::new(builder.build().unwrap());
     assert_eq!(topology.definition_count(), 2);
     assert_eq!(topology.hierarchy().chains().count(), 1);
-    let first_molecule = topology.molecule(first).unwrap();
+    let first_molecule = topology.instance(first).unwrap();
     assert_eq!(first_molecule.molecule(), &molecule);
     assert_eq!(
         first_molecule
@@ -922,7 +929,7 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
         vec![chain]
     );
     assert!(topology
-        .molecule(small_instance)
+        .instance(small_instance)
         .unwrap()
         .chains()
         .next()
@@ -965,7 +972,7 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
         .atom_ids()
         .iter()
         .copied()
-        .find(|id| id.molecule() == small_instance)
+        .find(|id| id.instance() == small_instance)
         .unwrap();
     let small = topology.atom(small_atom).unwrap();
     assert!(small.atom_site().is_none());
@@ -973,36 +980,36 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
     assert!(small.chain().is_none());
 
     assert_eq!(
-        AtomSelection::for_chains(&topology, [chain])
+        AtomSelection::for_chains(Arc::clone(&topology), [chain])
             .unwrap()
             .semantic_ids(&topology)
             .unwrap(),
         vec![first_atom, second_atom]
     );
     assert_eq!(
-        AtomSelection::for_residues(&topology, [second_residue])
+        AtomSelection::for_residues(Arc::clone(&topology), [second_residue])
             .unwrap()
             .semantic_ids(&topology)
             .unwrap(),
         vec![second_atom]
     );
     assert_eq!(
-        AtomSelection::for_atom_sites(&topology, [first_site])
+        AtomSelection::for_atom_sites(Arc::clone(&topology), [first_site])
             .unwrap()
             .semantic_ids(&topology)
             .unwrap(),
         vec![first_atom]
     );
     assert_eq!(
-        AtomSelection::for_chain_label(&topology, "A")
+        AtomSelection::for_chain_label(Arc::clone(&topology), "A")
             .unwrap()
             .semantic_ids(&topology)
             .unwrap(),
         vec![first_atom, second_atom]
     );
 
-    let chain_selection = AtomSelection::for_chains(&topology, [chain]).unwrap();
-    let subset = topology.subset(&chain_selection).unwrap();
+    let chain_selection = AtomSelection::for_chains(Arc::clone(&topology), [chain]).unwrap();
+    let subset = crate::topology::Topology::subset(topology.clone(), &chain_selection).unwrap();
     assert_eq!(subset.topology().instance_count(), 2);
     assert_eq!(subset.topology().chains().count(), 1);
     assert_eq!(subset.topology().residues().count(), 2);
@@ -1035,18 +1042,18 @@ fn sparse_subset_retains_only_selected_component_storage() {
         .unwrap();
     let source = Arc::new(builder.build().unwrap());
     let selection = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         atoms
             .iter()
             .step_by(2)
             .map(|atom| InstanceAtomId::new(instance, *atom)),
     )
     .unwrap();
-    let subset = source.subset(&selection).unwrap();
+    let subset = crate::topology::Topology::subset(source.clone(), &selection).unwrap();
     assert_eq!(subset.topology().instance_count(), 128);
     assert_eq!(subset.topology().atom_count(), 128);
     assert_eq!(subset.topology().bond_count(), 0);
-    for molecule in subset.topology().molecules() {
+    for molecule in subset.topology().instances() {
         let molecule = molecule.molecule();
         assert_eq!(molecule.graph().atom_slot_count(), 1);
         assert_eq!(molecule.graph().bond_slot_count(), 0);
@@ -1106,13 +1113,13 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
     ];
     let source = Arc::new(builder.build().unwrap());
     let selection = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         instances
             .into_iter()
             .flat_map(|instance| [carbon, oxygen].map(|atom| InstanceAtomId::new(instance, atom))),
     )
     .unwrap();
-    let subset = source.subset(&selection).unwrap();
+    let subset = crate::topology::Topology::subset(source.clone(), &selection).unwrap();
     assert_eq!(
         subset.correspondence().source_bond_indices(),
         &[TopologyBondIndex::new(0), TopologyBondIndex::new(2)]
@@ -1133,7 +1140,7 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
             .unwrap();
         let target = subset
             .topology()
-            .molecule(mapped_carbon.molecule())
+            .instance(mapped_carbon.instance())
             .unwrap()
             .molecule();
         assert_eq!(target.graph().atom_slot_count(), 2);
@@ -1278,13 +1285,13 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
         .unwrap();
     let source = Arc::new(builder.build().unwrap());
     let selection = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         atoms[1..]
             .iter()
             .map(|atom| InstanceAtomId::new(instance, *atom)),
     )
     .unwrap();
-    let subset = source.subset(&selection).unwrap();
+    let subset = crate::topology::Topology::subset(source.clone(), &selection).unwrap();
     let carrier = |index| StereoCarrier::Atom(AtomId::new(index));
     let expected = [
         StereoElementKind::Tetrahedral(TetrahedralStereo {
@@ -1312,7 +1319,7 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
         }),
     ];
     assert_eq!(subset.topology().instance_count(), expected.len());
-    for (molecule, kind) in subset.topology().molecules().zip(expected) {
+    for (molecule, kind) in subset.topology().instances().zip(expected) {
         let molecule = molecule.molecule();
         assert_eq!(molecule.graph().stereo_elements.len(), 1);
         assert_eq!(
@@ -1332,7 +1339,7 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
         );
     }
     let selection = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         atoms
             .iter()
             .enumerate()
@@ -1340,8 +1347,8 @@ fn compact_subset_remaps_stereo_and_splits_absolute_groups_while_pruning_lost_ca
             .map(|(_, atom)| InstanceAtomId::new(instance, *atom)),
     )
     .unwrap();
-    let pruned = source.subset(&selection).unwrap();
-    for molecule in pruned.topology().molecules() {
+    let pruned = crate::topology::Topology::subset(source.clone(), &selection).unwrap();
+    for molecule in pruned.topology().instances() {
         assert_eq!(molecule.molecule().stereo_elements().count(), 0);
         assert_eq!(molecule.molecule().stereo_groups().count(), 0);
     }
@@ -1439,11 +1446,11 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
         .unwrap();
     let source = Arc::new(builder.build().unwrap());
     let whole_selection = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         [first, middle, last].map(|atom| InstanceAtomId::new(instance, atom)),
     )
     .unwrap();
-    let whole = source.subset(&whole_selection).unwrap();
+    let whole = crate::topology::Topology::subset(source.clone(), &whole_selection).unwrap();
     assert_eq!(
         whole
             .topology()
@@ -1454,11 +1461,11 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
     );
 
     let partial_selection = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         [first, middle].map(|atom| InstanceAtomId::new(instance, atom)),
     )
     .unwrap();
-    let partial = source.subset(&partial_selection).unwrap();
+    let partial = crate::topology::Topology::subset(source.clone(), &partial_selection).unwrap();
     assert!(!partial
         .topology()
         .properties()
@@ -1466,7 +1473,7 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
         .has_data());
 
     let selection = AtomSelection::from_atoms(
-        &source,
+        Arc::clone(&source),
         [
             InstanceAtomId::new(instance, first),
             InstanceAtomId::new(instance, last),
@@ -1474,7 +1481,7 @@ fn induced_subset_splits_molecules_and_filters_hierarchy_deterministically() {
     )
     .unwrap();
 
-    let subset = source.subset(&selection).unwrap();
+    let subset = crate::topology::Topology::subset(source.clone(), &selection).unwrap();
     assert_eq!(subset.topology().instance_count(), 2);
     assert_eq!(subset.topology().atom_count(), 2);
     assert_eq!(subset.topology().bond_count(), 0);

@@ -141,7 +141,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
             };
             let mut molecules = reread
                 .topology()
-                .molecules()
+                .instances()
                 .map(|instance| instance.molecule().clone())
                 .collect::<Vec<_>>();
             if molecules.len() != 1 {

@@ -137,7 +137,7 @@ pub struct XyzReader<R> {
     reader: R,
     topology: Arc<Topology>,
     options: XyzReadOptions,
-    frame_cursor: u64,
+    frame_cursor: usize,
     line: Vec<u8>,
     positions: Vec<Point3>,
 }
@@ -651,13 +651,13 @@ impl<R: BufRead + Seek> TrajectoryReader for IndexedXyzReader<R> {
 }
 
 impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
-    fn frame_count(&self) -> Option<u64> {
-        u64::try_from(self.offsets.len()).ok()
+    fn frame_count(&self) -> Option<usize> {
+        Some(self.offsets.len())
     }
 
     fn read_frame(
         &mut self,
-        index: u64,
+        index: usize,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(destination.topology()) {
@@ -665,8 +665,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        let index_usize = usize::try_from(index)
-            .map_err(|_| TrajectoryIoError::frame_index_out_of_range(index))?;
+        let index_usize = index;
         let offset = *self
             .offsets
             .get(index_usize)
@@ -720,7 +719,7 @@ pub struct XyzWriter<W> {
     topology: Arc<Topology>,
     options: XyzWriteOptions,
     source_label: String,
-    frame_count: u64,
+    frame_count: usize,
     /// Set while a frame's bytes are being written and left set if writing
     /// fails, so a stream that may end in a partial frame is never extended
     /// or reported as finished.
@@ -743,10 +742,11 @@ impl<W> fmt::Debug for XyzWriter<W> {
 impl<W: Write> XyzWriter<W> {
     pub fn new(
         writer: W,
-        topology: Arc<Topology>,
+        topology: impl Into<Arc<Topology>>,
         options: XyzWriteOptions,
         source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryIoError> {
+        let topology = topology.into();
         let source_label = source_label.into();
         options
             .length_unit
@@ -1026,7 +1026,7 @@ fn validate_frame_bytes(
     frame_bytes: u64,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-    frame: u64,
+    frame: usize,
     operation: TrajectoryIoOperation,
 ) -> Result<(), TrajectoryIoError> {
     if frame_bytes > limits.max_frame_bytes() {
@@ -1054,7 +1054,7 @@ fn checked_frame_add(
     frame_bytes: u64,
     consumed_bytes: usize,
     source_label: &str,
-    frame: u64,
+    frame: usize,
     operation: TrajectoryIoOperation,
 ) -> Result<u64, TrajectoryIoError> {
     u64::try_from(consumed_bytes)
@@ -1085,7 +1085,7 @@ fn read_line<'a, R: BufRead>(
     other_scratch_bytes: Option<usize>,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-    frame: u64,
+    frame: usize,
     operation: TrajectoryIoOperation,
 ) -> Result<Option<(&'a str, usize)>, TrajectoryIoError> {
     line.clear();
@@ -1183,7 +1183,7 @@ fn frame_codec_error(
     kind: TrajectoryIoErrorKind,
     operation: TrajectoryIoOperation,
     source_label: &str,
-    frame: u64,
+    frame: usize,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
     TrajectoryIoError::codec(kind, operation, Some(TrajectoryFormat::Xyz))
@@ -1192,7 +1192,11 @@ fn frame_codec_error(
         .with_detail(detail)
 }
 
-fn writer_field_error(source_label: &str, frame: u64, field: TrajectoryField) -> TrajectoryIoError {
+fn writer_field_error(
+    source_label: &str,
+    frame: usize,
+    field: TrajectoryField,
+) -> TrajectoryIoError {
     TrajectoryIoError::codec(
         TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

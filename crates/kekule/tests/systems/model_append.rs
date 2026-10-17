@@ -273,7 +273,7 @@ fn assert_same_rows<R>(source: &PropertyTable<R>, target: &PropertyTable<R>) {
 fn assert_import(source: &Model, target: &Model, first_instance: usize) {
     let instance =
         |id: MoleculeInstanceId| MoleculeInstanceId::new((first_instance + id.index()) as u32);
-    let atom = |id: InstanceAtomId| InstanceAtomId::new(instance(id.molecule()), id.atom());
+    let atom = |id: InstanceAtomId| InstanceAtomId::new(instance(id.instance()), id.atom());
     let atoms = source
         .topology()
         .atom_ids()
@@ -355,17 +355,17 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
         .bond_ids()
         .iter()
         .map(|&id| {
-            let other = InstanceBondId::new(instance(id.molecule()), id.bond());
+            let other = InstanceBondId::new(instance(id.instance()), id.bond());
             let before = source.topology().bond(id).unwrap();
             let after = target.topology().bond(other).unwrap();
             assert_eq!(before.order, after.order);
             assert_eq!(
-                atom(InstanceAtomId::new(id.molecule(), before.a())),
-                InstanceAtomId::new(other.molecule(), after.a())
+                atom(InstanceAtomId::new(id.instance(), before.a())),
+                InstanceAtomId::new(other.instance(), after.a())
             );
             assert_eq!(
-                atom(InstanceAtomId::new(id.molecule(), before.b())),
-                InstanceAtomId::new(other.molecule(), after.b())
+                atom(InstanceAtomId::new(id.instance(), before.b())),
+                InstanceAtomId::new(other.instance(), after.b())
             );
             (
                 source.topology().bond_index(id).unwrap().index(),
@@ -383,11 +383,11 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
         target.topology().properties().bonds(),
         &bonds,
     );
-    for molecule in source.topology().molecules() {
+    for molecule in source.topology().instances() {
         let id = molecule.id();
         let other = instance(id);
         let before = molecule.definition();
-        let after = target.topology().molecule(other).unwrap().definition();
+        let after = target.topology().instance(other).unwrap().definition();
         assert_eq!(before.class(), after.class());
         assert_eq!(before.molecule(), after.molecule());
         assert_eq!(
@@ -466,11 +466,11 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     for first_instance in [3, 6] {
         let defs = source
             .topology()
-            .molecules()
+            .instances()
             .map(|molecule| {
                 target
                     .topology()
-                    .molecule(MoleculeInstanceId::new(
+                    .instance(MoleculeInstanceId::new(
                         first_instance + molecule.id().index() as u32,
                     ))
                     .unwrap()
@@ -561,7 +561,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
         .id();
     let oxygen_molecule = split
         .topology()
-        .molecule(oxygen.molecule())
+        .instance(oxygen.instance())
         .unwrap()
         .molecule();
     assert_eq!(oxygen_molecule.atom_count(), 1);
@@ -861,12 +861,12 @@ fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotatio
         result.topology().atom(source_atom).unwrap().formal_charge,
         1
     );
-    for molecule in source.topology().molecules() {
+    for molecule in source.topology().instances() {
         let id = molecule.id();
         let target = id; // No membership change: occurrences retain their input order.
         let before = molecule.molecule();
-        let after = result.topology().molecule(target).unwrap().molecule();
-        if id == source_atom.molecule() {
+        let after = result.topology().instance(target).unwrap().molecule();
+        if id == source_atom.instance() {
             assert_eq!(
                 result
                     .topology()

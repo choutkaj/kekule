@@ -760,7 +760,7 @@ mod tests {
         );
         assert_eq!(
             error.to_string(),
-            "invalid represented stereo: sg2 lists s7 more than once"
+            "invalid represented stereo: stereo group 2 lists stereo element 7 more than once"
         );
     }
 

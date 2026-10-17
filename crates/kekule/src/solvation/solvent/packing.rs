@@ -147,7 +147,7 @@ pub(super) fn solvate(
     let mut ion_sites = Neighbors::new(&geometry, ion_separation)?;
     // Existing monatomic ions participate in separation checks, but are never replaced.
     for (i, atom) in model.topology().atoms().enumerate() {
-        let m = atom.molecule();
+        let m = atom.instance();
         if m.molecule().atom_count() == 1
             && (atom.formal_charge != 0 || m.class() == MoleculeClass::Ion)
         {

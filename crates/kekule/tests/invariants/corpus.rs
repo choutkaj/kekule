@@ -161,7 +161,7 @@ pub(crate) fn molecules() -> Vec<Sample> {
                 read_model(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
             let molecules = model
                 .topology()
-                .molecules()
+                .instances()
                 .map(|instance| instance.molecule().clone())
                 .collect::<Vec<_>>();
             let single = molecules.len() == 1;

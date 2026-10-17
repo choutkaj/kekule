@@ -69,8 +69,8 @@ fn topology() -> Arc<Topology> {
 fn set_operations_preserve_dense_order_and_exact_snapshot_identity() {
     let top = topology();
     let ids = top.atom_ids();
-    let a = AtomSelection::from_atoms(&top, [ids[4], ids[2], ids[0], ids[2]]).unwrap();
-    let b = AtomSelection::from_atoms(&top, [ids[5], ids[2], ids[1]]).unwrap();
+    let a = AtomSelection::from_atoms(Arc::clone(&top), [ids[4], ids[2], ids[0], ids[2]]).unwrap();
+    let b = AtomSelection::from_atoms(Arc::clone(&top), [ids[5], ids[2], ids[1]]).unwrap();
     assert_eq!(
         a.union(&b).unwrap().atom_ids().collect::<Vec<_>>(),
         [ids[0], ids[1], ids[2], ids[4], ids[5]]
@@ -83,14 +83,14 @@ fn set_operations_preserve_dense_order_and_exact_snapshot_identity() {
         a.difference(&b).unwrap().atom_ids().collect::<Vec<_>>(),
         [ids[0], ids[4]]
     );
-    let empty = AtomSelection::from_atoms(&top, []).unwrap();
+    let empty = AtomSelection::from_atoms(Arc::clone(&top), []).unwrap();
     assert_eq!(a.union(&empty).unwrap(), a);
     assert_eq!(empty.union(&a).unwrap(), a);
     assert_eq!(a.intersection(&empty).unwrap(), empty);
     assert_eq!(a.difference(&a).unwrap(), empty);
     assert_eq!(empty.difference(&a).unwrap(), empty);
     assert_eq!(a.atom_ids().len(), 3);
-    let other = AtomSelection::all(&topology());
+    let other = AtomSelection::all(Arc::clone(&topology()));
     assert_eq!(a.union(&other), Err(SelectionError::TopologyMismatch));
     assert_eq!(
         empty.intersection(&other),
@@ -103,7 +103,7 @@ fn set_operations_preserve_dense_order_and_exact_snapshot_identity() {
 fn residue_expansion_crosses_instances_and_preserves_unassigned_atoms() {
     let top = topology();
     let ids = top.atom_ids();
-    let selected = AtomSelection::from_atoms(&top, [ids[0], ids[4]]).unwrap();
+    let selected = AtomSelection::from_atoms(Arc::clone(&top), [ids[0], ids[4]]).unwrap();
     let expanded = selected.expand_to_residues();
     assert_eq!(
         expanded.atom_ids().collect::<Vec<_>>(),
@@ -111,9 +111,9 @@ fn residue_expansion_crosses_instances_and_preserves_unassigned_atoms() {
     );
     assert_eq!(expanded.expand_to_residues(), expanded);
     assert!(std::ptr::eq(expanded.topology(), top.as_ref()));
-    let empty = AtomSelection::from_atoms(&top, []).unwrap();
+    let empty = AtomSelection::from_atoms(Arc::clone(&top), []).unwrap();
     assert_eq!(empty.expand_to_residues(), empty);
-    let bare = AtomSelection::from_atoms(&top, [ids[5]]).unwrap();
+    let bare = AtomSelection::from_atoms(Arc::clone(&top), [ids[5]]).unwrap();
     assert_eq!(bare.expand_to_residues(), bare);
 }
 
@@ -121,14 +121,14 @@ fn residue_expansion_crosses_instances_and_preserves_unassigned_atoms() {
 fn chain_expansion_crosses_residues_and_instances_but_retains_unassigned_atoms() {
     let top = topology();
     let ids = top.atom_ids();
-    let selected = AtomSelection::from_atoms(&top, [ids[0], ids[4]]).unwrap();
+    let selected = AtomSelection::from_atoms(Arc::clone(&top), [ids[0], ids[4]]).unwrap();
     let expanded = selected.expand_to_chains();
     assert_eq!(expanded.atom_ids().collect::<Vec<_>>(), ids[..5]);
     assert_eq!(expanded.expand_to_chains(), expanded);
     assert!(Arc::ptr_eq(&expanded.shared_topology(), &top));
-    let bare = AtomSelection::from_atoms(&top, [ids[5]]).unwrap();
+    let bare = AtomSelection::from_atoms(Arc::clone(&top), [ids[5]]).unwrap();
     assert_eq!(bare.expand_to_chains(), bare);
-    let empty = AtomSelection::empty(&top);
+    let empty = AtomSelection::empty(Arc::clone(&top));
     assert_eq!(empty.expand_to_chains(), empty);
 }
 
@@ -172,21 +172,24 @@ fn lookup_respects_identifier_namespace_scope_insertion_and_ambiguity() {
         second.atom_site_by_label("CA"),
         Err(HierarchyError::Ambiguous { matches: 2, .. })
     ));
-    let ca = AtomSelection::for_label_atom_names(&top, ["CA", "missing"]).unwrap();
+    let ca = AtomSelection::for_label_atom_names(Arc::clone(&top), ["CA", "missing"]).unwrap();
     assert_eq!(
         ca.atom_ids().collect::<Vec<_>>(),
         [top.atom_ids()[0], top.atom_ids()[1], top.atom_ids()[3]]
     );
-    let authors = AtomSelection::for_author_atom_names(&top, ["alpha"]).unwrap();
+    let authors = AtomSelection::for_author_atom_names(Arc::clone(&top), ["alpha"]).unwrap();
     assert_eq!(
         authors.atom_ids().collect::<Vec<_>>(),
         [top.atom_ids()[0], top.atom_ids()[1]]
     );
-    assert!(AtomSelection::for_author_atom_names(&top, ["CA"])
-        .unwrap()
-        .indices()
-        .is_empty());
-    let amino = AtomSelection::for_residue_classes(&top, [ResidueClass::AminoAcid]).unwrap();
+    assert!(
+        AtomSelection::for_author_atom_names(Arc::clone(&top), ["CA"])
+            .unwrap()
+            .indices()
+            .is_empty()
+    );
+    let amino =
+        AtomSelection::for_residue_classes(Arc::clone(&top), [ResidueClass::AminoAcid]).unwrap();
     assert_eq!(ca.intersection(&amino).unwrap(), ca);
 }
 
@@ -229,10 +232,14 @@ fn original_1ake_pocket_uses_checked_composition_and_retains_source_associations
     let top = model.shared_topology();
     let residue = top.residue_by_author("A", "215", None).unwrap();
     assert_eq!(residue.name(), "AP5");
-    let ligand = AtomSelection::for_residues(&top, [residue.id()]).unwrap();
+    let ligand = AtomSelection::for_residues(Arc::clone(&top), [residue.id()]).unwrap();
     assert_eq!(ligand.atom_ids().len(), 57);
-    let hydrogen = AtomSelection::for_elements(&top, [Element::from_symbol("H").unwrap()]).unwrap();
-    let candidates = AtomSelection::all(&top).difference(&hydrogen).unwrap();
+    let hydrogen =
+        AtomSelection::for_elements(Arc::clone(&top), [Element::from_symbol("H").unwrap()])
+            .unwrap();
+    let candidates = AtomSelection::all(Arc::clone(&top))
+        .difference(&hydrogen)
+        .unwrap();
     let nearby = measure::within(
         model.as_model_view(),
         &candidates,

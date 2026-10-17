@@ -302,11 +302,13 @@ fn topology_disconnected_queries_keep_occurrences_and_snapshot() {
     let q = smarts::parse_str("[#6:1].[#6:2]", Default::default()).unwrap();
     let matches = prepared.all(&q, options()).unwrap();
     assert_eq!(matches.len(), 6);
-    assert!(matches.iter().all(|m| Arc::ptr_eq(m.topology(), &topology)));
+    assert!(matches
+        .iter()
+        .all(|m| Arc::ptr_eq(&m.shared_topology(), &topology)));
     assert_eq!(
         matches
             .iter()
-            .filter(|m| m.atoms()[0].molecule() != m.atoms()[1].molecule())
+            .filter(|m| m.atoms()[0].instance() != m.atoms()[1].instance())
             .count(),
         4
     );

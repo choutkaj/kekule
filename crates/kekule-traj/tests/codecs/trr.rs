@@ -271,7 +271,7 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
     // Indexing retained the largest raw capacity. Mixing reads must not need
     // duplicate scratch, nor publish fields left over from the last read.
     for (random, next) in [(1, 0), (0, 1), (1, 2)] {
-        indexed.read_frame(random as u64, &mut destination).unwrap();
+        indexed.read_frame(random, &mut destination).unwrap();
         assert_eq!(destination.frame_view().payload().clone(), expected[random]);
         assert!(indexed.read_next(&mut destination).unwrap());
         assert_eq!(destination.frame_view().payload().clone(), expected[next]);

@@ -412,7 +412,7 @@ impl MolfileInterpretation {
 
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.topology()
-            .molecules()
+            .instances()
             .map(|instance| instance.molecule())
     }
 

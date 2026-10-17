@@ -183,7 +183,7 @@ fn topology_edits_reject_separating_correlated_groups() {
         let original = molecule(&format!("F[C@H](Cl)CCC[C@H](Br)I |{tag}:1,6|"));
         let source = Arc::new(Topology::from_molecule(original.clone()).unwrap());
         let mut edit = source.to_editor();
-        let instance = source.molecules().next().unwrap().id();
+        let instance = source.instances().next().unwrap().id();
         let local = original
             .bond_between(AtomId::new(3), AtomId::new(4))
             .unwrap();
@@ -197,7 +197,7 @@ fn topology_edits_reject_separating_correlated_groups() {
             assert_eq!(restored.instance_count(), 2);
             assert_eq!(
                 restored
-                    .molecules()
+                    .instances()
                     .map(|m| m.molecule().stereo_groups().count())
                     .sum::<usize>(),
                 2
@@ -212,9 +212,9 @@ fn topology_edits_reject_separating_correlated_groups() {
                 )
             ));
         }
-        assert_eq!(source.molecules().next().unwrap().molecule(), &original);
+        assert_eq!(source.instances().next().unwrap().molecule(), &original);
         let selected = kekule::topology::AtomSelection::from_atoms(
-            &source,
+            Arc::clone(&source),
             source
                 .atom_ids()
                 .iter()
@@ -223,7 +223,10 @@ fn topology_edits_reject_separating_correlated_groups() {
         )
         .unwrap();
         // Removing the bridge atom leaves both stereo reference frames intact.
-        assert_eq!(source.subset(&selected).is_ok(), tag == "a");
+        assert_eq!(
+            kekule::topology::Topology::subset(source.clone(), &selected).is_ok(),
+            tag == "a"
+        );
     }
 }
 

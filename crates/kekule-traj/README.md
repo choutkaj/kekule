@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Fit all atoms onto frame 0, or use a protein/backbone selection for a
     // solvated system. Superposition changes the trajectory in place.
-    let fit = AtomSelection::all(&topology);
+    let fit = AtomSelection::all(topology.clone());
     trajectory.superpose(0, &fit, Default::default())?;
     let rmsd = trajectory.rmsd(0, &fit, Default::default())?.value_in(ANGSTROM)?;
     for (index, value) in rmsd.iter().enumerate() {

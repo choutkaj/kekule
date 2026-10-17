@@ -71,7 +71,11 @@ pub struct SolvationRadii {
     radii: Vec<f64>,
 }
 impl SolvationRadii {
-    pub fn new(topology: Arc<Topology>, radii: Quantity<Vec<f64>>) -> Result<Self, SolvationError> {
+    pub fn new(
+        topology: impl Into<Arc<Topology>>,
+        radii: Quantity<Vec<f64>>,
+    ) -> Result<Self, SolvationError> {
+        let topology = topology.into();
         let radii = radii.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
         if radii.len() != topology.atom_count() {
             return Err(SolvationError::RadiusCountMismatch);

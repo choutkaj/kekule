@@ -39,7 +39,7 @@ fn library_only_repeated_definitions_retain_exact_binding_and_nonbonded_constrai
             kekule_openff::ChargeMethod::LibraryOnly,
         )
         .unwrap();
-    assert!(Arc::ptr_eq(p.topology(), &topology));
+    assert!(Arc::ptr_eq(&p.shared_topology(), &topology));
     assert_eq!(
         p.charges().value_in(ELEMENTARY_CHARGE).unwrap(),
         [-0.8, 0.4, 0.4, -0.8, 0.4, 0.4]
@@ -208,7 +208,7 @@ fn interactions_from_one_rule_share_one_parameter_allocation() {
     assert!(p
         .bonds()
         .iter()
-        .any(|b| b.atoms()[0].molecule() != first.atoms()[0].molecule()));
+        .any(|b| b.atoms()[0].instance() != first.atoms()[0].instance()));
     assert!(p
         .angles()
         .iter()

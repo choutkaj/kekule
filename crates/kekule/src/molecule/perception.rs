@@ -847,7 +847,7 @@ impl fmt::Display for PerceptionInstallError {
             Self::InvalidAtomId(atom) => write!(formatter, "invalid perception atom id: {atom}"),
             Self::InferredHydrogensOnFixedAtom(atom) => write!(
                 formatter,
-                "perception infers hydrogens on atom {atom}, whose implicit count is fixed"
+                "perception infers hydrogens on {atom}, whose implicit count is fixed"
             ),
             Self::InvalidBondId(bond) => write!(formatter, "invalid perception bond id: {bond}"),
             Self::InvalidStereoElementId(element) => {
@@ -858,7 +858,7 @@ impl fmt::Display for PerceptionInstallError {
                 descriptor,
             } => write!(
                 formatter,
-                "CIP descriptor {descriptor:?} is incompatible with stereo element {element}"
+                "CIP descriptor {descriptor:?} is incompatible with {element}"
             ),
             Self::RingAtomSlotCountMismatch { expected, actual } => write!(
                 formatter,
@@ -874,25 +874,25 @@ impl fmt::Display for PerceptionInstallError {
             Self::InconsistentRingAtomMembership(atom) => {
                 write!(
                     formatter,
-                    "installed ring atom {atom} is not marked in membership"
+                    "installed ring {atom} is not marked in membership"
                 )
             }
             Self::InconsistentRingBondMembership(bond) => {
                 write!(
                     formatter,
-                    "installed ring bond {bond} is not marked in membership"
+                    "installed ring {bond} is not marked in membership"
                 )
             }
             Self::RingAtomMissingFromBasis(atom) => {
                 write!(
                     formatter,
-                    "ring membership atom {atom} is absent from the ring basis"
+                    "ring membership {atom} is absent from the ring basis"
                 )
             }
             Self::RingBondMissingFromBasis(bond) => {
                 write!(
                     formatter,
-                    "ring membership bond {bond} is absent from the ring basis"
+                    "ring membership {bond} is absent from the ring basis"
                 )
             }
         }

@@ -3,7 +3,7 @@ use std::io;
 
 pub(crate) fn frame_offset_context(
     mut error: TrajectoryIoError,
-    frame: u64,
+    frame: usize,
     byte_offset: u64,
 ) -> TrajectoryIoError {
     if matches!(
@@ -48,7 +48,7 @@ pub(crate) fn probe_seekable_eof<R: io::Read + io::Seek>(
 }
 
 pub(crate) fn require_nonempty_writer(
-    frame_count: u64,
+    frame_count: usize,
     format: TrajectoryFormat,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {

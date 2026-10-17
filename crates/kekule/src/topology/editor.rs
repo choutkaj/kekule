@@ -87,7 +87,7 @@ impl GroupIdentity {
         bases: (usize, usize),
     ) -> Self {
         let molecule = source
-            .molecule(instance)
+            .instance(instance)
             .expect("registered source instance exists")
             .molecule();
         let atom = |local| {
@@ -171,15 +171,14 @@ pub struct TopologyEditor {
 }
 
 impl Topology {
-    /// Starts a detached draft from a shared topology, retaining its exact snapshot.
+    /// Starts a detached draft from a copy of this topology.
     ///
-    /// This method borrows an `Arc<Topology>` so no-op publication can return
-    /// that same allocation. For an owned `Topology`, use [`Self::into_editor`]
-    /// to transfer ownership, or [`TopologyEditor::from_topology`] with either
-    /// an owned value or an `Arc`. Clone the `Arc` when another owner must retain
-    /// the original snapshot; molecular data is copied only when edited.
-    pub fn to_editor(self: &Arc<Self>) -> TopologyEditor {
-        TopologyEditor::from_topology(Arc::clone(self))
+    /// To edit a shared snapshot without copying it, pass the `Arc` to
+    /// [`TopologyEditor::from_topology`]: molecular data is then copied only
+    /// when edited, and a no-op publication returns that same allocation. Use
+    /// [`Self::into_editor`] to transfer an owned topology.
+    pub fn to_editor(&self) -> TopologyEditor {
+        TopologyEditor::from_topology(self.clone())
     }
     /// Transfers an owned topology into a structural draft. Successful consuming
     /// publication can move its unchanged molecular definitions into the result.
@@ -220,7 +219,7 @@ impl TopologyEditor {
         // Source slots are source dense indices, so an unedited draft
         // republishes the source order exactly.
         let (atom_handles, bond_handles) = GroupIdentity::source_handles(&source);
-        for (instance, value) in source.instances() {
+        for (instance, value) in source.instance_records() {
             let molecule = source
                 .definition(value.definition())
                 .expect("published definition")
@@ -513,14 +512,14 @@ impl TopologyEditor {
         if self
             .source
             .as_ref()
-            .is_none_or(|t| t.instance(source).is_none())
+            .is_none_or(|t| t.instance_record(source).is_none())
         {
             return Err(TopologyEditError::InvalidSourceInstance(source));
         }
         let ids = self
             .source_atoms
             .iter()
-            .filter(|(id, handle)| id.molecule() == source && self.atoms.contains_key(handle))
+            .filter(|(id, handle)| id.instance() == source && self.atoms.contains_key(handle))
             .map(|(_, &h)| h)
             .collect::<Vec<_>>();
         self.delete_atoms(ids)
@@ -751,7 +750,7 @@ impl TopologyEditor {
             .as_ref()
             .ok_or(TopologyEditError::InvalidSourceInstance(instance))?;
         let molecule = source
-            .molecule(instance)
+            .instance(instance)
             .ok_or(TopologyEditError::InvalidSourceInstance(instance))?;
         let atom = molecule.atoms().next().unwrap().id();
         let handle = self.require_atom_handle(atom)?;

@@ -63,10 +63,10 @@ pub(super) fn prepare_model(
 
     let mut atoms = Vec::new();
     let hierarchy = model.topology().hierarchy();
-    for (id, molecule) in model.topology().instances() {
+    for (id, molecule) in model.topology().instance_records() {
         let definition = model
             .topology()
-            .molecule(id)
+            .instance(id)
             .expect("listed instances are topology molecules")
             .definition();
         validate_graph_chemistry(molecule, definition)?;

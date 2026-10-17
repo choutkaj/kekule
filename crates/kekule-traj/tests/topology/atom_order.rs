@@ -80,7 +80,7 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     let instances = topology
         .atom_ids()
         .iter()
-        .map(|atom| atom.molecule())
+        .map(|atom| atom.instance())
         .collect::<Vec<_>>();
     assert_eq!(instances[0], instances[2]);
     assert_ne!(instances[0], instances[1]);

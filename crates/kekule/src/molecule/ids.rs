@@ -18,7 +18,7 @@ pub(crate) fn checked_fixed_id_collection_len(
     checked_raw_id(final_len - 1).map(|_| ())
 }
 
-fixed_u32_id!(AtomId, "a");
-fixed_u32_id!(BondId, "b");
-fixed_u32_id!(StereoElementId, "s");
-fixed_u32_id!(StereoGroupId, "sg");
+fixed_u32_id!(AtomId, "atom");
+fixed_u32_id!(BondId, "bond");
+fixed_u32_id!(StereoElementId, "stereo element");
+fixed_u32_id!(StereoGroupId, "stereo group");

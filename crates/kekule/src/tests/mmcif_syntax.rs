@@ -255,7 +255,7 @@ fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
     assert_eq!(a.model().positions(), b.model().positions());
     assert_eq!(a.model().properties(), b.model().properties());
     let protein = crate::topology::AtomSelection::for_molecule_classes(
-        &a.model().shared_topology(),
+        a.model().shared_topology(),
         [crate::topology::MoleculeClass::Protein],
     )
     .unwrap();

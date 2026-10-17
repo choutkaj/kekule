@@ -18,8 +18,8 @@ fn instance_subset(
     source: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
 ) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
-    let selection = AtomSelection::for_instances(source, instances)?;
-    Ok(source.subset(&selection)?.shared_topology())
+    let selection = AtomSelection::for_instances(Arc::clone(source), instances)?;
+    Ok(kekule::topology::Topology::subset(source.clone(), &selection)?.shared_topology())
 }
 
 /// The topology of every instance except `instances`.
@@ -27,8 +27,8 @@ fn instance_complement(
     source: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
 ) -> Result<Arc<Topology>, Box<dyn std::error::Error>> {
-    let selection = AtomSelection::for_instances(source, instances)?.complement();
-    Ok(source.subset(&selection)?.shared_topology())
+    let selection = AtomSelection::for_instances(Arc::clone(source), instances)?.complement();
+    Ok(kekule::topology::Topology::subset(source.clone(), &selection)?.shared_topology())
 }
 
 fn molecule(source: &str) -> kekule::molecule::Molecule {
@@ -138,7 +138,7 @@ fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
     );
     // Bonds stay in instance order regardless of atom order.
     assert_eq!(topology.bond_ids().len(), 1);
-    assert_eq!(topology.bond_ids()[0].molecule(), methanol);
+    assert_eq!(topology.bond_ids()[0].instance(), methanol);
 
     // Append-oriented rebuilding keeps the explicit order.
     let default_order =
@@ -263,8 +263,9 @@ fn subsets_and_instance_filters_keep_relative_source_order() {
     let (model, [carbon, water_oxygen, oxygen]) = interleaved();
     let topology = model.shared_topology();
 
-    let selection = AtomSelection::from_atoms(&topology, [oxygen, water_oxygen]).unwrap();
-    let subset = topology.subset(&selection).unwrap();
+    let selection =
+        AtomSelection::from_atoms(Arc::clone(&topology), [oxygen, water_oxygen]).unwrap();
+    let subset = kekule::topology::Topology::subset(topology.clone(), &selection).unwrap();
     assert_eq!(
         subset.correspondence().source_atom_indices(),
         &[TopologyAtomIndex::new(1), TopologyAtomIndex::new(2)]
@@ -272,7 +273,7 @@ fn subsets_and_instance_filters_keep_relative_source_order() {
     let sliced = model.subset(&selection).unwrap();
     assert_eq!(xs(&sliced), [1.0, 2.0]);
 
-    let methanol = instance_subset(&topology, [carbon.molecule()]).unwrap();
+    let methanol = instance_subset(&topology, [carbon.instance()]).unwrap();
     assert_eq!(
         methanol
             .atoms()
@@ -280,6 +281,6 @@ fn subsets_and_instance_filters_keep_relative_source_order() {
             .collect::<Vec<_>>(),
         ["C", "O"]
     );
-    let water = instance_complement(&topology, [carbon.molecule()]).unwrap();
+    let water = instance_complement(&topology, [carbon.instance()]).unwrap();
     assert_eq!(water.atom_count(), 1);
 }

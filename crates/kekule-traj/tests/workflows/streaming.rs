@@ -53,13 +53,13 @@ impl TrajectoryReader for CompanionIndexed {
 }
 
 impl SeekableTrajectoryReader for CompanionIndexed {
-    fn frame_count(&self) -> Option<u64> {
+    fn frame_count(&self) -> Option<usize> {
         Some(0)
     }
 
     fn read_frame(
         &mut self,
-        index: u64,
+        index: usize,
         _destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
         Err(TrajectoryIoError::frame_index_out_of_range(index))

@@ -10,8 +10,14 @@ pub struct TopologyQueryMatch {
     atoms: Vec<InstanceAtomId>,
 }
 impl TopologyQueryMatch {
-    pub fn topology(&self) -> &Arc<Topology> {
+    /// The topology snapshot the match was found in.
+    pub fn topology(&self) -> &Topology {
         &self.topology
+    }
+
+    /// Clones the handle to the matched snapshot, without copying topology data.
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
     }
     pub fn atoms(&self) -> &[InstanceAtomId] {
         &self.atoms
@@ -45,16 +51,16 @@ pub struct PreparedTopologyTarget<'a> {
 }
 impl<'a> PreparedTopologyTarget<'a> {
     pub fn new(topology: &'a Arc<Topology>) -> Self {
-        let data = engine::TargetData::new(topology.molecules().map(|m| m.molecule()));
+        let data = engine::TargetData::new(topology.instances().map(|m| m.molecule()));
         let ids = topology
-            .molecules()
+            .instances()
             .flat_map(|m| m.atoms().map(|atom| atom.id()))
             .collect();
         let definitions = topology
             .definitions()
             .map(|d| {
                 let instances = topology
-                    .molecules()
+                    .instances()
                     .filter(|m| m.definition_id() == d.id())
                     .map(|m| m.id())
                     .collect();

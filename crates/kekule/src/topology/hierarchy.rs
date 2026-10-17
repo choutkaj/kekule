@@ -5,7 +5,7 @@ use super::{InstanceAtomId, ResidueClass};
 
 fixed_u32_id!(ChainId, "chain");
 fixed_u32_id!(ResidueId, "residue");
-fixed_u32_id!(AtomSiteId, "atom-site");
+fixed_u32_id!(AtomSiteId, "atom site");
 
 /// Coordinate-independent residue, chain, polymer, and atom-site organization.
 ///

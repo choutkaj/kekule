@@ -18,12 +18,12 @@ macro_rules! handle {
         pub struct $name(u64);
         impl $name { pub(super) fn new() -> Self { Self(fresh()) } }
         impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, concat!($label, "{}"), self.0) }
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, concat!($label, " {}"), self.0) }
         }
     };
 }
-handle!(EditAtomId, "edit-atom");
-handle!(EditBondId, "edit-bond");
-handle!(EditChainId, "edit-chain");
-handle!(EditResidueId, "edit-residue");
-handle!(EditAtomSiteId, "edit-site");
+handle!(EditAtomId, "edit atom");
+handle!(EditBondId, "edit bond");
+handle!(EditChainId, "edit chain");
+handle!(EditResidueId, "edit residue");
+handle!(EditAtomSiteId, "edit atom site");

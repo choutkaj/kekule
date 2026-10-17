@@ -72,7 +72,7 @@ impl<'a> ChainView<'a> {
             self.residues()
                 .filter(|residue| residue.label_seq_id() == Some(sequence)),
             HierarchyIdKind::Residue,
-            || format!("chain {} label {sequence}", self.id()),
+            || format!("{} label {sequence}", self.id()),
         )
     }
 
@@ -88,12 +88,7 @@ impl<'a> ChainView<'a> {
                 residue.author_seq_id() == Some(sequence) && residue.insertion_code() == insertion
             }),
             HierarchyIdKind::Residue,
-            || {
-                format!(
-                    "chain {} author {sequence:?} insertion {insertion:?}",
-                    self.id()
-                )
-            },
+            || format!("{} author {sequence:?} insertion {insertion:?}", self.id()),
         )
     }
 }
@@ -105,7 +100,7 @@ impl<'a> ResidueView<'a> {
             self.atom_sites()
                 .filter(|site| site.metadata().label_atom_id.as_deref() == Some(name)),
             HierarchyIdKind::AtomSite,
-            || format!("residue {} label atom {name:?}", self.id()),
+            || format!("{} label atom {name:?}", self.id()),
         )
     }
 
@@ -115,7 +110,7 @@ impl<'a> ResidueView<'a> {
             self.atom_sites()
                 .filter(|site| site.metadata().auth_atom_id.as_deref() == Some(name)),
             HierarchyIdKind::AtomSite,
-            || format!("residue {} author atom {name:?}", self.id()),
+            || format!("{} author atom {name:?}", self.id()),
         )
     }
 }

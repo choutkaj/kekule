@@ -165,11 +165,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Initiate Model builder and combine both Models
     let mut builder = Model::builder();
     builder.add_molecule(
-        sdf_model.topology().molecules().next().unwrap().molecule().clone(),
+        sdf_model.topology().instances().next().unwrap().molecule().clone(),
         sdf_model.positions(),
     )?;
     builder.add_molecule(
-        cif_model.topology().molecules().next().unwrap().molecule().clone(),
+        cif_model.topology().instances().next().unwrap().molecule().clone(),
         cif_model.positions(),
     )?;
     let combined = builder.build()?;

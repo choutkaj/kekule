@@ -410,7 +410,7 @@ fn canonical_smiles_atom_representation(
     if smiles_atom_requires_brackets(&payload, aromatic, inferred_hydrogens) {
         if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() {
             return Err(SMILES_WRITE.missing_perception(format!(
-                "canonical SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
+                "canonical SMILES bracket {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
             )));
         }
         payload.hydrogens = ImplicitHydrogens::Fixed(

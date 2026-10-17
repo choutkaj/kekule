@@ -13,7 +13,7 @@ use kekule::structure::{
 };
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{
-    Quantity, ScaleValue, UnitError, ANGSTROM, CANONICAL_LENGTH_UNIT, DIMENSIONLESS, NANOMETER,
+    Quantity, UnitError, ANGSTROM, CANONICAL_LENGTH_UNIT, DIMENSIONLESS, NANOMETER,
 };
 
 struct Alternating<'a> {
@@ -232,18 +232,12 @@ fn borrowed_quantity_conversion_retains_the_source() {
 }
 
 #[test]
-fn consuming_quantity_conversions_support_values_that_cannot_be_cloned() {
-    struct NonClone(f64);
-    impl ScaleValue for NonClone {
-        fn scaled(self, factor: f64) -> Self {
-            Self(self.0 * factor)
-        }
-    }
-    let converted = Quantity::new(NonClone(1.25), NANOMETER)
+fn consuming_quantity_conversions_move_their_values() {
+    let converted = Quantity::new(vec![1.25, 2.5], NANOMETER)
         .into_unit(ANGSTROM)
         .unwrap()
         .into_value();
-    assert_eq!(converted.0, 12.5);
+    assert_eq!(converted, [12.5, 25.0]);
 
     let text = String::from("owned payload");
     let pointer = text.as_ptr();

@@ -335,7 +335,7 @@ impl ForceField {
         // Atom parameters follow dense order, which need not keep instances contiguous.
         let mut atom_vdw = vec![None; topology.atom_count()];
         let mut atom_charges = vec![0.0; topology.atom_count()];
-        for instance in topology.molecules() {
+        for instance in topology.instances() {
             let (a, charges) = &definitions[&instance.definition_id()];
             let qualify = |atom| InstanceAtomId::new(instance.id(), atom);
             for (atoms, &i) in &a.bonds {
@@ -610,7 +610,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(calls, 1);
-        assert!(Arc::ptr_eq(p.topology(), &topology));
+        assert!(Arc::ptr_eq(&p.shared_topology(), &topology));
         assert_eq!(p.charges().value(), &[0.0; 8]);
         assert_eq!(p.bonds().len(), 6);
         assert_eq!(p.angles().len(), 6);
