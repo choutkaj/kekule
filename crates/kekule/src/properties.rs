@@ -98,6 +98,7 @@ fn valid_property_key(value: &str) -> bool {
 
 /// One generic scalar annotation.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PropertyValue {
     Bool(bool),
     Int(i64),
@@ -140,6 +141,7 @@ impl PropertyValue {
 /// Numerical values and units are copied; strings remain borrowed. Use
 /// [`Self::to_value`] when an independently owned value is needed.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum PropertyValueRef<'a> {
     Bool(bool),
     Int(i64),
@@ -161,6 +163,7 @@ impl PropertyValueRef<'_> {
 
 /// One homogeneous optional-valued property column.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PropertyColumn {
     Bool(Vec<Option<bool>>),
     Int(Vec<Option<i64>>),

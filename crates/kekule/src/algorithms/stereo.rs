@@ -127,6 +127,7 @@ impl CoordinateStereoMaterializationReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StereoCandidate {
     Tetrahedral {
         center: AtomId,

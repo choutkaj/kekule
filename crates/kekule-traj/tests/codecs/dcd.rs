@@ -949,12 +949,10 @@ fn fixed_atom_fixture(endian: DcdEndian) -> Vec<u8> {
     let i32_bytes = |value: i32| match endian {
         DcdEndian::Little => value.to_le_bytes(),
         DcdEndian::Big => value.to_be_bytes(),
-        _ => unreachable!("test covers current DCD endian variants"),
     };
     let f32_bytes = |value: f32| match endian {
         DcdEndian::Little => value.to_le_bytes(),
         DcdEndian::Big => value.to_be_bytes(),
-        _ => unreachable!("test covers current DCD endian variants"),
     };
     let mut bytes = Vec::new();
     let mut record = |payload: &[u8]| {

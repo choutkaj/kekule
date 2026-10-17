@@ -25,8 +25,9 @@ const HEADER_BYTES: usize = 84;
 const CELL_BYTES: usize = 48;
 
 /// Byte order used by DCD record markers and numeric payloads.
+///
+/// This enum is closed: a DCD file is either little- or big-endian.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum DcdEndian {
     Little,
     Big,

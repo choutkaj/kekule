@@ -212,8 +212,11 @@ fn perceive_localized_aromaticity(
         let ring_options = options.ring_options.with_scope(RingPerceptionScope::Basis);
         perceive_rings(mol, ring_options).map_err(AromaticityError::RingPerception)?;
     }
-    if model == AromaticityModel::Mdl
-        && mol.perception().ring_basis_model() != Some(RingBasisModel::FiguerasSssrLike)
+    if model.is_mdl()
+        && !mol
+            .perception()
+            .ring_basis_model()
+            .is_some_and(RingBasisModel::is_sssr_like)
     {
         return Err(AromaticityError::IncompatibleRingBasis);
     }
@@ -243,7 +246,7 @@ fn assign_localized_aromaticity(
         donors[atom_id.index()] = donor;
         atom_candidates[atom_id.index()] =
             atom_is_rdkit_aromatic_candidate_for_donor(mol, atom_id, atom, donor)
-                && (model != AromaticityModel::Mdl
+                && (!model.is_mdl()
                     || (matches!(atom.element.atomic_number(), 6 | 7)
                         && donor == AromaticElectronDonorType::One
                         && atom_noncyclic_pi_neighbor(mol, atom_id).is_none()
@@ -275,7 +278,7 @@ fn assign_localized_aromaticity(
             &neighbors,
             &component,
             &donors,
-            if model == AromaticityModel::Mdl { 6 } else { 0 },
+            if model.is_mdl() { 6 } else { 0 },
             work,
         )?;
     }

@@ -1251,7 +1251,11 @@ fn public_residue(residue: &BackboneResidue, all: &[BackboneResidue]) -> DsspRes
         partner.map(|partner| DsspBetaPartner {
             partner: all[partner.partner].key,
             ladder: partner.ladder,
-            parallel: partner.parallel,
+            direction: if partner.parallel {
+                DsspBridgeDirection::Parallel
+            } else {
+                DsspBridgeDirection::Antiparallel
+            },
         })
     };
     DsspResidue {

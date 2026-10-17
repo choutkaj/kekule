@@ -314,7 +314,8 @@ fn strict_detection_reports_valence_failures_even_with_permissive_cached_state()
     crate::algorithms::perceive_valence(
         &mut molecule,
         ValenceModel::RdkitLike,
-        crate::algorithms::ValenceOptions::default().with_strict(false),
+        crate::algorithms::ValenceOptions::default()
+            .with_validation(crate::algorithms::ValenceValidation::Permissive),
     )
     .unwrap();
     crate::algorithms::perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();

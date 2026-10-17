@@ -64,6 +64,7 @@ fn model_error(detail: impl std::fmt::Display) -> Error {
 
 /// Provenance of one molecule's assigned charges.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ChargeSource {
     Library { parameter_ids: Vec<String> },
     Lookup { inchi: String, model: ModelIdentity },

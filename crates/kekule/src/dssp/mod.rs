@@ -197,12 +197,20 @@ impl DsspHydrogenBond {
     }
 }
 
+/// Whether a beta bridge pairs strands running the same way or opposite ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DsspBridgeDirection {
+    Parallel,
+    Antiparallel,
+}
+
 /// One beta partner produced by DSSP bridge/ladder construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspBetaPartner {
     pub(crate) partner: ResidueId,
     pub(crate) ladder: usize,
-    pub(crate) parallel: bool,
+    pub(crate) direction: DsspBridgeDirection,
 }
 
 impl DsspBetaPartner {
@@ -215,8 +223,8 @@ impl DsspBetaPartner {
         self.ladder
     }
 
-    pub const fn parallel(&self) -> bool {
-        self.parallel
+    pub const fn direction(&self) -> DsspBridgeDirection {
+        self.direction
     }
 }
 
@@ -364,6 +372,7 @@ impl DsspStatistics {
 
 /// One of the four backbone atoms DSSP reads from a residue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum DsspBackboneAtom {
     /// The amide nitrogen, `N`.
     N,

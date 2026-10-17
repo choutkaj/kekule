@@ -286,6 +286,7 @@ impl MmcifBlock {
 
 /// One scalar item or loop of a data block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MmcifEntry<'a> {
     Item(MmcifItem<'a>),
     Loop(MmcifLoopTable<'a>),

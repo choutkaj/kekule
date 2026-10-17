@@ -50,6 +50,7 @@ impl StereoElement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StereoElementKind {
     Tetrahedral(TetrahedralStereo),
     DoubleBond(DoubleBondStereo),
@@ -142,6 +143,7 @@ pub struct AxisStereo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StereoCarrier {
     Atom(AtomId),
     ImplicitHydrogen,
@@ -158,6 +160,10 @@ impl StereoCarrier {
     }
 }
 
+/// The handedness of four tetrahedral carriers in their stored order.
+///
+/// This enum is closed: a tetrahedral arrangement has exactly two
+/// handednesses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TetrahedralOrientation {
     /// Positive signed volume `(p0 - p3) × (p1 - p3) · (p2 - p3)`
@@ -176,6 +182,9 @@ impl TetrahedralOrientation {
     }
 }
 
+/// Whether two double-bond reference carriers lie on the same side.
+///
+/// This enum is closed: two references are either together or opposite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoubleBondOrientation {
     Together,
@@ -191,6 +200,9 @@ impl DoubleBondOrientation {
     }
 }
 
+/// The handedness of an axis and its endpoint references.
+///
+/// This enum is closed: the signed triple product has two signs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AxisOrientation {
     /// Positive `(right - left) · ((left_reference - left) ×
@@ -238,6 +250,7 @@ pub(crate) fn has_axis_stereo(molecule: &Molecule, axis: BondId) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StereoDescriptor {
     R,
     S,
@@ -268,6 +281,7 @@ pub struct StereoGroup {
 /// make independent choices. The kinds remain distinct even when they admit the
 /// same pair of configurations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StereoGroupKind {
     /// Every member has the specified absolute configuration.
     Absolute,

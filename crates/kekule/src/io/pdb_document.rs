@@ -80,6 +80,7 @@ fn pdb_parse_error(
 
 /// Whether a coordinate record is an `ATOM` or a `HETATM` record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PdbAtomKind {
     Atom,
     Hetatm,

@@ -18,6 +18,16 @@ use super::{
     Velocities,
 };
 
+/// Whether [`Trajectory::validate_monotonic_time`] accepts frames without time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MissingTimePolicy {
+    /// Skip frames without time; only present times must be non-decreasing.
+    Skip,
+    /// Report a frame without time as [`TrajectoryError::MissingTime`].
+    Reject,
+}
+
 /// A time-ordered sequence of frames of one shared topology, as produced by
 /// dynamics.
 ///
@@ -235,16 +245,21 @@ impl Trajectory {
         self.frames
     }
 
-    /// Checks that every present time is non-decreasing; with `require_all`,
-    /// a frame without time is an error.
-    pub fn validate_monotonic_time(&self, require_all: bool) -> Result<(), TrajectoryError> {
+    /// Checks that every present time is non-decreasing; `missing` says
+    /// whether a frame without time is skipped or an error.
+    pub fn validate_monotonic_time(
+        &self,
+        missing: MissingTimePolicy,
+    ) -> Result<(), TrajectoryError> {
         let mut previous = None;
         for (index, frame) in self.frames.iter().enumerate() {
             let Some(time) = frame.time else {
-                if require_all {
-                    return Err(TrajectoryError::MissingTime { frame: index });
+                match missing {
+                    MissingTimePolicy::Skip => continue,
+                    MissingTimePolicy::Reject => {
+                        return Err(TrajectoryError::MissingTime { frame: index })
+                    }
                 }
-                continue;
             };
             let value = time.into_value();
             if previous.is_some_and(|previous| value < previous) {

@@ -346,6 +346,7 @@ pub mod smiles {
     /// What one SMILES record describes: one connected molecule, or every
     /// molecule occurrence of a topology joined with `.`.
     #[derive(Debug, Clone, Copy)]
+    #[non_exhaustive]
     pub enum SmilesSource<'a> {
         Molecule(&'a Molecule),
         Topology(&'a Topology),
@@ -613,8 +614,8 @@ pub mod macromolecular {
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
         AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
         ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
-        InstanceProvenance, ModelSelection, SourceResidueId, SourceResiduePosition,
-        StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+        EntityMetadataPolicy, InstanceProvenance, ModelSelection, SourceResidueId,
+        SourceResiduePosition, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
         StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
         StructureInterpretationReport,
     };
@@ -786,6 +787,7 @@ pub mod perception {
     pub mod valence {
         pub use crate::algorithms::{
             perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,
+            ValenceValidation,
         };
         pub use crate::molecule::perception::{ValenceModel, ValencePerception};
     }
@@ -879,17 +881,17 @@ pub mod stereo {
 /// without losing chemical information. These operations do not change
 /// protonation states.
 ///
-/// Addition requires current inference for inferred counts, unless `fixed_only`
-/// is selected. Fixed counts need no perception. Removal needs current inference
+/// Addition requires current inference for inferred counts, unless
+/// [`AddHydrogensScope::FixedOnly`] is selected. Fixed counts need no perception. Removal needs current inference
 /// on affected parents whose counts are inferred, and keeps a parent inferred
 /// only when inference reproduces its collapsed count; otherwise it fixes it.
 /// Successful topology changes invalidate perception state; recompute it before
 /// reading inferred counts.
 pub mod hydrogens {
     pub use crate::algorithms::{
-        AddHydrogensOptions, AddHydrogensReport, AddedHydrogen, AddedHydrogenOrigin,
-        HydrogenCountAdjustment, HydrogenTransformError, RemoveHydrogensReport, RemovedHydrogen,
-        RetainedHydrogen, RetainedHydrogenReason,
+        AddHydrogensOptions, AddHydrogensReport, AddHydrogensScope, AddedHydrogen,
+        AddedHydrogenOrigin, HydrogenCountAdjustment, HydrogenTransformError,
+        RemoveHydrogensReport, RemovedHydrogen, RetainedHydrogen, RetainedHydrogenReason,
     };
 }
 

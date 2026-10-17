@@ -37,6 +37,7 @@ impl Atom {
 /// [`Molecule::implicit_hydrogens`]: super::Molecule::implicit_hydrogens
 /// [`Molecule::total_hydrogens`]: super::Molecule::total_hydrogens
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum ImplicitHydrogens {
     /// The valence model supplies the complete implicit count. It is unknown
     /// until valence perception is installed.
@@ -159,6 +160,7 @@ impl Bond {
 ///
 /// Aromaticity is perceived state, not a represented bond order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum BondOrder {
     Zero,
     Single,

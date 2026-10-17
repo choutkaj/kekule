@@ -194,6 +194,7 @@ impl QueryMatch {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QueryPerception {
     Valence,
     RingMembership,
@@ -271,6 +272,7 @@ impl std::error::Error for SubstructureMatchError {}
 
 /// Whether a streaming traversal exhausted the search or was stopped by its visitor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MatchCompletion {
     Complete,
     Stopped,

@@ -44,6 +44,7 @@ impl WriteErrors {
 /// What a structure writer does with state its format cannot represent, such
 /// as a periodic cell in a Molfile. Representable state is always written.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum UnrepresentablePolicy {
     /// Fail rather than write a record that silently lacks the state.
     #[default]

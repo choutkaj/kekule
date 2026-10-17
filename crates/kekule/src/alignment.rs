@@ -108,6 +108,7 @@ const JACOBI_MAX_SWEEPS: usize = 24;
 
 /// The atoms paired between a moving and a reference view.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum FitAtoms<'a> {
     /// Each selected atom pairs with itself; both views and the selection share
     /// one topology layout. Pairs follow sorted selection order.
@@ -484,6 +485,7 @@ impl<'a> AlignmentOptions<'a> {
 
 /// Per-pair weighting for fitting and RMSD.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub enum Weighting<'a> {
     /// Give every pair equal weight.
     #[default]

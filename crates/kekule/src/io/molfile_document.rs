@@ -100,6 +100,7 @@ impl Default for MolfileParseOptions {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MolfileVersion {
     V2000,
     V3000,
@@ -138,6 +139,7 @@ impl MolfileHeader {
 /// Radical state declared by a V2000 `M  RAD` record or charge code 4, or a
 /// V3000 `RAD` option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum MolfileRadical {
     Singlet,
     Doublet,
@@ -149,6 +151,7 @@ pub enum MolfileRadical {
 /// V2000 atom-block parity is ignored when read, as CTfile specifies, so V2000
 /// atoms never carry one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum MolfileAtomParity {
     /// `CFG=1`.
     Odd,
@@ -241,6 +244,7 @@ impl MolfileAtom {
 
 /// Decoded bond type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum MolfileBondOrder {
     Zero,
     Single,
@@ -253,6 +257,7 @@ pub enum MolfileBondOrder {
 
 /// Decoded bond stereo mark, drawn from the bond's first atom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum MolfileBondStereo {
     /// Wedge toward the viewer on a single bond.
     Up,
@@ -292,6 +297,7 @@ impl MolfileBond {
 
 /// Kind and number of a V3000 enhanced stereo group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum MolfileStereoGroupKind {
     /// `MDLV30/STEABS`.
     Absolute,

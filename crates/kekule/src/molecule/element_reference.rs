@@ -4,6 +4,7 @@ const BOHR_TO_ANGSTROM: f64 = 0.529_177_210_903;
 
 /// Selects one of the neutral-atom van der Waals reference columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum VanDerWaalsRadiusSource {
     /// Free-atom radii reported by Charry and Tkatchenko.
     #[default]

@@ -64,6 +64,7 @@ pub use bond_dihedrals::{bond_dihedral, bond_dihedrals, BondDihedral, BondDihedr
 
 /// Optional topology validation for Cartesian measurements.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectivityCheck {
     /// Allow arbitrary atoms, without requiring bonds. This is the default.
     #[default]

@@ -52,7 +52,7 @@ chemical hydrogens use the molecule-level getters instead.
 `add_hydrogens` materializes resolved implicit hydrogens as graph atoms and bonds.
 Fixed counts need no perception and become `Fixed(0)`. Inferred atoms require an
 installed assignment; an absent or incomplete assignment fails before mutation.
-`AddHydrogensOptions::fixed_only` materializes only fixed counts without
+`AddHydrogensScope::FixedOnly` materializes only fixed counts without
 requiring inference. Origins in the report are `Fixed` or `Inferred`.
 
 `remove_hydrogens` suppresses eligible explicit hydrogens while preserving the

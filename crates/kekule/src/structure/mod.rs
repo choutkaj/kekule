@@ -81,8 +81,8 @@ pub use model_editor::{ModelAppend, ModelAppendReport, ModelEditError, ModelEdit
 pub use positions::{DenseArrayError, Positions};
 pub use state::StructureError;
 pub use trajectory::{
-    Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut, TrajectoryFrameView,
-    TrajectoryIter,
+    MissingTimePolicy, Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut,
+    TrajectoryFrameView, TrajectoryIter,
 };
 
 #[cfg(test)]

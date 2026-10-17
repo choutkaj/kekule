@@ -11,6 +11,7 @@ static EMPTY_CIP_DESCRIPTORS: BTreeMap<StereoElementId, StereoDescriptor> = BTre
 
 /// The valence model used to produce installed valence state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ValenceModel {
     /// RDKit-like allowed valences and hydrogen inference on localized chemistry.
     ///
@@ -21,6 +22,7 @@ pub enum ValenceModel {
 
 /// The aromaticity model used to produce installed aromaticity state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AromaticityModel {
     RdkitLike,
     /// MDL model as implemented by RDKit (the OpenFF OEAroModel_MDL profile).
@@ -29,6 +31,7 @@ pub enum AromaticityModel {
 
 /// The algorithm used to select an installed ring set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RingBasisModel {
     /// RDKit-like Figueras selection and symmetrization, with a deterministic
     /// depth-first cycle fallback when the candidate search is incomplete.
@@ -38,6 +41,27 @@ pub enum RingBasisModel {
     FiguerasSssrLike,
     /// Deterministic cycle fallback; unsuitable for exact SMARTS R/r predicates.
     DepthFirstFallback,
+}
+
+impl RingBasisModel {
+    /// Whether the selected rings follow the SSSR-like selection that MDL
+    /// aromaticity and SMARTS ring counts require.
+    pub(crate) const fn is_sssr_like(self) -> bool {
+        match self {
+            Self::FiguerasSssrLike => true,
+            Self::DepthFirstFallback => false,
+        }
+    }
+}
+
+impl AromaticityModel {
+    /// Whether the model applies the MDL candidate and electron-count rules.
+    pub(crate) const fn is_mdl(self) -> bool {
+        match self {
+            Self::RdkitLike => false,
+            Self::Mdl => true,
+        }
+    }
 }
 
 /// Cycle membership indexed by a molecule's atom and bond IDs.

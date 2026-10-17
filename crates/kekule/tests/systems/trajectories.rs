@@ -105,7 +105,7 @@ fn frame_selection_retains_exact_state_order_duplicates_and_empty_topology_bindi
         assert_eq!(actual.payload(), original.get(index).unwrap().payload());
     }
     assert_eq!(
-        selected.validate_monotonic_time(true),
+        selected.validate_monotonic_time(kekule::structure::MissingTimePolicy::Reject),
         Err(TrajectoryError::NonMonotonicTime { frame: 1 })
     );
     let strided = original.select((0..4).step_by(2)).unwrap();

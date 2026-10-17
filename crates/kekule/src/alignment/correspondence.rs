@@ -161,6 +161,8 @@ impl AtomCorrespondence {
 }
 
 /// The side of a moving-to-reference correspondence implicated in an error.
+///
+/// This enum is closed: a correspondence has exactly two sides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorrespondenceSide {
     Moving,

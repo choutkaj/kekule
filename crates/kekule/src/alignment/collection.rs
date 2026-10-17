@@ -18,6 +18,7 @@ use super::{
 /// reference. Pair atoms of an independent topology with an
 /// [`super::AtomCorrespondence`].
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum Reference<'a> {
     /// An item of the collection being measured.
     Index(usize),

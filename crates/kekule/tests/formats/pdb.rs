@@ -1460,7 +1460,9 @@ fn pdb_interpretation_rejects_contradictory_records() {
         ),
         (
             water.clone(),
-            StructureInterpretOptions::default().with_strict_entity_metadata(true),
+            StructureInterpretOptions::default().with_entity_metadata(
+                kekule::macromolecular::EntityMetadataPolicy::RequireDeclared,
+            ),
             DiagnosticKind::Inconsistent,
             None,
         ),

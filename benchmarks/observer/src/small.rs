@@ -114,6 +114,7 @@ fn order(order: BondOrder) -> Value {
         BondOrder::Triple => json!(3),
         BondOrder::Quadruple => json!(4),
         BondOrder::Dative => json!("dative"),
+        other => unimplemented!("the observer does not report {other:?}"),
     }
 }
 
@@ -205,6 +206,7 @@ fn stereo_facts(component: &Component, facts: &mut Facts) -> Result<(), Failure>
         StereoCarrier::Atom(id) => component.atom(*id) as i64,
         StereoCarrier::ImplicitHydrogen => -1,
         StereoCarrier::ImplicitLonePair => -2,
+        other => unimplemented!("the observer does not report {other:?}"),
     };
     let mut members: BTreeMap<StereoElementId, Value> = BTreeMap::new();
     for (id, element) in molecule.stereo_elements() {
@@ -265,6 +267,7 @@ fn stereo_facts(component: &Component, facts: &mut Facts) -> Result<(), Failure>
                 }
                 ("axis", focus.to_vec(), reference.to_vec(), parity)
             }
+            other => unimplemented!("the observer does not report {other:?}"),
         };
         facts.push(json!(["stereo", kind, focus, "carriers", carriers]));
         facts.push(json!(["stereo", kind, focus, "parity", parity]));
@@ -294,6 +297,7 @@ fn group_kind(kind: StereoGroupKind) -> &'static str {
         StereoGroupKind::Racemic => "racemic",
         StereoGroupKind::And => "and",
         StereoGroupKind::Or => "or",
+        other => unimplemented!("the observer does not report {other:?}"),
     }
 }
 
@@ -494,6 +498,7 @@ fn candidates(components: &[Component], facts: &mut Facts) -> Result<(), Failure
                         true
                     ]));
                 }
+                other => unimplemented!("the observer does not report {other:?}"),
             }
         }
     }
@@ -516,6 +521,7 @@ fn descriptor(descriptor: StereoDescriptor) -> &'static str {
         StereoDescriptor::P => "P",
         StereoDescriptor::LowerM => "m",
         StereoDescriptor::LowerP => "p",
+        other => unimplemented!("the observer does not report {other:?}"),
     }
 }
 
@@ -544,6 +550,7 @@ fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
                         .ok_or_else(|| Failure::new("cip", "missing bond"))?;
                     ("bond", ends(component, bond).to_vec())
                 }
+                other => unimplemented!("the observer does not report {other:?}"),
             };
             facts.push(json!(["cip", kind, focus, "label", descriptor(label)]));
         }

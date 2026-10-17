@@ -51,6 +51,7 @@ use data::{exact_isotope_mass, most_abundant_isotope, standard_atomic_weight};
 
 /// Selects which non-atom hydrogen counts contribute to a descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum HydrogenCountPolicy {
     /// Count explicit graph hydrogens and fixed implicit counts only.
     /// Inferred counts are omitted, so this can describe a partial composition.

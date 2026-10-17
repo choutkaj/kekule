@@ -82,6 +82,7 @@ fixed_u32_id!(TopologyBondIndex, "bond-index");
 /// from contextual roles such as ligand or receptor and from format-specific
 /// categories such as mmCIF entity kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum MoleculeClass {
     Protein,
     Dna,
@@ -99,6 +100,7 @@ pub enum MoleculeClass {
 /// explicitly overridden through [`TopologyBuilder`]. They describe component
 /// identity rather than contextual roles or source-format entity semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum ResidueClass {
     AminoAcid,
     DnaNucleotide,

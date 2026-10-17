@@ -12,9 +12,11 @@ use std::ops::{Deref, DerefMut, Div, Mul, Neg};
 const DIMENSION_COUNT: usize = 7;
 
 /// Independent physical dimensions supported by [`Unit`].
+///
+/// This enum is closed: the base dimensions define the unit system, so a new
+/// variant would be a different system rather than an extension of this one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(usize)]
-#[non_exhaustive]
 pub enum BaseDimension {
     Length = 0,
     Mass = 1,

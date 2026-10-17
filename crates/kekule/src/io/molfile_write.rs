@@ -66,6 +66,7 @@ impl MolfileWriteOptions {
 /// Convert from `&Molecule`, `&Model`, or any borrowed model view through
 /// [`Self::model`]. Specified stereo requires coordinates.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum MolfileSource<'a> {
     Molecule(&'a Molecule),
     Model(ModelView<'a>),

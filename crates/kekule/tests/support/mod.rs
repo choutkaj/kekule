@@ -165,6 +165,7 @@ pub(crate) fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomI
                 value.axis = bonds[&value.axis];
                 value.carriers = value.carriers.iter().copied().map(carrier).collect();
             }
+            other => unimplemented!("support cannot remap {other:?}"),
         }
         let new = editor.add_stereo_element(StereoElement::new(kind)).unwrap();
         elements.insert(old, new);
@@ -236,6 +237,7 @@ pub(crate) fn try_cip_labels(
                     let axis = molecule.bond(value.axis).unwrap();
                     StereoFocus::bond(axis.a().index(), axis.b().index())
                 }
+                other => unimplemented!("support cannot focus {other:?}"),
             };
             (focus, format!("{:?}", assignment.descriptor()))
         })

@@ -15,12 +15,14 @@ use std::{fmt, sync::Arc};
 
 /// Built-in coordinate model. This does not install force-field parameters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WaterModel {
     #[default]
     Tip3p,
 }
 /// Monovalent cations supported by the solvent builder.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PositiveIon {
     Lithium,
     #[default]
@@ -42,6 +44,7 @@ impl PositiveIon {
 }
 /// Monovalent anions supported by the solvent builder.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NegativeIon {
     Fluoride,
     #[default]
@@ -239,6 +242,7 @@ impl Default for SolventOptions {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SolvationChargeBasis {
     FormalCharges,
     Override,

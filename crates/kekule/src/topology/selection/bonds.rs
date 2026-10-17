@@ -11,6 +11,7 @@ use super::{
 
 /// Endpoint rule for converting an atom selection into a bond selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BondSelectionMode {
     /// Both endpoints are selected (the induced bond set).
     Internal,

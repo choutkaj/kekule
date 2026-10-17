@@ -7,6 +7,7 @@ use crate::{
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BoxShape {
     #[default]
     Cube,
@@ -15,6 +16,7 @@ pub enum BoxShape {
 }
 /// Exactly one sizing mode, so conflicting sizing inputs are unrepresentable.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum PeriodicBoxOptions {
     Dimensions(Quantity<Vector3>),
     Cell(PeriodicCell),

@@ -10,25 +10,43 @@ use crate::stereo::{StereoCarrier, StereoElementId, StereoElementKind};
 
 use super::rdkit_inferred_hydrogen_count;
 
+/// Which implicit hydrogen counts [`Molecule::add_hydrogens`] materializes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AddHydrogensScope {
+    /// Fixed and inferred counts; inferred counts need installed valence.
+    #[default]
+    All,
+    /// Only fixed counts, leaving inferred counts implicit; this needs no
+    /// perception.
+    FixedOnly,
+}
+
 /// Controls which encoded hydrogens are materialized and bounds graph growth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddHydrogensOptions {
-    fixed_only: bool,
+    scope: AddHydrogensScope,
     max_added_hydrogens: usize,
 }
 
 impl AddHydrogensOptions {
-    /// Materialize only fixed implicit counts and leave inferred counts
-    /// implicit; this mode needs no perception.
-    pub const fn fixed_only(&self) -> bool {
-        self.fixed_only
+    /// Which implicit counts are materialized.
+    pub const fn scope(&self) -> AddHydrogensScope {
+        self.scope
     }
 
-    /// Sets [`Self::fixed_only`].
+    /// Sets [`Self::scope`].
     #[must_use]
-    pub const fn with_fixed_only(mut self, fixed_only: bool) -> Self {
-        self.fixed_only = fixed_only;
+    pub const fn with_scope(mut self, scope: AddHydrogensScope) -> Self {
+        self.scope = scope;
         self
+    }
+
+    const fn fixed_only(&self) -> bool {
+        match self.scope {
+            AddHydrogensScope::All => false,
+            AddHydrogensScope::FixedOnly => true,
+        }
     }
 
     /// Bound topology growth before any mutation is committed.
@@ -52,7 +70,7 @@ impl AddHydrogensOptions {
 impl Default for AddHydrogensOptions {
     fn default() -> Self {
         Self {
-            fixed_only: false,
+            scope: AddHydrogensScope::All,
             max_added_hydrogens: Self::DEFAULT_MAX_ADDED_HYDROGENS,
         }
     }
@@ -60,6 +78,7 @@ impl Default for AddHydrogensOptions {
 
 /// Identifies the count representation consumed for an added hydrogen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AddedHydrogenOrigin {
     /// The implicit hydrogen came from a fixed count.
     Fixed,
@@ -123,6 +142,7 @@ impl RemovedHydrogen {
 
 /// Explains why a graph hydrogen could not be collapsed losslessly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RetainedHydrogenReason {
     Isotopic,
     Mapped,
@@ -316,7 +336,7 @@ pub(crate) fn add_hydrogens_to_molecule(
         .map(|(parent, atom)| {
             let (count, origin) = match atom.hydrogens {
                 ImplicitHydrogens::Fixed(count) => (usize::from(count), AddedHydrogenOrigin::Fixed),
-                ImplicitHydrogens::Inferred if options.fixed_only => {
+                ImplicitHydrogens::Inferred if options.fixed_only() => {
                     (0, AddedHydrogenOrigin::Inferred)
                 }
                 ImplicitHydrogens::Inferred => (
@@ -338,7 +358,7 @@ pub(crate) fn add_hydrogens_to_molecule(
         )));
     }
 
-    validate_materialized_stereo_hydrogens(molecule, &plan, options.fixed_only)?;
+    validate_materialized_stereo_hydrogens(molecule, &plan, options.fixed_only())?;
 
     let mut editor = molecule.to_editor();
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a periodic-table element");

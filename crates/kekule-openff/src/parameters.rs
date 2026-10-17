@@ -187,6 +187,7 @@ impl PairException {
 }
 /// SMIRNOFF vdW treatment for one boundary condition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum VdwMethod {
     /// Truncate at the handler cutoff, with its optional switching width.
     Cutoff,
@@ -206,6 +207,7 @@ impl VdwMethod {
 
 /// SMIRNOFF electrostatics treatment for one boundary condition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ElectrostaticsMethod {
     /// Plain Coulomb interactions between every non-excluded pair.
     Coulomb,

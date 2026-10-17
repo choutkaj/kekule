@@ -86,6 +86,7 @@ fn syntax(document: &MmcifDocument) -> Result<Facts, Failure> {
                         ]));
                     }
                 }
+                other => unimplemented!("the observer does not report {other:?}"),
             }
         }
     }
@@ -177,6 +178,7 @@ fn connectivity(document: &MmcifDocument) -> Result<Facts, Failure> {
                 BondOrder::Triple => json!(3),
                 BondOrder::Quadruple => json!(4),
                 BondOrder::Dative => json!("dative"),
+                other => unimplemented!("the observer does not report {other:?}"),
             };
             facts.push(json!(["bond", ends[0], ends[1], "order", order]));
         }

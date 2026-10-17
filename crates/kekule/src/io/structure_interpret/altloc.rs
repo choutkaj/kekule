@@ -27,6 +27,7 @@ pub(super) use select::{inventory, select_alt_locations};
 /// occupancy-derived ensemble weights. In their absence, residues are independent
 /// unless grouped explicitly. Source coordinate models are always separate scopes.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AltLocPolicy {
     HighestOccupancy,
     /// Require this label at every residue with alternatives; retain shared atoms.
@@ -40,6 +41,7 @@ pub enum AltLocPolicy {
 
 /// Default choice for residues not covered by an exact override.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AltLocPreference {
     #[default]
     HighestOccupancy,
@@ -191,6 +193,7 @@ impl SourceResidueId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum SourceResiduePosition {
     Label(i32),
     Author(String),
@@ -273,6 +276,7 @@ impl AltLocResidue {
 
 /// Why an alternate configuration was selected for a residue.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AltLocSelectionReason {
     HighestOccupancy,
     ExactSelection,

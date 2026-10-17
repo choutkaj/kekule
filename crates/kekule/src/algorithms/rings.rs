@@ -144,6 +144,7 @@ fn ring_dfs_iterative(
 
 /// The ring state [`perceive_rings`] derives and installs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RingPerceptionScope {
     /// Graph-theoretic cycle membership only, excluding zero and dative bonds.
     ///

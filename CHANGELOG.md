@@ -105,6 +105,33 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Every public enum is `#[non_exhaustive]` (ARCHITECTURE.md,
+  "Options, results, and enums"), so matches outside the crate need a
+  wildcard arm. This now includes `BondOrder`, `StereoElementKind`,
+  `StereoCarrier`, `StereoDescriptor`, `StereoGroupKind`,
+  `ImplicitHydrogens`, the perception model enums, `MoleculeClass`,
+  `ResidueClass`, `EntityKind`, `ModelSelection`, `AltLocPolicy`,
+  `FitAtoms`, `Weighting`, `Reference`, `ConnectivityCheck`,
+  `MatchCompletion`, `QueryPerception`, the property value enums, the
+  solvation enums, the Molfile, PDB and SMILES document enums,
+  `ChargeSource`, `VdwMethod`, `ElectrostaticsMethod` and
+  `MinimizationStatus`. Six enums are closed, and their documentation says
+  why: `TetrahedralOrientation`, `DoubleBondOrientation`, `AxisOrientation`,
+  `CorrespondenceSide`, `BaseDimension` and `DcdEndian` (the last two lose
+  `#[non_exhaustive]`).
+- **Breaking:** `bool` parameters and fields that select a mode are enums:
+  `AddHydrogensOptions::with_fixed_only(bool)` is
+  `with_scope(AddHydrogensScope::{All, FixedOnly})`,
+  `ValenceOptions::with_strict(bool)` is
+  `with_validation(ValenceValidation::{Strict, Permissive})`,
+  `StructureInterpretOptions` and `StructureEnsembleInterpretOptions`
+  `with_strict_entity_metadata(bool)` is
+  `with_entity_metadata(EntityMetadataPolicy::{InferMissing, RequireDeclared})`,
+  `Trajectory::validate_monotonic_time(bool)` takes
+  `MissingTimePolicy::{Skip, Reject}`, and `DsspBetaPartner::parallel()` is
+  `direction()` (`DsspBridgeDirection::{Parallel, Antiparallel}`). Feature
+  switches such as `RotatableBondOptions::with_include_ring_bonds` stay
+  `bool`.
 - **Breaking:** Results, reports and their records have private fields with
   accessors and no `Default` (ARCHITECTURE.md, "Options, results, and
   enums"); a field `report.added` is now `report.added()`, and collections

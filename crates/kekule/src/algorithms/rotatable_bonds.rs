@@ -166,9 +166,21 @@ pub fn rotatable_bonds(
 ) -> Result<RotatableBondSet, PerceptionError> {
     let mut perceived;
     let perception = molecule.perception();
-    let mut compatible = perception.valence_model() == Some(ValenceModel::RdkitLike)
-        && perception.ring_basis_model() == Some(RingBasisModel::FiguerasSssrLike)
-        && perception.aromaticity_model() == Some(AromaticityModel::RdkitLike);
+    // Cached state is reused only when it was produced by the models this
+    // descriptor would perceive itself.
+    let valence_matches = match perception.valence_model() {
+        Some(ValenceModel::RdkitLike) => true,
+        None => false,
+    };
+    let aromaticity_matches = match perception.aromaticity_model() {
+        Some(AromaticityModel::RdkitLike) => true,
+        Some(AromaticityModel::Mdl) | None => false,
+    };
+    let mut compatible = valence_matches
+        && perception
+            .ring_basis_model()
+            .is_some_and(RingBasisModel::is_sssr_like)
+        && aromaticity_matches;
     if !options.include_resonance_restricted_bonds && compatible {
         // Model provenance does not distinguish strict from permissive valence
         // installation. Revalidate before reuse so cached results cannot hide a

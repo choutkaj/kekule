@@ -60,7 +60,7 @@ pub(crate) fn interpret_mmcif_block(
 ) -> Result<StructureInterpretation, FormatError> {
     let source = mmcif_source(
         block,
-        options.strict_entity_metadata(),
+        options.requires_entity_metadata(),
         options.connectivity(),
     )?;
     interpret_source(source, &options)
@@ -88,7 +88,7 @@ pub(crate) fn interpret_mmcif_ensemble_block(
     interpret_ensemble(available, options, |options| {
         mmcif_source(
             block,
-            options.strict_entity_metadata(),
+            options.requires_entity_metadata(),
             options.connectivity(),
         )
     })

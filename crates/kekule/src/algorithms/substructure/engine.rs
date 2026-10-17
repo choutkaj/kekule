@@ -722,7 +722,10 @@ fn require_atom_perception(m: &Molecule, p: &AtomPredicate) -> Result<(), Substr
         }
         AtomPredicate::RingCount(_) | AtomPredicate::SmallestRingSize(_) => {
             if m.ring_set().is_some()
-                && m.perception().ring_basis_model() != Some(RingBasisModel::FiguerasSssrLike)
+                && !m
+                    .perception()
+                    .ring_basis_model()
+                    .is_some_and(RingBasisModel::is_sssr_like)
             {
                 return Err(SubstructureMatchError::IncompatiblePerception(
                     QueryPerception::RingBasis,

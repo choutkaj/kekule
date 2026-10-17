@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .filter(|frame| frame.cell().is_some())
             .count()
     );
-    trajectory.validate_monotonic_time(false)?;
+    trajectory.validate_monotonic_time(kekule::structure::MissingTimePolicy::Skip)?;
 
     if make_whole {
         periodic::make_molecules_whole(&mut trajectory)?;

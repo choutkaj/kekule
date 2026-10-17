@@ -153,6 +153,7 @@ impl Default for MinimizeOptions {
 
 /// Terminal state of a minimization that did not fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MinimizationStatus {
     /// The largest per-atom gradient norm reached the tolerance.
     Converged,

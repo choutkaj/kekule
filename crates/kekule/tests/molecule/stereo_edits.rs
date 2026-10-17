@@ -291,6 +291,7 @@ fn checked_stereo_boundaries_reject_nonadjacent_carriers_transactionally() {
             StereoElementKind::Axis(stereo) => {
                 stereo.carriers[0] = StereoCarrier::Atom(source.bond(stereo.axis).unwrap().a())
             }
+            other => unreachable!("no fixture asserts {other:?}"),
         }
         let mut editor = source.to_editor();
         let before = format!("{editor:?}");

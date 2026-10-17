@@ -121,6 +121,7 @@ impl std::error::Error for TaggedMatchError {
 
 /// Which tagged tuples [`TaggedQuery::find_matches`] returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TupleMode {
     /// Every tuple of every embedding, including repeated tuples.
     All,

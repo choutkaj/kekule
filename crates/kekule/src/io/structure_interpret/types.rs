@@ -9,6 +9,7 @@ use crate::structure::{Ensemble, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ModelSelection {
     RequireSingle,
     Select(String),
@@ -67,24 +68,50 @@ impl Default for ConnectivityOptions {
     }
 }
 
+/// How interpretation treats structural instances without a declared entity type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EntityMetadataPolicy {
+    /// Infer the entity kind from the residues and report the inference.
+    #[default]
+    InferMissing,
+    /// Fail interpretation; PDB entries, which declare no entity types,
+    /// always fail.
+    RequireDeclared,
+}
+
+impl EntityMetadataPolicy {
+    const fn requires_declared(self) -> bool {
+        match self {
+            Self::InferMissing => false,
+            Self::RequireDeclared => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureInterpretOptions {
-    strict_entity_metadata: bool,
+    entity_metadata: EntityMetadataPolicy,
     altloc_policy: AltLocPolicy,
     model_selection: ModelSelection,
     connectivity: ConnectivityOptions,
 }
 
 impl StructureInterpretOptions {
-    pub const fn strict_entity_metadata(&self) -> bool {
-        self.strict_entity_metadata
+    /// Whether missing entity types are inferred or rejected.
+    pub const fn entity_metadata(&self) -> EntityMetadataPolicy {
+        self.entity_metadata
     }
 
-    /// Sets [`Self::strict_entity_metadata`].
+    /// Sets [`Self::entity_metadata`].
     #[must_use]
-    pub fn with_strict_entity_metadata(mut self, strict_entity_metadata: bool) -> Self {
-        self.strict_entity_metadata = strict_entity_metadata;
+    pub fn with_entity_metadata(mut self, entity_metadata: EntityMetadataPolicy) -> Self {
+        self.entity_metadata = entity_metadata;
         self
+    }
+
+    pub(crate) const fn requires_entity_metadata(&self) -> bool {
+        self.entity_metadata.requires_declared()
     }
 
     pub fn altloc_policy(&self) -> &AltLocPolicy {
@@ -124,7 +151,7 @@ impl StructureInterpretOptions {
 impl Default for StructureInterpretOptions {
     fn default() -> Self {
         Self {
-            strict_entity_metadata: false,
+            entity_metadata: EntityMetadataPolicy::InferMissing,
             altloc_policy: AltLocPolicy::HighestOccupancy,
             model_selection: ModelSelection::RequireSingle,
             connectivity: ConnectivityOptions::default(),
@@ -133,6 +160,7 @@ impl Default for StructureInterpretOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum EntityKind {
     Polymer,
     Branched,
@@ -738,22 +766,27 @@ pub(in crate::io) fn ensemble_error(
 /// statistical weights. A single coordinate model yields a single member.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureEnsembleInterpretOptions {
-    strict_entity_metadata: bool,
+    entity_metadata: EntityMetadataPolicy,
     altloc_policy: AltLocPolicy,
     connectivity: ConnectivityOptions,
     model_ids: Option<Vec<String>>,
 }
 
 impl StructureEnsembleInterpretOptions {
-    pub const fn strict_entity_metadata(&self) -> bool {
-        self.strict_entity_metadata
+    /// Whether missing entity types are inferred or rejected.
+    pub const fn entity_metadata(&self) -> EntityMetadataPolicy {
+        self.entity_metadata
     }
 
-    /// Sets [`Self::strict_entity_metadata`].
+    /// Sets [`Self::entity_metadata`].
     #[must_use]
-    pub fn with_strict_entity_metadata(mut self, strict_entity_metadata: bool) -> Self {
-        self.strict_entity_metadata = strict_entity_metadata;
+    pub fn with_entity_metadata(mut self, entity_metadata: EntityMetadataPolicy) -> Self {
+        self.entity_metadata = entity_metadata;
         self
+    }
+
+    pub(crate) const fn requires_entity_metadata(&self) -> bool {
+        self.entity_metadata.requires_declared()
     }
 
     pub fn altloc_policy(&self) -> &AltLocPolicy {
@@ -801,7 +834,7 @@ impl StructureEnsembleInterpretOptions {
 impl Default for StructureEnsembleInterpretOptions {
     fn default() -> Self {
         Self {
-            strict_entity_metadata: false,
+            entity_metadata: EntityMetadataPolicy::InferMissing,
             altloc_policy: AltLocPolicy::HighestOccupancy,
             connectivity: ConnectivityOptions::default(),
             model_ids: None,
