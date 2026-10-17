@@ -448,15 +448,12 @@ fn publish_molfile_components(
     let mut builder = ModelBuilder::new();
     let mut reports = Vec::with_capacity(components.len());
     let mut lines = Vec::new();
-    let chain = builder
-        .topology_builder_mut()
-        .hierarchy_mut()
-        .add_chain("A", None)?;
+    let chain = builder.hierarchy_mut().add_chain("A", None)?;
     for (index, (molecule, positions, report)) in components.into_iter().enumerate() {
         let atom_ids = molecule.atom_ids().collect::<Vec<_>>();
         let instance = builder.add_molecule(molecule, &positions)?;
         let sequence = i32::try_from(index + 1).map_err(|_| ModelBuildError::CapacityOverflow)?;
-        let hierarchy = builder.topology_builder_mut().hierarchy_mut();
+        let hierarchy = builder.hierarchy_mut();
         let residue = hierarchy.add_residue(
             chain,
             "UNL",

@@ -303,6 +303,19 @@ impl TopologyEditor {
         self.revision += 1;
         Ok(())
     }
+    /// Clears one residue's class, explicit or retained, so publication
+    /// infers it afresh.
+    pub fn clear_residue_class(&mut self, id: EditResidueId) -> Result<(), TopologyEditError> {
+        if self.require_residue(id)?.class.is_none() {
+            return Ok(());
+        }
+        let residue = self.hierarchy.residues.get_mut(&id).unwrap();
+        residue.class = None;
+        residue.class_explicit = false;
+        self.invalidate_molecule_classes_for_residue(id);
+        self.revision += 1;
+        Ok(())
+    }
     pub fn set_atom_site_metadata(
         &mut self,
         id: EditAtomSiteId,
@@ -499,7 +512,10 @@ impl TopologyEditor {
                     author_seq: residue.author_seq_id().map(str::to_owned),
                     insertion: residue.insertion_code().map(str::to_owned),
                     class: Some(residue.class()),
-                    class_explicit: source.residue_class_overrides.contains_key(&source_id),
+                    class_explicit: source
+                        .hierarchy()
+                        .residue(source_id)
+                        .is_some_and(|residue| residue.explicit_class.is_some()),
                     slot: source_id.index(),
                 },
             );

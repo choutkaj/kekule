@@ -153,7 +153,9 @@ interpretation keeps source atom-row order, builders default to instance order
 or accept an explicit permutation, and editors and subsets keep surviving atoms
 in source order. Dense bond order is instance order, then local bond ID.
 
-`Hierarchy` is owned exactly once by `Topology`. Atom sites refer to live
+`Hierarchy` is owned exactly once by `Topology`. Its storage is private: the
+chain, residue, and atom-site views are the only read path, and builders stage
+it through one `HierarchyBuilder`. Atom sites refer to live
 `InstanceAtomId` values; they do not copy atoms. One chain or residue may span
 molecules, and one molecule may span chains. Molecular and domain-specific
 hierarchy views borrow and filter this single hierarchy. Source labels and author
@@ -166,7 +168,10 @@ contextual roles such as receptor or ligand, and do not affect molecular identit
 Inference occurs at topology publication without running chemical perception.
 It combines conservative component recognition, simple graph evidence, and
 inter-residue connectivity; conflicting strong evidence yields `Other`.
-Explicit assignments retain their intent separately from inferred cached values.
+Explicit assignments retain their intent separately from inferred cached values,
+and `ClassAssignment` reports which one a published class is. A residue's
+explicit class lives on its staged node, so replacing a staged hierarchy
+discards it; clearing an assignment returns the entity to inference.
 
 Unchanged complete entities preserve their classifications through subsets and
 ordinary appends. Changed chemistry or informative new context triggers

@@ -1,3 +1,4 @@
+use crate::support::hierarchy_record;
 use kekule::geometry::Point3;
 use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
@@ -94,15 +95,15 @@ fn split_then_merge_preserves_handles_geometry_and_hierarchy() {
     editor.validate().unwrap();
     let split = editor.clone().finish().unwrap();
     assert_eq!(split.topology().instance_count(), 2);
-    assert_eq!(split.topology().hierarchy().chains().count(), 1);
-    assert_eq!(split.topology().hierarchy().residues().count(), 1);
-    assert_eq!(split.topology().hierarchy().atom_sites().count(), 3);
+    assert_eq!(split.topology().chains().len(), 1);
+    assert_eq!(split.topology().residues().len(), 1);
+    assert_eq!(split.topology().atom_sites().len(), 3);
     assert_eq!(split.positions(), source.positions());
-    for (site, before) in source.topology().hierarchy().atom_sites() {
-        let after = split.topology().hierarchy().atom_site(site).unwrap();
+    for before in source.topology().atom_sites() {
+        let after = split.topology().atom_site(before.id()).unwrap();
         assert_eq!(
-            source.position(before.atom()).unwrap(),
-            split.position(after.atom()).unwrap()
+            source.position(before.atom().id()).unwrap(),
+            split.position(after.atom().id()).unwrap()
         );
     }
     editor
@@ -232,8 +233,8 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
     let result = editor.finish().unwrap();
     assert_eq!(result.topology().instance_count(), 1);
     assert_eq!(result.topology().bond_count(), 1);
-    assert_eq!(result.topology().hierarchy().chains().count(), 2);
-    assert_eq!(result.topology().hierarchy().residues().count(), 2);
+    assert_eq!(result.topology().chains().len(), 2);
+    assert_eq!(result.topology().residues().len(), 2);
     assert!(!result
         .topology()
         .properties()
@@ -241,14 +242,14 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
         .has_data());
     assert_eq!(result.positions(), source.positions());
     assert!(has_bond(&result, 0, 1));
-    for (site, before) in source.topology().hierarchy().atom_sites() {
-        let after = result.topology().hierarchy().atom_site(site).unwrap();
+    for before in source.topology().atom_sites() {
+        let after = result.topology().atom_site(before.id()).unwrap();
         assert_eq!(
-            source.position(before.atom()).unwrap(),
-            result.position(after.atom()).unwrap()
+            source.position(before.atom().id()).unwrap(),
+            result.position(after.atom().id()).unwrap()
         );
         assert_eq!(
-            after.atom().instance(),
+            after.atom().id().instance(),
             result.topology().atom_ids()[0].instance()
         );
     }
@@ -395,9 +396,9 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         .insert_atom_property_column(key("live"), column)
         .unwrap();
     let result = editor.finish().unwrap();
-    assert_eq!(result.topology().hierarchy().chains().count(), 1);
-    assert_eq!(result.topology().hierarchy().residues().count(), 1);
-    assert_eq!(result.topology().hierarchy().atom_sites().count(), 1);
+    assert_eq!(result.topology().chains().len(), 1);
+    assert_eq!(result.topology().residues().len(), 1);
+    assert_eq!(result.topology().atom_sites().len(), 1);
     assert!(result.properties().owner().is_empty());
     let retained = result.topology().atom_ids()[0];
     assert_eq!(
@@ -1180,7 +1181,10 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         source.positions().values().value()[..]
     );
     assert_eq!(result.topology().definition_count(), 1);
-    assert_eq!(result.topology().hierarchy(), source.topology().hierarchy());
+    assert_eq!(
+        hierarchy_record(result.topology()),
+        hierarchy_record(source.topology())
+    );
     assert_eq!(
         result
             .topology()

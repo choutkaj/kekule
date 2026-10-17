@@ -1,3 +1,4 @@
+use crate::support::{chain_record, residue_record};
 use kekule::{
     geometry::{PeriodicCell, PeriodicGeometry, PeriodicGeometryError, Point3, Vector3},
     molecule::{Element, VanDerWaalsRadiusSource},
@@ -450,12 +451,12 @@ fn original_entities_properties_and_existing_water_survive() {
     );
     assert_eq!(report.cleared_model_properties(), vec![key("model_note")]);
     assert_eq!(
-        m.topology().hierarchy().chain(chain).unwrap(),
-        before.topology().hierarchy().chain(chain).unwrap()
+        chain_record(m.topology().chain(chain).unwrap()),
+        chain_record(before.topology().chain(chain).unwrap())
     );
     assert_eq!(
-        m.topology().hierarchy().residue(residue).unwrap(),
-        before.topology().hierarchy().residue(residue).unwrap()
+        residue_record(m.topology().residue(residue).unwrap()),
+        residue_record(before.topology().residue(residue).unwrap())
     );
     assert!(m.topology().chains().any(|c| c.label_id() == "SOL2"));
     assert_eq!(before.topology().instance_count(), 1);

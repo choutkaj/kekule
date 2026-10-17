@@ -12,5 +12,7 @@ mod perception;
 mod properties;
 mod scientific_selection;
 mod selection;
+#[path = "../support/mod.rs"]
+mod support;
 mod topology;
 mod trajectories;

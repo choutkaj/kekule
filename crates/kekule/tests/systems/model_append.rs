@@ -154,6 +154,7 @@ fn annotated(conflict: Option<&str>) -> Model {
         }
     }
     builder
+        .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::Other)
         .unwrap();
     let atom_count = molecule.atom_count() * 3;
@@ -290,8 +291,8 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
             );
             assert_eq!(occupancy(source, id), occupancy(target, other));
             assert_eq!(b_factor(source, id), b_factor(target, other));
-            let before = source.topology().hierarchy().atom_site_for_atom(id);
-            let after = target.topology().hierarchy().atom_site_for_atom(other);
+            let before = source.topology().atom(id).unwrap().atom_site();
+            let after = target.topology().atom(other).unwrap().atom_site();
             assert_eq!(before.is_some(), after.is_some());
             if let (Some(before), Some(after)) = (before, after) {
                 assert_eq!(before.metadata(), after.metadata());
@@ -300,16 +301,7 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
                     target.topology().properties().atom_sites(),
                     &[(before.id().index(), after.id().index())],
                 );
-                let before = source
-                    .topology()
-                    .hierarchy()
-                    .residue(before.residue())
-                    .unwrap();
-                let after = target
-                    .topology()
-                    .hierarchy()
-                    .residue(after.residue())
-                    .unwrap();
+                let (before, after) = (before.residue(), after.residue());
                 assert_eq!(before.atom_sites().len(), after.atom_sites().len());
                 assert_eq!(before.name(), after.name());
                 assert_eq!(before.label_seq_id(), after.label_seq_id());
@@ -323,8 +315,7 @@ fn assert_import(source: &Model, target: &Model, first_instance: usize) {
                     target.topology().properties().residues(),
                     &[(before.id().index(), after.id().index())],
                 );
-                let before = source.topology().hierarchy().chain(before.chain()).unwrap();
-                let after = target.topology().hierarchy().chain(after.chain()).unwrap();
+                let (before, after) = (before.chain(), after.chain());
                 assert_eq!(before.residues().len(), after.residues().len());
                 assert_eq!(before.label_id(), after.label_id());
                 assert_eq!(before.author_id(), after.author_id());

@@ -1,4 +1,6 @@
 use std::error::Error;
+
+use crate::support::hierarchy_record;
 use std::sync::{Arc, Weak};
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -118,6 +120,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
         .add_residue(chain, "LIG", Some(1), None, None)
         .unwrap();
     builder
+        .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::Other)
         .unwrap();
     for instance in [first, second] {
@@ -150,7 +153,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
     assert!(!Arc::ptr_eq(&source, &target));
     assert_eq!(target.atom_ids(), source.atom_ids());
     assert_eq!(target.bond_ids(), source.bond_ids());
-    assert_eq!(target.hierarchy(), source.hierarchy());
+    assert_eq!(hierarchy_record(&target), hierarchy_record(&source));
     assert_eq!(target.properties(), source.properties());
     assert_eq!(target.definition_count(), 1);
     assert_eq!(target.instance_count(), 2);
@@ -401,7 +404,6 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     let again = Arc::new(perceived.perceived().unwrap());
     assert!(perceived.shares_layout(&source) && again.shares_layout(&source));
     // Perception shares the layout storage instead of copying it.
-    assert!(std::ptr::eq(source.hierarchy(), perceived.hierarchy()));
     assert!(std::ptr::eq(
         source.atom_ids().as_ptr(),
         perceived.atom_ids().as_ptr()

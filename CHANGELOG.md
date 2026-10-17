@@ -105,6 +105,27 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** The topology views are the only read path for hierarchy
+  data (ARCHITECTURE.md, "Topology, hierarchy, and classification").
+  - `Hierarchy`, `Chain`, `Residue` and `AtomSite` are crate-private, and
+    `Topology::hierarchy` is gone. Read through `Topology::chains`,
+    `residues`, `atom_sites`, `chain`, `residue`, `atom_site` and
+    `AtomView::atom_site`; these iterators, and `InstanceView::chains`,
+    `residues` and `atom_sites`, are `ExactSizeIterator`s.
+  - Staging goes through the new `topology::HierarchyBuilder`, returned by
+    `TopologyBuilder::hierarchy`/`hierarchy_mut` and
+    `ModelBuilder::hierarchy`/`hierarchy_mut`. `ModelTopologyMut::hierarchy_mut`
+    is removed, so `ModelBuilder` has one hierarchy path.
+  - `TopologyBuilder::set_residue_class` and `ModelBuilder::set_residue_class`
+    move to `HierarchyBuilder::set_residue_class`. The explicit class is
+    stored on the staged residue, so replacing the staged hierarchy
+    (`*builder.hierarchy_mut() = HierarchyBuilder::new()`) now discards it
+    instead of applying it to whichever new residue reuses the identifier.
+  - The new `ClassAssignment::{Explicit, Inferred}`, from
+    `ResidueView::class_assignment` and `InstanceView::class_assignment`,
+    says whether a class was assigned or inferred. `HierarchyBuilder::clear_residue_class`,
+    `TopologyBuilder::clear_molecule_class`, `ModelBuilder::clear_molecule_class`
+    and `TopologyEditor::clear_residue_class` return a class to inference.
 - **Breaking:** `Model::apply_transform` is renamed `Model::transform_atoms`:
   it moves a selection's atoms and keeps the cell. The new
   `Model::apply_rigid_transform(&RigidTransform)` moves the whole model and

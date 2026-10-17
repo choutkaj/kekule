@@ -34,9 +34,11 @@ fn topology() -> Arc<Topology> {
         .add_residue(chain, "ALA", Some(2), Some("7".into()), Some("B".into()))
         .unwrap();
     builder
+        .hierarchy_mut()
         .set_residue_class(first, ResidueClass::AminoAcid)
         .unwrap();
     builder
+        .hierarchy_mut()
         .set_residue_class(second, ResidueClass::AminoAcid)
         .unwrap();
     // Each residue crosses molecule instances. Two atoms have no hierarchy.

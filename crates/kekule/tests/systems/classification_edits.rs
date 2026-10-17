@@ -4,8 +4,9 @@ use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::{
     edit::{EditAtomId, TopologyEditor},
-    AtomSelection, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass,
-    MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, Topology, TopologyBuilder,
+    AtomSelection, AtomSiteMetadata, ClassAssignment, HierarchyBuilder, InstanceAtomId,
+    MoleculeClass, MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, Topology,
+    TopologyBuilder,
 };
 
 /// The topology of the complete `instances`, as a whole-instance subset.
@@ -178,13 +179,14 @@ fn published_hierarchy_removal_discards_orphaned_explicit_residue_assignments() 
         .add_atom_site(residue, atom, AtomSiteMetadata::default())
         .unwrap();
     builder
+        .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::Ion)
         .unwrap();
     let source = Arc::new(builder.clone().build().unwrap());
 
     for recoverable in [false, true] {
         let mut builder = builder.clone().build().unwrap().into_builder();
-        *builder.hierarchy_mut() = Hierarchy::new();
+        *builder.hierarchy_mut() = HierarchyBuilder::new();
         builder.validate().unwrap();
         let removed = if recoverable {
             builder.try_build().unwrap()
@@ -214,7 +216,7 @@ fn published_hierarchy_removal_discards_orphaned_explicit_residue_assignments() 
 }
 
 #[test]
-fn builder_assignments_still_apply_to_surviving_residues_after_hierarchy_replacement() {
+fn replacing_the_staged_hierarchy_discards_its_explicit_residue_classes() {
     let oxygen = single_atom("O");
     let mut builder = TopologyBuilder::new();
     let instance = builder.add_molecule(oxygen.clone()).unwrap();
@@ -224,15 +226,18 @@ fn builder_assignments_still_apply_to_surviving_residues_after_hierarchy_replace
         .add_residue(chain, "UNL", None, None, None)
         .unwrap();
     builder
+        .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::Ion)
         .unwrap();
-    *builder.hierarchy_mut() = Hierarchy::new();
+    *builder.hierarchy_mut() = HierarchyBuilder::new();
     let chain = builder.hierarchy_mut().add_chain("NEW", None).unwrap();
     let replaced = builder
         .hierarchy_mut()
         .add_residue(chain, "HOH", None, None, None)
         .unwrap();
+    // The new residue reuses the identifier but not the old node's class.
     assert_eq!(replaced, residue);
+    assert_eq!(builder.hierarchy().explicit_residue_class(replaced), None);
     builder
         .hierarchy_mut()
         .add_atom_site(
@@ -242,17 +247,63 @@ fn builder_assignments_still_apply_to_surviving_residues_after_hierarchy_replace
         )
         .unwrap();
     let result = builder.build().unwrap();
-    assert_eq!(result.residues().next().unwrap().class(), ResidueClass::Ion);
     assert_eq!(
-        result
-            .into_builder()
-            .build()
-            .unwrap()
-            .residues()
-            .next()
-            .unwrap()
-            .class(),
-        ResidueClass::Ion
+        result.residues().next().unwrap().class_assignment(),
+        ClassAssignment::Inferred(ResidueClass::Water)
+    );
+}
+
+#[test]
+fn cleared_class_assignments_are_inferred_again_on_rebuild() {
+    let oxygen = single_atom("O");
+    let mut builder = TopologyBuilder::new();
+    let instance = builder.add_molecule(oxygen.clone()).unwrap();
+    let chain = builder.hierarchy_mut().add_chain("W", None).unwrap();
+    let residue = builder
+        .hierarchy_mut()
+        .add_residue(chain, "HOH", None, None, None)
+        .unwrap();
+    builder
+        .hierarchy_mut()
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(instance, oxygen.atom_ids().next().unwrap()),
+            AtomSiteMetadata::default(),
+        )
+        .unwrap();
+    builder
+        .hierarchy_mut()
+        .set_residue_class(residue, ResidueClass::Ion)
+        .unwrap();
+    builder
+        .set_molecule_class(MoleculeDefinitionId::new(0), MoleculeClass::Ion)
+        .unwrap();
+    let explicit = builder.build().unwrap();
+    assert_eq!(
+        explicit.residue(residue).unwrap().class_assignment(),
+        ClassAssignment::Explicit(ResidueClass::Ion)
+    );
+    assert_eq!(
+        explicit.instances().next().unwrap().class_assignment(),
+        ClassAssignment::Explicit(MoleculeClass::Ion)
+    );
+
+    let mut rebuilt = explicit.into_builder();
+    rebuilt
+        .hierarchy_mut()
+        .clear_residue_class(residue)
+        .unwrap();
+    rebuilt
+        .clear_molecule_class(MoleculeDefinitionId::new(0))
+        .unwrap();
+    let inferred = rebuilt.build().unwrap();
+    assert_eq!(
+        inferred.residue(residue).unwrap().class_assignment(),
+        ClassAssignment::Inferred(ResidueClass::Water)
+    );
+    assert_eq!(
+        inferred.instances().next().unwrap().class_assignment(),
+        ClassAssignment::Inferred(MoleculeClass::Water)
     );
 }
 
@@ -278,6 +329,7 @@ fn instance_filters_reclassify_partial_residues_and_preserve_complete_assignment
         }
         if explicit {
             builder
+                .hierarchy_mut()
                 .set_residue_class(residue, ResidueClass::Water)
                 .unwrap();
         }
@@ -293,6 +345,7 @@ fn instance_filters_reclassify_partial_residues_and_preserve_complete_assignment
             .add_atom_site(whole, nitrogen_atom, AtomSiteMetadata::default())
             .unwrap();
         builder
+            .hierarchy_mut()
             .set_residue_class(whole, ResidueClass::Carbohydrate)
             .unwrap();
         let source = Arc::new(builder.build().unwrap());
@@ -367,7 +420,10 @@ fn add_instance(
             )
             .unwrap();
         if let Some(class) = residue_class {
-            builder.set_residue_class(residue, class).unwrap();
+            builder
+                .hierarchy_mut()
+                .set_residue_class(residue, class)
+                .unwrap();
         }
     }
     instance
@@ -531,6 +587,7 @@ fn explicit_classes_survive_changed_component_evidence_and_rebuilding() {
         .set_molecule_class(definition, MoleculeClass::Water)
         .unwrap();
     builder
+        .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::Water)
         .unwrap();
     let source = Arc::new(builder.build().unwrap());
@@ -603,7 +660,7 @@ fn hierarchy_edits_reinfer_source_molecule_classes_and_preserve_shared_snapshot(
         source.instances().next().unwrap().class(),
         MoleculeClass::SmallMolecule
     );
-    assert!(source.hierarchy().is_empty());
+    assert_eq!(source.chains().len(), 0);
     let mut editor = result.to_editor();
     let residue = editor.residues().next().unwrap().0;
     editor
@@ -661,7 +718,10 @@ fn preserved_inferred_class_survives_no_op_rebuilding_until_its_evidence_changes
             AtomSiteMetadata::default(),
         )
         .unwrap();
-    builder.set_residue_class(ion, ResidueClass::Ion).unwrap();
+    builder
+        .hierarchy_mut()
+        .set_residue_class(ion, ResidueClass::Ion)
+        .unwrap();
     let source = Arc::new(builder.build().unwrap());
     assert_eq!(
         source.instances().next().unwrap().class(),

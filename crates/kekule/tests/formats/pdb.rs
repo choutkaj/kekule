@@ -1055,10 +1055,10 @@ fn a_ter_record_ends_the_residue_it_follows() {
             })
             .collect::<Vec<_>>();
         assert_eq!(instances, expected);
-        let hierarchy = interpreted.topology().hierarchy();
-        let residues = hierarchy
+        let residues = interpreted
+            .topology()
             .residues()
-            .map(|(_, residue)| {
+            .map(|residue| {
                 (
                     residue.name().to_owned(),
                     residue.author_seq_id().map(str::to_owned),
@@ -1074,7 +1074,7 @@ fn a_ter_record_ends_the_residue_it_follows() {
             })
             .collect::<Vec<_>>();
         assert_eq!(residues, sizes);
-        assert_eq!(hierarchy.chains().count(), 1);
+        assert_eq!(interpreted.topology().chains().len(), 1);
         assert_eq!(
             bonds_with_evidence(&interpreted, &BondEvidence::PolymerLink),
             peptide_bonds

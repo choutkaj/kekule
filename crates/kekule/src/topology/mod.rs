@@ -6,8 +6,9 @@
 //! instance still receives distinct [`InstanceAtomId`] and [`InstanceBondId`]
 //! identities.
 //!
-//! The system-wide [`Hierarchy`] organizes those atoms into chains, residues,
-//! and atom sites. Hierarchy is independent of covalent connectedness: one
+//! The system-wide hierarchy organizes those atoms into chains, residues,
+//! and atom sites, read through [`ChainView`], [`ResidueView`], and
+//! [`AtomSiteView`] and staged through [`HierarchyBuilder`]. Hierarchy is independent of covalent connectedness: one
 //! chain may span several molecule instances, and one connected molecule may
 //! contribute to several chains.
 //!
@@ -47,9 +48,10 @@ pub use builder::{TopologyBuildError, TopologyBuilder, TopologyIdKind};
 use dense_order::DenseOrder;
 pub(crate) use editor::AppendMapping;
 pub use entity_views::{AtomView, BondView};
+pub(crate) use hierarchy::{AtomSite, Chain, Hierarchy, Residue};
 pub use hierarchy::{
-    AtomSite, AtomSiteId, AtomSiteMetadata, Chain, ChainId, Hierarchy, HierarchyError,
-    HierarchyIdKind, Residue, ResidueId,
+    AtomSiteId, AtomSiteMetadata, ChainId, HierarchyBuilder, HierarchyError, HierarchyIdKind,
+    ResidueId,
 };
 pub use perception::TopologyPerceptionError;
 pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
@@ -97,7 +99,7 @@ pub enum MoleculeClass {
 /// Broad canonical classification of one topology-owned hierarchy residue.
 ///
 /// Residue classes are inferred during topology publication and can be
-/// explicitly overridden through [`TopologyBuilder`]. They describe component
+/// explicitly assigned through [`HierarchyBuilder::set_residue_class`]. They describe component
 /// identity rather than contextual roles or source-format entity semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
@@ -109,6 +111,42 @@ pub enum ResidueClass {
     Water,
     Ion,
     Other,
+}
+
+/// A published class and whether it was assigned explicitly or inferred.
+///
+/// Explicit assignments keep their class through later publication whatever
+/// the evidence; inferred classes are reevaluated when their evidence
+/// changes. Builders and editors clear an explicit assignment
+/// (`clear_molecule_class`, `clear_residue_class`) to return to inference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ClassAssignment<C> {
+    /// Assigned explicitly by a builder or editor.
+    Explicit(C),
+    /// Inferred at publication.
+    Inferred(C),
+}
+
+impl<C: Copy> ClassAssignment<C> {
+    pub(crate) const fn new(class: C, explicit: bool) -> Self {
+        if explicit {
+            Self::Explicit(class)
+        } else {
+            Self::Inferred(class)
+        }
+    }
+
+    /// The class, however it was assigned.
+    pub const fn class(self) -> C {
+        match self {
+            Self::Explicit(class) | Self::Inferred(class) => class,
+        }
+    }
+
+    pub const fn is_explicit(self) -> bool {
+        matches!(self, Self::Explicit(_))
+    }
 }
 
 /// The local atom of one explicit molecule instance.
@@ -267,6 +305,12 @@ impl<'a> ResidueView<'a> {
     /// Returns this topology-owned residue's canonical class.
     pub fn class(self) -> ResidueClass {
         self.local().class()
+    }
+
+    /// This residue's class and whether it was assigned explicitly.
+    pub fn class_assignment(self) -> ClassAssignment<ResidueClass> {
+        let residue = self.local();
+        ClassAssignment::new(residue.class(), residue.explicit_class.is_some())
     }
 
     pub fn label_comp_id(self) -> Option<&'a str> {
@@ -478,6 +522,16 @@ impl<'a> InstanceView<'a> {
         self.definition().class()
     }
 
+    /// The class of this occurrence's definition and whether it was assigned
+    /// explicitly.
+    pub fn class_assignment(self) -> ClassAssignment<MoleculeClass> {
+        let explicit = self
+            .topology
+            .molecule_class_overrides
+            .contains_key(&self.definition_id());
+        ClassAssignment::new(self.class(), explicit)
+    }
+
     /// One static topology annotation of this occurrence.
     pub fn property(self, key: &PropertyKey) -> Option<PropertyValue> {
         self.property_ref(key).map(PropertyValueRef::to_value)
@@ -516,7 +570,7 @@ impl<'a> InstanceView<'a> {
 
     /// Complete chains that contain at least one atom of this occurrence, in
     /// hierarchy order. A chain is not clipped and may contain other atoms.
-    pub fn chains(self) -> impl Iterator<Item = ChainView<'a>> + 'a {
+    pub fn chains(self) -> impl ExactSizeIterator<Item = ChainView<'a>> + 'a {
         let topology = self.topology;
         let chains = self
             .residue_ids()
@@ -536,7 +590,7 @@ impl<'a> InstanceView<'a> {
 
     /// Complete residues that contain at least one atom of this occurrence, in
     /// hierarchy order. A residue is not clipped and may contain other atoms.
-    pub fn residues(self) -> impl Iterator<Item = ResidueView<'a>> + 'a {
+    pub fn residues(self) -> impl ExactSizeIterator<Item = ResidueView<'a>> + 'a {
         let topology = self.topology;
         self.residue_ids()
             .into_iter()
@@ -547,7 +601,7 @@ impl<'a> InstanceView<'a> {
     ///
     /// Costs one indexed lookup per atom of this occurrence, independent of
     /// the size of the rest of the hierarchy.
-    pub fn atom_sites(self) -> impl Iterator<Item = AtomSiteView<'a>> + 'a {
+    pub fn atom_sites(self) -> impl ExactSizeIterator<Item = AtomSiteView<'a>> + 'a {
         let topology = self.topology;
         self.site_ids()
             .into_iter()
@@ -585,7 +639,8 @@ impl<'a> InstanceView<'a> {
 ///
 /// `Topology` owns reusable molecule definitions, explicit instances of those
 /// definitions, topology-global dense atom and bond order, one system
-/// [`Hierarchy`], and topology-scoped properties. It does not own coordinates.
+/// hierarchy of chains, residues, and atom sites, and topology-scoped
+/// properties. It does not own coordinates.
 /// Attach positions through [`crate::structure::Model`] or another structure
 /// type.
 ///
@@ -622,11 +677,11 @@ pub struct Topology {
     // Static state a perception snapshot shares instead of copying.
     atom_order: Arc<DenseOrder<InstanceAtomId>>,
     bond_order: Arc<DenseOrder<InstanceBondId>>,
+    // Residue nodes record their own explicit classes.
     hierarchy: Arc<Hierarchy>,
     // Retain explicit assignment intent separately from inferred class values.
     // It affects future editing policy, not current topology layout equality.
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
-    residue_class_overrides: BTreeMap<ResidueId, ResidueClass>,
     // Shared with perception snapshots until edited.
     properties: Arc<TopologyProperties>,
     layout: LayoutId,
@@ -710,7 +765,7 @@ impl Topology {
                 && self.instances == other.instances
                 && self.atom_order == other.atom_order
                 && self.bond_order == other.bond_order
-                && self.hierarchy == other.hierarchy)
+                && self.hierarchy.same_layout(&other.hierarchy))
     }
 
     /// Returns whether both values are snapshots of one published layout.
@@ -781,8 +836,8 @@ impl Topology {
             .filter(move |molecule| molecule.definition_id() == definition)
     }
 
-    /// Returns the one authoritative system-level hierarchy.
-    pub fn hierarchy(&self) -> &Hierarchy {
+    /// The one authoritative system-level hierarchy storage.
+    pub(crate) fn hierarchy(&self) -> &Hierarchy {
         &self.hierarchy
     }
 
@@ -826,21 +881,21 @@ impl Topology {
     }
 
     /// Every hierarchy chain in hierarchy order.
-    pub fn chains(&self) -> impl Iterator<Item = ChainView<'_>> {
+    pub fn chains(&self) -> impl ExactSizeIterator<Item = ChainView<'_>> {
         self.hierarchy
             .chains()
             .map(move |(id, _)| ChainView::new(self, id))
     }
 
     /// Every hierarchy residue in hierarchy order.
-    pub fn residues(&self) -> impl Iterator<Item = ResidueView<'_>> {
+    pub fn residues(&self) -> impl ExactSizeIterator<Item = ResidueView<'_>> {
         self.hierarchy
             .residues()
             .map(move |(id, _)| ResidueView::new(self, id))
     }
 
     /// Every hierarchy atom site in hierarchy order.
-    pub fn atom_sites(&self) -> impl Iterator<Item = AtomSiteView<'_>> {
+    pub fn atom_sites(&self) -> impl ExactSizeIterator<Item = AtomSiteView<'_>> {
         self.hierarchy
             .atom_sites()
             .map(move |(id, _)| AtomSiteView::new(self, id))

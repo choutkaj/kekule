@@ -133,18 +133,12 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
     let macro_id = builder
         .add_molecule(macromolecule.clone(), &macro_positions)
         .unwrap();
-    let chain = builder
-        .topology_builder_mut()
-        .hierarchy_mut()
-        .add_chain("A", None)
-        .unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
     let residue = builder
-        .topology_builder_mut()
         .hierarchy_mut()
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
     let site = builder
-        .topology_builder_mut()
         .hierarchy_mut()
         .add_atom_site(
             residue,

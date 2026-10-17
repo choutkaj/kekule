@@ -7,8 +7,8 @@ use crate::molecule::Molecule;
 use crate::properties::{StructureProperties, TopologyPropertiesMut};
 use crate::topology::TopologySubsetError;
 use crate::topology::{
-    AtomSelection, Hierarchy, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeDefinitionId,
-    MoleculeInstanceId, ResidueClass, ResidueId, Topology, TopologyAtomIndex, TopologyBuildError,
+    AtomSelection, HierarchyBuilder, InstanceAtomId, InstanceBondId, MoleculeClass,
+    MoleculeDefinitionId, MoleculeInstanceId, Topology, TopologyAtomIndex, TopologyBuildError,
     TopologyBuilder, TopologyPerceptionError,
 };
 use crate::units::Quantity;
@@ -708,11 +708,14 @@ impl ModelBuilder {
         }
     }
 
-    pub fn hierarchy(&self) -> &Hierarchy {
+    /// The staged hierarchy.
+    pub fn hierarchy(&self) -> &HierarchyBuilder {
         self.topology.hierarchy()
     }
 
-    pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
+    /// The staged hierarchy, for adding chains, residues, and atom sites and
+    /// assigning residue classes; see [`TopologyBuilder::hierarchy_mut`].
+    pub fn hierarchy_mut(&mut self) -> &mut HierarchyBuilder {
         self.topology.hierarchy_mut()
     }
 
@@ -823,13 +826,13 @@ impl ModelBuilder {
         Ok(self.topology.set_molecule_class(definition, class)?)
     }
 
-    /// Overrides automatic classification for one staged hierarchy residue.
-    pub fn set_residue_class(
+    /// Clears one staged definition's explicit class, so publication infers
+    /// it afresh.
+    pub fn clear_molecule_class(
         &mut self,
-        residue: ResidueId,
-        class: ResidueClass,
+        definition: MoleculeDefinitionId,
     ) -> Result<(), ModelBuildError> {
-        Ok(self.topology.set_residue_class(residue, class)?)
+        Ok(self.topology.clear_molecule_class(definition)?)
     }
 
     /// Adds an instance with dense positions in its definition's atom order.
@@ -978,10 +981,6 @@ pub struct ModelTopologyMut<'a> {
 }
 
 impl<'a> ModelTopologyMut<'a> {
-    pub fn hierarchy_mut(self) -> &'a mut Hierarchy {
-        self.topology.hierarchy_mut()
-    }
-
     /// Length-preserving mutable access to staged static topology annotations.
     pub fn properties_mut(self) -> crate::properties::TopologyPropertiesMut<'a> {
         self.topology.properties_mut()

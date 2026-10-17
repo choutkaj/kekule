@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::diagnostics::{DiagnosticKind, FormatError};
 use crate::geometry::PeriodicCell;
 use crate::structure::ModelBuilder;
+use crate::topology::HierarchyBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
 use super::structure_connectivity::ConnectivityCatalog;
@@ -279,8 +280,10 @@ fn publish_model(
     builder
         .set_atom_order(rows.into_iter().map(|(_, atom)| atom))
         .map_err(graph_error)?;
-    *builder.topology_builder_mut().hierarchy_mut() =
-        build_topology_hierarchy(&report.instances, polymer_asym_order)?;
+    *builder.hierarchy_mut() = HierarchyBuilder::from_storage(build_topology_hierarchy(
+        &report.instances,
+        polymer_asym_order,
+    )?);
     let mut model = builder.build().map_err(graph_error)?;
     model.set_cell(cell);
     let mut occupancies = vec![None; model.atom_count()];
