@@ -8,7 +8,9 @@ use super::{QueryAtomId, QueryBond, QueryBondId, QueryGraphError};
 /// Distinct groups are independent; group order has no matching significance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryStereoGroup {
+    /// How the members' configurations are related.
     pub kind: crate::stereo::StereoGroupKind,
+    /// The tetrahedral query centers in the group.
     pub members: Vec<QueryAtomId>,
 }
 
@@ -25,16 +27,25 @@ pub enum QueryStereoConstraint {
     /// the constraint still requires specified tetrahedral stereo on the target.
     /// A query atom's hydrogen predicate is independent of these carrier references.
     Tetrahedral {
+        /// The query stereocenter.
         center: QueryAtomId,
+        /// Every query neighbor of `center`, each once, in the order
+        /// `orientation` refers to; at most four.
         carriers: Vec<QueryAtomId>,
+        /// The required handedness of `carriers` followed by omitted target
+        /// carriers.
         orientation: TetrahedralOrientation,
     },
     /// Configuration of the selected carriers at `bond.a()` and `bond.b()`.
     /// The query must contain the two carrier-to-endpoint edges.
     DoubleBond {
+        /// The query double bond.
         bond: QueryBondId,
+        /// A query neighbor of `bond.a()` other than `bond.b()`.
         left_carrier: QueryAtomId,
+        /// A query neighbor of `bond.b()` other than `bond.a()`.
         right_carrier: QueryAtomId,
+        /// The required relation between the two carriers.
         orientation: DoubleBondOrientation,
     },
 }

@@ -13,6 +13,7 @@ use super::*;
 /// canonical SMILES normalizes that equivalence for supported encodings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoElement {
+    /// The focus, carriers, and orientation of the assertion.
     pub kind: StereoElementKind,
     pub(crate) group: Option<StereoGroupId>,
 }
@@ -45,20 +46,27 @@ impl StereoElement {
         !self.is_specified()
     }
 
+    /// Whether `atom` is this element's focus, an axis or double-bond
+    /// endpoint, or one of its carriers.
     pub fn references_atom(&self, atom: AtomId) -> bool {
         self.kind.references_atom(atom)
     }
 
+    /// Whether `bond` is this element's double-bond or axis focus.
     pub fn references_bond(&self, bond: BondId) -> bool {
         self.kind.references_bond(bond)
     }
 }
 
+/// The geometry of one stereo assertion and its focus.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StereoElementKind {
+    /// Tetrahedral configuration around a center atom.
     Tetrahedral(TetrahedralStereo),
+    /// Cis/trans configuration about a double bond.
     DoubleBond(DoubleBondStereo),
+    /// Axial configuration about a bond, as in an atropisomer.
     Axis(AxisStereo),
 }
 
@@ -77,6 +85,8 @@ impl StereoElementKind {
         }
     }
 
+    /// Whether the assertion has a concrete orientation; `false` for an
+    /// explicitly unknown configuration.
     pub fn is_specified(&self) -> bool {
         match self {
             Self::Tetrahedral(stereo) => stereo.orientation.is_some(),
@@ -116,8 +126,10 @@ impl StereoElementKind {
     }
 }
 
+/// Tetrahedral configuration around one center atom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TetrahedralStereo {
+    /// The stereocenter.
     pub center: AtomId,
     /// Four distinct carriers in the order used by `orientation`. The explicit
     /// atom carriers are exactly the center's bonded neighbors.
@@ -126,19 +138,34 @@ pub struct TetrahedralStereo {
     pub orientation: Option<TetrahedralOrientation>,
 }
 
+/// Cis/trans configuration about one double bond, stated for one reference
+/// carrier at each endpoint.
+///
+/// Checked insertion requires a [`BondOrder::Double`] focus bond and stores
+/// the endpoints in ascending ID order, exchanging the carriers with them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DoubleBondStereo {
+    /// The double bond.
     pub bond: BondId,
+    /// One endpoint of `bond`.
     pub left: AtomId,
+    /// The other endpoint of `bond`.
     pub right: AtomId,
+    /// The reference at `left`: a neighbor other than `right`, or its implicit
+    /// hydrogen.
     pub left_carrier: StereoCarrier,
+    /// The reference at `right`: a neighbor other than `left`, or its implicit
+    /// hydrogen.
     pub right_carrier: StereoCarrier,
     /// `None` represents an explicit assertion of unknown configuration.
     pub orientation: Option<DoubleBondOrientation>,
 }
 
+/// Axial configuration about one bond, stated for one reference atom at each
+/// axis endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AxisStereo {
+    /// The bond whose endpoints define the axis.
     pub axis: BondId,
     /// Two explicit atom references, one bonded exclusively to each axis
     /// endpoint. Checked insertion canonicalizes endpoint and reference order.
@@ -147,11 +174,19 @@ pub struct AxisStereo {
     pub orientation: Option<AxisOrientation>,
 }
 
+/// One reference around a stereo focus.
+///
+/// Implicit carriers stand for a non-graph hydrogen or a lone pair of the focus
+/// atom they are listed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StereoCarrier {
+    /// A graph atom bonded to the focus.
     Atom(AtomId),
+    /// An implicit (non-graph) hydrogen of the focus atom.
     ImplicitHydrogen,
+    /// A lone pair of the focus atom, as at a tetrahedral nitrogen or sulfur.
+    /// Not accepted for double-bond or axis stereo.
     ImplicitLonePair,
 }
 
@@ -192,7 +227,9 @@ impl TetrahedralOrientation {
 /// This enum is closed: two references are either together or opposite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoubleBondOrientation {
+    /// The two references are on the same side (cis).
     Together,
+    /// The two references are on opposite sides (trans).
     Opposite,
 }
 
@@ -254,26 +291,49 @@ pub(crate) fn has_axis_stereo(molecule: &Molecule, axis: BondId) -> bool {
     })
 }
 
+/// A CIP stereodescriptor assigned to one stereo element.
+///
+/// Descriptors are derived perception, installed by CIP assignment; they are
+/// never part of represented stereo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StereoDescriptor {
+    /// `R` at a stereogenic center.
     R,
+    /// `S` at a stereogenic center.
     S,
+    /// `r` at a pseudoasymmetric center.
     LowerR,
+    /// `s` at a pseudoasymmetric center.
     LowerS,
+    /// `seqTrans` at a pseudoasymmetric double bond.
     SeqTrans,
+    /// `seqCis` at a pseudoasymmetric double bond.
     SeqCis,
+    /// `E` at a stereogenic double bond.
     E,
+    /// `Z` at a stereogenic double bond.
     Z,
+    /// `M` at a stereogenic axis.
     M,
+    /// `P` at a stereogenic axis.
     P,
+    /// `m` at a pseudoasymmetric axis.
     LowerM,
+    /// `p` at a pseudoasymmetric axis.
     LowerP,
 }
 
+/// An enhanced stereo group: stereo elements whose specified configurations
+/// are related as `kind` states.
+///
+/// A valid group has at least one member and no repeated member, and each
+/// element belongs to at most one group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoGroup {
+    /// How the members' configurations are related.
     pub kind: StereoGroupKind,
+    /// The member stereo elements; order carries no chemical meaning.
     pub members: Vec<StereoElementId>,
 }
 

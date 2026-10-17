@@ -65,9 +65,23 @@ use super::{
     AtomExpression, AtomPredicate, BondExpression, QueryStereoConstraint, QueryStereoGroup,
 };
 
-fixed_u32_id!(QueryAtomId, "query atom");
-fixed_u32_id!(QueryBondId, "query bond");
+fixed_u32_id!(
+    /// A query-local atom ID, owned by one [`QueryGraph`] or its builder.
+    ///
+    /// IDs are dense indices `0..atom_count` in insertion order.
+    QueryAtomId,
+    "query atom"
+);
+fixed_u32_id!(
+    /// A query-local bond ID, owned by one [`QueryGraph`] or its builder.
+    ///
+    /// IDs are dense indices `0..bond_count` in insertion order.
+    QueryBondId,
+    "query bond"
+);
 
+/// One query atom: a boolean expression over target-atom predicates and an
+/// optional atom-map label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryAtom {
     expression: AtomExpression,
@@ -84,11 +98,14 @@ impl QueryAtom {
         self.stereo_frame.as_ref()
     }
 
+    /// The predicate expression a target atom must satisfy.
     pub const fn expression(&self) -> &AtomExpression {
         &self.expression
     }
 }
 
+/// One query bond: two endpoint query atoms and a boolean expression over
+/// target-bond predicates. Endpoint order carries no matching meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryBond {
     a: QueryAtomId,
@@ -97,18 +114,22 @@ pub struct QueryBond {
 }
 
 impl QueryBond {
+    /// The first endpoint.
     pub const fn a(&self) -> QueryAtomId {
         self.a
     }
 
+    /// The second endpoint.
     pub const fn b(&self) -> QueryAtomId {
         self.b
     }
 
+    /// Both endpoints as `(a, b)`.
     pub const fn endpoints(&self) -> (QueryAtomId, QueryAtomId) {
         (self.a, self.b)
     }
 
+    /// The predicate expression a target bond must satisfy.
     pub const fn expression(&self) -> &BondExpression {
         &self.expression
     }
@@ -141,6 +162,8 @@ pub struct QueryGraph {
 }
 
 impl QueryGraph {
+    /// Enhanced stereo groups over tetrahedral query centers, in insertion
+    /// order.
     pub fn stereo_groups(&self) -> &[QueryStereoGroup] {
         &self.stereo_groups
     }
@@ -214,18 +237,24 @@ impl QueryGraph {
             })
     }
 
+    /// Local stereo constraints, ordered tetrahedral before double-bond and
+    /// then by focus ID; at most one per focus.
     pub fn stereo_constraints(&self) -> &[QueryStereoConstraint] {
         &self.stereo
     }
 
+    /// Starts an empty [`QueryGraphBuilder`].
     pub fn builder() -> QueryGraphBuilder {
         QueryGraphBuilder::new()
     }
 
+    /// The number of outer query atoms, at least one. Atoms of recursive
+    /// subqueries are not counted.
     pub fn atom_count(&self) -> usize {
         self.atoms.len()
     }
 
+    /// The number of outer query bonds.
     pub fn bond_count(&self) -> usize {
         self.bonds.len()
     }
@@ -240,10 +269,12 @@ impl QueryGraph {
         self.bonds.get(id.index())
     }
 
+    /// Query atom IDs in ascending order.
     pub fn atom_ids(&self) -> impl Iterator<Item = QueryAtomId> + '_ {
         (0..=u32::MAX).take(self.atoms.len()).map(QueryAtomId::new)
     }
 
+    /// Query bond IDs in ascending order.
     pub fn bond_ids(&self) -> impl Iterator<Item = QueryBondId> + '_ {
         (0..=u32::MAX).take(self.bonds.len()).map(QueryBondId::new)
     }
@@ -295,6 +326,7 @@ pub struct QueryGraphBuilder {
 }
 
 impl QueryGraphBuilder {
+    /// An empty builder.
     pub const fn new() -> Self {
         Self {
             atoms: Vec::new(),
@@ -305,6 +337,7 @@ impl QueryGraphBuilder {
         }
     }
 
+    /// An empty builder with room for `atoms` atoms and `bonds` bonds.
     pub fn with_capacity(atoms: usize, bonds: usize) -> Self {
         Self {
             atoms: Vec::with_capacity(atoms),
@@ -315,6 +348,11 @@ impl QueryGraphBuilder {
         }
     }
 
+    /// Adds an untagged query atom and returns its ID.
+    ///
+    /// # Errors
+    ///
+    /// [`QueryGraphError::LimitExceeded`] when no query atom ID is left.
     pub fn add_atom(&mut self, expression: AtomExpression) -> Result<QueryAtomId, QueryGraphError> {
         let raw = crate::molecule::checked_raw_id(self.atoms.len()).map_err(|_| {
             QueryGraphError::LimitExceeded(LimitExceeded::first_beyond(
@@ -361,6 +399,14 @@ impl QueryGraphBuilder {
         Ok(())
     }
 
+    /// Adds a query bond between two existing atoms and returns its ID.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryGraphError::InvalidAtomId`] when an endpoint names no atom.
+    /// - [`QueryGraphError::SelfBond`] when `a == b`.
+    /// - [`QueryGraphError::DuplicateBond`] when the atoms are already bonded.
+    /// - [`QueryGraphError::LimitExceeded`] when no query bond ID is left.
     pub fn add_bond(
         &mut self,
         a: QueryAtomId,
@@ -413,6 +459,20 @@ impl QueryGraphBuilder {
         Ok(())
     }
 
+    /// Validates and publishes the query graph.
+    ///
+    /// Stereo constraints and carrier frames are revalidated against the final
+    /// adjacency. The query need not be connected.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryGraphError::EmptyGraph`] when no atom was added.
+    /// - [`QueryGraphError::InvalidStereo`] when a constraint or frame no
+    ///   longer covers its center's neighbors, or an atom with a tetrahedral
+    ///   predicate has no carrier frame.
+    /// - [`QueryGraphError::LimitExceeded`] when the query, counting recursive
+    ///   subqueries, exceeds [`MAX_QUERY_RECURSION_DEPTH`],
+    ///   [`MAX_QUERY_TOTAL_ATOMS`], or [`MAX_QUERY_TOTAL_EXPRESSION_NODES`].
     pub fn build(self) -> Result<QueryGraph, QueryGraphError> {
         if self.atoms.is_empty() {
             return Err(QueryGraphError::EmptyGraph);

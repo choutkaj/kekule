@@ -42,6 +42,12 @@ impl PartialEq for Molecule {
     }
 }
 
+/// Mutable access to one live atom of a draft, from
+/// [`MoleculeEditor::atom_mut`].
+///
+/// Obtaining the guard clears installed perception and owner properties
+/// immediately, even if no change is made or the guard is forgotten. Read the
+/// atom through `Deref` and change it with the setters or `DerefMut`.
 pub struct AtomMut<'a> {
     molecule: &'a mut Molecule,
     id: AtomId,
@@ -109,6 +115,11 @@ impl AtomMut<'_> {
     }
 }
 
+/// Order-only mutable access to one live bond of a draft, from
+/// [`MoleculeEditor::bond_mut`].
+///
+/// Endpoints stay fixed so adjacency remains consistent; read the bond
+/// through `Deref` and change its order with [`BondMut::set_order`].
 pub struct BondMut<'a> {
     molecule: &'a mut Molecule,
     id: BondId,
@@ -168,6 +179,7 @@ impl Deref for Molecule {
 }
 
 impl Molecule {
+    /// The authoritative represented chemistry, also reachable through `Deref`.
     pub fn graph(&self) -> &Graph {
         &self.graph
     }
@@ -319,6 +331,7 @@ impl Molecule {
         MoleculePropertiesMut::new(&mut self.properties, &self.graph.atoms, &self.graph.bonds)
     }
 
+    /// The installed derived chemistry; sections not yet perceived are absent.
     pub fn perception(&self) -> &Perception {
         &self.perception
     }

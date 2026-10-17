@@ -47,33 +47,42 @@ impl MoleculeCorrespondence {
         }
     }
 
+    /// The counterpart of a source atom, or `None` when it has none.
     pub fn atom(&self, source: AtomId) -> Option<AtomId> {
         self.atoms.get(&source).copied()
     }
+    /// The counterpart of a source bond, or `None` when it has none.
     pub fn bond(&self, source: BondId) -> Option<BondId> {
         self.bonds.get(&source).copied()
     }
+    /// The counterpart of a source stereo element, or `None` when it has none.
     pub fn stereo_element(&self, source: StereoElementId) -> Option<StereoElementId> {
         self.stereo_elements.get(&source).copied()
     }
+    /// The counterpart of a source stereo group, or `None` when it has none.
     pub fn stereo_group(&self, source: StereoGroupId) -> Option<StereoGroupId> {
         self.stereo_groups.get(&source).copied()
     }
+    /// Every atom entry, keyed by source ID.
     pub fn atoms(&self) -> &BTreeMap<AtomId, AtomId> {
         &self.atoms
     }
+    /// Every bond entry, keyed by source ID.
     pub fn bonds(&self) -> &BTreeMap<BondId, BondId> {
         &self.bonds
     }
+    /// Every stereo element entry, keyed by source ID.
     pub fn stereo_elements(&self) -> &BTreeMap<StereoElementId, StereoElementId> {
         &self.stereo_elements
     }
+    /// Every stereo group entry, keyed by source ID.
     pub fn stereo_groups(&self) -> &BTreeMap<StereoGroupId, StereoGroupId> {
         &self.stereo_groups
     }
 }
 
 impl MoleculeEditor {
+    /// Whether the draft has no live atoms.
     pub fn is_empty(&self) -> bool {
         self.atom_count() == 0
     }
@@ -157,6 +166,14 @@ impl MoleculeEditor {
         Ok(())
     }
 
+    /// Rewires a bond to new endpoints, keeping its order; see
+    /// [`Self::replace_bond`] for the stereo it removes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::replace_bond`]: [`MoleculeError::InvalidBondId`],
+    /// [`MoleculeError::InvalidAtomId`], [`MoleculeError::SelfBond`], or
+    /// [`MoleculeError::DuplicateBond`], leaving the draft unchanged.
     pub fn set_bond_endpoints(&mut self, id: BondId, a: AtomId, b: AtomId) -> Result<()> {
         self.replace_bond(id, Bond::new(a, b, self.require_bond(id)?.order))?;
         Ok(())

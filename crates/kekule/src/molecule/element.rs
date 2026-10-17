@@ -1,6 +1,11 @@
 use crate::units::{Quantity, ANGSTROM};
 use std::fmt;
 
+/// A chemical element, atomic number 1 (H) to 118 (Og).
+///
+/// Elements order by atomic number and display as their IUPAC symbol.
+/// Construct one from the associated constants, [`Element::from_atomic_number`],
+/// [`Element::from_symbol`], [`str::parse`], or [`TryFrom<u8>`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Element {
     atomic_number: u8,
@@ -278,6 +283,7 @@ impl Element {
         })
     }
 
+    /// The atomic number, from 1 to 118.
     pub const fn atomic_number(self) -> u8 {
         self.atomic_number
     }
@@ -399,6 +405,7 @@ impl Element {
         }
     }
 
+    /// The IUPAC symbol, such as `"Cl"`.
     pub fn symbol(self) -> &'static str {
         ELEMENT_SYMBOLS
             .get(self.atomic_number as usize)
