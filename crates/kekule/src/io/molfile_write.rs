@@ -93,26 +93,61 @@ impl MolfileWriteOptions {
 }
 
 /// What one Molfile CTAB describes: a coordinate-free molecule written with
-/// zero coordinates, or a geometry-bearing model.
+/// zero coordinates, or a geometry-bearing model, with the title written on
+/// its first header line.
 ///
-/// Convert from `&Molecule`, `&Model`, or any borrowed model view through
-/// [`Self::model`]. Specified stereo requires coordinates.
+/// Convert from `&Molecule` or `&Model`, or build one with [`Self::molecule`]
+/// or [`Self::model`], which accepts any borrowed model view. Specified stereo
+/// requires coordinates.
+///
+/// ```
+/// use kekule::molfile::{self, MolfileSource};
+/// let ethanol = kekule::smiles::to_molecules("CCO")?.remove(0);
+/// let text = molfile::write(MolfileSource::molecule(&ethanol).with_title("ethanol"), Default::default())?;
+/// assert_eq!(molfile::parse_str(&text, Default::default())?.header().title(), "ethanol");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
-#[non_exhaustive]
-pub enum MolfileSource<'a> {
+pub struct MolfileSource<'a> {
+    content: MolfileContent<'a>,
+    title: &'a str,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MolfileContent<'a> {
     Molecule(&'a Molecule),
     Model(ModelView<'a>),
 }
 
 impl<'a> MolfileSource<'a> {
+    /// A coordinate-free molecule, written with zero coordinates.
+    pub const fn molecule(molecule: &'a Molecule) -> Self {
+        Self {
+            content: MolfileContent::Molecule(molecule),
+            title: "",
+        }
+    }
+
+    /// A geometry-bearing model, ensemble member, or trajectory frame.
     pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
-        Self::Model(model.as_model_view())
+        Self {
+            content: MolfileContent::Model(model.as_model_view()),
+            title: "",
+        }
+    }
+
+    /// Writes `title` on the first header line; empty by default. Writing
+    /// fails for a title spanning lines.
+    #[must_use]
+    pub const fn with_title(mut self, title: &'a str) -> Self {
+        self.title = title;
+        self
     }
 }
 
 impl<'a> From<&'a Molecule> for MolfileSource<'a> {
     fn from(molecule: &'a Molecule) -> Self {
-        Self::Molecule(molecule)
+        Self::molecule(molecule)
     }
 }
 
@@ -129,11 +164,19 @@ pub(crate) fn write_molfile<'a>(
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,
 ) -> Result<String, FormatError> {
-    match source.into() {
-        MolfileSource::Molecule(molecule) => {
-            render_molecule(&MolfileRecord::molecule(molecule)?, "", options.version)
-        }
-        MolfileSource::Model(model) => {
+    let source = source.into();
+    if source.title.contains(['\r', '\n']) {
+        return Err(MOLFILE_WRITE
+            .unsupported("Molfile titles cannot contain line breaks")
+            .with_detail(crate::diagnostics::FormatErrorDetail::Title));
+    }
+    match source.content {
+        MolfileContent::Molecule(molecule) => render_molecule(
+            &MolfileRecord::molecule(molecule)?,
+            source.title,
+            options.version,
+        ),
+        MolfileContent::Model(model) => {
             check_cell(model, options.cell)?;
             check_structure_state(
                 Format::Molfile,
@@ -141,7 +184,7 @@ pub(crate) fn write_molfile<'a>(
                 Some(options.ensemble_metadata),
                 options.frame_metadata,
             )?;
-            render_model(model, "", options.version)
+            render_model(model, source.title, options.version)
         }
     }
 }

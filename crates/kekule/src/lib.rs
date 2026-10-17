@@ -344,29 +344,75 @@ pub mod smiles {
     }
 
     /// What one SMILES record describes: one connected molecule, or every
-    /// molecule occurrence of a topology joined with `.`.
+    /// molecule occurrence of a topology joined with `.`, with an optional
+    /// record name written after the SMILES as `.smi` files carry it.
+    ///
+    /// Convert from `&Molecule`, `&Topology`, or `&Arc<Topology>`, or build
+    /// one with [`Self::molecule`] or [`Self::topology`] to add a name.
+    ///
+    /// ```
+    /// use kekule::smiles::{self, SmilesSource};
+    /// let ethanol = smiles::to_molecules("CCO")?.remove(0);
+    /// let line = smiles::write(SmilesSource::molecule(&ethanol).with_name("ethanol"), Default::default())?;
+    /// assert_eq!(line, "CCO ethanol");
+    /// let document = smiles::parse_str(&line, Default::default())?;
+    /// assert_eq!(document.name(), Some("ethanol"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[derive(Debug, Clone, Copy)]
-    #[non_exhaustive]
-    pub enum SmilesSource<'a> {
+    pub struct SmilesSource<'a> {
+        content: SmilesContent<'a>,
+        name: Option<&'a str>,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum SmilesContent<'a> {
         Molecule(&'a Molecule),
         Topology(&'a Topology),
     }
 
+    impl<'a> SmilesSource<'a> {
+        /// One connected molecule.
+        pub const fn molecule(molecule: &'a Molecule) -> Self {
+            Self {
+                content: SmilesContent::Molecule(molecule),
+                name: None,
+            }
+        }
+
+        /// Every molecule occurrence of a topology, joined with `.`.
+        pub const fn topology(topology: &'a Topology) -> Self {
+            Self {
+                content: SmilesContent::Topology(topology),
+                name: None,
+            }
+        }
+
+        /// Writes `name` after the SMILES, separated by one space. Writing
+        /// fails for an empty name, one with surrounding whitespace, or one
+        /// spanning lines, which would not read back as the same name.
+        #[must_use]
+        pub const fn with_name(mut self, name: &'a str) -> Self {
+            self.name = Some(name);
+            self
+        }
+    }
+
     impl<'a> From<&'a Molecule> for SmilesSource<'a> {
         fn from(molecule: &'a Molecule) -> Self {
-            Self::Molecule(molecule)
+            Self::molecule(molecule)
         }
     }
 
     impl<'a> From<&'a Topology> for SmilesSource<'a> {
         fn from(topology: &'a Topology) -> Self {
-            Self::Topology(topology)
+            Self::topology(topology)
         }
     }
 
     impl<'a> From<&'a Arc<Topology>> for SmilesSource<'a> {
         fn from(topology: &'a Arc<Topology>) -> Self {
-            Self::Topology(topology)
+            Self::topology(topology)
         }
     }
 
@@ -403,16 +449,32 @@ pub mod smiles {
         source: impl Into<SmilesSource<'a>>,
         options: SmilesWriteOptions,
     ) -> Result<String, FormatError> {
-        match source.into() {
-            SmilesSource::Molecule(molecule) => match options.mode {
+        let source = source.into();
+        if let Some(name) = source.name {
+            if name.is_empty() || name.trim() != name || name.contains(['\r', '\n']) {
+                return Err(FormatError::write(
+                    Format::Smiles,
+                    DiagnosticKind::Unsupported,
+                    "SMILES record names must be nonempty, trimmed, and on one line",
+                )
+                .with_detail(crate::diagnostics::FormatErrorDetail::Title));
+            }
+        }
+        let mut record = match source.content {
+            SmilesContent::Molecule(molecule) => match options.mode {
                 SmilesWriteMode::Ordinary => crate::io::write_smiles(molecule),
                 SmilesWriteMode::Isomeric => crate::io::write_isomeric_smiles(molecule),
                 SmilesWriteMode::Canonical => crate::io::write_canonical_smiles(molecule),
             },
-            SmilesSource::Topology(topology) => {
+            SmilesContent::Topology(topology) => {
                 crate::io::smiles::write_topology(topology, options)
             }
+        }?;
+        if let Some(name) = source.name {
+            record.push(' ');
+            record.push_str(name);
         }
+        Ok(record)
     }
 
     /// Writes one SMILES record as a line terminated by `\n`, so repeated

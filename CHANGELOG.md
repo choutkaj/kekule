@@ -105,6 +105,15 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** `smiles::SmilesSource` and `molfile::MolfileSource` are
+  structs with private fields, like `sdf::SdfRecordSource`. Build them with
+  `SmilesSource::molecule`/`topology` and `MolfileSource::molecule`/`model`
+  (or the existing `From` conversions) instead of the enum variants.
+  `SmilesSource::with_name` writes a `.smi` record name after the SMILES and
+  `MolfileSource::with_title` writes the Molfile title line, so both now
+  round-trip; before, Molfile titles were always empty and SMILES names could
+  not be written. Names that would not read back (empty, padded, or
+  multi-line) and multi-line titles fail with `FormatErrorDetail::Title`.
 - **Breaking:** Represented stereo has one validator (ARCHITECTURE.md,
   "Represented and derived chemistry"), used by explicit stereo edits,
   publication and `MoleculeEditor::validate`. The public

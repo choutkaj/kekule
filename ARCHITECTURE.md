@@ -587,8 +587,10 @@ writers stream into the caller's writer without buffering it, as trajectory
 codecs do; callers wrap unbuffered sinks, and only path writers buffer. The
 exception is the Molfile/SDF writer, which renders one CTAB before emitting it,
 because automatic version selection learns whether V2000 can hold a record only
-by rendering it; SDF still streams record by record. Each
-source type converts from the inputs that format can represent: molecules,
+by rendering it; SDF still streams record by record. Each source type
+is a struct with private fields, constructors for the inputs it accepts, and
+the record's title or name (`with_title`, `with_name`), and it converts from
+the inputs that format can represent: molecules,
 models, collection items, interpreted records, or mmCIF block sources carrying
 classifications or reports. Models and collection items share a borrowed
 structure path. Coordinate-bearing writers emit atoms in dense order.

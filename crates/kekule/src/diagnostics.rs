@@ -416,7 +416,8 @@ pub enum FormatErrorDetail {
         /// The model ID.
         model_id: String,
     },
-    /// An SDF record title cannot be written.
+    /// A record title or name cannot be written: an SDF or Molfile title, or
+    /// a SMILES record name.
     Title,
     /// An SDF data field cannot be written, or holds an invalid ensemble
     /// member value.

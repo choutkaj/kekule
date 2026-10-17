@@ -1434,3 +1434,57 @@ fn streaming_writers_report_structured_io_failures() {
         expected(Format::Mmcif)
     );
 }
+
+#[test]
+fn molfile_titles_and_smiles_names_round_trip_and_reject_unreadable_text() {
+    let ethanol = molecule("CCO");
+    let positioned = model("CCO", &[[0.0; 3], [1.5, 0.0, 0.0], [2.0, 1.0, 0.0]]);
+    for source in [
+        molfile::MolfileSource::molecule(&ethanol),
+        molfile::MolfileSource::model(&positioned),
+    ] {
+        let text = molfile::write(source.with_title("ethanol 1"), Default::default()).unwrap();
+        let document = molfile::parse_str(&text, Default::default()).unwrap();
+        assert_eq!(document.header().title(), "ethanol 1");
+        assert_eq!(
+            described(molfile::write(source.with_title("a\nb"), Default::default()).unwrap_err()),
+            (
+                DiagnosticKind::Unsupported,
+                Some(FormatErrorDetail::Title),
+                "Molfile titles cannot contain line breaks".to_owned(),
+            )
+        );
+    }
+
+    let named = smiles::SmilesSource::molecule(&ethanol).with_name("ethanol 1");
+    let line = smiles::write(named, SmilesWriteOptions::default()).unwrap();
+    assert_eq!(line, "CCO ethanol 1");
+    let document = smiles::parse_str(&line, Default::default()).unwrap();
+    assert_eq!(document.name(), Some("ethanol 1"));
+    let topology = smiles::to_topology("CCO.O").unwrap();
+    assert_eq!(
+        smiles::write(
+            smiles::SmilesSource::topology(&topology).with_name("solution"),
+            SmilesWriteOptions::default()
+        )
+        .unwrap(),
+        "CCO.O solution"
+    );
+    for name in ["", " padded", "two\nlines"] {
+        assert_eq!(
+            described(
+                smiles::write(
+                    smiles::SmilesSource::molecule(&ethanol).with_name(name),
+                    SmilesWriteOptions::default()
+                )
+                .unwrap_err()
+            ),
+            (
+                DiagnosticKind::Unsupported,
+                Some(FormatErrorDetail::Title),
+                "SMILES record names must be nonempty, trimmed, and on one line".to_owned(),
+            ),
+            "{name:?}"
+        );
+    }
+}
