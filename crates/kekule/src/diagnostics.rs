@@ -4,7 +4,22 @@
 //! a structured [`DiagnosticKind`] that callers can match on, and a
 //! [`SourceLocation`] in the original input. Messages remain human-readable
 //! detail, not an API contract. Writers share [`UnrepresentablePolicy`] for
-//! state a format cannot represent.
+//! state a format cannot represent, and readers share [`UnsupportedContent`]
+//! for valid content Kekule does not support.
+//!
+//! Bounded operations, in formats and elsewhere, report an exhausted resource
+//! limit as a [`LimitExceeded`] naming the counted [`Resource`].
+//!
+//! # Example
+//!
+//! ```
+//! use kekule::diagnostics::{DiagnosticKind, Format, FormatStage};
+//!
+//! let error = kekule::smiles::to_molecules("C1CC").unwrap_err();
+//! assert_eq!(error.format(), Format::Smiles);
+//! assert_eq!(error.stage(), FormatStage::Parse);
+//! assert_eq!(error.kind(), DiagnosticKind::Syntax);
+//! ```
 
 use std::fmt;
 use std::sync::Arc;
@@ -36,10 +51,13 @@ impl SourceLocation {
         }
     }
 
+    /// The 1-based line number.
     pub const fn line(&self) -> usize {
         self.line
     }
 
+    /// The 1-based byte column within the line, or `None` when only the line
+    /// is known.
     pub const fn column(&self) -> Option<usize> {
         self.column
     }

@@ -1,5 +1,33 @@
 //! Dependency-light three-dimensional geometry shared by structure, analysis,
 //! trajectory, and modelling code.
+//!
+//! [`Point3`], [`Vector3`] and [`Matrix3`] are bare Cartesian values; wrap them
+//! in a [`Quantity`] to give them a unit. [`RigidTransform`] is a validated
+//! proper rotation plus translation, [`PeriodicCell`] a validated simulation
+//! cell, and [`PeriodicGeometry`] its prepared lattice for fractional
+//! coordinates and exact nearest-image searches. Cell and lattice outputs use
+//! the canonical length unit (nm).
+//!
+//! # Example
+//!
+//! ```
+//! use kekule::geometry::{PeriodicCell, PeriodicGeometry, Point3, Vector3};
+//! use kekule::units::{Quantity, NANOMETER};
+//!
+//! let a = Point3::new(0.5, 0.0, 0.0);
+//! let b = Point3::new(1.75, 0.0, 0.0);
+//! assert_eq!(b - a, Vector3::new(1.25, 0.0, 0.0));
+//!
+//! let cell = PeriodicCell::orthorhombic(
+//!     Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
+//!     [true; 3],
+//! )?;
+//! let lattice = PeriodicGeometry::new(cell)?;
+//! let (image, shift) = lattice.nearest_image(Quantity::new(b - a, NANOMETER))?;
+//! assert_eq!(shift, [1, 0, 0]);
+//! assert_eq!(image, Quantity::new(Vector3::new(-0.75, 0.0, 0.0), NANOMETER));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod periodic;
 pub use periodic::{PeriodicGeometry, PeriodicGeometryError, MAX_LATTICE_IMAGES};
@@ -10,22 +38,31 @@ use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 use crate::units::{Quantity, ScaleValue, UnitError, CANONICAL_LENGTH_UNIT, CUBIC_NANOMETER};
 
 /// A Cartesian point.
+///
+/// The coordinates are bare numbers; a [`Quantity<Point3>`](Quantity) carries
+/// their length unit.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Point3 {
+    /// The x coordinate.
     pub x: f64,
+    /// The y coordinate.
     pub y: f64,
+    /// The z coordinate.
     pub z: f64,
 }
 
 impl Point3 {
+    /// The point with coordinates `(x, y, z)`.
     pub const fn new(x: f64, y: f64, z: f64) -> Self {
         Self { x, y, z }
     }
 
+    /// The point `(0, 0, 0)`.
     pub const fn origin() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }
 
+    /// Whether every coordinate is finite (neither NaN nor infinite).
     pub fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }
@@ -39,31 +76,42 @@ impl ScaleValue for Point3 {
     }
 }
 
-/// A Cartesian vector.
+/// A Cartesian vector, such as the displacement between two [`Point3`]s.
+///
+/// The components are bare numbers; a [`Quantity<Vector3>`](Quantity) carries
+/// their unit.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Vector3 {
+    /// The x component.
     pub x: f64,
+    /// The y component.
     pub y: f64,
+    /// The z component.
     pub z: f64,
 }
 
 impl Vector3 {
+    /// The vector with components `(x, y, z)`.
     pub const fn new(x: f64, y: f64, z: f64) -> Self {
         Self { x, y, z }
     }
 
+    /// The zero vector.
     pub const fn zero() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }
 
+    /// Whether every component is finite (neither NaN nor infinite).
     pub fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }
 
+    /// The dot product `self · other`.
     pub fn dot(self, other: Self) -> f64 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
+    /// The right-handed cross product `self × other`.
     pub fn cross(self, other: Self) -> Self {
         Self::new(
             self.y * other.z - self.z * other.y,
@@ -72,6 +120,7 @@ impl Vector3 {
         )
     }
 
+    /// The squared Euclidean magnitude, `self · self`.
     pub fn norm_squared(self) -> f64 {
         self.dot(self)
     }
@@ -181,10 +230,12 @@ pub struct Matrix3 {
 }
 
 impl Matrix3 {
+    /// The matrix whose columns are `a`, `b` and `c`, in order.
     pub const fn from_columns(a: Vector3, b: Vector3, c: Vector3) -> Self {
         Self { columns: [a, b, c] }
     }
 
+    /// The identity matrix.
     pub const fn identity() -> Self {
         Self::from_columns(
             Vector3::new(1.0, 0.0, 0.0),
@@ -193,18 +244,23 @@ impl Matrix3 {
         )
     }
 
+    /// The three columns, in order.
     pub const fn columns(self) -> [Vector3; 3] {
         self.columns
     }
 
+    /// Whether every entry is finite (neither NaN nor infinite).
     pub fn is_finite(self) -> bool {
         self.columns.into_iter().all(Vector3::is_finite)
     }
 
+    /// The determinant, computed as the triple product `a · (b × c)` of the
+    /// columns.
     pub fn determinant(self) -> f64 {
         self.columns[0].dot(self.columns[1].cross(self.columns[2]))
     }
 
+    /// The transposed matrix.
     pub fn transpose(self) -> Self {
         let [a, b, c] = self.columns;
         Self::from_columns(
@@ -214,10 +270,12 @@ impl Matrix3 {
         )
     }
 
+    /// The matrix-vector product `self * vector`.
     pub fn transform_vector(self, vector: Vector3) -> Vector3 {
         self.columns[0] * vector.x + self.columns[1] * vector.y + self.columns[2] * vector.z
     }
 
+    /// The matrix product `self * other`, which applies `other` first.
     pub fn multiply(self, other: Self) -> Self {
         let [a, b, c] = other.columns;
         Self::from_columns(
@@ -251,7 +309,17 @@ pub struct PeriodicCell {
 }
 
 impl PeriodicCell {
-    /// Creates an orthorhombic cell from positive axis lengths.
+    /// Creates an orthorhombic cell from positive axis lengths, with the cell
+    /// vectors along x, y and z.
+    ///
+    /// `periodic_axes[i]` marks whether the cell repeats along vector `i`.
+    ///
+    /// # Errors
+    ///
+    /// [`PeriodicCellError::Unit`] when `lengths` is not a length,
+    /// [`PeriodicCellError::InvalidOrthorhombicLengths`] when a length is not
+    /// finite and strictly positive, and [`PeriodicCellError::NoPeriodicAxes`]
+    /// when no axis is periodic.
     pub fn orthorhombic(
         lengths: Quantity<Vector3>,
         periodic_axes: [bool; 3],
@@ -274,6 +342,16 @@ impl PeriodicCell {
     }
 
     /// Creates an orthorhombic or triclinic cell from three basis vectors.
+    ///
+    /// `periodic_axes[i]` marks whether the cell repeats along `vectors[i]`.
+    ///
+    /// # Errors
+    ///
+    /// [`PeriodicCellError::NoPeriodicAxes`] when no axis is periodic,
+    /// [`PeriodicCellError::Unit`] when `vectors` is not a length,
+    /// [`PeriodicCellError::NonFiniteVector`] when a component is not finite,
+    /// and [`PeriodicCellError::DegenerateVectors`] when the vectors span zero
+    /// or non-finite volume.
     pub fn new(
         vectors: Quantity<[Vector3; 3]>,
         periodic_axes: [bool; 3],
@@ -296,19 +374,24 @@ impl PeriodicCell {
         })
     }
 
+    /// The three cell vectors, in the canonical length unit (nm).
     pub fn vectors(self) -> Quantity<[Vector3; 3]> {
         Quantity::new(self.vectors.columns(), CANONICAL_LENGTH_UNIT)
     }
 
+    /// Whether the cell repeats along each of its three vectors; at least one
+    /// is `true`.
     pub const fn periodic_axes(self) -> [bool; 3] {
         self.periodic_axes
     }
 
-    /// The signed volume `a · (b × c)`; negative for a left-handed basis.
+    /// The signed volume `a · (b × c)` in nm³; negative for a left-handed
+    /// basis.
     pub fn signed_volume(self) -> Quantity<f64> {
         Quantity::new(self.vectors.determinant(), CUBIC_NANOMETER)
     }
 
+    /// Whether the cell vectors lie exactly along x, y and z, in that order.
     pub fn is_orthorhombic(self) -> bool {
         let [a, b, c] = self.vectors.columns();
         a.y == 0.0 && a.z == 0.0 && b.x == 0.0 && b.z == 0.0 && c.x == 0.0 && c.y == 0.0
@@ -323,6 +406,7 @@ pub struct RigidTransform {
 }
 
 impl RigidTransform {
+    /// The transform that leaves every point unchanged.
     pub const fn identity() -> Self {
         Self {
             rotation: Matrix3::identity(),
@@ -331,6 +415,16 @@ impl RigidTransform {
     }
 
     /// A rotation followed by a translation of any length unit.
+    ///
+    /// The rotation must be orthonormal with determinant +1, within an
+    /// absolute tolerance of 1e-10 per entry.
+    ///
+    /// # Errors
+    ///
+    /// [`RigidTransformError::Unit`] when `translation` is not a length,
+    /// [`RigidTransformError::NonFinite`] when a component is not finite, and
+    /// [`RigidTransformError::NonRigidRotation`] when `rotation` is not a
+    /// proper rotation.
     pub fn new(
         rotation: Matrix3,
         translation: Quantity<Vector3>,
@@ -371,15 +465,20 @@ impl RigidTransform {
         })
     }
 
+    /// The proper rotation, applied before the translation.
     pub const fn rotation(self) -> Matrix3 {
         self.rotation
     }
 
-    /// The translation, in the canonical length unit.
+    /// The translation, in the canonical length unit (nm).
     pub fn translation(self) -> Quantity<Vector3> {
         Quantity::new(self.translation, CANONICAL_LENGTH_UNIT)
     }
 
+    /// Rotates `point` about the origin, then translates it.
+    ///
+    /// `point` is taken to be in the canonical length unit (nm), the unit of
+    /// [`Self::translation`].
     pub fn transform_point(self, point: Point3) -> Point3 {
         let rotated = self
             .rotation
@@ -391,6 +490,7 @@ impl RigidTransform {
         )
     }
 
+    /// Rotates `vector`; a displacement is unaffected by the translation.
     pub fn transform_vector(self, vector: Vector3) -> Vector3 {
         self.rotation.transform_vector(vector)
     }

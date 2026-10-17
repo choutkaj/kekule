@@ -16,6 +16,36 @@
 //! Properties are annotations, not represented graph chemistry. Changing a
 //! generic property does not change molecular identity or trigger chemical
 //! perception.
+//!
+//! Every column of a table has one type, and a real column one storage unit;
+//! [`PropertyValue::Real`] values written to it are converted to that unit.
+//! Columns whose cells are all missing are removed rather than stored.
+//!
+//! # Example
+//!
+//! ```
+//! use kekule::molecule::AtomId;
+//! use kekule::properties::{PropertyKey, PropertyValue};
+//! use kekule::units::{ELEMENTARY_CHARGE};
+//!
+//! let mut molecule = kekule::smiles::to_molecules("CO")?.remove(0);
+//! let charge = PropertyKey::new("partial_charge")?;
+//! let oxygen = AtomId::new(1);
+//! molecule.properties_mut().atoms_mut().set_value(
+//!     charge.clone(),
+//!     oxygen,
+//!     Some(PropertyValue::real(-0.5, ELEMENTARY_CHARGE)?),
+//! )?;
+//!
+//! let atoms = molecule.properties().atoms();
+//! assert_eq!(atoms.len(), 2);
+//! assert_eq!(
+//!     atoms.value(&charge, oxygen)?,
+//!     Some(PropertyValue::Real { value: -0.5, unit: ELEMENTARY_CHARGE }),
+//! );
+//! assert_eq!(atoms.value(&charge, AtomId::new(0))?, None);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -28,13 +58,23 @@ use crate::topology::{
 };
 use crate::units::{Unit, UnitError};
 
+/// Maximum length of a [`PropertyKey`], in bytes.
 pub const MAX_PROPERTY_KEY_LEN: usize = 128;
 
 /// A validated, deterministic property identifier.
+///
+/// A key is 1 to [`MAX_PROPERTY_KEY_LEN`] ASCII bytes: a letter or `_`,
+/// followed by letters, digits, `_`, `-` or `.`. Keys order and compare
+/// byte-wise.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PropertyKey(String);
 
 impl PropertyKey {
+    /// Validates `value` as a key.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::InvalidKey`] when `value` is not a valid key.
     pub fn new(value: impl Into<String>) -> Result<Self, PropertyError> {
         let value = value.into();
         if !valid_property_key(&value) {
@@ -43,6 +83,7 @@ impl PropertyKey {
         Ok(Self(value))
     }
 
+    /// The key text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -97,12 +138,25 @@ fn valid_property_key(value: &str) -> bool {
 }
 
 /// One generic scalar annotation.
+///
+/// Stored real values are finite; [`Self::real`] validates one, and storing
+/// a value validates it.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PropertyValue {
+    /// A boolean.
     Bool(bool),
+    /// A signed integer.
     Int(i64),
-    Real { value: f64, unit: Unit },
+    /// A real number with its physical unit.
+    Real {
+        /// The magnitude, in `unit`.
+        value: f64,
+        /// The unit of `value`; [`DIMENSIONLESS`](crate::units::DIMENSIONLESS)
+        /// for a pure number.
+        unit: Unit,
+    },
+    /// A UTF-8 string.
     String(String),
 }
 
@@ -120,6 +174,12 @@ impl PropertyValue {
         }
     }
 
+    /// A [`Self::Real`] value.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::NonFiniteValue`] with `index: None` when `value` is NaN
+    /// or infinite.
     pub fn real(value: f64, unit: Unit) -> Result<Self, PropertyError> {
         let value = Self::Real { value, unit };
         value.validate()?;
@@ -143,9 +203,18 @@ impl PropertyValue {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum PropertyValueRef<'a> {
+    /// A boolean.
     Bool(bool),
+    /// A signed integer.
     Int(i64),
-    Real { value: f64, unit: Unit },
+    /// A real number with its physical unit.
+    Real {
+        /// The magnitude, in `unit`.
+        value: f64,
+        /// The unit of `value`.
+        unit: Unit,
+    },
+    /// A borrowed UTF-8 string.
     String(&'a str),
 }
 
@@ -162,19 +231,29 @@ impl PropertyValueRef<'_> {
 }
 
 /// One homogeneous optional-valued property column.
+///
+/// Element `i` is the cell of row `i`; `None` is a missing cell. Storing a
+/// column requires every real value to be finite.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PropertyColumn {
+    /// Boolean cells.
     Bool(Vec<Option<bool>>),
+    /// Signed integer cells.
     Int(Vec<Option<i64>>),
+    /// Real cells sharing one unit.
     Real {
+        /// The unit of every value.
         unit: Unit,
+        /// The magnitudes, in `unit`.
         values: Vec<Option<f64>>,
     },
+    /// UTF-8 string cells.
     String(Vec<Option<String>>),
 }
 
 impl PropertyColumn {
+    /// The number of cells, missing ones included.
     pub fn len(&self) -> usize {
         match self {
             Self::Bool(values) => values.len(),
@@ -184,10 +263,12 @@ impl PropertyColumn {
         }
     }
 
+    /// Whether the column has no cells.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Whether every cell is missing; true for an empty column.
     pub fn is_all_missing(&self) -> bool {
         match self {
             Self::Bool(values) => values.iter().all(Option::is_none),
@@ -198,12 +279,20 @@ impl PropertyColumn {
     }
 
     /// Reads a scalar, copying string storage. See [`Self::value_ref`] to borrow.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::value_ref`].
     pub fn value(&self, index: usize) -> Result<Option<PropertyValue>, PropertyError> {
         self.value_ref(index)
             .map(|value| value.map(PropertyValueRef::to_value))
     }
 
-    /// Borrows one cell without allocating, preserving missing-value semantics.
+    /// Borrows one cell without allocating; a missing cell is `None`.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::InvalidIndex`] when `index` is outside the column.
     pub fn value_ref(&self, index: usize) -> Result<Option<PropertyValueRef<'_>>, PropertyError> {
         if index >= self.len() {
             return Err(PropertyError::InvalidIndex {
@@ -426,6 +515,7 @@ impl<R> PropertyTable<R> {
         self.raw.len()
     }
 
+    /// Whether the table has no rows.
     pub fn is_empty(&self) -> bool {
         self.raw.is_empty()
     }
@@ -435,6 +525,8 @@ impl<R> PropertyTable<R> {
         self.raw.has_data()
     }
 
+    /// The column stored under `key`, or `None` when no cell of it is
+    /// populated.
     pub fn get(&self, key: &PropertyKey) -> Option<&PropertyColumn> {
         self.raw.get(key)
     }
@@ -446,17 +538,27 @@ impl<R> PropertyTable<R> {
         self.raw.iter()
     }
 
+    /// Column keys in deterministic order.
     pub fn keys(&self) -> impl ExactSizeIterator<Item = &PropertyKey> + DoubleEndedIterator {
         self.raw.columns.keys()
     }
 }
 
 impl<R: PropertyRow> PropertyTable<R> {
+    /// Whether any column has a value in `row`.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::InvalidIndex`] when `row` is outside the table.
     pub fn row_has_data(&self, row: R) -> Result<bool, PropertyError> {
         self.raw.row_has_data(row.row())
     }
 
     /// Reads a cell, copying string storage. See [`Self::value_ref`] to borrow.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::value_ref`].
     pub fn value(&self, key: &PropertyKey, row: R) -> Result<Option<PropertyValue>, PropertyError> {
         self.raw.value(key, row.row())
     }
@@ -465,6 +567,10 @@ impl<R: PropertyRow> PropertyTable<R> {
     ///
     /// Missing keys and missing cells return `None`; a row outside the table
     /// is an error even when the key is absent.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::InvalidIndex`] when `row` is outside the table.
     pub fn value_ref(
         &self,
         key: &PropertyKey,
@@ -552,6 +658,17 @@ impl<'a, R> PropertyTableMut<'a, R> {
     ///
     /// Replacing a real column preserves its storage unit and converts
     /// compatible input values. An all-missing input removes the key.
+    /// Returns the replaced column, if any.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::LengthMismatch`] when the column length differs from
+    /// the table's, [`PropertyError::NonFiniteValue`] for a NaN or infinite
+    /// real value, [`PropertyError::TypeMismatch`] when an existing column
+    /// under `key` has another type, [`PropertyError::Unit`] when real values
+    /// cannot be converted to the existing column's unit, and
+    /// [`PropertyError::RemovedRow`] when a value lands in the row of an atom or
+    /// bond removed from an editing draft. On error the table is unchanged.
     pub fn insert(
         &mut self,
         key: PropertyKey,
@@ -563,6 +680,7 @@ impl<'a, R> PropertyTableMut<'a, R> {
         self.table.raw.insert(key, column)
     }
 
+    /// Removes and returns the column under `key`, if present.
     pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
         self.table.raw.remove(key)
     }
@@ -575,6 +693,20 @@ impl<'a, R> PropertyTableMut<'a, R> {
 
 impl<R: PropertyRow> PropertyTableMut<'_, R> {
     /// Sets or clears one cell, removing a column that becomes all-missing.
+    ///
+    /// Setting a cell of an absent key creates a column of the value's type
+    /// (and unit, for a real value); a real value written to an existing real
+    /// column is converted to its unit.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::InvalidIndex`] when `row` is outside the table,
+    /// [`PropertyError::RemovedRow`] when it belongs to an atom or bond removed
+    /// from an editing draft, [`PropertyError::NonFiniteValue`] for a NaN or
+    /// infinite real value, before or after conversion,
+    /// [`PropertyError::TypeMismatch`] when the existing column has another
+    /// type, and [`PropertyError::Unit`] when the value's unit is incompatible
+    /// with the column's. On error the table is unchanged.
     pub fn set_value(
         &mut self,
         key: PropertyKey,
@@ -585,6 +717,14 @@ impl<R: PropertyRow> PropertyTableMut<'_, R> {
         self.table.raw.set_value(key, row.row(), value)
     }
 
+    /// Clears one cell, removing a column that becomes all-missing. Clearing a
+    /// cell of an absent key is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::InvalidIndex`] when `row` is outside the table, and
+    /// [`PropertyError::RemovedRow`] when it belongs to an atom or bond removed
+    /// from an editing draft.
     pub fn clear_value(&mut self, key: PropertyKey, row: R) -> Result<(), PropertyError> {
         self.check_row(row.row())?;
         self.table.raw.set_value(key, row.row(), None)
@@ -599,7 +739,11 @@ impl<R: PropertyRow> PropertyTableMut<'_, R> {
 
     /// Applies several cell updates to one column transactionally: either
     /// every update succeeds or the column is unchanged. Other columns are
-    /// never copied.
+    /// never copied. Updates apply in order, so a later update of a row wins.
+    ///
+    /// # Errors
+    ///
+    /// The first error [`Self::set_value`] would return for an update.
     pub fn set_values(
         &mut self,
         key: PropertyKey,
@@ -967,33 +1111,45 @@ pub struct OwnerProperties {
 }
 
 impl OwnerProperties {
+    /// An empty set of owner values.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// The number of stored values.
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
+    /// Whether no value is stored.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 
+    /// The value stored under `key`, if any.
     pub fn get(&self, key: &PropertyKey) -> Option<&PropertyValue> {
         self.values.get(key)
     }
 
+    /// Values in deterministic key order.
     pub fn iter(
         &self,
     ) -> impl ExactSizeIterator<Item = (&PropertyKey, &PropertyValue)> + DoubleEndedIterator {
         self.values.iter()
     }
 
+    /// Keys in deterministic order.
     pub fn keys(&self) -> impl ExactSizeIterator<Item = &PropertyKey> + DoubleEndedIterator {
         self.values.keys()
     }
 
-    /// Inserts a validated value, returning the one it replaces.
+    /// Inserts a validated value, returning the one it replaces. Unlike a
+    /// table column, an owner value may change type or unit on replacement.
+    ///
+    /// # Errors
+    ///
+    /// [`PropertyError::NonFiniteValue`] with `index: None` for a NaN or
+    /// infinite real value; nothing is stored.
     pub fn insert(
         &mut self,
         key: PropertyKey,
@@ -1003,10 +1159,12 @@ impl OwnerProperties {
         Ok(self.values.insert(key, value))
     }
 
+    /// Removes and returns the value under `key`, if present.
     pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyValue> {
         self.values.remove(key)
     }
 
+    /// Removes every value.
     pub fn clear(&mut self) {
         self.values.clear();
     }
@@ -1034,18 +1192,22 @@ impl MoleculeProperties {
         }
     }
 
+    /// Owner-level values.
     pub fn owner(&self) -> &OwnerProperties {
         &self.owner
     }
 
+    /// One row per atom slot, addressed by [`AtomId`].
     pub fn atoms(&self) -> &PropertyTable<AtomId> {
         &self.atoms
     }
 
+    /// One row per bond slot, addressed by [`BondId`].
     pub fn bonds(&self) -> &PropertyTable<BondId> {
         &self.bonds
     }
 
+    /// Whether no owner value and no column is stored.
     pub fn is_empty(&self) -> bool {
         self.owner.is_empty() && !self.atoms.has_data() && !self.bonds.has_data()
     }
@@ -1093,14 +1255,19 @@ impl<'a> MoleculePropertiesMut<'a> {
         }
     }
 
+    /// Mutable owner-level values.
     pub fn owner_mut(&mut self) -> &mut OwnerProperties {
         &mut self.properties.owner
     }
 
+    /// Mutable atom columns; rows of removed draft atoms accept only missing
+    /// values.
     pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, AtomId> {
         PropertyTableMut::with_live_rows(&mut self.properties.atoms, self.atoms_live)
     }
 
+    /// Mutable bond columns; rows of removed draft bonds accept only missing
+    /// values.
     pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, BondId> {
         PropertyTableMut::with_live_rows(&mut self.properties.bonds, self.bonds_live)
     }
@@ -1127,28 +1294,36 @@ pub struct TopologyProperties {
 }
 
 impl TopologyProperties {
+    /// Owner-level values.
     pub fn owner(&self) -> &OwnerProperties {
         &self.owner
     }
+    /// One row per molecule instance, addressed by [`MoleculeInstanceId`].
     pub fn molecule_instances(&self) -> &PropertyTable<MoleculeInstanceId> {
         &self.molecule_instances
     }
+    /// One row per topology atom, addressed by its dense [`TopologyAtomIndex`].
     pub fn atoms(&self) -> &PropertyTable<TopologyAtomIndex> {
         &self.atoms
     }
+    /// One row per topology bond, addressed by its dense [`TopologyBondIndex`].
     pub fn bonds(&self) -> &PropertyTable<TopologyBondIndex> {
         &self.bonds
     }
+    /// One row per hierarchy chain, addressed by [`ChainId`].
     pub fn chains(&self) -> &PropertyTable<ChainId> {
         &self.chains
     }
+    /// One row per hierarchy residue, addressed by [`ResidueId`].
     pub fn residues(&self) -> &PropertyTable<ResidueId> {
         &self.residues
     }
+    /// One row per hierarchy atom site, addressed by [`AtomSiteId`].
     pub fn atom_sites(&self) -> &PropertyTable<AtomSiteId> {
         &self.atom_sites
     }
 
+    /// Whether no owner value and no column is stored.
     pub fn is_empty(&self) -> bool {
         self.owner.is_empty() && self.tables().iter().all(|table| !table.has_data())
     }
@@ -1272,24 +1447,31 @@ impl<'a> TopologyPropertiesMut<'a> {
     pub(crate) fn new(properties: &'a mut TopologyProperties) -> Self {
         Self { properties }
     }
+    /// Mutable owner-level values.
     pub fn owner_mut(&mut self) -> &mut OwnerProperties {
         &mut self.properties.owner
     }
+    /// Mutable molecule-instance columns.
     pub fn molecule_instances_mut(&mut self) -> PropertyTableMut<'_, MoleculeInstanceId> {
         PropertyTableMut::new(&mut self.properties.molecule_instances)
     }
+    /// Mutable topology-atom columns.
     pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, TopologyAtomIndex> {
         PropertyTableMut::new(&mut self.properties.atoms)
     }
+    /// Mutable topology-bond columns.
     pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, TopologyBondIndex> {
         PropertyTableMut::new(&mut self.properties.bonds)
     }
+    /// Mutable chain columns.
     pub fn chains_mut(&mut self) -> PropertyTableMut<'_, ChainId> {
         PropertyTableMut::new(&mut self.properties.chains)
     }
+    /// Mutable residue columns.
     pub fn residues_mut(&mut self) -> PropertyTableMut<'_, ResidueId> {
         PropertyTableMut::new(&mut self.properties.residues)
     }
+    /// Mutable atom-site columns.
     pub fn atom_sites_mut(&mut self) -> PropertyTableMut<'_, AtomSiteId> {
         PropertyTableMut::new(&mut self.properties.atom_sites)
     }
@@ -1324,18 +1506,24 @@ impl StructureProperties {
         }
     }
 
+    /// Owner-level values.
     pub fn owner(&self) -> &OwnerProperties {
         &self.owner
     }
 
+    /// One row per topology atom, addressed by its dense [`TopologyAtomIndex`].
     pub fn atoms(&self) -> &PropertyTable<TopologyAtomIndex> {
         &self.atoms
     }
 
+    /// One row per topology bond, addressed by its dense
+    /// [`TopologyBondIndex`]; empty until a detached payload is bound to a
+    /// topology.
     pub fn bonds(&self) -> &PropertyTable<TopologyBondIndex> {
         &self.bonds
     }
 
+    /// Whether no owner value and no column is stored.
     pub fn is_empty(&self) -> bool {
         self.owner.is_empty() && !self.atoms.has_data() && !self.bonds.has_data()
     }
@@ -1417,14 +1605,17 @@ impl<'a> StructurePropertiesMut<'a> {
         Self { properties }
     }
 
+    /// Mutable owner-level values.
     pub fn owner_mut(&mut self) -> &mut OwnerProperties {
         &mut self.properties.owner
     }
 
+    /// Mutable topology-atom columns.
     pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, TopologyAtomIndex> {
         PropertyTableMut::new(&mut self.properties.atoms)
     }
 
+    /// Mutable topology-bond columns.
     pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, TopologyBondIndex> {
         PropertyTableMut::new(&mut self.properties.bonds)
     }
