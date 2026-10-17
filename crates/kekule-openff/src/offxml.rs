@@ -56,6 +56,11 @@ impl ForceField {
     /// Two declared NAGL models must match; an absent declaration does not erase
     /// an existing one. Failure leaves this force field unchanged. This composes
     /// complete supported documents, not arbitrary partial handler fragments.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Composition`] if the nonbonded settings or the declared
+    /// NAGL models differ.
     pub fn append(&mut self, other: &Self) -> Result<()> {
         if !compatible_settings(&self.settings, &other.settings) {
             return Err(Error::new(
@@ -85,6 +90,11 @@ impl ForceField {
     }
 
     /// Compile the bundled, version-pinned Rosemary preset.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::ForceField`] only if the bundled document fails to
+    /// compile, which indicates a corrupted build.
     pub fn rosemary() -> Result<Self> {
         Self::from_offxml(include_str!("../data/rosemary.offxml"))
     }
@@ -98,6 +108,11 @@ impl ForceField {
     /// let force_field = kekule_openff::ForceField::from_file("custom.offxml")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Io`] if the file cannot be read, otherwise as
+    /// [`Self::from_offxml`], with the path attached.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let xml = std::fs::read_to_string(path).map_err(|e| Error::io(path, e))?;
@@ -110,6 +125,11 @@ impl ForceField {
     /// Without NAGL, every molecule must have complete library charges.
     /// Supported optional attributes use specification defaults.
     /// Unknown physics, attributes and section versions fail explicitly.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::ForceField`] if the XML is malformed, a SMIRKS pattern or
+    /// quantity is invalid, or the document is outside the supported subset.
     pub fn from_offxml(xml: &str) -> Result<Self> {
         let document = roxmltree::Document::parse(xml).map_err(invalid)?;
         let root = document.root_element();
@@ -132,6 +152,8 @@ impl ForceField {
         ff.compile_nonbonded(&sections)?;
         Ok(ff)
     }
+
+    /// The nonbonded policy from the vdW and Electrostatics handlers.
     pub fn nonbonded_settings(&self) -> &NonbondedSettings {
         &self.settings
     }

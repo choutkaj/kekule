@@ -1,3 +1,5 @@
+//! OpenFF potential energies and gradients against an independent SMIRNOFF reference,
+//! layout binding, evaluation of every model view, and minimization.
 #![cfg(feature = "openff")]
 
 use std::sync::Arc;

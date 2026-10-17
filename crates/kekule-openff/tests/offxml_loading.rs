@@ -1,3 +1,5 @@
+//! OFFXML loading from files and strings, and rejection of malformed or unsupported documents.
+
 use kekule_openff::ForceField;
 
 const ROSEMARY: &str = include_str!("../data/rosemary.offxml");

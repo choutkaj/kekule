@@ -1,3 +1,5 @@
+//! Unit composition, conversion and approximate comparison at representability limits.
+
 use kekule::geometry::Point3;
 use kekule::structure::{DenseArrayError, Positions};
 use kekule::units::{
