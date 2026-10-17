@@ -380,7 +380,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
     let mut editor = source.to_editor();
     let removed = editor.atom_handle(source_atoms[0]).unwrap();
     editor.delete_atom(removed).unwrap();
-    assert!(editor.position(removed).is_err());
+    assert!(editor.position(removed).is_none());
     editor
         .add_atom(
             atom("O"),
@@ -405,9 +405,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         source.position(source_atoms[1]).unwrap()
     );
     assert_eq!(
-        result
-            .occupancy(result.topology().atom_index(retained).unwrap())
-            .unwrap(),
+        result.occupancy(result.topology().atom_index(retained).unwrap()),
         Some(0.7)
     );
     assert_eq!(
@@ -420,9 +418,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
     );
     let new = result.topology().atom_ids()[1];
     assert_eq!(
-        result
-            .occupancy(result.topology().atom_index(new).unwrap())
-            .unwrap(),
+        result.occupancy(result.topology().atom_index(new).unwrap()),
         None
     );
     assert_eq!(
@@ -1002,7 +998,7 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
     editor
         .set_atom_properties(key("occupancy"), [(atom, Some(PropertyValue::Int(1)))])
         .unwrap();
-    assert_eq!(editor.occupancy(atom).unwrap(), None);
+    assert_eq!(editor.occupancy(atom), None);
     editor.finish().unwrap();
 }
 
@@ -1036,7 +1032,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         4.0
     );
     assert_eq!(
-        builder.occupancy(builder.atom_index(id).unwrap()).unwrap(),
+        builder.occupancy(builder.atom_index(id).unwrap()),
         Some(0.5)
     );
     let row = builder.atom_index(id).unwrap();
@@ -1066,7 +1062,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         .add_atom(atom("N"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(handle, replacement);
-    assert!(editor.atom(handle).is_err());
+    assert!(editor.atom(handle).is_none());
     let result = editor.finish().unwrap();
     assert_eq!(result.atom_count(), 1);
     assert_eq!(result.topology().instance_count(), 1);
@@ -1081,14 +1077,12 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     );
     assert_eq!(result.positions(), &positions(&[0.0]));
     assert_eq!(
-        result
-            .occupancy(
-                result
-                    .topology()
-                    .atom_index(result.topology().atom_ids()[0])
-                    .unwrap()
-            )
-            .unwrap(),
+        result.occupancy(
+            result
+                .topology()
+                .atom_index(result.topology().atom_ids()[0])
+                .unwrap()
+        ),
         None
     );
     assert_eq!(
@@ -1372,13 +1366,13 @@ fn independently_created_or_cleared_drafts_never_accept_foreign_handles() {
         .add_atom(atom("N"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(c, d);
-    assert!(branch.atom(c).is_err());
+    assert!(branch.atom(c).is_none());
     first.clear();
     let e = first
         .add_atom(atom("C"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
     assert_ne!(a, e);
-    assert!(first.atom(a).is_err());
+    assert!(first.atom(a).is_none());
 }
 
 #[test]

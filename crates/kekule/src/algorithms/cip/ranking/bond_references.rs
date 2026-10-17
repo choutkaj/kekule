@@ -48,7 +48,7 @@ pub(crate) fn bond_reference_atoms(
     // A single available reference needs no ranking. Otherwise ligand expansion
     // must know the implicit hydrogens: missing perception is not zero H.
     for atom in mol.atom_ids() {
-        if mol.implicit_hydrogens(atom).expect("live atom").is_none() {
+        if mol.implicit_hydrogens(atom).is_none() {
             return Err(CipRankingError::UnknownHydrogenCount { atom });
         }
     }

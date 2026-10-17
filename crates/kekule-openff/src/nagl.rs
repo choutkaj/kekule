@@ -49,7 +49,10 @@ pub(crate) fn lookup_molecule(input: &Molecule) -> Result<Molecule> {
     let mut editor = input.to_editor();
     for (id, atom) in input.atoms() {
         if atom.isotope.is_some() {
-            editor.atom_mut(id).map_err(Error::chemistry)?.isotope = None;
+            editor
+                .atom_mut(id)
+                .expect("atom IDs come from this molecule")
+                .isotope = None;
         }
     }
     explicit(&editor.finish().map_err(Error::chemistry)?)
@@ -235,7 +238,7 @@ impl NaglModel {
             for atom in mapping {
                 let map = reference
                     .atom(atom)
-                    .map_err(Error::chemistry)?
+                    .expect("atom IDs come from this molecule")
                     .atom_map
                     .ok_or_else(|| model_error("unmapped lookup atom"))?;
                 let q = entry

@@ -293,7 +293,7 @@ fn query_graph_is_distinct_from_the_concrete_molecule_kernel() {
 
     let graph = builder.build().unwrap();
     assert_eq!((graph.atom_count(), graph.bond_count()), (2, 1));
-    assert_eq!(graph.bond_between(carbon, hetero).unwrap(), Some(bond));
+    assert_eq!(graph.bond_between(carbon, hetero), Some(bond));
     assert_eq!(
         graph.neighbors(carbon).unwrap().collect::<Vec<_>>(),
         vec![hetero]

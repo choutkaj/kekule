@@ -297,10 +297,10 @@ fn aromatic_smiles_is_localized_during_interpretation_then_perceived() {
     );
     assert!(molecule
         .atom_ids()
-        .all(|atom| molecule.atom_is_aromatic(atom).unwrap() == Some(true)));
+        .all(|atom| molecule.atom_is_aromatic(atom) == Some(true)));
     assert!(molecule
         .bond_ids()
-        .all(|bond| molecule.bond_is_aromatic(bond).unwrap() == Some(true)));
+        .all(|bond| molecule.bond_is_aromatic(bond) == Some(true)));
 }
 
 #[test]

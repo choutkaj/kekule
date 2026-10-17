@@ -185,7 +185,6 @@ fn topology_edits_reject_separating_correlated_groups() {
         let instance = source.molecules().next().unwrap().id();
         let local = original
             .bond_between(AtomId::new(3), AtomId::new(4))
-            .unwrap()
             .unwrap();
         let cut = edit
             .bond_handle(kekule::topology::InstanceBondId::new(instance, local))

@@ -362,13 +362,12 @@ fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> b
 ///
 /// Returns an error if `atom` is not live in `mol`.
 pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize> {
-    let declaration = mol.atom(atom)?.hydrogens.represented_count();
+    let declaration = mol.require_atom(atom)?.hydrogens.represented_count();
     Ok(explicit_valence(mol, atom) + usize::from(declaration))
 }
 
 pub(crate) fn explicit_valence(mol: &Molecule, atom: AtomId) -> usize {
     mol.incident_bonds(atom)
-        .ok()
         .into_iter()
         .flatten()
         .map(|(_, bond)| bond_order_valence(bond.order))

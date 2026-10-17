@@ -296,7 +296,7 @@ fn excluded_bonds_do_not_close_cycles_or_connect_ring_components() {
             .expect("membership perception cannot fail");
         let membership = molecule.ring_membership().expect("rings installed").clone();
         for (index, &(a, b)) in edges.iter().enumerate() {
-            let bond = molecule.bond_between(atoms[a], atoms[b]).unwrap().unwrap();
+            let bond = molecule.bond_between(atoms[a], atoms[b]).unwrap();
             assert_eq!(
                 membership.bond_in_ring(bond),
                 cyclic_edges & (1 << index) != 0
@@ -375,7 +375,6 @@ fn fallback_preserves_coverage_when_rdkit_selected_rings_omit_a_cyclic_bond() {
     for (left, right) in [(0, 3), (3, 4), (4, 5), (5, 6)] {
         assert!(molecule
             .bond_between(AtomId::new(left), AtomId::new(right))
-            .unwrap()
             .is_some());
     }
     perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();

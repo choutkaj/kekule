@@ -414,8 +414,7 @@ fn assert_declared_bond(
     let bond = definition
         .molecule()
         .bond_between(left.atom(), right.atom())
-        .expect("valid connection atoms")
-        .expect("declared connection bond");
+        .expect("valid connection atoms");
     assert_eq!(
         definition
             .molecule()
@@ -1270,11 +1269,8 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     ] {
         for index in 0..2 {
             let atom = TopologyAtomIndex::new(index as u32);
-            assert_eq!(
-                member.occupancy(atom).unwrap(),
-                Some(expected_occupancies[index])
-            );
-            let b_factor = member.b_factor(atom).unwrap().expect("B-factor");
+            assert_eq!(member.occupancy(atom), Some(expected_occupancies[index]));
+            let b_factor = member.b_factor(atom).expect("B-factor");
             assert_eq!(b_factor.unit(), SQUARE_NANOMETER);
             assert!((b_factor.into_value() - expected_b_factors[index]).abs() < 1.0e-15);
         }
@@ -1509,16 +1505,14 @@ ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
         ensemble
             .get(0)
             .unwrap()
-            .occupancy(TopologyAtomIndex::new(0))
-            .unwrap(),
+            .occupancy(TopologyAtomIndex::new(0)),
         Some(0.8)
     );
     assert_eq!(
         ensemble
             .get(1)
             .unwrap()
-            .occupancy(TopologyAtomIndex::new(0))
-            .unwrap(),
+            .occupancy(TopologyAtomIndex::new(0)),
         Some(0.9)
     );
     let selected_altlocs = interpreted

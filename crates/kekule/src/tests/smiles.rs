@@ -158,11 +158,11 @@ fn phosphine_smiles_preserve_bracket_hydrogen_and_lone_pair() {
 }
 
 fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
-    molecule.atom_is_aromatic(atom).expect("atom exists") == Some(true)
+    molecule.atom_is_aromatic(atom) == Some(true)
 }
 
 fn aromatic_bond(molecule: &Molecule, bond: BondId) -> bool {
-    molecule.bond_is_aromatic(bond).expect("bond exists") == Some(true)
+    molecule.bond_is_aromatic(bond) == Some(true)
 }
 
 fn inferred_hydrogens(molecule: &Molecule, atom: AtomId) -> Option<u8> {
@@ -968,11 +968,11 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
         .atoms()
         .find_map(|(id, atom)| {
             (atom.element.symbol() == "C"
-                && aryl_mercury.incident_bonds(id).is_ok_and(|bonds| {
+                && aryl_mercury.incident_bonds(id).is_some_and(|bonds| {
                     bonds.into_iter().any(|(_, bond)| {
                         aryl_mercury
                             .atom(bond.other_atom(id))
-                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
+                            .is_some_and(|neighbor| neighbor.element.symbol() == "Hg")
                     })
                 }))
             .then_some((id, atom))
@@ -1560,7 +1560,7 @@ fn all_smiles_writers_preserve_implicit_hydrogen_counts() {
         let id = editor.add_atom(atom).unwrap();
         let mut molecule = editor.finish().unwrap();
         perceive(&mut molecule).unwrap();
-        assert_eq!(molecule.implicit_hydrogens(id), Ok(Some(total)));
+        assert_eq!(molecule.implicit_hydrogens(id), Some(total));
         let before = molecule.clone();
         for written in [
             smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default()),
@@ -1573,7 +1573,7 @@ fn all_smiles_writers_preserve_implicit_hydrogen_counts() {
             let (id, atom) = reparsed.atoms().next().unwrap();
             assert_eq!(
                 reparsed.implicit_hydrogens(id),
-                Ok(Some(total)),
+                Some(total),
                 "{symbol}: {written}"
             );
             assert_eq!(atom.element.symbol(), symbol);

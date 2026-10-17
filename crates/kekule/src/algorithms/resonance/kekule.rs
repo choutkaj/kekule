@@ -67,7 +67,7 @@ fn ranks(mol: &Molecule, work: &mut super::search::Work) -> Result<Vec<usize>, R
                             neighbors.len(),
                             a.element.atomic_number(),
                             a.isotope.unwrap_or(0),
-                            mol.implicit_hydrogens(id).expect("live atom").unwrap_or(0),
+                            mol.implicit_hydrogens(id).unwrap_or(0),
                             a.formal_charge as u32,
                             atom_stereo(mol, id, &rank),
                             neighbors,

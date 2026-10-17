@@ -123,7 +123,7 @@ fn mapped_cip(molecule: &mut Molecule) -> BTreeMap<(u32, u32), StereoDescriptor>
             let right = molecule.atom(stereo.right).unwrap().atom_map.unwrap();
             (
                 (left.min(right), left.max(right)),
-                molecule.cip_descriptor(id).unwrap().unwrap(),
+                molecule.cip_descriptor(id).unwrap(),
             )
         })
         .collect()

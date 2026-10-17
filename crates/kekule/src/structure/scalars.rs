@@ -33,13 +33,9 @@ impl AtomScalars {
         self.0.as_deref()
     }
 
-    pub(crate) fn get(
-        &self,
-        atom: TopologyAtomIndex,
-        len: usize,
-    ) -> Result<Option<f64>, StructureError> {
-        let row = atom_row(len, atom)?;
-        Ok(self.0.as_ref().and_then(|values| values[row]))
+    /// One recorded value, or `None` when it is unset or `atom` is out of range.
+    pub(crate) fn get(&self, atom: TopologyAtomIndex) -> Option<f64> {
+        self.0.as_ref()?.get(atom.index()).copied().flatten()
     }
 
     /// Sets or clears one value; values must be finite.

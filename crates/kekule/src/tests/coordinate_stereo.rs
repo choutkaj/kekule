@@ -498,7 +498,7 @@ fn coordinate_axis_handedness_is_scale_and_rotation_invariant() {
     for scale in [1.0e-100, 1.0, 1.0e100] {
         let points = (0..positions.len())
             .map(|index| {
-                let point = positions.position_at(index).unwrap().into_value();
+                let point = positions.get(index).unwrap().into_value();
                 // A cyclic permutation is a proper rotation.
                 Point3::new(point.y * scale, point.z * scale, point.x * scale)
             })

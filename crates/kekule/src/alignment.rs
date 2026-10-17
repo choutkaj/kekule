@@ -66,8 +66,8 @@
 //!     &selection,
 //!     Default::default(),
 //! )?;
-//! let canonical_moving = moving.positions().position_at(1)?.into_value();
-//! let canonical_reference = reference.positions().position_at(1)?.into_value();
+//! let canonical_moving = moving.positions().get(1).expect("atom 1").into_value();
+//! let canonical_reference = reference.positions().get(1).expect("atom 1").into_value();
 //! let aligned = result.transform().transform_point(canonical_moving);
 //! assert!((aligned.x - canonical_reference.x).abs() < 1.0e-12);
 //! assert!(result.rmsd().into_value() < 1.0e-12);

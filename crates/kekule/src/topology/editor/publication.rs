@@ -186,7 +186,7 @@ impl TopologyEditor {
                 GroupChemistry::Source(id) => {
                     let definition = source_definitions[&id];
                     let instance = builder.add_instance(definition)?;
-                    let molecule = builder.definition(definition)?.molecule();
+                    let molecule = builder.require_definition(definition)?.molecule();
                     instance_sources.push(group.instance_slot);
                     self.record_component(
                         (&group.atoms, &group.bonds),
@@ -214,7 +214,7 @@ impl TopologyEditor {
                         id
                     };
                     let instance = builder.add_instance(definition)?;
-                    let molecule = builder.definition(definition)?.molecule();
+                    let molecule = builder.require_definition(definition)?.molecule();
                     instance_sources.push(group.instance_slot);
                     self.record_component(
                         (&group.atoms, &group.bonds),

@@ -129,7 +129,7 @@ fn apply_molfile_declared_valence(
         )
     };
     let represented_valence = molecule
-        .incident_bonds(atom)
+        .require_incident_bonds(atom)
         .map_err(|error| {
             interpret_error_at(DiagnosticKind::Chemistry, location, "invalid graph atom")
                 .with_source(error)
@@ -754,7 +754,7 @@ fn install_v3000_atom_cfg(
         let is_hydrogen = |carrier: &crate::stereo::StereoCarrier| match carrier {
             crate::stereo::StereoCarrier::Atom(atom) => molecule
                 .atom(*atom)
-                .is_ok_and(|atom| atom.element.symbol() == "H"),
+                .is_some_and(|atom| atom.element.symbol() == "H"),
             crate::stereo::StereoCarrier::ImplicitHydrogen => true,
             crate::stereo::StereoCarrier::ImplicitLonePair => false,
         };
@@ -907,7 +907,7 @@ pub(super) fn molfile_stereo_group_members_at_atom(
                 StereoElementKind::Tetrahedral(stereo) => stereo.center == atom,
                 StereoElementKind::Axis(stereo) => molecule
                     .bond(stereo.axis)
-                    .is_ok_and(|bond| bond.a() == atom || bond.b() == atom),
+                    .is_some_and(|bond| bond.a() == atom || bond.b() == atom),
                 StereoElementKind::DoubleBond(_) => false,
             };
             matches.then_some(id)
@@ -920,7 +920,7 @@ pub(super) fn materialize_molfile_stereo_hydrogens(
     centers: impl IntoIterator<Item = AtomId>,
 ) {
     for center in centers {
-        let Ok(atom) = molecule.atom(center) else {
+        let Some(atom) = molecule.atom(center) else {
             continue;
         };
         // Molfile's omitted fourth substituent is an implicit hydrogen when
@@ -928,7 +928,7 @@ pub(super) fn materialize_molfile_stereo_hydrogens(
         // fixed carrier before the represented-only normalization kernel runs.
         // No installed perception or unmarked coordinate inference is involved.
         if !atom.hydrogens.is_inferred()
-            || molecule.incident_bonds(center).ok().map(Iterator::count) != Some(3)
+            || molecule.incident_bonds(center).map(Iterator::count) != Some(3)
             || crate::algorithms::rdkit_inferred_hydrogen_count(molecule, center, atom) != 1
         {
             continue;
@@ -1060,7 +1060,7 @@ fn partition_molfile_staging(
             StagedCoordinates::with_atom_capacity(old_atoms.len(), geometry.unit())
                 .map_err(chemistry)?;
         for old in &old_atoms {
-            let atom = graph.atom(*old).map_err(chemistry)?;
+            let atom = graph.require_atom(*old).map_err(chemistry)?;
             let new = editor.add_atom(atom.clone()).map_err(chemistry)?;
             if let Some(point) = geometry.position(*old) {
                 component_geometry

@@ -103,8 +103,16 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
             let mut changed = false;
             for (tag, charge) in &rule.data.charges {
                 let id = mapping[tag];
-                if editor.atom(id).map_err(Error::chemistry)?.formal_charge != *charge {
-                    editor.atom_mut(id).map_err(Error::chemistry)?.formal_charge = *charge;
+                if editor
+                    .atom(id)
+                    .expect("atom IDs come from this molecule")
+                    .formal_charge
+                    != *charge
+                {
+                    editor
+                        .atom_mut(id)
+                        .expect("atom IDs come from this molecule")
+                        .formal_charge = *charge;
                     changed = true;
                 }
             }
@@ -114,7 +122,6 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 };
                 let id = editor
                     .bond_between(mapping[&a], mapping[&b])
-                    .map_err(Error::chemistry)?
                     .ok_or_else(|| invariant("normalization changed connectivity"))?;
                 let order = match order {
                     1 => BondOrder::Single,
@@ -122,10 +129,15 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                     3 => BondOrder::Triple,
                     _ => return Err(invariant("unsupported normalization bond order")),
                 };
-                if editor.bond(id).map_err(Error::chemistry)?.order != order {
+                if editor
+                    .bond(id)
+                    .expect("bond IDs come from this molecule")
+                    .order
+                    != order
+                {
                     editor
                         .bond_mut(id)
-                        .map_err(Error::chemistry)?
+                        .expect("bond IDs come from this molecule")
                         .set_order(order);
                     changed = true;
                 }
@@ -286,7 +298,7 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
     let mut elements = Vec::with_capacity(ids.len());
     let mut charges = Vec::with_capacity(ids.len());
     for &id in &ids {
-        let atom = molecule.atom(id).map_err(Error::chemistry)?;
+        let atom = molecule.atom(id).expect("atom IDs come from this molecule");
         elements.push(atom.element.atomic_number());
         charges.push(atom.formal_charge);
     }
@@ -494,7 +506,10 @@ pub(super) fn features(
                     result[(i, offset + column)] = 1.0;
                 }
                 Feature::Connectivity { categories } => {
-                    let degree = molecule.neighbors(id).map_err(Error::chemistry)?.count();
+                    let degree = molecule
+                        .neighbors(id)
+                        .expect("atom IDs come from this molecule")
+                        .count();
                     let column = categories
                         .iter()
                         .position(|&n| n == degree)
@@ -533,7 +548,7 @@ pub(crate) fn adjacency(molecule: &Molecule) -> Result<Vec<Vec<usize>>> {
         .map(|a| {
             Ok(molecule
                 .neighbors(a)
-                .map_err(Error::chemistry)?
+                .expect("atom IDs come from this molecule")
                 .map(|b| ids[&b])
                 .collect())
         })

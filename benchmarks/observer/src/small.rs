@@ -126,9 +126,7 @@ fn parse(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
         let molecule = &component.molecule;
         for (id, atom) in molecule.atoms() {
             let i = component.atom(id);
-            let hydrogens = molecule
-                .total_hydrogens(id)
-                .map_err(|e| Failure::new("perception", e))?;
+            let hydrogens = molecule.total_hydrogens(id);
             let radicals = atom.radical.map(|r| r.electron_count()).unwrap_or(0);
             facts.push(json!(["atom", i, "element", atom.element.symbol()]));
             facts.push(json!(["atom", i, "isotope", atom.isotope]));
@@ -157,8 +155,8 @@ fn coordinates(components: &[Component], facts: &mut Facts) -> Result<(), Failur
         };
         for id in component.molecule.atom_ids() {
             let point = positions
-                .position_at(id.index())
-                .map_err(|e| Failure::new("parse", e))?
+                .get(id.index())
+                .expect("indices are within the positions")
                 .value_in(kekule::units::ANGSTROM)
                 .map_err(|e| Failure::new("parse", e))?;
             facts.push(json!([
@@ -192,7 +190,7 @@ fn reference_carrier(
     Ok(component
         .molecule
         .neighbors(center)
-        .map_err(|e| Failure::new("stereo", e))?
+        .ok_or_else(|| Failure::new("stereo", "missing atom"))?
         .filter(|id| *id != other)
         .map(|id| component.atom(id) as i64)
         .min()
@@ -246,7 +244,7 @@ fn stereo_facts(component: &Component, facts: &mut Facts) -> Result<(), Failure>
             StereoElementKind::Axis(s) => {
                 let bond = molecule
                     .bond(s.axis)
-                    .map_err(|e| Failure::new("stereo", e))?;
+                    .ok_or_else(|| Failure::new("stereo", "missing bond"))?;
                 let selected = s.carriers.iter().map(carrier).collect::<Vec<_>>();
                 let mut reference = [
                     reference_carrier(component, bond.a(), bond.b())?,
@@ -366,12 +364,12 @@ fn aromaticity_facts(
         }
         let molecule = &component.molecule;
         for id in molecule.atom_ids() {
-            let aromatic = molecule.atom_is_aromatic(id).ok().flatten();
+            let aromatic = molecule.atom_is_aromatic(id);
             facts.push(json!(["atom", component.atom(id), "aromatic", aromatic]));
         }
         for (id, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
-            let aromatic = molecule.bond_is_aromatic(id).ok().flatten();
+            let aromatic = molecule.bond_is_aromatic(id);
             facts.push(json!(["bond", a, b, "aromatic", aromatic]));
         }
     }
@@ -383,7 +381,7 @@ fn conjugation(components: &[Component], facts: &mut Facts) -> Result<(), Failur
         let molecule = &component.molecule;
         for (id, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
-            let conjugated = molecule.bond_is_conjugated(id).ok().flatten();
+            let conjugated = molecule.bond_is_conjugated(id);
             facts.push(json!(["bond", a, b, "conjugated", conjugated]));
         }
     }
@@ -413,8 +411,8 @@ fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<()
                 .bonds
                 .iter()
                 .map(|&id| molecule.bond(id).map(|bond| ends(component, bond)))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Failure::new("resonance", e))?;
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| Failure::new("resonance", "missing bond"))?;
             bonds.sort_unstable();
             facts.push(json!(["resonance", "group", atoms[0], "atoms", atoms]));
             facts.push(json!(["resonance", "group", atoms[0], "bonds", bonds]));
@@ -434,7 +432,7 @@ fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<()
                 if bond_order != BondOrder::Single {
                     let bond = molecule
                         .bond(id)
-                        .map_err(|e| Failure::new("resonance", e))?;
+                        .ok_or_else(|| Failure::new("resonance", "missing bond"))?;
                     bonds.push((ends(component, bond), order(bond_order).to_string()));
                 }
             }
@@ -485,7 +483,9 @@ fn candidates(components: &[Component], facts: &mut Facts) -> Result<(), Failure
                     ]));
                 }
                 StereoCandidate::DoubleBond { bond, .. } => {
-                    let bond = molecule.bond(bond).map_err(|e| Failure::new("stereo", e))?;
+                    let bond = molecule
+                        .bond(bond)
+                        .ok_or_else(|| Failure::new("stereo", "missing bond"))?;
                     facts.push(json!([
                         "candidate",
                         "double_bond",
@@ -528,10 +528,7 @@ fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
         let component = &*component;
         let molecule = &component.molecule;
         for (id, element) in molecule.stereo_elements() {
-            let Some(label) = molecule
-                .cip_descriptor(id)
-                .map_err(|e| Failure::new("cip", e))?
-            else {
+            let Some(label) = molecule.cip_descriptor(id) else {
                 continue;
             };
             let (kind, focus) = match &element.kind {
@@ -542,7 +539,9 @@ fn cip(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
                     ("bond", focus)
                 }
                 StereoElementKind::Axis(s) => {
-                    let bond = molecule.bond(s.axis).map_err(|e| Failure::new("cip", e))?;
+                    let bond = molecule
+                        .bond(s.axis)
+                        .ok_or_else(|| Failure::new("cip", "missing bond"))?;
                     ("bond", ends(component, bond).to_vec())
                 }
             };
@@ -595,7 +594,7 @@ fn rotatable(components: &[Component], facts: &mut Facts) -> Result<(), Failure>
         for &id in detected.bond_ids() {
             let bond = molecule
                 .bond(id)
-                .map_err(|e| Failure::new("rotatable", e))?;
+                .ok_or_else(|| Failure::new("rotatable", "missing bond"))?;
             let [a, b] = ends(component, bond);
             facts.push(json!(["bond", a, b, "rotatable", true]));
         }

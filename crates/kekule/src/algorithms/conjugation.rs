@@ -48,7 +48,6 @@ pub fn perceive_conjugation(
     for (id, atom) in mol.atoms() {
         let h = mol
             .implicit_hydrogens(id)
-            .expect("live atom")
             .ok_or(ConjugationError::UnknownHydrogens(id))?;
         let degree = mol.incident_bonds(id).expect("live atom").count() + h;
         let total_valence = explicit_valence(mol, id) + h;

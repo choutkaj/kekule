@@ -151,7 +151,7 @@ fn assign_axis_descriptor(
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let bond = mol
         .bond(stereo.axis)
-        .map_err(|_| CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let (left, right) = bond.endpoints();
     let (left_reference, right_reference) =
         axis_reference_carriers(mol, element, stereo, left, right)?;
@@ -258,8 +258,8 @@ pub(super) fn axis_reference_carriers(
         let StereoCarrier::Atom(atom) = carrier else {
             return Err(CipAssignmentIssue::UnresolvedPriority { element });
         };
-        let adjacent_left = mol.bond_between(left, *atom).ok().flatten().is_some();
-        let adjacent_right = mol.bond_between(right, *atom).ok().flatten().is_some();
+        let adjacent_left = mol.bond_between(left, *atom).is_some();
+        let adjacent_right = mol.bond_between(right, *atom).is_some();
         match (adjacent_left, adjacent_right) {
             (true, false) if left_reference.is_none() => left_reference = Some(*carrier),
             (false, true) if right_reference.is_none() => right_reference = Some(*carrier),
@@ -279,7 +279,7 @@ pub(super) fn axis_endpoint_carriers(
     axis: BondId,
 ) -> Vec<StereoCarrier> {
     let mut carriers = Vec::new();
-    if let Ok(incident) = mol.incident_bonds(endpoint) {
+    if let Some(incident) = mol.incident_bonds(endpoint) {
         for (bond_id, bond) in incident {
             if bond_id != axis {
                 carriers.push(StereoCarrier::Atom(bond.other_atom(endpoint)));
@@ -287,11 +287,7 @@ pub(super) fn axis_endpoint_carriers(
         }
     }
     if atom_hydrogen_count(mol, endpoint) > 0
-        && mol
-            .bond_between(endpoint, other_endpoint)
-            .ok()
-            .flatten()
-            .is_some()
+        && mol.bond_between(endpoint, other_endpoint).is_some()
     {
         carriers.push(StereoCarrier::ImplicitHydrogen);
     }
@@ -442,7 +438,7 @@ fn axis_final_tie_is_nonstereogenic(
 ) -> CipResult<bool> {
     let bond = mol
         .bond(stereo.axis)
-        .map_err(|_| CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let (left, right) = bond.endpoints();
     axis_reference_carriers(mol, element, stereo, left, right)?;
     let left_carriers = axis_endpoint_carriers(mol, left, right, stereo.axis);

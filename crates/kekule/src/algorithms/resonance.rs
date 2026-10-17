@@ -234,9 +234,10 @@ impl ResonanceStructures<'_> {
             let h = self
                 .source
                 .implicit_hydrogens(id)
-                .expect("live atom")
                 .ok_or(ResonanceError::UnknownHydrogens(id))?;
-            let mut atom = editor.atom_mut(id).map_err(ResonanceError::Molecule)?;
+            let mut atom = editor
+                .require_atom_mut(id)
+                .map_err(ResonanceError::Molecule)?;
             atom.formal_charge = contributor.charges[&id];
             atom.hydrogens = ImplicitHydrogens::Fixed(
                 u8::try_from(h).map_err(|_| ResonanceError::InvalidElectronCount)?,
@@ -284,7 +285,7 @@ pub fn enumerate_resonance(
         return Err(ResonanceError::InvalidStructureLimit);
     }
     for id in mol.atom_ids() {
-        if mol.implicit_hydrogens(id).expect("live atom").is_none() {
+        if mol.implicit_hydrogens(id).is_none() {
             return Err(ResonanceError::UnknownHydrogens(id));
         }
     }

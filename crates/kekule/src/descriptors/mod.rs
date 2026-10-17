@@ -326,7 +326,6 @@ fn visit_constituents(
             HydrogenCountPolicy::StoredOnly => usize::from(atom.hydrogens.represented_count()),
             HydrogenCountPolicy::IncludePerceived => graph
                 .implicit_hydrogens(atom_id)
-                .expect("a live atom identifier remains valid during read-only traversal")
                 .ok_or(MolecularDescriptorError::MissingImplicitHydrogens { atom: atom_id })?,
         };
         if implicit != 0 {

@@ -115,7 +115,7 @@ fn conversions_reject_zero_and_infinite_intermediate_factors() {
     let mut positions = Positions::zeros(1);
     let before = positions.clone();
     assert!(matches!(
-        positions.set_position_at(0, Quantity::new(Point3::new(1.0, 0.0, 0.0), too_large)),
+        positions.set(0, Quantity::new(Point3::new(1.0, 0.0, 0.0), too_large)),
         Err(DenseArrayError::Unit(
             UnitError::UnrepresentableConversion { .. }
         ))

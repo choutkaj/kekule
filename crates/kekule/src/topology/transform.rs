@@ -175,7 +175,7 @@ impl Topology {
         for (target_index, &source_index) in hierarchy_projection.residues.iter().enumerate() {
             let residue = self
                 .hierarchy()
-                .residue(ResidueId::new(source_index as u32))?;
+                .require_residue(ResidueId::new(source_index as u32))?;
             let complete = residue.atom_sites().iter().all(|site| {
                 let atom = self
                     .hierarchy()
@@ -299,7 +299,7 @@ fn copy_filtered_hierarchy(
                 source_residue.author_comp_id().map(str::to_owned),
             )?;
             for source_site_id in source_residue.atom_sites() {
-                let source_site = source.hierarchy().atom_site(*source_site_id)?;
+                let source_site = source.hierarchy().require_atom_site(*source_site_id)?;
                 let Some(target_atom) = atom_targets.get(&source_site.atom()).copied() else {
                     continue;
                 };

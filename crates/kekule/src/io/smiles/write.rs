@@ -204,10 +204,7 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Fo
                         "isomeric SMILES writer cannot encode tetrahedral stereo with repeated implicit hydrogens",
                     ));
                 }
-                let implicit = mol
-                    .implicit_hydrogens(stereo.center)
-                    .expect("stereo elements name live atoms");
-                let implicit = implicit.ok_or_else(|| {
+                let implicit = mol.implicit_hydrogens(stereo.center).ok_or_else(|| {
                     SMILES_WRITE.missing_perception(
                         "SMILES stereo atom requires installed hydrogen perception",
                     )
@@ -255,7 +252,6 @@ fn validate_isomeric_double_bond_endpoint(
         StereoCarrier::Atom(atom) => {
             let bond = mol
                 .bond_between(endpoint, atom)
-                .expect("stereo elements name live atoms")
                 .expect("publication validates stereo carrier adjacency");
             let order = mol.bond(bond).expect("the writer visits live bonds").order;
             if order != BondOrder::Single || atom == other_endpoint {
@@ -265,9 +261,7 @@ fn validate_isomeric_double_bond_endpoint(
             }
         }
         StereoCarrier::ImplicitHydrogen => {
-            let hydrogens = mol
-                .implicit_hydrogens(endpoint)
-                .expect("stereo elements name live atoms");
+            let hydrogens = mol.implicit_hydrogens(endpoint);
             if hydrogens.is_none_or(|count| count == 0) {
                 return Err(SMILES_WRITE.unsupported(
                     "isomeric SMILES writer cannot encode unavailable implicit double-bond hydrogen carrier",
@@ -454,7 +448,7 @@ impl SmilesStereoWriteContext {
                     group
                         .members
                         .iter()
-                        .filter_map(|id| match &mol.stereo_element(*id).ok()?.kind {
+                        .filter_map(|id| match &mol.stereo_element(*id)?.kind {
                             StereoElementKind::Tetrahedral(value) => Some(value.center),
                             _ => None,
                         })
@@ -1212,7 +1206,7 @@ pub(super) fn smiles_incident_bonds_for_style(
     {
         let order = match atom_style {
             CanonicalAtomStyle::Aromatic
-                if mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
+                if mol.bond_is_aromatic(bond_id) == Some(true)
                     && !matches!(bond.order, BondOrder::Triple | BondOrder::Quadruple) =>
             {
                 SmilesBondOrder::Aromatic
@@ -1264,8 +1258,8 @@ pub(super) fn smiles_bond_between(
     right: AtomId,
 ) -> &'static str {
     if matches!(order, SmilesBondOrder::Single | SmilesBondOrder::Aromatic)
-        && mol.atom_is_aromatic(left).ok().flatten() == Some(true)
-        && mol.atom_is_aromatic(right).ok().flatten() == Some(true)
+        && mol.atom_is_aromatic(left) == Some(true)
+        && mol.atom_is_aromatic(right) == Some(true)
     {
         return if order == SmilesBondOrder::Single {
             "-"
@@ -1385,7 +1379,7 @@ fn smiles_atom_with_style_and_chirality(
     chirality: Option<TetrahedralOrientation>,
     force_hydrogen: bool,
 ) -> std::result::Result<String, FormatError> {
-    let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
+    let aromatic = mol.atom_is_aromatic(atom_id) == Some(true);
     let perceived_hydrogens = mol.perception().inferred_hydrogens(atom_id);
     let inferred_hydrogens = perceived_hydrogens.unwrap_or(0);
     let written = if matches!(atom_style, CanonicalAtomStyle::StoredKekule) && aromatic {

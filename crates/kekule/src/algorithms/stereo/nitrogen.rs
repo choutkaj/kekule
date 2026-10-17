@@ -27,7 +27,7 @@ pub(super) fn lone_pair_is_stereogenic(mol: &Molecule, center: AtomId) -> bool {
             .expect("live center")
             .any(|(id, bond)| {
                 bond.order != BondOrder::Single
-                    || mol.bond_is_aromatic(id).ok().flatten() == Some(true)
+                    || mol.bond_is_aromatic(id) == Some(true)
                     || conjugated_neighbor(mol, center, bond.other_atom(center))
             })
     {
@@ -38,7 +38,7 @@ pub(super) fn lone_pair_is_stereogenic(mol: &Molecule, center: AtomId) -> bool {
     let neighbors: Vec<_> = mol.neighbors(center).expect("live center").collect();
     if neighbors.iter().enumerate().any(|(i, &a)| {
         neighbors[i + 1..].iter().any(|&b| {
-            mol.bond_between(a, b).ok().flatten().is_some_and(|id| {
+            mol.bond_between(a, b).is_some_and(|id| {
                 !matches!(
                     mol.bond(id).expect("live bond").order,
                     BondOrder::Zero | BondOrder::Dative
@@ -81,7 +81,7 @@ fn conjugated_neighbor(mol: &Molecule, center: AtomId, neighbor: AtomId) -> bool
             let other = bond.other_atom(neighbor);
             other != center
                 && (matches!(bond.order, BondOrder::Double | BondOrder::Triple)
-                    || mol.bond_is_aromatic(id).ok().flatten() == Some(true))
+                    || mol.bond_is_aromatic(id) == Some(true))
                 && conjugation_donor(mol, other)
         })
 }

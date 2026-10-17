@@ -195,7 +195,7 @@ fn construction_copies_positions_and_preserves_sources() {
         .unwrap();
     assert_eq!(small, source);
     assert_eq!(
-        positions.position_at(0).unwrap(),
+        positions.get(0).unwrap(),
         Quantity::new(Point3::new(0.0, 0.0, 0.0), CANONICAL_LENGTH_UNIT)
     );
     assert_eq!(model.topology().definition_count(), 1);

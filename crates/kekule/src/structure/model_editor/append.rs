@@ -40,8 +40,8 @@ impl ModelEditor {
     /// let mut editor = ligand.to_editor();
     /// let appended = editor.append_model(&ligand)?;
     /// let source_atom = ligand.topology().atom_ids()[0];
-    /// let draft_atom = appended.atom(source_atom)?;
-    /// assert_eq!(editor.position(draft_atom)?, ligand.position(source_atom)?);
+    /// let draft_atom = appended.atom(source_atom).expect("appended atom");
+    /// assert_eq!(editor.position(draft_atom), ligand.position(source_atom));
     /// let model = editor.finish()?;
     /// assert_eq!(model.atom_count(), 4);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -168,39 +168,29 @@ impl ModelAppend {
     pub fn report(&self) -> &ModelAppendReport {
         &self.report
     }
-    pub fn atom(&self, source: InstanceAtomId) -> Result<EditAtomId, ModelEditError> {
-        self.mapping
-            .atoms
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceAtom(source).into())
+    /// The draft handle of an appended source atom, or `None` when the source
+    /// has no such atom.
+    pub fn atom(&self, source: InstanceAtomId) -> Option<EditAtomId> {
+        self.mapping.atoms.get(&source).copied()
     }
-    pub fn bond(&self, source: InstanceBondId) -> Result<EditBondId, ModelEditError> {
-        self.mapping
-            .bonds
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceBond(source).into())
+    /// The draft handle of an appended source bond, or `None` when the source
+    /// has no such bond.
+    pub fn bond(&self, source: InstanceBondId) -> Option<EditBondId> {
+        self.mapping.bonds.get(&source).copied()
     }
-    pub fn chain(&self, source: ChainId) -> Result<EditChainId, ModelEditError> {
-        self.mapping
-            .chains
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceChain(source).into())
+    /// The draft handle of an appended source chain, or `None` when the source
+    /// has no such chain.
+    pub fn chain(&self, source: ChainId) -> Option<EditChainId> {
+        self.mapping.chains.get(&source).copied()
     }
-    pub fn residue(&self, source: ResidueId) -> Result<EditResidueId, ModelEditError> {
-        self.mapping
-            .residues
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceResidue(source).into())
+    /// The draft handle of an appended source residue, or `None` when the
+    /// source has no such residue.
+    pub fn residue(&self, source: ResidueId) -> Option<EditResidueId> {
+        self.mapping.residues.get(&source).copied()
     }
-    pub fn atom_site(&self, source: AtomSiteId) -> Result<EditAtomSiteId, ModelEditError> {
-        self.mapping
-            .sites
-            .get(&source)
-            .copied()
-            .ok_or_else(|| TopologyEditError::InvalidSourceAtomSite(source).into())
+    /// The draft handle of an appended source atom site, or `None` when the
+    /// source has no such site.
+    pub fn atom_site(&self, source: AtomSiteId) -> Option<EditAtomSiteId> {
+        self.mapping.sites.get(&source).copied()
     }
 }

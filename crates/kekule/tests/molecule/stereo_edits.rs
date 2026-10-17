@@ -205,10 +205,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
             _ => None,
         })
         .unwrap();
-    let removed = source
-        .bond_between(stereo.center, carrier)
-        .unwrap()
-        .unwrap();
+    let removed = source.bond_between(stereo.center, carrier).unwrap();
     for batch in [false, true] {
         let mut editor = source.to_editor();
         if batch {
@@ -216,7 +213,7 @@ fn ring_bond_deletion_prunes_invalid_carriers_and_preserves_unrelated_stereo_gro
         } else {
             editor.delete_bond(removed).unwrap();
         }
-        assert!(editor.stereo_element(elements[0]).is_err());
+        assert!(editor.stereo_element(elements[0]).is_none());
         assert_eq!(editor.pruned_stereo_elements(), [elements[0]]);
         assert_eq!(
             editor.stereo_element(elements[1]).unwrap(),
@@ -272,7 +269,7 @@ fn checked_stereo_boundaries_reject_nonadjacent_carriers_transactionally() {
     let mut axis = molecule("FCCF").into_editor();
     let atoms = axis.atom_ids().collect::<Vec<_>>();
     axis.add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
-        axis: axis.bond_between(atoms[1], atoms[2]).unwrap().unwrap(),
+        axis: axis.bond_between(atoms[1], atoms[2]).unwrap(),
         carriers: vec![StereoCarrier::Atom(atoms[0]), StereoCarrier::Atom(atoms[3])],
         orientation: None,
     })))

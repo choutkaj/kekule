@@ -1,8 +1,8 @@
 use kekule::molecule::{Atom, Element, MoleculeEditor};
 use kekule::topology::{
     edit::TopologyEditor, AtomSite, AtomSiteId, AtomSiteMetadata, AtomSiteView, Chain, ChainId,
-    ChainView, Hierarchy, HierarchyError, HierarchyIdKind, InstanceAtomId, MoleculeClass, Residue,
-    ResidueId, ResidueView, TopologyBuilder,
+    ChainView, Hierarchy, HierarchyIdKind, InstanceAtomId, MoleculeClass, Residue, ResidueId,
+    ResidueView, TopologyBuilder,
 };
 
 fn atom(symbol: &str) -> Atom {
@@ -47,10 +47,7 @@ fn canonical_topology_hierarchy_types_and_views_are_public() {
     let site_view: AtomSiteView<'_> = residue_view.atom_sites().next().unwrap();
     assert_eq!(site_view.atom().id(), InstanceAtomId::new(instance, atom));
 
-    assert_eq!(
-        hierarchy.chain(ChainId::new(99)).unwrap_err(),
-        HierarchyError::InvalidChainId(ChainId::new(99))
-    );
+    assert!(hierarchy.chain(ChainId::new(99)).is_none());
     assert_eq!(HierarchyIdKind::AtomSite.to_string(), "atom-site");
 }
 
@@ -71,9 +68,9 @@ fn editor_hierarchy_membership_stays_aligned_during_bulk_assembly_and_site_edits
         residues.push(residue);
     }
     editor.set_atom_site_residue(sites[0], residues[1]).unwrap();
-    assert!(editor.residue(residues[0]).is_err());
+    assert!(editor.residue(residues[0]).is_none());
     editor.delete_atom_site(sites[1]).unwrap();
-    assert!(editor.residue(residues[1]).is_ok());
+    assert!(editor.residue(residues[1]).is_some());
     for &site in sites.iter().skip(2).step_by(2) {
         editor.delete_atom_site(site).unwrap();
     }

@@ -172,7 +172,7 @@ pub(super) fn validate_groups(mol: &Molecule) -> Result<(), FormatError> {
         for member in &group.members {
             if !matches!(
                 mol.stereo_element(*member).map(|s| &s.kind),
-                Ok(StereoElementKind::Tetrahedral(_))
+                Some(StereoElementKind::Tetrahedral(_))
             ) {
                 return Err(SMILES_WRITE.unsupported("CXSMILES group export requires tetrahedral members; this stereo family has no supported SMILES encoding"));
             }

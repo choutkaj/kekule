@@ -11,7 +11,7 @@ pub(crate) fn atom_is_atropisomeric_sp2_endpoint(
     center: AtomId,
     hydrogens: u8,
 ) -> bool {
-    let Ok(atom) = mol.atom(center) else {
+    let Some(atom) = mol.atom(center) else {
         return false;
     };
     if hydrogens != 0 || atom.radical.is_some() {
@@ -20,7 +20,7 @@ pub(crate) fn atom_is_atropisomeric_sp2_endpoint(
     let Some(outer) = main_group_outer_electrons(atom) else {
         return false;
     };
-    let Ok(incident) = mol.incident_bonds(center) else {
+    let Some(incident) = mol.incident_bonds(center) else {
         return false;
     };
     let bonds = incident.map(|(_, bond)| bond).collect::<Vec<_>>();
@@ -51,21 +51,18 @@ pub(crate) fn atom_is_atropisomeric_sp2_endpoint(
         && atom.element.atomic_number() <= 10
         && bonds.iter().any(|bond| {
             let neighbor = bond.other_atom(center);
-            let Ok(other) = mol.atom(neighbor) else {
+            let Some(other) = mol.atom(neighbor) else {
                 return false;
             };
             other.radical.is_none()
                 && main_group_outer_electrons(other)
                     .is_some_and(|outer| other.element.atomic_number() <= 10 || outer <= 4)
-                && mol
-                    .incident_bonds(neighbor)
-                    .ok()
-                    .is_some_and(|mut incident| {
-                        incident.any(|(_, next)| {
-                            next.other_atom(neighbor) != center
-                                && matches!(next.order, BondOrder::Double | BondOrder::Triple)
-                        })
+                && mol.incident_bonds(neighbor).is_some_and(|mut incident| {
+                    incident.any(|(_, next)| {
+                        next.other_atom(neighbor) != center
+                            && matches!(next.order, BondOrder::Double | BondOrder::Triple)
                     })
+                })
         })
 }
 

@@ -29,10 +29,7 @@ fn composition(molecule: &Molecule) -> BTreeMap<AtomIdentity, usize> {
                 map: atom.atom_map,
             })
             .or_default() += 1;
-        let hydrogens = molecule
-            .implicit_hydrogens(id)
-            .expect("live atom")
-            .expect("perceived H count");
+        let hydrogens = molecule.implicit_hydrogens(id).expect("perceived H count");
         if hydrogens != 0 {
             *result
                 .entry(AtomIdentity {

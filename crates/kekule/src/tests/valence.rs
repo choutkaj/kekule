@@ -370,7 +370,7 @@ fn assert_aromatic_valence_pipeline_for_molecule(
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
             .count(),
         expected_aromatic_atoms,
         "{smiles}"
@@ -443,7 +443,7 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
             .count(),
         5
     );
@@ -555,7 +555,7 @@ fn fused_aromatic_valence_comes_from_localized_bond_orders() {
     assert_eq!(
         molecule
             .atom_ids()
-            .filter(|atom| molecule.atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|atom| molecule.atom_is_aromatic(*atom) == Some(true))
             .count(),
         10
     );

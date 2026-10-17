@@ -14,7 +14,7 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
         let point = interpreted
             .model()
             .positions()
-            .position_at(0)
+            .get(0)
             .unwrap()
             .value_in(crate::units::ANGSTROM)
             .unwrap();

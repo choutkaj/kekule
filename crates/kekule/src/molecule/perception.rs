@@ -1003,12 +1003,12 @@ fn validate_delocalization(
     let mut endpoints = BTreeSet::new();
     for &atom in &conjugation.atoms {
         mol.atom(atom)
-            .map_err(|_| PerceptionInstallError::InvalidAtomId(atom))?;
+            .ok_or(PerceptionInstallError::InvalidAtomId(atom))?;
     }
     for &id in &conjugation.bonds {
         let bond = mol
             .bond(id)
-            .map_err(|_| PerceptionInstallError::InvalidBondId(id))?;
+            .ok_or(PerceptionInstallError::InvalidBondId(id))?;
         endpoints.extend([bond.a(), bond.b()]);
     }
     if endpoints != conjugation.atoms {
@@ -1033,7 +1033,7 @@ fn validate_delocalization(
                 }
                 let bond = mol
                     .bond(id)
-                    .map_err(|_| PerceptionInstallError::InvalidBondId(id))?;
+                    .ok_or(PerceptionInstallError::InvalidBondId(id))?;
                 group_ends.extend([bond.a(), bond.b()]);
             }
             for &id in &group.atoms {

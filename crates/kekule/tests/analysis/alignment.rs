@@ -956,7 +956,7 @@ fn acetate_model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
 
 fn nanometers(positions: &Positions) -> Vec<Point3> {
     (0..positions.len())
-        .map(|index| positions.position_at(index).unwrap().into_value())
+        .map(|index| positions.get(index).unwrap().into_value())
         .collect()
 }
 

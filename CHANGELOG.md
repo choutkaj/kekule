@@ -105,6 +105,28 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Identity lookups return `Option` (ARCHITECTURE.md, "Lookups,
+  errors, and panics"); `None` means the ID names nothing in the owner.
+  Searches by label or name keep `Result`.
+  - `Graph::{atom, bond, neighbors, incident_bonds, bond_between,
+    stereo_element, stereo_group}` and the same `QueryGraph` lookups.
+    `bond_between` returns `Option<BondId>`, `None` also when either atom is
+    missing.
+  - `Hierarchy::{chain, residue, atom_site}`, `TopologyBuilder::definition`,
+    `TopologyEditor::{atom, bond, atom_handle, bond_handle, chain, residue,
+    atom_site, chain_handle, residue_handle}`, `ModelAppend::{atom, bond,
+    chain, residue, atom_site}` and `MoleculeEditor::{atom_mut, bond_mut}`.
+  - `Model::position`, `ModelView::position`, `ModelBuilder::position` and
+    `ModelEditor::position` return `Option<Quantity<Point3>>`.
+    `Positions::position_at` is now `Positions::get`, and
+    `Positions::set_position_at` is `Positions::set`.
+  - Per-atom reads no longer return `Result<Option<_>>`:
+    `Molecule`/`MoleculeEditor::{explicit_hydrogens, implicit_hydrogens,
+    total_hydrogens, atom_is_aromatic, bond_is_aromatic, atom_is_conjugated,
+    bond_is_conjugated, cip_descriptor}` return `Option`, as do
+    `occupancy` and `b_factor` on models, views, members and
+    `ModelEditor`. `None` covers both an unset value and an ID or index that
+    names nothing.
 - **Breaking:** Errors follow one policy (ARCHITECTURE.md, "Lookups, errors,
   and panics"). Which inputs fail is unchanged; callers update the error
   types they name and match.

@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Assign and print rotatable bonds
     let rotatable = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)?;
     for &bond_id in rotatable.bond_ids() {
-        let bond = molecule.bond(bond_id)?;
+        let bond = molecule.bond(bond_id).expect("detected bonds are in the molecule");
         println!("rotatable bond {bond_id}: {}-{}", bond.a(), bond.b());
     }
     Ok(())

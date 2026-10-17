@@ -229,7 +229,7 @@ fn molfile_v3000_continues_records_past_80_columns() {
     .unwrap();
     let stored = charged
         .positions()
-        .position_at(0)
+        .get(0)
         .unwrap()
         .value_in(ANGSTROM)
         .unwrap();
@@ -345,7 +345,7 @@ fn molfile_model_flattens_disconnected_topology_and_preserves_coordinates() {
     {
         let actual = round_trip_model
             .positions()
-            .position_at(index)
+            .get(index)
             .unwrap()
             .value_in(ANGSTROM)
             .unwrap();
@@ -553,7 +553,7 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
         (records[0]
             .model()
             .positions()
-            .position_at(0)
+            .get(0)
             .unwrap()
             .value_in(ANGSTROM)
             .unwrap()
@@ -566,7 +566,7 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
         (records[1]
             .model()
             .positions()
-            .position_at(0)
+            .get(0)
             .unwrap()
             .value_in(ANGSTROM)
             .unwrap()
@@ -964,7 +964,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
             .get(0)
             .unwrap()
             .positions()
-            .position_at(0)
+            .get(0)
             .unwrap()
             .value_in(ANGSTROM)
             .unwrap()
@@ -979,7 +979,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
             .get(1)
             .unwrap()
             .positions()
-            .position_at(0)
+            .get(0)
             .unwrap()
             .value_in(ANGSTROM)
             .unwrap()

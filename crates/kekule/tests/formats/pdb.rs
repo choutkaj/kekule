@@ -220,7 +220,7 @@ fn bonds(result: &StructureInterpretation) -> Vec<(String, String, BondOrder, Bo
         .map(|bond| {
             let [a, b] = bond.atoms();
             let molecule = result.topology().molecule(a.molecule()).unwrap().molecule();
-            let id = molecule.bond_between(a.atom(), b.atom()).unwrap().unwrap();
+            let id = molecule.bond_between(a.atom(), b.atom()).unwrap();
             let (a, b) = (name(a), name(b));
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
             (

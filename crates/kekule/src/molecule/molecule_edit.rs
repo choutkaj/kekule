@@ -199,39 +199,39 @@ impl MoleculeEditor {
     }
 
     /// See [`Molecule::explicit_hydrogens`].
-    pub fn explicit_hydrogens(&self, atom: AtomId) -> Result<usize> {
+    pub fn explicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
         self.working.explicit_hydrogens(atom)
     }
 
     /// See [`Molecule::implicit_hydrogens`]. Chemical edits invalidate inference.
-    pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
+    pub fn implicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
         self.working.implicit_hydrogens(atom)
     }
 
     /// See [`Molecule::total_hydrogens`].
-    pub fn total_hydrogens(&self, atom: AtomId) -> Result<Option<usize>> {
+    pub fn total_hydrogens(&self, atom: AtomId) -> Option<usize> {
         self.working.total_hydrogens(atom)
     }
 
-    pub fn atom_is_aromatic(&self, atom: AtomId) -> Result<Option<bool>> {
+    pub fn atom_is_aromatic(&self, atom: AtomId) -> Option<bool> {
         self.working.atom_is_aromatic(atom)
     }
 
-    pub fn bond_is_aromatic(&self, bond: BondId) -> Result<Option<bool>> {
+    pub fn bond_is_aromatic(&self, bond: BondId) -> Option<bool> {
         self.working.bond_is_aromatic(bond)
     }
 
     /// See [`Molecule::atom_is_conjugated`]. Chemical edits invalidate this state.
-    pub fn atom_is_conjugated(&self, atom: AtomId) -> Result<Option<bool>> {
+    pub fn atom_is_conjugated(&self, atom: AtomId) -> Option<bool> {
         self.working.atom_is_conjugated(atom)
     }
 
     /// See [`Molecule::bond_is_conjugated`]. Chemical edits invalidate this state.
-    pub fn bond_is_conjugated(&self, bond: BondId) -> Result<Option<bool>> {
+    pub fn bond_is_conjugated(&self, bond: BondId) -> Option<bool> {
         self.working.bond_is_conjugated(bond)
     }
 
-    pub fn cip_descriptor(&self, element: StereoElementId) -> Result<Option<StereoDescriptor>> {
+    pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
         self.working.cip_descriptor(element)
     }
 
@@ -258,8 +258,14 @@ impl MoleculeEditor {
     /// Obtaining mutable atom access invalidates perception and owner properties
     /// immediately, even if the guard is forgotten. Use [`Self::replace_atom`]
     /// when an identical replacement should preserve cached state.
-    pub fn atom_mut(&mut self, atom: AtomId) -> Result<super::AtomMut<'_>> {
+    ///
+    /// Returns `None` when `atom` names no live atom of this draft.
+    pub fn atom_mut(&mut self, atom: AtomId) -> Option<super::AtomMut<'_>> {
         self.working.atom_mut(atom)
+    }
+
+    pub(crate) fn require_atom_mut(&mut self, atom: AtomId) -> Result<super::AtomMut<'_>> {
+        self.working.require_atom_mut(atom)
     }
 
     /// Borrows a bond with checked order editing through [`super::BondMut::set_order`].
@@ -271,9 +277,16 @@ impl MoleculeEditor {
     ///     *editor.bond_mut(id).unwrap() = Bond::new(AtomId::new(0), AtomId::new(99), BondOrder::Single);
     /// }
     /// ```
-    pub fn bond_mut(&mut self, bond: BondId) -> Result<super::BondMut<'_>> {
+    ///
+    /// Returns `None` when `bond` names no live bond of this draft.
+    pub fn bond_mut(&mut self, bond: BondId) -> Option<super::BondMut<'_>> {
         self.working
             .bond_mut_recording(bond, &mut self.pruned_stereo)
+    }
+
+    pub(crate) fn require_bond_mut(&mut self, bond: BondId) -> Result<super::BondMut<'_>> {
+        self.bond_mut(bond)
+            .ok_or(MoleculeError::InvalidBondId(bond))
     }
 
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
@@ -420,7 +433,7 @@ impl MoleculeEditor {
     /// ));
     /// assert_eq!(editor.normalize_oxohalogens(), [chlorine]);
     /// let perchlorate = editor.finish()?;
-    /// assert_eq!(perchlorate.atom(chlorine)?.formal_charge, 3);
+    /// assert_eq!(perchlorate.atom(chlorine).map(|atom| atom.formal_charge), Some(3));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn normalize_oxohalogens(&mut self) -> Vec<AtomId> {
@@ -520,7 +533,7 @@ fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidatio
         let Some(bond) = bond else { continue };
         let bond_id = BondId::new(index as u32);
         for atom in [bond.a(), bond.b()] {
-            if molecule.atom(atom).is_err() {
+            if molecule.atom(atom).is_none() {
                 return Err(GraphValidationError::InvalidBondEndpoint { bond: bond_id });
             }
             if !molecule.graph.adjacency[atom.index()].contains(&bond_id) {
@@ -558,7 +571,7 @@ fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoValidat
                 error => unreachable!("stereo references fail only on atoms and bonds: {error}"),
             })?;
         if let Some(group_id) = element.group {
-            let group = molecule.stereo_group(group_id).map_err(|_| {
+            let group = molecule.stereo_group(group_id).ok_or({
                 StereoValidationIssue::MissingStereoGroup {
                     element: element_id,
                     group: group_id,
@@ -584,7 +597,7 @@ fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoValidat
                     element: element_id,
                 });
             }
-            let element = molecule.stereo_element(element_id).map_err(|_| {
+            let element = molecule.stereo_element(element_id).ok_or({
                 StereoValidationIssue::MissingStereoGroupMember {
                     group: group_id,
                     element: element_id,
@@ -671,20 +684,18 @@ fn is_rdkit_oxohalogen(molecule: &Molecule, atom_id: AtomId, atom: &Atom) -> boo
     }
     molecule
         .incident_bonds(atom_id)
-        .ok()
         .into_iter()
         .flatten()
         .all(|(_, bond)| {
             molecule
                 .atom(bond.other_atom(atom_id))
-                .is_ok_and(|neighbor| neighbor.element.symbol() == "O")
+                .is_some_and(|neighbor| neighbor.element.symbol() == "O")
         })
 }
 
 fn oxo_bonds_to_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(AtomId, BondId)> {
     molecule
         .incident_bonds(atom_id)
-        .ok()
         .into_iter()
         .flatten()
         .filter_map(|(bond_id, bond)| {
@@ -692,7 +703,7 @@ fn oxo_bonds_to_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(AtomId, Bon
                 return None;
             }
             let oxygen_id = bond.other_atom(atom_id);
-            let oxygen = molecule.atom(oxygen_id).ok()?;
+            let oxygen = molecule.atom(oxygen_id)?;
             (oxygen.element.symbol() == "O").then_some((oxygen_id, bond_id))
         })
         .collect()
@@ -903,7 +914,7 @@ mod tests {
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
         assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
-        let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap().unwrap();
+        let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap();
         assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
         assert_eq!(molecule.perception(), &super::super::Perception::default());
     }
@@ -975,7 +986,7 @@ mod tests {
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
         assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
-        let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap().unwrap();
+        let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap();
         assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
     }
 

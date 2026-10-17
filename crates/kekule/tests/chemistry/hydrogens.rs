@@ -36,12 +36,8 @@ fn counts_describe_representation_independently_of_how_implicit_h_were_specified
             explicit,
             "{source}"
         );
-        assert_eq!(
-            molecule.implicit_hydrogens(c).unwrap(),
-            Some(implicit),
-            "{source}"
-        );
-        assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(4), "{source}");
+        assert_eq!(molecule.implicit_hydrogens(c), Some(implicit), "{source}");
+        assert_eq!(molecule.total_hydrogens(c), Some(4), "{source}");
         let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
         assert_eq!(
             formula.count(kekule::molecule::Element::from_symbol("H").unwrap()),
@@ -61,23 +57,15 @@ fn fixed_counts_are_known_without_perception_and_unknown_is_not_zero() {
         let molecule = parse(source);
         let atom = molecule.atom_ids().next().unwrap();
         assert!(!molecule.perception().has_valence());
-        assert_eq!(
-            molecule.implicit_hydrogens(atom).unwrap(),
-            expected,
-            "{source}"
-        );
-        assert_eq!(
-            molecule.total_hydrogens(atom).unwrap(),
-            expected,
-            "{source}"
-        );
+        assert_eq!(molecule.implicit_hydrogens(atom), expected, "{source}");
+        assert_eq!(molecule.total_hydrogens(atom), expected, "{source}");
         assert_eq!(molecule.explicit_hydrogens(atom).unwrap(), 0);
     }
     let molecule = parse("C");
     let invalid = AtomId::new(999);
-    assert!(molecule.explicit_hydrogens(invalid).is_err());
-    assert!(molecule.implicit_hydrogens(invalid).is_err());
-    assert!(molecule.total_hydrogens(invalid).is_err());
+    assert!(molecule.explicit_hydrogens(invalid).is_none());
+    assert!(molecule.implicit_hydrogens(invalid).is_none());
+    assert!(molecule.total_hydrogens(invalid).is_none());
 }
 
 #[test]
@@ -89,9 +77,9 @@ fn edits_invalidate_inference_and_preserve_fixed_counts() {
         let bond = molecule.bond_ids().next().unwrap();
         let mut editor = molecule.into_editor();
         editor.bond_mut(bond).unwrap().set_order(BondOrder::Double);
-        assert_eq!(editor.implicit_hydrogens(c).unwrap(), after_edit);
+        assert_eq!(editor.implicit_hydrogens(c), after_edit);
         assert_eq!(editor.explicit_hydrogens(c).unwrap(), 0);
-        assert_eq!(editor.total_hydrogens(c).unwrap(), after_edit);
+        assert_eq!(editor.total_hydrogens(c), after_edit);
         let mut molecule = editor.finish().unwrap();
         if source.starts_with('[') {
             // The edit makes the fixed count overvalent. Strict validation must
@@ -104,10 +92,7 @@ fn edits_invalidate_inference_and_preserve_fixed_counts() {
         } else {
             molecule.perceive().unwrap();
         }
-        assert_eq!(
-            molecule.implicit_hydrogens(c).unwrap(),
-            Some(after_perception)
-        );
+        assert_eq!(molecule.implicit_hydrogens(c), Some(after_perception));
     }
 }
 
@@ -139,7 +124,7 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
         molecule.perceive().unwrap();
         let c = carbon(&molecule);
         let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
-        let original_implicit = molecule.implicit_hydrogens(c).unwrap().unwrap();
+        let original_implicit = molecule.implicit_hydrogens(c).unwrap();
         assert_eq!(
             molecule
                 .add_hydrogens(Default::default())
@@ -150,7 +135,7 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
         );
         molecule.perceive().unwrap();
         assert_eq!(molecule.explicit_hydrogens(c).unwrap(), 4);
-        assert_eq!(molecule.implicit_hydrogens(c).unwrap(), Some(0));
+        assert_eq!(molecule.implicit_hydrogens(c), Some(0));
         let report = molecule.remove_hydrogens().unwrap();
         let retained = usize::from(source.contains("2H") || source.contains(":7"));
         assert_eq!(report.retained.len(), retained);
@@ -159,7 +144,7 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
         // Removal renumbers atoms that followed a removed hydrogen.
         let c = report.correspondence.atom(c).unwrap();
         molecule.perceive().unwrap();
-        assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(4));
+        assert_eq!(molecule.total_hydrogens(c), Some(4));
         assert_eq!(
             molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap(),
             formula
@@ -230,8 +215,8 @@ fn count_arithmetic_does_not_truncate_large_detached_assignments() {
         .unwrap()
         .build();
     molecule.install_perception(perception).unwrap();
-    assert_eq!(molecule.implicit_hydrogens(c).unwrap(), Some(255));
-    assert_eq!(molecule.total_hydrogens(c).unwrap(), Some(256));
+    assert_eq!(molecule.implicit_hydrogens(c), Some(255));
+    assert_eq!(molecule.total_hydrogens(c), Some(256));
 }
 
 #[test]
@@ -255,14 +240,8 @@ fn installed_perception_cannot_infer_hydrogens_on_a_fixed_count() {
         let installed = molecule.install_perception(perception);
         assert_eq!(installed, expected);
         if installed.is_ok() {
-            assert_eq!(
-                molecule.implicit_hydrogens(AtomId::new(0)).unwrap(),
-                Some(3)
-            );
-            assert_eq!(
-                molecule.implicit_hydrogens(AtomId::new(1)).unwrap(),
-                Some(3)
-            );
+            assert_eq!(molecule.implicit_hydrogens(AtomId::new(0)), Some(3));
+            assert_eq!(molecule.implicit_hydrogens(AtomId::new(1)), Some(3));
         } else {
             assert_eq!(molecule.perception(), &before);
         }
@@ -278,8 +257,8 @@ fn incomplete_perception_cannot_silently_drop_hydrogens_during_materialization()
         .unwrap()
         .build();
     molecule.install_perception(state).unwrap();
-    assert_eq!(molecule.implicit_hydrogens(atoms[0]).unwrap(), Some(3));
-    assert_eq!(molecule.implicit_hydrogens(atoms[1]).unwrap(), None);
+    assert_eq!(molecule.implicit_hydrogens(atoms[0]), Some(3));
+    assert_eq!(molecule.implicit_hydrogens(atoms[1]), None);
     let before = molecule.perception().clone();
     assert_eq!(
         molecule.add_hydrogens(Default::default()),

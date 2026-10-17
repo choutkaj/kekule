@@ -117,23 +117,16 @@ impl<'a> AtomView<'a> {
         self.molecule()
             .molecule()
             .implicit_hydrogens(self.id.atom())
-            .expect("published topology atoms are live")
     }
 
     /// Explicit plus implicit hydrogens; see [`crate::molecule::Molecule::total_hydrogens`].
     pub fn total_hydrogens(self) -> Option<usize> {
-        self.molecule()
-            .molecule()
-            .total_hydrogens(self.id.atom())
-            .expect("published topology atoms are live")
+        self.molecule().molecule().total_hydrogens(self.id.atom())
     }
 
     /// Perceived aromaticity; `None` before perception.
     pub fn is_aromatic(self) -> Option<bool> {
-        self.molecule()
-            .molecule()
-            .atom_is_aromatic(self.id.atom())
-            .expect("published topology atoms are live")
+        self.molecule().molecule().atom_is_aromatic(self.id.atom())
     }
 
     pub fn atom_site(self) -> Option<AtomSiteView<'a>> {
@@ -243,10 +236,7 @@ impl<'a> BondView<'a> {
 
     /// Perceived aromaticity; `None` before perception.
     pub fn is_aromatic(self) -> Option<bool> {
-        self.molecule()
-            .molecule()
-            .bond_is_aromatic(self.id.bond())
-            .expect("published topology bonds are live")
+        self.molecule().molecule().bond_is_aromatic(self.id.bond())
     }
 
     /// One static topology annotation of this bond.

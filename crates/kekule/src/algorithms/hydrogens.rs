@@ -217,7 +217,7 @@ pub(crate) fn add_hydrogens_to_molecule(
                 }
                 ImplicitHydrogens::Inferred => (
                     molecule
-                        .implicit_hydrogens(parent)?
+                        .implicit_hydrogens(parent)
                         .ok_or(HydrogenTransformError::MissingValencePerception)?,
                     AddedHydrogenOrigin::Inferred,
                 ),
@@ -258,7 +258,7 @@ pub(crate) fn add_hydrogens_to_molecule(
             });
         }
         if origin == AddedHydrogenOrigin::Fixed && count > 0 {
-            editor.atom_mut(parent)?.hydrogens = ImplicitHydrogens::Fixed(0);
+            editor.require_atom_mut(parent)?.hydrogens = ImplicitHydrogens::Fixed(0);
         }
     }
 
@@ -333,17 +333,17 @@ pub(crate) fn remove_hydrogens_keeping(
     let mut expected_totals = BTreeMap::<AtomId, usize>::new();
     for (parent, hydrogens) in &by_parent {
         let implicit = molecule
-            .implicit_hydrogens(*parent)?
+            .implicit_hydrogens(*parent)
             .ok_or(HydrogenTransformError::MissingValencePerception)?;
         expected_totals.insert(*parent, implicit + hydrogens.len());
     }
 
     let mut fixed_count_parents = stereo_hydrogen_parents(molecule, &removable);
     fixed_count_parents.extend(by_parent.keys().copied().filter(|parent| {
-        molecule.atom(*parent).is_ok_and(|atom| {
+        molecule.atom(*parent).is_some_and(|atom| {
             atom.element.symbol() == "N"
                 && atom.formal_charge == 0
-                && molecule.atom_is_aromatic(*parent).ok().flatten() == Some(true)
+                && molecule.atom_is_aromatic(*parent) == Some(true)
         })
     }));
     let stereo_bindings = stereo_hydrogen_bindings(molecule, &removable);
@@ -536,7 +536,9 @@ fn removable_hydrogen(
     {
         return Ok(Err(RetainedHydrogenReason::AtomProperties));
     }
-    let incident = molecule.incident_bonds(hydrogen)?.collect::<Vec<_>>();
+    let incident = molecule
+        .require_incident_bonds(hydrogen)?
+        .collect::<Vec<_>>();
     if incident.is_empty() {
         return Ok(Err(RetainedHydrogenReason::NoHeavyAtomNeighbor));
     }
@@ -545,7 +547,7 @@ fn removable_hydrogen(
     }
     let (bond_id, bond) = incident[0];
     let parent = bond.other_atom(hydrogen);
-    if molecule.atom(parent)?.element.atomic_number() == 1 {
+    if molecule.require_atom(parent)?.element.atomic_number() == 1 {
         return Ok(Err(RetainedHydrogenReason::HydrogenNeighbor));
     }
     if bond.order != BondOrder::Single {
@@ -635,8 +637,8 @@ fn collapses_to_sole_implicit_hydrogen(
     parent: AtomId,
     candidates: &BTreeSet<AtomId>,
 ) -> bool {
-    matches!(molecule.implicit_hydrogens(parent), Ok(None | Some(0)))
-        && molecule.neighbors(parent).is_ok_and(|mut neighbors| {
+    matches!(molecule.implicit_hydrogens(parent), None | Some(0))
+        && molecule.neighbors(parent).is_some_and(|mut neighbors| {
             neighbors.all(|neighbor| neighbor == hydrogen || !candidates.contains(&neighbor))
         })
 }
@@ -674,7 +676,7 @@ fn collapse_stereo_hydrogen_carrier(
     elements: &[StereoElementId],
 ) -> Result<(), HydrogenTransformError> {
     for &id in elements {
-        let mut replacement = editor.stereo_element(id)?.clone();
+        let mut replacement = editor.require_stereo_element(id)?.clone();
         let collapse = |carrier: &mut StereoCarrier| {
             if *carrier == StereoCarrier::Atom(hydrogen) {
                 *carrier = StereoCarrier::ImplicitHydrogen;
@@ -742,7 +744,7 @@ fn assign_collapsed_hydrogen_counts(
     let mut adjustments = Vec::with_capacity(expected_totals.len());
     for (parent, expected) in expected_totals {
         let working = editor.working();
-        let atom = working.atom(*parent)?;
+        let atom = working.require_atom(*parent)?;
         let keeps_inference = atom.hydrogens.is_inferred()
             && !fixed_count_parents.contains(parent)
             && usize::from(rdkit_inferred_hydrogen_count(working, *parent, atom)) == *expected;
@@ -757,8 +759,10 @@ fn assign_collapsed_hydrogen_counts(
             })?;
             ImplicitHydrogens::Fixed(count)
         };
-        let explicit_hydrogens = working.explicit_hydrogens(*parent)?;
-        editor.atom_mut(*parent)?.hydrogens = hydrogens;
+        let explicit_hydrogens = working
+            .explicit_hydrogens(*parent)
+            .ok_or(MoleculeError::InvalidAtomId(*parent))?;
+        editor.require_atom_mut(*parent)?.hydrogens = hydrogens;
         adjustments.push(HydrogenCountAdjustment {
             parent: *parent,
             removed_graph_hydrogens: by_parent[parent].len(),

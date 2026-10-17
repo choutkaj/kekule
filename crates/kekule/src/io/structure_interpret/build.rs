@@ -274,7 +274,7 @@ impl BuiltMolecule {
                 let atom = self
                     .editor
                     .working()
-                    .atom(source_atom)
+                    .require_atom(source_atom)
                     .map_err(graph_error)?
                     .clone();
                 let target_atom = editor.add_atom(atom).map_err(graph_error)?;
@@ -444,7 +444,7 @@ pub(super) fn build_molecule(
         record_evidence(&mut evidence, left, right, source);
         if editor
             .working()
-            .bond_between(left, right)
+            .require_bond_between(left, right)
             .map_err(graph_error)?
             .is_none()
         {
@@ -454,10 +454,16 @@ pub(super) fn build_molecule(
         } else {
             let existing = editor
                 .working()
-                .bond_between(left, right)
+                .require_bond_between(left, right)
                 .map_err(graph_error)?
                 .expect("existing bond was found");
-            if editor.working().bond(existing).map_err(graph_error)?.order != connection.order {
+            if editor
+                .working()
+                .require_bond(existing)
+                .map_err(graph_error)?
+                .order
+                != connection.order
+            {
                 return Err(structure_error(
                     DiagnosticKind::Inconsistent,
                     None,
@@ -582,7 +588,7 @@ fn count_bond_candidates(
                         }
 
                         if graph
-                            .bond_between(left, right)
+                            .require_bond_between(left, right)
                             .map_err(graph_error)?
                             .is_none()
                         {

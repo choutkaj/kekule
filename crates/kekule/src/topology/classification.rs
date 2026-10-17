@@ -124,7 +124,7 @@ fn infer_residue_class(
     let atoms = residue
         .atom_sites()
         .iter()
-        .filter_map(|site| hierarchy.atom_site(*site).ok())
+        .filter_map(|site| hierarchy.atom_site(*site))
         .filter_map(|site| topology_atom(site.atom(), definitions, instances))
         .collect::<Vec<_>>();
     if atoms.len() == 1
@@ -148,7 +148,6 @@ fn topology_atom<'a>(
         .get(instance.definition().index())?
         .molecule()
         .atom(atom.atom())
-        .ok()
 }
 
 fn infer_instance_class(

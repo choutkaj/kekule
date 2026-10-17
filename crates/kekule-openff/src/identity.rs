@@ -27,7 +27,10 @@ fn signature(molecule: &Molecule) -> Result<Signature> {
         .map(|(id, atom)| {
             Ok((
                 atom.element.atomic_number(),
-                molecule.neighbors(id).map_err(Error::chemistry)?.count(),
+                molecule
+                    .neighbors(id)
+                    .expect("atom IDs come from this molecule")
+                    .count(),
             ))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -101,17 +104,23 @@ fn find(query: &Molecule, entry: &Molecule, mode: u8) -> Result<Option<Vec<AtomI
     let targets: Vec<_> = entry.atom_ids().collect();
     let mut candidates = Vec::new();
     for &a in &ids {
-        let qa = query.atom(a).map_err(Error::chemistry)?;
-        let degree = query.neighbors(a).map_err(Error::chemistry)?.count();
+        let qa = query.atom(a).expect("atom IDs come from this molecule");
+        let degree = query
+            .neighbors(a)
+            .expect("atom IDs come from this molecule")
+            .count();
         let mut row = Vec::new();
         for &b in &targets {
-            let eb = entry.atom(b).map_err(Error::chemistry)?;
+            let eb = entry.atom(b).expect("atom IDs come from this molecule");
             if qa.element == eb.element
                 && qa.isotope == eb.isotope
-                && degree == entry.neighbors(b).map_err(Error::chemistry)?.count()
+                && degree
+                    == entry
+                        .neighbors(b)
+                        .expect("atom IDs come from this molecule")
+                        .count()
                 && (mode > 0 || qa.formal_charge == eb.formal_charge)
-                && query.atom_is_aromatic(a).map_err(Error::chemistry)?
-                    == entry.atom_is_aromatic(b).map_err(Error::chemistry)?
+                && query.atom_is_aromatic(a) == entry.atom_is_aromatic(b)
             {
                 row.push(b);
             }
@@ -176,20 +185,26 @@ impl Search<'_> {
             }
             let mut compatible = true;
             for (&x, &y) in map.iter() {
-                let qb = self.query.bond_between(a, x).map_err(Error::chemistry)?;
-                let eb = self.entry.bond_between(b, y).map_err(Error::chemistry)?;
+                let qb = self.query.bond_between(a, x);
+                let eb = self.entry.bond_between(b, y);
                 match (qb, eb) {
                     (None, None) => {}
                     (Some(q), Some(e)) => {
-                        if self.query.bond_is_aromatic(q).map_err(Error::chemistry)?
-                            != self.entry.bond_is_aromatic(e).map_err(Error::chemistry)?
-                        {
+                        if self.query.bond_is_aromatic(q) != self.entry.bond_is_aromatic(e) {
                             compatible = false;
                             break;
                         }
                         if self.mode == 0
-                            && self.query.bond(q).map_err(Error::chemistry)?.order
-                                != self.entry.bond(e).map_err(Error::chemistry)?.order
+                            && self
+                                .query
+                                .bond(q)
+                                .expect("bond IDs come from this molecule")
+                                .order
+                                != self
+                                    .entry
+                                    .bond(e)
+                                    .expect("bond IDs come from this molecule")
+                                    .order
                         {
                             compatible = false;
                             break;

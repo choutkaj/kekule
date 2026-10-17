@@ -192,7 +192,7 @@ fn molfile_document_model_retains_published_component_geometry() {
             interpretation
                 .model()
                 .positions()
-                .position_at(position_index.index())
+                .get(position_index.index())
                 .expect("mapped source coordinate")
                 .into_value(),
             expected,

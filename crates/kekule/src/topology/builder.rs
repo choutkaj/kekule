@@ -275,12 +275,16 @@ impl TopologyBuilder {
         })
     }
 
-    pub fn definition(
+    /// One staged definition, or `None` when `id` names no staged definition.
+    pub fn definition(&self, id: MoleculeDefinitionId) -> Option<&MoleculeDefinition> {
+        self.definitions.get(id.index())
+    }
+
+    pub(crate) fn require_definition(
         &self,
         id: MoleculeDefinitionId,
     ) -> Result<&MoleculeDefinition, TopologyBuildError> {
-        self.definitions
-            .get(id.index())
+        self.definition(id)
             .ok_or(TopologyBuildError::InvalidMoleculeDefinitionId(id))
     }
 
@@ -294,7 +298,7 @@ impl TopologyBuilder {
         definition: MoleculeDefinitionId,
         class: MoleculeClass,
     ) -> Result<(), TopologyBuildError> {
-        self.definition(definition)?;
+        self.require_definition(definition)?;
         self.molecule_class_overrides.insert(definition, class);
         Ok(())
     }
@@ -307,7 +311,7 @@ impl TopologyBuilder {
         class: ResidueClass,
     ) -> Result<(), TopologyBuildError> {
         self.hierarchy
-            .residue(residue)
+            .require_residue(residue)
             .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
         self.residue_class_overrides.insert(residue, class);
         Ok(())
@@ -321,7 +325,7 @@ impl TopologyBuilder {
         class: MoleculeClass,
         explicit: bool,
     ) -> Result<(), TopologyBuildError> {
-        self.definition(definition)?;
+        self.require_definition(definition)?;
         if explicit {
             self.molecule_class_overrides.insert(definition, class);
         } else {
@@ -337,7 +341,7 @@ impl TopologyBuilder {
         explicit: bool,
     ) -> Result<(), TopologyBuildError> {
         self.hierarchy
-            .residue(residue)
+            .require_residue(residue)
             .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
         if explicit {
             self.residue_class_overrides.insert(residue, class);
@@ -362,7 +366,7 @@ impl TopologyBuilder {
         &mut self,
         definition: MoleculeDefinitionId,
     ) -> Result<MoleculeInstanceId, TopologyBuildError> {
-        self.definition(definition)?;
+        self.require_definition(definition)?;
         self.reserve_instances(1)?;
         let id = checked_id::<MoleculeInstanceId>(
             self.instances.len(),
@@ -426,7 +430,7 @@ impl TopologyBuilder {
 
         self.invalidate_changed_hierarchy_classes();
         self.residue_class_overrides
-            .retain(|id, _| self.hierarchy.residue(*id).is_ok());
+            .retain(|id, _| self.hierarchy.residue(*id).is_some());
         self.preserved_residue_classes.extend(
             self.residue_class_overrides
                 .iter()
@@ -534,7 +538,7 @@ impl TopologyBuilder {
         let unchanged_residues = source
             .residues()
             .filter_map(|(id, before)| {
-                let after = self.hierarchy.residue(id).ok()?;
+                let after = self.hierarchy.residue(id)?;
                 let same_component = before.name() == after.name()
                     && before.label_comp_id() == after.label_comp_id()
                     && before.author_comp_id() == after.author_comp_id();
@@ -810,7 +814,7 @@ pub(crate) fn validate_hierarchy(
         let residue_ids = || chain.residues().iter().map(|id| id.index());
         tally(&mut residue_counts, residue_ids(), 1);
         for residue_id in chain.residues() {
-            let residue = hierarchy.residue(*residue_id).map_err(|_| {
+            let residue = hierarchy.require_residue(*residue_id).map_err(|_| {
                 TopologyHierarchyError::InvalidChainResidue {
                     chain: chain_id,
                     residue: *residue_id,
@@ -835,7 +839,7 @@ pub(crate) fn validate_hierarchy(
                 id: residue_id,
             });
         }
-        hierarchy.chain(residue.chain()).map_err(|_| {
+        hierarchy.require_chain(residue.chain()).map_err(|_| {
             TopologyHierarchyError::InvalidResidueChain {
                 residue: residue_id,
                 chain: residue.chain(),
@@ -852,7 +856,7 @@ pub(crate) fn validate_hierarchy(
         let site_ids = || residue.atom_sites().iter().map(|id| id.index());
         tally(&mut site_counts, site_ids(), 1);
         for site_id in residue.atom_sites() {
-            let site = hierarchy.atom_site(*site_id).map_err(|_| {
+            let site = hierarchy.require_atom_site(*site_id).map_err(|_| {
                 TopologyHierarchyError::InvalidResidueAtomSite {
                     residue: residue_id,
                     site: *site_id,
@@ -872,7 +876,7 @@ pub(crate) fn validate_hierarchy(
         if site_id.index() != slot {
             return Err(TopologyHierarchyError::InvalidAtomSiteIdentifier { slot, id: site_id });
         }
-        hierarchy.residue(site.residue()).map_err(|_| {
+        hierarchy.require_residue(site.residue()).map_err(|_| {
             TopologyHierarchyError::InvalidAtomSiteResidue {
                 site: site_id,
                 residue: site.residue(),
@@ -902,9 +906,9 @@ pub(crate) fn validate_hierarchy(
         }
     }
     for (atom, site_id) in hierarchy.atom_lookup_entries() {
-        if !hierarchy
+        if hierarchy
             .atom_site(site_id)
-            .is_ok_and(|site| site.atom() == atom)
+            .is_none_or(|site| site.atom() != atom)
         {
             return Err(TopologyHierarchyError::InconsistentAtomLookup {
                 site: site_id,

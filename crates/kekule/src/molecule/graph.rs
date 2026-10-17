@@ -1,4 +1,4 @@
-use super::owner::{MoleculeError, Result};
+use super::owner::MoleculeError;
 use super::{
     Atom, AtomId, Bond, BondId, StereoElement, StereoElementId, StereoGroup, StereoGroupId,
 };
@@ -57,11 +57,9 @@ impl Graph {
             .sum()
     }
 
-    pub fn atom(&self, id: AtomId) -> Result<&Atom> {
-        self.atoms
-            .get(id.index())
-            .and_then(Option::as_ref)
-            .ok_or(MoleculeError::InvalidAtomId(id))
+    /// One live atom, or `None` when `id` names no atom of this graph.
+    pub fn atom(&self, id: AtomId) -> Option<&Atom> {
+        self.atoms.get(id.index()).and_then(Option::as_ref)
     }
 
     pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
@@ -74,11 +72,9 @@ impl Graph {
         self.atoms().map(|(id, _)| id)
     }
 
-    pub fn bond(&self, id: BondId) -> Result<&Bond> {
-        self.bonds
-            .get(id.index())
-            .and_then(Option::as_ref)
-            .ok_or(MoleculeError::InvalidBondId(id))
+    /// One live bond, or `None` when `id` names no bond of this graph.
+    pub fn bond(&self, id: BondId) -> Option<&Bond> {
+        self.bonds.get(id.index()).and_then(Option::as_ref)
     }
 
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
@@ -91,15 +87,13 @@ impl Graph {
         self.bonds().map(|(id, _)| id)
     }
 
-    pub fn neighbors(&self, id: AtomId) -> Result<impl Iterator<Item = AtomId> + '_> {
-        self.atom(id)?;
-        Ok(self.adjacency[id.index()]
-            .iter()
-            .map(|bond_id| {
-                self.bond(*bond_id)
-                    .expect("published molecule adjacency references a live bond")
-            })
-            .map(move |bond| bond.other_atom(id)))
+    /// Neighbours of one atom in adjacency order, or `None` when `id` names no
+    /// atom of this graph.
+    pub fn neighbors(&self, id: AtomId) -> Option<impl Iterator<Item = AtomId> + '_> {
+        Some(
+            self.incident_bonds(id)?
+                .map(move |(_, bond)| bond.other_atom(id)),
+        )
     }
 
     /// Returns graph components for validation and graph algorithms.
@@ -121,7 +115,7 @@ impl Graph {
                 component.push(atom);
                 let mut neighbors = self
                     .neighbors(atom)
-                    .expect("live atom must have valid adjacency")
+                    .expect("component traversal visits live atoms")
                     .filter(|neighbor| !seen[neighbor.index()])
                     .collect::<Vec<_>>();
                 neighbors.sort_unstable_by(|left, right| right.cmp(left));
@@ -138,31 +132,32 @@ impl Graph {
         components
     }
 
-    pub fn incident_bonds(&self, id: AtomId) -> Result<impl Iterator<Item = (BondId, &Bond)> + '_> {
+    /// Bonds incident to one atom in adjacency order, or `None` when `id`
+    /// names no atom of this graph.
+    pub fn incident_bonds(&self, id: AtomId) -> Option<impl Iterator<Item = (BondId, &Bond)> + '_> {
         self.atom(id)?;
-        Ok(self.adjacency[id.index()].iter().map(|bond_id| {
+        Some(self.adjacency[id.index()].iter().map(|bond_id| {
             let bond = self
                 .bond(*bond_id)
-                .expect("published molecule adjacency references a live bond");
+                .expect("adjacency references only live bonds");
             (*bond_id, bond)
         }))
     }
 
-    pub fn bond_between(&self, a: AtomId, b: AtomId) -> Result<Option<BondId>> {
-        self.atom(a)?;
+    /// The bond joining two atoms, or `None` when they are not bonded or
+    /// either names no atom of this graph.
+    pub fn bond_between(&self, a: AtomId, b: AtomId) -> Option<BondId> {
         self.atom(b)?;
-        Ok(self.adjacency[a.index()].iter().copied().find(|bond_id| {
-            self.bond(*bond_id)
-                .expect("published molecule adjacency references a live bond")
-                .connects(a, b)
-        }))
+        self.incident_bonds(a)?
+            .find(|(_, bond)| bond.connects(a, b))
+            .map(|(id, _)| id)
     }
 
-    pub fn stereo_element(&self, id: StereoElementId) -> Result<&StereoElement> {
+    /// One stereo element, or `None` when `id` names no element of this graph.
+    pub fn stereo_element(&self, id: StereoElementId) -> Option<&StereoElement> {
         self.stereo_elements
             .get(id.index())
             .and_then(Option::as_ref)
-            .ok_or(MoleculeError::InvalidStereoElementId(id))
     }
 
     pub fn stereo_elements(&self) -> impl Iterator<Item = (StereoElementId, &StereoElement)> {
@@ -179,10 +174,64 @@ impl Graph {
         self.stereo_elements().map(|(id, _)| id)
     }
 
-    pub fn stereo_group(&self, id: StereoGroupId) -> Result<&StereoGroup> {
-        self.stereo_groups
-            .get(id.index())
-            .and_then(Option::as_ref)
+    /// One stereo group, or `None` when `id` names no group of this graph.
+    pub fn stereo_group(&self, id: StereoGroupId) -> Option<&StereoGroup> {
+        self.stereo_groups.get(id.index()).and_then(Option::as_ref)
+    }
+
+    /// [`Self::atom`] for staging code that reports a missing atom.
+    pub(crate) fn require_atom(&self, id: AtomId) -> Result<&Atom, MoleculeError> {
+        self.atom(id).ok_or(MoleculeError::InvalidAtomId(id))
+    }
+
+    /// [`Self::bond`] for staging code that reports a missing bond.
+    pub(crate) fn require_bond(&self, id: BondId) -> Result<&Bond, MoleculeError> {
+        self.bond(id).ok_or(MoleculeError::InvalidBondId(id))
+    }
+
+    /// [`Self::neighbors`] for staging code that reports a missing atom.
+    pub(crate) fn require_neighbors(
+        &self,
+        id: AtomId,
+    ) -> Result<impl Iterator<Item = AtomId> + '_, MoleculeError> {
+        self.neighbors(id).ok_or(MoleculeError::InvalidAtomId(id))
+    }
+
+    /// [`Self::incident_bonds`] for staging code that reports a missing atom.
+    pub(crate) fn require_incident_bonds(
+        &self,
+        id: AtomId,
+    ) -> Result<impl Iterator<Item = (BondId, &Bond)> + '_, MoleculeError> {
+        self.incident_bonds(id)
+            .ok_or(MoleculeError::InvalidAtomId(id))
+    }
+
+    /// [`Self::bond_between`] for staging code that reports a missing atom.
+    pub(crate) fn require_bond_between(
+        &self,
+        a: AtomId,
+        b: AtomId,
+    ) -> Result<Option<BondId>, MoleculeError> {
+        self.require_atom(a)?;
+        self.require_atom(b)?;
+        Ok(self.bond_between(a, b))
+    }
+
+    /// [`Self::stereo_element`] for staging code that reports a missing element.
+    pub(crate) fn require_stereo_element(
+        &self,
+        id: StereoElementId,
+    ) -> Result<&StereoElement, MoleculeError> {
+        self.stereo_element(id)
+            .ok_or(MoleculeError::InvalidStereoElementId(id))
+    }
+
+    /// [`Self::stereo_group`] for staging code that reports a missing group.
+    pub(crate) fn require_stereo_group(
+        &self,
+        id: StereoGroupId,
+    ) -> Result<&StereoGroup, MoleculeError> {
+        self.stereo_group(id)
             .ok_or(MoleculeError::InvalidStereoGroupId(id))
     }
 

@@ -45,8 +45,8 @@ pub enum BondSelectionMode {
 /// selected.ensure_compatible(&topology)?;
 /// let mut editor = topology.to_editor();
 /// let handles = selected.bond_ids()
-///     .map(|id| editor.bond_handle(id))
-///     .collect::<Result<Vec<_>, _>>()?;
+///     .map(|id| editor.bond_handle(id).expect("selected source bond"))
+///     .collect::<Vec<_>>();
 /// editor.delete_bonds(handles)?;
 /// let edited = editor.finish()?;
 /// assert_eq!(edited.instance_count(), 2);

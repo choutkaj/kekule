@@ -36,7 +36,7 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
     assert_eq!(editor.bonds().count(), 1);
     assert_eq!(editor.neighbors(a).unwrap().collect::<Vec<_>>(), vec![b]);
     assert_eq!(editor.incident_bonds(b).unwrap().next().unwrap().0, bond);
-    assert_eq!(editor.bond_between(a, b).unwrap(), Some(bond));
+    assert_eq!(editor.bond_between(a, b), Some(bond));
     editor.atom_mut(a).unwrap().formal_charge = 1;
     assert_eq!(editor.formal_charge(), 1);
     assert_eq!(editor.replace_atom(a, atom("N")).unwrap().formal_charge, 1);
@@ -83,8 +83,8 @@ fn rewiring_retains_ids_properties_and_checks_every_endpoint_before_mutation() {
         assert_eq!(snapshot(&editor), before);
     }
     editor.set_bond_endpoints(bonds[0], ids[0], ids[3]).unwrap();
-    assert_eq!(editor.bond_between(ids[0], ids[1]).unwrap(), None);
-    assert_eq!(editor.bond_between(ids[0], ids[3]).unwrap(), Some(bonds[0]));
+    assert_eq!(editor.bond_between(ids[0], ids[1]), None);
+    assert_eq!(editor.bond_between(ids[0], ids[3]), Some(bonds[0]));
     assert_eq!(
         editor.neighbors(ids[0]).unwrap().collect::<Vec<_>>(),
         vec![ids[3]]
@@ -393,7 +393,7 @@ fn append_conflicts_roll_back_graph_properties_and_id_allocation() {
 fn append_remaps_double_bond_and_axis_stereo_across_sparse_ids() {
     let mut source = molecule("F/C=C/C=C").into_editor();
     let atoms = source.atom_ids().collect::<Vec<_>>();
-    let focus = source.bond_between(atoms[2], atoms[3]).unwrap().unwrap();
+    let focus = source.bond_between(atoms[2], atoms[3]).unwrap();
     let double = source.stereo_element_ids().next().unwrap();
     let axis = source
         .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
@@ -599,10 +599,7 @@ fn stereo_group_replacement_preserves_identity_and_rewiring_prunes_affected_ster
         .unwrap();
     assert_eq!(editor.stereo_element(group.members[0]).unwrap().group, None);
     assert_eq!(editor.stereo_element(added).unwrap().group, Some(id));
-    let bond = editor
-        .bond_between(original.center, center)
-        .unwrap()
-        .unwrap();
+    let bond = editor.bond_between(original.center, center).unwrap();
     let other = editor.add_atom(atom("C")).unwrap();
     editor
         .set_bond_endpoints(bond, original.center, other)

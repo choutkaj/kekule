@@ -133,11 +133,7 @@ impl<'a> MolfileRecord<'a> {
             let occurrence = view.molecule();
             let position = model
                 .position(qualified)
-                .map_err(|error| {
-                    MOLFILE_WRITE
-                        .invalid_model("inconsistent source model")
-                        .with_source(error)
-                })?
+                .ok_or_else(|| MOLFILE_WRITE.invalid_model("inconsistent source model"))?
                 .value_in(ANGSTROM)
                 .map_err(|error| {
                     MOLFILE_WRITE

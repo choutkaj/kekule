@@ -125,8 +125,7 @@ fn mmcif_altloc_ties_and_unknown_occupancies_are_reported() {
     assert_eq!(
         result
             .model()
-            .occupancy(crate::topology::TopologyAtomIndex::new(0))
-            .unwrap(),
+            .occupancy(crate::topology::TopologyAtomIndex::new(0)),
         None
     );
 }

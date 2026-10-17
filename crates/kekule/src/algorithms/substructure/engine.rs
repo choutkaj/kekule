@@ -49,10 +49,7 @@ impl<'a> TargetData<'a> {
                     .or_insert_with(|| {
                         // Unperceived targets retain the existing partial-facts
                         // policy: an unresolved inferred count counts as zero.
-                        let nongraph_hydrogens = molecule
-                            .implicit_hydrogens(local)
-                            .expect("valid atom")
-                            .unwrap_or(0);
+                        let nongraph_hydrogens = molecule.implicit_hydrogens(local).unwrap_or(0);
                         let neighbors = molecule
                             .neighbors(local)
                             .expect("valid atom")
@@ -458,7 +455,6 @@ impl Context<'_, '_> {
             let target_bond = target
                 .molecule
                 .bond_between(target.local, locals[bond.b().index()])
-                .expect("valid atoms")
                 .expect("mapped bond");
             let mut domain = Vec::new();
             for direction in [None, Some(false), Some(true)] {

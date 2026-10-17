@@ -16,10 +16,10 @@ fn index(model: &Model, atom: InstanceAtomId) -> TopologyAtomIndex {
     model.topology().atom_index(atom).unwrap()
 }
 fn occupancy(model: &Model, atom: InstanceAtomId) -> Option<f64> {
-    model.occupancy(index(model, atom)).unwrap()
+    model.occupancy(index(model, atom))
 }
 fn b_factor(model: &Model, atom: InstanceAtomId) -> Option<Quantity<f64>> {
-    model.b_factor(index(model, atom)).unwrap()
+    model.b_factor(index(model, atom))
 }
 fn atom_value(model: &Model, atom: InstanceAtomId, name: &PropertyKey) -> Option<PropertyValue> {
     model
@@ -543,7 +543,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     );
     let removed = imported.bond(source_bond).unwrap();
     editor.delete_bond(removed).unwrap();
-    assert!(editor.bond(removed).is_err());
+    assert!(editor.bond(removed).is_none());
     let split = editor.clone().finish().unwrap();
     assert_eq!(split.topology().instance_count(), 2);
     assert_eq!(split.atom_count(), 4);
@@ -566,8 +566,8 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
     );
     editor.delete_atom(left).unwrap();
     editor.delete_atom(right).unwrap();
-    assert!(editor.atom(left).is_err());
-    assert!(editor.atom(right).is_err());
+    assert!(editor.atom(left).is_none());
+    assert!(editor.atom(right).is_none());
     let deleted = editor.finish().unwrap();
     assert_eq!(deleted.atom_count(), 2);
     assert_eq!(deleted.topology().instance_count(), 2);
@@ -598,17 +598,17 @@ fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recov
     let mut foreign = source.to_editor();
     foreign.append_model(&source).unwrap();
     let imported_atom = imported.atom(source.topology().atom_ids()[0]).unwrap();
-    assert!(foreign.position(imported_atom).is_err());
+    assert!(foreign.position(imported_atom).is_none());
     assert!(foreign.delete_atom(imported_atom).is_err());
     let invalid = InstanceAtomId::new(MoleculeInstanceId::new(999), AtomId::new(0));
-    assert!(imported.atom(invalid).is_err());
+    assert!(imported.atom(invalid).is_none());
     editor.clear();
     let failure = editor.try_finish().unwrap_err();
     let mut editor = failure.into_draft();
     editor
         .add_atom(atom("Na"), Quantity::new(Point3::origin(), NANOMETER))
         .unwrap();
-    assert!(editor.position(imported_atom).is_err());
+    assert!(editor.position(imported_atom).is_none());
     assert!(editor.delete_atom(imported_atom).is_err());
     let result = editor.finish().unwrap();
     assert_eq!(result.atom_count(), 1);

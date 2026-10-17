@@ -180,10 +180,10 @@ fn collect_macro_rows(
             .atom_site_for_atom(qualified)
             .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
         let residue = hierarchy
-            .residue(site.residue)
+            .require_residue(site.residue)
             .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
         let chain = hierarchy
-            .chain(residue.chain)
+            .require_chain(residue.chain)
             .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
         let assignment = assignments
             .get(&qualified)
@@ -236,15 +236,12 @@ fn collect_macro_rows(
             insertion_code: residue.insertion_code.clone(),
             position: model
                 .position(qualified)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
+                .ok_or_else(|| invalid_model("inconsistent source model"))?
                 .value_in(ANGSTROM)
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
-            occupancy: model
-                .occupancy(dense_index(model, qualified)?)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
+            occupancy: model.occupancy(dense_index(model, qualified)?),
             b_factor: model
                 .b_factor(dense_index(model, qualified)?)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
@@ -302,15 +299,12 @@ fn collect_small_rows(
             insertion_code: None,
             position: model
                 .position(qualified)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
+                .ok_or_else(|| invalid_model("inconsistent source model"))?
                 .value_in(ANGSTROM)
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
-            occupancy: model
-                .occupancy(dense_index(model, qualified)?)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
+            occupancy: model.occupancy(dense_index(model, qualified)?),
             b_factor: model
                 .b_factor(dense_index(model, qualified)?)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,

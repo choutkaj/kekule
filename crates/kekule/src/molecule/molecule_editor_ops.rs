@@ -90,10 +90,10 @@ impl MoleculeEditor {
 
     /// Replaces represented atom state while retaining its ID and properties.
     pub fn replace_atom(&mut self, id: AtomId, atom: Atom) -> Result<Atom> {
-        if self.atom(id)? == &atom {
+        if self.require_atom(id)? == &atom {
             return Ok(atom);
         }
-        Ok(std::mem::replace(&mut *self.atom_mut(id)?, atom))
+        Ok(std::mem::replace(&mut *self.require_atom_mut(id)?, atom))
     }
 
     /// Replaces a bond's endpoints and order, retaining its ID and properties.
@@ -102,21 +102,24 @@ impl MoleculeEditor {
     /// endpoints, whose chemical neighborhoods have changed.
     /// Changing only the order removes assertions focused on this bond.
     pub fn replace_bond(&mut self, id: BondId, replacement: Bond) -> Result<Bond> {
-        let previous = self.bond(id)?.clone();
+        let previous = self.require_bond(id)?.clone();
         let (a, b) = replacement.endpoints();
-        self.atom(a)?;
-        self.atom(b)?;
+        self.require_atom(a)?;
+        self.require_atom(b)?;
         if a == b {
             return Err(MoleculeError::SelfBond(a));
         }
-        if self.bond_between(a, b)?.is_some_and(|other| other != id) {
+        if self
+            .require_bond_between(a, b)?
+            .is_some_and(|other| other != id)
+        {
             return Err(MoleculeError::DuplicateBond { a, b });
         }
         if previous == replacement {
             return Ok(previous);
         }
         if (previous.a() == a && previous.b() == b) || (previous.a() == b && previous.b() == a) {
-            self.bond_mut(id)?.set_order(replacement.order);
+            self.require_bond_mut(id)?.set_order(replacement.order);
             return Ok(previous);
         }
         for atom in [previous.a(), previous.b()] {
@@ -147,15 +150,15 @@ impl MoleculeEditor {
     /// Changes represented order, removing stereo assertions focused on this bond.
     /// Assigning the current order leaves chemistry, stereo, and annotations intact.
     pub fn set_bond_order(&mut self, id: BondId, order: BondOrder) -> Result<()> {
-        if self.bond(id)?.order == order {
+        if self.require_bond(id)?.order == order {
             return Ok(());
         }
-        self.bond_mut(id)?.set_order(order);
+        self.require_bond_mut(id)?.set_order(order);
         Ok(())
     }
 
     pub fn set_bond_endpoints(&mut self, id: BondId, a: AtomId, b: AtomId) -> Result<()> {
-        self.replace_bond(id, Bond::new(a, b, self.bond(id)?.order))?;
+        self.replace_bond(id, Bond::new(a, b, self.require_bond(id)?.order))?;
         Ok(())
     }
 
@@ -167,7 +170,7 @@ impl MoleculeEditor {
     ) -> Result<Vec<(AtomId, Atom)>> {
         let atoms = atoms.into_iter().collect::<BTreeSet<_>>();
         for &id in &atoms {
-            self.atom(id)?;
+            self.require_atom(id)?;
         }
         atoms
             .into_iter()
@@ -182,7 +185,7 @@ impl MoleculeEditor {
     ) -> Result<Vec<(BondId, Bond)>> {
         let bonds = bonds.into_iter().collect::<BTreeSet<_>>();
         for &id in &bonds {
-            self.bond(id)?;
+            self.require_bond(id)?;
         }
         bonds
             .into_iter()
@@ -197,7 +200,7 @@ impl MoleculeEditor {
     ) -> Result<Vec<(AtomId, Atom)>> {
         let retained = atoms.into_iter().collect::<BTreeSet<_>>();
         for &id in &retained {
-            self.atom(id)?;
+            self.require_atom(id)?;
         }
         let removed = self
             .atom_ids()
@@ -218,11 +221,11 @@ impl MoleculeEditor {
         id: StereoGroupId,
         replacement: StereoGroup,
     ) -> Result<StereoGroup> {
-        let previous = self.stereo_group(id)?.clone();
+        let previous = self.require_stereo_group(id)?.clone();
         super::owner::validate_group_members(id, &replacement)?;
         for &member in &replacement.members {
             if let Some(group) = self
-                .stereo_element(member)?
+                .require_stereo_element(member)?
                 .group
                 .filter(|&group| group != id)
             {

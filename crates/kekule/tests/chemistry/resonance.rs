@@ -222,7 +222,7 @@ fn canonical_aromatic_seed_retains_aryne_triple_bonds() {
         .find(|(_, b)| b.order == BondOrder::Triple)
         .unwrap()
         .0;
-    assert_eq!(m.bond_is_aromatic(triple).unwrap(), Some(true));
+    assert_eq!(m.bond_is_aromatic(triple), Some(true));
     let result = enumerate_resonance(&m, Default::default()).unwrap();
     assert_eq!(result.contributors().len(), 1);
     let orders: std::collections::BTreeMap<_, _> = result.contributors()[0].bond_orders().collect();
@@ -278,11 +278,11 @@ fn present_empty_sections_and_prerequisite_invalidation() {
     assert!(!m.perception().has_resonance());
     let a = m.atom_ids().next().unwrap();
     assert_eq!(m.perception().atom_is_conjugated(a), Some(false));
-    assert_eq!(m.atom_is_conjugated(a).unwrap(), Some(false));
-    assert!(m.atom_is_conjugated(AtomId::new(999)).is_err());
+    assert_eq!(m.atom_is_conjugated(a), Some(false));
+    assert!(m.atom_is_conjugated(AtomId::new(999)).is_none());
     let bond = m.bond_ids().next().unwrap();
-    assert_eq!(m.bond_is_conjugated(bond).unwrap(), Some(false));
-    assert!(m.bond_is_conjugated(BondId::new(999)).is_err());
+    assert_eq!(m.bond_is_conjugated(bond), Some(false));
+    assert!(m.bond_is_conjugated(BondId::new(999)).is_none());
     perceive_resonance(&mut m).unwrap();
     assert!(m
         .perception()

@@ -843,23 +843,18 @@ impl Topology {
     }
 
     pub fn chain(&self, id: ChainId) -> Option<ChainView<'_>> {
-        self.hierarchy
-            .chain(id)
-            .ok()
-            .map(|_| ChainView::new(self, id))
+        self.hierarchy.chain(id).map(|_| ChainView::new(self, id))
     }
 
     pub fn residue(&self, id: ResidueId) -> Option<ResidueView<'_>> {
         self.hierarchy
             .residue(id)
-            .ok()
             .map(|_| ResidueView::new(self, id))
     }
 
     pub fn atom_site(&self, id: AtomSiteId) -> Option<AtomSiteView<'_>> {
         self.hierarchy
             .atom_site(id)
-            .ok()
             .map(|_| AtomSiteView::new(self, id))
     }
 

@@ -137,22 +137,16 @@ impl Positions {
         Ok(Self { values })
     }
 
-    pub fn position_at(&self, index: usize) -> Result<Quantity<Point3>, DenseArrayError> {
+    /// One position, or `None` when `index` is out of range.
+    pub fn get(&self, index: usize) -> Option<Quantity<Point3>> {
         self.values
             .get(index)
             .copied()
             .map(|point| Quantity::new(point, CANONICAL_LENGTH_UNIT))
-            .ok_or(DenseArrayError::IndexOutOfRange {
-                index,
-                len: self.values.len(),
-            })
     }
 
-    pub fn set_position_at(
-        &mut self,
-        index: usize,
-        position: Quantity<Point3>,
-    ) -> Result<(), DenseArrayError> {
+    /// Replaces one position after checking its unit and finiteness.
+    pub fn set(&mut self, index: usize, position: Quantity<Point3>) -> Result<(), DenseArrayError> {
         let point = position.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
         if !point.is_finite() {
             return Err(DenseArrayError::NonFinite { index });

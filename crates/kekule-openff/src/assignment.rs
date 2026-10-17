@@ -147,7 +147,7 @@ impl ForceField {
         for center in m.atom_ids() {
             let neighbors = m
                 .neighbors(center)
-                .map_err(Error::chemistry)?
+                .expect("atom IDs come from this molecule")
                 .collect::<Vec<_>>();
             for i in 0..neighbors.len() {
                 for j in i + 1..neighbors.len() {
@@ -158,12 +158,12 @@ impl ForceField {
         for (_, b) in m.bonds() {
             for a in m
                 .neighbors(b.a())
-                .map_err(Error::chemistry)?
+                .expect("atom IDs come from this molecule")
                 .filter(|a| *a != b.b())
             {
                 for d in m
                     .neighbors(b.b())
-                    .map_err(Error::chemistry)?
+                    .expect("atom IDs come from this molecule")
                     .filter(|d| *d != b.a() && *d != a)
                 {
                     propers.insert(ordered([a, b.a(), b.b(), d]));
@@ -176,10 +176,7 @@ impl ForceField {
         complete("vdW", &m.atom_ids().map(|a| [a]).collect(), &assigned.vdw)?;
         for atoms in assigned.impropers.keys() {
             for i in [0, 2, 3] {
-                if m.bond_between(atoms[1], atoms[i])
-                    .map_err(Error::chemistry)?
-                    .is_none()
-                {
+                if m.bond_between(atoms[1], atoms[i]).is_none() {
                     return Err(Error::new(
                         ErrorKind::ForceField,
                         "improper parameter has invalid connectivity",
@@ -417,7 +414,11 @@ impl ForceField {
                     if depth == 3 {
                         continue;
                     }
-                    for next in a.molecule.neighbors(at).map_err(Error::chemistry)? {
+                    for next in a
+                        .molecule
+                        .neighbors(at)
+                        .expect("atom IDs come from this molecule")
+                    {
                         if visited.insert(next) {
                             queue.push_back((next, depth + 1));
                             if start < next {

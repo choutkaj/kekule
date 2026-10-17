@@ -599,7 +599,7 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
         .remove_stereo_element(element)
         .expect("grouped element removal");
     assert_eq!(removed.group, None);
-    assert!(mol.stereo_group(group).is_err());
+    assert!(mol.stereo_group(group).is_none());
 
     let readded = mol
         .add_stereo_element(removed)
@@ -645,7 +645,7 @@ fn topology_deletions_prune_referencing_stereo_state() {
     })
     .expect("group");
     mol.delete_bond(ab).expect("delete double bond");
-    assert!(mol.stereo_element(element).is_err());
+    assert!(mol.stereo_element(element).is_none());
     assert!(mol
         .stereo_groups()
         .all(|(_, group)| group.members.is_empty()));
@@ -671,8 +671,8 @@ fn topology_deletions_prune_referencing_stereo_state() {
         )))
         .expect("atom element");
     mol.delete_atom(c).expect("delete atom");
-    assert!(mol.stereo_element(atom_element).is_err());
-    assert!(mol.bond(bc).is_err());
+    assert!(mol.stereo_element(atom_element).is_none());
+    assert!(mol.bond(bc).is_none());
 }
 
 #[test]

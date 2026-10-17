@@ -68,7 +68,7 @@ impl Hierarchy {
         author_seq_id: Option<String>,
         insertion_code: Option<String>,
     ) -> std::result::Result<ResidueId, HierarchyError> {
-        self.chain(chain)?;
+        self.require_chain(chain)?;
         let name = name.into();
         let id = checked_hierarchy_id(
             self.residues.len(),
@@ -98,7 +98,7 @@ impl Hierarchy {
         atom: InstanceAtomId,
         metadata: AtomSiteMetadata,
     ) -> std::result::Result<AtomSiteId, HierarchyError> {
-        self.residue(residue)?;
+        self.require_residue(residue)?;
         if self.atom_lookup.contains_key(&atom) {
             return Err(HierarchyError::DuplicateAtomPlacement(atom));
         }
@@ -124,21 +124,40 @@ impl Hierarchy {
         &mut self.chains[chain.index()].residues
     }
 
-    pub fn chain(&self, id: ChainId) -> std::result::Result<&Chain, HierarchyError> {
-        self.chains
-            .get(id.index())
-            .ok_or(HierarchyError::InvalidChainId(id))
+    /// One chain, or `None` when `id` names no chain of this hierarchy.
+    pub fn chain(&self, id: ChainId) -> Option<&Chain> {
+        self.chains.get(id.index())
     }
 
-    pub fn residue(&self, id: ResidueId) -> std::result::Result<&Residue, HierarchyError> {
-        self.residues
-            .get(id.index())
-            .ok_or(HierarchyError::InvalidResidueId(id))
+    /// One residue, or `None` when `id` names no residue of this hierarchy.
+    pub fn residue(&self, id: ResidueId) -> Option<&Residue> {
+        self.residues.get(id.index())
     }
 
-    pub fn atom_site(&self, id: AtomSiteId) -> std::result::Result<&AtomSite, HierarchyError> {
-        self.atom_sites
-            .get(id.index())
+    /// One atom site, or `None` when `id` names no site of this hierarchy.
+    pub fn atom_site(&self, id: AtomSiteId) -> Option<&AtomSite> {
+        self.atom_sites.get(id.index())
+    }
+
+    /// [`Self::chain`] for staging code that reports a missing chain.
+    pub(crate) fn require_chain(&self, id: ChainId) -> std::result::Result<&Chain, HierarchyError> {
+        self.chain(id).ok_or(HierarchyError::InvalidChainId(id))
+    }
+
+    /// [`Self::residue`] for staging code that reports a missing residue.
+    pub(crate) fn require_residue(
+        &self,
+        id: ResidueId,
+    ) -> std::result::Result<&Residue, HierarchyError> {
+        self.residue(id).ok_or(HierarchyError::InvalidResidueId(id))
+    }
+
+    /// [`Self::atom_site`] for staging code that reports a missing site.
+    pub(crate) fn require_atom_site(
+        &self,
+        id: AtomSiteId,
+    ) -> std::result::Result<&AtomSite, HierarchyError> {
+        self.atom_site(id)
             .ok_or(HierarchyError::InvalidAtomSiteId(id))
     }
 

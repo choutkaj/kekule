@@ -286,7 +286,7 @@ fn stereo_cleanup_removes_assertions_on_perceived_aromatic_bonds() {
         .unwrap();
     let mut molecule = editor.finish().unwrap();
     molecule.perceive().unwrap();
-    assert!(molecule.stereo_element(id).is_ok());
+    assert!(molecule.stereo_element(id).is_some());
     let mut editor = molecule.to_editor();
     assert_eq!(
         stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default())

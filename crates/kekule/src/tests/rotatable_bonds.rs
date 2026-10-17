@@ -84,8 +84,7 @@ fn resonance_restriction_does_not_require_a_neutral_double_bond_partner() {
         let mut molecule = read_smiles(smiles).expect("valid imidate or amidine");
         let axis = molecule
             .bond_between(AtomId::new(1), AtomId::new(3))
-            .expect("valid atoms")
-            .expect("resonance-restricted linkage");
+            .expect("valid atoms");
         for materialize in [false, true] {
             if materialize {
                 molecule.perceive().expect("valid valence");
@@ -125,7 +124,6 @@ fn localized_aromatic_ring_bonds_do_not_create_false_resonance_exclusions() {
         graph
             .bond_between(AtomId::new(left), AtomId::new(right))
             .expect("valid atom IDs")
-            .expect("expected bond")
     });
     expected.sort_unstable();
 
@@ -145,7 +143,6 @@ fn localized_five_member_aromatic_rings_do_not_hide_exocyclic_axes() {
         graph
             .bond_between(AtomId::new(left), AtomId::new(right))
             .expect("valid atom IDs")
-            .expect("expected bond")
     });
     expected.sort_unstable();
 
@@ -415,8 +412,7 @@ fn resonance_filter_also_applies_when_ring_bonds_are_enabled() {
     let molecule = read_smiles("O=C1NCCC1").expect("lactam should interpret");
     let amide = molecule
         .bond_between(AtomId::new(1), AtomId::new(2))
-        .expect("valid atom IDs")
-        .expect("cyclic amide bond");
+        .expect("valid atom IDs");
     let rings_without_restricted = descriptors::rotatable_bonds(
         &molecule,
         RotatableBondOptions {

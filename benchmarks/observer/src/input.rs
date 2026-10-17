@@ -99,7 +99,7 @@ fn from_model(model: &Model) -> Result<Vec<Component>, Failure> {
                 source.push(dense.index());
                 let position = model
                     .position(qualified)
-                    .map_err(|e| Failure::new("parse", e))?;
+                    .expect("atoms come from the model topology");
                 points.push(
                     position
                         .value_in(ANGSTROM)

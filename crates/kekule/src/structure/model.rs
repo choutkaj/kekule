@@ -227,7 +227,8 @@ impl Model {
         Self::from_state(subset.shared_topology(), state)
     }
 
-    pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
+    /// The position of one atom, or `None` when `atom` is not in the topology.
+    pub fn position(&self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
         self.as_model_view().position(atom)
     }
 
@@ -395,9 +396,9 @@ impl<'a> ModelView<'a> {
     }
 
     /// Occupancy of one atom; `None` when it was never recorded, which is
-    /// always the case for a trajectory frame.
-    pub fn occupancy(self, atom: TopologyAtomIndex) -> Result<Option<f64>, StructureError> {
-        self.occupancies.get(atom, self.positions.len())
+    /// always the case for a trajectory frame, or when `atom` is out of range.
+    pub fn occupancy(self, atom: TopologyAtomIndex) -> Option<f64> {
+        self.occupancies.get(atom)
     }
 
     /// Every occupancy in dense atom order, or `None` when none was recorded.
@@ -406,14 +407,10 @@ impl<'a> ModelView<'a> {
     }
 
     /// Isotropic B-factor of one atom; `None` when it was never recorded,
-    /// which is always the case for a trajectory frame.
-    pub fn b_factor(
-        self,
-        atom: TopologyAtomIndex,
-    ) -> Result<Option<Quantity<f64>>, StructureError> {
-        Ok(b_factor_quantity(
-            self.b_factors.get(atom, self.positions.len())?,
-        ))
+    /// which is always the case for a trajectory frame, or when `atom` is out
+    /// of range.
+    pub fn b_factor(self, atom: TopologyAtomIndex) -> Option<Quantity<f64>> {
+        b_factor_quantity(self.b_factors.get(atom))
     }
 
     /// Every B-factor in dense atom order and square nanometres, or `None`
@@ -430,9 +427,9 @@ impl<'a> ModelView<'a> {
         self.b_factors
     }
 
-    pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
-        let index = atom_index(self.topology, atom)?;
-        Ok(self.positions.position_at(index.index())?)
+    /// The position of one atom, or `None` when `atom` is not in the topology.
+    pub fn position(self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
+        self.positions.get(self.topology.atom_index(atom)?.index())
     }
 
     /// One atom with its topology identity and structure state.
@@ -502,20 +499,16 @@ impl<'a> ModelAtomView<'a> {
     pub fn position(self) -> Quantity<Point3> {
         self.model
             .positions()
-            .position_at(self.atom.index().index())
+            .get(self.atom.index().index())
             .expect("bound structures cover every atom")
     }
 
     pub fn occupancy(self) -> Option<f64> {
-        self.model
-            .occupancy(self.atom.index())
-            .expect("bound structures cover every atom")
+        self.model.occupancy(self.atom.index())
     }
 
     pub fn b_factor(self) -> Option<Quantity<f64>> {
-        self.model
-            .b_factor(self.atom.index())
-            .expect("bound structures cover every atom")
+        self.model.b_factor(self.atom.index())
     }
 
     /// One structure annotation of this atom. Static annotations are
@@ -656,9 +649,10 @@ impl ModelBuilder {
             .map(|index| TopologyAtomIndex::new(index as u32))
     }
 
-    pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelBuildError> {
-        let index = self.checked_atom_index(atom)?;
-        Ok(self.state.positions.position_at(index.index())?)
+    /// The staged position of one atom, or `None` when `atom` is not in the
+    /// staged topology.
+    pub fn position(&self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
+        self.state.positions.get(self.atom_index(atom)?.index())
     }
 
     pub fn set_position(
@@ -752,7 +746,7 @@ impl ModelBuilder {
         definition: MoleculeDefinitionId,
         positions: &Positions,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        let molecule = self.topology.definition(definition)?.molecule();
+        let molecule = self.topology.require_definition(definition)?.molecule();
         let added_bonds = molecule.bond_count();
         validate_position_count(molecule.atom_count(), positions.len())?;
         self.reserve(positions.len())?;

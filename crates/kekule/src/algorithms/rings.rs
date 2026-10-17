@@ -49,7 +49,7 @@ pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
 }
 
 pub(crate) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
-    let Ok(bond) = mol.bond(bond_id) else {
+    let Some(bond) = mol.bond(bond_id) else {
         return false;
     };
     if ring_size <= 1 || matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
@@ -66,7 +66,7 @@ pub(crate) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_si
         if depth == max_path_edges {
             continue;
         }
-        let Ok(incident) = mol.incident_bonds(atom) else {
+        let Some(incident) = mol.incident_bonds(atom) else {
             continue;
         };
         for (next_bond, next) in incident

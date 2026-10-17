@@ -44,7 +44,6 @@ fn bond(model: &Model, b: usize, c: usize) -> InstanceBondId {
         instance
             .molecule()
             .bond_between(ids[b].atom(), ids[c].atom())
-            .unwrap()
             .unwrap(),
     )
 }
@@ -485,10 +484,7 @@ fn represented_remote_stereo_distinguishes_constitutionally_tied_ligands() {
                 .clone();
             assign_cip_descriptors(&mut labelled, Default::default()).unwrap();
             let (id, _) = labelled.stereo_elements().find(|(_, element)| matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == atoms[0].atom())).unwrap();
-            assert_eq!(
-                labelled.cip_descriptor(id).unwrap(),
-                Some(StereoDescriptor::R)
-            );
+            assert_eq!(labelled.cip_descriptor(id), Some(StereoDescriptor::R));
         }
     }
 }

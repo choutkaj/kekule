@@ -326,35 +326,41 @@ fn extract_backbones(
             .residues
             .iter()
             .filter(|entry| {
-                entry.hierarchy.residue(entry.residue).is_ok_and(|residue| {
-                    residue.class() == ResidueClass::AminoAcid
-                        || residue.class() == ResidueClass::Other
-                            && residue.atom_sites().iter().any(|site| {
-                                entry.hierarchy.atom_site(*site).is_ok_and(|site| {
-                                    site.metadata()
-                                        .label_atom_id
-                                        .as_deref()
-                                        .or(site.metadata().auth_atom_id.as_deref())
-                                        .and_then(|name| backbone_index(name.trim()))
-                                        .is_some()
+                entry
+                    .hierarchy
+                    .residue(entry.residue)
+                    .is_some_and(|residue| {
+                        residue.class() == ResidueClass::AminoAcid
+                            || residue.class() == ResidueClass::Other
+                                && residue.atom_sites().iter().any(|site| {
+                                    entry.hierarchy.atom_site(*site).is_some_and(|site| {
+                                        site.metadata()
+                                            .label_atom_id
+                                            .as_deref()
+                                            .or(site.metadata().auth_atom_id.as_deref())
+                                            .and_then(|name| backbone_index(name.trim()))
+                                            .is_some()
+                                    })
                                 })
-                            })
-                })
+                    })
             })
             .collect::<Vec<_>>();
         let label_numbered = ordering_residues.iter().all(|entry| {
             entry
                 .hierarchy
                 .residue(entry.residue)
-                .is_ok_and(|residue| residue.label_seq_id().is_some())
+                .is_some_and(|residue| residue.label_seq_id().is_some())
         });
         let author_numbered = ordering_residues.iter().all(|entry| {
-            entry.hierarchy.residue(entry.residue).is_ok_and(|residue| {
-                residue
-                    .author_seq_id()
-                    .and_then(|value| value.parse::<i64>().ok())
-                    .is_some()
-            })
+            entry
+                .hierarchy
+                .residue(entry.residue)
+                .is_some_and(|residue| {
+                    residue
+                        .author_seq_id()
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .is_some()
+                })
         });
         logical.residues.sort_by(|left, right| {
             let left_residue = left

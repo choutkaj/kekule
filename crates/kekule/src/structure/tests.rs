@@ -561,9 +561,9 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
         .atoms_mut()
         .set_value(key("occupancy"), ATOM0, Some(PropertyValue::Int(1)))
         .unwrap();
-    assert_eq!(model.occupancy(ATOM0).unwrap(), Some(0.75));
+    assert_eq!(model.occupancy(ATOM0), Some(0.75));
     assert_eq!(model.occupancies(), Some([Some(0.75), None].as_slice()));
-    let b_factor = model.b_factor(ATOM0).unwrap().unwrap();
+    let b_factor = model.b_factor(ATOM0).unwrap();
     assert_eq!(b_factor.unit(), SQUARE_NANOMETER);
     assert!((b_factor.into_value() - 0.125).abs() < 1.0e-12);
     assert_eq!(
@@ -757,7 +757,7 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
         model.b_factors().unwrap().value()
     );
     assert_eq!(member.cell(), Some(&cell()));
-    assert_eq!(member.as_model_view().occupancy(ATOM0), Ok(Some(0.5)));
+    assert_eq!(member.as_model_view().occupancy(ATOM0), Some(0.5));
     assert_eq!(member.to_model(), model);
 
     // Frame views report no occupancies or B-factors but still check indices.
@@ -771,15 +771,9 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
     let view = trajectory.get(0).unwrap().as_model_view();
     assert_eq!(view.occupancies(), None);
     assert!(view.b_factors().is_none());
-    assert_eq!(view.occupancy(ATOM0), Ok(None));
-    assert_eq!(view.b_factor(ATOM0), Ok(None));
-    assert_eq!(
-        view.occupancy(TopologyAtomIndex::new(2)),
-        Err(StructureError::Array(DenseArrayError::IndexOutOfRange {
-            index: 2,
-            len: 2
-        }))
-    );
+    assert_eq!(view.occupancy(ATOM0), None);
+    assert_eq!(view.b_factor(ATOM0), None);
+    assert_eq!(view.occupancy(TopologyAtomIndex::new(2)), None);
     assert_eq!(view.to_model().occupancies(), None);
 
     // Frames reinterpreted as members keep their cell and rows only.

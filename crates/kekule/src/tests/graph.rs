@@ -78,16 +78,9 @@ fn invalid_atom_ids_are_rejected() {
     let mut mol = crate::molecule::MoleculeEditor::new();
     let atom = mol.add_atom(carbon()).expect("atom identifier capacity");
 
-    assert_eq!(
-        mol.atom(AtomId::new(99))
-            .expect_err("missing atom should fail"),
-        MoleculeError::InvalidAtomId(AtomId::new(99))
-    );
+    assert!(mol.atom(AtomId::new(99)).is_none());
     mol.delete_atom(atom).expect("atom should delete");
-    assert_eq!(
-        mol.atom(atom).expect_err("deleted atom should fail"),
-        MoleculeError::InvalidAtomId(atom)
-    );
+    assert!(mol.atom(atom).is_none());
     assert_eq!(
         mol.add_bond(atom, AtomId::new(99), BondOrder::Single)
             .expect_err("deleted endpoint should fail"),
@@ -104,16 +97,9 @@ fn invalid_bond_ids_are_rejected() {
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
 
-    assert_eq!(
-        mol.bond(BondId::new(99))
-            .expect_err("missing bond should fail"),
-        MoleculeError::InvalidBondId(BondId::new(99))
-    );
+    assert!(mol.bond(BondId::new(99)).is_none());
     mol.delete_bond(bond).expect("bond should delete");
-    assert_eq!(
-        mol.bond(bond).expect_err("deleted bond should fail"),
-        MoleculeError::InvalidBondId(bond)
-    );
+    assert!(mol.bond(bond).is_none());
     assert_eq!(
         mol.delete_bond(bond)
             .expect_err("deleting bond twice should fail"),
@@ -173,10 +159,7 @@ fn neighbor_iteration_reports_live_adjacent_atoms() {
             .collect::<Vec<_>>(),
         Vec::<AtomId>::new()
     );
-    match mol.neighbors(AtomId::new(99)) {
-        Ok(_) => panic!("missing atom should fail"),
-        Err(err) => assert_eq!(err, MoleculeError::InvalidAtomId(AtomId::new(99))),
-    };
+    assert!(mol.neighbors(AtomId::new(99)).is_none());
 }
 
 #[test]
@@ -209,10 +192,7 @@ fn incident_bond_iteration_reports_live_bonds() {
             .collect::<Vec<_>>(),
         vec![right_bond]
     );
-    match mol.incident_bonds(AtomId::new(99)) {
-        Ok(_) => panic!("missing atom should fail"),
-        Err(err) => assert_eq!(err, MoleculeError::InvalidAtomId(AtomId::new(99))),
-    };
+    assert!(mol.incident_bonds(AtomId::new(99)).is_none());
 }
 
 #[test]
@@ -225,9 +205,9 @@ fn bond_between_finds_live_undirected_bonds() {
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
 
-    assert_eq!(mol.bond_between(a, b).expect("atoms exist"), Some(bond));
-    assert_eq!(mol.bond_between(b, a).expect("atoms exist"), Some(bond));
-    assert_eq!(mol.bond_between(a, c).expect("atoms exist"), None);
+    assert_eq!(mol.bond_between(a, b), Some(bond));
+    assert_eq!(mol.bond_between(b, a), Some(bond));
+    assert_eq!(mol.bond_between(a, c), None);
 }
 
 #[test]
@@ -247,7 +227,7 @@ fn bond_deletion_preserves_remaining_ids_and_counts() {
 
     assert_eq!(removed.a(), a);
     assert_eq!(mol.bond_count(), 1);
-    assert_eq!(mol.bond(first), Err(MoleculeError::InvalidBondId(first)));
+    assert_eq!(mol.bond(first), None);
     assert_eq!(
         mol.bond(second).expect("second bond remains").order,
         BondOrder::Double
@@ -279,7 +259,7 @@ fn atom_deletion_removes_incident_bonds_and_preserves_remaining_ids() {
     assert_eq!(removed.element.symbol(), "C");
     assert_eq!(mol.atom_count(), 2);
     assert_eq!(mol.bond_count(), 0);
-    assert_eq!(mol.atom(b), Err(MoleculeError::InvalidAtomId(b)));
+    assert_eq!(mol.atom(b), None);
     assert_eq!(
         mol.atom(a).expect("first atom remains").element.symbol(),
         "C"
@@ -288,8 +268,8 @@ fn atom_deletion_removes_incident_bonds_and_preserves_remaining_ids() {
         mol.atom(c).expect("third atom remains").element.symbol(),
         "O"
     );
-    assert_eq!(mol.bond(first), Err(MoleculeError::InvalidBondId(first)));
-    assert_eq!(mol.bond(second), Err(MoleculeError::InvalidBondId(second)));
+    assert_eq!(mol.bond(first), None);
+    assert_eq!(mol.bond(second), None);
     assert_eq!(mol.atom_ids().collect::<Vec<_>>(), vec![a, c]);
     assert_eq!(
         mol.neighbors(a)

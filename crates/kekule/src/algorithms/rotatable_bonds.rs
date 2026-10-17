@@ -224,7 +224,7 @@ fn atom_profiles(
             let mut profile = AtomProfile {
                 is_hydrogen: molecule
                     .atom(atom)
-                    .is_ok_and(|atom| atom.element.atomic_number() == HYDROGEN),
+                    .is_some_and(|atom| atom.element.atomic_number() == HYDROGEN),
                 ..AtomProfile::default()
             };
             for (_, bond) in molecule
@@ -237,7 +237,7 @@ fn atom_profiles(
                 let neighbor = bond.other_atom(atom);
                 if molecule
                     .atom(neighbor)
-                    .is_ok_and(|neighbor| neighbor.element.atomic_number() != HYDROGEN)
+                    .is_some_and(|neighbor| neighbor.element.atomic_number() != HYDROGEN)
                 {
                     profile.heavy_degree += 1;
                 }
@@ -248,7 +248,7 @@ fn atom_profiles(
         .collect::<BTreeMap<_, _>>();
 
     for atom in molecule.atom_ids() {
-        let Some(value) = molecule.atom(atom).ok() else {
+        let Some(value) = molecule.atom(atom) else {
             continue;
         };
         if value.element.atomic_number() != CARBON {
@@ -295,7 +295,7 @@ fn is_trihalomethyl_center(molecule: &Molecule, atom: AtomId) -> bool {
         if bond.order != BondOrder::Single {
             continue;
         }
-        let Ok(neighbor) = molecule.atom(bond.other_atom(atom)) else {
+        let Some(neighbor) = molecule.atom(bond.other_atom(atom)) else {
             continue;
         };
         match neighbor.element.atomic_number() {
@@ -313,7 +313,7 @@ fn is_methyl_like(
     atom_id: AtomId,
     profiles: &BTreeMap<AtomId, AtomProfile>,
 ) -> bool {
-    let Ok(atom) = molecule.atom(atom_id) else {
+    let Some(atom) = molecule.atom(atom_id) else {
         return false;
     };
     if atom.element.atomic_number() != CARBON
@@ -335,7 +335,7 @@ fn is_methyl_like(
         if !is_ordinary_covalent(bond.order) {
             continue;
         }
-        let Ok(neighbor) = molecule.atom(bond.other_atom(atom_id)) else {
+        let Some(neighbor) = molecule.atom(bond.other_atom(atom_id)) else {
             continue;
         };
         if neighbor.element.atomic_number() == HYDROGEN {
@@ -367,7 +367,7 @@ fn resonance_restricted_atoms(
 ) -> BTreeSet<AtomId> {
     let mut restricted = BTreeSet::new();
     for center in molecule.atom_ids() {
-        let Ok(center_atom) = molecule.atom(center) else {
+        let Some(center_atom) = molecule.atom(center) else {
             continue;
         };
         if center_atom.element.atomic_number() != CARBON
@@ -386,7 +386,7 @@ fn resonance_restricted_atoms(
             .expect("live atoms have valid adjacency")
         {
             let neighbor_id = bond.other_atom(center);
-            let Ok(neighbor) = molecule.atom(neighbor_id) else {
+            let Some(neighbor) = molecule.atom(neighbor_id) else {
                 continue;
             };
             if bond.order == BondOrder::Double

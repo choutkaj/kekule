@@ -31,7 +31,7 @@ fn default_perception_installs_one_ring_basis_for_aromaticity() {
     assert_eq!(
         molecule
             .atoms()
-            .filter(|(atom, _)| molecule.atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|(atom, _)| molecule.atom_is_aromatic(*atom) == Some(true))
             .count(),
         6
     );
@@ -256,7 +256,7 @@ fn direct_aromaticity_perception_accepts_localized_aromatic_input() {
 
     assert!(molecule
         .bond_ids()
-        .all(|bond| molecule.bond_is_aromatic(bond) == Ok(Some(true))));
+        .all(|bond| molecule.bond_is_aromatic(bond) == Some(true)));
 }
 
 #[test]

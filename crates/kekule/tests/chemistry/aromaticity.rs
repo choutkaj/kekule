@@ -24,7 +24,7 @@ fn default_perception_matches_reference_aromaticity_regressions() {
         molecule
             .perceive()
             .unwrap_or_else(|error| panic!("{}: {error}", case.label));
-        let aromatic = |atom| molecule.atom_is_aromatic(atom).unwrap() == Some(true);
+        let aromatic = |atom| molecule.atom_is_aromatic(atom) == Some(true);
         let atoms = molecule
             .atom_ids()
             .filter(|&atom| aromatic(atom))
@@ -35,7 +35,7 @@ fn default_perception_matches_reference_aromaticity_regressions() {
             let endpoints = (bond.a().index(), bond.b().index());
             let endpoints = (endpoints.0.min(endpoints.1), endpoints.0.max(endpoints.1));
             let both_aromatic = aromatic(bond.a()) && aromatic(bond.b());
-            match molecule.bond_is_aromatic(id).unwrap() == Some(true) {
+            match molecule.bond_is_aromatic(id) == Some(true) {
                 true if !both_aromatic => failures.push(format!(
                     "{}: aromatic bond {endpoints:?} has a non-aromatic endpoint",
                     case.label
@@ -98,10 +98,10 @@ fn standalone_aromaticity_uses_the_same_charged_hydrogen_rules_as_default_percep
     assert_eq!(complete.perception().inferred_hydrogens(sulfur), Some(1));
     assert!(complete
         .atoms()
-        .all(|(atom, _)| complete.atom_is_aromatic(atom).unwrap() == Some(true)));
+        .all(|(atom, _)| complete.atom_is_aromatic(atom) == Some(true)));
     assert!(complete
         .bonds()
-        .all(|(bond, _)| complete.bond_is_aromatic(bond).unwrap() == Some(true)));
+        .all(|(bond, _)| complete.bond_is_aromatic(bond) == Some(true)));
 
     perceive_aromaticity(
         &mut standalone,
@@ -142,10 +142,10 @@ fn standalone_aromaticity_preserves_partial_installed_hydrogen_assignments() {
     );
     assert!(molecule
         .atoms()
-        .all(|(atom, _)| molecule.atom_is_aromatic(atom).unwrap() == Some(false)));
+        .all(|(atom, _)| molecule.atom_is_aromatic(atom) == Some(false)));
     assert!(molecule
         .bonds()
-        .all(|(bond, _)| molecule.bond_is_aromatic(bond).unwrap() == Some(false)));
+        .all(|(bond, _)| molecule.bond_is_aromatic(bond) == Some(false)));
 }
 
 #[test]
@@ -180,14 +180,14 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
                     assert_eq!(
                         actual
                             .atoms()
-                            .filter(|(id, _)| actual.atom_is_aromatic(*id).unwrap() == Some(true))
+                            .filter(|(id, _)| actual.atom_is_aromatic(*id) == Some(true))
                             .count(),
                         12
                     );
                     assert_eq!(
                         actual
                             .bonds()
-                            .filter(|(id, _)| actual.bond_is_aromatic(*id).unwrap() == Some(true))
+                            .filter(|(id, _)| actual.bond_is_aromatic(*id) == Some(true))
                             .count(),
                         12
                     );
