@@ -15,7 +15,7 @@ publish = true
 workspace = true
 
 [dependencies]
-kekule = { version = "0.3.0", path = "../kekule" }
+kekule.workspace = true
 
 [dev-dependencies]
 sha2 = "0.11"

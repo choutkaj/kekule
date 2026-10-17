@@ -1,6 +1,8 @@
 [package]
 name = "kekule-openff-ash"
-version.workspace = true
+# Versioned apart from the workspace: the model data changes rarely and is
+# re-uploaded only when it does (see RELEASING.md).
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
