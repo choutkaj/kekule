@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::algorithms::{
     allowed_valences, rdkit_default_valence, HydrogenTransformError, RemoveHydrogensReport,
 };
-use crate::io::MoleculeWriteError;
+use crate::diagnostics::{FormatError, LimitExceeded, Resource};
+use crate::io::write_error::SMILES_WRITE;
 use crate::molecule::Molecule;
 use crate::molecule::*;
 
@@ -18,34 +19,48 @@ mod labeling;
 use super::emit::Emission;
 use labeling::CanonicalOrder;
 
-const MAX_INPUT_COMPLEXITY: usize = 50_000_000;
-const MAX_GRAPH_SLOTS: usize = 2_000_000;
+/// Maximum admission score `2*n*(n+2*m)` of canonical SMILES output, for `n`
+/// live atoms and `m` live bonds.
+pub const MAX_CANONICAL_INPUT_COMPLEXITY: usize = 50_000_000;
+/// Maximum combined atom and bond storage slots of canonical SMILES output.
+pub const MAX_CANONICAL_GRAPH_SLOTS: usize = 2_000_000;
+pub use labeling::{
+    MAX_CANONICAL_PENDING_LABELS, MAX_CANONICAL_REFINEMENT_WORK, MAX_CANONICAL_SEARCH_STATES,
+};
 
 pub(crate) fn write_canonical_smiles(
     molecule: &Molecule,
-) -> std::result::Result<String, MoleculeWriteError> {
-    write_canonical_smiles_with_limits(molecule, MAX_INPUT_COMPLEXITY, MAX_GRAPH_SLOTS)
+) -> std::result::Result<String, FormatError> {
+    write_canonical_smiles_with_limits(
+        molecule,
+        MAX_CANONICAL_INPUT_COMPLEXITY,
+        MAX_CANONICAL_GRAPH_SLOTS,
+    )
 }
 
 fn write_canonical_smiles_with_limits(
     molecule: &Molecule,
     max_input_complexity: usize,
     max_graph_slots: usize,
-) -> std::result::Result<String, MoleculeWriteError> {
+) -> std::result::Result<String, FormatError> {
     write_canonical_emission_with_limits(molecule, max_input_complexity, max_graph_slots)?.render()
 }
 
 pub(super) fn write_canonical_emission(
     molecule: &Molecule,
-) -> std::result::Result<Emission, MoleculeWriteError> {
-    write_canonical_emission_with_limits(molecule, MAX_INPUT_COMPLEXITY, MAX_GRAPH_SLOTS)
+) -> std::result::Result<Emission, FormatError> {
+    write_canonical_emission_with_limits(
+        molecule,
+        MAX_CANONICAL_INPUT_COMPLEXITY,
+        MAX_CANONICAL_GRAPH_SLOTS,
+    )
 }
 
 fn write_canonical_emission_with_limits(
     molecule: &Molecule,
     max_input_complexity: usize,
     max_graph_slots: usize,
-) -> std::result::Result<Emission, MoleculeWriteError> {
+) -> std::result::Result<Emission, FormatError> {
     // Check before cloning or ranking. A sparse graph can have many deleted
     // slots, so live atom counts alone do not bound
     // the dense scratch arrays used by ranking and labeling.
@@ -54,9 +69,14 @@ fn write_canonical_emission_with_limits(
         .atom_slot_count()
         .checked_add(molecule.graph.bond_slot_count());
     if slots.is_none_or(|slots| slots > max_graph_slots) {
-        return Err(MoleculeWriteError::resource_limit(format!(
-            "canonical SMILES exceeds the graph storage limit ({max_graph_slots} atom/bond slots)"
-        )));
+        return Err(SMILES_WRITE.resource_limit(
+            "canonical SMILES",
+            LimitExceeded::new(
+                Resource::GraphSlots,
+                max_graph_slots,
+                slots.unwrap_or(usize::MAX),
+            ),
+        ));
     }
     let atoms = molecule.atom_count();
     // This quadratic input-size guard bounds admission to canonicalization,
@@ -69,9 +89,14 @@ fn write_canonical_emission_with_limits(
         .and_then(|visits| visits.checked_mul(atoms))
         .and_then(|visits| visits.checked_mul(2));
     if input_complexity.is_none_or(|score| score > max_input_complexity) {
-        return Err(MoleculeWriteError::resource_limit(format!(
-            "canonical SMILES exceeds the input complexity limit ({max_input_complexity})"
-        )));
+        return Err(SMILES_WRITE.resource_limit(
+            "canonical SMILES input",
+            LimitExceeded::new(
+                Resource::Work,
+                max_input_complexity,
+                input_complexity.unwrap_or(usize::MAX),
+            ),
+        ));
     }
     let molecule = without_unknown_stereo(molecule);
     let molecule = molecule.as_ref();
@@ -82,7 +107,7 @@ fn write_canonical_emission_with_limits(
     // string. A connected graph has a ring exactly when it has as many bonds
     // as atoms; an acyclic molecule has no aromatic atom to perceive.
     if molecule.bond_count() >= molecule.atom_count() && !molecule.perception().has_aromaticity() {
-        return Err(MoleculeWriteError::missing_perception(
+        return Err(SMILES_WRITE.missing_perception(
             "canonical SMILES requires installed aromaticity perception; perceive the molecule before writing",
         ));
     }
@@ -100,7 +125,7 @@ fn write_canonical_emission_with_limits(
     write_canonical_smiles_component(mol, root, &order, atom_style, &stereo)
 }
 
-fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, MoleculeWriteError> {
+fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, FormatError> {
     let mut normalized = mol.clone();
     // Metadata does not affect a molecular identifier. Use the common hydrogen
     // transform so carrier remapping and count reconstruction have one owner.
@@ -158,27 +183,33 @@ fn double_bond_reference_hydrogens(mol: &Molecule) -> BTreeSet<AtomId> {
 }
 
 /// Classifies a hydrogen-normalization failure by its cause.
-fn hydrogen_normalization_error(error: HydrogenTransformError) -> MoleculeWriteError {
-    let message = format!("canonical SMILES hydrogen normalization failed: {error}");
-    match error {
+fn hydrogen_normalization_error(error: HydrogenTransformError) -> FormatError {
+    let message = "canonical SMILES hydrogen normalization failed";
+    let classified = match &error {
         HydrogenTransformError::MissingValencePerception => {
-            MoleculeWriteError::missing_perception(message)
+            SMILES_WRITE.missing_perception(message)
         }
-        HydrogenTransformError::ResourceLimit { .. } => MoleculeWriteError::resource_limit(message),
+        HydrogenTransformError::LimitExceeded(limit) => FormatError::write(
+            crate::diagnostics::Format::Smiles,
+            crate::diagnostics::DiagnosticKind::Limit,
+            message,
+        )
+        .exceeding(*limit),
         HydrogenTransformError::HydrogenCountOverflow { .. }
         | HydrogenTransformError::UnsupportedImplicitAxisHydrogen { .. } => {
-            MoleculeWriteError::unsupported(message)
+            SMILES_WRITE.unsupported(message)
         }
         HydrogenTransformError::InconsistentStereoHydrogen { .. }
         | HydrogenTransformError::Molecule(_)
-        | HydrogenTransformError::Publication(_) => MoleculeWriteError::invalid_model(message),
-    }
+        | HydrogenTransformError::Publication(_) => SMILES_WRITE.invalid_model(message),
+    };
+    classified.with_source(error)
 }
 
 fn canonical_projection_graph(
     mol: &Molecule,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<Molecule, MoleculeWriteError> {
+) -> std::result::Result<Molecule, FormatError> {
     // Ranking and labeling must see the same isotope and hydrogen projection
     // as the output; only this private copy adopts the exported representation.
     let mut projected = mol.clone();
@@ -279,7 +310,7 @@ fn write_canonical_smiles_component(
     ranking: &CanonicalOrder,
     atom_style: CanonicalAtomStyle,
     stereo: &SmilesStereoWriteContext,
-) -> std::result::Result<Emission, MoleculeWriteError> {
+) -> std::result::Result<Emission, FormatError> {
     let rings = crate::algorithms::compute_ring_membership(mol);
     let plan = plan_canonical_smiles_component(mol, root, ranking, atom_style, &rings)?;
     write_smiles_component(
@@ -302,7 +333,7 @@ fn plan_canonical_smiles_component(
     ranking: &CanonicalOrder,
     atom_style: CanonicalAtomStyle,
     rings: &RingMembership,
-) -> std::result::Result<SmilesWritePlan, MoleculeWriteError> {
+) -> std::result::Result<SmilesWritePlan, FormatError> {
     super::write::plan_smiles_component(mol, root, atom_style, |neighbors| {
         sort_canonical_smiles_neighbors(neighbors, ranking, rings);
     })
@@ -352,7 +383,7 @@ fn canonical_smiles_atom(
     atom_id: AtomId,
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<String, MoleculeWriteError> {
+) -> std::result::Result<String, FormatError> {
     let (atom, aromatic, inferred_hydrogens) =
         canonical_smiles_atom_representation(mol, atom_id, atom, atom_style)?;
     Ok(smiles_atom(&atom, aromatic, inferred_hydrogens))
@@ -363,7 +394,7 @@ fn canonical_smiles_atom_representation(
     atom_id: AtomId,
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<(Atom, bool, u8), MoleculeWriteError> {
+) -> std::result::Result<(Atom, bool, u8), FormatError> {
     let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
     let perceived_hydrogens = mol.perception().inferred_hydrogens(atom_id);
     let inferred_hydrogens = perceived_hydrogens.unwrap_or(0);
@@ -378,7 +409,7 @@ fn canonical_smiles_atom_representation(
     )?;
     if smiles_atom_requires_brackets(&payload, aromatic, inferred_hydrogens) {
         if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() {
-            return Err(MoleculeWriteError::missing_perception(format!(
+            return Err(SMILES_WRITE.missing_perception(format!(
                 "canonical SMILES bracket atom {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
             )));
         }
@@ -401,7 +432,7 @@ fn canonical_smiles_atom_normalized(
     aromatic: bool,
     inferred_hydrogens: u8,
     stored_kekule: bool,
-) -> std::result::Result<(Atom, u8), MoleculeWriteError> {
+) -> std::result::Result<(Atom, u8), FormatError> {
     if canonical_smiles_should_bracket_metal_bound_hydrogens(
         mol,
         atom_id,
@@ -509,7 +540,7 @@ fn canonical_smiles_can_use_organic_form(
     aromatic: bool,
     inferred_hydrogens: u8,
     stored_kekule: bool,
-) -> std::result::Result<bool, MoleculeWriteError> {
+) -> std::result::Result<bool, FormatError> {
     if atom.formal_charge != 0
         || atom.radical.is_some()
         || atom.atom_map.is_some()
@@ -680,7 +711,7 @@ fn smiles_bond_valence_sum(mol: &Molecule, atom_id: AtomId, stored_kekule: bool)
 #[cfg(test)]
 mod resource_tests {
     use super::*;
-    use crate::io::MoleculeWriteErrorKind;
+    use crate::diagnostics::DiagnosticKind;
 
     #[test]
     fn canonical_input_complexity_accepts_the_boundary() {
@@ -691,8 +722,11 @@ mod resource_tests {
             "CC"
         );
         let error = write_canonical_smiles_with_limits(&molecule, 15, usize::MAX).unwrap_err();
-        assert_eq!(error.kind(), MoleculeWriteErrorKind::ResourceLimit);
-        assert!(error.to_string().contains("input complexity"));
+        assert_eq!(error.kind(), DiagnosticKind::Limit);
+        assert_eq!(
+            error.limit_exceeded(),
+            Some(LimitExceeded::new(Resource::Work, 15, 16))
+        );
     }
 
     #[test]
@@ -715,7 +749,10 @@ mod resource_tests {
         let mut chain = crate::smiles::to_molecules("CCC").unwrap().pop().unwrap();
         chain.perceive().unwrap();
         let error = write_canonical_smiles_with_limits(&chain, usize::MAX, 4).unwrap_err();
-        assert_eq!(error.kind(), MoleculeWriteErrorKind::ResourceLimit);
-        assert!(error.to_string().contains("graph storage"));
+        assert_eq!(error.kind(), DiagnosticKind::Limit);
+        assert_eq!(
+            error.limit_exceeded(),
+            Some(LimitExceeded::new(Resource::GraphSlots, 4, 5))
+        );
     }
 }

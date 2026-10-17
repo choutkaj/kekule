@@ -1,3 +1,4 @@
+use crate::DraftError;
 use std::fmt;
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     validate_binding,
 };
-use super::{PositionError, Positions, StructureError};
+use super::{DenseArrayError, Positions, StructureError};
 
 /// One concrete structure of one topology.
 ///
@@ -262,15 +263,14 @@ impl Model {
     ) -> Result<(), ModelError> {
         let staged = values
             .into_iter()
-            .enumerate()
-            .map(|(order, (atom, position))| {
+            .map(|(atom, position)| {
                 let index = atom_index(&self.topology, atom)?.index();
                 let point = position
                     .into_unit(crate::units::CANONICAL_LENGTH_UNIT)
-                    .map_err(PositionError::from)?
+                    .map_err(DenseArrayError::from)?
                     .into_value();
                 if !point.is_finite() {
-                    return Err(PositionError::NonFinitePosition { index: order }.into());
+                    return Err(DenseArrayError::NonFinite { index }.into());
                 }
                 Ok((index, point))
             })
@@ -532,12 +532,15 @@ impl<'a> ModelAtomView<'a> {
     }
 }
 
+/// Why a model operation was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelError {
+    /// The atom is not part of the model's topology.
     InvalidAtomId(InstanceAtomId),
-    InvalidBondId(InstanceBondId),
+    /// Structure state is invalid; see the source.
     Structure(StructureError),
+    /// Subsetting the topology failed; see the source.
     Subset(TopologySubsetError),
 }
 
@@ -545,9 +548,8 @@ impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
-            Self::InvalidBondId(bond) => write!(formatter, "invalid topology bond: {bond}"),
-            Self::Structure(error) => write!(formatter, "invalid model structure: {error}"),
-            Self::Subset(error) => write!(formatter, "cannot subset model topology: {error}"),
+            Self::Structure(_) => formatter.write_str("invalid model structure"),
+            Self::Subset(_) => formatter.write_str("cannot subset model topology"),
         }
     }
 }
@@ -568,8 +570,8 @@ impl From<StructureError> for ModelError {
     }
 }
 
-impl From<PositionError> for ModelError {
-    fn from(error: PositionError) -> Self {
+impl From<DenseArrayError> for ModelError {
+    fn from(error: DenseArrayError) -> Self {
         Self::Structure(error.into())
     }
 }
@@ -678,15 +680,14 @@ impl ModelBuilder {
     ) -> Result<(), ModelBuildError> {
         let staged = values
             .into_iter()
-            .enumerate()
-            .map(|(order, (atom, position))| {
+            .map(|(atom, position)| {
                 let index = self.checked_atom_index(atom)?.index();
                 let point = position
                     .into_unit(crate::units::CANONICAL_LENGTH_UNIT)
-                    .map_err(PositionError::from)?
+                    .map_err(DenseArrayError::from)?
                     .into_value();
                 if !point.is_finite() {
-                    return Err(PositionError::NonFinitePosition { index: order }.into());
+                    return Err(DenseArrayError::NonFinite { index }.into());
                 }
                 Ok((index, point))
             })
@@ -698,11 +699,11 @@ impl ModelBuilder {
         self.clone().build().map(|_| ())
     }
 
-    pub fn try_build(self) -> Result<Model, ModelBuilderError> {
-        self.clone().build().map_err(|error| ModelBuilderError {
-            error,
-            builder: Box::new(self),
-        })
+    /// Builds the model, or returns this builder for repair with the error.
+    pub fn try_build(self) -> Result<Model, DraftError<Self, ModelBuildError>> {
+        self.clone()
+            .build()
+            .map_err(|error| DraftError::new(error, self))
     }
 
     /// Replaces the dense atom order with a permutation of every staged atom.
@@ -822,15 +823,22 @@ fn validate_position_count(expected: usize, actual: usize) -> Result<(), ModelBu
     Ok(())
 }
 
+/// A model builder edit or the final build was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelBuildError {
+    /// An added instance's positions do not match its molecule's atom count.
     InstancePositionCountMismatch {
+        /// The molecule's atom count.
         expected: usize,
+        /// The number of positions supplied.
         actual: usize,
     },
+    /// Reserving per-atom state exceeded capacity.
     CapacityOverflow,
+    /// A topology edit or the topology build failed; see the source.
     Topology(TopologyBuildError),
+    /// A chain, residue or atom-site edit failed; see the source.
     Hierarchy(crate::topology::HierarchyError),
     /// Final model validation failed after topology publication.
     Model(Box<ModelError>),
@@ -846,9 +854,9 @@ impl fmt::Display for ModelBuildError {
             Self::CapacityOverflow => {
                 formatter.write_str("model construction exceeds coordinate capacity")
             }
-            Self::Topology(error) => write!(formatter, "cannot build topology: {error}"),
-            Self::Hierarchy(error) => write!(formatter, "cannot build hierarchy: {error}"),
-            Self::Model(error) => write!(formatter, "cannot build model: {error}"),
+            Self::Topology(_) => formatter.write_str("cannot build topology"),
+            Self::Hierarchy(_) => formatter.write_str("cannot build hierarchy"),
+            Self::Model(_) => formatter.write_str("cannot build model"),
         }
     }
 }
@@ -864,8 +872,8 @@ impl std::error::Error for ModelBuildError {
     }
 }
 
-impl From<PositionError> for ModelBuildError {
-    fn from(error: PositionError) -> Self {
+impl From<DenseArrayError> for ModelBuildError {
+    fn from(error: DenseArrayError) -> Self {
         ModelError::from(error).into()
     }
 }
@@ -873,37 +881,6 @@ impl From<PositionError> for ModelBuildError {
 impl From<StructureError> for ModelBuildError {
     fn from(error: StructureError) -> Self {
         ModelError::from(error).into()
-    }
-}
-
-/// Failed model construction retaining its complete original builder for repair.
-#[derive(Debug)]
-pub struct ModelBuilderError {
-    error: ModelBuildError,
-    builder: Box<ModelBuilder>,
-}
-
-impl ModelBuilderError {
-    pub fn error(&self) -> &ModelBuildError {
-        &self.error
-    }
-    pub fn builder(&self) -> &ModelBuilder {
-        &self.builder
-    }
-    pub fn into_builder(self) -> ModelBuilder {
-        *self.builder
-    }
-}
-
-impl fmt::Display for ModelBuilderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-
-impl std::error::Error for ModelBuilderError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
     }
 }
 

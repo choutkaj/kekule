@@ -180,18 +180,29 @@ impl fmt::Display for CorrespondenceSide {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AtomCorrespondenceError {
+    /// Dense-order pairing was requested for topologies with different layouts.
     LayoutMismatch,
+    /// A pair names an atom absent from that side's topology.
     InvalidAtom {
+        /// The side whose atom is absent.
         side: CorrespondenceSide,
+        /// The position of the pair in the input.
         pair_index: usize,
+        /// The absent atom.
         atom: InstanceAtomId,
     },
+    /// A pair repeats an atom already paired on the same side.
     DuplicateAtom {
+        /// The side with the repeated atom.
         side: CorrespondenceSide,
+        /// The position of the repeating pair in the input.
         pair_index: usize,
+        /// The repeated atom.
         atom: InstanceAtomId,
     },
+    /// A topology does not share the layout the correspondence was built for.
     TopologyMismatch {
+        /// The side with the mismatched topology.
         side: CorrespondenceSide,
     },
 }

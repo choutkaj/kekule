@@ -1,10 +1,9 @@
-use crate::diagnostics::DiagnosticKind;
+use super::super::types::structure_error;
+use crate::diagnostics::{DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::atom_site::AtomRow;
-use super::super::{
-    StructureInterpretError, StructureInterpretIssue, StructureInterpretationReport,
-};
+use super::super::{StructureInterpretIssue, StructureInterpretationReport};
 use super::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, SourceResidueId,
@@ -16,7 +15,7 @@ struct Residue<'a> {
     labels: BTreeSet<String>,
 }
 
-fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, StructureInterpretError> {
+fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, FormatError> {
     let mut grouped = BTreeMap::<SourceResidueId, Vec<&AtomRow>>::new();
     for row in rows {
         grouped
@@ -30,7 +29,7 @@ fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, StructureInterpretErro
             let mut identities = BTreeSet::new();
             for row in &rows {
                 if !identities.insert((&row.comp_id, &row.atom_name, &row.alt_id)) {
-                    return Err(StructureInterpretError::new(
+                    return Err(structure_error(
                         DiagnosticKind::Inconsistent,
                         Some(row.line),
                         format!(
@@ -49,7 +48,7 @@ fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, StructureInterpretErro
 /// The residues of a source that have alternate locations.
 pub(in crate::io::structure_interpret) fn inventory(
     rows: &[AtomRow],
-) -> Result<Vec<AltLocResidue>, StructureInterpretError> {
+) -> Result<Vec<AltLocResidue>, FormatError> {
     Ok(residues(rows)?
         .into_iter()
         .filter(|residue| !residue.labels.is_empty())
@@ -78,8 +77,8 @@ fn selection_error(
     residue: &Residue<'_>,
     kind: DiagnosticKind,
     message: impl std::fmt::Display,
-) -> StructureInterpretError {
-    StructureInterpretError::new(
+) -> FormatError {
+    structure_error(
         kind,
         Some(residue.rows[0].line),
         format!("{message} at {:?}", residue.id),
@@ -91,7 +90,7 @@ fn selection_error(
 fn candidate_rows<'a>(
     residue: &Residue<'a>,
     labels: &BTreeSet<String>,
-) -> Result<Vec<&'a AtomRow>, StructureInterpretError> {
+) -> Result<Vec<&'a AtomRow>, FormatError> {
     let labelled = residue
         .rows
         .iter()
@@ -193,7 +192,7 @@ fn groups(
     residues: &[Residue<'_>],
     selection: &AltLocSelection,
     source_declared: bool,
-) -> Result<Vec<Vec<usize>>, StructureInterpretError> {
+) -> Result<Vec<Vec<usize>>, FormatError> {
     let indices = residues
         .iter()
         .enumerate()
@@ -206,7 +205,7 @@ fn groups(
         .chain(selection.groups.iter().flatten())
     {
         if !indices.contains_key(id) || residues[indices[id]].labels.is_empty() {
-            return Err(StructureInterpretError::new(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
@@ -217,14 +216,14 @@ fn groups(
     }
     for group in &selection.groups {
         if group.len() < 2 || group.iter().collect::<BTreeSet<_>>().len() != group.len() {
-            return Err(StructureInterpretError::new(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 "alternate-location group requires at least two distinct residues",
             ));
         }
         if group.iter().any(|id| id.model_id != group[0].model_id) {
-            return Err(StructureInterpretError::new(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 "alternate-location group crosses source coordinate models",
@@ -271,12 +270,12 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
     conformations: &BTreeMap<String, BTreeSet<String>>,
     policy: &AltLocPolicy,
     report: &mut StructureInterpretationReport,
-) -> Result<Vec<AtomRow>, StructureInterpretError> {
+) -> Result<Vec<AtomRow>, FormatError> {
     let residues = residues(rows)?;
     let selection = configuration(policy);
     if let Some(id) = &selection.source_conformation {
         if !conformations.contains_key(id) {
-            return Err(StructureInterpretError::new(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!("source alternate conformation `{id}` is unavailable"),
@@ -411,7 +410,7 @@ fn choose<'a>(
     alternatives: &BTreeMap<String, BTreeSet<String>>,
     source_declared: bool,
     report: &mut StructureInterpretationReport,
-) -> Result<Candidate<'a>, StructureInterpretError> {
+) -> Result<Candidate<'a>, FormatError> {
     let mut candidates = Vec::new();
     let mut last_error = None;
     for (id, labels) in alternatives {

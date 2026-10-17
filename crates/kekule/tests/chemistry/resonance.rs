@@ -88,7 +88,7 @@ fn group_preparation_is_separate_and_transactional() {
                 ..Default::default()
             }
         ),
-        Err(ResonanceError::ResourceLimit { .. })
+        Err(ResonanceError::LimitExceeded(_))
     ));
     assert_eq!(m.perception(), &before);
     perception::aromaticity::perceive_aromaticity(

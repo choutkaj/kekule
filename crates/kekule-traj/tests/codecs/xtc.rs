@@ -11,8 +11,8 @@ use kekule_traj::io::xtc::{
 };
 use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryFormat,
-    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
@@ -146,7 +146,7 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
     assert_eq!(
             writer.write_frame(frame.frame_view()),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 TrajectoryFormat::Xtc,
                 "box-rounding.xtc",
@@ -262,7 +262,7 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
                 .unwrap();
             assert_eq!(
                 codec_kind(&error),
-                Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+                Some(TrajectoryIoErrorKind::LimitExceeded)
             );
             assert!(!control.violated(), "over-budget payload must not be read");
 
@@ -282,12 +282,12 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
                 let before = buffer_snapshot(&destination);
                 assert_eq!(
                     codec_kind(&bounded.read_next(&mut destination).unwrap_err()),
-                    Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+                    Some(TrajectoryIoErrorKind::LimitExceeded)
                 );
                 assert_eq!(buffer_snapshot(&destination), before);
                 assert_eq!(
                     codec_kind(&open_indexed(total - 1).err().unwrap()),
-                    Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+                    Some(TrajectoryIoErrorKind::LimitExceeded)
                 );
             }
             let mut indexed = open_indexed(total).unwrap();
@@ -520,11 +520,9 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         .unwrap();
         assert_eq!(
             codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::InvalidHeader)
+            Some(TrajectoryIoErrorKind::InvalidHeader)
         );
-        let TrajectoryIoError::Codec(context) = error else {
-            panic!("expected typed XTC count error");
-        };
+        let context = error;
         assert_eq!(context.frame(), Some(0));
         assert_eq!(context.byte_offset(), Some(expected_offset));
     }
@@ -542,11 +540,9 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep)
+        Some(TrajectoryIoErrorKind::NegativeOrUnrepresentableStep)
     );
-    let TrajectoryIoError::Codec(context) = error else {
-        panic!("expected typed XTC step error");
-    };
+    let context = error;
     assert_eq!(context.frame(), Some(0));
     assert_eq!(context.byte_offset(), Some(8));
 
@@ -581,7 +577,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InconsistentAtomCount)
+        Some(TrajectoryIoErrorKind::InconsistentAtomCount)
     );
 
     let mut writer = XtcWriter::new(
@@ -610,7 +606,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     assert_eq!(
         writer.write_frame(overflow.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
+            TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Xtc,
             "overflow-writer.xtc",
@@ -646,7 +642,7 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
     let before = buffer_snapshot(&destination);
     control.arm_at_current_position();
     let error = indexed.read_frame(1, &mut destination).unwrap_err();
-    assert!(matches!(error, TrajectoryIoError::Io(_)));
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::Io);
     assert_eq!(buffer_snapshot(&destination), before);
 }
 
@@ -686,7 +682,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     assert!(!control.violated());
     assert_eq!(control.probed_bytes(), 1);
@@ -717,7 +713,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         .unwrap();
         assert_eq!(
             codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+            Some(TrajectoryIoErrorKind::LimitExceeded)
         );
         assert!(!control.violated());
         assert_eq!(control.probed_bytes(), 1);
@@ -750,7 +746,7 @@ fn xtc_fuzz_regression_rejects_compressed_bitstream_underflow_without_panic() {
     .expect_err("fuzz artifact must be rejected during preflight");
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::CorruptCompressedData)
+        Some(TrajectoryIoErrorKind::CorruptCompressedData)
     );
 }
 
@@ -771,7 +767,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InconsistentAtomCount)
+        Some(TrajectoryIoErrorKind::InconsistentAtomCount)
     );
 
     let mut precision = valid.clone();
@@ -787,7 +783,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InvalidPrecision)
+        Some(TrajectoryIoErrorKind::InvalidPrecision)
     );
 
     let mut small_index = valid.clone();
@@ -803,7 +799,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::CorruptCompressedData)
+        Some(TrajectoryIoErrorKind::CorruptCompressedData)
     );
 
     let mut truncated = valid.clone();
@@ -819,7 +815,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::TruncatedRecord)
+        Some(TrajectoryIoErrorKind::TruncatedRecord)
     );
 
     let limits = TrajectoryIoLimits {
@@ -837,7 +833,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
 }
 
@@ -864,11 +860,9 @@ fn xtc_rejects_trailing_compressed_data_and_mixed_file_profiles() {
     .unwrap();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::CorruptCompressedData)
+        Some(TrajectoryIoErrorKind::CorruptCompressedData)
     );
-    let TrajectoryIoError::Codec(context) = &error else {
-        panic!("expected typed XTC codec context");
-    };
+    let context = &error;
     assert_eq!(context.frame(), Some(0));
     assert_eq!(context.byte_offset(), Some(0));
 
@@ -892,7 +886,7 @@ fn xtc_rejects_trailing_compressed_data_and_mixed_file_profiles() {
         let error = reader.read_next(&mut destination).unwrap_err();
         assert_eq!(
             codec_kind(&error),
-            Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+            Some(TrajectoryIoErrorKind::InconsistentMetadata)
         );
         assert_eq!(x_values(&destination), before);
     }
@@ -905,7 +899,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         assert_eq!(
             XtcWriteOptions::default().with_precision(precision),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InvalidPrecision,
+                TrajectoryIoErrorKind::InvalidPrecision,
                 TrajectoryIoOperation::Open,
                 TrajectoryFormat::Xtc,
                 "XTC writer options",
@@ -927,7 +921,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     assert_eq!(
             writer.write_frame(frame.frame_view()),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 TrajectoryFormat::Xtc,
                 "strict.xtc",
@@ -950,13 +944,14 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     assert_eq!(
         writer.write_frame(frame.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Xtc,
             "strict.xtc",
             Some(0),
-            "XTC cannot preserve owner properties",
-        ))
+            "XTC cannot preserve frame properties",
+        )
+        .with_field(TrajectoryField::Properties))
     );
     frame.frame_mut().properties_mut().owner_mut().clear();
     frame
@@ -974,13 +969,14 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     assert_eq!(
         writer.write_frame(frame.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Xtc,
             "strict.xtc",
             Some(0),
             "XTC cannot preserve bond properties",
-        ))
+        )
+        .with_field(TrajectoryField::BondProperties))
     );
 }
 
@@ -1038,7 +1034,7 @@ fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
         assert_eq!(
             writer.write_frame(frame.frame_view()),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
                 TrajectoryFormat::Xtc,
                 "span.xtc",
@@ -1077,7 +1073,7 @@ fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
     assert_eq!(
         strict.write_frame(frames[0].2.frame_view()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::InconsistentMetadata,
+            TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Xtc,
             "vacuum.xtc",

@@ -3,7 +3,7 @@ mod append;
 pub use append::{ModelAppend, ModelAppendReport};
 
 use super::model_state::ModelState;
-use super::{Model, ModelError, PositionError, Positions, StructureError};
+use super::{DenseArrayError, Model, ModelError, Positions, StructureError};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{
@@ -18,6 +18,7 @@ use crate::topology::{
     TopologyBondIndex,
 };
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
+use crate::DraftError;
 use std::fmt;
 
 /// Detached structural editing for one geometry-bearing molecular system.
@@ -104,7 +105,7 @@ impl ModelEditor {
         atom: Atom,
         position: Quantity<Point3>,
     ) -> Result<EditAtomId, ModelEditError> {
-        let point = checked_point(position)?;
+        let point = checked_point(position, None)?;
         self.slots.try_reserve_atoms(1)?;
         let id = self.structural(|topology| topology.add_atom(atom))?;
         let slot = self.topology.atom_slot(id)?;
@@ -118,7 +119,7 @@ impl ModelEditor {
         positions: &Positions,
     ) -> Result<EditMolecule, ModelEditError> {
         if positions.len() != molecule.atom_count() {
-            return Err(PositionError::PositionCountMismatch {
+            return Err(DenseArrayError::CountMismatch {
                 expected: molecule.atom_count(),
                 actual: positions.len(),
             }
@@ -237,7 +238,7 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         let positions = Positions::new(positions)?;
         if positions.len() != self.atom_count() {
-            return Err(PositionError::PositionCountMismatch {
+            return Err(DenseArrayError::CountMismatch {
                 expected: self.atom_count(),
                 actual: positions.len(),
             }
@@ -257,7 +258,12 @@ impl ModelEditor {
     ) -> Result<(), ModelEditError> {
         let staged = values
             .into_iter()
-            .map(|(id, value)| Ok((self.topology.atom_slot(id)?, checked_point(value)?)))
+            .map(|(id, value)| {
+                Ok((
+                    self.topology.atom_slot(id)?,
+                    checked_point(value, Some(id))?,
+                ))
+            })
             .collect::<Result<Vec<_>, ModelEditError>>()?;
         Ok(self.slots.positions.set_canonical_batch(&staged)?)
     }
@@ -585,12 +591,10 @@ impl ModelEditor {
         ))
     }
     /// Publishes a model, returning the draft with any publication error.
-    pub fn try_finish(self) -> Result<Model, ModelFinishError> {
+    pub fn try_finish(self) -> Result<Model, DraftError<Self, ModelEditError>> {
         let snapshot = self.clone();
-        self.finish().map_err(|error| ModelFinishError {
-            error: Box::new(error),
-            editor: Box::new(snapshot),
-        })
+        self.finish()
+            .map_err(|error| DraftError::new(error, snapshot))
     }
 
     /// Runs one topology edit and keeps slot rows in step: new slots get rows,
@@ -653,44 +657,73 @@ fn live_column(
         .remove(key)
 }
 
-fn checked_point(position: Quantity<Point3>) -> Result<Point3, PositionError> {
-    let point = position.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
+/// A canonical finite point for editor atom `atom`, or for an atom being
+/// added when `atom` is `None`.
+fn checked_point(
+    position: Quantity<Point3>,
+    atom: Option<EditAtomId>,
+) -> Result<Point3, ModelEditError> {
+    let point = position
+        .into_unit(CANONICAL_LENGTH_UNIT)
+        .map_err(DenseArrayError::from)?
+        .into_value();
     if !point.is_finite() {
-        return Err(PositionError::NonFinitePosition { index: 0 });
+        return Err(ModelEditError::NonFinitePosition { atom });
     }
     Ok(point)
 }
 
+/// A model edit was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelEditError {
+    /// Editing the topology failed; see the source.
     Topology(TopologyEditError),
-    Position(PositionError),
+    /// Dense per-atom state is invalid; see the source.
+    Position(DenseArrayError),
+    /// A position is not finite: of editor atom `atom`, or of the atom being
+    /// added when `atom` is `None`.
+    NonFinitePosition {
+        /// The editor atom.
+        atom: Option<EditAtomId>,
+    },
+    /// A property edit failed; see the source.
     Property(PropertyError),
+    /// Structure state is invalid; see the source.
     Structure(StructureError),
+    /// The edited model is invalid; see the source.
     Model(Box<ModelError>),
+    /// The edit exceeds coordinate capacity.
     CapacityOverflow,
     /// A periodic source cannot be imported under the destination's cell.
     IncompatibleAppendCell,
     /// An imported structure property cannot be combined with its destination table.
     AppendProperty {
-        domain: &'static str,
+        /// The table whose rows could not be appended.
+        domain: crate::properties::PropertyDomain,
+        /// The cause, also the source.
         error: Box<PropertyError>,
     },
 }
 impl fmt::Display for ModelEditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Topology(e) => e.fmt(f),
-            Self::Position(e) => e.fmt(f),
-            Self::Property(e) => e.fmt(f),
-            Self::Structure(e) => e.fmt(f),
-            Self::Model(e) => e.fmt(f),
+            Self::Topology(_) => f.write_str("cannot edit the topology"),
+            Self::Position(_) => f.write_str("invalid positions"),
+            Self::NonFinitePosition { atom: Some(atom) } => {
+                write!(f, "position of {atom:?} is not finite")
+            }
+            Self::NonFinitePosition { atom: None } => {
+                f.write_str("position of the added atom is not finite")
+            }
+            Self::Property(_) => f.write_str("invalid property"),
+            Self::Structure(_) => f.write_str("invalid structure"),
+            Self::Model(_) => f.write_str("invalid model"),
             Self::CapacityOverflow => f.write_str("model editing exceeds coordinate capacity"),
             Self::IncompatibleAppendCell => f.write_str(
                 "appended model has a different periodic cell; set the intended destination cell or explicitly remove the source cell before appending",
             ),
-            Self::AppendProperty { domain, error } => write!(f, "cannot append {domain} properties: {error}"),
+            Self::AppendProperty { domain, .. } => write!(f, "cannot append {domain} properties"),
         }
     }
 }
@@ -703,7 +736,9 @@ impl std::error::Error for ModelEditError {
             Self::Structure(e) => Some(e),
             Self::Model(e) => Some(e.as_ref()),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
-            Self::CapacityOverflow | Self::IncompatibleAppendCell => None,
+            Self::CapacityOverflow
+            | Self::IncompatibleAppendCell
+            | Self::NonFinitePosition { .. } => None,
         }
     }
 }
@@ -717,38 +752,12 @@ macro_rules! convert {
     };
 }
 convert!(TopologyEditError, Topology);
-convert!(PositionError, Position);
+convert!(DenseArrayError, Position);
 convert!(PropertyError, Property);
 convert!(StructureError, Structure);
 impl From<ModelError> for ModelEditError {
     fn from(error: ModelError) -> Self {
         Self::Model(Box::new(error))
-    }
-}
-#[derive(Debug)]
-pub struct ModelFinishError {
-    error: Box<ModelEditError>,
-    editor: Box<ModelEditor>,
-}
-impl ModelFinishError {
-    pub fn error(&self) -> &ModelEditError {
-        &self.error
-    }
-    pub fn editor(&self) -> &ModelEditor {
-        &self.editor
-    }
-    pub fn into_editor(self) -> ModelEditor {
-        *self.editor
-    }
-}
-impl fmt::Display for ModelFinishError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-impl std::error::Error for ModelFinishError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.error.as_ref())
     }
 }
 

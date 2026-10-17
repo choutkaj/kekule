@@ -1,5 +1,5 @@
 use kekule::geometry::Vector3;
-use kekule::structure::{Forces, StructureError, Velocities};
+use kekule::structure::{DenseArrayError, Forces, Velocities};
 use kekule::units::{Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT};
 use kekule_traj::FrameBuffer;
 
@@ -99,21 +99,21 @@ fn owned_vector_construction_keeps_allocations_and_validates_converted_values() 
             vec![Vector3::new(f64::NAN, 0.0, 0.0)],
             CANONICAL_VELOCITY_UNIT
         )),
-        Err(StructureError::NonFiniteVector { index: 0 })
+        Err(DenseArrayError::NonFinite { index: 0 })
     ));
     assert!(matches!(
         Forces::from_vec(Quantity::new(
             vec![Vector3::new(f64::MAX, 0.0, 0.0)],
             source_unit
         )),
-        Err(StructureError::NonFiniteVector { index: 0 })
+        Err(DenseArrayError::NonFinite { index: 0 })
     ));
     assert!(matches!(
         Forces::from_vec(Quantity::new(
             vec![Vector3::zero()],
             CANONICAL_VELOCITY_UNIT
         )),
-        Err(StructureError::Unit(_))
+        Err(DenseArrayError::Unit(_))
     ));
 }
 

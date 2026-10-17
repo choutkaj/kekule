@@ -1,7 +1,8 @@
 //! Structured SMILES emission; CX atom indices are assigned after traversal.
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::io::MoleculeWriteError;
+use crate::diagnostics::FormatError;
+use crate::io::write_error::SMILES_WRITE;
 use crate::molecule::{AtomId, Molecule};
 use crate::stereo::{StereoElementKind, StereoGroupKind};
 
@@ -97,7 +98,7 @@ impl Emission {
         result
     }
 
-    pub(crate) fn render(&self) -> Result<String, MoleculeWriteError> {
+    pub(crate) fn render(&self) -> Result<String, FormatError> {
         let mut absolute = BTreeSet::new();
         let mut and = Vec::new();
         let mut or = Vec::new();
@@ -108,12 +109,12 @@ impl Emission {
                 StereoGroupKind::And => and.push(members.clone()),
                 StereoGroupKind::Or => or.push(members.clone()),
                 StereoGroupKind::Relative => relative += 1,
-                StereoGroupKind::Racemic => return Err(MoleculeWriteError::unsupported(
+                StereoGroupKind::Racemic => return Err(SMILES_WRITE.unsupported(
                     "CXSMILES cannot encode a quantitative racemic group without losing its distinction from AND")),
             }
         }
         if relative > 1 {
-            return Err(MoleculeWriteError::unsupported(
+            return Err(SMILES_WRITE.unsupported(
                 "CXSMILES r cannot encode multiple independent relative stereo groups",
             ));
         }
@@ -161,11 +162,11 @@ impl Emission {
     }
 }
 
-pub(super) fn validate_groups(mol: &Molecule) -> Result<(), MoleculeWriteError> {
+pub(super) fn validate_groups(mol: &Molecule) -> Result<(), FormatError> {
     let mut relative = 0;
     for (_, group) in mol.stereo_groups() {
         if group.kind == StereoGroupKind::Racemic {
-            return Err(MoleculeWriteError::unsupported("CXSMILES cannot encode a quantitative racemic group without losing its distinction from AND"));
+            return Err(SMILES_WRITE.unsupported("CXSMILES cannot encode a quantitative racemic group without losing its distinction from AND"));
         }
         relative += usize::from(group.kind == StereoGroupKind::Relative);
         for member in &group.members {
@@ -173,14 +174,13 @@ pub(super) fn validate_groups(mol: &Molecule) -> Result<(), MoleculeWriteError> 
                 mol.stereo_element(*member).map(|s| &s.kind),
                 Ok(StereoElementKind::Tetrahedral(_))
             ) {
-                return Err(MoleculeWriteError::unsupported("CXSMILES group export requires tetrahedral members; this stereo family has no supported SMILES encoding"));
+                return Err(SMILES_WRITE.unsupported("CXSMILES group export requires tetrahedral members; this stereo family has no supported SMILES encoding"));
             }
         }
     }
     if relative > 1 {
-        return Err(MoleculeWriteError::unsupported(
-            "CXSMILES r cannot encode multiple independent relative stereo groups",
-        ));
+        return Err(SMILES_WRITE
+            .unsupported("CXSMILES r cannot encode multiple independent relative stereo groups"));
     }
     Ok(())
 }

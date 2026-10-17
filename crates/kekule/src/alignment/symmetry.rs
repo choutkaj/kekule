@@ -1,5 +1,6 @@
 //! Symmetry-equivalent atom permutations for symmetry-corrected RMSD.
 
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -130,11 +131,18 @@ pub struct SymmetryLimits {
     pub max_search_steps: usize,
 }
 
+impl SymmetryLimits {
+    /// The [`Default`] bound of [`Self::max_permutations`].
+    pub const DEFAULT_MAX_PERMUTATIONS: usize = 4096;
+    /// The [`Default`] bound of [`Self::max_search_steps`].
+    pub const DEFAULT_MAX_SEARCH_STEPS: usize = 1_000_000;
+}
+
 impl Default for SymmetryLimits {
     fn default() -> Self {
         Self {
-            max_permutations: 4096,
-            max_search_steps: 1_000_000,
+            max_permutations: Self::DEFAULT_MAX_PERMUTATIONS,
+            max_search_steps: Self::DEFAULT_MAX_SEARCH_STEPS,
         }
     }
 }
@@ -143,33 +151,27 @@ impl Default for SymmetryLimits {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SymmetryError {
-    /// The selection admits more permutations than allowed.
-    PermutationLimit { limit: usize },
-    /// The search examined more candidate mappings than allowed.
-    SearchLimit { limit: usize },
+    /// The selection admits more permutations
+    /// ([`Resource::Permutations`](crate::diagnostics::Resource::Permutations)) or the search examined more candidate
+    /// mappings ([`Resource::SearchStates`](crate::diagnostics::Resource::SearchStates)) than allowed.
+    LimitExceeded(LimitExceeded),
     /// Perceiving inferred hydrogen counts failed.
     Perception(TopologyPerceptionError),
     /// An atom's hydrogen count is unknown even after perception.
-    UnknownHydrogenCount { atom: TopologyAtomIndex },
+    UnknownHydrogenCount {
+        /// The atom with the unknown count.
+        atom: TopologyAtomIndex,
+    },
 }
 
 impl fmt::Display for SymmetryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Perception(error) => {
-                write!(formatter, "cannot perceive hydrogen counts: {error}")
-            }
+            Self::Perception(_) => formatter.write_str("cannot perceive hydrogen counts"),
             Self::UnknownHydrogenCount { atom } => {
                 write!(formatter, "hydrogen count of atom {atom} is unknown")
             }
-            Self::PermutationLimit { limit } => write!(
-                formatter,
-                "selection admits more than {limit} symmetry permutations"
-            ),
-            Self::SearchLimit { limit } => write!(
-                formatter,
-                "symmetry search exceeded {limit} candidate mappings"
-            ),
+            Self::LimitExceeded(limit) => write!(formatter, "symmetry search {limit}"),
         }
     }
 }
@@ -311,9 +313,10 @@ impl Search {
                     continue;
                 }
                 if permutations.len() == limits.max_permutations {
-                    return Err(SymmetryError::PermutationLimit {
-                        limit: limits.max_permutations,
-                    });
+                    return Err(SymmetryError::LimitExceeded(LimitExceeded::first_beyond(
+                        Resource::Permutations,
+                        limits.max_permutations,
+                    )));
                 }
                 permutations.push(self.restriction(&image));
                 // Other extensions of this restriction add nothing; resume
@@ -349,9 +352,10 @@ impl Search {
         let atom = self.order[depth];
         while let Some(target) = candidates[depth].pop() {
             if *steps == limits.max_search_steps {
-                return Err(SymmetryError::SearchLimit {
-                    limit: limits.max_search_steps,
-                });
+                return Err(SymmetryError::LimitExceeded(LimitExceeded::first_beyond(
+                    Resource::SearchStates,
+                    limits.max_search_steps,
+                )));
             }
             *steps += 1;
             if self.consistent(atom, target, image, used) {

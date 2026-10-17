@@ -3,12 +3,14 @@
 
 use std::fmt;
 
-use crate::diagnostics::{normalize_line_endings, read_bounded, DiagnosticKind, SourceLocation};
+use crate::diagnostics::{
+    normalize_line_endings, read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded,
+    Resource, SourceLocation,
+};
 use crate::geometry::Point3;
 
 use super::structure_documents::{
-    interpret_molfile_document, MolfileInterpretError, MolfileInterpretOptions,
-    MolfileInterpretation,
+    interpret_molfile_document, MolfileInterpretOptions, MolfileInterpretation,
 };
 use super::v2000::parse_v2000_ctab;
 use super::v3000::parse_v3000_ctab;
@@ -26,13 +28,24 @@ pub struct MolfileParseOptions {
     pub max_v3000_logical_line_bytes: usize,
 }
 
+impl MolfileParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+    /// The [`Default`] bound of [`Self::max_v3000_atoms`].
+    pub const DEFAULT_MAX_V3000_ATOMS: usize = 1_000_000;
+    /// The [`Default`] bound of [`Self::max_v3000_bonds`].
+    pub const DEFAULT_MAX_V3000_BONDS: usize = 2_000_000;
+    /// The [`Default`] bound of [`Self::max_v3000_logical_line_bytes`].
+    pub const DEFAULT_MAX_V3000_LOGICAL_LINE_BYTES: usize = 1024 * 1024;
+}
+
 impl Default for MolfileParseOptions {
     fn default() -> Self {
         Self {
-            max_input_bytes: 64 * 1024 * 1024,
-            max_v3000_atoms: 1_000_000,
-            max_v3000_bonds: 2_000_000,
-            max_v3000_logical_line_bytes: 1024 * 1024,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_v3000_atoms: Self::DEFAULT_MAX_V3000_ATOMS,
+            max_v3000_bonds: Self::DEFAULT_MAX_V3000_BONDS,
+            max_v3000_logical_line_bytes: Self::DEFAULT_MAX_V3000_LOGICAL_LINE_BYTES,
         }
     }
 }
@@ -396,51 +409,19 @@ impl MolfileDocument {
     pub fn interpret(
         &self,
         options: MolfileInterpretOptions,
-    ) -> Result<MolfileInterpretation, MolfileInterpretError> {
+    ) -> Result<MolfileInterpretation, FormatError> {
         interpret_molfile_document(self, options)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MolfileParseError {
+/// A Molfile parse failure on `line` of the input.
+pub(super) fn molfile_parse_error(
     kind: DiagnosticKind,
-    location: SourceLocation,
-    message: String,
+    line: usize,
+    message: impl Into<String>,
+) -> FormatError {
+    FormatError::parse(Format::Molfile, kind, message).at(SourceLocation::at_line(line))
 }
-
-impl MolfileParseError {
-    pub(super) fn new(kind: DiagnosticKind, line: usize, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            location: SourceLocation::at_line(line),
-            message: message.into(),
-        }
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.kind
-    }
-
-    pub const fn location(&self) -> SourceLocation {
-        self.location
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl fmt::Display for MolfileParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Molfile parse error at {}: {}",
-            self.location, self.message
-        )
-    }
-}
-
-impl std::error::Error for MolfileParseError {}
 
 /// The lines of one Molfile, numbered as in the original input.
 #[derive(Debug, Clone, Copy)]
@@ -476,21 +457,26 @@ impl<'a> MolfileLines<'a> {
         index: usize,
         kind: DiagnosticKind,
         message: impl Into<String>,
-    ) -> MolfileParseError {
-        MolfileParseError::new(kind, self.number(index), message)
+    ) -> FormatError {
+        molfile_parse_error(kind, self.number(index), message)
     }
 }
 
 pub(crate) fn parse_molfile_document(
     input: &str,
     options: MolfileParseOptions,
-) -> Result<MolfileDocument, MolfileParseError> {
+) -> Result<MolfileDocument, FormatError> {
     if input.len() > options.max_input_bytes {
-        return Err(MolfileParseError::new(
+        return Err(molfile_parse_error(
             DiagnosticKind::Limit,
             1,
             "input exceeds configured byte limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            options.max_input_bytes,
+            input.len(),
+        )));
     }
     let source = normalize_line_endings(input);
     let lines = source.lines().collect::<Vec<_>>();
@@ -515,9 +501,9 @@ pub(crate) fn parse_molfile_document(
 pub(crate) fn parse_molfile_reader(
     reader: impl std::io::Read,
     options: MolfileParseOptions,
-) -> Result<MolfileDocument, MolfileParseError> {
-    let input = read_bounded(reader, options.max_input_bytes)
-        .map_err(|(kind, message)| MolfileParseError::new(kind, 1, message))?;
+) -> Result<MolfileDocument, FormatError> {
+    let input = read_bounded(reader, options.max_input_bytes, Format::Molfile)
+        .map_err(|error| error.at(SourceLocation::at_line(1)))?;
     parse_molfile_document(&input, options)
 }
 
@@ -526,7 +512,7 @@ pub(crate) fn parse_molfile_reader(
 pub(super) fn parse_molfile_lines(
     lines: MolfileLines<'_>,
     options: MolfileParseOptions,
-) -> Result<(MolfileDocument, usize), MolfileParseError> {
+) -> Result<(MolfileDocument, usize), FormatError> {
     let (Some(title), Some(program), Some(comment), Some(counts)) =
         (lines.text(0), lines.text(1), lines.text(2), lines.text(3))
     else {

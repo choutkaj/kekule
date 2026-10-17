@@ -3,6 +3,7 @@ use super::config::Feature;
 use crate::{Error, ErrorKind, Result};
 
 use kekule::{
+    diagnostics::{LimitExceeded, Resource},
     molecule::{AtomId, BondOrder, Molecule},
     perception::rings::RingBasisModel,
     query::QueryGraph,
@@ -15,9 +16,30 @@ use std::{
     sync::OnceLock,
 };
 
-fn limit(detail: impl std::fmt::Display) -> Error {
-    Error::new(ErrorKind::ResourceLimit, detail)
+fn limit(detail: impl std::fmt::Display, limit: LimitExceeded) -> Error {
+    Error::limit(detail, limit)
 }
+
+/// The bound a resonance enumeration exceeded: its structure count, or else
+/// the values those structures hold.
+fn structure_limit(structures: usize, state_size: usize) -> LimitExceeded {
+    if structures > MAX_RESONANCE_STRUCTURES {
+        LimitExceeded::new(Resource::Structures, MAX_RESONANCE_STRUCTURES, structures)
+    } else {
+        LimitExceeded::new(
+            Resource::Values,
+            MAX_RESONANCE_VALUES,
+            structures.saturating_mul(state_size),
+        )
+    }
+}
+
+/// Resonance structures one enumeration may hold at once.
+const MAX_RESONANCE_STRUCTURES: usize = 10_000;
+/// Bond orders and charges those structures may hold together.
+const MAX_RESONANCE_VALUES: usize = 20_000_000;
+/// Path extensions one donor-acceptor transfer search may visit.
+const MAX_RESONANCE_TRANSFER_WORK: usize = 1_000_000;
 
 fn invariant(detail: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::Chemistry, detail)
@@ -116,9 +138,10 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
             molecule.perceive().map_err(Error::chemistry)?;
         }
         if !converged {
-            return Err(limit(format!(
-                "NAGL normalization did not converge within {applications} applications"
-            )));
+            return Err(limit(
+                format!("NAGL normalization did not converge within {applications} applications"),
+                LimitExceeded::first_beyond(Resource::Work, applications),
+            ));
         }
     }
     Ok(molecule)
@@ -191,16 +214,30 @@ impl ResonanceGraph {
         work: &mut usize,
     ) -> Result<()> {
         *work += 1;
-        if *work > 1_000_000 {
-            return Err(limit("resonance transfer path limit exceeded"));
+        if *work > MAX_RESONANCE_TRANSFER_WORK {
+            return Err(limit(
+                "resonance transfer path limit exceeded",
+                LimitExceeded::new(Resource::Work, MAX_RESONANCE_TRANSFER_WORK, *work),
+            ));
         }
         let at = *path.last().unwrap();
         if at == acceptor {
             if bonds.len() >= 2 && bonds.len().is_multiple_of(2) {
-                if output.len() >= 10_000
-                    || output.len().saturating_mul(self.state_size(state)) > 20_000_000
+                let state_size = self.state_size(state);
+                if output.len() >= MAX_RESONANCE_STRUCTURES
+                    || output.len().saturating_mul(state_size) > MAX_RESONANCE_VALUES
                 {
-                    return Err(limit("resonance product limit exceeded"));
+                    return Err(limit(
+                        "resonance product limit exceeded",
+                        if output.len() >= MAX_RESONANCE_STRUCTURES {
+                            LimitExceeded::first_beyond(
+                                Resource::Structures,
+                                MAX_RESONANCE_STRUCTURES,
+                            )
+                        } else {
+                            structure_limit(output.len(), state_size)
+                        },
+                    ));
                 }
                 let mut next = state.clone();
                 next.charges[path[0]] += 1;
@@ -351,8 +388,13 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
             if !visited.insert(key) {
                 continue;
             }
-            if visited.len() > 10_000 || visited.len().saturating_mul(state_size) > 20_000_000 {
-                return Err(limit("resonance state limit exceeded"));
+            if visited.len() > MAX_RESONANCE_STRUCTURES
+                || visited.len().saturating_mul(state_size) > MAX_RESONANCE_VALUES
+            {
+                return Err(limit(
+                    "resonance state limit exceeded",
+                    structure_limit(visited.len(), state_size),
+                ));
             }
             // Upstream deduplicates final forms by donor and acceptor positions.
             let roles = kinds.iter().map(|k| k.signum()).collect::<Vec<_>>();
@@ -369,8 +411,13 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
                         &mut work,
                     )?;
                     let count = pending.len().saturating_add(products.len());
-                    if count > 10_000 || count.saturating_mul(state_size) > 20_000_000 {
-                        return Err(limit("resonance queue limit exceeded"));
+                    if count > MAX_RESONANCE_STRUCTURES
+                        || count.saturating_mul(state_size) > MAX_RESONANCE_VALUES
+                    {
+                        return Err(limit(
+                            "resonance queue limit exceeded",
+                            structure_limit(count, state_size),
+                        ));
                     }
                     pending.extend(products);
                 }

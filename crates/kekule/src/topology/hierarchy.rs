@@ -323,15 +323,36 @@ impl fmt::Display for HierarchyIdKind {
     }
 }
 
+/// Why a hierarchy operation or lookup failed.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HierarchyError {
+    /// The chain does not exist.
     InvalidChainId(ChainId),
+    /// The residue does not exist.
     InvalidResidueId(ResidueId),
+    /// The atom site does not exist.
     InvalidAtomSiteId(AtomSiteId),
+    /// The atom already has an atom site.
     DuplicateAtomPlacement(InstanceAtomId),
     /// A new hierarchy node cannot be represented by the fixed-width ID for `kind`.
     IdentifierCapacityExceeded(HierarchyIdKind),
+    /// A lookup by name or label found no match.
+    NotFound {
+        /// The kind of node looked up.
+        kind: HierarchyIdKind,
+        /// The name or label looked up.
+        query: String,
+    },
+    /// A lookup by name or label found more than one match.
+    Ambiguous {
+        /// The kind of node looked up.
+        kind: HierarchyIdKind,
+        /// The name or label looked up.
+        query: String,
+        /// The number of matches.
+        matches: usize,
+    },
 }
 
 impl fmt::Display for HierarchyError {
@@ -344,6 +365,12 @@ impl fmt::Display for HierarchyError {
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(f, "{kind} identifier capacity exceeded")
             }
+            Self::NotFound { kind, query } => write!(f, "no {kind} matches {query}"),
+            Self::Ambiguous {
+                kind,
+                query,
+                matches,
+            } => write!(f, "{matches} {kind} matches for {query}"),
         }
     }
 }

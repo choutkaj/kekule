@@ -1,5 +1,6 @@
+use kekule::diagnostics::{LimitExceeded, Resource};
 use kekule::dssp::{
-    self, DsspChainBreak, DsspError, DsspLimits, DsspOptions, DsspResource, DsspSecondaryStructure,
+    self, DsspChainBreak, DsspError, DsspLimits, DsspOptions, DsspSecondaryStructure,
 };
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
@@ -104,10 +105,10 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
     };
     assert_eq!(
         dssp::assign(&model, options),
-        Err(DsspError::ResourceLimitExceeded {
-            resource: DsspResource::Residues,
-            limit: 2,
-        })
+        Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+            Resource::Residues,
+            2
+        )))
     );
 
     let options = DsspOptions {
@@ -119,10 +120,10 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
     };
     assert_eq!(
         dssp::assign(&model, options),
-        Err(DsspError::ResourceLimitExceeded {
-            resource: DsspResource::CandidatePairs,
-            limit: 0,
-        })
+        Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+            Resource::CandidatePairs,
+            0
+        )))
     );
 
     let options = DsspOptions {
@@ -134,10 +135,10 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
     };
     assert_eq!(
         dssp::assign(&model, options),
-        Err(DsspError::ResourceLimitExceeded {
-            resource: DsspResource::Ladders,
-            limit: 0,
-        })
+        Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+            Resource::Ladders,
+            0
+        )))
     );
 }
 
@@ -153,10 +154,7 @@ fn dssp_rejects_coordinates_outside_its_spatial_index_range_without_panicking() 
 
     assert!(matches!(
         dssp::assign(&model, DsspOptions::default()),
-        Err(DsspError::CoordinateOutOfRange {
-            quantity: "backbone coordinate",
-            ..
-        })
+        Err(DsspError::CoordinateOutOfRange { .. })
     ));
 }
 

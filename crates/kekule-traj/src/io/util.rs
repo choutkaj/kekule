@@ -1,37 +1,28 @@
-use crate::{
-    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryIoErrorContext, TrajectoryIoOperation,
-};
+use crate::{TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation};
 use std::io;
 
 pub(crate) fn frame_offset_context(
-    error: TrajectoryIoError,
+    mut error: TrajectoryIoError,
     frame: u64,
     byte_offset: u64,
 ) -> TrajectoryIoError {
-    match error {
-        TrajectoryIoError::Io(context) => {
-            let mut context = *context;
-            if context.frame().is_none() {
-                context = context.with_frame(frame);
-            }
-            if context.byte_offset().is_none() {
-                context = context.with_byte_offset(byte_offset);
-            }
-            TrajectoryIoError::Io(Box::new(context))
-        }
-        TrajectoryIoError::Codec(context) => {
-            let mut context = *context;
-            if context.frame().is_none() {
-                context = context.with_frame(frame);
-            }
-            if context.byte_offset().is_none() {
-                context = context.with_byte_offset(byte_offset);
-            }
-            TrajectoryIoError::Codec(Box::new(context))
-        }
-        error => error,
+    if matches!(
+        error.kind(),
+        TrajectoryIoErrorKind::InvalidStructure
+            | TrajectoryIoErrorKind::InvalidTrajectory
+            | TrajectoryIoErrorKind::TopologyMismatch
+            | TrajectoryIoErrorKind::FrameIndexOutOfRange
+            | TrajectoryIoErrorKind::UnsupportedField
+    ) {
+        return error;
     }
+    if error.frame().is_none() {
+        error = error.with_frame(frame);
+    }
+    if error.byte_offset().is_none() {
+        error = error.with_byte_offset(byte_offset);
+    }
+    error
 }
 
 pub(crate) fn probe_seekable_eof<R: io::Read + io::Seek>(
@@ -63,7 +54,7 @@ pub(crate) fn require_nonempty_writer(
 ) -> Result<(), TrajectoryIoError> {
     if frame_count == 0 {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::Finish,
             Some(format),
             source_label,
@@ -84,7 +75,7 @@ pub(crate) fn require_no_partial_frame(
 ) -> Result<(), TrajectoryIoError> {
     if partial {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             operation,
             Some(format),
             source_label,
@@ -97,11 +88,11 @@ pub(crate) fn require_no_partial_frame(
 /// The cause of a reused reader-side validation failure without the reader's
 /// operation, frame, and source context, which would misdescribe a write.
 pub(crate) fn validation_detail(error: &TrajectoryIoError) -> String {
-    match error {
-        TrajectoryIoError::Codec(context) => context
+    match error.operation() {
+        Some(_) if error.kind() != TrajectoryIoErrorKind::Io => error
             .detail()
-            .map_or_else(|| context.kind().to_string(), str::to_owned),
-        other => other.to_string(),
+            .map_or_else(|| error.kind().to_string(), str::to_owned),
+        _ => error.to_string(),
     }
 }
 
@@ -111,23 +102,21 @@ pub(crate) fn io_context(
     source_label: &str,
     error: io::Error,
 ) -> TrajectoryIoError {
-    let mut context = TrajectoryIoErrorContext::new(operation, error.kind(), error.to_string())
-        .with_source_label(source_label);
+    let mut error = TrajectoryIoError::io(operation, error).with_source_label(source_label);
     if let Some(format) = format {
-        context = context.with_format(format);
+        error = error.with_format(format);
     }
-    context.into()
+    error
 }
 
 pub(crate) fn codec_context(
-    kind: TrajectoryCodecErrorKind,
+    kind: TrajectoryIoErrorKind,
     operation: TrajectoryIoOperation,
     format: Option<TrajectoryFormat>,
     source_label: &str,
     detail: impl Into<String>,
 ) -> TrajectoryIoError {
-    TrajectoryCodecErrorContext::new(kind, operation, format)
+    TrajectoryIoError::codec(kind, operation, format)
         .with_source_label(source_label)
         .with_detail(detail)
-        .into()
 }

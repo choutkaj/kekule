@@ -1,3 +1,4 @@
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::sync::Arc;
 
 use super::*;
@@ -116,7 +117,7 @@ fn searches_beyond_their_limits_fail_instead_of_truncating() {
     };
     assert_eq!(
         SymmetricSelection::with_limits(&selection, limits).unwrap_err(),
-        SymmetryError::PermutationLimit { limit: 23 }
+        SymmetryError::LimitExceeded(LimitExceeded::new(Resource::Permutations, 23, 24))
     );
     let limits = SymmetryLimits {
         max_search_steps: 10,
@@ -124,7 +125,7 @@ fn searches_beyond_their_limits_fail_instead_of_truncating() {
     };
     assert_eq!(
         SymmetricSelection::with_limits(&selection, limits).unwrap_err(),
-        SymmetryError::SearchLimit { limit: 10 }
+        SymmetryError::LimitExceeded(LimitExceeded::new(Resource::SearchStates, 10, 11))
     );
     let exact = SymmetryLimits {
         max_permutations: 24,

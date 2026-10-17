@@ -9,7 +9,7 @@ use kekule::properties::{
 };
 use kekule::smiles;
 use kekule::structure::{
-    EnsembleError, Model, ModelError, PositionError, Positions, StructureError, TrajectoryFrame,
+    DenseArrayError, EnsembleError, Model, ModelError, Positions, StructureError, TrajectoryFrame,
 };
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{
@@ -68,7 +68,7 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
             },
             CANONICAL_LENGTH_UNIT
         )),
-        Err(StructureError::Position(PositionError::NonFinitePosition {
+        Err(StructureError::Array(DenseArrayError::NonFinite {
             index: 0
         }))
     ));
@@ -98,14 +98,14 @@ fn position_vectors_transfer_their_allocation_and_convert_units() {
 fn owned_positions_reject_invalid_units_and_nonfinite_conversions() {
     assert!(matches!(
         Positions::from_vec(Quantity::new(vec![Point3::origin()], DIMENSIONLESS)),
-        Err(PositionError::Unit(_))
+        Err(DenseArrayError::Unit(_))
     ));
     assert!(matches!(
         Positions::from_vec(Quantity::new(
             vec![Point3::new(f64::INFINITY, 0.0, 0.0)],
             ANGSTROM
         )),
-        Err(PositionError::NonFinitePosition { index: 0 })
+        Err(DenseArrayError::NonFinite { index: 0 })
     ));
     let huge_unit =
         kekule::units::Unit::new(CANONICAL_LENGTH_UNIT.dimension(), 1.0e200, None).unwrap();
@@ -114,7 +114,7 @@ fn owned_positions_reject_invalid_units_and_nonfinite_conversions() {
             vec![Point3::new(1.0e300, 0.0, 0.0)],
             huge_unit
         )),
-        Err(PositionError::NonFinitePosition { index: 0 })
+        Err(DenseArrayError::NonFinite { index: 0 })
     ));
 }
 
@@ -200,7 +200,7 @@ fn structural_error_chains_retain_the_underlying_unit_failure() {
     let structure = error.source().unwrap();
     assert!(structure.is::<StructureError>());
     let position = structure.source().unwrap();
-    assert!(position.is::<PositionError>());
+    assert!(position.is::<DenseArrayError>());
     assert!(position.source().unwrap().is::<UnitError>());
     let error = ModelError::from(position_error);
     assert!(error.source().unwrap().is::<StructureError>());
@@ -316,7 +316,7 @@ fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
 #[test]
 fn failed_publication_returns_the_editor_by_ownership_transfer() {
     let failed = MoleculeEditor::new().try_finish().unwrap_err();
-    let mut editor = failed.into_editor();
+    let mut editor = failed.into_draft();
     editor
         .append_molecule(&smiles::to_molecules("C").unwrap().pop().unwrap())
         .unwrap();

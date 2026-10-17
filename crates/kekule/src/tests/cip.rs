@@ -306,13 +306,13 @@ fn cip_default_depth_resolves_a_remote_constitutional_difference() {
         },
     )
     .expect_err("the distinguishing atom is beyond depth 32");
-    assert_eq!(
-        error.issues,
-        vec![CipAssignmentIssue::DepthLimitExceeded {
-            element: StereoElementId::new(0),
-            max_depth: 32,
-        }]
-    );
+    assert!(matches!(
+        error.issues.as_slice(),
+        [CipAssignmentIssue::LimitExceeded { element, limit }]
+            if *element == StereoElementId::new(0)
+                && limit.resource() == crate::diagnostics::Resource::DigraphDepth
+                && limit.limit() == 32
+    ));
     assert_eq!(molecule.perception(), &previous);
     // Cl > F > oxygen-terminated carbon chain > hydrocarbon chain. The
     // represented orientation gives R, independently checked with RDKit.
@@ -350,13 +350,13 @@ fn cip_stops_at_the_first_distinguishing_shell_within_the_node_budget() {
             },
         )
         .expect_err("the first distinguishing shell must fit in its entirety");
-        assert_eq!(
-            error.issues,
-            vec![CipAssignmentIssue::ResourceLimitExceeded {
-                element: StereoElementId::new(0),
-                max_nodes: 9,
-            }]
-        );
+        assert!(matches!(
+            error.issues.as_slice(),
+            [CipAssignmentIssue::LimitExceeded { element, limit }]
+                if *element == StereoElementId::new(0)
+                    && limit.resource() == crate::diagnostics::Resource::DigraphNodes
+                    && limit.limit() == 9
+        ));
         assert_eq!(molecule.perception(), &previous);
     }
 }
@@ -376,13 +376,13 @@ fn cip_depth_limit_cannot_promote_isotope_rule_or_claim_nonstereogenicity() {
             },
         )
         .expect_err("a truncated constitutional tie cannot be resolved");
-        assert_eq!(
-            error.issues,
-            vec![CipAssignmentIssue::DepthLimitExceeded {
-                element: StereoElementId::new(0),
-                max_depth: 0,
-            }]
-        );
+        assert!(matches!(
+            error.issues.as_slice(),
+            [CipAssignmentIssue::LimitExceeded { element, limit }]
+                if *element == StereoElementId::new(0)
+                    && limit.resource() == crate::diagnostics::Resource::DigraphDepth
+                    && limit.limit() == 0
+        ));
         assert_eq!(molecule.perception(), &previous);
     }
 }
@@ -1878,13 +1878,13 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
     )
     .expect_err("the constrained reassignment should fail");
 
-    assert_eq!(
-        error.issues,
-        vec![CipAssignmentIssue::ResourceLimitExceeded {
-            element: StereoElementId::new(0),
-            max_nodes: 1,
-        }]
-    );
+    assert!(matches!(
+        error.issues.as_slice(),
+        [CipAssignmentIssue::LimitExceeded { element, limit }]
+            if *element == StereoElementId::new(0)
+                && limit.resource() == crate::diagnostics::Resource::DigraphNodes
+                && limit.limit() == 1
+    ));
     assert_eq!(installed_cip_descriptors(&molecule), before);
     assert_eq!(molecule.perception().stereo_state(), before_state.as_ref());
     assert_eq!(
@@ -1939,13 +1939,13 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
     perceive(&mut molecule).expect("fixture perceives");
     let error = stereo_api::cip::assign_cip_descriptors(&mut molecule, options)
         .expect_err("the later center should exceed the resource limit");
-    assert_eq!(
-        error.issues,
-        vec![CipAssignmentIssue::ResourceLimitExceeded {
-            element: StereoElementId::new(1),
-            max_nodes: 1,
-        }]
-    );
+    assert!(matches!(
+        error.issues.as_slice(),
+        [CipAssignmentIssue::LimitExceeded { element, limit }]
+            if *element == StereoElementId::new(1)
+                && limit.resource() == crate::diagnostics::Resource::DigraphNodes
+                && limit.limit() == 1
+    ));
     assert!(installed_cip_descriptors(&molecule).is_empty());
     assert!(!molecule.perception().has_stereo());
     assert!(molecule

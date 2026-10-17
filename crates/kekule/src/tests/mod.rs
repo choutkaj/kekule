@@ -15,6 +15,44 @@ use crate::{
     stereo::{cip::*, cleanup::*, coordinates::*, *},
 };
 
+/// The typed detail of a failed format operation.
+pub(super) fn error_detail<T>(
+    result: std::result::Result<T, crate::diagnostics::FormatError>,
+) -> Option<crate::diagnostics::FormatErrorDetail> {
+    result.err()?.detail().cloned()
+}
+
+/// The messages of `error` and its sources, joined by `: `.
+pub(super) fn chain_text(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+/// The mmCIF writer issue of a failed format operation.
+pub(super) fn mmcif_issue<T>(
+    result: std::result::Result<T, crate::diagnostics::FormatError>,
+) -> Option<crate::mmcif::MmcifWriteIssue> {
+    match error_detail(result)? {
+        crate::diagnostics::FormatErrorDetail::MmcifWrite(issue) => Some(issue),
+        _ => None,
+    }
+}
+
+/// The 0-based byte offset of a SMILES or SMARTS failure within its record.
+pub(super) fn byte_offset(error: &crate::diagnostics::FormatError) -> usize {
+    error
+        .location()
+        .and_then(|location| location.column())
+        .expect("SMILES and SMARTS failures carry a byte column")
+        - 1
+}
+
 pub(super) fn carbon() -> Atom {
     Atom::new(Element::from_symbol("C").expect("carbon should be available"))
 }
@@ -124,7 +162,7 @@ pub(super) fn molfile_failure(input: &str) -> (FailureStage, DiagnosticKind, Opt
         Err(error) => (
             FailureStage::Parse,
             error.kind(),
-            Some(error.location().line()),
+            Some(error.location().unwrap().line()),
         ),
         Ok(document) => {
             let error = document

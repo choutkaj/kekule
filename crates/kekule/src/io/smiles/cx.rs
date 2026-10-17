@@ -7,8 +7,9 @@ use crate::diagnostics::{DiagnosticKind, UnsupportedContent};
 use crate::molecule::{AtomId, AtomRadical, MoleculeEditor};
 use crate::stereo::{StereoElementKind, StereoGroup, StereoGroupKind};
 
-use super::interpret::SmilesInterpretError;
-use super::parse::{SmilesDocument, SmilesParseError};
+use super::interpret::interpret_error;
+use super::parse::{parse_error, SmilesDocument};
+use crate::diagnostics::FormatError;
 
 /// Kind and number of a CXSMILES enhanced stereo group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -66,7 +67,7 @@ impl SmilesCxField {
 pub(super) fn parse_cx_fields(
     source: &str,
     span: Range<usize>,
-) -> Result<Vec<SmilesCxField>, SmilesParseError> {
+) -> Result<Vec<SmilesCxField>, FormatError> {
     let mut reader = CxReader {
         text: &source[span.start + 1..span.end - 1],
         offset: span.start + 1,
@@ -96,8 +97,8 @@ pub(super) fn parse_cx_fields(
     Ok(fields)
 }
 
-fn syntax(offset: usize, message: &str) -> SmilesParseError {
-    SmilesParseError::new(DiagnosticKind::Syntax, offset, message)
+fn syntax(offset: usize, message: &str) -> FormatError {
+    parse_error(DiagnosticKind::Syntax, offset, message)
 }
 
 struct CxReader<'a> {
@@ -121,7 +122,7 @@ impl CxReader<'_> {
         }
     }
 
-    fn expect(&mut self, expected: u8) -> Result<(), SmilesParseError> {
+    fn expect(&mut self, expected: u8) -> Result<(), FormatError> {
         self.skip_space();
         if self.peek() != Some(expected) {
             return Err(syntax(self.position(), "invalid CXSMILES field syntax"));
@@ -132,7 +133,7 @@ impl CxReader<'_> {
 
     /// Reads one field. Radicals, stereo groups, and the relative flag are
     /// typed; any other field is kept as written.
-    fn field(&mut self) -> Result<SmilesCxFieldKind, SmilesParseError> {
+    fn field(&mut self) -> Result<SmilesCxFieldKind, FormatError> {
         let start = self.cursor;
         let rest = &self.text[start..];
         let tag_len = rest.find([':', ',', ' ', '\t']).unwrap_or(rest.len());
@@ -169,7 +170,7 @@ impl CxReader<'_> {
                     6 => (3, Some(2)),
                     7 => (3, Some(4)),
                     _ => {
-                        return Err(SmilesParseError::new(
+                        return Err(parse_error(
                             DiagnosticKind::InvalidValue,
                             code_offset,
                             "invalid CXSMILES radical code",
@@ -198,13 +199,13 @@ impl CxReader<'_> {
     }
 
     /// The number after a group or radical tag character.
-    fn tag_number(&self, digits: &str) -> Result<usize, SmilesParseError> {
+    fn tag_number(&self, digits: &str) -> Result<usize, FormatError> {
         let offset = self.position() + 1;
         if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(syntax(offset, "expected unsigned CXSMILES index"));
         }
         digits.parse().map_err(|_| {
-            SmilesParseError::new(
+            parse_error(
                 DiagnosticKind::InvalidValue,
                 offset,
                 "CXSMILES index exceeds supported range",
@@ -236,7 +237,7 @@ impl CxReader<'_> {
         }
     }
 
-    fn number(&mut self) -> Result<usize, SmilesParseError> {
+    fn number(&mut self) -> Result<usize, FormatError> {
         self.skip_space();
         let start = self.position();
         if !self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
@@ -248,7 +249,7 @@ impl CxReader<'_> {
                 .checked_mul(10)
                 .and_then(|value| value.checked_add(usize::from(ch - b'0')))
                 .ok_or_else(|| {
-                    SmilesParseError::new(
+                    parse_error(
                         DiagnosticKind::InvalidValue,
                         start,
                         "CXSMILES index exceeds supported range",
@@ -259,7 +260,7 @@ impl CxReader<'_> {
         Ok(value)
     }
 
-    fn atoms(&mut self) -> Result<Vec<usize>, SmilesParseError> {
+    fn atoms(&mut self) -> Result<Vec<usize>, FormatError> {
         let mut atoms = Vec::new();
         loop {
             atoms.push(self.number()?);
@@ -296,7 +297,7 @@ impl CxFeatures {
     pub(super) fn interpret(
         document: &SmilesDocument,
         unsupported: UnsupportedContent,
-    ) -> Result<Self, SmilesInterpretError> {
+    ) -> Result<Self, FormatError> {
         let atom_count = document.program.atoms.len();
         let mut features = Self::default();
         let mut group_indices = BTreeMap::new();
@@ -410,15 +411,15 @@ impl CxFeatures {
     }
 }
 
-fn error(kind: DiagnosticKind, offset: usize, message: String) -> SmilesInterpretError {
-    SmilesInterpretError::new(kind, offset, message)
+fn error(kind: DiagnosticKind, offset: usize, message: String) -> FormatError {
+    interpret_error(kind, offset, message)
 }
 
 pub(super) fn install_stereo_groups(
     editor: &mut MoleculeEditor,
     source_to_atom: &BTreeMap<usize, AtomId>,
     groups: &[CxStereoGroup],
-) -> Result<(), SmilesInterpretError> {
+) -> Result<(), FormatError> {
     if groups.is_empty() {
         return Ok(());
     }

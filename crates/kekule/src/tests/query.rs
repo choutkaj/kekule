@@ -1,5 +1,7 @@
+use super::byte_offset;
+use crate::diagnostics::{DiagnosticKind, LimitExceeded, Resource, SourceLocation};
 use crate::query::*;
-use crate::smarts::{self, SmartsParseErrorKind, SmartsParseOptions};
+use crate::smarts::{self, SmartsParseOptions};
 use crate::substructure::{self, *};
 
 use super::*;
@@ -318,10 +320,7 @@ fn query_expressions_normalize_constants_and_enforce_depth_bounds() {
     assert_eq!(deep.depth(), MAX_QUERY_EXPRESSION_DEPTH);
     assert!(matches!(
         deep.negate(),
-        Err(QueryExpressionError::ResourceLimit {
-            resource: "expression depth",
-            ..
-        })
+        Err(QueryExpressionError::LimitExceeded(limit)) if limit.resource() == Resource::ExpressionDepth
     ));
 }
 
@@ -438,20 +437,20 @@ fn bounded_smarts_rejects_unsupported_semantics_instead_of_approximating() {
         ("(C.C)", "component-level"),
     ] {
         let error = smarts::parse_str(input, Default::default()).expect_err(input);
-        assert_eq!(error.kind(), SmartsParseErrorKind::Unsupported, "{input}");
+        assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{input}");
         assert!(
             error.message().contains(expected_fragment),
             "{input}: {error}"
         );
-        assert!(error.span().start < input.len(), "{input}: {error}");
+        assert!(byte_offset(&error) < input.len(), "{input}: {error}");
     }
 }
 
 #[test]
 fn malformed_smarts_returns_structured_syntax_errors() {
     let empty = smarts::parse_str("", Default::default()).unwrap_err();
-    assert_eq!(empty.kind(), SmartsParseErrorKind::Empty);
-    assert_eq!(empty.span(), 0..0);
+    assert_eq!(empty.kind(), DiagnosticKind::Syntax);
+    assert_eq!(empty.location(), Some(SourceLocation::at_column(1, 1)));
 
     for input in [
         "C(",
@@ -469,11 +468,7 @@ fn malformed_smarts_returns_structured_syntax_errors() {
         "C/1CCCCC/1",
     ] {
         let error = smarts::parse_str(input, Default::default()).expect_err(input);
-        assert_eq!(
-            error.kind(),
-            SmartsParseErrorKind::InvalidSyntax,
-            "{input}: {error}"
-        );
+        assert_eq!(error.kind(), DiagnosticKind::Syntax, "{input}: {error}");
     }
 }
 
@@ -488,9 +483,7 @@ fn smarts_parser_is_total_over_deterministic_text_mutations() {
     ] {
         for input in deterministic_text_mutations(seed) {
             if let Err(error) = smarts::parse_str(&input, Default::default()) {
-                let span = error.span();
-                assert!(span.start <= span.end, "{input:?}: {error}");
-                assert!(span.end <= input.len(), "{input:?}: {error}");
+                assert!(byte_offset(&error) <= input.len(), "{input:?}: {error}");
             }
         }
     }
@@ -506,7 +499,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
         },
     )
     .unwrap_err();
-    assert_eq!(input_error.kind(), SmartsParseErrorKind::ResourceLimit);
+    assert_eq!(input_error.kind(), DiagnosticKind::Limit);
 
     let atom_error = smarts::parse_str(
         "CC",
@@ -516,7 +509,11 @@ fn smarts_limits_cover_input_topology_and_expressions() {
         },
     )
     .unwrap_err();
-    assert_eq!(atom_error.kind(), SmartsParseErrorKind::ResourceLimit);
+    assert_eq!(atom_error.kind(), DiagnosticKind::Limit);
+    assert_eq!(
+        atom_error.limit_exceeded(),
+        Some(LimitExceeded::new(Resource::Atoms, 1, 2))
+    );
 
     let branch_error = smarts::parse_str(
         "C(C(C))",
@@ -526,7 +523,11 @@ fn smarts_limits_cover_input_topology_and_expressions() {
         },
     )
     .unwrap_err();
-    assert_eq!(branch_error.kind(), SmartsParseErrorKind::ResourceLimit);
+    assert_eq!(branch_error.kind(), DiagnosticKind::Limit);
+    assert_eq!(
+        branch_error.limit_exceeded(),
+        Some(LimitExceeded::new(Resource::BranchDepth, 1, 2))
+    );
 
     let expression_error = smarts::parse_str(
         "[!C]",
@@ -536,7 +537,28 @@ fn smarts_limits_cover_input_topology_and_expressions() {
         },
     )
     .unwrap_err();
-    assert_eq!(expression_error.kind(), SmartsParseErrorKind::ResourceLimit);
+    assert_eq!(expression_error.kind(), DiagnosticKind::Limit);
+    assert_eq!(
+        expression_error
+            .limit_exceeded()
+            .map(|limit| (limit.resource(), limit.limit())),
+        Some((Resource::ExpressionDepth, 2))
+    );
+
+    // A bond expression within its node bound but beyond its depth bound
+    // reports the depth bound.
+    let bond_depth_error = smarts::parse_str(
+        "C!-C",
+        SmartsParseOptions {
+            max_expression_depth: 1,
+            ..SmartsParseOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        bond_depth_error.limit_exceeded(),
+        Some(LimitExceeded::new(Resource::ExpressionDepth, 1, 3))
+    );
 }
 
 #[test]
@@ -953,10 +975,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
         .unwrap_err();
     assert!(matches!(
         candidate_error,
-        SubstructureMatchError::ResourceLimit {
-            resource: "candidate pairs",
-            ..
-        }
+        SubstructureMatchError::LimitExceeded { limit, .. } if limit.resource() == Resource::CandidatePairs
     ));
 
     let state_error = substructure::PreparedTarget::new(&target)
@@ -971,13 +990,10 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
         .unwrap_err();
     assert!(matches!(
         state_error,
-        SubstructureMatchError::ResourceLimit {
-            resource: "search states",
-            ..
-        }
+        SubstructureMatchError::LimitExceeded { limit, .. } if limit.resource() == Resource::SearchStates
     ));
 
-    assert!(matches!(
+    assert_eq!(
         substructure::PreparedTarget::new(&target).all(
             &query,
             SubstructureMatchOptions {
@@ -985,6 +1001,9 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
                 ..SubstructureMatchOptions::default()
             }
         ),
-        Err(SubstructureMatchError::InvalidOptions(_))
-    ));
+        Err(SubstructureMatchError::InvalidLimit {
+            resource: Resource::Atoms,
+            limit: MAX_SUBSTRUCTURE_QUERY_ATOMS + 1,
+        })
+    );
 }

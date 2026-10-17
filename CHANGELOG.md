@@ -105,6 +105,204 @@ All notable changes to Kekule are documented in this file.
 
 ### Changed
 
+- **Breaking:** Errors follow one policy (ARCHITECTURE.md, "Lookups, errors,
+  and panics"). Which inputs fail is unchanged; callers update the error
+  types they name and match.
+  - Every format failure, SMARTS included, is one
+    `diagnostics::FormatError` with `format()` (`diagnostics::Format`),
+    `stage()` (`FormatStage::{Parse, Interpret, Write}`), `kind()`
+    (`DiagnosticKind`), `location()`, `record()`, `message()`, typed
+    `detail()` (`FormatErrorDetail`) and `source()`. It replaces
+    `SmilesParseError`, `SmilesInterpretError`, `smiles::SmilesReadError`,
+    `SmilesComponentCountError` (now `FormatErrorDetail::ComponentCount`),
+    `MolfileParseError`, `MolfileInterpretError`, `MoleculeWriteError` and
+    `MoleculeWriteErrorKind`, `SdfParseError`, `SdfInterpretError`,
+    `SdfWriteError`, `SdfEnsembleError`, `MmcifParseError`,
+    `MmcifWriteError`, `PdbParseError`, `StructureInterpretError`,
+    `StructureEnsembleInterpretError` (its variants are `FormatErrorDetail`
+    variants), `components::ComponentError`, and `SmartsParseError` and
+    `SmartsParseErrorKind`.
+  - `location()` is an `Option` for every stage. SMILES and SMARTS errors
+    locate the byte column within their line; `SmilesParseError::offset()`
+    and `SmartsParseError::span()` are gone (the column is `offset + 1`).
+    `record()` is an `Option` and counts SDF records from 1, including the
+    ensemble assembly error, which used to count from 0.
+  - Writer kinds follow the writer failure taxonomy:
+    `MoleculeWriteErrorKind::UnsupportedRepresentation` is
+    `DiagnosticKind::Unsupported`, `MissingPerception` is the new
+    `DiagnosticKind::MissingPerception`, `ResourceLimit` is
+    `DiagnosticKind::Limit`, `InvalidModel` is `DiagnosticKind::Inconsistent`,
+    and `Io(kind)` is `DiagnosticKind::Io` with the `std::io::Error` as
+    `source()`. SMARTS `Empty` and `InvalidSyntax` are
+    `DiagnosticKind::Syntax`, `ResourceLimit` is `DiagnosticKind::Limit`.
+  - The mmCIF writer's typed failures are `mmcif::MmcifWriteIssue`, carried
+    as `FormatErrorDetail::MmcifWrite`. Its `&'static str` fields are typed:
+    `MmcifAtomField`, `MmcifMemberField` and `MmcifCellReason`;
+    `UnsupportedTextValue { item }` names the mmCIF item. `InvalidModel`,
+    `InvalidHierarchy` and `Io` are plain `Inconsistent` and `Io` errors with
+    their cause as `source()`. The never-constructed
+    `ClassificationCountMismatch` and `InvalidGroupPdb` are removed.
+  - An ensemble failure inside one coordinate model is that model's error
+    with `FormatErrorDetail::Model { model_id }` or
+    `Conformation { selection }`, not a wrapper; the `"<model inventory>"`
+    sentinel model ID is gone.
+  - `Display` is `"<format> <stage> error[ in record N][ at LOCATION]:
+    message"` and never repeats the source; causes that used to be formatted
+    into messages, such as I/O and graph-construction errors, are `source()`.
+  - Resource exhaustion is one shape: `diagnostics::LimitExceeded`, with
+    `resource()` (`diagnostics::Resource`), `limit()` and `observed()`.
+    It replaces `AromaticityError::ResourceLimit { limit }`,
+    `RingPerceptionError::ResourceLimit { resource, observed, limit }`,
+    `StereoSearchError::ResourceLimit`,
+    `SubstructureMatchError::ResourceLimit` (now `LimitExceeded { limit,
+    work }`), `QueryExpressionError::ResourceLimit`,
+    `QueryGraphError::ResourceLimit`, `HydrogenTransformError::ResourceLimit`,
+    `ResonanceError::ResourceLimit`, `CipRankingError::DepthLimitExceeded`
+    and `ResourceLimitExceeded`, `CipAssignmentIssue::DepthLimitExceeded` and
+    `ResourceLimitExceeded` (now `LimitExceeded { element, limit }`),
+    `SymmetryError::PermutationLimit` and `SearchLimit`,
+    `NormalizationError::AromaticLocalizationLimit { examined_states, .. }`,
+    `DsspError::ResourceLimitExceeded` with `dssp::DsspResource`,
+    `PeriodicGeometryError::ImageSearchLimit`, `SolvationError::CandidateLimit`
+    and `kekule_traj::PeriodicError::ImageSearchLimit`, each now a
+    `LimitExceeded` variant carrying it. A format failure of kind
+    `DiagnosticKind::Limit` carries it as `FormatErrorDetail::LimitExceeded`
+    and `FormatError::limit_exceeded()`.
+  - Two payloads were wrong: a query graph over its 4,096-atom bound
+    reported the 65,536 expression-node bound, and a SMARTS bond expression
+    over its depth bound reported its node count against the node bound.
+  - Default limits are constants: `DEFAULT_*` associated constants on
+    `AromaticityOptions`, `RingPerceptionOptions`, `StereoSearchOptions`,
+    `SubstructureMatchOptions`, `CipAssignmentOptions`, `AddHydrogensOptions`,
+    `ResonanceOptions` (with `MAX_STRUCTURES`), `SymmetryLimits`,
+    `DsspLimits`, `SolventOptions`, and the SMILES, SMARTS, Molfile, SDF,
+    mmCIF and PDB parse options; built-in bounds are
+    `query::{MAX_QUERY_RECURSION_DEPTH, MAX_QUERY_TOTAL_ATOMS,
+    MAX_QUERY_TOTAL_EXPRESSION_NODES}`, `geometry::MAX_LATTICE_IMAGES`, and
+    the canonical and isomeric SMILES writer bounds
+    `smiles::MAX_CANONICAL_*` and `smiles::MAX_DIRECTIONAL_*`.
+  - A failed `try_build` or `try_finish` returns `kekule::DraftError<D, E>`
+    with `error()`, `draft()`, `into_draft()` and `into_parts()`. It replaces
+    `MoleculeFinishError` (`DraftError<MoleculeEditor,
+    MoleculePublicationError>`), `TopologyBuilderError`
+    (`DraftError<TopologyBuilder, TopologyBuildError>`),
+    `TopologyFinishError` (`DraftError<TopologyEditor, TopologyEditError>`),
+    `ModelBuilderError` (`DraftError<ModelBuilder, ModelBuildError>`) and
+    `ModelFinishError` (`DraftError<ModelEditor, ModelEditError>`);
+    `editor()`/`builder()` are `draft()` and `into_editor()`/`into_builder()`
+    are `into_draft()`. Its `Display` no longer repeats the error, which is
+    its `source()`.
+  - `MoleculeError::InvalidStereoReference` carries a
+    `stereo::StereoValidationIssue` instead of one of 24 `&'static str`
+    reasons; elements and groups being added are named by the ID they would
+    receive. `StereoValidationIssue` gains the group and membership issues
+    (`GroupMembershipOutsideGroupEdit`, `MissingStereoGroup`,
+    `EmptyStereoGroup`, `DuplicateStereoGroupMember`,
+    `MissingStereoGroupMember`, `InconsistentStereoGroupMembership`,
+    `StereoElementAlreadyGrouped`, `SplitCorrelatedStereoGroup`), `Display`,
+    and `#[non_exhaustive]`. `MoleculeError::UnsupportedFeature`, which was
+    never constructed, and `impl Eq for MoleculeError`, unsound because the
+    error can hold an `f64` property value, are removed; types that wrap it
+    (`HydrogenTransformError`, `CoordinateStereoError`, `NormalizationError`
+    and `SourceStereoNormalizationError`) are no longer `Eq` either.
+  - `MoleculePublicationError` is the one publication error.
+    `MoleculeConnectivityError` becomes `Disconnected { components }`, and
+    `StereoPublicationError` becomes `InvalidStereo(StereoValidationIssue)`,
+    which now names the specific issue instead of
+    `InvalidElementReference`. `GraphValidationError` and the
+    `InvalidGraph` variant are removed: the public API cannot corrupt graph
+    storage, so publication checks it only as a debug assertion.
+  - `PerceptionInstallError::InvalidDelocalization` carries a
+    `perception::DelocalizationIssue` instead of a `&'static str`.
+  - Other `&'static str` and stringified payloads are typed:
+    `StereoSearchError::InvalidOptions` and
+    `SubstructureMatchError::InvalidOptions` are `InvalidLimit { resource,
+    limit }`; `QueryGraphError::InvalidStereo` carries a
+    `query::QueryStereoIssue`; `ResonanceError::Materialization(String)` is
+    `ContributorOutOfRange { index, count }`, `Molecule(MoleculeError)` or
+    `Publication(MoleculePublicationError)`; the `AppendProperty { domain }`
+    of `TopologyEditError` and `ModelEditError` is a
+    `properties::PropertyDomain`; DSSP backbone atoms are
+    `dssp::DsspBackboneAtom` (`AmbiguousBackboneAtom { atom }`,
+    `DsspSkipReason::MissingBackboneAtoms { missing }`), and the
+    single-valued `quantity` fields of `DegenerateBackboneGeometry`,
+    `NonFiniteGeometry` and `CoordinateOutOfRange` are removed;
+    `ConnectionResolutionReason::ConflictingSelectorValues` carries a
+    `macromolecular::ConflictingSelector`.
+  - Removed variants that could never be constructed:
+    `AromaticityError::UnsupportedElement`,
+    `ValenceIssue::UnsupportedElement` (the valence rules cover every
+    element) and `DsspError::InvalidHierarchy`.
+  - Wrapping errors report their cause only through `source()`: `Display`
+    gives the context alone. This covers `PerceptionError`,
+    `AromaticityError`, `StereoSearchError`, `CoordinateStereoError`,
+    `HydrogenTransformError`, `TaggedMatchError` (now `#[non_exhaustive]`),
+    `ResonanceError`, `SymmetryError`, `AlignmentError`, `ClusteringError`,
+    `SolvationError`, `PeriodicBoxError`, `PeriodicCellError`,
+    `PropertyError`, `PositionError`, `StructureError`, `ModelError`,
+    `ModelBuildError`, `ModelEditError`, `EnsembleError`, `TrajectoryError`,
+    `MeasurementError`, `BondDihedralError`, `GeometryEditError`,
+    `TopologyBuildError`, `TopologyEditError` and `TopologySubsetError`.
+    `HydrogenTransformError`, `TaggedMatchError` and `ResonanceError` gain
+    a `source()`.
+  - One error per functional area. `HierarchyLookupError` folds into
+    `topology::HierarchyError` (`NotFound`, `Ambiguous`).
+    `TopologyHierarchyError` and `TopologyBuildError::InvalidHierarchy` are
+    removed: the one case the public API can reach, an atom site on an atom
+    the topology lacks, is `TopologyBuildError::MissingHierarchyAtom { site,
+    atom }`, and the other ten storage inconsistencies are debug assertions.
+    `PositionError` becomes `structure::DenseArrayError`
+    (`IndexOutOfRange { index, len }`, `CountMismatch`, `NonFinite { index }`,
+    `Unit`), which positions, velocities, forces and per-atom scalars share;
+    every `index` is the dense row. `Velocities` and `Forces` constructors
+    return it instead of `StructureError`, and `StructureError`'s
+    `AtomCountMismatch`, `InvalidAtomIndex`, `NonFiniteValue`,
+    `NonFiniteVector` and `Position` become `StructureError::Array`. A
+    non-finite position given to the model editor is
+    `ModelEditError::NonFinitePosition { atom }` instead of a fabricated
+    row 0, and `Model::set_atom_positions` reports the dense row instead of
+    the input position. `ModelError::InvalidBondId`, never constructed, is
+    removed. `CipAssignmentIssue` and `ValenceIssue` are
+    `#[non_exhaustive]`.
+  - `kekule_traj::TrajectoryIoError` is one struct with `kind()`
+    (`TrajectoryIoErrorKind`), `operation()`, `format()`, `source_label()`,
+    `frame()`, `byte_offset()`, `expected()`, `actual()`, `limit_exceeded()`,
+    `field()`, `detail()`, `io_error_kind()` and `source()` (the
+    `std::io::Error` or Kekule error), and public constructors for
+    `TrajectoryReader` and `TrajectoryWriter` implementors. It replaces the
+    `TrajectoryIoError` enum, `TrajectoryIoErrorContext`,
+    `TrajectoryCodecErrorContext` and `TrajectoryCodecErrorKind`
+    (`ResourceLimitExceeded` is `LimitExceeded`); `Io(_)`, `Codec(_)`,
+    `Structure(_)`, `Trajectory(_)`, `TopologyMismatch` and
+    `FrameIndexOutOfRange(n)` are kinds `Io`, the codec kinds,
+    `InvalidStructure`, `InvalidTrajectory`, `TopologyMismatch` and
+    `FrameIndexOutOfRange` with `frame()`. `UnsupportedField(&'static str)`
+    is kind `UnsupportedField` with `field()` (`kekule_traj::TrajectoryField`),
+    which writers now also set; the XTC and TRR property messages say
+    "frame properties". The XYZ frame-byte limit carries its
+    `LimitExceeded`. The never-constructed `AtomOrderMismatch`,
+    `UnsupportedRandomAccess`, `MissingRequiredTopology` and
+    `TrajectoryIoOperation::WriteHeader` are removed.
+  - `kekule_openff::Error` returns the wrapped Kekule, I/O, JSON or OFFXML
+    error from `source()` (it used to skip to that error's own source) and
+    its `Display` gives `ErrorKind`'s description instead of repeating the
+    wrapped message; `ErrorKind` gains `Display`. `Error::limit_exceeded()`
+    gives the exceeded bound of `ErrorKind::ResourceLimit` failures.
+  - `kekule_potentials`: `EvaluationError::Backend { backend, message }` is
+    `Backend(Arc<dyn Error + Send + Sync>)`, built with
+    `EvaluationError::backend`, with the cause as `source()`;
+    `InvalidGeometry::interaction` is an `InteractionKind`;
+    `MinimizationError::InvalidOptions` carries a `MinimizeOption` and
+    `NumericalFailure` a `NumericalFailure`;
+    `OpenFfPotentialError::UnsupportedNonbondedMethod { handler, method }` is
+    `UnsupportedVdwMethod(VdwMethod)` or
+    `UnsupportedElectrostaticsMethod(ElectrostaticsMethod)`;
+    `InvalidParameter { parameter, message }` is `InvalidParameter {
+    parameter: openff::OpenFfParameter, value }`, `ZeroTorsionDivisor`,
+    `SelfPairException` or `DuplicatePairException`; and
+    `AtomCountMismatch::parameter` is `array: openff::PerAtomArray`.
+    `MinimizationError`, `EvaluationError` and `OpenFfPotentialError` no
+    longer repeat their source in `Display`.
 - **Breaking:** Public items live in the module of the domain that owns them,
   and every operation has one home. Behaviour is unchanged; callers update
   paths, names, and signatures as listed.

@@ -1,3 +1,4 @@
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -16,15 +17,16 @@ const MAX_AROMATIC_LOCALIZATION_MATCHING_STATES: usize = 100_000;
 
 /// Failure to publish Kekule's canonical represented chemistry.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum NormalizationError {
     /// Source-aromatic bonds cannot be localized under the fixed rules.
     InvalidAromaticRepresentation(AtomId),
     /// Imported aromatic localization exhausted its deterministic search budget.
     AromaticLocalizationLimit {
+        /// The first atom of the component being localized.
         atom: AtomId,
-        examined_states: usize,
-        limit: usize,
+        /// The exceeded bound of examined matching states.
+        limit: LimitExceeded,
     },
     /// Source-declared stereo could not be represented canonically.
     SourceStereo(SourceStereoNormalizationError),
@@ -51,7 +53,7 @@ pub(crate) enum NormalizationWarning {
 }
 
 /// One concrete source-stereo normalization issue.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SourceStereoNormalizationIssue {
     MissingSourceBondMark {
         bond: BondId,
@@ -81,7 +83,7 @@ pub(crate) enum SourceStereoNormalizationIssue {
 }
 
 /// Collected failure to canonicalize source-declared stereochemistry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SourceStereoNormalizationError {
     pub issues: Vec<SourceStereoNormalizationIssue>,
 }
@@ -105,20 +107,22 @@ impl fmt::Display for NormalizationError {
             Self::InvalidAromaticRepresentation(atom) => {
                 write!(f, "invalid imported aromatic representation at atom {atom}")
             }
-            Self::AromaticLocalizationLimit {
-                atom,
-                examined_states,
-                limit,
-            } => write!(
-                f,
-                "imported aromatic localization limit exceeded at atom {atom}: examined {examined_states} matching states, limit {limit}"
-            ),
-            Self::SourceStereo(error) => write!(f, "{error}"),
+            Self::AromaticLocalizationLimit { atom, limit } => {
+                write!(f, "imported aromatic localization at atom {atom}: {limit}")
+            }
+            Self::SourceStereo(_) => f.write_str("source stereo cannot be represented canonically"),
         }
     }
 }
 
-impl std::error::Error for NormalizationError {}
+impl std::error::Error for NormalizationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SourceStereo(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl NormalizationError {
     pub(crate) fn atom_location_hint(&self) -> Option<AtomId> {
@@ -314,8 +318,11 @@ fn try_localize_aromatic_component_with_limit(
         if examined_states > max_matching_states {
             return Err(NormalizationError::AromaticLocalizationLimit {
                 atom: component[0],
-                examined_states,
-                limit: max_matching_states,
+                limit: LimitExceeded::new(
+                    Resource::SearchStates,
+                    max_matching_states,
+                    examined_states,
+                ),
             });
         }
         if unmatched.is_empty() {
@@ -502,11 +509,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            NormalizationError::AromaticLocalizationLimit {
-                examined_states: 1,
-                limit: 0,
-                ..
-            }
+            NormalizationError::AromaticLocalizationLimit { limit, .. }
+                if limit == LimitExceeded::new(Resource::SearchStates, 0, 1)
         ));
         assert_eq!(molecule, before);
     }

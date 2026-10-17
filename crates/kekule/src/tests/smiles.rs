@@ -243,7 +243,7 @@ fn smiles_record_preserves_name_extension_and_original_byte_spans() {
     );
     let error = document.interpret(Default::default()).unwrap_err();
     assert_eq!(
-        error.offset(),
+        byte_offset(&error),
         document.cx_extension_span().unwrap().start + 1
     );
     assert!(error.message().contains("CXSMILES"));
@@ -612,7 +612,7 @@ fn cxsmiles_rejects_ambiguous_invalid_and_unsupported_chemical_fields() {
         let document = match smiles_api::parse_str(&source, Default::default()) {
             Err(error) => {
                 assert_eq!(
-                    (Parse, error.kind(), error.offset()),
+                    (Parse, error.kind(), byte_offset(&error)),
                     (stage, kind, offset),
                     "{source}: {error}"
                 );
@@ -622,7 +622,7 @@ fn cxsmiles_rejects_ambiguous_invalid_and_unsupported_chemical_fields() {
         };
         let error = document.interpret(Default::default()).unwrap_err();
         assert_eq!(
-            (Interpret, error.kind(), error.offset()),
+            (Interpret, error.kind(), byte_offset(&error)),
             (stage, kind, offset),
             "{source}: {error}"
         );
@@ -664,7 +664,7 @@ fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
 
     let error = document.interpret(Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
-    assert_eq!(error.location(), SourceLocation::at_column(1, 19));
+    assert_eq!(error.location(), Some(SourceLocation::at_column(1, 19)));
     assert_eq!(error.message(), "unsupported CXSMILES field `c:1`");
 
     let report = SmilesInterpretOptions {
@@ -704,9 +704,12 @@ fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
         records,
         [
             Ok((1, Some("ethanol".to_owned()))),
-            Err((DiagnosticKind::Syntax, SourceLocation::at_column(3, 5))),
+            Err((
+                DiagnosticKind::Syntax,
+                Some(SourceLocation::at_column(3, 5))
+            )),
             Ok((4, Some("benzene".to_owned()))),
-            Err((DiagnosticKind::Io, SourceLocation::at_column(5, 2))),
+            Err((DiagnosticKind::Io, Some(SourceLocation::at_column(5, 2)))),
             Ok((6, Some("salt".to_owned()))),
         ]
     );
@@ -721,7 +724,7 @@ fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
         (error.kind(), error.location()),
         (
             DiagnosticKind::InvalidReference,
-            SourceLocation::at_column(6, 14)
+            Some(SourceLocation::at_column(6, 14))
         )
     );
 
@@ -737,7 +740,7 @@ fn smiles_record_stream_locates_records_and_isolates_malformed_lines() {
         limited,
         [
             Ok("CCO".to_owned()),
-            Err((DiagnosticKind::Limit, SourceLocation::at_column(2, 1))),
+            Err((DiagnosticKind::Limit, Some(SourceLocation::at_column(2, 1)))),
             Ok("O".to_owned()),
         ]
     );
@@ -755,7 +758,7 @@ fn smiles_record_rejects_malformed_framing_and_multiple_records() {
         ("C name\rnext", 6),
     ] {
         let error = smiles_api::parse_str(source, Default::default()).unwrap_err();
-        assert_eq!(error.offset(), offset, "{source:?}: {error}");
+        assert_eq!(byte_offset(&error), offset, "{source:?}: {error}");
     }
     assert!(smiles_api::parse_str("C|r|", Default::default()).is_err());
     let named = smiles_api::parse_str("C a name |with literal bars|", Default::default()).unwrap();
@@ -801,21 +804,15 @@ fn smiles_record_limits_cover_metadata_and_syntax_errors_point_into_base() {
             .contains(message));
     }
     assert_eq!(
-        smiles_api::parse_str("\tC( title", Default::default())
-            .unwrap_err()
-            .offset(),
+        byte_offset(&smiles_api::parse_str("\tC( title", Default::default()).unwrap_err()),
         3
     );
     assert_eq!(
-        smiles_api::parse_str("\t[CH3 title", Default::default())
-            .unwrap_err()
-            .offset(),
+        byte_offset(&smiles_api::parse_str("\t[CH3 title", Default::default()).unwrap_err()),
         1
     );
     assert_eq!(
-        smiles_api::parse_str("\tC. title", Default::default())
-            .unwrap_err()
-            .offset(),
+        byte_offset(&smiles_api::parse_str("\tC. title", Default::default()).unwrap_err()),
         3
     );
 }
@@ -836,7 +833,10 @@ fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
     let error = interpretation
         .molecule()
         .expect_err("multi-component SMILES is not one molecule");
-    assert_eq!(error.actual(), 2);
+    assert_eq!(
+        error.detail(),
+        Some(&crate::diagnostics::FormatErrorDetail::ComponentCount { actual: 2 })
+    );
     assert_eq!(interpretation.components().len(), 2);
     for component in interpretation.components() {
         assert_eq!(component.molecule().atom_count(), 1);
@@ -1048,11 +1048,14 @@ fn malformed_smiles_grammar_is_rejected_by_the_document_parser() {
             .unwrap_or_else(|_| panic!("`{input}` panicked"));
         let error = parsed.expect_err("malformed SMILES must fail document parsing");
         assert_eq!(
-            (error.kind(), error.offset()),
+            (error.kind(), byte_offset(&error)),
             (kind, offset),
             "{input}: {error}"
         );
-        assert_eq!(error.location(), SourceLocation::at_column(1, offset + 1));
+        assert_eq!(
+            error.location(),
+            Some(SourceLocation::at_column(1, offset + 1))
+        );
     }
     assert_eq!(
         smiles_api::parse_str("C(", Default::default())
@@ -1261,9 +1264,7 @@ fn invalid_lowercase_aromatic_ring_returns_structured_error() {
     for smiles in ["c1cccc1", "c1ccccc1.c1cccc1"] {
         let error = read_smiles_components(smiles)
             .expect_err("unlocalizable aromatic source must fail interpretation");
-        assert!(error
-            .to_string()
-            .contains("invalid imported aromatic representation"));
+        assert!(chain_text(&*error).contains("invalid imported aromatic representation"));
     }
 }
 
@@ -1315,7 +1316,7 @@ fn smiles_interpretation_rejects_inconsistent_source_aromaticity() {
             Err(error) => error,
         };
 
-        assert_eq!(error.offset(), offset, "{source}: {error}");
+        assert_eq!(byte_offset(&error), offset, "{source}: {error}");
         assert_eq!(error.message(), message, "{source}: {error}");
     }
 }
@@ -1537,7 +1538,7 @@ fn all_smiles_writers_require_perception_for_bracketed_inferred_hydrogens() {
         };
         assert_eq!(
             error.kind(),
-            molfile::MoleculeWriteErrorKind::MissingPerception,
+            crate::diagnostics::DiagnosticKind::MissingPerception,
             "{writer}: {error}"
         );
     }

@@ -1,3 +1,4 @@
+use crate::DraftError;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -168,15 +169,22 @@ impl TopologyBuilder {
     pub fn properties(&self) -> &TopologyProperties {
         &self.properties
     }
+    /// The storage consistency of the staged hierarchy.
+    #[cfg(test)]
+    pub(crate) fn hierarchy_consistency(&self) -> Result<(), TopologyHierarchyError> {
+        validate_hierarchy(&self.hierarchy, &self.atoms)
+    }
+
     /// Validates a cloned snapshot without consuming staged state.
     pub fn validate(&self) -> Result<(), TopologyBuildError> {
         self.clone().build().map(|_| ())
     }
-    pub fn try_build(self) -> Result<Topology, TopologyBuilderError> {
-        self.clone().build().map_err(|error| TopologyBuilderError {
-            error,
-            builder: Box::new(self),
-        })
+    /// Builds the topology, or returns this builder for repair with the
+    /// error.
+    pub fn try_build(self) -> Result<Topology, DraftError<Self, TopologyBuildError>> {
+        self.clone()
+            .build()
+            .map_err(|error| DraftError::new(error, self))
     }
 
     pub(super) fn from_topology(topology: Topology) -> Self {
@@ -403,8 +411,18 @@ impl TopologyBuilder {
         }
         let atom_count = self.atoms.len();
         let bond_count = self.bonds.len();
-        validate_hierarchy(&self.hierarchy, &self.atoms)
-            .map_err(TopologyBuildError::InvalidHierarchy)?;
+        match validate_hierarchy(&self.hierarchy, &self.atoms) {
+            Ok(()) => {}
+            Err(TopologyHierarchyError::InvalidAtomSiteAtom { site, atom }) => {
+                return Err(TopologyBuildError::MissingHierarchyAtom { site, atom });
+            }
+            Err(inconsistency) => {
+                debug_assert!(
+                    false,
+                    "hierarchy operations keep storage consistent: {inconsistency}"
+                );
+            }
+        }
 
         self.invalidate_changed_hierarchy_classes();
         self.residue_class_overrides
@@ -618,34 +636,6 @@ impl TopologyBuilder {
     }
 }
 
-/// Failed topology construction retaining the original builder for repair.
-#[derive(Debug)]
-pub struct TopologyBuilderError {
-    error: TopologyBuildError,
-    builder: Box<TopologyBuilder>,
-}
-impl TopologyBuilderError {
-    pub fn error(&self) -> &TopologyBuildError {
-        &self.error
-    }
-    pub fn builder(&self) -> &TopologyBuilder {
-        &self.builder
-    }
-    pub fn into_builder(self) -> TopologyBuilder {
-        *self.builder
-    }
-}
-impl fmt::Display for TopologyBuilderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-impl std::error::Error for TopologyBuilderError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
-    }
-}
-
 pub(super) trait FromRawId {
     fn from_raw(raw: u32) -> Self;
 }
@@ -692,10 +682,12 @@ pub(super) fn checked_future_len(
         .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(kind))
 }
 
-/// A hierarchy reference or reverse lookup that cannot be published in a topology.
+/// An inconsistency between hierarchy storage and the topology. Hierarchy
+/// operations keep storage consistent, so only an atom site on an atom the
+/// topology lacks ([`TopologyBuildError::MissingHierarchyAtom`]) is reachable
+/// from the public API; publication checks the rest in debug builds.
 #[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum TopologyHierarchyError {
+pub(crate) enum TopologyHierarchyError {
     InvalidChainIdentifier {
         slot: usize,
         id: ChainId,
@@ -793,8 +785,6 @@ impl fmt::Display for TopologyHierarchyError {
     }
 }
 
-impl std::error::Error for TopologyHierarchyError {}
-
 /// Adds `delta` to the scratch occurrence count of every in-range ID of one
 /// list. Out-of-range IDs fail their lookup before their count is read.
 fn tally(counts: &mut [isize], ids: impl IntoIterator<Item = usize>, delta: isize) {
@@ -805,7 +795,7 @@ fn tally(counts: &mut [isize], ids: impl IntoIterator<Item = usize>, delta: isiz
     }
 }
 
-fn validate_hierarchy(
+pub(crate) fn validate_hierarchy(
     hierarchy: &Hierarchy,
     atoms: &DenseOrder<InstanceAtomId>,
 ) -> Result<(), TopologyHierarchyError> {
@@ -950,22 +940,34 @@ impl fmt::Display for TopologyIdKind {
     }
 }
 
+/// A topology builder edit or publication was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyBuildError {
+    /// The builder has no molecule instances to publish.
     NoMoleculeInstances,
+    /// Reordering or validating topology property rows failed; see the source.
     Property(Box<PropertyError>),
+    /// A molecule definition reference is not staged.
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
+    /// A residue reference is not in the staged hierarchy.
     InvalidResidueId(ResidueId),
     /// A staged definition was not instantiated and cannot be published.
     UnusedMoleculeDefinition(MoleculeDefinitionId),
-    /// The staged system hierarchy is inconsistent with itself or the topology.
-    InvalidHierarchy(TopologyHierarchyError),
+    /// A hierarchy atom site places an atom the topology does not contain.
+    MissingHierarchyAtom {
+        /// The atom site.
+        site: AtomSiteId,
+        /// The missing atom.
+        atom: InstanceAtomId,
+    },
     /// A topology collection exceeded the fixed-width identifier space for `kind`.
     IdentifierCapacityExceeded(TopologyIdKind),
     /// A replacement dense atom order does not list every staged atom once.
     AtomOrderLengthMismatch {
+        /// The number of staged atoms.
         expected: usize,
+        /// The number of atoms in the replacement order.
         actual: usize,
     },
     /// A replacement dense atom order names an atom that is not staged.
@@ -980,7 +982,7 @@ impl fmt::Display for TopologyBuildError {
             Self::NoMoleculeInstances => {
                 formatter.write_str("topology must contain at least one molecule instance")
             }
-            Self::Property(error) => write!(formatter, "invalid topology properties: {error}"),
+            Self::Property(_) => formatter.write_str("invalid topology properties"),
             Self::InvalidMoleculeDefinitionId(id) => {
                 write!(formatter, "invalid molecule definition: {id}")
             }
@@ -991,9 +993,10 @@ impl fmt::Display for TopologyBuildError {
                     "molecule definition {id} is not referenced by any instance"
                 )
             }
-            Self::InvalidHierarchy(error) => {
-                write!(formatter, "invalid topology hierarchy: {error}")
-            }
+            Self::MissingHierarchyAtom { site, atom } => write!(
+                formatter,
+                "hierarchy atom site {site} places {atom}, which the topology does not contain"
+            ),
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(formatter, "{kind} identifier capacity exceeded")
             }
@@ -1018,7 +1021,6 @@ impl std::error::Error for TopologyBuildError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Property(error) => Some(error),
-            Self::InvalidHierarchy(error) => Some(error),
             _ => None,
         }
     }

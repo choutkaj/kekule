@@ -64,7 +64,7 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
             let error = smiles::write(&original, options).unwrap_err();
             assert_eq!(
                 error.kind(),
-                molfile::MoleculeWriteErrorKind::MissingPerception
+                kekule::diagnostics::DiagnosticKind::MissingPerception
             );
         }
         if map.is_some() || charge != 0 {
@@ -72,7 +72,7 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
                 smiles::write(&original, smiles::SmilesWriteOptions::canonical()).unwrap_err();
             assert_eq!(
                 error.kind(),
-                molfile::MoleculeWriteErrorKind::MissingPerception
+                kekule::diagnostics::DiagnosticKind::MissingPerception
             );
         }
         original.perceive().unwrap();
@@ -99,11 +99,17 @@ fn canonical_hydrogen_collapse_requires_a_known_parent_count() {
     let error = smiles::write(&inferred, smiles::SmilesWriteOptions::canonical()).unwrap_err();
     assert_eq!(
         error.kind(),
-        molfile::MoleculeWriteErrorKind::MissingPerception
+        kekule::diagnostics::DiagnosticKind::MissingPerception
     );
     assert_eq!(
         error.message(),
-        "canonical SMILES hydrogen normalization failed: hydrogen transformation requires current valence perception"
+        "canonical SMILES hydrogen normalization failed"
+    );
+    assert_eq!(
+        std::error::Error::source(&error)
+            .expect("the hydrogen transform failure is the source")
+            .to_string(),
+        "hydrogen transformation requires current valence perception"
     );
     inferred.perceive().unwrap();
     for original in [inferred, molecule("[H][CH3]")] {

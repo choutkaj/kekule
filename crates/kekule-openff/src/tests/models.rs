@@ -501,9 +501,14 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
         missing.path(),
         Some(scratch.0.join("weights.bin").as_path())
     );
-    assert!(std::error::Error::source(&missing).is_none() || missing.get_ref().is_some());
-    assert!(missing
-        .get_ref()
+    assert_eq!(
+        missing.to_string(),
+        format!(
+            "{}: reading a file failed",
+            scratch.0.join("weights.bin").display()
+        )
+    );
+    assert!(std::error::Error::source(&missing)
         .unwrap()
         .downcast_ref::<std::io::Error>()
         .is_some());

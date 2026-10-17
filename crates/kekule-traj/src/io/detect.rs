@@ -1,7 +1,7 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::{TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError, TrajectoryIoOperation};
+use crate::{TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation};
 
 use super::{
     codec_context, io_context, FormatDetectionEvidence, TrajectoryFormatHint, TrajectoryIoLimits,
@@ -25,7 +25,7 @@ pub(crate) fn select_format<R: Read + Seek>(
     let max = limits.max_detection_bytes;
     if max == 0 {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+            TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::Detect,
             None,
             source_label,
@@ -34,7 +34,7 @@ pub(crate) fn select_format<R: Read + Seek>(
     }
     if max > limits.max_scratch_bytes {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+            TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::Detect,
             None,
             source_label,
@@ -44,7 +44,7 @@ pub(crate) fn select_format<R: Read + Seek>(
     let mut prefix = Vec::new();
     prefix.try_reserve_exact(max).map_err(|_| {
         codec_context(
-            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+            TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::Detect,
             None,
             source_label,
@@ -63,7 +63,7 @@ pub(crate) fn select_format<R: Read + Seek>(
 
     if is_compressed_wrapper(&prefix) {
         return Err(codec_context(
-            TrajectoryCodecErrorKind::UnsupportedVariant,
+            TrajectoryIoErrorKind::UnsupportedVariant,
             TrajectoryIoOperation::Detect,
             None,
             source_label,
@@ -88,7 +88,7 @@ pub(crate) fn select_format<R: Read + Seek>(
                 ],
             }),
             (Some(signature), Some(extension)) => Err(codec_context(
-                TrajectoryCodecErrorKind::FormatMismatch,
+                TrajectoryIoErrorKind::FormatMismatch,
                 TrajectoryIoOperation::Detect,
                 Some(signature),
                 source_label,
@@ -102,14 +102,14 @@ pub(crate) fn select_format<R: Read + Seek>(
                 ],
             }),
             (None, Some(extension)) => Err(codec_context(
-                TrajectoryCodecErrorKind::UnknownFormat,
+                TrajectoryIoErrorKind::UnknownFormat,
                 TrajectoryIoOperation::Detect,
                 Some(extension),
                 source_label,
                 "known extension has no conclusive matching signature",
             )),
             (None, None) => Err(codec_context(
-                TrajectoryCodecErrorKind::UnknownFormat,
+                TrajectoryIoErrorKind::UnknownFormat,
                 TrajectoryIoOperation::Detect,
                 None,
                 source_label,

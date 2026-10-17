@@ -1,3 +1,4 @@
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 
@@ -180,17 +181,34 @@ pub struct RingPerceptionOptions {
     pub max_total_work: usize,
 }
 
+impl RingPerceptionOptions {
+    /// The [`Default`] bound of [`Self::max_atoms`].
+    pub const DEFAULT_MAX_ATOMS: usize = 1_000_000;
+    /// The [`Default`] bound of [`Self::max_bonds`].
+    pub const DEFAULT_MAX_BONDS: usize = 2_000_000;
+    /// The [`Default`] bound of [`Self::max_candidates`].
+    pub const DEFAULT_MAX_CANDIDATES: usize = 100_000;
+    /// The [`Default`] bound of [`Self::max_path_expansions`].
+    pub const DEFAULT_MAX_PATH_EXPANSIONS: usize = 2_000_000;
+    /// The [`Default`] bound of [`Self::max_equivalent_shortest_paths`].
+    pub const DEFAULT_MAX_EQUIVALENT_SHORTEST_PATHS: usize = 100_000;
+    /// The [`Default`] bound of [`Self::max_cycle_size`].
+    pub const DEFAULT_MAX_CYCLE_SIZE: usize = 4_096;
+    /// The [`Default`] bound of [`Self::max_total_work`].
+    pub const DEFAULT_MAX_TOTAL_WORK: usize = 5_000_000;
+}
+
 impl Default for RingPerceptionOptions {
     fn default() -> Self {
         Self {
             scope: RingPerceptionScope::Basis,
-            max_atoms: 1_000_000,
-            max_bonds: 2_000_000,
-            max_candidates: 100_000,
-            max_path_expansions: 2_000_000,
-            max_equivalent_shortest_paths: 100_000,
-            max_cycle_size: 4_096,
-            max_total_work: 5_000_000,
+            max_atoms: Self::DEFAULT_MAX_ATOMS,
+            max_bonds: Self::DEFAULT_MAX_BONDS,
+            max_candidates: Self::DEFAULT_MAX_CANDIDATES,
+            max_path_expansions: Self::DEFAULT_MAX_PATH_EXPANSIONS,
+            max_equivalent_shortest_paths: Self::DEFAULT_MAX_EQUIVALENT_SHORTEST_PATHS,
+            max_cycle_size: Self::DEFAULT_MAX_CYCLE_SIZE,
+            max_total_work: Self::DEFAULT_MAX_TOTAL_WORK,
         }
     }
 }
@@ -239,18 +257,12 @@ impl RingPerceptionOptions {
     }
 }
 
+/// Ring perception could not produce a complete ring set.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RingPerceptionError {
     /// A configured resource bound was exceeded.
-    ResourceLimit {
-        /// The bounded resource.
-        resource: &'static str,
-        /// The first observed value beyond the bound.
-        observed: usize,
-        /// The configured bound.
-        limit: usize,
-    },
+    LimitExceeded(LimitExceeded),
     /// The candidate basis did not cover every bond known to be cyclic.
     IncompleteRingCoverage {
         /// Cyclic bonds not covered by the candidate basis.
@@ -261,15 +273,7 @@ pub enum RingPerceptionError {
 impl fmt::Display for RingPerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ResourceLimit {
-                resource,
-                observed,
-                limit,
-                ..
-            } => write!(
-                f,
-                "ring perception {resource} limit exceeded: observed {observed}, limit {limit}"
-            ),
+            Self::LimitExceeded(limit) => write!(f, "ring perception {limit}"),
             Self::IncompleteRingCoverage {
                 uncovered_bonds, ..
             } => write!(
@@ -805,7 +809,11 @@ fn smallest_rings_bfs(
             }
             if ring.len() > 1 {
                 if ring.len() <= current_size {
-                    tracker.check("cycle size", ring.len(), tracker.options.max_cycle_size)?;
+                    tracker.check(
+                        Resource::RingSize,
+                        ring.len(),
+                        tracker.options.max_cycle_size,
+                    )?;
                     tracker.record_shortest_path()?;
                     current_size = ring.len();
                     rings.push(ring);
@@ -972,13 +980,21 @@ fn recover_connecting_cycles(
                     if invariants.contains(&ring_invariant(&atoms)) {
                         continue;
                     }
-                    tracker.check("cycle size", atoms.len(), tracker.options.max_cycle_size)?;
+                    tracker.check(
+                        Resource::RingSize,
+                        atoms.len(),
+                        tracker.options.max_cycle_size,
+                    )?;
                     tracker.record_shortest_path()?;
                     recovered = Some(atom_ring_to_ring(&atoms, &graph, tracker)?);
                     break 'search;
                 }
                 if discovered.atom_in_ring(neighbor) && !path.contains(&neighbor) {
-                    tracker.check("cycle size", path.len() + 1, tracker.options.max_cycle_size)?;
+                    tracker.check(
+                        Resource::RingSize,
+                        path.len() + 1,
+                        tracker.options.max_cycle_size,
+                    )?;
                     // Bound copied path storage as well as adjacency visits.
                     tracker.add_work(path.len() + 1)?;
                     let mut next = path.clone();
@@ -1055,7 +1071,11 @@ fn depth_first_ring_basis(
                     .rev()
                     .map(|frame| frame.atom)
                     .collect::<Vec<_>>();
-                tracker.check("cycle size", atoms.len(), tracker.options.max_cycle_size)?;
+                tracker.check(
+                    Resource::RingSize,
+                    atoms.len(),
+                    tracker.options.max_cycle_size,
+                )?;
                 tracker.add_work(atoms.len())?;
                 rings.push(atom_ring_to_ring(&atoms, &graph, tracker)?);
             }
@@ -1102,38 +1122,30 @@ impl RingWorkTracker {
             path_expansions: 0,
             total_work,
         };
-        tracker.check("atoms", atom_count, options.max_atoms)?;
-        tracker.check("bonds", bond_count, options.max_bonds)?;
-        tracker.check("total work", total_work, options.max_total_work)?;
+        tracker.check(Resource::Atoms, atom_count, options.max_atoms)?;
+        tracker.check(Resource::Bonds, bond_count, options.max_bonds)?;
+        tracker.check(Resource::Work, total_work, options.max_total_work)?;
         Ok(tracker)
     }
 
     fn check(
         &self,
-        resource: &'static str,
+        resource: Resource,
         observed: usize,
         limit: usize,
     ) -> std::result::Result<(), RingPerceptionError> {
-        if observed > limit {
-            Err(RingPerceptionError::ResourceLimit {
-                resource,
-                observed,
-                limit,
-            })
-        } else {
-            Ok(())
-        }
+        LimitExceeded::check(resource, limit, observed).map_err(RingPerceptionError::LimitExceeded)
     }
 
     fn add_work(&mut self, amount: usize) -> std::result::Result<(), RingPerceptionError> {
         self.total_work = self.total_work.saturating_add(amount);
-        self.check("total work", self.total_work, self.options.max_total_work)
+        self.check(Resource::Work, self.total_work, self.options.max_total_work)
     }
 
     fn record_path_expansion(&mut self) -> std::result::Result<(), RingPerceptionError> {
         self.path_expansions = self.path_expansions.saturating_add(1);
         self.check(
-            "path expansions",
+            Resource::PathExpansions,
             self.path_expansions,
             self.options.max_path_expansions,
         )?;
@@ -1143,7 +1155,7 @@ impl RingWorkTracker {
     fn record_shortest_path(&mut self) -> std::result::Result<(), RingPerceptionError> {
         self.equivalent_shortest_paths = self.equivalent_shortest_paths.saturating_add(1);
         self.check(
-            "equivalent shortest paths",
+            Resource::ShortestPaths,
             self.equivalent_shortest_paths,
             self.options.max_equivalent_shortest_paths,
         )?;
@@ -1153,7 +1165,7 @@ impl RingWorkTracker {
     fn record_candidate(&mut self) -> std::result::Result<(), RingPerceptionError> {
         self.candidate_cycles = self.candidate_cycles.saturating_add(1);
         self.check(
-            "candidate cycles",
+            Resource::CandidateCycles,
             self.candidate_cycles,
             self.options.max_candidates,
         )?;

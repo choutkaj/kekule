@@ -1,3 +1,4 @@
+use crate::structure::DenseArrayError;
 use std::fmt;
 use std::sync::Arc;
 
@@ -150,10 +151,10 @@ impl Trajectory {
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(StructureError::AtomCountMismatch {
+                return Err(StructureError::Array(DenseArrayError::CountMismatch {
                     expected: self.topology.atom_count(),
                     actual: values.len(),
-                }
+                })
                 .into());
             }
         }
@@ -436,10 +437,10 @@ impl TrajectoryFrame {
 
     fn check_len(&self, actual: usize) -> Result<(), StructureError> {
         if actual != self.positions.len() {
-            return Err(StructureError::AtomCountMismatch {
+            return Err(StructureError::Array(DenseArrayError::CountMismatch {
                 expected: self.positions.len(),
                 actual,
-            });
+            }));
         }
         Ok(())
     }
@@ -657,22 +658,33 @@ impl ExactSizeIterator for TrajectoryIter<'_> {}
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TrajectoryError {
+    /// A frame index is outside the trajectory.
     IndexOutOfRange {
+        /// The requested frame index.
         index: usize,
+        /// The number of frames.
         len: usize,
     },
     /// A trajectory-wide replacement has the wrong number of frames.
     FrameCountMismatch {
+        /// The trajectory's frame count.
         expected: usize,
+        /// The number of replacements supplied.
         actual: usize,
     },
+    /// Time validation requires every frame to have a time, and one has none.
     MissingTime {
+        /// The index of the frame without a time.
         frame: usize,
     },
+    /// A frame time is earlier than the previous timed frame.
     NonMonotonicTime {
+        /// The index of the out-of-order frame.
         frame: usize,
     },
+    /// A frame's structural state is invalid; see the source.
     Structure(StructureError),
+    /// Projecting the topology onto a selection failed; see the source.
     Subset(TopologySubsetError),
 }
 
@@ -690,8 +702,8 @@ impl fmt::Display for TrajectoryError {
             Self::NonMonotonicTime { frame } => {
                 write!(formatter, "time decreases at frame {frame}")
             }
-            Self::Structure(error) => write!(formatter, "invalid trajectory frame: {error}"),
-            Self::Subset(error) => write!(formatter, "cannot subset trajectory: {error}"),
+            Self::Structure(_) => formatter.write_str("invalid trajectory frame"),
+            Self::Subset(_) => formatter.write_str("cannot subset trajectory"),
         }
     }
 }

@@ -1,3 +1,4 @@
+use super::graph::QueryStereoIssue;
 use crate::stereo::{DoubleBondOrientation, TetrahedralOrientation};
 
 use super::{QueryAtomId, QueryBond, QueryBondId, QueryGraphError};
@@ -70,14 +71,14 @@ impl QueryStereoConstraint {
                 atom(*center)?;
                 if carriers.len() > 4 || carriers.len() != adjacency[center.index()].len() {
                     return Err(QueryGraphError::InvalidStereo(
-                        "tetrahedral carriers must cover all query neighbors, at most four",
+                        QueryStereoIssue::IncompleteTetrahedralCarriers,
                     ));
                 }
                 for (index, carrier) in carriers.iter().enumerate() {
                     atom(*carrier)?;
                     if !adjacent(*center, *carrier) || carriers[..index].contains(carrier) {
                         return Err(QueryGraphError::InvalidStereo(
-                            "tetrahedral carriers must be distinct neighbors",
+                            QueryStereoIssue::DuplicateTetrahedralCarrier,
                         ));
                     }
                 }
@@ -99,7 +100,9 @@ impl QueryStereoConstraint {
                     || !adjacent(bond.a(), *left_carrier)
                     || !adjacent(bond.b(), *right_carrier)
                 {
-                    return Err(QueryGraphError::InvalidStereo("double-bond carriers must be distinct substituents at the corresponding endpoints"));
+                    return Err(QueryGraphError::InvalidStereo(
+                        QueryStereoIssue::InvalidDoubleBondCarriers,
+                    ));
                 }
             }
         }

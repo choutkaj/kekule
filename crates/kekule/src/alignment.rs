@@ -575,10 +575,17 @@ pub enum AlignmentError {
     /// RMSD requires at least one atom pair.
     EmptySelection,
     /// A collection reference index does not exist.
-    ReferenceOutOfRange { index: usize, len: usize },
+    ReferenceOutOfRange {
+        /// The requested reference index.
+        index: usize,
+        /// The number of items in the collection.
+        len: usize,
+    },
     /// One collection item failed.
     Item {
+        /// The index of the failed item.
         index: usize,
+        /// The item's failure.
         source: Box<AlignmentError>,
     },
     /// A fitted transform could not be applied to one item's state.
@@ -594,7 +601,7 @@ impl fmt::Display for AlignmentError {
             Self::SelectionTopologyMismatch => {
                 formatter.write_str("atom selection belongs to a different topology allocation")
             }
-            Self::Correspondence(error) => error.fmt(formatter),
+            Self::Correspondence(_) => formatter.write_str("atom correspondence failed"),
             Self::InsufficientSelectedAtoms { selected, minimum } => write!(
                 formatter,
                 "rigid alignment requires at least {minimum} selected atoms, but received {selected}"
@@ -624,16 +631,14 @@ impl fmt::Display for AlignmentError {
             Self::NumericalFailure => {
                 formatter.write_str("rigid alignment numerical solution failed")
             }
-            Self::InvalidRigidTransform(error) => {
-                write!(formatter, "fitted rigid transform is invalid: {error}")
-            }
+            Self::InvalidRigidTransform(_) => formatter.write_str("fitted rigid transform is invalid"),
             Self::EmptySelection => formatter.write_str("RMSD requires at least one atom pair"),
             Self::ReferenceOutOfRange { index, len } => write!(
                 formatter,
                 "reference index {index} is out of range for {len} structures"
             ),
-            Self::Item { index, source } => write!(formatter, "structure {index}: {source}"),
-            Self::Transform(error) => write!(formatter, "cannot apply fitted transform: {error}"),
+            Self::Item { index, .. } => write!(formatter, "structure {index} failed"),
+            Self::Transform(_) => formatter.write_str("cannot apply fitted transform"),
         }
     }
 }

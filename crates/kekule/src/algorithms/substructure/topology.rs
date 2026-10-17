@@ -134,10 +134,12 @@ impl<'a> PreparedTopologyTarget<'a> {
                 )?;
                 if count > options.max_matches {
                     work.matches = count;
-                    return Err(SubstructureMatchError::ResourceLimit {
-                        resource: "matches",
-                        observed: count,
-                        limit: options.max_matches,
+                    return Err(SubstructureMatchError::LimitExceeded {
+                        limit: crate::diagnostics::LimitExceeded::new(
+                            crate::diagnostics::Resource::Matches,
+                            options.max_matches,
+                            count,
+                        ),
                         work,
                     });
                 }

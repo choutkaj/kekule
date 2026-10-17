@@ -546,7 +546,7 @@ fn cryst1_is_the_model_cell_only_for_a_whole_unit_cell() {
         (error.kind(), error.location(), error.message()),
         (
             DiagnosticKind::Inconsistent,
-            SourceLocation::at_line(2),
+            Some(SourceLocation::at_line(2)),
             "duplicate CRYST1 record"
         )
     );
@@ -1426,7 +1426,11 @@ fn pdb_parse_errors_locate_the_record() {
     ];
     for (text, kind, location) in cases {
         let error = pdb::parse_str(&text, Default::default()).unwrap_err();
-        assert_eq!((error.kind(), error.location()), (kind, location), "{text}");
+        assert_eq!(
+            (error.kind(), error.location()),
+            (kind, Some(location)),
+            "{text}"
+        );
     }
 
     let limited = pdb::parse_str(
@@ -1439,7 +1443,7 @@ fn pdb_parse_errors_locate_the_record() {
     .unwrap_err();
     assert_eq!(
         (limited.kind(), limited.location()),
-        (DiagnosticKind::Limit, SourceLocation::at_line(2))
+        (DiagnosticKind::Limit, Some(SourceLocation::at_line(2)))
     );
 }
 

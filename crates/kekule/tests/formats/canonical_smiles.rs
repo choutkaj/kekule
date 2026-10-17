@@ -1,5 +1,5 @@
+use kekule::diagnostics::DiagnosticKind;
 use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
-use kekule::molfile::MoleculeWriteErrorKind;
 use kekule::smiles;
 
 use crate::support::renumbered;
@@ -70,7 +70,7 @@ fn canonical_smiles_requires_installed_aromaticity() {
         assert_eq!(
             (error.kind(), error.message()),
             (
-                MoleculeWriteErrorKind::MissingPerception,
+                DiagnosticKind::MissingPerception,
                 "canonical SMILES requires installed aromaticity perception; perceive the molecule before writing"
             ),
             "{source}"
@@ -414,8 +414,16 @@ fn canonical_input_complexity_is_bounded_before_export() {
     }
     let molecule = editor.finish().unwrap();
     let error = smiles::write(&molecule, smiles::SmilesWriteOptions::canonical()).unwrap_err();
-    assert_eq!(error.kind(), MoleculeWriteErrorKind::ResourceLimit);
-    assert!(error.to_string().contains("input complexity"));
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    // The admission score 2*n*(n+2*m) of 4,096 atoms and 4,095 bonds.
+    assert_eq!(
+        error.limit_exceeded(),
+        Some(kekule::diagnostics::LimitExceeded::new(
+            kekule::diagnostics::Resource::Work,
+            smiles::MAX_CANONICAL_INPUT_COMPLEXITY,
+            100_646_912
+        ))
+    );
 }
 
 #[test]
@@ -553,7 +561,7 @@ fn smiles_uses_all_one_hundred_ring_labels_and_bounds_live_labels() {
         smiles::SmilesWriteOptions::default(),
     )
     .unwrap_err();
-    assert_eq!(error.kind(), MoleculeWriteErrorKind::ResourceLimit);
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
 }
 
 #[test]

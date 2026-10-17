@@ -1,7 +1,6 @@
 use crate::geometry::Vector3;
+use crate::structure::DenseArrayError;
 use crate::units::{Quantity, Unit, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT};
-
-use super::StructureError;
 
 #[derive(Debug, Clone, PartialEq)]
 struct DenseVectors {
@@ -10,20 +9,20 @@ struct DenseVectors {
 }
 
 impl DenseVectors {
-    fn from_vec(values: Quantity<Vec<Vector3>>, unit: Unit) -> Result<Self, StructureError> {
+    fn from_vec(values: Quantity<Vec<Vector3>>, unit: Unit) -> Result<Self, DenseArrayError> {
         let factor = values.unit().conversion_factor_to(unit)?;
         let mut values = values.into_value();
         for (index, vector) in values.iter_mut().enumerate() {
             let converted = *vector * factor;
             if !converted.is_finite() {
-                return Err(StructureError::NonFiniteVector { index });
+                return Err(DenseArrayError::NonFinite { index });
             }
             *vector = converted;
         }
         Ok(Self { values, unit })
     }
 
-    fn new<T>(values: Quantity<T>, unit: Unit) -> Result<Self, StructureError>
+    fn new<T>(values: Quantity<T>, unit: Unit) -> Result<Self, DenseArrayError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -38,7 +37,7 @@ impl DenseVectors {
         }
     }
 
-    fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), StructureError>
+    fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), DenseArrayError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -46,7 +45,7 @@ impl DenseVectors {
         let factor = values.unit().conversion_factor_to(self.unit)?;
         let source = values.value().as_ref();
         if source.len() != self.values.len() {
-            return Err(StructureError::AtomCountMismatch {
+            return Err(DenseArrayError::CountMismatch {
                 expected: self.values.len(),
                 actual: source.len(),
             });
@@ -55,7 +54,7 @@ impl DenseVectors {
             .iter()
             .position(|vector| !(*vector * factor).is_finite())
         {
-            return Err(StructureError::NonFiniteVector { index });
+            return Err(DenseArrayError::NonFinite { index });
         }
         for (destination, source) in self.values.iter_mut().zip(source) {
             *destination = *source * factor;
@@ -63,7 +62,7 @@ impl DenseVectors {
         Ok(())
     }
 
-    fn rotated(&self, rotate: impl Fn(Vector3) -> Vector3) -> Result<Self, StructureError> {
+    fn rotated(&self, rotate: impl Fn(Vector3) -> Vector3) -> Result<Self, DenseArrayError> {
         let values = self.values.iter().map(|vector| rotate(*vector)).collect();
         Self::from_vec(Quantity::new(values, self.unit), self.unit)
     }
@@ -80,7 +79,7 @@ macro_rules! vector_array {
 
         impl $name {
             /// Copies dense vectors and converts them to canonical units.
-            pub fn new<T>(values: Quantity<T>) -> Result<Self, StructureError>
+            pub fn new<T>(values: Quantity<T>) -> Result<Self, DenseArrayError>
             where
                 T: AsRef<[Vector3]>,
             {
@@ -88,7 +87,7 @@ macro_rules! vector_array {
             }
 
             /// Takes ownership of dense vectors, converting and validating in place.
-            pub fn from_vec(values: Quantity<Vec<Vector3>>) -> Result<Self, StructureError> {
+            pub fn from_vec(values: Quantity<Vec<Vector3>>) -> Result<Self, DenseArrayError> {
                 Ok(Self(DenseVectors::from_vec(values, $unit)?))
             }
 
@@ -117,7 +116,7 @@ macro_rules! vector_array {
             }
 
             /// Replaces every vector without changing the length.
-            pub fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), StructureError>
+            pub fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), DenseArrayError>
             where
                 T: AsRef<[Vector3]>,
             {
@@ -131,7 +130,7 @@ macro_rules! vector_array {
             pub(crate) fn rotated(
                 &self,
                 rotate: impl Fn(Vector3) -> Vector3,
-            ) -> Result<Self, StructureError> {
+            ) -> Result<Self, DenseArrayError> {
                 Ok(Self(self.0.rotated(rotate)?))
             }
         }

@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 
 use crate::chemistry::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
 };
-use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, SourceLocation, UnsupportedContent};
 use crate::geometry::Point3;
 use crate::molecule::{
     Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
@@ -34,67 +33,37 @@ pub struct MolfileInterpretOptions {
     pub unsupported: UnsupportedContent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MolfileInterpretError {
+/// A Molfile interpretation failure, located at the source line it concerns
+/// when it concerns one.
+pub(super) fn interpret_error(
     kind: DiagnosticKind,
     location: Option<SourceLocation>,
-    message: String,
+    message: impl Into<String>,
+) -> FormatError {
+    FormatError::interpret(Format::Molfile, kind, message).with_location(location)
 }
 
-impl MolfileInterpretError {
-    pub(super) fn new(
-        kind: DiagnosticKind,
-        location: Option<SourceLocation>,
-        message: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind,
-            location,
-            message: message.into(),
-        }
-    }
-
-    fn at(kind: DiagnosticKind, location: SourceLocation, message: impl Into<String>) -> Self {
-        Self::new(kind, Some(location), message)
-    }
-
-    fn chemistry(error: impl fmt::Display) -> Self {
-        Self::new(DiagnosticKind::Chemistry, None, error.to_string())
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.kind
-    }
-
-    /// The source line the failure concerns, when one does.
-    pub const fn location(&self) -> Option<SourceLocation> {
-        self.location
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
+fn interpret_error_at(
+    kind: DiagnosticKind,
+    location: SourceLocation,
+    message: impl Into<String>,
+) -> FormatError {
+    interpret_error(kind, Some(location), message)
 }
 
-impl fmt::Display for MolfileInterpretError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.location {
-            Some(location) => write!(
-                f,
-                "Molfile interpretation error at {location}: {}",
-                self.message
-            ),
-            None => write!(f, "Molfile interpretation error: {}", self.message),
-        }
-    }
+/// Molecule construction failed with `source` as the cause.
+fn chemistry(source: impl std::error::Error + Send + Sync + 'static) -> FormatError {
+    interpret_error(
+        DiagnosticKind::Chemistry,
+        None,
+        "molecule construction failed",
+    )
+    .with_source(source)
 }
 
-impl std::error::Error for MolfileInterpretError {}
-
-fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, MolfileInterpretError> {
-    let invalid = |message: String| {
-        MolfileInterpretError::at(DiagnosticKind::InvalidValue, atom.location, message)
-    };
+fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
+    let invalid =
+        |message: String| interpret_error_at(DiagnosticKind::InvalidValue, atom.location, message);
     let element = Element::from_symbol(&atom.symbol)
         .ok_or_else(|| invalid(format!("unsupported element symbol `{}`", atom.symbol)))?;
     let mut value = Atom::new(element);
@@ -103,7 +72,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, MolfileInterpretError> {
     value.isotope = atom.isotope;
     if let Some(difference) = atom.mass_difference {
         let nominal = crate::descriptors::mass_difference_reference(element).ok_or_else(|| {
-            MolfileInterpretError::at(
+            interpret_error_at(
                 DiagnosticKind::Unsupported,
                 atom.location,
                 format!(
@@ -147,11 +116,11 @@ fn apply_molfile_declared_valence(
     declared_valence: u8,
     source_aromatic_bonds: &BTreeSet<BondId>,
     version: MolfileVersion,
-) -> Result<(), MolfileInterpretError> {
+) -> Result<(), FormatError> {
     let version_name = version.name();
     let location = declaration.location;
     let unsupported_order = || {
-        MolfileInterpretError::at(
+        interpret_error_at(
             DiagnosticKind::Unsupported,
             location,
             format!(
@@ -162,7 +131,8 @@ fn apply_molfile_declared_valence(
     let represented_valence = molecule
         .incident_bonds(atom)
         .map_err(|error| {
-            MolfileInterpretError::at(DiagnosticKind::Chemistry, location, error.to_string())
+            interpret_error_at(DiagnosticKind::Chemistry, location, "invalid graph atom")
+                .with_source(error)
         })?
         .try_fold(0usize, |total, (bond, value)| {
             if source_aromatic_bonds.contains(&bond) {
@@ -180,14 +150,14 @@ fn apply_molfile_declared_valence(
     let inferred_hydrogens = usize::from(declared_valence)
         .checked_sub(represented_valence)
         .ok_or_else(|| {
-            MolfileInterpretError::at(
+            interpret_error_at(
                 DiagnosticKind::Inconsistent,
                 location,
                 format!("declared {version_name} valence is below represented bond valence"),
             )
         })?;
     let explicit = u8::try_from(inferred_hydrogens).map_err(|_| {
-        MolfileInterpretError::at(
+        interpret_error_at(
             DiagnosticKind::InvalidValue,
             location,
             format!("declared {version_name} hydrogen count exceeds u8"),
@@ -209,21 +179,26 @@ struct StagedMolfile {
 
 /// Builds the represented graph from decoded atoms and bonds in source order,
 /// so staging IDs index the document's atom and bond blocks.
-fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, MolfileInterpretError> {
+fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, FormatError> {
     let mut editor = MoleculeEditor::new();
     let mut geometry = StagedCoordinates::with_atom_capacity(document.atoms().len(), ANGSTROM)
-        .map_err(MolfileInterpretError::chemistry)?;
+        .map_err(chemistry)?;
     let mut atom_ids = Vec::with_capacity(document.atoms().len());
     for atom in document.atoms() {
-        let chemistry = |error: String| {
-            MolfileInterpretError::at(DiagnosticKind::Chemistry, atom.location, error)
-        };
-        let id = editor
-            .add_atom(molfile_atom(atom)?)
-            .map_err(|error| chemistry(format!("invalid graph atom: {error}")))?;
+        let id = editor.add_atom(molfile_atom(atom)?).map_err(|error| {
+            interpret_error_at(
+                DiagnosticKind::Chemistry,
+                atom.location,
+                "invalid graph atom",
+            )
+            .with_source(error)
+        })?;
         geometry
             .set_position(id, Quantity::new(atom.position, ANGSTROM))
-            .map_err(|error| chemistry(error.to_string()))?;
+            .map_err(|error| {
+                interpret_error_at(DiagnosticKind::Chemistry, atom.location, "invalid position")
+                    .with_source(error)
+            })?;
         atom_ids.push(id);
     }
     let mut source_aromatic_bonds = BTreeSet::new();
@@ -239,11 +214,12 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, MolfileInt
             MolfileBondOrder::Dative => BondOrder::Dative,
         };
         let id = editor.add_bond(a, b, order).map_err(|error| {
-            MolfileInterpretError::at(
+            interpret_error_at(
                 DiagnosticKind::Chemistry,
                 bond.location,
-                format!("invalid graph bond: {error}"),
+                "invalid graph bond",
             )
+            .with_source(error)
         })?;
         if bond.order == MolfileBondOrder::Aromatic {
             source_aromatic_bonds.insert(id);
@@ -277,11 +253,12 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, MolfileInt
     }
     localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
         |error| {
-            MolfileInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Chemistry,
                 first_aromatic,
-                format!("aromatic bond localization failed: {error}"),
+                "aromatic bond localization failed",
             )
+            .with_source(error)
         },
     )?;
     Ok(StagedMolfile {
@@ -507,11 +484,11 @@ fn publish_molfile_components(
 pub(crate) fn interpret_molfile_document(
     document: &MolfileDocument,
     options: MolfileInterpretOptions,
-) -> Result<MolfileInterpretation, MolfileInterpretError> {
+) -> Result<MolfileInterpretation, FormatError> {
     let omitted = match options.unsupported {
         UnsupportedContent::Reject => {
             if let Some(unsupported) = document.unsupported().first() {
-                return Err(MolfileInterpretError::at(
+                return Err(interpret_error_at(
                     DiagnosticKind::Unsupported,
                     unsupported.location(),
                     format!("unsupported {}", unsupported.content()),
@@ -573,11 +550,12 @@ pub(crate) fn interpret_molfile_document(
             &raw.source_stereo,
         )
         .map_err(|error| {
-            MolfileInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Chemistry,
                 canonicalization_error_location(&error, &atom_lines, &bond_lines),
-                format!("could not publish canonical molecule: {error}"),
+                "could not publish canonical molecule",
             )
+            .with_source(error)
         })?;
         if let Some(double_bonds) =
             molfile_coordinate_double_bonds(editor.working(), &raw.geometry)?
@@ -621,11 +599,12 @@ pub(crate) fn interpret_molfile_document(
         for element in inferred {
             publication_report.created_stereo_elements.push(
                 editor.add_stereo_element(element).map_err(|error| {
-                    MolfileInterpretError::new(
+                    interpret_error(
                         DiagnosticKind::Chemistry,
                         component_location,
-                        format!("could not materialize Molfile coordinate stereo: {error}"),
+                        "could not materialize Molfile coordinate stereo",
                     )
+                    .with_source(error)
                 })?,
             );
         }
@@ -635,11 +614,12 @@ pub(crate) fn interpret_molfile_document(
             document.stereo_groups(),
         )?;
         let (molecule, ids) = editor.finish_with_correspondence().map_err(|error| {
-            MolfileInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Chemistry,
                 component_location,
-                error.to_string(),
+                "cannot publish molecule",
             )
+            .with_source(error)
         })?;
         // Publication renumbers IDs densely and may prune canonicalized stereo.
         for target in raw.atom_map.values_mut() {
@@ -658,11 +638,12 @@ pub(crate) fn interpret_molfile_document(
             .filter_map(|element| ids.stereo_element(element))
             .collect();
         let positions = raw.geometry.to_positions(&molecule).map_err(|error| {
-            MolfileInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Chemistry,
                 component_location,
-                format!("could not retain published coordinates: {error}"),
+                "could not retain published coordinates",
             )
+            .with_source(error)
         })?;
         let mut warnings = publication_report
             .warnings
@@ -731,11 +712,12 @@ pub(crate) fn interpret_molfile_document(
         ));
     }
     publish_molfile_components(components, omitted).map_err(|error| {
-        MolfileInterpretError::new(
+        interpret_error(
             DiagnosticKind::Chemistry,
             None,
-            format!("could not build Molfile model: {error}"),
+            "could not build Molfile model",
         )
+        .with_source(error)
     })
 }
 
@@ -748,13 +730,13 @@ fn install_v3000_atom_cfg(
     declarations: &[(AtomId, MolfileAtomParity, SourceLocation)],
     geometry: &dyn crate::chemistry::AtomPositionSource,
     contradicted: &mut Vec<(AtomId, SourceLocation)>,
-) -> Result<Vec<StereoElementId>, MolfileInterpretError> {
+) -> Result<Vec<StereoElementId>, FormatError> {
     let mut created = Vec::new();
     for (source, parity, location) in declarations {
         let Some(&center) = atom_map.get(source) else {
             continue;
         };
-        let error = |kind, message: String| MolfileInterpretError::at(kind, *location, message);
+        let error = |kind, message: String| interpret_error_at(kind, *location, message);
         // Component remapping preserves atom-block order. CTfile parity uses
         // that order, except hydrogen (explicit or omitted) is numbered last.
         let carriers =
@@ -820,7 +802,13 @@ fn install_v3000_atom_cfg(
                         id,
                         StereoElement::new(StereoElementKind::Tetrahedral(stereo)),
                     )
-                    .map_err(|cause| error(DiagnosticKind::Chemistry, cause.to_string()))?;
+                    .map_err(|cause| {
+                        error(
+                            DiagnosticKind::Chemistry,
+                            "cannot replace stereo center".to_owned(),
+                        )
+                        .with_source(cause)
+                    })?;
             }
         } else {
             let id = molecule
@@ -831,7 +819,13 @@ fn install_v3000_atom_cfg(
                         orientation,
                     },
                 )))
-                .map_err(|cause| error(DiagnosticKind::Chemistry, cause.to_string()))?;
+                .map_err(|cause| {
+                    error(
+                        DiagnosticKind::Chemistry,
+                        "cannot add stereo center".to_owned(),
+                    )
+                    .with_source(cause)
+                })?;
             created.push(id);
         }
     }
@@ -842,9 +836,9 @@ fn install_molfile_stereo_groups(
     molecule: &mut Molecule,
     atom_map: &BTreeMap<AtomId, AtomId>,
     groups: &[MolfileStereoGroup],
-) -> Result<(), MolfileInterpretError> {
+) -> Result<(), FormatError> {
     for group in groups {
-        let error = |kind, message: &str| MolfileInterpretError::at(kind, group.location, message);
+        let error = |kind, message: &str| interpret_error_at(kind, group.location, message);
         let kind = match group.kind {
             MolfileStereoGroupKind::Absolute => StereoGroupKind::Absolute,
             MolfileStereoGroupKind::Or(_) => StereoGroupKind::Or,
@@ -957,12 +951,16 @@ pub(super) fn molfile_coordinates_are_flat(points: &[Point3]) -> bool {
 fn molfile_points(
     molecule: &Molecule,
     geometry: &dyn crate::chemistry::AtomPositionSource,
-) -> Result<Vec<Point3>, MolfileInterpretError> {
+) -> Result<Vec<Point3>, FormatError> {
     molecule
         .atom_ids()
         .map(|atom| {
             geometry.position_value(atom).ok_or_else(|| {
-                MolfileInterpretError::chemistry(format!("missing source coordinates for {atom}"))
+                interpret_error(
+                    DiagnosticKind::Chemistry,
+                    None,
+                    format!("missing source coordinates for {atom}"),
+                )
             })
         })
         .collect()
@@ -977,7 +975,7 @@ fn molfile_points(
 pub(super) fn molfile_coordinate_double_bonds(
     molecule: &Molecule,
     geometry: &dyn crate::chemistry::AtomPositionSource,
-) -> Result<Option<BTreeSet<BondId>>, MolfileInterpretError> {
+) -> Result<Option<BTreeSet<BondId>>, FormatError> {
     if molfile_coordinates_are_flat(&molfile_points(molecule, geometry)?) {
         return Ok(None);
     }
@@ -986,9 +984,12 @@ pub(super) fn molfile_coordinate_double_bonds(
         Err(crate::algorithms::StereoSearchError::Perception(
             crate::chemistry::PerceptionError::Valence(_),
         )) => Ok(None),
-        Err(error) => Err(MolfileInterpretError::chemistry(format!(
-            "could not classify Molfile coordinate double bonds: {error}"
-        ))),
+        Err(error) => Err(interpret_error(
+            DiagnosticKind::Chemistry,
+            None,
+            "could not classify Molfile coordinate double bonds",
+        )
+        .with_source(error)),
     }
 }
 
@@ -998,13 +999,12 @@ pub(super) fn molfile_coordinate_tetrahedra(
     molecule: &Molecule,
     geometry: &dyn crate::chemistry::AtomPositionSource,
     warnings: &mut Vec<MolfileInterpretationWarning>,
-) -> Result<Vec<StereoElement>, MolfileInterpretError> {
+) -> Result<Vec<StereoElement>, FormatError> {
     let points = molfile_points(molecule, geometry)?;
     if molfile_coordinates_are_flat(&points) {
         return Ok(Vec::new());
     }
-    let positions = Positions::from_vec(Quantity::new(points, ANGSTROM))
-        .map_err(MolfileInterpretError::chemistry)?;
+    let positions = Positions::from_vec(Quantity::new(points, ANGSTROM)).map_err(chemistry)?;
     let inferred = match crate::algorithms::infer_coordinate_stereo(
         molecule,
         &positions,
@@ -1021,9 +1021,12 @@ pub(super) fn molfile_coordinate_tetrahedra(
             return Ok(Vec::new());
         }
         Err(error) => {
-            return Err(MolfileInterpretError::chemistry(format!(
-                "could not infer Molfile coordinate stereo: {error}"
-            )))
+            return Err(interpret_error(
+                DiagnosticKind::Chemistry,
+                None,
+                "could not infer Molfile coordinate stereo",
+            )
+            .with_source(error))
         }
     };
     Ok(inferred
@@ -1046,7 +1049,7 @@ fn partition_molfile_staging(
     staging: MoleculeEditor,
     geometry: &StagedCoordinates,
     source_stereo: &[SourceStereoBondMark],
-) -> Result<Vec<RawMolfileComponent>, MolfileInterpretError> {
+) -> Result<Vec<RawMolfileComponent>, FormatError> {
     let graph = staging.working();
     let mut result = Vec::new();
     for old_atoms in graph.connected_components() {
@@ -1055,16 +1058,14 @@ fn partition_molfile_staging(
         let mut atom_map = BTreeMap::new();
         let mut component_geometry =
             StagedCoordinates::with_atom_capacity(old_atoms.len(), geometry.unit())
-                .map_err(MolfileInterpretError::chemistry)?;
+                .map_err(chemistry)?;
         for old in &old_atoms {
-            let atom = graph.atom(*old).map_err(MolfileInterpretError::chemistry)?;
-            let new = editor
-                .add_atom(atom.clone())
-                .map_err(MolfileInterpretError::chemistry)?;
+            let atom = graph.atom(*old).map_err(chemistry)?;
+            let new = editor.add_atom(atom.clone()).map_err(chemistry)?;
             if let Some(point) = geometry.position(*old) {
                 component_geometry
                     .set_position(new, point)
-                    .map_err(MolfileInterpretError::chemistry)?;
+                    .map_err(chemistry)?;
             }
             atom_map.insert(*old, new);
         }
@@ -1075,7 +1076,7 @@ fn partition_molfile_staging(
             }
             let new = editor
                 .add_bond(atom_map[&bond.a()], atom_map[&bond.b()], bond.order)
-                .map_err(MolfileInterpretError::chemistry)?;
+                .map_err(chemistry)?;
             bond_map.insert(old, new);
         }
         let mut properties =
@@ -1085,13 +1086,13 @@ fn partition_molfile_staging(
             .atoms()
             .raw()
             .select_indices(&old_atoms.iter().map(|id| id.index()).collect::<Vec<_>>())
-            .map_err(MolfileInterpretError::chemistry)?;
+            .map_err(chemistry)?;
         *properties.bonds_mut() = graph
             .properties()
             .bonds()
             .raw()
             .select_indices(&bond_map.keys().map(|id| id.index()).collect::<Vec<_>>())
-            .map_err(MolfileInterpretError::chemistry)?;
+            .map_err(chemistry)?;
         editor.working_mut().properties = properties;
         let remapped_stereo = source_stereo
             .iter()

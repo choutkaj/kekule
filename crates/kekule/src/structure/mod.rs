@@ -74,13 +74,11 @@ pub use ensemble::{
 };
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
 pub use model::{
-    AsModelView, Model, ModelAtomView, ModelBuildError, ModelBuilder, ModelBuilderError,
-    ModelError, ModelTopologyMut, ModelView,
+    AsModelView, Model, ModelAtomView, ModelBuildError, ModelBuilder, ModelError, ModelTopologyMut,
+    ModelView,
 };
-pub use model_editor::{
-    ModelAppend, ModelAppendReport, ModelEditError, ModelEditor, ModelFinishError,
-};
-pub use positions::{PositionError, Positions};
+pub use model_editor::{ModelAppend, ModelAppendReport, ModelEditError, ModelEditor};
+pub use positions::{DenseArrayError, Positions};
 pub use state::StructureError;
 pub use trajectory::{
     Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut, TrajectoryFrameView,

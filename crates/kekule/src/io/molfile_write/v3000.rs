@@ -1,7 +1,8 @@
 //! V3000 CTAB rendering of a prepared record.
 use crate::algorithms::explicit_valence;
 use crate::chemistry::SourceStereoBondMarkKind;
-use crate::io::MoleculeWriteError;
+use crate::diagnostics::FormatError;
+use crate::io::write_error::MOLFILE_WRITE;
 use crate::molecule::{AtomRadical, BondOrder, ImplicitHydrogens};
 use crate::stereo::StereoGroupKind;
 
@@ -11,10 +12,7 @@ use super::MolfileRecord;
 const MAX_LINE: usize = 80;
 const PREFIX: &str = "M  V30 ";
 
-pub(super) fn render(
-    record: &MolfileRecord<'_>,
-    title: &str,
-) -> Result<String, MoleculeWriteError> {
+pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, FormatError> {
     let mut out = String::new();
     record.push_header(&mut out, title);
     out.push_str("  0  0  0  0  0  0            999 V3000\n");
@@ -101,9 +99,9 @@ pub(super) fn render(
                 StereoGroupKind::Or => format!("MDLV30/STEREL{}", index + 1),
                 StereoGroupKind::And => format!("MDLV30/STERAC{}", index + 1),
                 _ => {
-                    return Err(MoleculeWriteError::unsupported(
-                        "V3000 cannot encode this stereo group kind",
-                    ))
+                    return Err(
+                        MOLFILE_WRITE.unsupported("V3000 cannot encode this stereo group kind")
+                    )
                 }
             };
             let mut line = format!("{kind} ATOMS=({}", atoms.len());
@@ -141,23 +139,23 @@ fn push_line(out: &mut String, body: &str) {
     out.push('\n');
 }
 
-fn v3000_bond_code(order: BondOrder) -> Result<u8, MoleculeWriteError> {
+fn v3000_bond_code(order: BondOrder) -> Result<u8, FormatError> {
     match order {
         BondOrder::Zero => Ok(0),
         BondOrder::Single => Ok(1),
         BondOrder::Double => Ok(2),
         BondOrder::Triple => Ok(3),
         BondOrder::Dative => Ok(9),
-        BondOrder::Quadruple => Err(MoleculeWriteError::unsupported(
-            "V3000 writer does not support quadruple bonds",
-        )),
+        BondOrder::Quadruple => {
+            Err(MOLFILE_WRITE.unsupported("V3000 writer does not support quadruple bonds"))
+        }
     }
 }
 
 fn v3000_bond_cfg(
     order: BondOrder,
     stereo: Option<SourceStereoBondMarkKind>,
-) -> Result<Option<u8>, MoleculeWriteError> {
+) -> Result<Option<u8>, FormatError> {
     match (order, stereo) {
         (_, None) => Ok(None),
         (BondOrder::Double, Some(SourceStereoBondMarkKind::MolfileDoubleBondGeometry)) => Ok(None),
@@ -165,18 +163,16 @@ fn v3000_bond_cfg(
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(Some(2)),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeDown)) => Ok(Some(3)),
         (BondOrder::Double, Some(SourceStereoBondMarkKind::DoubleBondEither)) => Ok(Some(2)),
-        _ => Err(MoleculeWriteError::unsupported(
-            "V3000 bond CFG is incompatible with the bond order",
-        )),
+        _ => Err(MOLFILE_WRITE.unsupported("V3000 bond CFG is incompatible with the bond order")),
     }
 }
 
-fn v3000_radical_code(radical: AtomRadical) -> Result<u8, MoleculeWriteError> {
+fn v3000_radical_code(radical: AtomRadical) -> Result<u8, FormatError> {
     match (radical.electron_count(), radical.spin_multiplicity()) {
         (2, Some(1)) => Ok(1),
         (1, Some(2)) => Ok(2),
         (2, Some(3)) => Ok(3),
-        _ => Err(MoleculeWriteError::unsupported(
+        _ => Err(MOLFILE_WRITE.unsupported(
             "V3000 writer requires an encodable radical electron count and explicit spin multiplicity",
         )),
     }

@@ -3,7 +3,7 @@ use std::fmt;
 use crate::chemistry::AtomPositionSource;
 use crate::geometry::Point3;
 use crate::molecule::{AtomId, Molecule};
-use crate::structure::{PositionError, Positions};
+use crate::structure::{DenseArrayError, Positions};
 use crate::units::{Quantity, Unit, UnitError, ANGSTROM};
 
 /// Sparse atom-local coordinates used only while a format graph is staged.
@@ -86,7 +86,7 @@ pub(crate) enum StagedCoordinateError {
     MissingPosition { atom: AtomId },
     NonFinitePosition { atom: AtomId },
     Unit(UnitError),
-    Position(PositionError),
+    Position(DenseArrayError),
 }
 
 impl fmt::Display for StagedCoordinateError {
@@ -99,13 +99,21 @@ impl fmt::Display for StagedCoordinateError {
             Self::NonFinitePosition { atom } => {
                 write!(formatter, "source position for {atom} is not finite")
             }
-            Self::Unit(error) => error.fmt(formatter),
-            Self::Position(error) => error.fmt(formatter),
+            Self::Unit(_) => formatter.write_str("invalid coordinate unit"),
+            Self::Position(_) => formatter.write_str("invalid position"),
         }
     }
 }
 
-impl std::error::Error for StagedCoordinateError {}
+impl std::error::Error for StagedCoordinateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unit(error) => Some(error),
+            Self::Position(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<UnitError> for StagedCoordinateError {
     fn from(error: UnitError) -> Self {
@@ -113,8 +121,8 @@ impl From<UnitError> for StagedCoordinateError {
     }
 }
 
-impl From<PositionError> for StagedCoordinateError {
-    fn from(error: PositionError) -> Self {
+impl From<DenseArrayError> for StagedCoordinateError {
+    fn from(error: DenseArrayError) -> Self {
         Self::Position(error)
     }
 }

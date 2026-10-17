@@ -4,26 +4,47 @@ use super::*;
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyEditError {
+    /// Publication was requested with no atoms left.
     EmptyTopology,
+    /// An atom handle is deleted or belongs to another editor.
     InvalidAtom(EditAtomId),
+    /// A bond handle is deleted or belongs to another editor.
     InvalidBond(EditBondId),
+    /// A chain handle is deleted or belongs to another editor.
     InvalidChain(EditChainId),
+    /// A residue handle is deleted or belongs to another editor.
     InvalidResidue(EditResidueId),
+    /// An atom-site handle is deleted or belongs to another editor.
     InvalidAtomSite(EditAtomSiteId),
+    /// A source-topology atom has no live editing handle.
     InvalidSourceAtom(InstanceAtomId),
+    /// A source-topology bond has no live editing handle.
     InvalidSourceBond(InstanceBondId),
+    /// A source molecule instance is absent or no longer matches its edited atoms.
     InvalidSourceInstance(MoleculeInstanceId),
+    /// A source-topology chain has no live editing handle.
     InvalidSourceChain(ChainId),
+    /// A source-topology residue has no live editing handle.
     InvalidSourceResidue(ResidueId),
+    /// A source-topology atom site has no live editing handle.
     InvalidSourceAtomSite(AtomSiteId),
+    /// The atom already has a hierarchy site.
     DuplicateAtomPlacement(EditAtomId),
+    /// A molecule edit failed; see the source.
     Molecule(MoleculeError),
+    /// An edited molecule could not be published; see the source.
     Publication(MoleculePublicationError),
+    /// The edited topology could not be published; see the source.
     Topology(TopologyBuildError),
+    /// A hierarchy edit failed; see the source.
     Hierarchy(HierarchyError),
+    /// A property edit failed; see the source.
     Property(PropertyError),
+    /// Property rows of an appended topology could not be copied into a table.
     AppendProperty {
-        domain: &'static str,
+        /// The table whose rows could not be appended.
+        domain: crate::properties::PropertyDomain,
+        /// The cause, also the source.
         error: Box<PropertyError>,
     },
 }
@@ -56,14 +77,12 @@ impl fmt::Display for TopologyEditError {
             Self::DuplicateAtomPlacement(id) => {
                 write!(f, "atom already has a hierarchy site: {id}")
             }
-            Self::Molecule(e) => write!(f, "cannot edit molecule: {e}"),
-            Self::Publication(e) => write!(f, "cannot publish edited molecule: {e}"),
-            Self::Topology(e) => write!(f, "cannot publish edited topology: {e}"),
-            Self::Hierarchy(e) => write!(f, "cannot edit hierarchy: {e}"),
-            Self::Property(e) => write!(f, "cannot edit properties: {e}"),
-            Self::AppendProperty { domain, error } => {
-                write!(f, "cannot append {domain} properties: {error}")
-            }
+            Self::Molecule(_) => f.write_str("cannot edit molecule"),
+            Self::Publication(_) => f.write_str("cannot publish edited molecule"),
+            Self::Topology(_) => f.write_str("cannot publish edited topology"),
+            Self::Hierarchy(_) => f.write_str("cannot edit hierarchy"),
+            Self::Property(_) => f.write_str("cannot edit properties"),
+            Self::AppendProperty { domain, .. } => write!(f, "cannot append {domain} properties"),
         }
     }
 }
@@ -103,33 +122,5 @@ impl From<super::super::components::ComponentBuildError> for TopologyEditError {
             E::Property(e) => e.into(),
             E::Topology(e) => e.into(),
         }
-    }
-}
-
-/// Failed publication retaining the exact draft for repair, including its handles.
-#[derive(Debug)]
-pub struct TopologyFinishError {
-    pub(super) error: Box<TopologyEditError>,
-    pub(super) editor: Box<TopologyEditor>,
-}
-impl TopologyFinishError {
-    pub fn error(&self) -> &TopologyEditError {
-        &self.error
-    }
-    pub fn editor(&self) -> &TopologyEditor {
-        &self.editor
-    }
-    pub fn into_editor(self) -> TopologyEditor {
-        *self.editor
-    }
-}
-impl fmt::Display for TopologyFinishError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.error.fmt(f)
-    }
-}
-impl std::error::Error for TopologyFinishError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.error.as_ref())
     }
 }

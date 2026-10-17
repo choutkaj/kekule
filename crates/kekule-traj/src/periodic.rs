@@ -61,7 +61,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{PositionError, Positions, Trajectory, TrajectoryError};
+use kekule::structure::{DenseArrayError, Positions, Trajectory, TrajectoryError};
 use kekule::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -72,47 +72,73 @@ pub use stream::{MoleculeImager, TrajectoryUnwrapper};
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PeriodicError {
+    /// A frame has no periodic cell.
     MissingCell {
+        /// The frame index.
         frame: usize,
     },
+    /// The anchor selection belongs to another topology.
     SelectionTopologyMismatch,
+    /// A frame belongs to another topology.
     TopologyMismatch {
+        /// The frame index.
         frame: usize,
     },
     /// Stateful unwrapping requires consecutive source-frame indices.
     NonSequentialFrame {
+        /// The previously unwrapped frame index.
         previous: usize,
+        /// The frame index that does not follow it.
         frame: usize,
     },
     /// Available time values must not decrease, including across missing values.
     NonMonotonicTime {
+        /// The frame index whose time decreases.
         frame: usize,
     },
+    /// Imaging was requested with no anchor atom.
     EmptyAnchors,
     /// Selected shortest bond images do not form a consistent finite molecule (e.g. a winding ring).
     InconsistentBondImages {
+        /// The frame index.
         frame: usize,
+        /// The bond whose images are inconsistent.
         bond: InstanceBondId,
     },
+    /// The periodic axes of the cell change between unwrapped frames.
     PeriodicAxesChanged {
+        /// The frame index whose axes differ.
         frame: usize,
     },
     /// A displacement lies on a half-cell boundary, with no unique temporal image.
     AmbiguousDisplacement {
+        /// The frame index.
         frame: usize,
+        /// The atom whose displacement is ambiguous.
         atom: TopologyAtomIndex,
+        /// The cell axis (0, 1 or 2) of the ambiguity.
         axis: usize,
     },
-    /// An ill-conditioned cell requires more than the bounded nearest-image search permits.
-    ImageSearchLimit {
+    /// An ill-conditioned cell requires more lattice images than the bounded
+    /// nearest-image search examines.
+    LimitExceeded {
+        /// The frame whose cell is ill-conditioned.
         frame: usize,
+        /// The exceeded bound of lattice images.
+        limit: kekule::diagnostics::LimitExceeded,
     },
+    /// A periodic coordinate calculation exceeds numerical precision or
+    /// range.
     NumericalFailure {
+        /// The frame index.
         frame: usize,
     },
+    /// A frame's positions are invalid; see the source.
     Position {
+        /// The frame index.
         frame: usize,
-        source: Box<PositionError>,
+        /// The position failure.
+        source: Box<DenseArrayError>,
     },
     /// Valid positions could not be published into the destination.
     Publication(Box<TrajectoryError>),
@@ -130,10 +156,10 @@ impl fmt::Display for PeriodicError {
             Self::InconsistentBondImages { frame, bond } => write!(f, "frame {frame} has inconsistent periodic images around bond {bond}"),
             Self::PeriodicAxesChanged { frame } => write!(f, "periodic axes change at frame {frame}"),
             Self::AmbiguousDisplacement { frame, atom, axis } => write!(f, "frame {frame}, atom {atom}, cell axis {axis}: ambiguous half-cell displacement"),
-            Self::ImageSearchLimit { frame } => write!(f, "frame {frame}: cell geometry exceeds the nearest-image search limit"),
+            Self::LimitExceeded { frame, limit } => write!(f, "frame {frame}: nearest-image search {limit}"),
             Self::NumericalFailure { frame } => write!(f, "frame {frame}: periodic coordinate calculation exceeds numerical precision or range"),
-            Self::Position { frame, source } => write!(f, "frame {frame}: {source}"),
-            Self::Publication(source) => write!(f, "cannot publish periodic coordinates: {source}"),
+            Self::Position { frame, .. } => write!(f, "frame {frame} has invalid positions"),
+            Self::Publication(_) => f.write_str("cannot publish periodic coordinates"),
         }
     }
 }
@@ -431,9 +457,10 @@ fn geometry_error(error: kekule::geometry::PeriodicGeometryError, frame: usize) 
         kekule::geometry::PeriodicGeometryError::NumericalFailure => {
             PeriodicError::NumericalFailure { frame }
         }
-        kekule::geometry::PeriodicGeometryError::ImageSearchLimit => {
-            PeriodicError::ImageSearchLimit { frame }
+        kekule::geometry::PeriodicGeometryError::LimitExceeded(limit) => {
+            PeriodicError::LimitExceeded { frame, limit }
         }
+        _ => PeriodicError::NumericalFailure { frame },
     }
 }
 fn checked_image(value: f64, frame: usize) -> Result<f64, PeriodicError> {
@@ -539,7 +566,8 @@ mod tests {
         let lattice = Lattice::new(Some(cell), 7).unwrap();
         assert!(matches!(
             lattice.nearest_image(Vector3::new(0.49, 0.49, 0.0)),
-            Err(PeriodicError::ImageSearchLimit { frame: 7 })
+            Err(PeriodicError::LimitExceeded { frame: 7, limit })
+                if limit.resource() == kekule::diagnostics::Resource::LatticeImages
         ));
         assert!(matches!(
             lattice.nearest_image(Vector3::new(1.0e100, 0.0, 0.0)),

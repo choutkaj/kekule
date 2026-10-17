@@ -1,3 +1,4 @@
+use kekule::diagnostics::{DiagnosticKind, LimitExceeded, Resource, SourceLocation};
 use kekule::{
     molecule::*,
     perception::{
@@ -5,7 +6,7 @@ use kekule::{
         rings::{RingBasisModel, RingBasisState},
         Perception,
     },
-    smarts::{self, SmartsParseErrorKind, SmartsParseOptions},
+    smarts::{self, SmartsParseOptions},
     smiles,
     substructure::*,
     topology::Topology,
@@ -219,10 +220,7 @@ fn complete_enumeration_never_silently_truncates() {
     assert_eq!(prefix, 1000);
     assert!(matches!(
         PreparedTarget::new(&m).all(&q, capped),
-        Err(SubstructureMatchError::ResourceLimit {
-            resource: "matches",
-            ..
-        })
+        Err(SubstructureMatchError::LimitExceeded { limit, .. }) if limit.resource() == Resource::Matches
     ));
     let mut visits = 0;
     assert_eq!(
@@ -269,7 +267,7 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
                 ..options()
             }
         ),
-        Err(SubstructureMatchError::ResourceLimit { .. })
+        Err(SubstructureMatchError::LimitExceeded { .. })
     ));
     for (source, opts) in [
         (
@@ -303,15 +301,17 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
     ] {
         assert_eq!(
             smarts::parse_str(source, opts).unwrap_err().kind(),
-            SmartsParseErrorKind::ResourceLimit
+            DiagnosticKind::Limit
         );
     }
     for source in [
         "[$()]", "[$([C)]", "[$(C)", "[C:]", "[C:1:2]", "C-,C", "C;&C",
     ] {
         let e = smarts::parse_str(source, Default::default()).unwrap_err();
+        let location = e.location().expect("SMARTS errors are located");
+        assert_eq!(location.line(), 1, "{source}: {e}");
         assert!(
-            e.span().start <= e.span().end && e.span().end <= source.len(),
+            (1..=source.len() + 1).contains(&location.column().unwrap()),
             "{source}: {e}"
         );
     }
@@ -453,10 +453,7 @@ fn topology_reuses_connected_matches_and_shares_budgets() {
                 ..small_budget
             }
         ),
-        Err(SubstructureMatchError::ResourceLimit {
-            resource: "matches",
-            ..
-        })
+        Err(SubstructureMatchError::LimitExceeded { limit, .. }) if limit.resource() == Resource::Matches
     ));
 }
 
@@ -526,6 +523,15 @@ fn graph_complexity_exhaustion_remains_a_resource_error() {
         },
     )
     .unwrap_err();
-    assert_eq!(error.kind(), SmartsParseErrorKind::ResourceLimit);
-    assert_eq!(error.span(), 0..input.len());
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    assert_eq!(error.location(), Some(SourceLocation::at_column(1, 1)));
+    // The aggregate query-atom bound trips, not the expression-node bound.
+    assert_eq!(
+        error.limit_exceeded(),
+        Some(LimitExceeded::new(
+            Resource::Atoms,
+            kekule::query::MAX_QUERY_TOTAL_ATOMS,
+            4097
+        ))
+    );
 }

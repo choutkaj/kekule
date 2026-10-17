@@ -84,12 +84,19 @@ impl<'a> PreparedTarget<'a> {
     }
 }
 
+/// Why a tagged query cannot be prepared or matched.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TaggedMatchError {
+    /// The query has no tagged atom.
     MissingTags,
+    /// A tag is zero; tags are positive.
     ZeroTag,
+    /// Two atoms carry this tag.
     DuplicateTag(u32),
+    /// A mapping does not have the query's atom count.
     MappingSize,
+    /// Matching failed; see the source.
     Match(SubstructureMatchError),
 }
 impl fmt::Display for TaggedMatchError {
@@ -99,11 +106,18 @@ impl fmt::Display for TaggedMatchError {
             Self::ZeroTag => f.write_str("tagged projection requires positive tags"),
             Self::DuplicateTag(t) => write!(f, "duplicate atom tag {t}"),
             Self::MappingSize => f.write_str("mapping does not have this query's atom count"),
-            Self::Match(e) => e.fmt(f),
+            Self::Match(_) => f.write_str("tagged substructure search failed"),
         }
     }
 }
-impl std::error::Error for TaggedMatchError {}
+impl std::error::Error for TaggedMatchError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Match(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Which tagged tuples [`TaggedQuery::find_matches`] returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -1,16 +1,14 @@
 //! Emit prepared rows with format-specific quoting and numeric formatting.
 use super::prepare::{AtomRow, PreparedModel};
-use super::{MmcifWriteError, MmcifWriteOptions};
+use super::{fail, sink, MmcifWriteIssue, MmcifWriteOptions};
+use crate::diagnostics::FormatError;
 use crate::io::mmcif_cell::CellParameters;
 use crate::molecule::BondOrder;
 use std::collections::BTreeMap;
 use std::io::Write;
 
-fn mmcif_io(error: std::io::Error) -> MmcifWriteError {
-    MmcifWriteError::Io {
-        kind: error.kind(),
-        message: error.to_string(),
-    }
+fn mmcif_io(error: std::io::Error) -> FormatError {
+    sink(error)
 }
 
 pub(super) fn render_model_to(
@@ -18,7 +16,7 @@ pub(super) fn render_model_to(
     model: &PreparedModel,
     cell: Option<CellParameters>,
     options: &MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     write_block_start(writer, model, cell, options)?;
     let mut atom_serial = 1u64;
     write_atom_rows(writer, &model.atoms, 1, &mut atom_serial, options)?;
@@ -30,7 +28,7 @@ pub(super) fn write_block_start(
     model: &PreparedModel,
     cell: Option<CellParameters>,
     options: &MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     writer
         .write_all(format!("data_{}\n#\n", options.block_name).as_bytes())
         .map_err(mmcif_io)?;
@@ -122,7 +120,7 @@ pub(super) fn write_atom_rows(
     model_number: usize,
     serial: &mut u64,
     options: &MmcifWriteOptions,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     for atom in atoms {
         write_row(
             writer,
@@ -161,7 +159,7 @@ pub(super) fn write_atom_rows(
 pub(super) fn write_block_end(
     writer: &mut impl Write,
     model: &PreparedModel,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     writer.write_all(b"#\n").map_err(mmcif_io)?;
     if !model.connections.is_empty() {
         let indexes = model
@@ -209,7 +207,7 @@ pub(super) fn write_block_end(
     Ok(())
 }
 
-fn write_loop_header(writer: &mut impl Write, tags: &[&str]) -> Result<(), MmcifWriteError> {
+fn write_loop_header(writer: &mut impl Write, tags: &[&str]) -> Result<(), FormatError> {
     writer.write_all(b"loop_\n").map_err(mmcif_io)?;
     for tag in tags {
         writer.write_all(tag.as_bytes()).map_err(mmcif_io)?;
@@ -218,7 +216,7 @@ fn write_loop_header(writer: &mut impl Write, tags: &[&str]) -> Result<(), Mmcif
     Ok(())
 }
 
-fn write_row(writer: &mut impl Write, values: Vec<String>) -> Result<(), MmcifWriteError> {
+fn write_row(writer: &mut impl Write, values: Vec<String>) -> Result<(), FormatError> {
     for (index, value) in values.into_iter().enumerate() {
         if index != 0 {
             writer.write_all(b" ").map_err(mmcif_io)?;
@@ -240,13 +238,15 @@ fn optional_display(value: Option<i32>) -> String {
     value.map_or_else(|| ".".to_owned(), |value| value.to_string())
 }
 
-fn optional_cif_value(value: Option<&str>, field: &'static str) -> Result<String, MmcifWriteError> {
+fn optional_cif_value(value: Option<&str>, field: &'static str) -> Result<String, FormatError> {
     value.map_or_else(|| Ok(".".to_owned()), |value| cif_value(value, field))
 }
 
-fn cif_value(value: &str, field: &'static str) -> Result<String, MmcifWriteError> {
+fn cif_value(value: &str, field: &'static str) -> Result<String, FormatError> {
     if value.is_empty() || value.contains(['\n', '\r']) {
-        return Err(MmcifWriteError::UnsupportedTextValue { field });
+        return Err(fail(MmcifWriteIssue::UnsupportedTextValue {
+            item: field.to_owned(),
+        }));
     }
     let lower = value.to_ascii_lowercase();
     let is_control = lower == "loop_"
@@ -275,7 +275,9 @@ fn cif_value(value: &str, field: &'static str) -> Result<String, MmcifWriteError
     if !value.contains('"') {
         return Ok(format!("\"{value}\""));
     }
-    Err(MmcifWriteError::UnsupportedTextValue { field })
+    Err(fail(MmcifWriteIssue::UnsupportedTextValue {
+        item: field.to_owned(),
+    }))
 }
 
 /// Dative bonds are metal coordination; every other bond is covalent.

@@ -123,14 +123,14 @@ fn molfile_document_parser_validates_declared_atom_and_bond_records() {
     let error = molfile::parse_str(invalid_atom, Default::default())
         .expect_err("invalid atom syntax must fail parsing");
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
-    assert_eq!(error.location(), SourceLocation::at_line(5));
+    assert_eq!(error.location(), Some(SourceLocation::at_line(5)));
     assert_eq!(error.message(), "invalid V2000 atom line");
 
     let invalid_bond = "Bad\nprogram\ncomment\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 C   0  0  0  0  0  0\nbond record\nM  END\n";
     let error = molfile::parse_str(invalid_bond, Default::default())
         .expect_err("invalid bond syntax must fail parsing");
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
-    assert_eq!(error.location(), SourceLocation::at_line(7));
+    assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
     assert_eq!(error.message(), "invalid V2000 bond line");
 }
 
@@ -253,7 +253,7 @@ M  END
 
     let error = sdf::parse_str(&input, Default::default())
         .expect_err("a previous delimiter must not waive the final delimiter");
-    assert_eq!(error.record(), 2);
+    assert_eq!(error.record(), Some(2));
     assert!(error.message().contains("missing final"));
 
     let document = sdf::parse_str(
@@ -330,7 +330,7 @@ $$$$
         },
     )
     .expect_err("record count limit should reject the second record");
-    assert_eq!(record_count_error.record(), 2);
+    assert_eq!(record_count_error.record(), Some(2));
     assert!(record_count_error.message().contains("record count"));
 
     let record_size_error = sdf::parse_str(
@@ -341,7 +341,7 @@ $$$$
         },
     )
     .expect_err("record byte limit should apply while scanning");
-    assert_eq!(record_size_error.record(), 1);
+    assert_eq!(record_size_error.record(), Some(1));
     assert!(record_size_error.message().contains("record exceeds"));
 }
 
@@ -642,7 +642,7 @@ fn v2000_bond_stereo_requires_enough_source_context_to_canonicalize() {
             .expect_err("under-specified stereo must not publish a molecule");
         assert_eq!(error.kind(), DiagnosticKind::Chemistry);
         assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
-        assert!(error.message().contains("source-stereo canonicalization"));
+        assert!(chain_text(&error).contains("source-stereo canonicalization"));
     }
 }
 
@@ -676,7 +676,7 @@ fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
         } else {
             let error = read_molfile(&input)
                 .expect_err("wedge without a declared fourth carrier must fail");
-            assert!(error.to_string().contains("UnassembledTetrahedralBondMark"));
+            assert!(chain_text(&*error).contains("UnassembledTetrahedralBondMark"));
         }
     }
 }
@@ -771,7 +771,7 @@ fn molfile_and_sdf_parse_supported_syntax_before_chemistry_interpretation() {
     let error = document.records()[0]
         .interpret(Default::default())
         .expect_err("SDF delegates chemistry interpretation to Molfile");
-    assert_eq!(error.record(), 1);
+    assert_eq!(error.record(), Some(1));
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     assert_eq!(error.location(), Some(SourceLocation::at_line(5)));
     assert_eq!(error.message(), "unsupported element symbol `Xx`");
@@ -1104,7 +1104,7 @@ fn v2000_present_numeric_fields_must_be_numbers() {
             (error.kind(), error.location(), error.message()),
             (
                 DiagnosticKind::Syntax,
-                SourceLocation::at_line(line),
+                Some(SourceLocation::at_line(line)),
                 message
             )
         );

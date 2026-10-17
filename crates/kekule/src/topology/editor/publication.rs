@@ -1,4 +1,5 @@
 use super::*;
+use crate::DraftError;
 
 /// Internal row projection needed to publish a model's structure arrays.
 pub(crate) struct TopologyPublication {
@@ -90,13 +91,10 @@ impl TopologyEditor {
         self.into_publication().map(|r| r.topology)
     }
     /// Publishes a topology, returning the draft with any publication error.
-    pub fn try_finish(self) -> Result<Arc<Topology>, TopologyFinishError> {
+    pub fn try_finish(self) -> Result<Arc<Topology>, DraftError<Self, TopologyEditError>> {
         match self.publish() {
             Ok(result) => Ok(result.topology),
-            Err(error) => Err(TopologyFinishError {
-                error: Box::new(error),
-                editor: Box::new(self),
-            }),
+            Err(error) => Err(DraftError::new(error, self)),
         }
     }
     pub(crate) fn publish(&self) -> Result<TopologyPublication, TopologyEditError> {

@@ -1,4 +1,5 @@
-use crate::diagnostics::DiagnosticKind;
+use super::types::structure_error;
+use crate::diagnostics::{DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::geometry::Point3;
@@ -7,9 +8,7 @@ use crate::molecule::Element;
 use super::super::element_symbol::parse_structure_element_symbol;
 use super::super::mmcif_category::MmcifCategory;
 use super::super::{MmcifBlock, MmcifValue};
-use super::types::{
-    EntityKind, StructureInterpretError, StructureInterpretIssue, StructureInterpretationReport,
-};
+use super::types::{EntityKind, StructureInterpretIssue, StructureInterpretationReport};
 
 /// A tag whose column is resolved once per table, for reads in row loops.
 #[derive(Debug, Clone, Copy)]
@@ -117,11 +116,9 @@ impl AtomSiteFields {
     }
 }
 
-pub(super) fn coordinate_model_ids(
-    block: &MmcifBlock,
-) -> Result<Vec<String>, StructureInterpretError> {
+pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, FormatError> {
     let table = block.category("_atom_site")?.ok_or_else(|| {
-        StructureInterpretError::new(
+        structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "data block has no atom-site category",
@@ -142,7 +139,7 @@ pub(super) fn coordinate_model_ids(
 
 pub(super) fn read_entity_types(
     block: &MmcifBlock,
-) -> Result<BTreeMap<String, EntityKind>, StructureInterpretError> {
+) -> Result<BTreeMap<String, EntityKind>, FormatError> {
     let mut entities = BTreeMap::new();
     if let Some(table) = block.category("_entity")? {
         let table = &table;
@@ -167,7 +164,7 @@ pub(super) fn read_entity_types(
 
 pub(super) fn read_asym_entities(
     block: &MmcifBlock,
-) -> Result<BTreeMap<String, String>, StructureInterpretError> {
+) -> Result<BTreeMap<String, String>, FormatError> {
     let mut instances = BTreeMap::new();
     if let Some(table) = block.category("_struct_asym")? {
         let table = &table;
@@ -243,7 +240,7 @@ pub(super) fn read_atom_rows(
     asym_entities: &BTreeMap<String, String>,
     strict_entity_metadata: bool,
     report: &mut StructureInterpretationReport,
-) -> Result<Vec<AtomRow>, StructureInterpretError> {
+) -> Result<Vec<AtomRow>, FormatError> {
     let mut rows = Vec::with_capacity(table.row_count());
     let mut occurrences = BTreeMap::<(String, String, String), OccurrenceState>::new();
     let mut inferred = BTreeSet::new();
@@ -252,7 +249,7 @@ pub(super) fn read_atom_rows(
         let type_symbol = required(table, row, fields.type_symbol)?;
         let type_value = fields.type_symbol.lookup(table, row).expect("required");
         let (element, isotope) = parse_structure_element_symbol(type_symbol).ok_or_else(|| {
-            StructureInterpretError::new(
+            structure_error(
                 DiagnosticKind::InvalidValue,
                 Some(type_value.line()),
                 format!("unknown atom-site element `{type_symbol}`"),
@@ -437,7 +434,7 @@ pub(super) fn required<'a>(
     table: &'a MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
-) -> Result<&'a str, StructureInterpretError> {
+) -> Result<&'a str, FormatError> {
     let tag = key.tag();
     let value = key.lookup(table, row).ok_or_else(|| {
         row_error(
@@ -448,7 +445,7 @@ pub(super) fn required<'a>(
         )
     })?;
     value.optional_text().ok_or_else(|| {
-        StructureInterpretError::new(
+        structure_error(
             DiagnosticKind::InvalidValue,
             Some(value.line()),
             format!("missing required {tag}"),
@@ -469,7 +466,7 @@ fn optional_f64(
     table: &MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
-) -> Result<Option<f64>, StructureInterpretError> {
+) -> Result<Option<f64>, FormatError> {
     let tag = key.tag();
     optional(table, row, key)
         .map(|value| {
@@ -498,7 +495,7 @@ pub(super) fn optional_i32(
     table: &MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
-) -> Result<Option<i32>, StructureInterpretError> {
+) -> Result<Option<i32>, FormatError> {
     let tag = key.tag();
     optional(table, row, key)
         .map(|value| {
@@ -518,7 +515,7 @@ fn optional_i8(
     table: &MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
-) -> Result<Option<i8>, StructureInterpretError> {
+) -> Result<Option<i8>, FormatError> {
     let tag = key.tag();
     optional(table, row, key)
         .map(|value| {
@@ -538,7 +535,7 @@ fn optional_point(
     table: &MmcifCategory<'_>,
     row: usize,
     [x, y, z]: [Field; 3],
-) -> Result<Option<Point3>, StructureInterpretError> {
+) -> Result<Option<Point3>, FormatError> {
     let x = optional_f64(table, row, x)?;
     let y = optional_f64(table, row, y)?;
     let z = optional_f64(table, row, z)?;
@@ -559,6 +556,6 @@ pub(super) fn row_error(
     row: usize,
     kind: DiagnosticKind,
     message: impl Into<String>,
-) -> StructureInterpretError {
-    StructureInterpretError::new(kind, table.row_line(row), message)
+) -> FormatError {
+    structure_error(kind, table.row_line(row), message)
 }

@@ -1,3 +1,4 @@
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::ControlFlow;
@@ -15,17 +16,16 @@ const LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT: usize = 300;
 #[cfg(test)]
 mod fused_tests;
 
+/// Aromaticity perception could not assign aromatic atoms and bonds.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AromaticityError {
-    UnsupportedElement(AtomId),
+    /// Ring perception failed; see the source.
     RingPerception(RingPerceptionError),
     /// MDL requires an identified SSSR-like ring set, not fallback cycles.
     IncompatibleRingBasis,
     /// Aromaticity work was exhausted; no partial assignment is installed.
-    ResourceLimit {
-        limit: usize,
-    },
+    LimitExceeded(LimitExceeded),
 }
 
 /// Independent bounds for ring perception and aromaticity assignment.
@@ -47,12 +47,15 @@ impl Default for AromaticityOptions {
     fn default() -> Self {
         Self {
             ring_options: RingPerceptionOptions::default(),
-            max_total_work: 5_000_000,
+            max_total_work: Self::DEFAULT_MAX_TOTAL_WORK,
         }
     }
 }
 
 impl AromaticityOptions {
+    /// The [`Default`] bound of [`Self::max_total_work`].
+    pub const DEFAULT_MAX_TOTAL_WORK: usize = 5_000_000;
+
     /// The bounds the default perception profile uses for a graph with
     /// `atoms` atom and `bonds` bond storage slots: the [`Default`] bounds,
     /// raised to grow linearly with the graph, as
@@ -91,10 +94,14 @@ impl AromaticityWork {
     }
 
     fn charge(&mut self, amount: usize) -> std::result::Result<(), AromaticityError> {
-        self.remaining = self
-            .remaining
-            .checked_sub(amount)
-            .ok_or(AromaticityError::ResourceLimit { limit: self.limit })?;
+        self.remaining =
+            self.remaining
+                .checked_sub(amount)
+                .ok_or(AromaticityError::LimitExceeded(LimitExceeded::new(
+                    Resource::Work,
+                    self.limit,
+                    (self.limit - self.remaining).saturating_add(amount),
+                )))?;
         Ok(())
     }
 }
@@ -113,11 +120,8 @@ impl fmt::Display for AromaticityError {
             Self::IncompatibleRingBasis => {
                 f.write_str("MDL aromaticity requires compatible SSSR ring perception")
             }
-            Self::UnsupportedElement(id) => {
-                write!(f, "unsupported aromaticity element at atom {id}")
-            }
-            Self::RingPerception(error) => write!(f, "{error}"),
-            Self::ResourceLimit { limit } => write!(f, "aromaticity work limit exceeded ({limit})"),
+            Self::RingPerception(_) => f.write_str("ring perception failed"),
+            Self::LimitExceeded(limit) => write!(f, "aromaticity {limit}"),
         }
     }
 }

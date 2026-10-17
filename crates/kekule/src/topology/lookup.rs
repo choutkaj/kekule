@@ -1,53 +1,21 @@
 //! Exact, scope-aware hierarchy lookup without identifier fallback.
 
-use std::fmt;
-
-use super::{AtomSiteView, ChainView, HierarchyIdKind, ResidueView, Topology};
-
-/// A request for one hierarchy match found zero or multiple matches.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum HierarchyLookupError {
-    NotFound {
-        kind: HierarchyIdKind,
-        query: String,
-    },
-    Ambiguous {
-        kind: HierarchyIdKind,
-        query: String,
-        matches: usize,
-    },
-}
-
-impl fmt::Display for HierarchyLookupError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotFound { kind, query } => write!(f, "no {kind} matches {query}"),
-            Self::Ambiguous {
-                kind,
-                query,
-                matches,
-            } => write!(f, "{matches} {kind} matches for {query}"),
-        }
-    }
-}
-
-impl std::error::Error for HierarchyLookupError {}
+use super::{AtomSiteView, ChainView, HierarchyError, HierarchyIdKind, ResidueView, Topology};
 
 fn unique<T>(
     mut items: impl Iterator<Item = T>,
     kind: HierarchyIdKind,
     query: impl FnOnce() -> String,
-) -> Result<T, HierarchyLookupError> {
+) -> Result<T, HierarchyError> {
     let Some(first) = items.next() else {
-        return Err(HierarchyLookupError::NotFound {
+        return Err(HierarchyError::NotFound {
             kind,
             query: query(),
         });
     };
     let remaining = items.count();
     if remaining > 0 {
-        return Err(HierarchyLookupError::Ambiguous {
+        return Err(HierarchyError::Ambiguous {
             kind,
             query: query(),
             matches: remaining + 1,
@@ -65,7 +33,7 @@ impl Topology {
         chain: &str,
         sequence: &str,
         insertion: Option<&str>,
-    ) -> Result<ResidueView<'_>, HierarchyLookupError> {
+    ) -> Result<ResidueView<'_>, HierarchyError> {
         unique(
             self.residues().filter(|residue| {
                 residue.chain().author_id() == Some(chain)
@@ -78,7 +46,7 @@ impl Topology {
     }
 
     /// Finds exactly one chain by its label identifier.
-    pub fn chain_by_label(&self, label: &str) -> Result<ChainView<'_>, HierarchyLookupError> {
+    pub fn chain_by_label(&self, label: &str) -> Result<ChainView<'_>, HierarchyError> {
         unique(
             self.chains().filter(|chain| chain.label_id() == label),
             HierarchyIdKind::Chain,
@@ -87,7 +55,7 @@ impl Topology {
     }
 
     /// Finds exactly one chain by its author identifier, without label fallback.
-    pub fn chain_by_author(&self, author: &str) -> Result<ChainView<'_>, HierarchyLookupError> {
+    pub fn chain_by_author(&self, author: &str) -> Result<ChainView<'_>, HierarchyError> {
         unique(
             self.chains()
                 .filter(|chain| chain.author_id() == Some(author)),
@@ -99,7 +67,7 @@ impl Topology {
 
 impl<'a> ChainView<'a> {
     /// Finds exactly one residue with this label sequence number in this chain.
-    pub fn residue_by_label(self, sequence: i32) -> Result<ResidueView<'a>, HierarchyLookupError> {
+    pub fn residue_by_label(self, sequence: i32) -> Result<ResidueView<'a>, HierarchyError> {
         unique(
             self.residues()
                 .filter(|residue| residue.label_seq_id() == Some(sequence)),
@@ -114,7 +82,7 @@ impl<'a> ChainView<'a> {
         self,
         sequence: &str,
         insertion: Option<&str>,
-    ) -> Result<ResidueView<'a>, HierarchyLookupError> {
+    ) -> Result<ResidueView<'a>, HierarchyError> {
         unique(
             self.residues().filter(|residue| {
                 residue.author_seq_id() == Some(sequence) && residue.insertion_code() == insertion
@@ -132,7 +100,7 @@ impl<'a> ChainView<'a> {
 
 impl<'a> ResidueView<'a> {
     /// Finds exactly one site by its label atom name in this residue.
-    pub fn atom_site_by_label(self, name: &str) -> Result<AtomSiteView<'a>, HierarchyLookupError> {
+    pub fn atom_site_by_label(self, name: &str) -> Result<AtomSiteView<'a>, HierarchyError> {
         unique(
             self.atom_sites()
                 .filter(|site| site.metadata().label_atom_id.as_deref() == Some(name)),
@@ -142,7 +110,7 @@ impl<'a> ResidueView<'a> {
     }
 
     /// Finds exactly one site by its author atom name, without label fallback.
-    pub fn atom_site_by_author(self, name: &str) -> Result<AtomSiteView<'a>, HierarchyLookupError> {
+    pub fn atom_site_by_author(self, name: &str) -> Result<AtomSiteView<'a>, HierarchyError> {
         unique(
             self.atom_sites()
                 .filter(|site| site.metadata().auth_atom_id.as_deref() == Some(name)),

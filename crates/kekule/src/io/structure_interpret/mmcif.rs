@@ -1,7 +1,8 @@
 //! Reads an mmCIF data block into the source-neutral interpretation input.
 use std::collections::BTreeMap;
 
-use crate::diagnostics::DiagnosticKind;
+use super::types::structure_error;
+use crate::diagnostics::{DiagnosticKind, FormatError, FormatErrorDetail};
 use crate::geometry::PeriodicCell;
 use crate::molecule::BondOrder;
 
@@ -18,33 +19,35 @@ use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, LabelConnectionSelector, PartnerSpec,
 };
-use super::ensemble::{interpret_conformations, interpret_ensemble};
+use super::ensemble::{
+    empty_model_selection, interpret_conformations, interpret_ensemble, no_coordinate_models,
+};
 use super::types::{
-    CellOmissionReason, ConnectionResolutionReason, ConnectivityOptions,
-    StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,
-    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    ensemble_error, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason,
+    ConnectivityOptions, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 use super::{interpret_source, AltLocResidue, StructureSource};
 
 pub(crate) fn interpret_mmcif(
     document: &MmcifDocument,
     options: StructureInterpretOptions,
-) -> Result<StructureInterpretation, StructureInterpretError> {
+) -> Result<StructureInterpretation, FormatError> {
     let blocks = document
         .blocks()
         .iter()
         .filter(|block| block.has_category("_atom_site"))
         .collect::<Vec<_>>();
     if blocks.is_empty() {
-        return Err(StructureInterpretError::new(
+        return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "document has no atom-site category",
         ));
     }
     if blocks.len() > 1 {
-        return Err(StructureInterpretError::new(
+        return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "document has atom-site data in more than one data block",
@@ -56,7 +59,7 @@ pub(crate) fn interpret_mmcif(
 pub(crate) fn interpret_mmcif_block(
     block: &MmcifBlock,
     options: StructureInterpretOptions,
-) -> Result<StructureInterpretation, StructureInterpretError> {
+) -> Result<StructureInterpretation, FormatError> {
     let source = mmcif_source(block, options.strict_entity_metadata, &options.connectivity)?;
     interpret_source(source, &options)
 }
@@ -66,7 +69,7 @@ pub(crate) fn interpret_mmcif_block(
 pub(crate) fn interpret_mmcif_ensemble(
     document: &MmcifDocument,
     options: StructureEnsembleInterpretOptions,
-) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+) -> Result<StructureEnsembleInterpretation, FormatError> {
     interpret_mmcif_ensemble_block(atom_site_block(document)?, options)
 }
 
@@ -75,18 +78,14 @@ pub(crate) fn interpret_mmcif_ensemble(
 pub(crate) fn interpret_mmcif_ensemble_block(
     block: &MmcifBlock,
     options: StructureEnsembleInterpretOptions,
-) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+) -> Result<StructureEnsembleInterpretation, FormatError> {
     if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
-        return Err(StructureEnsembleInterpretError::EmptyModelSelection);
+        return Err(empty_model_selection());
     }
     if !block.has_category("_atom_site") {
-        return Err(StructureEnsembleInterpretError::NoCoordinateModels);
+        return Err(no_coordinate_models());
     }
-    let available =
-        coordinate_model_ids(block).map_err(|error| StructureEnsembleInterpretError::Model {
-            model_id: "<model inventory>".to_owned(),
-            error,
-        })?;
+    let available = coordinate_model_ids(block)?;
     interpret_ensemble(available, options, |options| {
         mmcif_source(block, options.strict_entity_metadata, &options.connectivity)
     })
@@ -97,14 +96,14 @@ pub(crate) fn interpret_mmcif_ensemble_block(
 pub(crate) fn interpret_mmcif_conformations(
     document: &MmcifDocument,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+) -> Result<StructureEnsembleInterpretation, FormatError> {
     interpret_mmcif_conformations_block(atom_site_block(document)?, selections)
 }
 
 pub(crate) fn interpret_mmcif_conformations_block(
     block: &MmcifBlock,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+) -> Result<StructureEnsembleInterpretation, FormatError> {
     interpret_conformations(selections, |options| {
         interpret_mmcif_block(block, options.clone())
     })
@@ -112,11 +111,11 @@ pub(crate) fn interpret_mmcif_conformations_block(
 
 pub(crate) fn alternate_location_inventory(
     block: &MmcifBlock,
-) -> Result<Vec<AltLocResidue>, StructureInterpretError> {
+) -> Result<Vec<AltLocResidue>, FormatError> {
     let entities = read_entity_types(block)?;
     let asym = read_asym_entities(block)?;
     let table = block.category("_atom_site")?.ok_or_else(|| {
-        StructureInterpretError::new(
+        structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "block has no atom-site category",
@@ -133,18 +132,18 @@ pub(crate) fn alternate_location_inventory(
     inventory(&rows)
 }
 
-fn atom_site_block(
-    document: &MmcifDocument,
-) -> Result<&MmcifBlock, StructureEnsembleInterpretError> {
+fn atom_site_block(document: &MmcifDocument) -> Result<&MmcifBlock, FormatError> {
     let mut blocks = document
         .blocks()
         .iter()
         .filter(|block| block.has_category("_atom_site"));
-    let block = blocks
-        .next()
-        .ok_or(StructureEnsembleInterpretError::NoCoordinateModels)?;
+    let block = blocks.next().ok_or_else(no_coordinate_models)?;
     if blocks.next().is_some() {
-        return Err(StructureEnsembleInterpretError::MultipleAtomSiteBlocks);
+        return Err(ensemble_error(
+            DiagnosticKind::Inconsistent,
+            "mmCIF document has atom-site data in more than one data block",
+            FormatErrorDetail::MultipleAtomSiteBlocks,
+        ));
     }
     Ok(block)
 }
@@ -153,18 +152,18 @@ fn mmcif_source(
     block: &MmcifBlock,
     strict_entity_metadata: bool,
     connectivity: &ConnectivityOptions,
-) -> Result<StructureSource, StructureInterpretError> {
+) -> Result<StructureSource, FormatError> {
     let entities = read_entity_types(block)?;
     let asym_entities = read_asym_entities(block)?;
     let atom_table = block.category("_atom_site")?.ok_or_else(|| {
-        StructureInterpretError::new(
+        structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "block has no atom-site category",
         )
     })?;
     if atom_table.row_count() == 0 {
-        return Err(StructureInterpretError::new(
+        return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "atom-site category contains no rows",
@@ -197,7 +196,7 @@ fn mmcif_source(
 fn read_cell(
     block: &MmcifBlock,
     issues: &mut Vec<StructureInterpretIssue>,
-) -> Result<Option<PeriodicCell>, StructureInterpretError> {
+) -> Result<Option<PeriodicCell>, FormatError> {
     let Some(table) = block.category("_cell")? else {
         return Ok(None);
     };
@@ -266,18 +265,16 @@ fn read_cell(
             issues.push(StructureInterpretIssue::CellOmitted { reason, location });
             Ok(None)
         }
-        Err(error) => Err(row_error(
-            &table,
-            0,
-            DiagnosticKind::InvalidValue,
-            format!("invalid `_cell`: {error}"),
-        )),
+        Err(error) => Err(
+            row_error(&table, 0, DiagnosticKind::InvalidValue, "invalid `_cell`")
+                .with_source(error),
+        ),
     }
 }
 
 pub(super) fn polymer_asym_order(
     block: &MmcifBlock,
-) -> Result<BTreeMap<String, usize>, StructureInterpretError> {
+) -> Result<BTreeMap<String, usize>, FormatError> {
     let mut order = BTreeMap::new();
     let Some(table) = block.category("_pdbx_poly_seq_scheme")? else {
         return Ok(order);
@@ -290,7 +287,7 @@ pub(super) fn polymer_asym_order(
     Ok(order)
 }
 
-fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, StructureInterpretError> {
+fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, FormatError> {
     let Some(table) = block.category("_struct_conn")? else {
         return Ok(Vec::new());
     };
@@ -327,10 +324,7 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, Structu
     Ok(records)
 }
 
-fn connection_bond_order(
-    table: &MmcifCategory<'_>,
-    row: usize,
-) -> Result<BondOrder, StructureInterpretError> {
+fn connection_bond_order(table: &MmcifCategory<'_>, row: usize) -> Result<BondOrder, FormatError> {
     let Some(order) = optional(table, row, "_struct_conn.pdbx_value_order") else {
         return Ok(BondOrder::Single);
     };
@@ -361,7 +355,7 @@ fn connection_partner(
     table: &MmcifCategory<'_>,
     row: usize,
     partner: u8,
-) -> Result<PartnerSpec, StructureInterpretError> {
+) -> Result<PartnerSpec, FormatError> {
     let symmetry_tag = format!("_struct_conn.ptnr{partner}_symmetry");
     if let Some(symmetry) = optional(table, row, &symmetry_tag) {
         if symmetry != "1_555" {
@@ -379,7 +373,7 @@ fn connection_partner(
         (Some(left), Some(right)) if left != right => (
             Some(left.to_owned()),
             Some(ConnectionResolutionReason::ConflictingSelectorValues {
-                selector: "label alternate-location aliases",
+                selector: ConflictingSelector::LabelAlternateLocationAliases,
             }),
         ),
         (Some(value), _) | (_, Some(value)) => (Some(value.to_owned()), None),
@@ -416,7 +410,7 @@ fn connection_partner(
     ) {
         if label != author {
             conflict = Some(ConnectionResolutionReason::ConflictingSelectorValues {
-                selector: "label and author alternate locations",
+                selector: ConflictingSelector::LabelAndAuthorAlternateLocations,
             });
         }
     }

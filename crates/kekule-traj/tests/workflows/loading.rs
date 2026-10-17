@@ -10,7 +10,7 @@ use kekule_traj::io::xyz::XyzReadOptions;
 use kekule_traj::io::{
     read_trajectory, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
-use kekule_traj::{TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError};
+use kekule_traj::{TrajectoryFormat, TrajectoryIoErrorKind};
 
 use crate::support;
 use support::{codec_kind, linear_carbon_topology, topology};
@@ -150,10 +150,8 @@ fn loading_reports_a_late_decode_error_instead_of_returning_a_prefix() {
     let input = TemporaryInput::new(b"1\ncomplete\nC 1 2 3\n1\ntruncated\n");
     let error =
         read_trajectory(&input.0, linear_carbon_topology(1), Default::default()).unwrap_err();
-    let TrajectoryIoError::Codec(context) = error else {
-        panic!("expected a codec error, got {error}");
-    };
-    assert_eq!(context.kind(), TrajectoryCodecErrorKind::TruncatedRecord);
+    let context = error;
+    assert_eq!(context.kind(), TrajectoryIoErrorKind::TruncatedRecord);
     assert_eq!(context.frame(), Some(1));
     assert_eq!(context.format(), Some(TrajectoryFormat::Xyz));
     assert_eq!(context.source_label(), Some(input.0.to_str().unwrap()));
@@ -170,7 +168,7 @@ fn loading_preserves_resource_limits_and_topology_validation() {
     let error = read_trajectory(&path, water, options).unwrap_err();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     // Equal counts do not bypass XYZ's element-order check.
     assert!(read_trajectory(&path, linear_carbon_topology(3), Default::default()).is_err());
@@ -191,14 +189,14 @@ fn loading_preserves_codec_policy_and_open_errors() {
     .unwrap_err();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+        Some(TrajectoryIoErrorKind::InconsistentMetadata)
     );
 
     let input = TemporaryInput::new(b"");
     fs::remove_file(&input.0).unwrap();
     assert!(matches!(
         read_trajectory(&input.0, topology, Default::default()),
-        Err(TrajectoryIoError::Io(_))
+        Err(error) if error.kind() == TrajectoryIoErrorKind::Io
     ));
 }
 
@@ -212,6 +210,6 @@ fn loading_rejects_an_empty_file_even_with_an_explicit_format() {
     let error = read_trajectory(&input.0, topology, options).unwrap_err();
     assert_eq!(
         codec_kind(&error),
-        Some(TrajectoryCodecErrorKind::InvalidHeader)
+        Some(TrajectoryIoErrorKind::InvalidHeader)
     );
 }

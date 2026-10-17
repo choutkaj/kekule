@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::diagnostics::{LimitExceeded, Resource};
+
 use super::QueryGraph;
 use crate::molecule::{BondOrder, Element};
 
@@ -227,20 +229,12 @@ impl<P> QueryExpression<P> {
 
     fn from_root(root: ExpressionNode<P>) -> Result<Self, QueryExpressionError> {
         let (node_count, depth) = measure(&root);
-        if node_count > MAX_QUERY_EXPRESSION_NODES {
-            return Err(QueryExpressionError::ResourceLimit {
-                resource: "expression nodes",
-                observed: node_count,
-                limit: MAX_QUERY_EXPRESSION_NODES,
-            });
-        }
-        if depth > MAX_QUERY_EXPRESSION_DEPTH {
-            return Err(QueryExpressionError::ResourceLimit {
-                resource: "expression depth",
-                observed: depth,
-                limit: MAX_QUERY_EXPRESSION_DEPTH,
-            });
-        }
+        LimitExceeded::check(
+            Resource::ExpressionNodes,
+            MAX_QUERY_EXPRESSION_NODES,
+            node_count,
+        )?;
+        LimitExceeded::check(Resource::ExpressionDepth, MAX_QUERY_EXPRESSION_DEPTH, depth)?;
         Ok(Self {
             root,
             node_count,
@@ -342,27 +336,25 @@ pub enum BondPredicate {
 pub type AtomExpression = QueryExpression<AtomPredicate>;
 pub type BondExpression = QueryExpression<BondPredicate>;
 
+/// Why a query expression cannot be constructed.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryExpressionError {
-    ResourceLimit {
-        resource: &'static str,
-        observed: usize,
-        limit: usize,
-    },
+    /// The expression exceeds [`MAX_QUERY_EXPRESSION_NODES`] or
+    /// [`MAX_QUERY_EXPRESSION_DEPTH`].
+    LimitExceeded(LimitExceeded),
+}
+
+impl From<LimitExceeded> for QueryExpressionError {
+    fn from(limit: LimitExceeded) -> Self {
+        Self::LimitExceeded(limit)
+    }
 }
 
 impl fmt::Display for QueryExpressionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ResourceLimit {
-                resource,
-                observed,
-                limit,
-            } => write!(
-                f,
-                "query {resource} limit exceeded: observed {observed}, limit {limit}"
-            ),
+            Self::LimitExceeded(limit) => write!(f, "query expression {limit}"),
         }
     }
 }

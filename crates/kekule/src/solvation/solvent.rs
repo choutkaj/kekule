@@ -3,7 +3,8 @@ mod neighbors;
 mod packing;
 pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxError, PeriodicBoxOptions};
 
-use crate::structure::{Model, ModelBuildError, PositionError};
+use crate::diagnostics::{LimitExceeded, Resource};
+use crate::structure::{DenseArrayError, Model, ModelBuildError};
 use crate::{
     geometry::{PeriodicGeometryError, Point3},
     properties::PropertyKey,
@@ -103,6 +104,11 @@ pub struct SolventOptions {
     /// Bound on tiled candidate waters examined, before cropping and clash removal.
     pub max_candidates: usize,
 }
+impl SolventOptions {
+    /// The [`Default`] bound of [`Self::max_candidates`].
+    pub const DEFAULT_MAX_CANDIDATES: usize = 10_000_000;
+}
+
 impl Default for SolventOptions {
     fn default() -> Self {
         Self {
@@ -115,7 +121,7 @@ impl Default for SolventOptions {
             ion_separation: Quantity::new(0.5, NANOMETER),
             solute_radii: None,
             net_charge: None,
-            max_candidates: 10_000_000,
+            max_candidates: Self::DEFAULT_MAX_CANDIDATES,
         }
     }
 }
@@ -139,25 +145,49 @@ pub struct SolvationReport {
     pub cleared_model_properties: Vec<PropertyKey>,
 }
 
+/// Solvation options or the model prevent filling the cell with solvent.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum SolvationError {
+    /// The model has no periodic cell.
     MissingCell,
+    /// The model's cell is not periodic along all three axes.
     NotFullyPeriodic,
+    /// The supplied solute radii belong to a different topology layout.
     RadiusTopologyMismatch,
+    /// The number of radii differs from the topology's atom count.
     RadiusCountMismatch,
+    /// A radius is negative or not finite.
     InvalidRadius,
+    /// No reference van der Waals radius is known for this atom's element.
     MissingElementRadius(InstanceAtomId),
+    /// The ionic strength is negative or not finite.
     InvalidIonicStrength,
+    /// The ion separation is not finite and positive.
     InvalidIonSeparation,
-    CandidateLimit,
+    /// Tiling would examine more candidate waters than
+    /// [`SolventOptions::max_candidates`] allows.
+    LimitExceeded(LimitExceeded),
+    /// An ion count or allocation does not fit in `usize`.
     CapacityOverflow,
+    /// The cell is too small for a water, or every water site clashes.
     NoSolventSpace,
-    InsufficientIonSites { requested: usize, placed: usize },
+    /// Too few water sites satisfy the ion separation for the requested ions.
+    InsufficientIonSites {
+        /// The number of ions to place.
+        requested: usize,
+        /// The number of eligible sites found.
+        placed: usize,
+    },
+    /// A quantity could not be converted to the required unit; see the source.
     Unit(UnitError),
+    /// A periodic-geometry calculation failed; see the source.
     Geometry(PeriodicGeometryError),
-    Position(PositionError),
+    /// Position data was rejected; see the source.
+    Position(DenseArrayError),
+    /// Building the solvated model failed; see the source.
     Build(ModelBuildError),
+    /// Adding solvent molecules, chains or residues failed; see the source.
     Hierarchy(HierarchyError),
 }
 impl fmt::Display for SolvationError {
@@ -179,20 +209,18 @@ impl fmt::Display for SolvationError {
                 f.write_str("ionic strength must be finite and nonnegative")
             }
             Self::InvalidIonSeparation => f.write_str("ion separation must be finite and positive"),
-            Self::CandidateLimit => {
-                f.write_str("solvent tiling exceeds the configured candidate limit")
-            }
+            Self::LimitExceeded(limit) => write!(f, "solvent tiling {limit}"),
             Self::CapacityOverflow => f.write_str("solvation count or allocation exceeds capacity"),
             Self::NoSolventSpace => f.write_str("no nonclashing water sites fit in this cell"),
             Self::InsufficientIonSites { requested, placed } => write!(
                 f,
                 "cannot place {requested} ions; found {placed} eligible sites"
             ),
-            Self::Unit(e) => e.fmt(f),
-            Self::Geometry(e) => e.fmt(f),
-            Self::Position(e) => e.fmt(f),
-            Self::Build(e) => e.fmt(f),
-            Self::Hierarchy(e) => e.fmt(f),
+            Self::Unit(_) => f.write_str("invalid quantity unit"),
+            Self::Geometry(_) => f.write_str("periodic geometry failed"),
+            Self::Position(_) => f.write_str("invalid positions"),
+            Self::Build(_) => f.write_str("cannot build the solvated model"),
+            Self::Hierarchy(_) => f.write_str("cannot build the solvent hierarchy"),
         }
     }
 }
@@ -219,7 +247,7 @@ macro_rules! from_error {
 }
 from_error!(UnitError, Unit);
 from_error!(PeriodicGeometryError, Geometry);
-from_error!(PositionError, Position);
+from_error!(DenseArrayError, Position);
 from_error!(ModelBuildError, Build);
 from_error!(HierarchyError, Hierarchy);
 

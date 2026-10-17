@@ -100,7 +100,7 @@ pub(super) fn build_component_definitions(
             local_stereo.insert(source_element, (component, target_element));
         }
     }
-    for (_, group) in source_molecule.stereo_groups() {
+    for (group_id, group) in source_molecule.stereo_groups() {
         let mut members_by_component = BTreeMap::<_, Vec<_>>::new();
         for member in &group.members {
             if let Some(&(component, target_element)) = local_stereo.get(member) {
@@ -113,8 +113,11 @@ pub(super) fn build_component_definitions(
         if members_by_component.len() > 1 && group.kind != crate::stereo::StereoGroupKind::Absolute
         {
             return Err(MoleculeError::InvalidStereoReference(
-                "splitting this molecule would separate a correlated stereo group across components",
-            ).into());
+                crate::stereo::StereoValidationIssue::SplitCorrelatedStereoGroup {
+                    group: group_id,
+                },
+            )
+            .into());
         }
         for (component, members) in members_by_component {
             components[component].editor.add_stereo_group(StereoGroup {

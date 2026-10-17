@@ -124,6 +124,7 @@ mod chemistry;
 pub mod clustering;
 pub mod descriptors;
 pub mod diagnostics;
+mod draft;
 pub mod dssp;
 pub mod geometry;
 mod io;
@@ -134,6 +135,8 @@ pub mod solvation;
 pub mod structure;
 pub mod topology;
 pub mod units;
+
+pub use draft::DraftError;
 
 /// Syntax-independent substructure matching algorithms.
 ///
@@ -156,19 +159,20 @@ pub mod substructure {
 /// parse-and-interpret path. Dot-separated components remain separate molecules
 /// and perception is never run implicitly.
 pub mod smiles {
-    use std::fmt;
     use std::sync::Arc;
 
-    use crate::io::MoleculeWriteError;
+    use crate::diagnostics::{DiagnosticKind, Format, FormatError};
     pub use crate::io::{
-        SmilesAtomMapping, SmilesBondMapping, SmilesComponentCountError,
-        SmilesComponentInterpretation, SmilesCxField, SmilesCxFieldKind, SmilesCxStereoGroupKind,
-        SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesInterpretError,
-        SmilesInterpretOptions, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
-        SmilesParseOptions, SmilesRecords,
+        SmilesAtomMapping, SmilesBondMapping, SmilesComponentInterpretation, SmilesCxField,
+        SmilesCxFieldKind, SmilesCxStereoGroupKind, SmilesDocument, SmilesDocumentToken,
+        SmilesDocumentTokenKind, SmilesInterpretOptions, SmilesInterpretation,
+        SmilesInterpretationReport, SmilesParseOptions, SmilesRecords, MAX_CANONICAL_GRAPH_SLOTS,
+        MAX_CANONICAL_INPUT_COMPLEXITY, MAX_CANONICAL_PENDING_LABELS,
+        MAX_CANONICAL_REFINEMENT_WORK, MAX_CANONICAL_SEARCH_STATES, MAX_DIRECTIONAL_COMBINATIONS,
+        MAX_DIRECTIONAL_VISITS,
     };
     use crate::molecule::Molecule;
-    use crate::topology::{Topology, TopologyBuildError};
+    use crate::topology::Topology;
 
     /// SMILES output policy of [`write()`].
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -211,7 +215,7 @@ pub mod smiles {
         /// Canonical output of a molecule with a ring requires installed
         /// aromaticity perception, such as [`Molecule::perceive`] installs, and
         /// fails with
-        /// [`MoleculeWriteErrorKind::MissingPerception`](crate::molfile::MoleculeWriteErrorKind::MissingPerception)
+        /// [`DiagnosticKind::MissingPerception`]
         /// without it.
         /// Perceived
         /// aromatic atoms and bonds are written aromatic, so every Kekule form
@@ -227,7 +231,7 @@ pub mod smiles {
         /// atom/bond slots and a complexity score `2*n*(n+2*m)` of at most
         /// 50,000,000 for `n` live atoms and `m` live bonds. Exceeding a bound
         /// returns
-        /// [`MoleculeWriteErrorKind::ResourceLimit`](crate::molfile::MoleculeWriteErrorKind::ResourceLimit)
+        /// [`DiagnosticKind::Limit`]
         /// without a partial result.
         Canonical,
     }
@@ -257,60 +261,13 @@ pub mod smiles {
         }
     }
 
-    /// Error produced by the concise SMILES parse-and-interpret convenience.
-    #[derive(Debug, Clone, PartialEq)]
-    #[non_exhaustive]
-    pub enum SmilesReadError {
-        Parse(SmilesParseError),
-        Interpret(SmilesInterpretError),
-        Topology(Box<TopologyBuildError>),
-    }
-
-    impl fmt::Display for SmilesReadError {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self {
-                Self::Parse(error) => write!(formatter, "{error}"),
-                Self::Interpret(error) => write!(formatter, "{error}"),
-                Self::Topology(error) => write!(formatter, "{error}"),
-            }
-        }
-    }
-
-    impl std::error::Error for SmilesReadError {
-        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-            match self {
-                Self::Parse(error) => Some(error),
-                Self::Interpret(error) => Some(error),
-                Self::Topology(error) => Some(error.as_ref()),
-            }
-        }
-    }
-
-    impl From<SmilesParseError> for SmilesReadError {
-        fn from(error: SmilesParseError) -> Self {
-            Self::Parse(error)
-        }
-    }
-
-    impl From<SmilesInterpretError> for SmilesReadError {
-        fn from(error: SmilesInterpretError) -> Self {
-            Self::Interpret(error)
-        }
-    }
-
-    impl From<TopologyBuildError> for SmilesReadError {
-        fn from(error: TopologyBuildError) -> Self {
-            Self::Topology(Box::new(error))
-        }
-    }
-
     /// Parses one record: base SMILES, an optional CX extension with its fields
     /// typed, and an optional name. `options` bounds the input and the parsed
     /// graph.
     pub fn parse_str(
         input: &str,
         options: SmilesParseOptions,
-    ) -> Result<SmilesDocument, SmilesParseError> {
+    ) -> Result<SmilesDocument, FormatError> {
         crate::io::parse_smiles_document(input, options)
     }
 
@@ -318,11 +275,11 @@ pub mod smiles {
     /// same text. Use [`records`] for line-delimited multi-record input.
     ///
     /// The configured byte limit is enforced while reading; non-UTF-8 input
-    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    /// fails with [`DiagnosticKind::Io`].
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: SmilesParseOptions,
-    ) -> Result<SmilesDocument, SmilesParseError> {
+    ) -> Result<SmilesDocument, FormatError> {
         crate::io::parse_smiles_reader(reader, options)
     }
 
@@ -341,7 +298,7 @@ pub mod smiles {
     /// This is the concise form of [`parse_str`] followed by
     /// [`SmilesDocument::interpret`], both with default options.
     /// Dot-delimited components remain separate, and no perception is run implicitly.
-    pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, SmilesReadError> {
+    pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, FormatError> {
         let document = parse_str(input, SmilesParseOptions::default())?;
         Ok(document
             .interpret(SmilesInterpretOptions::default())?
@@ -353,13 +310,24 @@ pub mod smiles {
     ///
     /// Every connected component becomes one explicit molecule
     /// occurrence in source order. No hierarchy or perception is fabricated.
-    pub fn to_topology(input: &str) -> Result<Arc<Topology>, SmilesReadError> {
+    /// A topology that cannot be assembled fails with
+    /// [`DiagnosticKind::Chemistry`] and the
+    /// [`TopologyBuildError`](crate::topology::TopologyBuildError) as its
+    /// source.
+    pub fn to_topology(input: &str) -> Result<Arc<Topology>, FormatError> {
         let document = parse_str(input, SmilesParseOptions::default())?;
-        Ok(Arc::new(
-            document
-                .interpret(SmilesInterpretOptions::default())?
-                .into_topology()?,
-        ))
+        let topology = document
+            .interpret(SmilesInterpretOptions::default())?
+            .into_topology()
+            .map_err(|error| {
+                FormatError::interpret(
+                    Format::Smiles,
+                    DiagnosticKind::Chemistry,
+                    "cannot assemble topology",
+                )
+                .with_source(error)
+            })?;
+        Ok(Arc::new(topology))
     }
 
     /// What one SMILES record describes: one connected molecule, or every
@@ -420,7 +388,7 @@ pub mod smiles {
     pub fn write<'a>(
         source: impl Into<SmilesSource<'a>>,
         options: SmilesWriteOptions,
-    ) -> Result<String, MoleculeWriteError> {
+    ) -> Result<String, FormatError> {
         match source.into() {
             SmilesSource::Molecule(molecule) => match options.mode {
                 SmilesWriteMode::Ordinary => crate::io::write_smiles(molecule),
@@ -439,12 +407,12 @@ pub mod smiles {
         writer: &mut impl std::io::Write,
         source: impl Into<SmilesSource<'a>>,
         options: SmilesWriteOptions,
-    ) -> Result<(), MoleculeWriteError> {
+    ) -> Result<(), FormatError> {
         let mut line = write(source, options)?;
         line.push('\n');
         writer
             .write_all(line.as_bytes())
-            .map_err(MoleculeWriteError::io)
+            .map_err(|error| FormatError::sink(Format::Smiles, error))
     }
 }
 
@@ -456,9 +424,7 @@ pub mod smiles {
 /// implicitly. The dialect, including its explicit exclusions, is documented on
 /// [`query`].
 pub mod smarts {
-    pub use crate::query::smarts::{
-        parse_str, SmartsParseError, SmartsParseErrorKind, SmartsParseOptions,
-    };
+    pub use crate::query::smarts::{parse_str, SmartsParseOptions};
 }
 
 /// Molfile parsing, interpretation, and V2000/V3000 writing.
@@ -468,14 +434,14 @@ pub mod smarts {
 /// [`crate::structure::Model`]. Writers reject chemistry that the selected
 /// Molfile version cannot represent.
 pub mod molfile {
+    use crate::diagnostics::FormatError;
     pub use crate::io::{
-        MoleculeWriteError, MoleculeWriteErrorKind, MolfileAtom, MolfileAtomMapping,
-        MolfileAtomParity, MolfileBond, MolfileBondMapping, MolfileBondOrder, MolfileBondStereo,
-        MolfileDocument, MolfileHeader, MolfileInterpretError, MolfileInterpretOptions,
-        MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
-        MolfileParseError, MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup,
-        MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
-        MolfileWriteOptions, MolfileWriteVersion,
+        MolfileAtom, MolfileAtomMapping, MolfileAtomParity, MolfileBond, MolfileBondMapping,
+        MolfileBondOrder, MolfileBondStereo, MolfileDocument, MolfileHeader,
+        MolfileInterpretOptions, MolfileInterpretation, MolfileInterpretationReport,
+        MolfileInterpretationWarning, MolfileParseOptions, MolfileRadical, MolfileSource,
+        MolfileStereoGroup, MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent,
+        MolfileVersion, MolfileWriteOptions, MolfileWriteVersion,
     };
 
     /// Parses one V2000 or V3000 Molfile into its typed connection table
@@ -484,7 +450,7 @@ pub mod molfile {
     pub fn parse_str(
         input: &str,
         options: MolfileParseOptions,
-    ) -> Result<MolfileDocument, MolfileParseError> {
+    ) -> Result<MolfileDocument, FormatError> {
         crate::io::parse_molfile_document(input, options)
     }
 
@@ -495,7 +461,7 @@ pub mod molfile {
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: MolfileParseOptions,
-    ) -> Result<MolfileDocument, MolfileParseError> {
+    ) -> Result<MolfileDocument, FormatError> {
         crate::io::parse_molfile_reader(reader, options)
     }
 
@@ -509,7 +475,7 @@ pub mod molfile {
     pub fn write<'a>(
         source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
-    ) -> Result<String, MoleculeWriteError> {
+    ) -> Result<String, FormatError> {
         crate::io::write_molfile(source, options)
     }
 
@@ -520,7 +486,7 @@ pub mod molfile {
         writer: &mut impl std::io::Write,
         source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
-    ) -> Result<(), MoleculeWriteError> {
+    ) -> Result<(), FormatError> {
         crate::io::write_molfile_to(writer, source, options)
     }
 }
@@ -533,10 +499,10 @@ pub mod molfile {
 /// explicitly with [`sdf::SdfRecord::interpret`]; sibling records are not
 /// merged into one model or reinterpreted as an ensemble.
 pub mod sdf {
+    use crate::diagnostics::FormatError;
     pub use crate::io::{
-        SdfDataField, SdfDocument, SdfEnsembleError, SdfInterpretError, SdfParseError,
-        SdfParseOptions, SdfRecord, SdfRecordInterpretation, SdfRecordInterpretationReport,
-        SdfRecordSource, SdfRecords, SdfWriteError, SdfWriteOptions,
+        SdfDataField, SdfDocument, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
+        SdfRecordInterpretationReport, SdfRecordSource, SdfRecords, SdfWriteOptions,
         SDF_ENERGY_FIELD as ENERGY_FIELD, SDF_WEIGHT_FIELD as WEIGHT_FIELD,
     };
 
@@ -548,7 +514,7 @@ pub mod sdf {
     /// ensemble implicitly.
     pub fn ensemble<'a>(
         records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
-    ) -> Result<crate::structure::Ensemble, SdfEnsembleError> {
+    ) -> Result<crate::structure::Ensemble, FormatError> {
         crate::io::sdf_ensemble(records)
     }
 
@@ -564,7 +530,7 @@ pub mod sdf {
 
     /// Parses every record of an SDF input, failing on the first malformed
     /// record. Use [`records`] to skip past malformed records instead.
-    pub fn parse_str(input: &str, options: SdfParseOptions) -> Result<SdfDocument, SdfParseError> {
+    pub fn parse_str(input: &str, options: SdfParseOptions) -> Result<SdfDocument, FormatError> {
         crate::io::parse_sdf_document(input, options)
     }
 
@@ -575,7 +541,7 @@ pub mod sdf {
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: SdfParseOptions,
-    ) -> Result<SdfDocument, SdfParseError> {
+    ) -> Result<SdfDocument, FormatError> {
         crate::io::parse_sdf_reader(reader, options)
     }
 
@@ -587,7 +553,7 @@ pub mod sdf {
     pub fn write<'a, R: Into<SdfRecordSource<'a>>>(
         records: impl IntoIterator<Item = R>,
         options: SdfWriteOptions,
-    ) -> Result<String, SdfWriteError> {
+    ) -> Result<String, FormatError> {
         crate::io::write_sdf(records, options)
     }
 
@@ -598,7 +564,7 @@ pub mod sdf {
         writer: &mut impl std::io::Write,
         records: impl IntoIterator<Item = R>,
         options: SdfWriteOptions,
-    ) -> Result<(), SdfWriteError> {
+    ) -> Result<(), FormatError> {
         crate::io::write_sdf_to(writer, records, options)
     }
 }
@@ -618,8 +584,8 @@ pub mod sdf {
 /// define them.
 pub mod components {
     pub use crate::io::{
-        Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentError,
-        ComponentLibrary, ComponentLinking,
+        Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary,
+        ComponentLinking,
     };
 }
 
@@ -633,11 +599,11 @@ pub mod macromolecular {
     pub use crate::io::{
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
         AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
-        ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
-        ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretError,
+        ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
+        InstanceProvenance, ModelSelection, SourceResidueId, SourceResiduePosition,
         StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
-        StructureInterpretError, StructureInterpretIssue, StructureInterpretOptions,
-        StructureInterpretation, StructureInterpretationReport,
+        StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+        StructureInterpretationReport,
     };
 }
 
@@ -655,10 +621,11 @@ pub mod macromolecular {
 /// order, and writers emit `_atom_site` rows in dense atom order, so coordinate
 /// files in the same order address the same atoms after a round trip.
 pub mod mmcif {
+    use crate::diagnostics::FormatError;
     pub use crate::io::{
-        MmcifBlock, MmcifBlockSource, MmcifDocument, MmcifEntityClassifications, MmcifEntry,
-        MmcifItem, MmcifLoopTable, MmcifParseError, MmcifParseOptions, MmcifValue, MmcifWriteError,
-        MmcifWriteOptions,
+        MmcifAtomField, MmcifBlock, MmcifBlockSource, MmcifCellReason, MmcifDocument,
+        MmcifEntityClassifications, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifMemberField,
+        MmcifParseOptions, MmcifValue, MmcifWriteIssue, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular
@@ -666,7 +633,7 @@ pub mod mmcif {
     pub fn parse_str(
         input: &str,
         options: MmcifParseOptions,
-    ) -> Result<MmcifDocument, MmcifParseError> {
+    ) -> Result<MmcifDocument, FormatError> {
         crate::io::parse_mmcif_str(input, options)
     }
 
@@ -678,7 +645,7 @@ pub mod mmcif {
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: MmcifParseOptions,
-    ) -> Result<MmcifDocument, MmcifParseError> {
+    ) -> Result<MmcifDocument, FormatError> {
         crate::io::parse_mmcif_reader(reader, options)
     }
 
@@ -693,7 +660,7 @@ pub mod mmcif {
     /// use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
     /// # fn example(model: &kekule::structure::Model, other: &kekule::structure::Model,
     /// #     interpretation: &kekule::macromolecular::StructureInterpretation)
-    /// #     -> Result<(), mmcif::MmcifWriteError> {
+    /// #     -> Result<(), kekule::diagnostics::FormatError> {
     /// let one = mmcif::write([model], MmcifWriteOptions::default())?;
     /// let two = mmcif::write([model, other], MmcifWriteOptions::default())?;
     /// let faithful = mmcif::write([interpretation], MmcifWriteOptions::default())?;
@@ -704,7 +671,7 @@ pub mod mmcif {
     pub fn write<'a, B: Into<MmcifBlockSource<'a>>>(
         blocks: impl IntoIterator<Item = B>,
         options: MmcifWriteOptions,
-    ) -> Result<String, MmcifWriteError> {
+    ) -> Result<String, FormatError> {
         crate::io::write_mmcif(blocks, options)
     }
 
@@ -716,7 +683,7 @@ pub mod mmcif {
         writer: &mut impl std::io::Write,
         blocks: impl IntoIterator<Item = B>,
         options: MmcifWriteOptions,
-    ) -> Result<(), MmcifWriteError> {
+    ) -> Result<(), FormatError> {
         crate::io::write_mmcif_to(writer, blocks, options)
     }
 }
@@ -745,14 +712,15 @@ pub mod mmcif {
 ///
 /// Interpretation keeps coordinate records in source order as dense atom order.
 pub mod pdb {
+    use crate::diagnostics::FormatError;
     pub use crate::io::{
-        PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel, PdbParseError,
+        PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel,
         PdbParseOptions, PdbPartner, PdbRecord, PdbSsbond, PdbTer,
     };
 
     /// Parses a PDB entry into typed records without assigning molecular
     /// meaning. `options` sets the resource limits.
-    pub fn parse_str(input: &str, options: PdbParseOptions) -> Result<PdbDocument, PdbParseError> {
+    pub fn parse_str(input: &str, options: PdbParseOptions) -> Result<PdbDocument, FormatError> {
         crate::io::parse_pdb_str(input, options)
     }
 
@@ -764,7 +732,7 @@ pub mod pdb {
     pub fn parse_reader(
         reader: impl std::io::Read,
         options: PdbParseOptions,
-    ) -> Result<PdbDocument, PdbParseError> {
+    ) -> Result<PdbDocument, FormatError> {
         crate::io::parse_pdb_reader(reader, options)
     }
 }
@@ -791,8 +759,8 @@ pub mod perception {
     }
     pub use crate::chemistry::PerceptionError;
     pub use crate::molecule::perception::{
-        Perception, PerceptionBuildError, PerceptionBuilder, PerceptionComponent,
-        PerceptionInstallError,
+        DelocalizationIssue, Perception, PerceptionBuildError, PerceptionBuilder,
+        PerceptionComponent, PerceptionInstallError,
     };
 
     /// Expert valence perception for canonical represented chemistry.

@@ -82,16 +82,25 @@ pub enum ConnectivityCheck {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum MeasurementError {
+    /// A measurement atom is not in the view's topology.
     InvalidAtomId(InstanceAtomId),
     /// Consecutive measurement atoms lack a direct bond, in argument order.
     MissingBond {
+        /// The earlier atom of the pair.
         a: InstanceAtomId,
+        /// The later atom of the pair.
         b: InstanceAtomId,
     },
+    /// A selection does not match the view's topology; see the source.
     Selection(SelectionError),
+    /// The cutoff could not be converted to the canonical length unit; see
+    /// the source.
     Unit(UnitError),
+    /// The cutoff is negative or not finite.
     InvalidCutoff,
+    /// A direction needed by the measurement has zero length.
     DegenerateGeometry,
+    /// An intermediate length is not finite.
     NumericalFailure,
 }
 
@@ -102,8 +111,8 @@ impl fmt::Display for MeasurementError {
             Self::MissingBond { a, b } => {
                 write!(f, "measurement requires a direct bond between {a} and {b}")
             }
-            Self::Selection(error) => write!(f, "measurement selection: {error}"),
-            Self::Unit(error) => write!(f, "measurement unit: {error}"),
+            Self::Selection(_) => f.write_str("invalid measurement selection"),
+            Self::Unit(_) => f.write_str("invalid measurement unit"),
             Self::InvalidCutoff => f.write_str("distance cutoff must be finite and nonnegative"),
             Self::DegenerateGeometry => {
                 f.write_str("angle or dihedral is undefined for this geometry")

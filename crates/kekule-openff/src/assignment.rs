@@ -46,14 +46,18 @@ impl<'a> From<&'a NaglModel> for ChargeMethod<'a> {
 /// exceeded search bound a resource limit, and anything else an underlying
 /// matching failure.
 pub(crate) fn matching(error: TaggedMatchError) -> Error {
-    let kind = match error {
-        TaggedMatchError::Match(SubstructureMatchError::ResourceLimit { .. }) => {
-            ErrorKind::ResourceLimit
+    let (kind, limit) = match error {
+        TaggedMatchError::Match(SubstructureMatchError::LimitExceeded { limit, .. }) => {
+            (ErrorKind::ResourceLimit, Some(limit))
         }
-        TaggedMatchError::Match(_) => ErrorKind::Chemistry,
-        _ => ErrorKind::ForceField,
+        TaggedMatchError::Match(_) => (ErrorKind::Chemistry, None),
+        _ => (ErrorKind::ForceField, None),
     };
-    Error::wrap(kind, error)
+    let error = Error::wrap(kind, error);
+    match limit {
+        Some(limit) => error.with_limit(limit),
+        None => error,
+    }
 }
 
 /// Search bounds for one SMIRKS rule on a molecule of `atoms` atoms.
@@ -521,7 +525,35 @@ fn complete<const N: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kekule::diagnostics::{LimitExceeded, Resource};
+    use kekule::substructure::SubstructureMatchWork;
     use kekule::{smiles, topology::TopologyBuilder};
+
+    #[test]
+    fn exceeded_match_limits_are_resource_limits_with_the_wrapped_cause() {
+        let limit = LimitExceeded::new(Resource::SearchStates, 10, 11);
+        let error = matching(TaggedMatchError::Match(
+            SubstructureMatchError::LimitExceeded {
+                limit,
+                work: SubstructureMatchWork::default(),
+            },
+        ));
+        assert_eq!(error.kind(), ErrorKind::ResourceLimit);
+        assert_eq!(error.limit_exceeded(), Some(limit));
+        assert_eq!(error.to_string(), "a bounded search exceeded its limit");
+        assert_eq!(
+            std::error::Error::source(&error).unwrap().to_string(),
+            "tagged substructure search failed"
+        );
+
+        let error = matching(TaggedMatchError::ZeroTag);
+        assert_eq!(error.kind(), ErrorKind::ForceField);
+        assert_eq!(error.limit_exceeded(), None);
+        assert_eq!(
+            std::error::Error::source(&error).unwrap().to_string(),
+            "tagged projection requires positive tags"
+        );
+    }
 
     #[test]
     fn fourteen_scaling_uses_shortest_bond_distance() {

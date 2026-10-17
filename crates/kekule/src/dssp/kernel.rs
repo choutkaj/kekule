@@ -417,12 +417,9 @@ fn extract_chain(
         let hierarchy = chain_residue.hierarchy;
         let chain = chain_residue.chain;
         let residue_id = chain_residue.residue;
-        let residue =
-            hierarchy
-                .residue(residue_id)
-                .map_err(|error| DsspError::InvalidHierarchy {
-                    message: error.to_string(),
-                })?;
+        let residue = hierarchy
+            .residue(residue_id)
+            .expect("chain residues come from the model hierarchy");
         let key = residue_id;
         if !matches!(
             residue.class(),
@@ -437,12 +434,9 @@ fn extract_chain(
         let mut seen_backbone = 0;
 
         for &site_id in &residue.atom_sites {
-            let site =
-                hierarchy
-                    .atom_site(site_id)
-                    .map_err(|error| DsspError::InvalidHierarchy {
-                        message: error.to_string(),
-                    })?;
+            let site = hierarchy
+                .atom_site(site_id)
+                .expect("residue atom sites come from the model hierarchy");
             let atom_name = site
                 .metadata
                 .label_atom_id
@@ -456,27 +450,23 @@ fn extract_chain(
             if backbone[backbone_index].is_some() {
                 return Err(DsspError::AmbiguousBackboneAtom {
                     residue: key,
-                    atom_name: BACKBONE_NAMES[backbone_index],
+                    atom: DsspBackboneAtom::ALL[backbone_index],
                 });
             }
             let atom = site.atom;
             backbone[backbone_index] = Some(Vec3::from(
                 model
                     .position(atom)
-                    .map_err(|error| DsspError::InvalidHierarchy {
-                        message: error.to_string(),
-                    })?
+                    .expect("hierarchy atoms have model positions")
                     .value_in(ANGSTROM)
-                    .map_err(|error| DsspError::InvalidHierarchy {
-                        message: error.to_string(),
-                    })?,
+                    .expect("positions are lengths"),
             ));
         }
 
-        let missing = BACKBONE_NAMES
-            .iter()
+        let missing = DsspBackboneAtom::ALL
+            .into_iter()
             .enumerate()
-            .filter_map(|(index, name)| backbone[index].is_none().then_some(*name))
+            .filter_map(|(index, atom)| backbone[index].is_none().then_some(atom))
             .collect::<Vec<_>>();
         if !missing.is_empty() {
             if seen_backbone == 0 && residue.class() != ResidueClass::AminoAcid {
@@ -492,10 +482,10 @@ fn extract_chain(
             continue;
         }
         if residues.len() >= limits.max_residues {
-            return Err(DsspError::ResourceLimitExceeded {
-                resource: DsspResource::Residues,
-                limit: limits.max_residues,
-            });
+            return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+                Resource::Residues,
+                limits.max_residues,
+            )));
         }
 
         let n = backbone[0].expect("checked complete backbone");
@@ -506,10 +496,7 @@ fn extract_chain(
             .into_iter()
             .any(|point| !point.is_dssp_representable())
         {
-            return Err(DsspError::CoordinateOutOfRange {
-                residue: key,
-                quantity: "backbone coordinate",
-            });
+            return Err(DsspError::CoordinateOutOfRange { residue: key });
         }
         let index = residues.len();
         let continuous = previous.is_some_and(|prior: usize| {
@@ -603,7 +590,6 @@ fn calculate_geometry(
             if hydrogen.is_none() {
                 return Err(DsspError::DegenerateBackboneGeometry {
                     residue: residues[index].key,
-                    quantity: "preceding carbonyl bond",
                 });
             }
             residues[index].h = hydrogen;
@@ -735,10 +721,10 @@ fn candidate_pairs(
                         if dssp_distance_squared(residues[prior].ca, residue.ca) <= maximum_squared
                         {
                             if pairs.len() >= max_candidate_pairs {
-                                return Err(DsspError::ResourceLimitExceeded {
-                                    resource: DsspResource::CandidatePairs,
-                                    limit: max_candidate_pairs,
-                                });
+                                return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+                                    Resource::CandidatePairs,
+                                    max_candidate_pairs,
+                                )));
                             }
                             pairs.push((prior, current));
                         }
@@ -793,7 +779,6 @@ fn calculate_hydrogen_bond(
     if distances.iter().any(|distance| !distance.is_finite()) {
         return Err(DsspError::NonFiniteGeometry {
             residue: residues[donor].key,
-            quantity: "hydrogen-bond energy",
         });
     }
     let mut energy = if distances
@@ -917,10 +902,10 @@ fn calculate_beta_sheets(
         }
         if !extended {
             if bridges.len() >= max_ladders {
-                return Err(DsspError::ResourceLimitExceeded {
-                    resource: DsspResource::Ladders,
-                    limit: max_ladders,
-                });
+                return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+                    Resource::Ladders,
+                    max_ladders,
+                )));
             }
             bridges.push(Bridge {
                 bridge_type,
@@ -942,10 +927,11 @@ fn calculate_beta_sheets(
     });
     merge_bulges(residues, &mut bridges);
     if bridges.len() > max_ladders {
-        return Err(DsspError::ResourceLimitExceeded {
-            resource: DsspResource::Ladders,
-            limit: max_ladders,
-        });
+        return Err(DsspError::LimitExceeded(LimitExceeded::new(
+            Resource::Ladders,
+            max_ladders,
+            bridges.len(),
+        )));
     }
     counts.ladders = bridges.len();
     assign_sheets(&mut bridges);
@@ -1484,10 +1470,8 @@ mod tests {
 
         assert!(matches!(
             calculate_beta_sheets(&mut residues, &[(2, 5), (4, 7)], 1),
-            Err(DsspError::ResourceLimitExceeded {
-                resource: DsspResource::Ladders,
-                limit: 1,
-            })
+            Err(DsspError::LimitExceeded(limit))
+                if limit == LimitExceeded::first_beyond(Resource::Ladders, 1)
         ));
     }
 

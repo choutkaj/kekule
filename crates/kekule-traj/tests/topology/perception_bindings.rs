@@ -12,7 +12,7 @@ use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::analysis::RmsfAccumulator;
 use kekule_traj::io::{open_trajectory, write_trajectory};
-use kekule_traj::{FrameBuffer, TrajectoryIoError, TrajectoryReader};
+use kekule_traj::{FrameBuffer, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryReader};
 
 struct TemporaryPath(PathBuf);
 
@@ -77,6 +77,8 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
     assert!(independent.same_layout(&topology));
     assert_eq!(
         FrameBuffer::new(independent).copy_from(trajectory.get(0).unwrap()),
-        Err(TrajectoryIoError::TopologyMismatch)
+        Err(TrajectoryIoError::new(
+            TrajectoryIoErrorKind::TopologyMismatch
+        ))
     );
 }

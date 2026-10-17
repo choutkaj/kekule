@@ -183,8 +183,8 @@ fn interpretation_enforces_small_ring_double_bond_boundary() {
     let error = document
         .interpret(Default::default())
         .expect_err("excluded small-ring directional marks must reject interpretation");
-    assert_eq!(error.offset(), 2);
-    assert!(error.message().contains("UnpairedDirectionalBondMark"));
+    assert_eq!(byte_offset(&error), 2);
+    assert!(chain_text(&error).contains("UnpairedDirectionalBondMark"));
 
     let (cyclooctene, report) =
         read_smiles_with_report(r"C1/C=C\CCCCC1").expect("marked cyclooctene interprets");

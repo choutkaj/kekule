@@ -20,7 +20,7 @@ use std::fmt;
 use std::ops::ControlFlow;
 
 use kekule::geometry::{Point3, Vector3};
-use kekule::structure::{Model, ModelView, PositionError, Positions, StructureError};
+use kekule::structure::{DenseArrayError, Model, ModelView, Positions, StructureError};
 use kekule::units::{
     Quantity, UnitError, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
     KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
@@ -178,7 +178,7 @@ pub fn minimize_with_observer<P: Potential + ?Sized>(
         let max_gradient = max_atom_norm(&current.gradient);
         if !max_gradient.is_finite() {
             return Err(MinimizationError::NumericalFailure(
-                "maximum gradient norm is not representable",
+                NumericalFailure::MaxGradientNorm,
             ));
         }
         if max_gradient <= limits.gradient_tolerance {
@@ -196,14 +196,14 @@ pub fn minimize_with_observer<P: Potential + ?Sized>(
             slope = dot(&current.gradient, &direction);
             if !(slope.is_finite() && slope < 0.0) {
                 return Err(MinimizationError::NumericalFailure(
-                    "steepest-descent slope is not finite and negative",
+                    NumericalFailure::SteepestDescentSlope,
                 ));
             }
         }
         let alpha_max = limits.max_step / max_atom_norm(&direction);
         if !(alpha_max.is_finite() && alpha_max > 0.0) {
             return Err(MinimizationError::NumericalFailure(
-                "step length bound is not representable",
+                NumericalFailure::StepLengthBound,
             ));
         }
         // Without curvature information the direction has no natural scale, so
@@ -284,22 +284,18 @@ fn validate(options: &MinimizeOptions) -> Result<Limits, MinimizationError> {
     let max_step = options.max_step.value_in(CANONICAL_LENGTH_UNIT)?;
     if !(gradient_tolerance.is_finite() && gradient_tolerance > 0.0) {
         return Err(MinimizationError::InvalidOptions(
-            "gradient tolerance must be finite and positive",
+            MinimizeOption::GradientTolerance,
         ));
     }
     if !(max_step.is_finite() && max_step > 0.0) {
-        return Err(MinimizationError::InvalidOptions(
-            "maximum step must be finite and positive",
-        ));
+        return Err(MinimizationError::InvalidOptions(MinimizeOption::MaxStep));
     }
     if options.memory == 0 {
-        return Err(MinimizationError::InvalidOptions(
-            "L-BFGS memory must be at least one",
-        ));
+        return Err(MinimizationError::InvalidOptions(MinimizeOption::Memory));
     }
     if options.max_line_search_evaluations == 0 {
         return Err(MinimizationError::InvalidOptions(
-            "line searches need at least one evaluation",
+            MinimizeOption::MaxLineSearchEvaluations,
         ));
     }
     Ok(Limits {
@@ -545,19 +541,72 @@ fn axpy(y: &mut [f64], a: f64, x: &[f64]) {
     }
 }
 
+/// A [`MinimizeOptions`] field with an unusable value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum MinimizeOption {
+    /// [`MinimizeOptions::gradient_tolerance`] is not finite and positive.
+    GradientTolerance,
+    /// [`MinimizeOptions::max_step`] is not finite and positive.
+    MaxStep,
+    /// [`MinimizeOptions::memory`] is zero.
+    Memory,
+    /// [`MinimizeOptions::max_line_search_evaluations`] is zero.
+    MaxLineSearchEvaluations,
+}
+
+impl fmt::Display for MinimizeOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::GradientTolerance => "gradient tolerance must be finite and positive",
+            Self::MaxStep => "maximum step must be finite and positive",
+            Self::Memory => "L-BFGS memory must be at least one",
+            Self::MaxLineSearchEvaluations => "line searches need at least one evaluation",
+        })
+    }
+}
+
+/// The quantity that stopped being representable during a minimization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum NumericalFailure {
+    /// The maximum per-atom gradient norm is not finite.
+    MaxGradientNorm,
+    /// Even the steepest-descent slope is not finite and negative.
+    SteepestDescentSlope,
+    /// The step-length bound is not finite and positive.
+    StepLengthBound,
+}
+
+impl fmt::Display for NumericalFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::MaxGradientNorm => "maximum gradient norm is not representable",
+            Self::SteepestDescentSlope => "steepest-descent slope is not finite and negative",
+            Self::StepLengthBound => "step length bound is not representable",
+        })
+    }
+}
+
+/// A minimization that could not run or could not continue.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum MinimizationError {
-    InvalidOptions(&'static str),
+    /// An option has an unusable value.
+    InvalidOptions(MinimizeOption),
     /// Finite evaluations cannot produce a representable descent step.
-    NumericalFailure(&'static str),
+    NumericalFailure(NumericalFailure),
     /// The initial evaluation failed, or a trial failed for a reason other
     /// than singular geometry.
     Evaluation(EvaluationError),
     /// [`Minimization::to_model`] received a view of a different topology.
     IncompatibleTopology,
+    /// The minimized structure could not be built; see the source.
     Structure(StructureError),
-    Position(PositionError),
+    /// The positions could not be updated; see the source.
+    Position(DenseArrayError),
+    /// An option could not be converted to the canonical unit; see the
+    /// source.
     Unit(UnitError),
 }
 
@@ -568,15 +617,13 @@ impl fmt::Display for MinimizationError {
             Self::NumericalFailure(message) => {
                 write!(f, "minimization numerical failure: {message}")
             }
-            Self::Evaluation(error) => write!(f, "potential evaluation failed: {error}"),
+            Self::Evaluation(_) => f.write_str("potential evaluation failed"),
             Self::IncompatibleTopology => f.write_str(
                 "model view belongs to a different topology layout than the minimization",
             ),
-            Self::Structure(error) => {
-                write!(f, "cannot build the minimized structure: {error}")
-            }
-            Self::Position(error) => write!(f, "cannot update positions: {error}"),
-            Self::Unit(error) => write!(f, "invalid minimization quantity unit: {error}"),
+            Self::Structure(_) => f.write_str("cannot build the minimized structure"),
+            Self::Position(_) => f.write_str("cannot update positions"),
+            Self::Unit(_) => f.write_str("invalid minimization quantity unit"),
         }
     }
 }
@@ -607,8 +654,8 @@ impl From<StructureError> for MinimizationError {
     }
 }
 
-impl From<PositionError> for MinimizationError {
-    fn from(error: PositionError) -> Self {
+impl From<DenseArrayError> for MinimizationError {
+    fn from(error: DenseArrayError) -> Self {
         Self::Position(error)
     }
 }

@@ -293,17 +293,24 @@ impl Div for Unit {
     }
 }
 
+/// A unit could not be created, converted or composed.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnitError {
+    /// A unit scale is not finite and positive.
     InvalidScale(f64),
+    /// The units have different dimensions.
     IncompatibleUnits {
+        /// The unit converted from.
         from: Unit,
+        /// The unit converted to.
         to: Unit,
     },
     /// The conversion ratio overflowed or underflowed to zero.
     UnrepresentableConversion {
+        /// The unit converted from.
         from: Unit,
+        /// The unit converted to.
         to: Unit,
     },
     /// A composed dimension exponent does not fit in an `i32`.

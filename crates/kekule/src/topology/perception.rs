@@ -11,7 +11,9 @@ use super::{MoleculeDefinitionId, Topology};
 /// its installed perception remain unchanged on failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopologyPerceptionError {
+    /// The failed definition, in the source topology.
     pub definition: MoleculeDefinitionId,
+    /// The perception failure.
     pub source: PerceptionError,
 }
 

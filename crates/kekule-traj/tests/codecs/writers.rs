@@ -2,7 +2,7 @@
 //! nothing, and a write cut off partway refuses every further frame and the
 //! finish, so a corrupt stream is never extended or reported as complete.
 
-use std::io::{Cursor, ErrorKind, Seek, Write};
+use std::io::{Cursor, Seek, Write};
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -13,8 +13,8 @@ use kekule_traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions, TrrWriter};
 use kekule_traj::io::xtc::{XtcWriteOptions, XtcWriter};
 use kekule_traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule_traj::{
-    FrameBuffer, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryIoErrorContext, TrajectoryIoOperation, TrajectoryWriter,
+    FrameBuffer, TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
+    TrajectoryIoOperation, TrajectoryWriter,
 };
 
 use crate::support;
@@ -156,15 +156,16 @@ fn rejected_frame(
 ) -> (FrameBuffer, TrajectoryIoError) {
     let mut frame = valid_frame(format, topology, 1);
     let mut frame_state = frame.frame_mut();
-    let (kind, detail, frame_index) = match format {
+    let (kind, detail, frame_index, field) = match format {
         TrajectoryFormat::Xyz => {
             frame_state
                 .set_time(Some(Quantity::new(1.0, PICOSECOND)))
                 .unwrap();
             (
-                TrajectoryCodecErrorKind::UnsupportedField,
+                TrajectoryIoErrorKind::UnsupportedField,
                 "XYZ cannot preserve time",
                 Some(1),
+                Some(TrajectoryField::Time),
             )
         }
         TrajectoryFormat::Dcd => {
@@ -173,30 +174,33 @@ fn rejected_frame(
                 ANGSTROM,
             )));
             (
-                TrajectoryCodecErrorKind::UnsupportedVariant,
+                TrajectoryIoErrorKind::UnsupportedVariant,
                 "DCD cells require a along positive x, b in the xy plane with positive y, and c with positive z",
+                None,
                 None,
             )
         }
         TrajectoryFormat::Trr => {
             frame_state.set_time(None).unwrap();
             (
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 "TRR requires explicit frame time",
+                None,
                 None,
             )
         }
         TrajectoryFormat::Xtc => {
             frame_state.set_cell(None);
             (
-                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoErrorKind::InconsistentMetadata,
                 "XTC writer requires a periodic cell; XtcCellPolicy::ZeroMatrixAsAbsent writes a zero box instead",
+                None,
                 None,
             )
         }
         _ => unreachable!("every supported codec is listed"),
     };
-    let error = codec_error(
+    let mut error = codec_error(
         kind,
         TrajectoryIoOperation::WriteFrame,
         format,
@@ -204,6 +208,9 @@ fn rejected_frame(
         frame_index,
         detail,
     );
+    if let Some(field) = field {
+        error = error.with_field(field);
+    }
     (frame, error)
 }
 
@@ -212,7 +219,7 @@ fn partial_stream_error(
     operation: TrajectoryIoOperation,
 ) -> TrajectoryIoError {
     codec_error(
-        TrajectoryCodecErrorKind::InvalidFrame,
+        TrajectoryIoErrorKind::InvalidFrame,
         operation,
         format,
         &label(format),
@@ -229,7 +236,7 @@ fn every_codec_writer_refuses_to_finish_without_frames() {
         assert_eq!(
             writer.finish_stream().map(Cursor::into_inner),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::Finish,
                 format,
                 &label(format),
@@ -281,14 +288,12 @@ fn every_codec_writer_refuses_to_continue_after_a_write_cut_off_partway() {
         writer
             .write_frame(valid_frame(format, &topology, 0).frame_view())
             .unwrap();
-        let io_failure: TrajectoryIoError = TrajectoryIoErrorContext::new(
+        let io_failure = TrajectoryIoError::io(
             TrajectoryIoOperation::WriteFrame,
-            ErrorKind::Other,
-            ByteBudgetSink::INJECTED_FAILURE,
+            std::io::Error::other(ByteBudgetSink::INJECTED_FAILURE),
         )
         .with_format(format)
-        .with_source_label(label(format))
-        .into();
+        .with_source_label(label(format));
         assert_eq!(
             writer.write_frame(valid_frame(format, &topology, 1).frame_view()),
             Err(io_failure),

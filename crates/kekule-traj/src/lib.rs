@@ -92,7 +92,7 @@ pub mod io;
 pub mod periodic;
 
 pub use trajectory::{
-    FrameBuffer, FrameData, MemoryTrajectoryWriter, SeekableTrajectoryReader,
-    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryIoErrorContext, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameData, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryField,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
+    TrajectoryReader, TrajectoryWriter,
 };

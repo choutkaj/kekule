@@ -2,7 +2,8 @@
 use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::one_based_serial;
-use super::MmcifWriteError;
+use super::{fail, invalid_model, MmcifAtomField, MmcifMemberField, MmcifWriteIssue};
+use crate::diagnostics::FormatError;
 use crate::geometry::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::structure::ModelView;
@@ -53,7 +54,7 @@ pub(super) struct PreparedModel {
 pub(super) fn prepare_model(
     model: ModelView<'_>,
     plan: EntityPlan,
-) -> Result<PreparedModel, MmcifWriteError> {
+) -> Result<PreparedModel, FormatError> {
     let EntityPlan {
         entities,
         asyms,
@@ -122,44 +123,44 @@ pub(super) fn prepare_model(
 fn validate_graph_chemistry(
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     let molecule_definition = definition.molecule();
     if molecule_definition.stereo_elements().next().is_some()
         || molecule_definition.stereo_groups().next().is_some()
     {
-        return Err(MmcifWriteError::UnsupportedStereo(molecule.id()));
+        return Err(fail(MmcifWriteIssue::UnsupportedStereo(molecule.id())));
     }
     for (atom_id, atom) in molecule_definition.atoms() {
         let atom_id = molecule.qualify_atom(atom_id);
         if structure_element_symbol(atom.element, atom.isotope).is_none() {
-            return Err(MmcifWriteError::UnsupportedAtomField {
+            return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
                 atom: atom_id,
-                field: "isotope",
-            });
+                field: MmcifAtomField::Isotope,
+            }));
         }
         if atom.radical.is_some() {
-            return Err(MmcifWriteError::UnsupportedAtomField {
+            return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
                 atom: atom_id,
-                field: "radical",
-            });
+                field: MmcifAtomField::Radical,
+            }));
         }
         if atom.hydrogens != ImplicitHydrogens::default() {
-            return Err(MmcifWriteError::UnsupportedAtomField {
+            return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
                 atom: atom_id,
-                field: "hydrogens",
-            });
+                field: MmcifAtomField::Hydrogens,
+            }));
         }
         if atom.atom_map.is_some() {
-            return Err(MmcifWriteError::UnsupportedAtomField {
+            return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
                 atom: atom_id,
-                field: "atom_map",
-            });
+                field: MmcifAtomField::AtomMap,
+            }));
         }
         if !(-8..=8).contains(&atom.formal_charge) {
-            return Err(MmcifWriteError::FormalChargeOutOfRange {
+            return Err(fail(MmcifWriteIssue::FormalChargeOutOfRange {
                 atom: atom_id,
                 charge: atom.formal_charge,
-            });
+            }));
         }
     }
     Ok(())
@@ -172,31 +173,31 @@ fn collect_macro_rows(
     hierarchy: &Hierarchy,
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     rows: &mut Vec<AtomRow>,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let site = hierarchy
             .atom_site_for_atom(qualified)
-            .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
+            .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
         let residue = hierarchy
             .residue(site.residue)
-            .map_err(|error| invalid_hierarchy(error.to_string()))?;
+            .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
         let chain = hierarchy
             .chain(residue.chain)
-            .map_err(|error| invalid_hierarchy(error.to_string()))?;
+            .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
         let assignment = assignments
             .get(&qualified)
-            .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
+            .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
         if site
             .metadata
             .label_asym_id
             .as_deref()
             .is_some_and(|value| value != chain.label_id)
         {
-            return Err(MmcifWriteError::InconsistentAtomSite {
+            return Err(fail(MmcifWriteIssue::InconsistentAtomSite {
                 atom: qualified,
-                field: "label_asym_id",
-            });
+                field: MmcifAtomField::LabelAsymId,
+            }));
         }
         if site
             .metadata
@@ -204,12 +205,12 @@ fn collect_macro_rows(
             .as_deref()
             .is_some_and(|value| !value.eq_ignore_ascii_case(type_symbol(atom)))
         {
-            return Err(MmcifWriteError::InconsistentAtomSite {
+            return Err(fail(MmcifWriteIssue::InconsistentAtomSite {
                 atom: qualified,
-                field: "type_symbol",
-            });
+                field: MmcifAtomField::TypeSymbol,
+            }));
         }
-        let group_pdb = normalized_group_pdb(qualified, None, assignment.kind.default_group_pdb())?;
+        let group_pdb = assignment.kind.default_group_pdb().to_owned();
         let label_atom_id = site
             .metadata
             .label_atom_id
@@ -235,18 +236,18 @@ fn collect_macro_rows(
             insertion_code: residue.insertion_code.clone(),
             position: model
                 .position(qualified)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
                 .value_in(ANGSTROM)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
             occupancy: model
                 .occupancy(dense_index(model, qualified)?)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
             b_factor: model
                 .b_factor(dense_index(model, qualified)?)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: residue
                 .author_seq_id
@@ -271,12 +272,12 @@ fn collect_small_rows(
     definition: &MoleculeDefinition,
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     rows: &mut Vec<AtomRow>,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let assignment = assignments
             .get(&qualified)
-            .ok_or(MmcifWriteError::MissingAtomSite(qualified))?;
+            .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
         let component_id = if assignment.kind == AssignedEntityKind::Water {
             "HOH"
         } else {
@@ -292,7 +293,7 @@ fn collect_small_rows(
             residue: None,
             entity_id: assignment.entity_id.clone(),
             asym_id: assignment.asym_id.clone(),
-            group_pdb: normalized_group_pdb(qualified, None, assignment.kind.default_group_pdb())?,
+            group_pdb: assignment.kind.default_group_pdb().to_owned(),
             type_symbol: type_symbol(atom).to_owned(),
             label_atom_id: atom_name.clone(),
             label_alt_id: None,
@@ -301,18 +302,18 @@ fn collect_small_rows(
             insertion_code: None,
             position: model
                 .position(qualified)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
                 .value_in(ANGSTROM)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
             occupancy: model
                 .occupancy(dense_index(model, qualified)?)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
             b_factor: model
                 .b_factor(dense_index(model, qualified)?)
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
-                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: None,
             auth_comp_id: component_id.to_owned(),
@@ -321,24 +322,6 @@ fn collect_small_rows(
         });
     }
     Ok(())
-}
-
-fn normalized_group_pdb(
-    atom: InstanceAtomId,
-    value: Option<&str>,
-    default: &str,
-) -> Result<String, MmcifWriteError> {
-    let value = value.unwrap_or(default);
-    if value.eq_ignore_ascii_case("ATOM") {
-        Ok("ATOM".to_owned())
-    } else if value.eq_ignore_ascii_case("HETATM") {
-        Ok("HETATM".to_owned())
-    } else {
-        Err(MmcifWriteError::InvalidGroupPdb {
-            atom,
-            value: value.to_owned(),
-        })
-    }
 }
 
 /// The Chemical Component Dictionary names of water atoms: `O`, `H1`, `H2`.
@@ -364,17 +347,14 @@ fn generated_atom_name(symbol: &str, atom: AtomId) -> String {
     format!("{symbol}{}", one_based_serial(atom.raw()))
 }
 
-fn supported_bond_order(
-    bond: InstanceBondId,
-    order: BondOrder,
-) -> Result<BondOrder, MmcifWriteError> {
+fn supported_bond_order(bond: InstanceBondId, order: BondOrder) -> Result<BondOrder, FormatError> {
     match order {
         BondOrder::Single
         | BondOrder::Double
         | BondOrder::Triple
         | BondOrder::Quadruple
         | BondOrder::Dative => Ok(order),
-        BondOrder::Zero => Err(MmcifWriteError::UnsupportedBondOrder { bond, order }),
+        BondOrder::Zero => Err(fail(MmcifWriteIssue::UnsupportedBondOrder { bond, order })),
     }
 }
 
@@ -382,11 +362,13 @@ fn validate_connection_selector(
     atom: InstanceAtomId,
     rows: &[AtomRow],
     indexes: &BTreeMap<InstanceAtomId, usize>,
-) -> Result<(), MmcifWriteError> {
-    let row =
-        rows.get(*indexes.get(&atom).ok_or_else(|| {
-            MmcifWriteError::InvalidModel(format!("missing atom row for {atom}"))
-        })?)
+) -> Result<(), FormatError> {
+    let row = rows
+        .get(
+            *indexes
+                .get(&atom)
+                .ok_or_else(|| invalid_model(format!("missing atom row for {atom}")))?,
+        )
         .expect("atom row index is valid");
     let matches = rows
         .iter()
@@ -399,7 +381,7 @@ fn validate_connection_selector(
         })
         .count();
     if matches != 1 {
-        return Err(MmcifWriteError::AmbiguousConnectionSelector(atom));
+        return Err(fail(MmcifWriteIssue::AmbiguousConnectionSelector(atom)));
     }
     Ok(())
 }
@@ -459,7 +441,7 @@ fn number_unsequenced_polymers(
     }
 }
 
-fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), MmcifWriteError> {
+fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {
     let mut identities = BTreeSet::new();
     for row in rows {
         let residue = if let Some(sequence) = row.label_seq_id {
@@ -476,40 +458,38 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), MmcifWriteError> {
             format!("unsequenced:{:?}", row.residue)
         };
         if !identities.insert((row.asym_id.clone(), residue, row.label_atom_id.clone())) {
-            return Err(MmcifWriteError::DuplicateAtomIdentity(row.atom));
+            return Err(fail(MmcifWriteIssue::DuplicateAtomIdentity(row.atom)));
         }
     }
     Ok(())
 }
 
-fn invalid_hierarchy(message: impl Into<String>) -> MmcifWriteError {
-    MmcifWriteError::InvalidHierarchy {
-        message: message.into(),
-    }
+fn invalid_hierarchy(message: impl Into<String>) -> FormatError {
+    invalid_model(message)
 }
 
 pub(super) fn validate_ensemble_member(
     model: &PreparedModel,
     candidate: &PreparedModel,
     member: usize,
-) -> Result<(), MmcifWriteError> {
+) -> Result<(), FormatError> {
     if candidate.entities != model.entities {
-        return Err(MmcifWriteError::IncompatibleEnsembleMember {
+        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleMember {
             member,
-            field: "entity representation",
-        });
+            field: MmcifMemberField::Entities,
+        }));
     }
     if candidate.asyms != model.asyms {
-        return Err(MmcifWriteError::IncompatibleEnsembleMember {
+        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleMember {
             member,
-            field: "structural asymmetry representation",
-        });
+            field: MmcifMemberField::StructuralAsymmetry,
+        }));
     }
     if candidate.connections != model.connections {
-        return Err(MmcifWriteError::IncompatibleEnsembleMember {
+        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleMember {
             member,
-            field: "connectivity representation",
-        });
+            field: MmcifMemberField::Connectivity,
+        }));
     }
     if candidate.atoms.len() != model.atoms.len()
         || candidate
@@ -518,10 +498,10 @@ pub(super) fn validate_ensemble_member(
             .zip(&model.atoms)
             .any(|(left, right)| !same_static_atom_row(left, right))
     {
-        return Err(MmcifWriteError::IncompatibleEnsembleMember {
+        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleMember {
             member,
-            field: "atom-site representation",
-        });
+            field: MmcifMemberField::AtomSites,
+        }));
     }
     Ok(())
 }
@@ -548,11 +528,11 @@ fn same_static_atom_row(left: &AtomRow, right: &AtomRow) -> bool {
 fn dense_index(
     model: ModelView<'_>,
     atom: InstanceAtomId,
-) -> Result<crate::topology::TopologyAtomIndex, MmcifWriteError> {
+) -> Result<crate::topology::TopologyAtomIndex, FormatError> {
     model
         .topology()
         .atom_index(atom)
-        .ok_or_else(|| MmcifWriteError::InvalidModel(format!("invalid topology atom: {atom}")))
+        .ok_or_else(|| invalid_model(format!("invalid topology atom: {atom}")))
 }
 
 #[cfg(test)]

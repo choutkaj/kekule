@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use super::error_detail;
+use crate::diagnostics::{FormatError, FormatErrorDetail};
 use crate::macromolecular::*;
 use crate::mmcif::*;
 
@@ -38,7 +40,7 @@ const CROSSED: &str = "\
 fn selected(
     document: &MmcifDocument,
     policy: AltLocPolicy,
-) -> Result<StructureInterpretation, StructureInterpretError> {
+) -> Result<StructureInterpretation, FormatError> {
     document.interpret(StructureInterpretOptions {
         altloc_policy: policy,
         ..Default::default()
@@ -445,8 +447,8 @@ fn mmcif_altloc_ensemble_uses_source_models_and_stable_site_order() {
 fn mmcif_altloc_ensemble_rejects_changed_chemistry_and_keeps_single_plain_model() {
     let source = document("1 C CA GLY X 1 1 . A 0.9 0 0 0 1\n2 C CA ALA X 1 1 . B 0.1 5 0 0 1\n3 C CB ALA X 1 1 . B 0.1 6.5 0 0 1\n4 C CA GLY X 1 1 . A 0.1 0 0 0 2\n5 C CA ALA X 1 1 . B 0.9 5 0 0 2\n6 C CB ALA X 1 1 . B 0.9 6.5 0 0 2");
     assert!(matches!(
-        source.interpret_ensemble(Default::default()),
-        Err(StructureEnsembleInterpretError::InconsistentAtomSet { .. })
+        error_detail(source.interpret_ensemble(Default::default())),
+        Some(FormatErrorDetail::InconsistentAtomSet { .. })
     ));
     let plain = document("1 C C1 LIG X 1 1 . . 1 0 0 0 1");
     assert!(plain.blocks()[0].alternate_locations().unwrap().is_empty());
@@ -475,8 +477,8 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
             .replace("B 0.8 2.4 1.2 0 1", "B 0.8 11.2 0 0 1"),
     );
     assert!(matches!(
-        detached.interpret_conformations(&options),
-        Err(StructureEnsembleInterpretError::InconsistentTopology { .. })
+        error_detail(detached.interpret_conformations(&options)),
+        Some(FormatErrorDetail::InconsistentTopology { .. })
     ));
     assert!(result
         .ensemble()
@@ -503,16 +505,16 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
         .topology()
         .same_layout(result.ensemble().topology()));
     assert!(matches!(
-        source.interpret_conformations(&[]),
-        Err(StructureEnsembleInterpretError::EmptyConformationSelection)
+        error_detail(source.interpret_conformations(&[])),
+        Some(FormatErrorDetail::EmptyConformationSelection)
     ));
     let bad = [StructureInterpretOptions {
         altloc_policy: AltLocPolicy::SelectLabel("Z".into()),
         ..Default::default()
     }];
     assert!(matches!(
-        source.interpret_conformations(&bad),
-        Err(StructureEnsembleInterpretError::Conformation { selection: 0, .. })
+        error_detail(source.interpret_conformations(&bad)),
+        Some(FormatErrorDetail::Conformation { selection: 0, .. })
     ));
 }
 
@@ -524,8 +526,8 @@ fn mmcif_altloc_explicit_conformer_ensemble_rejects_microheterogeneity() {
         ..Default::default()
     });
     assert!(matches!(
-        source.interpret_conformations(&options),
-        Err(StructureEnsembleInterpretError::InconsistentAtomSet { .. })
+        error_detail(source.interpret_conformations(&options)),
+        Some(FormatErrorDetail::InconsistentAtomSet { .. })
     ));
 }
 

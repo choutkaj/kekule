@@ -1,3 +1,4 @@
+use crate::structure::DenseArrayError;
 use std::fmt;
 use std::sync::Arc;
 
@@ -222,10 +223,10 @@ impl Ensemble {
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(StructureError::AtomCountMismatch {
+                return Err(StructureError::Array(DenseArrayError::CountMismatch {
                     expected: self.topology.atom_count(),
                     actual: values.len(),
-                }
+                })
                 .into());
             }
         }
@@ -868,19 +869,25 @@ pub enum EnsembleError {
     /// A constructor received no models, or weights of an empty ensemble
     /// were normalized.
     EmptySource,
+    /// A member index is outside the ensemble.
     IndexOutOfRange {
+        /// The requested member index.
         index: usize,
+        /// The number of members.
         len: usize,
     },
     /// A model belongs to a different topology layout.
     TopologyMismatch,
     /// An ensemble-wide replacement has the wrong number of members.
     MemberCountMismatch {
+        /// The ensemble's member count.
         expected: usize,
+        /// The number of replacements supplied.
         actual: usize,
     },
     /// An energy-based operation found a member without an energy.
     MissingEnergy {
+        /// The index of the member without an energy.
         index: usize,
     },
     /// A temperature is not finite and positive.
@@ -889,9 +896,13 @@ pub enum EnsembleError {
     InvalidEnergyWindow,
     /// A weight fraction is not in `(0, 1]`.
     InvalidFraction,
+    /// A member's structural state is invalid; see the source.
     Structure(StructureError),
+    /// Projecting the topology onto a selection failed; see the source.
     Subset(TopologySubsetError),
+    /// Building the topology for the ensemble failed; see the source.
     TopologyBuild(TopologyBuildError),
+    /// A quantity could not be converted to the required unit; see the source.
     Unit(Box<UnitError>),
 }
 
@@ -919,10 +930,10 @@ impl fmt::Display for EnsembleError {
             Self::InvalidFraction => {
                 formatter.write_str("weight fraction must be greater than 0 and at most 1")
             }
-            Self::Structure(error) => write!(formatter, "invalid ensemble member: {error}"),
-            Self::Subset(error) => write!(formatter, "cannot subset ensemble: {error}"),
-            Self::TopologyBuild(error) => write!(formatter, "cannot build topology: {error}"),
-            Self::Unit(error) => write!(formatter, "invalid quantity unit: {error}"),
+            Self::Structure(_) => formatter.write_str("invalid ensemble member"),
+            Self::Subset(_) => formatter.write_str("cannot subset ensemble"),
+            Self::TopologyBuild(_) => formatter.write_str("cannot build topology"),
+            Self::Unit(_) => formatter.write_str("invalid quantity unit"),
         }
     }
 }

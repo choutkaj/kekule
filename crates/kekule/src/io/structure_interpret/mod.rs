@@ -12,7 +12,7 @@ mod types;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::diagnostics::DiagnosticKind;
+use crate::diagnostics::{DiagnosticKind, FormatError};
 use crate::geometry::PeriodicCell;
 use crate::structure::ModelBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
@@ -35,12 +35,13 @@ pub(crate) use mmcif::{
 pub(crate) use pdb::{
     interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
 };
+pub(in crate::io) use types::structure_error;
 pub use types::{
-    AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConnectionResolutionReason,
-    ConnectivityOptions, EntityKind, InstanceProvenance, ModelSelection,
-    StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretIssue,
-    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConflictingSelector,
+    ConnectionResolutionReason, ConnectivityOptions, EntityKind, InstanceProvenance,
+    ModelSelection, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a
@@ -65,14 +66,14 @@ struct StructureSource {
 fn interpret_source(
     source: StructureSource,
     options: &StructureInterpretOptions,
-) -> Result<StructureInterpretation, StructureInterpretError> {
+) -> Result<StructureInterpretation, FormatError> {
     let mut prepared = PreparedSource::new(source, &options.altloc_policy)?;
     let model_id = match &options.model_selection {
         ModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
             prepared.model_sizes[0].0.clone()
         }
         ModelSelection::RequireSingle => {
-            return Err(StructureInterpretError::new(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
@@ -105,10 +106,7 @@ struct PreparedSource {
 }
 
 impl PreparedSource {
-    fn new(
-        source: StructureSource,
-        altloc_policy: &AltLocPolicy,
-    ) -> Result<Self, StructureInterpretError> {
+    fn new(source: StructureSource, altloc_policy: &AltLocPolicy) -> Result<Self, FormatError> {
         let StructureSource {
             name,
             entity_definitions,
@@ -163,19 +161,16 @@ impl PreparedSource {
         })
     }
 
-    fn interpret_model(
-        &mut self,
-        model_id: &str,
-    ) -> Result<StructureInterpretation, StructureInterpretError> {
+    fn interpret_model(&mut self, model_id: &str) -> Result<StructureInterpretation, FormatError> {
         let rows = self.models.remove(model_id).ok_or_else(|| {
-            StructureInterpretError::new(
+            structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!("coordinate model `{model_id}` is unavailable"),
             )
         })?;
         if let Some(row) = rows.selected.iter().find(|row| row.point.is_none()) {
-            return Err(StructureInterpretError::new(
+            return Err(structure_error(
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
@@ -230,7 +225,7 @@ fn publish_model(
     catalog: &ConnectivityCatalog,
     cell: Option<PeriodicCell>,
     mut report: StructureInterpretationReport,
-) -> Result<StructureInterpretation, StructureInterpretError> {
+) -> Result<StructureInterpretation, FormatError> {
     let ModelRows {
         all: rows,
         selected,
@@ -294,10 +289,13 @@ fn publish_model(
         .conversion_factor_to(SQUARE_NANOMETER)
         .map_err(graph_error)?;
     for (atom, occupancy, b_factor) in qualified_atom_data {
-        let index = model
-            .topology()
-            .atom_index(atom)
-            .ok_or_else(|| graph_error(format_args!("invalid qualified mmCIF atom: {atom}")))?;
+        let index = model.topology().atom_index(atom).ok_or_else(|| {
+            structure_error(
+                DiagnosticKind::Chemistry,
+                None,
+                format!("invalid qualified mmCIF atom: {atom}"),
+            )
+        })?;
         occupancies[index.index()] = occupancy;
         b_factors[index.index()] = b_factor.map(|value| value * b_factor_scale);
     }

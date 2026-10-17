@@ -12,19 +12,23 @@ use crate::molecule::{AromaticityModel, Molecule, ValenceModel};
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerceptionError {
+    /// Conjugation perception failed; see the source.
     Conjugation(ConjugationError),
+    /// Valence perception failed; see the source.
     Valence(ValenceError),
+    /// Ring perception failed; see the source.
     Rings(RingPerceptionError),
+    /// Aromaticity perception failed; see the source.
     Aromaticity(AromaticityError),
 }
 
 impl fmt::Display for PerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Conjugation(error) => write!(f, "{error}"),
-            Self::Valence(error) => write!(f, "{error}"),
-            Self::Rings(error) => write!(f, "{error}"),
-            Self::Aromaticity(error) => write!(f, "{error}"),
+            Self::Conjugation(_) => f.write_str("conjugation perception failed"),
+            Self::Valence(_) => f.write_str("valence perception failed"),
+            Self::Rings(_) => f.write_str("ring perception failed"),
+            Self::Aromaticity(_) => f.write_str("aromaticity perception failed"),
         }
     }
 }

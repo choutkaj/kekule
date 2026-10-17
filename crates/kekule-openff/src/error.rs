@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use kekule::diagnostics::LimitExceeded;
 use kekule::topology::MoleculeDefinitionId;
 
 /// The category of a parameterization failure, for programmatic handling.
@@ -37,11 +38,30 @@ pub enum ErrorKind {
     Charges,
     /// A lookup hit cannot be mapped onto its entry.
     Identity,
-    /// A bounded combinatorial search exceeded its limit.
+    /// A bounded combinatorial search exceeded its limit; see
+    /// [`Error::limit_exceeded`].
     ResourceLimit,
     /// An underlying Kekule perception, matching, or editing operation failed;
     /// see [`std::error::Error::source`].
     Chemistry,
+}
+
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Io => "reading a file failed",
+            Self::ForceField => "the force field is invalid or unsupported",
+            Self::Composition => "the force fields cannot be composed",
+            Self::Model => "the NAGL model bundle is invalid or unsupported",
+            Self::ModelMismatch => "the model is not the one the force field declares",
+            Self::UnsupportedMolecule => "the molecule is outside the supported domain",
+            Self::Unparameterized => "the force field leaves the molecule unparameterized",
+            Self::Charges => "charges cannot be assigned",
+            Self::Identity => "a lookup hit cannot be mapped onto its entry",
+            Self::ResourceLimit => "a bounded search exceeded its limit",
+            Self::Chemistry => "a Kekule chemistry operation failed",
+        })
+    }
 }
 
 /// A parameterization, loading, or composition failure.
@@ -49,13 +69,16 @@ pub enum ErrorKind {
 /// [`Self::kind`] classifies the failure; the display text adds the specific
 /// detail and context. Failures inside one molecule of a system name its
 /// definition through [`Self::definition`], and file failures name the file
-/// through [`Self::path`].
+/// through [`Self::path`]. A failure caused by a lower-level error, such as a
+/// Kekule perception or I/O error, returns it from
+/// [`source`](std::error::Error::source) and does not repeat its message.
 #[derive(Debug, Clone)]
 pub struct Error {
     kind: ErrorKind,
     detail: String,
     path: Option<PathBuf>,
     definition: Option<MoleculeDefinitionId>,
+    limit: Option<LimitExceeded>,
     source: Option<Arc<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -66,20 +89,41 @@ impl Error {
             detail: detail.to_string(),
             path: None,
             definition: None,
+            limit: None,
             source: None,
         }
     }
 
-    /// Wraps an underlying error, keeping it as the source.
+    /// Wraps an underlying error, keeping it as the source; the detail is the
+    /// kind's description.
     pub(crate) fn wrap(
         kind: ErrorKind,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
+        Self::new(kind, kind).with_source(source)
+    }
+
+    /// A [`ErrorKind::ResourceLimit`] failure with the exceeded bound.
+    pub(crate) fn limit(detail: impl fmt::Display, limit: LimitExceeded) -> Self {
         Self {
-            detail: source.to_string(),
-            source: Some(Arc::new(source)),
-            ..Self::new(kind, "")
+            limit: Some(limit),
+            ..Self::new(ErrorKind::ResourceLimit, detail)
         }
+    }
+
+    /// Adds the exceeded bound of a [`ErrorKind::ResourceLimit`] failure.
+    pub(crate) fn with_limit(mut self, limit: LimitExceeded) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// Adds the underlying error that caused this failure.
+    pub(crate) fn with_source(
+        mut self,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        self.source = Some(Arc::new(source));
+        self
     }
 
     pub(crate) fn chemistry(source: impl std::error::Error + Send + Sync + 'static) -> Self {
@@ -102,11 +146,13 @@ impl Error {
         self
     }
 
+    /// The failure category.
     pub fn kind(&self) -> ErrorKind {
         self.kind
     }
 
-    /// The specific failure, without path or definition context.
+    /// The specific failure, without path or definition context or the
+    /// message of the [`source`](std::error::Error::source).
     pub fn detail(&self) -> &str {
         &self.detail
     }
@@ -122,13 +168,15 @@ impl Error {
         self.definition
     }
 
+    /// The exceeded bound, for [`ErrorKind::ResourceLimit`] failures whose
+    /// bound is a single count.
+    pub fn limit_exceeded(&self) -> Option<LimitExceeded> {
+        self.limit
+    }
+
     /// The wrapped lower-level error, such as a Kekule perception or I/O
-    /// error, for downcasting.
-    ///
-    /// As with [`std::io::Error`], the wrapper is transparent: its display text
-    /// is the wrapped error's, and [`std::error::Error::source`] continues with
-    /// the wrapped error's own source, so a source chain never repeats a
-    /// message.
+    /// error, for downcasting; the same error
+    /// [`source`](std::error::Error::source) returns.
     pub fn get_ref(&self) -> Option<&(dyn std::error::Error + Send + Sync + 'static)> {
         self.source.as_deref()
     }
@@ -148,7 +196,9 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source.as_deref().and_then(std::error::Error::source)
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }
 

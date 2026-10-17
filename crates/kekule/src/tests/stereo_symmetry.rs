@@ -241,7 +241,7 @@ fn stereo_cleanup_is_explicit_transactional_and_preserves_surviving_groups() {
     ] {
         assert!(matches!(
             stereo_api::cleanup::cleanup_stereo(&mut editor, options),
-            Err(stereo_api::StereoSearchError::ResourceLimit { .. })
+            Err(stereo_api::StereoSearchError::LimitExceeded(_))
         ));
         assert_eq!(editor.working(), &before);
     }

@@ -1,3 +1,4 @@
+use kekule::diagnostics::Resource;
 use kekule::perception::aromaticity::{
     perceive_aromaticity, AromaticityError, AromaticityModel, AromaticityOptions,
 };
@@ -165,12 +166,13 @@ fn aromaticity_work_failures_restore_both_missing_and_installed_perception() {
             };
             match perceive_aromaticity(&mut actual, AromaticityModel::RdkitLike, options) {
                 Err(error) => {
-                    assert_eq!(
+                    assert!(matches!(
                         error,
-                        AromaticityError::ResourceLimit {
-                            limit: max_total_work
-                        }
-                    );
+                        AromaticityError::LimitExceeded(limit)
+                            if limit.resource() == Resource::Work
+                                && limit.limit() == max_total_work
+                                && limit.observed() > max_total_work
+                    ));
                     assert_eq!(actual.perception(), original.perception());
                     failures += 1;
                 }
@@ -220,7 +222,8 @@ fn installed_rings_skip_enumeration_limits_but_not_aromaticity_limits() {
                 ..options
             }
         ),
-        Err(AromaticityError::ResourceLimit { limit: 0 })
+        Err(AromaticityError::LimitExceeded(limit))
+            if limit.resource() == Resource::Work && limit.limit() == 0
     ));
     assert_eq!(actual.perception(), &before);
 }

@@ -87,7 +87,7 @@ fn topology_publication_validates_hierarchy_references() {
         .unwrap();
     assert!(matches!(
         builder.build(),
-        Err(TopologyBuildError::InvalidHierarchy(_))
+        Err(TopologyBuildError::MissingHierarchyAtom { .. })
     ));
 
     let mut builder = TopologyBuilder::new();

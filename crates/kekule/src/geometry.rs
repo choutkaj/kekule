@@ -2,7 +2,7 @@
 //! trajectory, and modelling code.
 
 mod periodic;
-pub use periodic::{PeriodicGeometry, PeriodicGeometryError};
+pub use periodic::{PeriodicGeometry, PeriodicGeometryError, MAX_LATTICE_IMAGES};
 
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
@@ -379,20 +379,27 @@ impl Default for RigidTransform {
     }
 }
 
+/// Cell vectors or axis flags do not describe a valid periodic cell.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum PeriodicCellError {
+    /// The vectors could not be converted to the canonical length unit; see the
+    /// source.
     Unit(UnitError),
+    /// No axis is marked periodic.
     NoPeriodicAxes,
+    /// A cell vector component is not finite.
     NonFiniteVector,
+    /// The cell vectors span zero or non-finite volume.
     DegenerateVectors,
+    /// An orthorhombic length is not finite and strictly positive.
     InvalidOrthorhombicLengths,
 }
 
 impl fmt::Display for PeriodicCellError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unit(error) => write!(formatter, "invalid periodic-cell unit: {error}"),
+            Self::Unit(_) => formatter.write_str("invalid periodic-cell unit"),
             Self::NoPeriodicAxes => formatter.write_str("periodic cell has no periodic axis"),
             Self::NonFiniteVector => formatter.write_str("periodic-cell vectors must be finite"),
             Self::DegenerateVectors => {
@@ -419,10 +426,13 @@ impl From<UnitError> for PeriodicCellError {
     }
 }
 
+/// A rotation and translation do not form a proper rigid transform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RigidTransformError {
+    /// A rotation or translation component is not finite.
     NonFinite,
+    /// The rotation matrix is not orthonormal with determinant +1.
     NonRigidRotation,
 }
 

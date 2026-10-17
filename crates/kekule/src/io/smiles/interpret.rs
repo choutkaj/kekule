@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::ops::Range;
 
 use crate::chemistry::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
-use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
+use crate::diagnostics::{
+    DiagnosticKind, Format, FormatError, FormatErrorDetail, SourceLocation, UnsupportedContent,
+};
 use crate::molecule::{
     Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
     MoleculeEditor,
@@ -34,84 +35,24 @@ pub struct SmilesInterpretOptions {
     pub unsupported: UnsupportedContent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SmilesInterpretError {
+/// A SMILES interpretation failure concerning byte `offset` of a record.
+pub(super) fn interpret_error(
     kind: DiagnosticKind,
-    line: usize,
     offset: usize,
-    message: String,
+    message: impl Into<String>,
+) -> FormatError {
+    FormatError::interpret(Format::Smiles, kind, message)
+        .at(SourceLocation::at_column(1, offset + 1))
 }
 
-impl SmilesInterpretError {
-    pub(super) fn new(kind: DiagnosticKind, offset: usize, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            line: 1,
-            offset,
-            message: message.into(),
-        }
-    }
-
-    fn on_line(mut self, line: usize) -> Self {
-        self.line = line;
-        self
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.kind
-    }
-
-    /// Byte offset of the source the failure concerns within its record.
-    pub const fn offset(&self) -> usize {
-        self.offset
-    }
-
-    /// The record's line in the input and the failure's byte column in it.
-    pub const fn location(&self) -> SourceLocation {
-        SourceLocation::at_column(self.line, self.offset + 1)
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
+fn component_count_error(actual: usize) -> FormatError {
+    FormatError::interpret(
+        Format::Smiles,
+        DiagnosticKind::Inconsistent,
+        format!("single-molecule SMILES access requires exactly one component, found {actual}"),
+    )
+    .with_detail(FormatErrorDetail::ComponentCount { actual })
 }
-
-impl fmt::Display for SmilesInterpretError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "SMILES interpretation error at {}: {}",
-            self.location(),
-            self.message
-        )
-    }
-}
-
-impl std::error::Error for SmilesInterpretError {}
-
-/// A single-molecule accessor was used for a component-aware interpretation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SmilesComponentCountError {
-    actual: usize,
-}
-
-impl SmilesComponentCountError {
-    pub const fn actual(self) -> usize {
-        self.actual
-    }
-}
-
-impl fmt::Display for SmilesComponentCountError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "single-molecule SMILES access requires exactly one component, found {}",
-            self.actual
-        )
-    }
-}
-
-impl std::error::Error for SmilesComponentCountError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesAtomMapping {
@@ -287,45 +228,35 @@ impl SmilesInterpretation {
     ///
     /// Prefer [`Self::components`] for general SMILES input. An input with
     /// several connected components returns a component-count error.
-    pub fn molecule(&self) -> Result<&Molecule, SmilesComponentCountError> {
+    pub fn molecule(&self) -> Result<&Molecule, FormatError> {
         Ok(self.single_component()?.molecule())
     }
 
     /// Convenience report access for an interpretation known to contain one component.
-    pub fn report(&self) -> Result<&SmilesInterpretationReport, SmilesComponentCountError> {
+    pub fn report(&self) -> Result<&SmilesInterpretationReport, FormatError> {
         Ok(self.single_component()?.report())
     }
 
     /// Consumes an interpretation known to contain exactly one component.
-    pub fn into_molecule(self) -> Result<Molecule, SmilesComponentCountError> {
+    pub fn into_molecule(self) -> Result<Molecule, FormatError> {
         Ok(self.into_single_component()?.into_molecule())
     }
 
     /// Consumes an interpretation known to contain exactly one component and its report.
-    pub fn into_parts(
-        self,
-    ) -> Result<(Molecule, SmilesInterpretationReport), SmilesComponentCountError> {
+    pub fn into_parts(self) -> Result<(Molecule, SmilesInterpretationReport), FormatError> {
         Ok(self.into_single_component()?.into_parts())
     }
 
-    fn single_component(
-        &self,
-    ) -> Result<&SmilesComponentInterpretation, SmilesComponentCountError> {
+    fn single_component(&self) -> Result<&SmilesComponentInterpretation, FormatError> {
         match self.components.as_slice() {
             [component] => Ok(component),
-            components => Err(SmilesComponentCountError {
-                actual: components.len(),
-            }),
+            components => Err(component_count_error(components.len())),
         }
     }
 
-    fn into_single_component(
-        mut self,
-    ) -> Result<SmilesComponentInterpretation, SmilesComponentCountError> {
+    fn into_single_component(mut self) -> Result<SmilesComponentInterpretation, FormatError> {
         if self.components.len() != 1 {
-            return Err(SmilesComponentCountError {
-                actual: self.components.len(),
-            });
+            return Err(component_count_error(self.components.len()));
         }
         Ok(self
             .components
@@ -343,13 +274,13 @@ impl SmilesInterpretation {
 pub(crate) fn interpret_smiles_document(
     document: &SmilesDocument,
     options: SmilesInterpretOptions,
-) -> Result<SmilesInterpretation, SmilesInterpretError> {
+) -> Result<SmilesInterpretation, FormatError> {
     interpret_document(document, Some(options)).map_err(|error| error.on_line(document.line()))
 }
 
 pub(super) fn interpret_base_smiles_document(
     document: &SmilesDocument,
-) -> Result<SmilesInterpretation, SmilesInterpretError> {
+) -> Result<SmilesInterpretation, FormatError> {
     interpret_document(document, None).map_err(|error| error.on_line(document.line()))
 }
 
@@ -357,7 +288,7 @@ pub(super) fn interpret_base_smiles_document(
 fn interpret_document(
     document: &SmilesDocument,
     options: Option<SmilesInterpretOptions>,
-) -> Result<SmilesInterpretation, SmilesInterpretError> {
+) -> Result<SmilesInterpretation, FormatError> {
     let base_only = options.is_none();
     let cx = match options {
         Some(options) => CxFeatures::interpret(document, options.unsupported)?,
@@ -448,16 +379,16 @@ fn interpret_document(
 fn fragment_source_span(
     document: &SmilesDocument,
     token_range: Range<usize>,
-) -> Result<Range<usize>, SmilesInterpretError> {
+) -> Result<Range<usize>, FormatError> {
     if token_range.is_empty() {
-        return Err(SmilesInterpretError::new(
+        return Err(interpret_error(
             DiagnosticKind::Syntax,
             document.source().len(),
             "empty SMILES component".to_owned(),
         ));
     }
     let first = document.tokens().get(token_range.start).ok_or_else(|| {
-        SmilesInterpretError::new(
+        interpret_error(
             DiagnosticKind::Syntax,
             document.source().len(),
             "component token range starts outside the SMILES document".to_owned(),
@@ -467,7 +398,7 @@ fn fragment_source_span(
         .tokens()
         .get(token_range.end.saturating_sub(1))
         .ok_or_else(|| {
-            SmilesInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Syntax,
                 document.source().len(),
                 "component token range ends outside the SMILES document".to_owned(),
@@ -489,7 +420,7 @@ fn interpret_smiles_program_component(
     component: &ComponentProgram,
     source: &str,
     radicals: &BTreeMap<usize, AtomRadical>,
-) -> std::result::Result<(Molecule, SmilesInterpretationReport), SmilesInterpretError> {
+) -> std::result::Result<(Molecule, SmilesInterpretationReport), FormatError> {
     validate_smiles_source_aromaticity(program, component, source)?;
     let end_offset = source.len();
 
@@ -500,11 +431,12 @@ fn interpret_smiles_program_component(
         let record = &program.atoms[index];
         let atom = interpret_smiles_atom(&record.syntax, record.span.start)?;
         let atom_id = editor.add_atom(atom).map_err(|error| {
-            SmilesInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Chemistry,
                 record.span.start,
-                format!("invalid represented atom: {error}"),
+                "invalid represented atom",
             )
+            .with_source(error)
         })?;
         source_to_atom.insert(index, atom_id);
         atom_mappings.push(SmilesAtomMapping {
@@ -520,14 +452,14 @@ fn interpret_smiles_program_component(
     for &index in &component.bonds {
         let bond = &program.bonds[index];
         let left = source_to_atom.get(&bond.left).copied().ok_or_else(|| {
-            SmilesInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Chemistry,
                 bond.offset,
                 "bond left endpoint is outside its SMILES component".to_owned(),
             )
         })?;
         let right = source_to_atom.get(&bond.right).copied().ok_or_else(|| {
-            SmilesInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Chemistry,
                 bond.offset,
                 "bond right endpoint is outside its SMILES component".to_owned(),
@@ -537,14 +469,14 @@ fn interpret_smiles_program_component(
         let bond_id = add_smiles_bond(&mut editor, left, right, order, bond.offset)?;
         if let Some(direction) = bond.direction {
             let source_from = bond.direction_from.ok_or_else(|| {
-                SmilesInterpretError::new(
+                interpret_error(
                     DiagnosticKind::Chemistry,
                     bond.direction_offset.unwrap_or(bond.offset),
                     "directional bond is missing its textual origin endpoint".to_owned(),
                 )
             })?;
             let from = source_to_atom.get(&source_from).copied().ok_or_else(|| {
-                SmilesInterpretError::new(
+                interpret_error(
                     DiagnosticKind::Chemistry,
                     bond.direction_offset.unwrap_or(bond.offset),
                     "directional bond origin is outside its SMILES component".to_owned(),
@@ -567,11 +499,12 @@ fn interpret_smiles_program_component(
     }
     localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
         |error| {
-            SmilesInterpretError::new(
+            interpret_error(
                 DiagnosticKind::Chemistry,
                 first_aromatic_offset.unwrap_or(end_offset),
-                error.to_string(),
+                "cannot localize aromatic bonds",
             )
+            .with_source(error)
         },
     )?;
 
@@ -615,22 +548,24 @@ fn interpret_smiles_program_component(
         &source_stereo,
     )
     .map_err(|error| {
-        SmilesInterpretError::new(
+        interpret_error(
             DiagnosticKind::Chemistry,
             canonicalization_error_offset(&error, &atom_mappings, &bond_mappings, end_offset),
-            format!("could not publish canonical molecule: {error}"),
+            "could not publish canonical molecule",
         )
+        .with_source(error)
     })?;
     debug_assert!(publication_report.warnings.is_empty());
     super::cx::install_stereo_groups(&mut editor, &source_to_atom, &component.groups)?;
     let (molecule, ids) = editor.finish_with_correspondence().map_err(|error| {
-        SmilesInterpretError::new(
+        interpret_error(
             DiagnosticKind::Chemistry,
             atom_mappings
                 .first()
                 .map_or(end_offset, |mapping| mapping.source_span.start),
-            error.to_string(),
+            "cannot publish molecule",
         )
+        .with_source(error)
     })?;
     // Publication renumbers IDs densely and may prune canonicalized stereo.
     for mapping in &mut atom_mappings {
@@ -694,13 +629,13 @@ fn validate_smiles_source_aromaticity(
     program: &SmilesProgram,
     component: &ComponentProgram,
     source: &str,
-) -> std::result::Result<(), SmilesInterpretError> {
+) -> std::result::Result<(), FormatError> {
     let mut source_aromatic_atoms = BTreeSet::new();
     for &index in &component.atoms {
         let record = &program.atoms[index];
         let imported = program.imported_aromatic_atoms.contains(&index);
         if record.syntax.aromatic != imported {
-            return Err(SmilesInterpretError::new(
+            return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
                 record.span.start,
                 "inconsistent aromatic atom syntax state".to_owned(),
@@ -721,7 +656,7 @@ fn validate_smiles_source_aromaticity(
         if !source_aromatic_atoms.contains(&bond.left)
             || !source_aromatic_atoms.contains(&bond.right)
         {
-            return Err(SmilesInterpretError::new(
+            return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
                 explicit_aromatic_bond_offset(source, bond.offset),
                 "source-aromatic bond requires source-aromatic atom syntax at both endpoints"
@@ -738,7 +673,7 @@ fn validate_smiles_source_aromaticity(
         .copied()
     {
         let record = &program.atoms[index];
-        return Err(SmilesInterpretError::new(
+        return Err(interpret_error(
             DiagnosticKind::Inconsistent,
             record.span.start,
             "source-aromatic atom is not part of a source-aromatic bond".to_owned(),
@@ -759,9 +694,9 @@ fn explicit_aromatic_bond_offset(source: &str, fallback: usize) -> usize {
 fn interpret_smiles_atom(
     syntax: &SmilesAtomSyntax,
     offset: usize,
-) -> std::result::Result<Atom, SmilesInterpretError> {
+) -> std::result::Result<Atom, FormatError> {
     let element = Element::from_symbol(&syntax.symbol).ok_or_else(|| {
-        SmilesInterpretError::new(
+        interpret_error(
             DiagnosticKind::InvalidValue,
             offset,
             format!("unsupported element symbol `{}`", syntax.symbol),
@@ -802,9 +737,9 @@ fn add_smiles_bond(
     right: AtomId,
     order: BondOrder,
     offset: usize,
-) -> std::result::Result<BondId, SmilesInterpretError> {
+) -> std::result::Result<BondId, FormatError> {
     editor.add_bond(left, right, order).map_err(|error| {
-        SmilesInterpretError::new(DiagnosticKind::Chemistry, offset, error.to_string())
+        interpret_error(DiagnosticKind::Chemistry, offset, "cannot add bond").with_source(error)
     })
 }
 
@@ -814,7 +749,7 @@ fn add_smiles_tetrahedral_elements(
     centers: &[PendingTetrahedral],
     carriers_by_center: &BTreeMap<usize, Vec<PendingStereoCarrier>>,
     offset: usize,
-) -> std::result::Result<(), SmilesInterpretError> {
+) -> std::result::Result<(), FormatError> {
     for pending in centers {
         let Some(&center) = source_to_atom.get(&pending.center) else {
             continue;
@@ -841,7 +776,12 @@ fn add_smiles_tetrahedral_elements(
                 },
             )))
             .map_err(|error| {
-                SmilesInterpretError::new(DiagnosticKind::Chemistry, offset, error.to_string())
+                interpret_error(
+                    DiagnosticKind::Chemistry,
+                    offset,
+                    "cannot add stereo center",
+                )
+                .with_source(error)
             })?;
     }
     Ok(())
@@ -853,7 +793,7 @@ fn resolve_smiles_tetrahedral_carriers(
     source_to_atom: &BTreeMap<usize, AtomId>,
     carriers: Vec<PendingStereoCarrier>,
     offset: usize,
-) -> std::result::Result<Vec<StereoCarrier>, SmilesInterpretError> {
+) -> std::result::Result<Vec<StereoCarrier>, FormatError> {
     let mut carriers = carriers
         .into_iter()
         .map(|carrier| match carrier {
@@ -862,7 +802,7 @@ fn resolve_smiles_tetrahedral_carriers(
                 .copied()
                 .map(StereoCarrier::Atom)
                 .ok_or_else(|| {
-                    SmilesInterpretError::new(
+                    interpret_error(
                         DiagnosticKind::Chemistry,
                         offset,
                         "tetrahedral carrier is outside its SMILES component".to_owned(),
@@ -871,7 +811,7 @@ fn resolve_smiles_tetrahedral_carriers(
             PendingStereoCarrier::Resolved(SmilesStereoCarrier::ImplicitHydrogen) => {
                 Ok(StereoCarrier::ImplicitHydrogen)
             }
-            PendingStereoCarrier::Ring { .. } => Err(SmilesInterpretError::new(
+            PendingStereoCarrier::Ring { .. } => Err(interpret_error(
                 DiagnosticKind::Chemistry,
                 offset,
                 "unresolved tetrahedral ring carrier".to_owned(),
@@ -944,6 +884,9 @@ mod tests {
             .expect("interpret components")
             .into_molecule()
             .expect_err("single-component access must reject two components");
-        assert_eq!(error.actual(), 2);
+        assert_eq!(
+            error.detail(),
+            Some(&FormatErrorDetail::ComponentCount { actual: 2 })
+        );
     }
 }

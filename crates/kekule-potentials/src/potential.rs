@@ -263,7 +263,39 @@ impl fmt::Display for SingularGeometry {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// The kind of interaction whose coordinates are singular.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum InteractionKind {
+    /// A harmonic bond stretch.
+    Bond,
+    /// A harmonic angle bend.
+    Angle,
+    /// A proper torsion.
+    ProperTorsion,
+    /// An improper torsion.
+    ImproperTorsion,
+    /// A nonbonded (van der Waals or electrostatic) atom pair.
+    NonbondedPair,
+    /// A positional or distance restraint, such as a confining wall.
+    Restraint,
+}
+
+impl fmt::Display for InteractionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Bond => "harmonic bond",
+            Self::Angle => "harmonic angle",
+            Self::ProperTorsion => "proper torsion",
+            Self::ImproperTorsion => "improper torsion",
+            Self::NonbondedPair => "nonbonded pair",
+            Self::Restraint => "restraint",
+        })
+    }
+}
+
+/// A failed energy or gradient evaluation.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum EvaluationError {
     /// The evaluated view does not share the potential's topology layout.
@@ -272,29 +304,81 @@ pub enum EvaluationError {
     UnsupportedPeriodicCell,
     /// The coordinates are singular for a required interaction.
     InvalidGeometry {
-        interaction: &'static str,
+        /// The interaction that is undefined.
+        interaction: InteractionKind,
+        /// The atoms of the interaction.
         atoms: Vec<InstanceAtomId>,
+        /// Why the interaction is undefined.
         kind: SingularGeometry,
     },
+    /// The potential produced a non-finite energy.
     NonFiniteEnergy,
     /// An energy decomposition named one component twice.
     DuplicateComponent(ComponentKind),
+    /// The potential produced a gradient array of the wrong length.
     GradientLengthMismatch {
+        /// The model's atom count.
         expected: usize,
+        /// The number of gradients produced.
         actual: usize,
     },
+    /// The potential produced a non-finite gradient.
     NonFiniteGradient {
+        /// The atom whose gradient is not finite.
         atom: InstanceAtomId,
     },
+    /// A quantity could not be converted to the canonical unit; see the
+    /// source.
     Unit(UnitError),
-    /// A backend reported a non-geometric failure.
-    Backend {
-        backend: &'static str,
-        message: String,
-    },
+    /// A backend reported a non-geometric failure; see the source.
+    Backend(Arc<dyn std::error::Error + Send + Sync>),
+}
+
+impl PartialEq for EvaluationError {
+    /// Backend failures compare equal when their messages are equal.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::IncompatibleTopology, Self::IncompatibleTopology)
+            | (Self::UnsupportedPeriodicCell, Self::UnsupportedPeriodicCell)
+            | (Self::NonFiniteEnergy, Self::NonFiniteEnergy) => true,
+            (
+                Self::InvalidGeometry {
+                    interaction,
+                    atoms,
+                    kind,
+                },
+                Self::InvalidGeometry {
+                    interaction: other_interaction,
+                    atoms: other_atoms,
+                    kind: other_kind,
+                },
+            ) => interaction == other_interaction && atoms == other_atoms && kind == other_kind,
+            (Self::DuplicateComponent(kind), Self::DuplicateComponent(other)) => kind == other,
+            (
+                Self::GradientLengthMismatch { expected, actual },
+                Self::GradientLengthMismatch {
+                    expected: other_expected,
+                    actual: other_actual,
+                },
+            ) => expected == other_expected && actual == other_actual,
+            (Self::NonFiniteGradient { atom }, Self::NonFiniteGradient { atom: other }) => {
+                atom == other
+            }
+            (Self::Unit(error), Self::Unit(other)) => error == other,
+            (Self::Backend(error), Self::Backend(other)) => {
+                Arc::ptr_eq(error, other) || error.to_string() == other.to_string()
+            }
+            _ => false,
+        }
+    }
 }
 
 impl EvaluationError {
+    /// A backend failure caused by `error`.
+    pub fn backend(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Backend(Arc::new(error))
+    }
+
     /// Whether the failure is caused only by the evaluated coordinates.
     pub const fn is_invalid_geometry(&self) -> bool {
         matches!(self, Self::InvalidGeometry { .. })
@@ -338,10 +422,8 @@ impl fmt::Display for EvaluationError {
                     "potential produced a non-finite gradient for atom {atom}"
                 )
             }
-            Self::Unit(error) => write!(f, "invalid potential quantity unit: {error}"),
-            Self::Backend { backend, message } => {
-                write!(f, "{backend} potential evaluation failed: {message}")
-            }
+            Self::Unit(_) => f.write_str("invalid potential quantity unit"),
+            Self::Backend(_) => f.write_str("potential backend evaluation failed"),
         }
     }
 }
@@ -350,6 +432,7 @@ impl std::error::Error for EvaluationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unit(error) => Some(error),
+            Self::Backend(error) => Some(error.as_ref()),
             _ => None,
         }
     }
@@ -358,5 +441,28 @@ impl std::error::Error for EvaluationError {
 impl From<UnitError> for EvaluationError {
     fn from(error: UnitError) -> Self {
         Self::Unit(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_failures_keep_their_cause_as_the_source() {
+        let cause = std::io::Error::other("model server unavailable");
+        let error = EvaluationError::backend(cause);
+        assert_eq!(error.to_string(), "potential backend evaluation failed");
+        let source = std::error::Error::source(&error).unwrap();
+        assert_eq!(source.to_string(), "model server unavailable");
+        assert!(source.downcast_ref::<std::io::Error>().is_some());
+        assert_eq!(
+            error,
+            EvaluationError::backend(std::io::Error::other("model server unavailable"))
+        );
+        assert_ne!(
+            error,
+            EvaluationError::backend(std::io::Error::other("timeout"))
+        );
     }
 }

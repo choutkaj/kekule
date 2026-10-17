@@ -14,8 +14,8 @@ use kekule_traj::io::{
     TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule_traj::{
-    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryIoErrorContext, TrajectoryIoOperation, TrajectoryWriter,
+    TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
+    TrajectoryIoOperation, TrajectoryWriter,
 };
 
 use crate::support;
@@ -185,16 +185,15 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
     )
     .unwrap();
     let path = directory.file("trajectory.data");
-    let unknown: TrajectoryIoError = TrajectoryCodecErrorContext::new(
-        TrajectoryCodecErrorKind::UnknownFormat,
+    let unknown: TrajectoryIoError = TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::UnknownFormat,
         TrajectoryIoOperation::Open,
         None,
     )
     .with_source_label(label(&path))
     .with_detail(
         "destination extension does not identify a supported format; supply explicit write options",
-    )
-    .into();
+    );
     assert_eq!(
         write_trajectory(&path, &trajectory, Default::default()),
         Err(unknown.clone())
@@ -253,7 +252,7 @@ fn every_empty_path_writer_rejects_publication_and_removes_temporary_files() {
         assert_eq!(
             empty.finish(),
             Err(codec_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::Finish,
                 format,
                 &label(&path),
@@ -289,7 +288,7 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
         (
             &empty,
             codec_error(
-                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::Finish,
                 TrajectoryFormat::Xyz,
                 &label(&path),
@@ -300,17 +299,18 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
         (
             &stepped,
             codec_error(
-                TrajectoryCodecErrorKind::UnsupportedField,
+                TrajectoryIoErrorKind::UnsupportedField,
                 TrajectoryIoOperation::WriteFrame,
                 TrajectoryFormat::Xyz,
                 &label(&path),
                 Some(1),
                 "XYZ cannot preserve step",
-            ),
+            )
+            .with_field(TrajectoryField::Step),
         ),
         (
             &annotated,
-            TrajectoryIoError::UnsupportedField("collection properties"),
+            TrajectoryIoError::unsupported_field(TrajectoryField::CollectionProperties),
         ),
     ] {
         assert_eq!(
@@ -359,18 +359,19 @@ fn a_failed_frame_write_prevents_publication_of_the_frames_before_it() {
     assert_eq!(
         writer.write_frame(trajectory.get(0).unwrap()),
         Err(codec_error(
-            TrajectoryCodecErrorKind::UnsupportedField,
+            TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
             TrajectoryFormat::Xyz,
             &label(&path),
             Some(1),
             "XYZ cannot preserve step",
-        ))
+        )
+        .with_field(TrajectoryField::Step))
     );
     assert_eq!(
         writer.finish(),
         Err(codec_error(
-            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::Finish,
             TrajectoryFormat::Xyz,
             &label(&path),
@@ -394,14 +395,12 @@ fn forbid_policy_never_replaces_an_existing_destination() {
     // An existing destination is refused before any frame is written.
     assert_eq!(
         write_trajectory(&path, &single_frame(5.0), Default::default()),
-        Err(TrajectoryIoErrorContext::new(
+        Err(TrajectoryIoError::io(
             TrajectoryIoOperation::Open,
-            io::ErrorKind::AlreadyExists,
-            "destination already exists",
+            io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists"),
         )
         .with_format(TrajectoryFormat::Xyz)
-        .with_source_label(label(&path))
-        .into())
+        .with_source_label(label(&path)))
     );
     assert_eq!(fs::read(&path).unwrap(), original);
 
@@ -417,22 +416,24 @@ fn forbid_policy_never_replaces_an_existing_destination() {
     .unwrap();
     writer.write_frame(replacement.get(0).unwrap()).unwrap();
     fs::write(&late, &original).unwrap();
-    let Err(TrajectoryIoError::Io(context)) = writer.finish() else {
+    let Err(context) = writer.finish() else {
         panic!("publishing over a file that appeared later must fail with an I/O error");
     };
     // The message is the operating system's own text, so compare the rest.
     assert_eq!(
         (
+            context.kind(),
             context.operation(),
             context.format(),
             context.source_label(),
-            context.error_kind(),
+            context.io_error_kind(),
         ),
         (
-            TrajectoryIoOperation::Finish,
+            TrajectoryIoErrorKind::Io,
+            Some(TrajectoryIoOperation::Finish),
             Some(TrajectoryFormat::Xyz),
             Some(label(&late).as_str()),
-            io::ErrorKind::AlreadyExists,
+            Some(io::ErrorKind::AlreadyExists),
         )
     );
     assert_eq!(fs::read(&late).unwrap(), original);

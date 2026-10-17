@@ -1,21 +1,42 @@
 //! Exact lattice geometry. Inputs and Cartesian outputs use canonical length units.
 use super::{PeriodicCell, Vector3};
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::fmt;
+
+/// Maximum lattice images an exact nearest-image search examines.
+pub const MAX_LATTICE_IMAGES: usize = 1_000_000;
 
 /// A nonfinite, unrepresentable, or excessively expensive periodic calculation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PeriodicGeometryError {
+    /// The calculation exceeds numerical precision or range.
     NumericalFailure,
-    /// More than one million lattice images would need examination.
-    ImageSearchLimit,
+    /// More than [`MAX_LATTICE_IMAGES`] lattice images would need examination.
+    LimitExceeded(LimitExceeded),
 }
 impl fmt::Display for PeriodicGeometryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::NumericalFailure => "periodic calculation exceeds numerical precision or range",
-            Self::ImageSearchLimit => "periodic calculation exceeds the nearest-image search limit",
-        })
+        match self {
+            Self::NumericalFailure => {
+                f.write_str("periodic calculation exceeds numerical precision or range")
+            }
+            Self::LimitExceeded(limit) => write!(f, "nearest-image search {limit}"),
+        }
     }
+}
+
+/// The nearest-image search would examine `images` lattice images, more than
+/// [`MAX_LATTICE_IMAGES`]; `None` means more than `u64` counts.
+fn image_limit(images: Option<u64>) -> PeriodicGeometryError {
+    let observed = images
+        .and_then(|images| usize::try_from(images).ok())
+        .unwrap_or(usize::MAX);
+    PeriodicGeometryError::LimitExceeded(LimitExceeded::new(
+        Resource::LatticeImages,
+        MAX_LATTICE_IMAGES,
+        observed.max(MAX_LATTICE_IMAGES + 1),
+    ))
 }
 impl std::error::Error for PeriodicGeometryError {}
 
@@ -115,10 +136,10 @@ impl PeriodicGeometry {
                 }
                 let (low, high) = (low as i64, high as i64);
                 let count = (high - low + 1).max(0) as u64;
-                candidates = candidates
-                    .checked_mul(count)
-                    .filter(|n| *n <= 1_000_000)
-                    .ok_or(PeriodicGeometryError::ImageSearchLimit)?;
+                let next = candidates.checked_mul(count);
+                candidates = next
+                    .filter(|n| *n <= MAX_LATTICE_IMAGES as u64)
+                    .ok_or_else(|| image_limit(next))?;
                 bounds[axis] = (low, high);
             }
         }
@@ -178,13 +199,15 @@ impl PeriodicGeometry {
                 let extent =
                     (radius * self.reciprocal[i].norm() * (1.0 + 64.0 * f64::EPSILON)).ceil();
                 if !extent.is_finite() || extent > 500_000.0 {
-                    return Err(PeriodicGeometryError::ImageSearchLimit);
+                    // Along this axis alone, 2 * extent + 1 images exceed the
+                    // bound; `as` saturates an infinite extent.
+                    return Err(image_limit(Some((2.0 * extent + 1.0) as u64)));
                 }
                 *bound = extent as i64;
-                count = count
-                    .checked_mul(2 * (*bound as u64) + 1)
-                    .filter(|n| *n <= 1_000_000)
-                    .ok_or(PeriodicGeometryError::ImageSearchLimit)?;
+                let next = count.checked_mul(2 * (*bound as u64) + 1);
+                count = next
+                    .filter(|n| *n <= MAX_LATTICE_IMAGES as u64)
+                    .ok_or_else(|| image_limit(next))?;
             }
         }
         for a in -bounds[0]..=bounds[0] {

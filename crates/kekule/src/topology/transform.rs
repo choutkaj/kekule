@@ -361,12 +361,19 @@ fn project_topology_properties(
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologySubsetError {
+    /// The selection contains no atoms.
     EmptySelection,
+    /// The selection does not match the topology; see the source.
     Selection(SelectionError),
+    /// Extracting a selected molecule fragment failed; see the source.
     Molecule(MoleculeError),
+    /// A selected molecule fragment could not be published; see the source.
     Publication(MoleculePublicationError),
+    /// Building the subset hierarchy failed; see the source.
     Hierarchy(HierarchyError),
+    /// Publishing the subset topology failed; see the source.
     TopologyBuild(TopologyBuildError),
+    /// Projecting property rows onto the subset failed; see the source.
     Property(PropertyError),
 }
 
@@ -374,16 +381,12 @@ impl fmt::Display for TopologySubsetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptySelection => formatter.write_str("topology subset selection is empty"),
-            Self::Selection(error) => write!(formatter, "invalid subset selection: {error}"),
-            Self::Molecule(error) => write!(formatter, "cannot construct subset molecule: {error}"),
-            Self::Publication(error) => {
-                write!(formatter, "cannot publish subset molecule: {error}")
-            }
-            Self::Hierarchy(error) => write!(formatter, "cannot filter subset hierarchy: {error}"),
-            Self::TopologyBuild(error) => {
-                write!(formatter, "cannot publish subset topology: {error}")
-            }
-            Self::Property(error) => write!(formatter, "cannot project subset properties: {error}"),
+            Self::Selection(_) => formatter.write_str("invalid subset selection"),
+            Self::Molecule(_) => formatter.write_str("cannot construct subset molecule"),
+            Self::Publication(_) => formatter.write_str("cannot publish subset molecule"),
+            Self::Hierarchy(_) => formatter.write_str("cannot filter subset hierarchy"),
+            Self::TopologyBuild(_) => formatter.write_str("cannot publish subset topology"),
+            Self::Property(_) => formatter.write_str("cannot project subset properties"),
         }
     }
 }

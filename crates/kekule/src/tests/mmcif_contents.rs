@@ -1,11 +1,12 @@
-use super::{deterministic_text_mutations, test_positions};
+use super::{deterministic_text_mutations, error_detail, mmcif_issue, test_positions};
+use crate::diagnostics::FormatErrorDetail;
 use crate::geometry::Point3;
 use crate::macromolecular::{
     self, AltLocPolicy, EntityKind, InstanceProvenance, ModelSelection, StructureInterpretOptions,
     StructureInterpretationReport,
 };
 use crate::mmcif::{
-    self, MmcifEntityClassifications, MmcifParseOptions, MmcifWriteError, MmcifWriteOptions,
+    self, MmcifEntityClassifications, MmcifParseOptions, MmcifWriteIssue, MmcifWriteOptions,
 };
 use crate::molecule::{Atom, AtomId, BondOrder, Element};
 use crate::properties::{PropertyColumn, PropertyKey};
@@ -528,10 +529,10 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
         .interpret(Default::default())
         .expect_err("metadata block has no model");
     assert!(model_error.message().contains("no atom-site category"));
-    assert!(matches!(
-        block.interpret_ensemble(Default::default()),
-        Err(macromolecular::StructureEnsembleInterpretError::NoCoordinateModels)
-    ));
+    assert_eq!(
+        error_detail(block.interpret_ensemble(Default::default())),
+        Some(FormatErrorDetail::NoCoordinateModels)
+    );
 }
 
 #[test]
@@ -1170,12 +1171,13 @@ fn ensemble_interpretation_rejects_empty_explicit_model_selection_without_panick
             ..macromolecular::StructureEnsembleInterpretOptions::default()
         })
     });
-    assert!(matches!(
-        result,
-        Ok(Err(
-            macromolecular::StructureEnsembleInterpretError::EmptyModelSelection
-        ))
-    ));
+    assert_eq!(
+        result
+            .expect("no panic")
+            .err()
+            .and_then(|error| error.detail().cloned()),
+        Some(FormatErrorDetail::EmptyModelSelection)
+    );
 }
 
 #[test]
@@ -1187,10 +1189,10 @@ fn document_interpreters_reject_multiple_atom_site_blocks() {
     assert!(single_error
         .message()
         .contains("atom-site data in more than one data block"));
-    assert!(matches!(
-        document.interpret_ensemble(Default::default()),
-        Err(macromolecular::StructureEnsembleInterpretError::MultipleAtomSiteBlocks)
-    ));
+    assert_eq!(
+        error_detail(document.interpret_ensemble(Default::default())),
+        Some(FormatErrorDetail::MultipleAtomSiteBlocks)
+    );
 }
 
 #[test]
@@ -1330,9 +1332,11 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
 #[test]
 fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
     let changed = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 N C1");
-    assert!(
-        matches!((parse(&changed)).interpret_ensemble(Default::default()),
-        Err(macromolecular::StructureEnsembleInterpretError::InconsistentTopology { model_id }) if model_id == "2")
+    assert_eq!(
+        error_detail(parse(&changed).interpret_ensemble(Default::default())),
+        Some(FormatErrorDetail::InconsistentTopology {
+            model_id: "2".to_owned()
+        })
     );
     let invalid = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 Xx C1");
     let error = (parse(&invalid))
@@ -1341,19 +1345,24 @@ fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
             ..macromolecular::StructureEnsembleInterpretOptions::default()
         })
         .unwrap_err();
-    assert!(
-        matches!(error, macromolecular::StructureEnsembleInterpretError::Model { model_id, error } if model_id == "1" && error.message().contains("unknown atom-site element"))
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::Model {
+            model_id: "1".to_owned()
+        })
     );
+    assert!(error.message().contains("unknown atom-site element"));
 }
 
 #[test]
 fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
     let inconsistent = MULTI_MODEL.replace("HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2\n", "");
-    assert!(matches!(
-        (parse(&inconsistent)).interpret_ensemble(Default::default()),
-        Err(macromolecular::StructureEnsembleInterpretError::InconsistentAtomSet { model_id })
-            if model_id == "2"
-    ));
+    assert_eq!(
+        error_detail((parse(&inconsistent)).interpret_ensemble(Default::default())),
+        Some(FormatErrorDetail::InconsistentAtomSet {
+            model_id: "2".to_owned()
+        })
+    );
 }
 
 #[test]
@@ -1430,11 +1439,12 @@ HETATM 2 C C1 LIG B XB 1 5.0 0.0 0.0 1
 HETATM 3 C C1 LIG B XB 1 15.0 0.0 0.0 2
 HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
 "#;
-    assert!(matches!(
-        (parse(reordered)).interpret_ensemble(Default::default()),
-        Err(macromolecular::StructureEnsembleInterpretError::InconsistentDenseAtomOrder { model_id })
-            if model_id == "2"
-    ));
+    assert_eq!(
+        error_detail((parse(reordered)).interpret_ensemble(Default::default())),
+        Some(FormatErrorDetail::InconsistentDenseAtomOrder {
+            model_id: "2".to_owned()
+        })
+    );
 }
 
 #[test]
@@ -1443,11 +1453,12 @@ fn ensemble_identity_detects_true_repeated_atom_set_mismatch() {
         "ATOM 6 C CA GLY A X 1 8 101 . . 14.0 0.0 0.0 2",
         "ATOM 6 C CA GLY A X 1 9 101 . . 14.0 0.0 0.0 2",
     );
-    assert!(matches!(
-        (parse(&mismatched)).interpret_ensemble(Default::default()),
-        Err(macromolecular::StructureEnsembleInterpretError::InconsistentAtomSet { model_id })
-            if model_id == "2"
-    ));
+    assert_eq!(
+        error_detail((parse(&mismatched)).interpret_ensemble(Default::default())),
+        Some(FormatErrorDetail::InconsistentAtomSet {
+            model_id: "2".to_owned()
+        })
+    );
 }
 
 #[test]
@@ -2164,8 +2175,8 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         .insert(molecules[1], EntityKind::NonPolymer)
         .unwrap();
     assert!(matches!(
-        mmcif::write([mmcif::MmcifBlockSource::model(interpreted.model()).with_classifications(&conflicting)], MmcifWriteOptions::default()),
-        Err(MmcifWriteError::ConflictingAsymEntityClassifications {
+        mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::model(interpreted.model()).with_classifications(&conflicting)], MmcifWriteOptions::default())),
+        Some(MmcifWriteIssue::ConflictingAsymEntityClassifications {
             asym_id,
             ..
         }) if asym_id == "A"
@@ -2174,8 +2185,8 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
     let mut contradictory_report = interpreted.report().clone();
     contradictory_report.instances[1].atoms[0].entity_id = Some("8".to_owned());
     assert!(matches!(
-        mmcif::write([mmcif::MmcifBlockSource::model(interpreted.model()).with_reports(std::slice::from_ref(&contradictory_report))], MmcifWriteOptions::default()),
-        Err(MmcifWriteError::ConflictingAsymEntityIds { asym_id, .. })
+        mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::model(interpreted.model()).with_reports(std::slice::from_ref(&contradictory_report))], MmcifWriteOptions::default())),
+        Some(MmcifWriteIssue::ConflictingAsymEntityIds { asym_id, .. })
             if asym_id == "A"
     ));
 }
@@ -2185,11 +2196,11 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
     let zero = small_model_with_bond(BondOrder::Zero);
     let classifications = classifications_for(&zero, EntityKind::NonPolymer);
     assert!(matches!(
-        mmcif::write(
+        mmcif_issue(mmcif::write(
             [mmcif::MmcifBlockSource::model(&zero).with_classifications(&classifications)],
             MmcifWriteOptions::default()
-        ),
-        Err(MmcifWriteError::UnsupportedBondOrder {
+        )),
+        Some(MmcifWriteIssue::UnsupportedBondOrder {
             order: BondOrder::Zero,
             ..
         })
@@ -2255,7 +2266,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
     assert!(matches!(
         builder.build(),
         Err(ModelBuildError::Topology(
-            TopologyBuildError::InvalidHierarchy(_)
+            TopologyBuildError::MissingHierarchyAtom { .. }
         ))
     ));
     let _ = atom;
@@ -2339,11 +2350,11 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
     let model = builder.build().unwrap();
     let report = report_with_entity_kinds(&model, &[EntityKind::NonPolymer]);
     assert!(matches!(
-        mmcif::write(
+        mmcif_issue(mmcif::write(
             [mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))],
             MmcifWriteOptions::default()
-        ),
-        Err(MmcifWriteError::DuplicateAtomIdentity(_))
+        )),
+        Some(MmcifWriteIssue::DuplicateAtomIdentity(_))
     ));
 }
 
@@ -2468,8 +2479,8 @@ fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
     for model in [&linear, &graph_branched] {
         let molecule = model.topology().molecules().next().unwrap().id();
         assert_eq!(
-            mmcif::write([model], MmcifWriteOptions::default()),
-            Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
+            mmcif_issue(mmcif::write([model], MmcifWriteOptions::default())),
+            Some(MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
                 molecule,
                 classification: MoleculeClass::Carbohydrate,
             })
@@ -2487,8 +2498,8 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
     assert_eq!(molecule.class(), MoleculeClass::Carbohydrate);
     assert_eq!(molecule.residues().count(), 3);
     assert!(matches!(
-        mmcif::write([model], MmcifWriteOptions::default()),
-        Err(MmcifWriteError::UnresolvedCanonicalEntityClassification {
+        mmcif_issue(mmcif::write([model], MmcifWriteOptions::default())),
+        Some(MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
             classification: MoleculeClass::Carbohydrate,
             ..
         })
@@ -2509,8 +2520,8 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
     let molecule = model.topology().instances().next().unwrap().0;
     let report = report_with_entity_kinds(&model, &[EntityKind::Polymer, EntityKind::Branched]);
     assert!(matches!(
-        mmcif::write([mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))], MmcifWriteOptions::default()),
-        Err(MmcifWriteError::ConflictingEntityClassifications {
+        mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))], MmcifWriteOptions::default())),
+        Some(MmcifWriteIssue::ConflictingEntityClassifications {
             molecule: conflicted,
             ..
         }) if conflicted == molecule
@@ -2518,21 +2529,21 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
 
     let report = report_with_entity_kinds(&model, &[]);
     assert_eq!(
-        mmcif::write(
+        mmcif_issue(mmcif::write(
             [mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))],
             MmcifWriteOptions::default()
-        ),
-        Err(MmcifWriteError::MissingEntityClassification(molecule))
+        )),
+        Some(MmcifWriteIssue::MissingEntityClassification(molecule))
     );
 
     let report =
         report_with_entity_kinds(&model, &[EntityKind::Other("unsupported-kind".to_owned())]);
     assert_eq!(
-        mmcif::write(
+        mmcif_issue(mmcif::write(
             [mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))],
             MmcifWriteOptions::default()
-        ),
-        Err(MmcifWriteError::UnsupportedEntityClassification {
+        )),
+        Some(MmcifWriteIssue::UnsupportedEntityClassification {
             molecule,
             classification: "unsupported-kind".to_owned(),
         })
@@ -2541,18 +2552,18 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
     let mut report = report_with_entity_kinds(&model, &[EntityKind::Branched]);
     report.instances.push(report.instances[0].clone());
     assert_eq!(
-        mmcif::write(
+        mmcif_issue(mmcif::write(
             [mmcif::MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))],
             MmcifWriteOptions::default()
-        ),
-        Err(MmcifWriteError::DuplicateEntityClassification(molecule))
+        )),
+        Some(MmcifWriteIssue::DuplicateEntityClassification(molecule))
     );
 
     let mut duplicate = MmcifEntityClassifications::new();
     duplicate.insert(molecule, EntityKind::Branched).unwrap();
     assert_eq!(
-        duplicate.insert(molecule, EntityKind::Polymer),
-        Err(MmcifWriteError::DuplicateEntityClassification(molecule))
+        mmcif_issue(duplicate.insert(molecule, EntityKind::Polymer)),
+        Some(MmcifWriteIssue::DuplicateEntityClassification(molecule))
     );
 
     let unknown = MoleculeInstanceId::new(u32::MAX);
@@ -2561,11 +2572,11 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
         .insert(unknown, EntityKind::NonPolymer)
         .unwrap();
     assert_eq!(
-        mmcif::write(
+        mmcif_issue(mmcif::write(
             [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications)],
             MmcifWriteOptions::default()
-        ),
-        Err(MmcifWriteError::UnknownClassifiedMolecule(unknown))
+        )),
+        Some(MmcifWriteIssue::UnknownClassifiedMolecule(unknown))
     );
 }
 
@@ -2585,11 +2596,11 @@ fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
         .insert(classified, EntityKind::Polymer)
         .unwrap();
     assert!(matches!(
-        mmcif::write(
+        mmcif_issue(mmcif::write(
             [mmcif::MmcifBlockSource::model(model).with_classifications(&classifications)],
             MmcifWriteOptions::default()
-        ),
-        Err(MmcifWriteError::ConflictingAsymEntityClassifications { .. })
+        )),
+        Some(MmcifWriteIssue::ConflictingAsymEntityClassifications { .. })
     ));
 }
 

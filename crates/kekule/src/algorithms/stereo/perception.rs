@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 use std::borrow::Cow;
 use std::result::Result;
 
@@ -11,44 +12,51 @@ pub struct StereoSearchOptions {
     pub max_search_states: usize,
 }
 
+impl StereoSearchOptions {
+    /// The [`Default`] bound of [`Self::max_atoms`].
+    pub const DEFAULT_MAX_ATOMS: usize = 4_096;
+    /// The [`Default`] bound of [`Self::max_search_states`].
+    pub const DEFAULT_MAX_SEARCH_STATES: usize = 1_000_000;
+}
+
 impl Default for StereoSearchOptions {
     fn default() -> Self {
         Self {
-            max_atoms: 4096,
-            max_search_states: 1_000_000,
+            max_atoms: Self::DEFAULT_MAX_ATOMS,
+            max_search_states: Self::DEFAULT_MAX_SEARCH_STATES,
         }
     }
 }
 
+/// Why a bounded stereo symmetry search failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StereoSearchError {
-    InvalidOptions(&'static str),
-    Perception(crate::chemistry::PerceptionError),
-    InvalidStereo(StereoValidationError),
-    ResourceLimit {
-        resource: &'static str,
-        observed: usize,
+    /// A configured bound is zero.
+    InvalidLimit {
+        /// The bounded resource.
+        resource: Resource,
+        /// The configured bound.
         limit: usize,
     },
+    /// Perceiving the analysed molecule failed; see the source.
+    Perception(crate::chemistry::PerceptionError),
+    /// Represented stereo is invalid; see the source.
+    InvalidStereo(StereoValidationError),
+    /// The search exceeded [`StereoSearchOptions::max_atoms`] or
+    /// [`StereoSearchOptions::max_search_states`].
+    LimitExceeded(LimitExceeded),
 }
 
 impl fmt::Display for StereoSearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidOptions(message) => {
-                write!(f, "invalid stereo perception options: {message}")
+            Self::InvalidLimit { resource, limit } => {
+                write!(f, "invalid stereo search {resource} limit {limit}")
             }
-            Self::Perception(error) => error.fmt(f),
-            Self::InvalidStereo(error) => error.fmt(f),
-            Self::ResourceLimit {
-                resource,
-                observed,
-                limit,
-            } => write!(
-                f,
-                "stereo {resource} limit exceeded: observed {observed}, limit {limit}"
-            ),
+            Self::Perception(_) => f.write_str("cannot perceive the molecule for stereo search"),
+            Self::InvalidStereo(_) => f.write_str("represented stereo is invalid"),
+            Self::LimitExceeded(limit) => write!(f, "stereo search {limit}"),
         }
     }
 }
@@ -109,14 +117,19 @@ pub fn detect_stereo_candidates(
     options: StereoSearchOptions,
 ) -> Result<Vec<StereoCandidate>, StereoSearchError> {
     if options.max_atoms == 0 || options.max_search_states == 0 {
-        return Err(StereoSearchError::InvalidOptions("limits must be positive"));
+        let (resource, limit) = if options.max_atoms == 0 {
+            (Resource::Atoms, options.max_atoms)
+        } else {
+            (Resource::SearchStates, options.max_search_states)
+        };
+        return Err(StereoSearchError::InvalidLimit { resource, limit });
     }
     if mol.atom_count() > options.max_atoms {
-        return Err(StereoSearchError::ResourceLimit {
-            resource: "analysis atoms",
-            observed: mol.atom_count(),
-            limit: options.max_atoms,
-        });
+        return Err(StereoSearchError::LimitExceeded(LimitExceeded::new(
+            Resource::Atoms,
+            options.max_atoms,
+            mol.atom_count(),
+        )));
     }
     validate_stereo(mol).map_err(StereoSearchError::InvalidStereo)?;
     let perceived = prepared(mol)?;

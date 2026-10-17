@@ -5,8 +5,8 @@ use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::{
-    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryIoError, TrajectoryReader,
-    TrajectoryWriter,
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryIoError, TrajectoryIoErrorKind,
+    TrajectoryReader, TrajectoryWriter,
 };
 
 use crate::support;
@@ -62,7 +62,7 @@ impl SeekableTrajectoryReader for CompanionIndexed {
         index: u64,
         _destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
-        Err(TrajectoryIoError::FrameIndexOutOfRange(index))
+        Err(TrajectoryIoError::frame_index_out_of_range(index))
     }
 }
 
@@ -81,7 +81,9 @@ impl TrajectoryWriter for CompanionWriter {
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !std::ptr::eq(self.topology.as_ref(), frame.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         Ok(())
     }

@@ -23,13 +23,21 @@ pub enum PeriodicBoxOptions {
         shape: BoxShape,
     },
 }
+/// A periodic box could not be built for the model.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PeriodicBoxError {
+    /// The padding is not finite and positive.
     InvalidPadding,
+    /// The supplied cell is not periodic along all three axes.
     NotFullyPeriodic,
+    /// The padding could not be converted to the canonical length unit; see
+    /// the source.
     Unit(UnitError),
+    /// The box vectors do not form a valid cell; see the source.
     Cell(PeriodicCellError),
+    /// Centering the solute or validating the cell geometry failed; see the
+    /// source.
     Geometry(PeriodicGeometryError),
 }
 impl fmt::Display for PeriodicBoxError {
@@ -37,9 +45,9 @@ impl fmt::Display for PeriodicBoxError {
         match self {
             Self::InvalidPadding => f.write_str("padding must be finite and positive"),
             Self::NotFullyPeriodic => f.write_str("box construction requires three periodic axes"),
-            Self::Unit(e) => e.fmt(f),
-            Self::Cell(e) => e.fmt(f),
-            Self::Geometry(e) => e.fmt(f),
+            Self::Unit(_) => f.write_str("invalid box unit"),
+            Self::Cell(_) => f.write_str("invalid periodic cell"),
+            Self::Geometry(_) => f.write_str("periodic geometry failed"),
         }
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::{LimitExceeded, Resource};
 
 #[test]
 fn ring_set_reports_symmetric_cycles_for_fused_rings() {
@@ -71,35 +72,35 @@ fn ring_input_and_work_limits_return_actionable_errors() {
                 max_atoms: 2,
                 ..RingPerceptionOptions::default()
             },
-            ("atoms", 3, 2),
+            (Resource::Atoms, 3, 2),
         ),
         (
             RingPerceptionOptions {
                 max_bonds: 2,
                 ..RingPerceptionOptions::default()
             },
-            ("bonds", 3, 2),
+            (Resource::Bonds, 3, 2),
         ),
         (
             RingPerceptionOptions {
                 max_total_work: 5,
                 ..RingPerceptionOptions::default()
             },
-            ("total work", 6, 5),
+            (Resource::Work, 6, 5),
         ),
         (
             RingPerceptionOptions {
                 max_path_expansions: 0,
                 ..RingPerceptionOptions::default()
             },
-            ("path expansions", 1, 0),
+            (Resource::PathExpansions, 1, 0),
         ),
         (
             RingPerceptionOptions {
                 max_equivalent_shortest_paths: 0,
                 ..RingPerceptionOptions::default()
             },
-            ("equivalent shortest paths", 1, 0),
+            (Resource::ShortestPaths, 1, 0),
         ),
     ];
 
@@ -112,11 +113,9 @@ fn ring_input_and_work_limits_return_actionable_errors() {
             .expect_err("configured ring resource limit should fail");
         assert_eq!(
             error,
-            RingPerceptionError::ResourceLimit {
-                resource: expected.0,
-                observed: expected.1,
-                limit: expected.2,
-            }
+            RingPerceptionError::LimitExceeded(LimitExceeded::new(
+                expected.0, expected.2, expected.1
+            ))
         );
         assert!(molecule.ring_set().is_none());
     }
@@ -147,12 +146,8 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
     .expect_err("symmetric cage should hit candidate limit");
     assert!(matches!(
         error,
-        RingPerceptionError::ResourceLimit {
-            resource: "candidate cycles",
-            observed,
-            limit,
-            ..
-        } if observed > limit
+        RingPerceptionError::LimitExceeded(limit)
+            if limit.resource() == Resource::CandidateCycles && limit.observed() > limit.limit()
     ));
     assert!(mol.ring_set().is_none());
 }
@@ -255,12 +250,8 @@ fn cycle_size_limit_returns_structured_error() {
     .expect_err("large cycle should hit cycle-size limit");
     assert!(matches!(
         error,
-        RingPerceptionError::ResourceLimit {
-            resource: "cycle size",
-            observed: 10,
-            limit: 5,
-            ..
-        }
+        RingPerceptionError::LimitExceeded(limit)
+            if limit == LimitExceeded::new(Resource::RingSize, 5, 10)
     ));
 }
 
@@ -286,7 +277,7 @@ fn focused_ring_resource_errors_are_transactional() {
     };
     let error = rings_api::perceive_rings(molecule.working_mut(), ring_options)
         .expect_err("ring limit should fail focused perception");
-    assert!(matches!(error, RingPerceptionError::ResourceLimit { .. }));
+    assert!(matches!(error, RingPerceptionError::LimitExceeded(_)));
     assert_eq!(molecule, original);
 
     let mut aromatic = read_smiles("c1ccccc1").expect("benzene should parse");

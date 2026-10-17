@@ -1,9 +1,11 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::fmt;
 use std::ops::Range;
 use std::rc::Rc;
 
+use crate::diagnostics::{
+    DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
+};
 use crate::molecule::{BondOrder, Element};
 
 use super::{
@@ -41,87 +43,70 @@ pub struct SmartsParseOptions {
     pub max_total_expression_nodes: usize,
 }
 
+impl SmartsParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 16_384;
+    /// The [`Default`] bound of [`Self::max_atoms`].
+    pub const DEFAULT_MAX_ATOMS: usize = 256;
+    /// The [`Default`] bound of [`Self::max_bonds`].
+    pub const DEFAULT_MAX_BONDS: usize = 512;
+    /// The [`Default`] bound of [`Self::max_branch_depth`].
+    pub const DEFAULT_MAX_BRANCH_DEPTH: usize = 64;
+    /// The [`Default`] bound of [`Self::max_ring_closures`].
+    pub const DEFAULT_MAX_RING_CLOSURES: usize = 128;
+    /// The [`Default`] bound of [`Self::max_expression_nodes`].
+    pub const DEFAULT_MAX_EXPRESSION_NODES: usize = 512;
+    /// The [`Default`] bound of [`Self::max_expression_depth`].
+    pub const DEFAULT_MAX_EXPRESSION_DEPTH: usize = 32;
+    /// The [`Default`] bound of [`Self::max_recursive_depth`].
+    pub const DEFAULT_MAX_RECURSIVE_DEPTH: usize = 32;
+    /// The [`Default`] bound of [`Self::max_total_expression_nodes`].
+    pub const DEFAULT_MAX_TOTAL_EXPRESSION_NODES: usize = 16_384;
+}
+
 impl Default for SmartsParseOptions {
     fn default() -> Self {
         Self {
-            max_input_bytes: 16_384,
-            max_atoms: 256,
-            max_bonds: 512,
-            max_branch_depth: 64,
-            max_ring_closures: 128,
-            max_expression_nodes: 512,
-            max_expression_depth: 32,
-            max_recursive_depth: 32,
-            max_total_expression_nodes: 16_384,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_atoms: Self::DEFAULT_MAX_ATOMS,
+            max_bonds: Self::DEFAULT_MAX_BONDS,
+            max_branch_depth: Self::DEFAULT_MAX_BRANCH_DEPTH,
+            max_ring_closures: Self::DEFAULT_MAX_RING_CLOSURES,
+            max_expression_nodes: Self::DEFAULT_MAX_EXPRESSION_NODES,
+            max_expression_depth: Self::DEFAULT_MAX_EXPRESSION_DEPTH,
+            max_recursive_depth: Self::DEFAULT_MAX_RECURSIVE_DEPTH,
+            max_total_expression_nodes: Self::DEFAULT_MAX_TOTAL_EXPRESSION_NODES,
         }
     }
 }
 
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SmartsParseErrorKind {
-    Empty,
-    InvalidSyntax,
-    Unsupported,
-    ResourceLimit,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SmartsParseError {
-    kind: SmartsParseErrorKind,
+/// A SMARTS parse failure at the start of `span`, a byte range of the pattern.
+fn smarts_error(
+    kind: DiagnosticKind,
     span: Range<usize>,
-    message: String,
+    message: impl Into<String>,
+) -> FormatError {
+    FormatError::parse(Format::Smarts, kind, message)
+        .at(SourceLocation::at_column(1, span.start + 1))
 }
 
-impl SmartsParseError {
-    pub const fn kind(&self) -> SmartsParseErrorKind {
-        self.kind
-    }
-
-    pub fn span(&self) -> Range<usize> {
-        self.span.clone()
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn new(kind: SmartsParseErrorKind, span: Range<usize>, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            span,
-            message: message.into(),
-        }
-    }
-
-    fn syntax(span: Range<usize>, message: impl Into<String>) -> Self {
-        Self::new(SmartsParseErrorKind::InvalidSyntax, span, message)
-    }
-
-    fn unsupported(span: Range<usize>, message: impl Into<String>) -> Self {
-        Self::new(SmartsParseErrorKind::Unsupported, span, message)
-    }
-
-    fn limit(span: Range<usize>, resource: &'static str, observed: usize, limit: usize) -> Self {
-        Self::new(
-            SmartsParseErrorKind::ResourceLimit,
-            span,
-            format!("SMARTS {resource} limit exceeded: observed {observed}, limit {limit}"),
-        )
-    }
+fn syntax_error(span: Range<usize>, message: impl Into<String>) -> FormatError {
+    smarts_error(DiagnosticKind::Syntax, span, message)
 }
 
-impl fmt::Display for SmartsParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "SMARTS parse error at {}..{}: {}",
-            self.span.start, self.span.end, self.message
-        )
-    }
+fn unsupported_error(span: Range<usize>, message: impl Into<String>) -> FormatError {
+    smarts_error(DiagnosticKind::Unsupported, span, message)
 }
 
-impl std::error::Error for SmartsParseError {}
+fn limit_error(
+    span: Range<usize>,
+    resource: Resource,
+    observed: usize,
+    limit: usize,
+) -> FormatError {
+    let exceeded = LimitExceeded::new(resource, limit, observed);
+    smarts_error(DiagnosticKind::Limit, span, exceeded.to_string()).exceeding(exceeded)
+}
 
 /// Parses one SMARTS pattern into a syntax-independent [`QueryGraph`].
 ///
@@ -148,25 +133,25 @@ impl std::error::Error for SmartsParseError {}
 /// groups and the `r` flag, with zero-based query atom indices. Other CX fields
 /// are rejected. Enhanced groups compare correlated configurations during matching.
 /// See the crate's SMARTS capability matrix for the complete dialect contract.
-pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph, SmartsParseError> {
+pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph, FormatError> {
     validate_options(options)?;
     if input.is_empty() {
-        return Err(SmartsParseError::new(
-            SmartsParseErrorKind::Empty,
+        return Err(smarts_error(
+            DiagnosticKind::Syntax,
             0..0,
             "empty SMARTS query",
         ));
     }
     if input.len() > options.max_input_bytes {
-        return Err(SmartsParseError::limit(
+        return Err(limit_error(
             0..input.len(),
-            "input bytes",
+            Resource::InputBytes,
             input.len(),
             options.max_input_bytes,
         ));
     }
     if let Some((offset, ch)) = input.char_indices().find(|(_, ch)| !ch.is_ascii()) {
-        return Err(SmartsParseError::unsupported(
+        return Err(unsupported_error(
             offset..offset + ch.len_utf8(),
             "non-ASCII query syntax is outside the bounded SMARTS subset",
         ));
@@ -177,7 +162,7 @@ pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph,
             || !input.as_bytes()[start - 1].is_ascii_whitespace()
             || !input.ends_with('|')
         {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 start..input.len(),
                 "CXSMARTS requires a separated, terminated extension",
             ));
@@ -202,12 +187,12 @@ fn install_cx_groups(
     query: QueryGraph,
     fields: &str,
     span: Range<usize>,
-) -> Result<QueryGraph, SmartsParseError> {
+) -> Result<QueryGraph, FormatError> {
     if fields.trim().is_empty() {
         return Ok(query);
     }
     use crate::stereo::StereoGroupKind as K;
-    let fail = |message| SmartsParseError::syntax(span.clone(), message);
+    let fail = |message| syntax_error(span.clone(), message);
     let mut groups = BTreeMap::<(u8, usize), (K, Vec<QueryAtomId>)>::new();
     let mut current = None;
     let mut relative = false;
@@ -233,7 +218,7 @@ fn install_cx_groups(
                 let tag = header.as_bytes()[0];
                 (tag, number, if tag == b'o' { K::Or } else { K::And })
             } else {
-                return Err(SmartsParseError::unsupported(
+                return Err(unsupported_error(
                     span.clone(),
                     "unsupported CXSMARTS field",
                 ));
@@ -276,14 +261,14 @@ fn install_cx_groups(
     for (_, (kind, members)) in groups {
         builder
             .add_stereo_group(super::QueryStereoGroup { kind, members })
-            .map_err(|e| SmartsParseError::syntax(span.clone(), e.to_string()))?;
+            .map_err(|e| syntax_error(span.clone(), "invalid query").with_source(e))?;
     }
     builder
         .build()
-        .map_err(|e| SmartsParseError::syntax(span.clone(), e.to_string()))
+        .map_err(|e| syntax_error(span.clone(), "invalid query").with_source(e))
 }
 
-fn validate_options(options: SmartsParseOptions) -> Result<(), SmartsParseError> {
+fn validate_options(options: SmartsParseOptions) -> Result<(), FormatError> {
     for (name, value) in [
         ("max_input_bytes", options.max_input_bytes),
         ("max_atoms", options.max_atoms),
@@ -299,8 +284,8 @@ fn validate_options(options: SmartsParseOptions) -> Result<(), SmartsParseError>
         ),
     ] {
         if value == 0 {
-            return Err(SmartsParseError::new(
-                SmartsParseErrorKind::ResourceLimit,
+            return Err(smarts_error(
+                DiagnosticKind::Limit,
                 0..0,
                 format!("SMARTS option {name} must be greater than zero"),
             ));
@@ -343,12 +328,12 @@ fn charge(
     counter: &Cell<usize>,
     amount: usize,
     limit: usize,
-    name: &'static str,
+    resource: Resource,
     span: Range<usize>,
-) -> Result<(), SmartsParseError> {
+) -> Result<(), FormatError> {
     let observed = counter.get().saturating_add(amount);
     if observed > limit {
-        return Err(SmartsParseError::limit(span, name, observed, limit));
+        return Err(limit_error(span, resource, observed, limit));
     }
     counter.set(observed);
     Ok(())
@@ -396,7 +381,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse(mut self) -> Result<QueryGraph, SmartsParseError> {
+    fn parse(mut self) -> Result<QueryGraph, FormatError> {
         while self.cursor < self.bytes.len() {
             match self.bytes[self.cursor] {
                 b'(' => self.open_branch()?,
@@ -415,48 +400,43 @@ impl<'a> Parser<'a> {
                 | PreviousToken::BranchOpen
                 | PreviousToken::Dot
         ) {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 self.input.len()..self.input.len(),
                 "incomplete SMARTS query",
             ));
         }
         if let Some((_, offset)) = self.branches.last() {
-            return Err(SmartsParseError::syntax(
-                *offset..(*offset + 1),
-                "unclosed branch",
-            ));
+            return Err(syntax_error(*offset..(*offset + 1), "unclosed branch"));
         }
         if let Some(open) = self.rings.values().next() {
-            return Err(SmartsParseError::syntax(
-                open.span.clone(),
-                "unclosed ring label",
-            ));
+            return Err(syntax_error(open.span.clone(), "unclosed ring label"));
         }
         self.stereo.install(&mut self.builder)?;
         self.builder.build().map_err(|error| {
-            let kind = if matches!(error, QueryGraphError::ResourceLimit { .. }) {
-                SmartsParseErrorKind::ResourceLimit
-            } else {
-                SmartsParseErrorKind::InvalidSyntax
-            };
-            SmartsParseError::new(
-                kind,
-                0..self.input.len(),
-                format!("invalid query graph: {error}"),
-            )
+            let span = 0..self.input.len();
+            match error {
+                QueryGraphError::LimitExceeded(exceeded) => limit_error(
+                    span,
+                    exceeded.resource(),
+                    exceeded.observed(),
+                    exceeded.limit(),
+                ),
+                error => smarts_error(DiagnosticKind::Syntax, span, "invalid query graph")
+                    .with_source(error),
+            }
         })
     }
 
-    fn open_branch(&mut self) -> Result<(), SmartsParseError> {
+    fn open_branch(&mut self) -> Result<(), FormatError> {
         let offset = self.cursor;
         if matches!(self.previous, PreviousToken::Start | PreviousToken::Dot) {
-            return Err(SmartsParseError::unsupported(
+            return Err(unsupported_error(
                 offset..offset + 1,
                 "component-level SMARTS grouping is not supported",
             ));
         }
         if !self.previous.can_end_atom() || self.pending_bond.is_some() {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 offset..offset + 1,
                 "branch must follow an atom",
             ));
@@ -466,9 +446,9 @@ impl<'a> Parser<'a> {
             .expect("an atom-ending token has a current atom");
         let observed = self.branches.len().saturating_add(1);
         if observed > self.options.max_branch_depth {
-            return Err(SmartsParseError::limit(
+            return Err(limit_error(
                 offset..offset + 1,
-                "branch depth",
+                Resource::BranchDepth,
                 observed,
                 self.options.max_branch_depth,
             ));
@@ -479,31 +459,32 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn close_branch(&mut self) -> Result<(), SmartsParseError> {
+    fn close_branch(&mut self) -> Result<(), FormatError> {
         let offset = self.cursor;
         if !self.previous.can_end_atom() || self.pending_bond.is_some() {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 offset..offset + 1,
                 "empty or incomplete branch",
             ));
         }
-        let (parent, _) = self.branches.pop().ok_or_else(|| {
-            SmartsParseError::syntax(offset..offset + 1, "unmatched branch close")
-        })?;
+        let (parent, _) = self
+            .branches
+            .pop()
+            .ok_or_else(|| syntax_error(offset..offset + 1, "unmatched branch close"))?;
         self.current = Some(parent);
         self.previous = PreviousToken::BranchClose;
         self.cursor += 1;
         Ok(())
     }
 
-    fn component_separator(&mut self) -> Result<(), SmartsParseError> {
+    fn component_separator(&mut self) -> Result<(), FormatError> {
         let offset = self.cursor;
         if !self.previous.can_end_atom()
             || self.pending_bond.is_some()
             || !self.branches.is_empty()
             || !self.rings.is_empty()
         {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 offset..offset + 1,
                 "component separator must follow a complete top-level component",
             ));
@@ -514,12 +495,12 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn read_bond(&mut self) -> Result<(), SmartsParseError> {
+    fn read_bond(&mut self) -> Result<(), FormatError> {
         let start = self.cursor;
         if !(self.previous.can_end_atom() || self.previous == PreviousToken::BranchOpen)
             || self.pending_bond.is_some()
         {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 start..start + 1,
                 "bond expression must follow an atom or ring label",
             ));
@@ -530,7 +511,7 @@ impl<'a> Parser<'a> {
             &self.budget.nodes,
             expression.node_count(),
             self.options.max_total_expression_nodes,
-            "total expression nodes",
+            Resource::ExpressionNodes,
             start..end,
         )?;
         self.pending_bond = Some(BondSyntax {
@@ -542,10 +523,10 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn read_ring(&mut self) -> Result<(), SmartsParseError> {
+    fn read_ring(&mut self) -> Result<(), FormatError> {
         let start = self.cursor;
         if !self.previous.can_end_atom() && self.previous != PreviousToken::Bond {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 start..start + 1,
                 "ring label must follow an atom",
             ));
@@ -557,10 +538,7 @@ impl<'a> Parser<'a> {
         let span = start..self.cursor;
         if let Some(open) = self.rings.remove(&label) {
             if open.atom == current {
-                return Err(SmartsParseError::syntax(
-                    span,
-                    "ring label cannot create a self-bond",
-                ));
+                return Err(syntax_error(span, "ring label cannot create a self-bond"));
             }
             let closing = self.pending_bond.take();
             let bond = BondSyntax::ring(open.bond, closing, span.clone())?;
@@ -568,18 +546,18 @@ impl<'a> Parser<'a> {
             self.stereo.close_ring(open.atom, current, label);
             self.ring_closure_count = self.ring_closure_count.saturating_add(1);
             if self.ring_closure_count > self.options.max_ring_closures {
-                return Err(SmartsParseError::limit(
+                return Err(limit_error(
                     span,
-                    "ring closures",
+                    Resource::RingClosures,
                     self.ring_closure_count,
                     self.options.max_ring_closures,
                 ));
             }
         } else {
             if self.rings.len() >= self.options.max_ring_closures {
-                return Err(SmartsParseError::limit(
+                return Err(limit_error(
                     span,
-                    "open ring labels",
+                    Resource::RingClosures,
                     self.rings.len().saturating_add(1),
                     self.options.max_ring_closures,
                 ));
@@ -598,14 +576,14 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_ring_label(&mut self) -> Result<u16, SmartsParseError> {
+    fn parse_ring_label(&mut self) -> Result<u16, FormatError> {
         let start = self.cursor;
         if self.bytes[self.cursor] == b'%' {
             if self.cursor + 2 >= self.bytes.len()
                 || !self.bytes[self.cursor + 1].is_ascii_digit()
                 || !self.bytes[self.cursor + 2].is_ascii_digit()
             {
-                return Err(SmartsParseError::syntax(
+                return Err(syntax_error(
                     start..(start + 1).min(self.bytes.len()),
                     "percent ring labels require exactly two digits",
                 ));
@@ -621,7 +599,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn read_atom(&mut self) -> Result<(), SmartsParseError> {
+    fn read_atom(&mut self) -> Result<(), FormatError> {
         let start = self.cursor;
         let (expression, stereo, tag) = if self.bytes[self.cursor] == b'[' {
             let mut level = 1usize;
@@ -640,13 +618,10 @@ impl<'a> Parser<'a> {
                 close += 1;
             }
             if close == self.bytes.len() {
-                return Err(SmartsParseError::syntax(
-                    start..close,
-                    "unclosed bracket atom",
-                ));
+                return Err(syntax_error(start..close, "unclosed bracket atom"));
             }
             if close == self.cursor + 1 {
-                return Err(SmartsParseError::syntax(
+                return Err(syntax_error(
                     start..close + 1,
                     "empty bracket atom expression",
                 ));
@@ -669,18 +644,18 @@ impl<'a> Parser<'a> {
             &self.budget.atoms,
             1,
             self.options.max_atoms,
-            "atoms",
+            Resource::Atoms,
             start..self.cursor,
         )?;
         charge(
             &self.budget.nodes,
             expression.node_count(),
             self.options.max_total_expression_nodes,
-            "total expression nodes",
+            Resource::ExpressionNodes,
             start..self.cursor,
         )?;
         let atom = self.builder.add_atom(expression).map_err(|error| {
-            SmartsParseError::syntax(start..self.cursor, format!("invalid query atom: {error}"))
+            syntax_error(start..self.cursor, "invalid query atom").with_source(error)
         })?;
         self.builder
             .set_atom_tag(atom, tag)
@@ -694,7 +669,7 @@ impl<'a> Parser<'a> {
                 .unwrap_or_else(|| BondSyntax::default_at(start..self.cursor))?;
             self.add_bond(previous_atom, atom, bond, start..self.cursor)?;
         } else if self.pending_bond.is_some() {
-            return Err(SmartsParseError::syntax(
+            return Err(syntax_error(
                 start..self.cursor,
                 "bond expression has no preceding atom",
             ));
@@ -704,7 +679,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_simple_atom(&mut self) -> Result<AtomExpression, SmartsParseError> {
+    fn parse_simple_atom(&mut self) -> Result<AtomExpression, FormatError> {
         let start = self.cursor;
         match self.bytes[self.cursor] {
             b'*' => {
@@ -733,7 +708,7 @@ impl<'a> Parser<'a> {
                     symbol,
                     "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
                 ) {
-                    return Err(SmartsParseError::unsupported(
+                    return Err(unsupported_error(
                         start..end,
                         "elements outside the organic subset must be bracketed",
                     ));
@@ -761,14 +736,14 @@ impl<'a> Parser<'a> {
             }
             b'/' | b'\\' | b'@' => {
                 self.cursor += 1;
-                Err(SmartsParseError::unsupported(
+                Err(unsupported_error(
                     start..self.cursor,
                     "stereochemical SMARTS is not supported",
                 ))
             }
             _ => {
                 self.cursor += 1;
-                Err(SmartsParseError::syntax(
+                Err(syntax_error(
                     start..self.cursor,
                     format!(
                         "unexpected SMARTS character `{}`",
@@ -785,12 +760,12 @@ impl<'a> Parser<'a> {
         b: QueryAtomId,
         syntax: BondSyntax,
         span: Range<usize>,
-    ) -> Result<(), SmartsParseError> {
+    ) -> Result<(), FormatError> {
         charge(
             &self.budget.bonds,
             1,
             self.options.max_bonds,
-            "bonds",
+            Resource::Bonds,
             span.clone(),
         )?;
         let is_double = syntax.expression
@@ -799,9 +774,7 @@ impl<'a> Parser<'a> {
         let id = self
             .builder
             .add_bond(a, b, syntax.expression)
-            .map_err(|error| {
-                SmartsParseError::syntax(span, format!("invalid query bond: {error}"))
-            })?;
+            .map_err(|error| syntax_error(span, "invalid query bond").with_source(error))?;
         self.stereo
             .add_bond(id, a, b, is_double, syntax.direction, syntax.span);
         Ok(())
@@ -815,7 +788,7 @@ fn is_bond_start(byte: u8) -> bool {
     )
 }
 
-fn default_bond_expression() -> Result<BondExpression, SmartsParseError> {
+fn default_bond_expression() -> Result<BondExpression, FormatError> {
     BondExpression::any([
         non_aromatic_bond_expression(BondOrder::Single)
             .map_err(|error| expression_error(0..0, error))?,
@@ -847,7 +820,7 @@ fn atom_element_expression(
     element: Element,
     aromatic: bool,
     span: Range<usize>,
-) -> Result<AtomExpression, SmartsParseError> {
+) -> Result<AtomExpression, FormatError> {
     AtomExpression::all([
         AtomExpression::predicate(AtomPredicate::Element(element)),
         AtomExpression::predicate(AtomPredicate::Aromatic(aromatic)),
@@ -855,8 +828,15 @@ fn atom_element_expression(
     .map_err(|error| expression_error(span, error))
 }
 
-fn expression_error(span: Range<usize>, error: QueryExpressionError) -> SmartsParseError {
-    SmartsParseError::new(SmartsParseErrorKind::ResourceLimit, span, error.to_string())
+fn expression_error(span: Range<usize>, error: QueryExpressionError) -> FormatError {
+    match error {
+        QueryExpressionError::LimitExceeded(exceeded) => limit_error(
+            span,
+            exceeded.resource(),
+            exceeded.observed(),
+            exceeded.limit(),
+        ),
+    }
 }
 
 fn parse_element_symbol(input: &str, start: usize) -> Option<(Element, usize)> {
@@ -911,9 +891,7 @@ impl<'a> BracketParser<'a> {
         }
     }
 
-    fn parse(
-        mut self,
-    ) -> Result<(AtomExpression, Option<AtomStereo>, Option<u32>), SmartsParseError> {
+    fn parse(mut self) -> Result<(AtomExpression, Option<AtomStereo>, Option<u32>), FormatError> {
         let expression = self.parse_low_and()?;
         if self.peek() == Some(b':') {
             self.cursor += 1;
@@ -926,17 +904,17 @@ impl<'a> BracketParser<'a> {
             return Err(self.syntax_here("unexpected atom-expression syntax"));
         }
         if expression.node_count() > self.options.max_expression_nodes {
-            return Err(SmartsParseError::limit(
+            return Err(limit_error(
                 self.base..self.base + self.bytes.len(),
-                "expression nodes",
+                Resource::ExpressionNodes,
                 expression.node_count(),
                 self.options.max_expression_nodes,
             ));
         }
         if expression.depth() > self.options.max_expression_depth {
-            return Err(SmartsParseError::limit(
+            return Err(limit_error(
                 self.base..self.base + self.bytes.len(),
-                "expression depth",
+                Resource::ExpressionDepth,
                 expression.depth(),
                 self.options.max_expression_depth,
             ));
@@ -944,7 +922,7 @@ impl<'a> BracketParser<'a> {
         Ok((expression, self.stereo, self.tag))
     }
 
-    fn parse_low_and(&mut self) -> Result<AtomExpression, SmartsParseError> {
+    fn parse_low_and(&mut self) -> Result<AtomExpression, FormatError> {
         let mut terms = vec![self.parse_or()?];
         while self.peek() == Some(b';') {
             self.cursor += 1;
@@ -956,7 +934,7 @@ impl<'a> BracketParser<'a> {
         self.compose_all(terms)
     }
 
-    fn parse_or(&mut self) -> Result<AtomExpression, SmartsParseError> {
+    fn parse_or(&mut self) -> Result<AtomExpression, FormatError> {
         let mut terms = vec![self.parse_high_and()?];
         while self.peek() == Some(b',') {
             self.cursor += 1;
@@ -968,7 +946,7 @@ impl<'a> BracketParser<'a> {
         self.compose_any(terms)
     }
 
-    fn parse_high_and(&mut self) -> Result<AtomExpression, SmartsParseError> {
+    fn parse_high_and(&mut self) -> Result<AtomExpression, FormatError> {
         let mut terms = vec![self.parse_unary()?];
         loop {
             if self.peek() == Some(b'&') {
@@ -986,7 +964,7 @@ impl<'a> BracketParser<'a> {
         self.compose_all(terms)
     }
 
-    fn parse_unary(&mut self) -> Result<AtomExpression, SmartsParseError> {
+    fn parse_unary(&mut self) -> Result<AtomExpression, FormatError> {
         let start = self.cursor;
         let mut negations = 0usize;
         while self.peek() == Some(b'!') {
@@ -1005,7 +983,7 @@ impl<'a> BracketParser<'a> {
         Ok(expression)
     }
 
-    fn parse_primitive(&mut self) -> Result<AtomExpression, SmartsParseError> {
+    fn parse_primitive(&mut self) -> Result<AtomExpression, FormatError> {
         let start = self.cursor;
         let byte = self
             .peek()
@@ -1048,7 +1026,7 @@ impl<'a> BracketParser<'a> {
                     .ok()
                     .and_then(Element::from_atomic_number)
                     .ok_or_else(|| {
-                        SmartsParseError::syntax(
+                        syntax_error(
                             self.absolute(start..self.cursor),
                             "atomic number must be in 1..=118",
                         )
@@ -1060,7 +1038,7 @@ impl<'a> BracketParser<'a> {
             b'0'..=b'9' => {
                 let isotope = self.read_number("isotope")?;
                 let isotope = u16::try_from(isotope).map_err(|_| {
-                    SmartsParseError::syntax(
+                    syntax_error(
                         self.absolute(start..self.cursor),
                         "isotope exceeds u16 range",
                     )
@@ -1168,12 +1146,7 @@ impl<'a> BracketParser<'a> {
                 let absolute_start = self.base + self.cursor;
                 let (element, absolute_end) =
                     parse_element_symbol_at_bytes(self.source, self.base, self.cursor).ok_or_else(
-                        || {
-                            SmartsParseError::syntax(
-                                self.absolute(start..start + 1),
-                                "unknown element symbol",
-                            )
-                        },
+                        || syntax_error(self.absolute(start..start + 1), "unknown element symbol"),
                     )?;
                 self.cursor = absolute_end - self.base;
                 atom_element_expression(element, false, absolute_start..absolute_end)
@@ -1184,11 +1157,14 @@ impl<'a> BracketParser<'a> {
                     return Err(self.syntax_here("recursive query requires $(...)"));
                 }
                 let depth = self.recursive_depth + 1;
-                let limit = self.options.max_recursive_depth.min(32);
+                let limit = self
+                    .options
+                    .max_recursive_depth
+                    .min(super::MAX_QUERY_RECURSION_DEPTH);
                 if depth > limit {
-                    return Err(SmartsParseError::limit(
+                    return Err(limit_error(
                         self.absolute(start..self.cursor),
-                        "recursive depth",
+                        Resource::RecursionDepth,
                         depth,
                         limit,
                     ));
@@ -1219,10 +1195,7 @@ impl<'a> BracketParser<'a> {
                     depth,
                 )
                 .parse()
-                .map_err(|mut e| {
-                    e.span = self.absolute(begin + e.span.start..begin + e.span.end);
-                    e
-                })?;
+                .map_err(|e| e.shift_column(self.base + begin))?;
                 self.cursor += 1;
                 Ok(AtomExpression::predicate(AtomPredicate::Recursive(
                     Box::new(query),
@@ -1247,14 +1220,14 @@ impl<'a> BracketParser<'a> {
                 while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
                     self.cursor += 1;
                 }
-                Err(SmartsParseError::unsupported(
+                Err(unsupported_error(
                     self.absolute(start..self.cursor),
                     "valence and hybridization primitives are outside the bounded SMARTS subset",
                 ))
             }
             _ => {
                 self.cursor += 1;
-                Err(SmartsParseError::syntax(
+                Err(syntax_error(
                     self.absolute(start..self.cursor),
                     format!("unexpected atom primitive `{}`", byte as char),
                 ))
@@ -1262,7 +1235,7 @@ impl<'a> BracketParser<'a> {
         }
     }
 
-    fn parse_charge(&mut self) -> Result<AtomExpression, SmartsParseError> {
+    fn parse_charge(&mut self) -> Result<AtomExpression, FormatError> {
         let start = self.cursor;
         let sign = self.bytes[self.cursor];
         self.cursor += 1;
@@ -1277,7 +1250,7 @@ impl<'a> BracketParser<'a> {
             magnitude
         };
         let magnitude = i8::try_from(magnitude).map_err(|_| {
-            SmartsParseError::syntax(
+            syntax_error(
                 self.absolute(start..self.cursor),
                 "formal charge exceeds i8 range",
             )
@@ -1292,12 +1265,12 @@ impl<'a> BracketParser<'a> {
         &mut self,
         default: u8,
         description: &'static str,
-    ) -> Result<u8, SmartsParseError> {
+    ) -> Result<u8, FormatError> {
         let start = self.cursor;
         match self.read_optional_number() {
             None => Ok(default),
             Some(value) => u8::try_from(value).map_err(|_| {
-                SmartsParseError::syntax(
+                syntax_error(
                     self.absolute(start..self.cursor),
                     format!("{description} exceeds u8 range"),
                 )
@@ -1305,10 +1278,10 @@ impl<'a> BracketParser<'a> {
         }
     }
 
-    fn read_number(&mut self, description: &'static str) -> Result<usize, SmartsParseError> {
+    fn read_number(&mut self, description: &'static str) -> Result<usize, FormatError> {
         let start = self.cursor;
         self.read_optional_number().ok_or_else(|| {
-            SmartsParseError::syntax(
+            syntax_error(
                 self.absolute(start..self.cursor),
                 format!("missing {description}"),
             )
@@ -1327,18 +1300,12 @@ impl<'a> BracketParser<'a> {
         (self.cursor > start).then_some(value)
     }
 
-    fn compose_all(
-        &self,
-        expressions: Vec<AtomExpression>,
-    ) -> Result<AtomExpression, SmartsParseError> {
+    fn compose_all(&self, expressions: Vec<AtomExpression>) -> Result<AtomExpression, FormatError> {
         AtomExpression::all(expressions)
             .map_err(|error| expression_error(self.base..self.base + self.bytes.len(), error))
     }
 
-    fn compose_any(
-        &self,
-        expressions: Vec<AtomExpression>,
-    ) -> Result<AtomExpression, SmartsParseError> {
+    fn compose_any(&self, expressions: Vec<AtomExpression>) -> Result<AtomExpression, FormatError> {
         AtomExpression::any(expressions)
             .map_err(|error| expression_error(self.base..self.base + self.bytes.len(), error))
     }
@@ -1355,9 +1322,9 @@ impl<'a> BracketParser<'a> {
         self.base + span.start..self.base + span.end
     }
 
-    fn syntax_here(&self, message: impl Into<String>) -> SmartsParseError {
+    fn syntax_here(&self, message: impl Into<String>) -> FormatError {
         let end = (self.cursor + 1).min(self.bytes.len());
-        SmartsParseError::syntax(self.absolute(self.cursor..end), message)
+        syntax_error(self.absolute(self.cursor..end), message)
     }
 }
 

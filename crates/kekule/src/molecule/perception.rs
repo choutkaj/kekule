@@ -678,12 +678,91 @@ impl fmt::Display for MalformedRingReason {
     }
 }
 
+/// Why installed conjugation or resonance groups are inconsistent.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelocalizationIssue {
+    /// Resonance groups are installed without conjugation.
+    GroupsWithoutConjugation,
+    /// Conjugation is installed without aromaticity.
+    ConjugationWithoutAromaticity,
+    /// The conjugated atoms are not exactly the endpoints of the conjugated
+    /// bonds.
+    ConjugatedAtomsNotBondEndpoints,
+    /// An aromatic bond is not conjugated.
+    AromaticBondNotConjugated,
+    /// The zero-based resonance group `group` has no bonds.
+    EmptyGroup {
+        /// The group position.
+        group: usize,
+    },
+    /// A bond of group `group` is not conjugated or belongs to an earlier
+    /// group.
+    GroupBondsNotPartition {
+        /// The group position.
+        group: usize,
+    },
+    /// An atom of group `group` is repeated or belongs to an earlier group.
+    OverlappingGroupAtom {
+        /// The group position.
+        group: usize,
+    },
+    /// The atoms of group `group` are not exactly the endpoints of its bonds.
+    GroupAtomsNotBondEndpoints {
+        /// The group position.
+        group: usize,
+    },
+    /// The bonds of group `group` are not connected.
+    DisconnectedGroup {
+        /// The group position.
+        group: usize,
+    },
+    /// The groups do not cover every conjugated atom and bond.
+    IncompleteGroupPartition,
+}
+
+impl fmt::Display for DelocalizationIssue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GroupsWithoutConjugation => formatter.write_str("groups require conjugation"),
+            Self::ConjugationWithoutAromaticity => {
+                formatter.write_str("conjugation requires aromaticity")
+            }
+            Self::ConjugatedAtomsNotBondEndpoints => {
+                formatter.write_str("conjugated atoms must be exactly bond endpoints")
+            }
+            Self::AromaticBondNotConjugated => {
+                formatter.write_str("aromatic bonds must be conjugated")
+            }
+            Self::EmptyGroup { group } => write!(formatter, "group {group} is empty"),
+            Self::GroupBondsNotPartition { group } => write!(
+                formatter,
+                "group {group} bonds do not partition conjugation"
+            ),
+            Self::OverlappingGroupAtom { group } => {
+                write!(
+                    formatter,
+                    "group {group} has a duplicate or overlapping atom"
+                )
+            }
+            Self::GroupAtomsNotBondEndpoints { group } => write!(
+                formatter,
+                "group {group} atoms are not exactly its bond endpoints"
+            ),
+            Self::DisconnectedGroup { group } => write!(formatter, "group {group} is disconnected"),
+            Self::IncompleteGroupPartition => {
+                formatter.write_str("incomplete conjugated-group partition")
+            }
+        }
+    }
+}
+
 /// Errors validating a detached perception state against one molecule.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerceptionInstallError {
     /// Conjugation or its group partition is structurally inconsistent.
-    InvalidDelocalization(&'static str),
+    InvalidDelocalization(DelocalizationIssue),
     /// One component exceeds the fixed-width stable-ID capacity.
     ComponentCapacityExceeded(PerceptionComponent),
     /// An atom reference is not live.
@@ -696,7 +775,9 @@ pub enum PerceptionInstallError {
     InvalidStereoElementId(StereoElementId),
     /// A descriptor uses a different stereo geometry than its represented focus.
     IncompatibleStereoDescriptor {
+        /// The stereo element being described.
         element: StereoElementId,
+        /// The incompatible descriptor.
         descriptor: StereoDescriptor,
     },
     /// Ring atom flags do not cover the molecule's exact stable atom slots.
@@ -733,8 +814,8 @@ pub enum PerceptionInstallError {
 impl fmt::Display for PerceptionInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidDelocalization(reason) => {
-                write!(formatter, "invalid delocalization state: {reason}")
+            Self::InvalidDelocalization(issue) => {
+                write!(formatter, "invalid delocalization state: {issue}")
             }
             Self::ComponentCapacityExceeded(component) => {
                 write!(formatter, "{component} capacity exceeded")
@@ -910,7 +991,7 @@ fn validate_delocalization(
     let bad = PerceptionInstallError::InvalidDelocalization;
     let Some(conjugation) = &state.conjugation else {
         return if state.resonance.is_some() {
-            Err(bad("groups require conjugation"))
+            Err(bad(DelocalizationIssue::GroupsWithoutConjugation))
         } else {
             Ok(())
         };
@@ -918,7 +999,7 @@ fn validate_delocalization(
     let aromaticity = state
         .aromaticity
         .as_ref()
-        .ok_or(bad("conjugation requires aromaticity"))?;
+        .ok_or(bad(DelocalizationIssue::ConjugationWithoutAromaticity))?;
     let mut endpoints = BTreeSet::new();
     for &atom in &conjugation.atoms {
         mol.atom(atom)
@@ -931,22 +1012,24 @@ fn validate_delocalization(
         endpoints.extend([bond.a(), bond.b()]);
     }
     if endpoints != conjugation.atoms {
-        return Err(bad("conjugated atoms must be exactly bond endpoints"));
+        return Err(bad(DelocalizationIssue::ConjugatedAtomsNotBondEndpoints));
     }
     if !aromaticity.bonds.is_subset(&conjugation.bonds) {
-        return Err(bad("aromatic bonds must be conjugated"));
+        return Err(bad(DelocalizationIssue::AromaticBondNotConjugated));
     }
     if let Some(resonance) = &state.resonance {
         let mut atoms = BTreeSet::new();
         let mut bonds = BTreeSet::new();
-        for group in &resonance.groups {
+        for (index, group) in resonance.groups.iter().enumerate() {
             if group.bonds.is_empty() {
-                return Err(bad("empty group"));
+                return Err(bad(DelocalizationIssue::EmptyGroup { group: index }));
             }
             let mut group_ends = BTreeSet::new();
             for &id in &group.bonds {
                 if !conjugation.bonds.contains(&id) || !bonds.insert(id) {
-                    return Err(bad("group bonds must partition conjugation"));
+                    return Err(bad(DelocalizationIssue::GroupBondsNotPartition {
+                        group: index,
+                    }));
                 }
                 let bond = mol
                     .bond(id)
@@ -955,11 +1038,15 @@ fn validate_delocalization(
             }
             for &id in &group.atoms {
                 if !atoms.insert(id) {
-                    return Err(bad("duplicate or overlapping group atom"));
+                    return Err(bad(DelocalizationIssue::OverlappingGroupAtom {
+                        group: index,
+                    }));
                 }
             }
             if group_ends != group.atoms.iter().copied().collect() {
-                return Err(bad("group atoms must be exactly bond endpoints"));
+                return Err(bad(DelocalizationIssue::GroupAtomsNotBondEndpoints {
+                    group: index,
+                }));
             }
             let member_bonds: BTreeSet<_> = group.bonds.iter().copied().collect();
             let mut reached = BTreeSet::new();
@@ -974,11 +1061,11 @@ fn validate_delocalization(
                 }
             }
             if reached != group_ends {
-                return Err(bad("disconnected group"));
+                return Err(bad(DelocalizationIssue::DisconnectedGroup { group: index }));
             }
         }
         if atoms != conjugation.atoms || bonds != conjugation.bonds {
-            return Err(bad("incomplete conjugated-group partition"));
+            return Err(bad(DelocalizationIssue::IncompleteGroupPartition));
         }
     }
     Ok(())

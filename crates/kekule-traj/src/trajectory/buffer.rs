@@ -1,3 +1,4 @@
+use crate::TrajectoryIoErrorKind;
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -214,10 +215,12 @@ impl FrameBuffer {
         let time = validated_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
-                return Err(StructureError::AtomCountMismatch {
-                    expected: self.atom_count(),
-                    actual: source.atoms().len(),
-                });
+                return Err(StructureError::Array(
+                    kekule::structure::DenseArrayError::CountMismatch {
+                        expected: self.atom_count(),
+                        actual: source.atoms().len(),
+                    },
+                ));
             }
             if source.bonds().len() != self.properties().bonds().len() {
                 return Err(StructureError::BondCountMismatch {
@@ -270,7 +273,9 @@ impl FrameBuffer {
     /// Copies a complete frame of any snapshot sharing this buffer's layout.
     pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(frame.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         Ok(self.replace_from_data(FrameData::from_frame_view(frame))?)
     }
@@ -288,7 +293,7 @@ impl FrameBuffer {
             Ok(()) => Ok(storage),
             Err(error) => {
                 self.spare_velocities = Some(storage);
-                Err(error)
+                Err(error.into())
             }
         }
     }
@@ -306,7 +311,7 @@ impl FrameBuffer {
             Ok(()) => Ok(storage),
             Err(error) => {
                 self.spare_forces = Some(storage);
-                Err(error)
+                Err(error.into())
             }
         }
     }

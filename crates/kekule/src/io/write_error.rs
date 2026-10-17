@@ -1,74 +1,45 @@
-//! Failure shared by the molecule-encoding writers (SMILES and Molfile CTABs).
-use std::fmt;
+//! Failures of the molecule-encoding writers (SMILES and Molfile CTABs).
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, LimitExceeded};
 
-/// Why a SMILES or Molfile writer produced no output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum MoleculeWriteErrorKind {
+/// Constructors of write-stage [`FormatError`]s for one format, following the
+/// writer failure taxonomy: cannot encode, missing perception, limit,
+/// inconsistent source, and sink.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WriteErrors(Format);
+
+pub(crate) const SMILES_WRITE: WriteErrors = WriteErrors(Format::Smiles);
+pub(crate) const MOLFILE_WRITE: WriteErrors = WriteErrors(Format::Molfile);
+
+impl WriteErrors {
     /// The format, or the requested format version, cannot encode valid
     /// source content without losing or changing it.
-    UnsupportedRepresentation,
-    /// The source lacks perception the writer requires; perceive it and retry.
-    MissingPerception,
-    /// A bounded writer calculation could not complete within its work limit.
-    ResourceLimit,
+    pub(crate) fn unsupported(self, message: impl Into<String>) -> FormatError {
+        FormatError::write(self.0, DiagnosticKind::Unsupported, message)
+    }
+
+    /// The source lacks perception the writer requires.
+    pub(crate) fn missing_perception(self, message: impl Into<String>) -> FormatError {
+        FormatError::write(self.0, DiagnosticKind::MissingPerception, message)
+    }
+
+    /// A bounded writer calculation, described by `what`, could not complete
+    /// within `limit`.
+    pub(crate) fn resource_limit(self, what: &str, limit: LimitExceeded) -> FormatError {
+        FormatError::write(self.0, DiagnosticKind::Limit, format!("{what} {limit}"))
+            .exceeding(limit)
+    }
+
     /// The source is internally inconsistent or incomplete, for example a
     /// model without positions for every atom.
-    InvalidModel,
+    pub(crate) fn invalid_model(self, message: impl Into<String>) -> FormatError {
+        FormatError::write(self.0, DiagnosticKind::Inconsistent, message)
+    }
+
     /// The output sink failed.
-    Io(std::io::ErrorKind),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MoleculeWriteError {
-    kind: MoleculeWriteErrorKind,
-    message: String,
-}
-
-impl MoleculeWriteError {
-    pub(crate) fn unsupported(message: impl Into<String>) -> Self {
-        Self::with_kind(MoleculeWriteErrorKind::UnsupportedRepresentation, message)
-    }
-
-    pub(crate) fn missing_perception(message: impl Into<String>) -> Self {
-        Self::with_kind(MoleculeWriteErrorKind::MissingPerception, message)
-    }
-
-    pub(crate) fn resource_limit(message: impl Into<String>) -> Self {
-        Self::with_kind(MoleculeWriteErrorKind::ResourceLimit, message)
-    }
-
-    pub(crate) fn invalid_model(message: impl Into<String>) -> Self {
-        Self::with_kind(MoleculeWriteErrorKind::InvalidModel, message)
-    }
-
-    pub(crate) fn io(error: std::io::Error) -> Self {
-        Self::with_kind(MoleculeWriteErrorKind::Io(error.kind()), error.to_string())
-    }
-
-    fn with_kind(kind: MoleculeWriteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    pub const fn kind(&self) -> MoleculeWriteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
+    pub(crate) fn io(self, error: std::io::Error) -> FormatError {
+        FormatError::sink(self.0, error)
     }
 }
-
-impl fmt::Display for MoleculeWriteError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for MoleculeWriteError {}
 
 /// What a structure writer does with state its format cannot represent, such
 /// as a periodic cell in a Molfile. Representable state is always written.

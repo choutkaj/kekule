@@ -2,13 +2,15 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::diagnostics::{normalize_line_endings, read_bounded, DiagnosticKind, SourceLocation};
+use crate::diagnostics::{
+    normalize_line_endings, read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded,
+    Resource, SourceLocation,
+};
 
 use super::structure_interpret::{
     interpret_mmcif, interpret_mmcif_block, interpret_mmcif_conformations,
     interpret_mmcif_conformations_block, interpret_mmcif_ensemble, interpret_mmcif_ensemble_block,
-    StructureEnsembleInterpretError, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretError, StructureInterpretOptions,
+    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretOptions,
     StructureInterpretation,
 };
 
@@ -35,58 +37,34 @@ pub struct MmcifParseOptions {
     pub max_atom_site_rows: usize,
 }
 
+impl MmcifParseOptions {
+    /// The [`Default`] bound of [`Self::max_input_bytes`].
+    pub const DEFAULT_MAX_INPUT_BYTES: usize = 1024 * 1024 * 1024;
+    /// The [`Default`] bound of [`Self::max_atom_site_rows`].
+    pub const DEFAULT_MAX_ATOM_SITE_ROWS: usize = 5_000_000;
+    /// The [`Default`] bound of [`Self::max_tokens`]: room for the default
+    /// atom-site rows plus 20,000,000 other values.
+    pub const DEFAULT_MAX_TOKENS: usize =
+        Self::DEFAULT_MAX_ATOM_SITE_ROWS * TYPICAL_ATOM_SITE_COLUMNS + 20_000_000;
+    /// The [`Default`] bound of [`Self::max_token_bytes`].
+    pub const DEFAULT_MAX_TOKEN_BYTES: usize = 16 * 1024 * 1024;
+}
+
 impl Default for MmcifParseOptions {
     fn default() -> Self {
-        let max_atom_site_rows = 5_000_000;
         Self {
-            max_input_bytes: 1024 * 1024 * 1024,
-            max_tokens: max_atom_site_rows * TYPICAL_ATOM_SITE_COLUMNS + 20_000_000,
-            max_token_bytes: 16 * 1024 * 1024,
-            max_atom_site_rows,
+            max_input_bytes: Self::DEFAULT_MAX_INPUT_BYTES,
+            max_tokens: Self::DEFAULT_MAX_TOKENS,
+            max_token_bytes: Self::DEFAULT_MAX_TOKEN_BYTES,
+            max_atom_site_rows: Self::DEFAULT_MAX_ATOM_SITE_ROWS,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcifParseError {
-    kind: DiagnosticKind,
-    location: SourceLocation,
-    message: String,
+/// An mmCIF parse failure on `line` of the input.
+fn mmcif_parse_error(kind: DiagnosticKind, line: usize, message: impl Into<String>) -> FormatError {
+    FormatError::parse(Format::Mmcif, kind, message).at(SourceLocation::at_line(line))
 }
-
-impl MmcifParseError {
-    fn new(kind: DiagnosticKind, line: usize, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            location: SourceLocation::at_line(line),
-            message: message.into(),
-        }
-    }
-
-    pub const fn kind(&self) -> DiagnosticKind {
-        self.kind
-    }
-
-    pub const fn location(&self) -> SourceLocation {
-        self.location
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl fmt::Display for MmcifParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "mmCIF parse error at {}: {}",
-            self.location, self.message
-        )
-    }
-}
-
-impl std::error::Error for MmcifParseError {}
 
 /// One parsed tag or value: a byte span of the shared source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +98,7 @@ impl MmcifDocument {
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+    ) -> Result<StructureEnsembleInterpretation, FormatError> {
         interpret_mmcif_conformations(self, selections)
     }
 
@@ -136,7 +114,7 @@ impl MmcifDocument {
     pub fn interpret(
         &self,
         options: StructureInterpretOptions,
-    ) -> Result<StructureInterpretation, StructureInterpretError> {
+    ) -> Result<StructureInterpretation, FormatError> {
         interpret_mmcif(self, options)
     }
 
@@ -146,7 +124,7 @@ impl MmcifDocument {
     pub fn interpret_ensemble(
         &self,
         options: StructureEnsembleInterpretOptions,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+    ) -> Result<StructureEnsembleInterpretation, FormatError> {
         interpret_mmcif_ensemble(self, options)
     }
 }
@@ -200,7 +178,7 @@ impl MmcifBlock {
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+    ) -> Result<StructureEnsembleInterpretation, FormatError> {
         interpret_mmcif_conformations_block(self, selections)
     }
 
@@ -221,9 +199,7 @@ impl MmcifBlock {
     /// Inventories alternate labels and stable residue identities without
     /// selecting coordinates or changing the source document. Identities can be
     /// used in [`super::AltLocSelection`] overrides and residue groups.
-    pub fn alternate_locations(
-        &self,
-    ) -> Result<Vec<super::AltLocResidue>, StructureInterpretError> {
+    pub fn alternate_locations(&self) -> Result<Vec<super::AltLocResidue>, FormatError> {
         super::structure_interpret::alternate_location_inventory(self)
     }
 
@@ -248,7 +224,7 @@ impl MmcifBlock {
     pub fn interpret(
         &self,
         options: StructureInterpretOptions,
-    ) -> Result<StructureInterpretation, StructureInterpretError> {
+    ) -> Result<StructureInterpretation, FormatError> {
         interpret_mmcif_block(self, options)
     }
 
@@ -257,7 +233,7 @@ impl MmcifBlock {
     pub fn interpret_ensemble(
         &self,
         options: StructureEnsembleInterpretOptions,
-    ) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+    ) -> Result<StructureEnsembleInterpretation, FormatError> {
         interpret_mmcif_ensemble_block(self, options)
     }
 }
@@ -400,29 +376,39 @@ impl<'a> MmcifValue<'a> {
 pub(crate) fn parse_mmcif_reader(
     reader: impl std::io::Read,
     options: MmcifParseOptions,
-) -> Result<MmcifDocument, MmcifParseError> {
-    let input = read_bounded(reader, options.max_input_bytes)
-        .map_err(|(kind, message)| MmcifParseError::new(kind, 1, message))?;
+) -> Result<MmcifDocument, FormatError> {
+    let input = read_bounded(reader, options.max_input_bytes, Format::Mmcif)
+        .map_err(|error| error.at(SourceLocation::at_line(1)))?;
     parse_mmcif_str(&input, options)
 }
 
 pub(crate) fn parse_mmcif_str(
     input: &str,
     options: MmcifParseOptions,
-) -> Result<MmcifDocument, MmcifParseError> {
+) -> Result<MmcifDocument, FormatError> {
     if input.len() > options.max_input_bytes {
-        return Err(MmcifParseError::new(
+        return Err(mmcif_parse_error(
             DiagnosticKind::Limit,
             1,
             "input exceeds configured byte limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            options.max_input_bytes,
+            input.len(),
+        )));
     }
     if u32::try_from(input.len()).is_err() {
-        return Err(MmcifParseError::new(
+        return Err(mmcif_parse_error(
             DiagnosticKind::Limit,
             1,
             "input exceeds the 4 GiB addressable mmCIF limit",
-        ));
+        )
+        .exceeding(LimitExceeded::new(
+            Resource::InputBytes,
+            u32::MAX as usize,
+            input.len(),
+        )));
     }
     let source: Arc<str> = normalize_line_endings(input).into();
     let mut tokens = Tokens {
@@ -436,7 +422,7 @@ fn parse_blocks(
     source: &Arc<str>,
     tokens: &mut Tokens<'_>,
     max_atom_site_rows: usize,
-) -> Result<MmcifDocument, MmcifParseError> {
+) -> Result<MmcifDocument, FormatError> {
     let text = |span: Span| span.text(source);
     let mut blocks = Vec::new();
     let mut block_names = BTreeSet::new();
@@ -452,7 +438,7 @@ fn parse_blocks(
             return Err(syntax_error(token, "data block has no name"));
         }
         if !block_names.insert(name.to_ascii_lowercase()) {
-            return Err(MmcifParseError::new(
+            return Err(mmcif_parse_error(
                 DiagnosticKind::Inconsistent,
                 token.line as usize,
                 format!("duplicate data block {name}"),
@@ -469,7 +455,7 @@ fn parse_blocks(
                 let table = parse_loop(source, tokens, token, max_atom_site_rows)?;
                 for tag in &table.tags {
                     if !data_names.insert(tag.to_ascii_lowercase()) {
-                        return Err(MmcifParseError::new(
+                        return Err(mmcif_parse_error(
                             DiagnosticKind::Inconsistent,
                             token.line as usize,
                             format!("duplicate data name {tag}"),
@@ -480,7 +466,7 @@ fn parse_blocks(
             } else if token.bare && text(token).starts_with('_') {
                 let tag = text(token).to_owned();
                 if !data_names.insert(tag.to_ascii_lowercase()) {
-                    return Err(MmcifParseError::new(
+                    return Err(mmcif_parse_error(
                         DiagnosticKind::Inconsistent,
                         token.line as usize,
                         format!("duplicate data name {tag}"),
@@ -511,11 +497,12 @@ fn parse_blocks(
                 }
                 _ => None,
             }) {
-                return Err(MmcifParseError::new(
+                return Err(mmcif_parse_error(
                     DiagnosticKind::Limit,
                     item.value.line as usize,
                     "atom-site row count exceeds configured limit",
-                ));
+                )
+                .exceeding(LimitExceeded::first_beyond(Resource::Rows, 0)));
             }
         }
         blocks.push(MmcifBlock {
@@ -525,7 +512,7 @@ fn parse_blocks(
         });
     }
     if blocks.is_empty() {
-        return Err(MmcifParseError::new(
+        return Err(mmcif_parse_error(
             DiagnosticKind::Syntax,
             1,
             "missing data block",
@@ -542,7 +529,7 @@ fn parse_loop(
     tokens: &mut Tokens<'_>,
     keyword: Span,
     max_atom_site_rows: usize,
-) -> Result<LoopData, MmcifParseError> {
+) -> Result<LoopData, FormatError> {
     let text = |span: Span| span.text(source);
     let mut tags = Vec::new();
     let mut seen = BTreeSet::new();
@@ -552,7 +539,7 @@ fn parse_loop(
         }
         tokens.next()?;
         if !seen.insert(text(token).to_ascii_lowercase()) {
-            return Err(MmcifParseError::new(
+            return Err(mmcif_parse_error(
                 DiagnosticKind::Inconsistent,
                 token.line as usize,
                 format!("duplicate loop tag {}", text(token)),
@@ -573,18 +560,22 @@ fn parse_loop(
             break;
         }
         if max_values == Some(values.len()) {
-            return Err(MmcifParseError::new(
+            return Err(mmcif_parse_error(
                 DiagnosticKind::Limit,
                 token.line as usize,
                 "atom-site row count exceeds configured limit",
-            ));
+            )
+            .exceeding(LimitExceeded::first_beyond(
+                Resource::Rows,
+                max_atom_site_rows,
+            )));
         }
         tokens.next()?;
         values.push(token);
     }
     if values.len() % tags.len() != 0 {
         let line = values.last().map_or(keyword.line, |value| value.line);
-        return Err(MmcifParseError::new(
+        return Err(mmcif_parse_error(
             DiagnosticKind::Syntax,
             line as usize,
             "loop has ragged rows",
@@ -598,8 +589,8 @@ fn parse_loop(
     Ok(LoopData { tags, values })
 }
 
-fn syntax_error(token: Span, message: impl Into<String>) -> MmcifParseError {
-    MmcifParseError::new(DiagnosticKind::Syntax, token.line as usize, message)
+fn syntax_error(token: Span, message: impl Into<String>) -> FormatError {
+    mmcif_parse_error(DiagnosticKind::Syntax, token.line as usize, message)
 }
 
 fn is_control(token: Span, text: &str) -> bool {
@@ -634,14 +625,14 @@ struct Tokens<'a> {
 }
 
 impl Tokens<'_> {
-    fn peek(&mut self) -> Result<Option<Span>, MmcifParseError> {
+    fn peek(&mut self) -> Result<Option<Span>, FormatError> {
         if self.peeked.is_none() {
             self.peeked = Some(self.tokenizer.next_token()?);
         }
         Ok(self.peeked.expect("peeked token is present"))
     }
 
-    fn next(&mut self) -> Result<Option<Span>, MmcifParseError> {
+    fn next(&mut self) -> Result<Option<Span>, FormatError> {
         match self.peeked.take() {
             Some(token) => Ok(token),
             None => self.tokenizer.next_token(),
@@ -691,7 +682,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Result<Option<Span>, MmcifParseError> {
+    fn next_token(&mut self) -> Result<Option<Span>, FormatError> {
         loop {
             if self.line_start > self.source.len() {
                 return Ok(None);
@@ -728,7 +719,7 @@ impl<'a> Tokenizer<'a> {
                         self.column += 1;
                     }
                     if self.column == bytes.len() {
-                        return Err(MmcifParseError::new(
+                        return Err(mmcif_parse_error(
                             DiagnosticKind::Syntax,
                             self.line,
                             "unterminated quoted value",
@@ -757,14 +748,14 @@ impl<'a> Tokenizer<'a> {
     /// A `;`-delimited text field starting at the current line. CIF text starts
     /// immediately after the opening semicolon; only the newline introducing
     /// the closing semicolon is excluded.
-    fn semicolon_text(&mut self, opening_end: usize) -> Result<Span, MmcifParseError> {
+    fn semicolon_text(&mut self, opening_end: usize) -> Result<Span, FormatError> {
         let opening_line = self.line;
         let text_start = self.line_start + 1;
         let mut next = opening_end + 1;
         let mut line = self.line + 1;
         let closing = loop {
             if next > self.source.len() {
-                return Err(MmcifParseError::new(
+                return Err(mmcif_parse_error(
                     DiagnosticKind::Syntax,
                     opening_line,
                     "unterminated semicolon text",
@@ -775,22 +766,32 @@ impl<'a> Tokenizer<'a> {
             }
             let end = self.line_end(next);
             if end - text_start > self.options.max_token_bytes {
-                return Err(MmcifParseError::new(
+                return Err(mmcif_parse_error(
                     DiagnosticKind::Limit,
                     opening_line,
                     "semicolon value exceeds configured token limit",
-                ));
+                )
+                .exceeding(LimitExceeded::new(
+                    Resource::ValueBytes,
+                    self.options.max_token_bytes,
+                    end - text_start,
+                )));
             }
             next = end + 1;
             line += 1;
         };
         let text_end = closing - 1;
         if text_end - text_start > self.options.max_token_bytes {
-            return Err(MmcifParseError::new(
+            return Err(mmcif_parse_error(
                 DiagnosticKind::Limit,
                 opening_line,
                 "semicolon value exceeds configured token limit",
-            ));
+            )
+            .exceeding(LimitExceeded::new(
+                Resource::ValueBytes,
+                self.options.max_token_bytes,
+                text_end - text_start,
+            )));
         }
         // A closing delimiter can be followed by more tokens on its line.
         if self
@@ -799,7 +800,7 @@ impl<'a> Tokenizer<'a> {
             .get(closing + 1)
             .is_some_and(|byte| !byte.is_ascii_whitespace())
         {
-            return Err(MmcifParseError::new(
+            return Err(mmcif_parse_error(
                 DiagnosticKind::Syntax,
                 line,
                 "closing semicolon must be followed by whitespace or end of line",
@@ -827,20 +828,29 @@ impl<'a> Tokenizer<'a> {
         end: usize,
         line: usize,
         bare: bool,
-    ) -> Result<Span, MmcifParseError> {
+    ) -> Result<Span, FormatError> {
         if end - start > self.options.max_token_bytes {
-            return Err(MmcifParseError::new(
+            return Err(mmcif_parse_error(
                 DiagnosticKind::Limit,
                 line,
                 "value exceeds configured token limit",
-            ));
+            )
+            .exceeding(LimitExceeded::new(
+                Resource::ValueBytes,
+                self.options.max_token_bytes,
+                end - start,
+            )));
         }
         if self.count >= self.options.max_tokens {
-            return Err(MmcifParseError::new(
+            return Err(mmcif_parse_error(
                 DiagnosticKind::Limit,
                 line,
                 "input exceeds configured token count",
-            ));
+            )
+            .exceeding(LimitExceeded::first_beyond(
+                Resource::Values,
+                self.options.max_tokens,
+            )));
         }
         self.count += 1;
         let narrow = |value: usize| u32::try_from(value).expect("input length fits u32");

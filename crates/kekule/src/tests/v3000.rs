@@ -738,7 +738,7 @@ fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
     let error = molfile::write(&model, molfile::MolfileWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.kind(),
-        molfile::MoleculeWriteErrorKind::UnsupportedRepresentation
+        crate::diagnostics::DiagnosticKind::Unsupported
     );
     assert_eq!(
         error.message(),

@@ -1,5 +1,6 @@
 //! The in-memory test reader and the in-memory stream contracts.
 
+use crate::TrajectoryIoErrorKind;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
@@ -63,12 +64,12 @@ impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
-        let index =
-            usize::try_from(index).map_err(|_| TrajectoryIoError::FrameIndexOutOfRange(index))?;
+        let index = usize::try_from(index)
+            .map_err(|_| TrajectoryIoError::frame_index_out_of_range(index))?;
         let frame = self
             .trajectory
             .get(index)
-            .ok_or(TrajectoryIoError::FrameIndexOutOfRange(index as u64))?;
+            .ok_or(TrajectoryIoError::frame_index_out_of_range(index as u64))?;
         destination.copy_from(frame)?;
         Ok(())
     }
@@ -175,7 +176,7 @@ fn memory_random_reads_preserve_sequential_cursor_and_error_destinations() {
     let before = (*destination).clone();
     assert_eq!(
         reader.read_frame(99, &mut destination),
-        Err(TrajectoryIoError::FrameIndexOutOfRange(99))
+        Err(TrajectoryIoError::frame_index_out_of_range(99))
     );
     assert_eq!((*destination).clone(), before);
     let unrelated = annotated();
@@ -183,7 +184,9 @@ fn memory_random_reads_preserve_sequential_cursor_and_error_destinations() {
     let unrelated_before = (*unrelated_buffer).clone();
     assert_eq!(
         reader.read_frame(0, &mut unrelated_buffer),
-        Err(TrajectoryIoError::TopologyMismatch)
+        Err(TrajectoryIoError::new(
+            TrajectoryIoErrorKind::TopologyMismatch
+        ))
     );
     assert_eq!((*unrelated_buffer).clone(), unrelated_before);
     for index in 1..4 {

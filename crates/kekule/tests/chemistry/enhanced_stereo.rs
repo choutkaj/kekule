@@ -203,10 +203,14 @@ fn topology_edits_reject_separating_correlated_groups() {
                 2
             );
         } else {
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("correlated stereo group"));
+            assert!(matches!(
+                result.unwrap_err(),
+                kekule::topology::edit::TopologyEditError::Molecule(
+                    kekule::molecule::MoleculeError::InvalidStereoReference(
+                        kekule::stereo::StereoValidationIssue::SplitCorrelatedStereoGroup { .. }
+                    )
+                )
+            ));
         }
         assert_eq!(source.molecules().next().unwrap().molecule(), &original);
         let selected = kekule::topology::AtomSelection::from_atoms(

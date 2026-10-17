@@ -580,12 +580,14 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
     };
     stereo.center = AtomId::new(999);
     let slots_before = mol.working().graph.stereo_elements.clone();
-    assert!(matches!(
+    assert_eq!(
         mol.add_stereo_element(pre_grouped),
         Err(MoleculeError::InvalidStereoReference(
-            "stereo element group membership must be established through add_stereo_group"
+            StereoValidationIssue::GroupMembershipOutsideGroupEdit {
+                element: StereoElementId::new(slots_before.len() as u32),
+            }
         ))
-    ));
+    );
     assert_eq!(
         mol.working().graph.stereo_elements.len(),
         slots_before.len()
@@ -804,12 +806,7 @@ fn stereo_focus_is_unique_and_rejection_preserves_groups_and_perception() {
             .contains(&issue));
         assert_eq!(
             unchecked.finish().unwrap_err(),
-            MoleculePublicationError::InvalidStereo(
-                StereoPublicationError::DuplicateElementFocus {
-                    element: ids[1],
-                    previous: ids[0]
-                }
-            )
+            MoleculePublicationError::InvalidStereo(issue)
         );
     }
     // Replacing the existing focus is the supported way to update an assertion.

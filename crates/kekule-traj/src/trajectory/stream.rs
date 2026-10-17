@@ -5,7 +5,7 @@ use kekule::structure::{Trajectory, TrajectoryFrameView};
 use kekule::topology::Topology;
 
 use super::buffer::FrameBuffer;
-use super::TrajectoryIoError;
+use super::{TrajectoryIoError, TrajectoryIoErrorKind};
 
 /// Sequential reader that publishes complete frames into reusable storage.
 ///
@@ -99,7 +99,9 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.trajectory.topology().shares_layout(frame.topology()) {
-            return Err(TrajectoryIoError::TopologyMismatch);
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
         }
         Ok(self.trajectory.push(frame.payload().clone())?)
     }

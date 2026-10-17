@@ -9,7 +9,8 @@
 //! polymer adjacency.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::diagnostics::DiagnosticKind;
+use super::types::structure_error;
+use crate::diagnostics::{DiagnosticKind, FormatError};
 use crate::molecule::{BondOrder, Element};
 
 use super::super::element_symbol::parse_structure_element_symbol;
@@ -24,16 +25,16 @@ use super::connections::{
 };
 use super::ensemble::{interpret_conformations, interpret_ensemble};
 use super::types::{
-    ConnectionResolutionReason, ConnectivityOptions, EntityKind, StructureEnsembleInterpretError,
-    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretError,
-    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    ConnectionResolutionReason, ConnectivityOptions, EntityKind, StructureEnsembleInterpretOptions,
+    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
+    StructureInterpretation,
 };
 use super::{interpret_source, AltLocResidue, StructureSource};
 
 pub(crate) fn interpret_pdb(
     document: &PdbDocument,
     options: StructureInterpretOptions,
-) -> Result<StructureInterpretation, StructureInterpretError> {
+) -> Result<StructureInterpretation, FormatError> {
     let source = pdb_source(
         document,
         options.strict_entity_metadata,
@@ -47,7 +48,7 @@ pub(crate) fn interpret_pdb(
 pub(crate) fn interpret_pdb_ensemble(
     document: &PdbDocument,
     options: StructureEnsembleInterpretOptions,
-) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+) -> Result<StructureEnsembleInterpretation, FormatError> {
     let mut seen = BTreeSet::new();
     let available = document
         .atoms()
@@ -70,7 +71,7 @@ pub(crate) fn interpret_pdb_ensemble(
 pub(crate) fn interpret_pdb_conformations(
     document: &PdbDocument,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureEnsembleInterpretation, StructureEnsembleInterpretError> {
+) -> Result<StructureEnsembleInterpretation, FormatError> {
     interpret_conformations(selections, |options| {
         interpret_pdb(document, options.clone())
     })
@@ -78,7 +79,7 @@ pub(crate) fn interpret_pdb_conformations(
 
 pub(crate) fn pdb_alternate_locations(
     document: &PdbDocument,
-) -> Result<Vec<AltLocResidue>, StructureInterpretError> {
+) -> Result<Vec<AltLocResidue>, FormatError> {
     inventory(&read_rows(document)?.0)
 }
 
@@ -86,9 +87,9 @@ fn pdb_source(
     document: &PdbDocument,
     strict_entity_metadata: bool,
     connectivity: &ConnectivityOptions,
-) -> Result<StructureSource, StructureInterpretError> {
+) -> Result<StructureSource, FormatError> {
     if strict_entity_metadata {
-        return Err(StructureInterpretError::new(
+        return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "PDB entries declare no entity types; strict entity metadata cannot be satisfied",
@@ -122,11 +123,12 @@ fn pdb_source(
                     None
                 }
                 Err(error) => {
-                    return Err(StructureInterpretError::new(
+                    return Err(structure_error(
                         DiagnosticKind::InvalidValue,
                         Some(record.location().line()),
-                        format!("invalid CRYST1 cell: {error}"),
-                    ))
+                        "invalid CRYST1 cell",
+                    )
+                    .with_source(error))
                 }
             }
         }
@@ -225,12 +227,10 @@ impl ChainRuns {
 
 /// Atom rows of every model, and the lines of records whose element was
 /// inferred from the atom name.
-fn read_rows(
-    document: &PdbDocument,
-) -> Result<(Vec<AtomRow>, Vec<usize>), StructureInterpretError> {
+fn read_rows(document: &PdbDocument) -> Result<(Vec<AtomRow>, Vec<usize>), FormatError> {
     let atoms = document.atoms();
     if atoms.is_empty() {
-        return Err(StructureInterpretError::new(
+        return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "PDB entry has no coordinate records",
@@ -304,7 +304,7 @@ fn read_rows(
         let line = atom.location().line();
         let (element, isotope) = match atom.element() {
             Some(symbol) => parse_structure_element_symbol(symbol).ok_or_else(|| {
-                StructureInterpretError::new(
+                structure_error(
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!("unknown element `{symbol}`"),
@@ -314,7 +314,7 @@ fn read_rows(
                 inferred.push(line);
                 let element = element_from_atom_name(atom.name_field(), atom.residue_name())
                     .ok_or_else(|| {
-                        StructureInterpretError::new(
+                        structure_error(
                             DiagnosticKind::InvalidValue,
                             Some(line),
                             format!(
@@ -411,9 +411,7 @@ fn element_from_atom_name(name_field: &str, residue_name: &str) -> Option<Elemen
     symbol(&name_field[index..=index])
 }
 
-fn connection_records(
-    document: &PdbDocument,
-) -> Result<Vec<ConnectionRecord>, StructureInterpretError> {
+fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, FormatError> {
     let mut records = Vec::new();
     for record in document.ssbond_records() {
         let [left, right] = record.partners();
@@ -446,7 +444,7 @@ fn connection_records(
         let line = record.location().line();
         for &bonded in record.bonded() {
             if bonded == serial {
-                return Err(StructureInterpretError::new(
+                return Err(structure_error(
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!("CONECT record bonds atom {serial} to itself"),
@@ -467,7 +465,7 @@ fn connection_records(
             2 => BondOrder::Double,
             3 => BondOrder::Triple,
             count => {
-                return Err(StructureInterpretError::new(
+                return Err(structure_error(
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!(
