@@ -430,7 +430,35 @@ impl TopologyBuilder {
     ///   atom that no staged instance contains.
     /// - [`TopologyBuildError::Property`] when staged property rows do not fit the
     ///   published dimensions.
-    pub fn build(mut self) -> Result<Topology, TopologyBuildError> {
+    pub fn build(self) -> Result<Topology, TopologyBuildError> {
+        self.publish(true)
+    }
+
+    /// Publishes like [`Self::build`] but keeps the classes already set on
+    /// staged definitions and hierarchy residues instead of classifying, for
+    /// exact reconstruction of a stored topology.
+    pub(super) fn build_restored(self) -> Result<Topology, TopologyBuildError> {
+        self.publish(false)
+    }
+
+    pub(super) fn set_restored_molecule_class(
+        &mut self,
+        definition: MoleculeDefinitionId,
+        class: MoleculeClass,
+        explicit: bool,
+    ) -> Result<(), TopologyBuildError> {
+        let stored = self
+            .definitions
+            .get_mut(definition.index())
+            .ok_or(TopologyBuildError::InvalidMoleculeDefinitionId(definition))?;
+        stored.class = class;
+        if explicit {
+            self.molecule_class_overrides.insert(definition, class);
+        }
+        Ok(())
+    }
+
+    fn publish(mut self, classify: bool) -> Result<Topology, TopologyBuildError> {
         if self.instances.is_empty() {
             return Err(TopologyBuildError::NoMoleculeInstances);
         }
@@ -469,24 +497,29 @@ impl TopologyBuilder {
             }
         }
 
-        self.invalidate_changed_hierarchy_classes();
-        let mut hierarchy = self.hierarchy.into_storage();
-        self.preserved_residue_classes.extend(
+        let hierarchy = if classify {
+            self.invalidate_changed_hierarchy_classes();
+            let mut hierarchy = self.hierarchy.into_storage();
+            self.preserved_residue_classes.extend(
+                hierarchy
+                    .residues()
+                    .filter_map(|(id, residue)| residue.explicit_class.map(|class| (id, class))),
+            );
+            super::classification::finalize(
+                &mut self.definitions,
+                &self.instances,
+                &mut hierarchy,
+                &self.molecule_class_overrides,
+                &self.preserved_molecule_classes,
+                self.source_hierarchy
+                    .as_ref()
+                    .map(|_| self.source_instance_count),
+                &self.preserved_residue_classes,
+            );
             hierarchy
-                .residues()
-                .filter_map(|(id, residue)| residue.explicit_class.map(|class| (id, class))),
-        );
-        super::classification::finalize(
-            &mut self.definitions,
-            &self.instances,
-            &mut hierarchy,
-            &self.molecule_class_overrides,
-            &self.preserved_molecule_classes,
-            self.source_hierarchy
-                .as_ref()
-                .map(|_| self.source_instance_count),
-            &self.preserved_residue_classes,
-        );
+        } else {
+            self.hierarchy.into_storage()
+        };
 
         let dimensions = [
             self.instances.len(),

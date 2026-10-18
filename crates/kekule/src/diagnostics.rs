@@ -333,6 +333,8 @@ pub enum Format {
     Mmcif,
     /// PDB.
     Pdb,
+    /// Kekule's native binary serialization.
+    Native,
 }
 
 impl fmt::Display for Format {
@@ -344,6 +346,7 @@ impl fmt::Display for Format {
             Self::Sdf => "SDF",
             Self::Mmcif => "mmCIF",
             Self::Pdb => "PDB",
+            Self::Native => "native",
         })
     }
 }
@@ -452,6 +455,33 @@ pub enum FormatErrorDetail {
     /// A configured or built-in resource limit was exceeded; the kind is
     /// [`DiagnosticKind::Limit`].
     LimitExceeded(LimitExceeded),
+    /// The input does not start with the native format's magic bytes; the
+    /// kind is [`DiagnosticKind::Syntax`].
+    NativeMagic,
+    /// The input is written in a native format version this reader does not
+    /// implement; the kind is [`DiagnosticKind::Unsupported`].
+    NativeVersion {
+        /// The version the input declares.
+        found: u32,
+        /// The version this reader implements.
+        supported: u32,
+    },
+    /// The native input's checksum does not match its content; the kind is
+    /// [`DiagnosticKind::Inconsistent`].
+    NativeChecksum {
+        /// The checksum the input stores.
+        stored: u32,
+        /// The checksum of the content read.
+        computed: u32,
+    },
+    /// A native input holds a different kind of object than the projection
+    /// requested; the kind is [`DiagnosticKind::Inconsistent`].
+    NativeKind {
+        /// The kind the projection requires.
+        expected: crate::io::NativeKind,
+        /// The kind the input holds.
+        found: crate::io::NativeKind,
+    },
 }
 
 /// Ensemble member or trajectory frame state named by
@@ -502,6 +532,7 @@ struct FormatErrorData {
     stage: FormatStage,
     kind: DiagnosticKind,
     location: Option<SourceLocation>,
+    byte_offset: Option<u64>,
     record: Option<usize>,
     message: String,
     detail: Option<FormatErrorDetail>,
@@ -520,6 +551,7 @@ impl FormatError {
             stage,
             kind,
             location: None,
+            byte_offset: None,
             record: None,
             message: message.into(),
             detail: None,
@@ -589,6 +621,13 @@ impl FormatError {
         self
     }
 
+    /// Locates the failure at a byte offset of binary input.
+    #[must_use]
+    pub(crate) fn at_byte(mut self, offset: u64) -> Self {
+        self.0.byte_offset = Some(offset);
+        self
+    }
+
     #[must_use]
     pub(crate) fn in_record(mut self, record: usize) -> Self {
         self.0.record = Some(record);
@@ -653,6 +692,12 @@ impl FormatError {
         self.0.location
     }
 
+    /// The 0-based byte offset of binary input the failure concerns, for
+    /// the native format, whose input has no lines.
+    pub fn byte_offset(&self) -> Option<u64> {
+        self.0.byte_offset
+    }
+
     /// The 1-based number of the record the failure concerns, for
     /// record-oriented input and output such as SDF.
     pub fn record(&self) -> Option<usize> {
@@ -679,6 +724,9 @@ impl fmt::Display for FormatError {
         }
         if let Some(location) = self.0.location {
             write!(formatter, " at {location}")?;
+        }
+        if let Some(offset) = self.0.byte_offset {
+            write!(formatter, " at byte {offset}")?;
         }
         write!(formatter, ": {}", self.0.message)
     }
