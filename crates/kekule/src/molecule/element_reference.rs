@@ -10,9 +10,10 @@ const BOHR_TO_ANGSTROM: f64 = 0.529_177_210_903;
 /// crystallographic contact radii of Bondi (carbon 1.91 Å against 1.70 Å),
 /// and Alvarez's contact-distribution radii are larger again for most
 /// metals. Only the two Charry–Tkatchenko columns fall back to each other;
-/// [`Bondi`](Self::Bondi) and [`Alvarez`](Self::Alvarez) never borrow values
-/// from another column, so a caller that wants one scale completed by another
-/// composes the lookups explicitly.
+/// [`Bondi`](Self::Bondi), [`BondiMantina`](Self::BondiMantina), and
+/// [`Alvarez`](Self::Alvarez) never borrow values from another column, so a
+/// caller that wants one scale completed by another composes the lookups
+/// explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum VanDerWaalsRadiusSource {
@@ -31,27 +32,44 @@ pub enum VanDerWaalsRadiusSource {
     /// [`FreeAtom`](Self::FreeAtom) value.
     Reference,
     /// Bondi's crystallographic van der Waals radii, J. Phys. Chem. 1964, 68,
-    /// 441, DOI 10.1021/j100785a001, with the usual completions, tabulated in
-    /// ångström. These are the radii molecular graphics conventionally
-    /// display.
+    /// 441, DOI 10.1021/j100785a001, tabulated in ångström. These are the
+    /// radii molecular graphics conventionally display.
     ///
-    /// The 44 main-group elements, hydrogen to radium, are the consistent set
-    /// of Mantina, Chamberlin, Valero, Cramer and Truhlar, J. Phys. Chem. A
-    /// 2009, 113, 5806, DOI 10.1021/jp8111556, Table 12, transcribed
-    /// verbatim: Bondi's values for 27 elements, hydrogen 1.10 Å from Rowland
-    /// and Taylor, J. Phys. Chem. 1996, 100, 7384, DOI 10.1021/jp953141+,
-    /// in place of Bondi's 1.20 Å, and Mantina's own values for the 16
-    /// elements Bondi did not cover (Be, B, Al, Ca, Ge, Rb, Sr, Sb, Cs, Ba,
-    /// Bi, Po, At, Rn, Fr, Ra). Strontium is 2.49 Å as in Table 12; the
-    /// paper's abstract states 2.50 Å. The ten further elements Bondi gave
-    /// (Ni, Cu, Zn, Pd, Ag, Cd, Pt, Au, Hg, U) are transcribed from the Bondi
-    /// column of Alvarez 2013, Table 1, which draws on Bondi 1964 and on
-    /// Bondi's 1966 values for metals in covalent compounds, J. Phys. Chem.
-    /// 1966, 70, 3006, DOI 10.1021/j100881a503.
+    /// The 38 elements Bondi gives are transcribed from the paper: the mean
+    /// radii of the nonmetals in Table I (H, He, C, N, O, F, Ne, Si, P, S, Cl,
+    /// Ar, As, Se, Br, Kr, Te, I, Xe), hydrogen at Bondi's 1.20 Å, and the
+    /// metals of Table XIV (Li, Na, Mg, K, Ni, Cu, Zn, Ga, Pd, Ag, Cd, In, Sn,
+    /// Pt, Au, Hg, Tl, Pb, U). Table XIV prints copper as 1.4 Å and gives two
+    /// values for platinum; this column takes its X-ray value, 1.72 Å, not the
+    /// 1.75 Å from ultraviolet spectroscopy.
+    ///
+    /// The 16 main-group elements Bondi lacks (Be, B, Al, Ca, Ge, Rb, Sr, Sb,
+    /// Cs, Ba, Bi, Po, At, Rn, Fr, Ra) are completed with the values Mantina,
+    /// Chamberlin, Valero, Cramer and Truhlar derived to be compatible with
+    /// Bondi's scale, J. Phys. Chem. A 2009, 113, 5806, DOI 10.1021/jp8111556,
+    /// Table 12; strontium is 2.49 Å as in Table 12, where the abstract states
+    /// 2.50 Å. No other completion is made.
     ///
     /// Covers 54 elements; every other element, including the remaining
-    /// transition metals and lanthanides, has no Bondi radius.
+    /// transition metals and lanthanides, has no Bondi radius. See
+    /// [`BondiMantina`](Self::BondiMantina) for the set with Rowland and
+    /// Taylor's hydrogen.
     Bondi,
+    /// The consistent main-group set of Mantina, Chamberlin, Valero, Cramer
+    /// and Truhlar, J. Phys. Chem. A 2009, 113, 5806, DOI 10.1021/jp8111556,
+    /// Table 12, transcribed verbatim, tabulated in ångström.
+    ///
+    /// It combines Bondi's radii for 27 elements, hydrogen at 1.10 Å from
+    /// Rowland and Taylor, J. Phys. Chem. 1996, 100, 7384,
+    /// DOI 10.1021/jp953141+, and Mantina's own values for the 16 elements
+    /// Bondi lacks. It differs from [`Bondi`](Self::Bondi) in three elements:
+    /// hydrogen (1.10 against Bondi's 1.20 Å), lithium (1.81 against 1.82 Å),
+    /// and bromine (1.83 against 1.85 Å), the last two as Table 12 prints
+    /// Bondi's values.
+    ///
+    /// Covers the 44 main-group elements hydrogen to radium; Bondi's
+    /// transition metals and uranium are not part of the set.
+    BondiMantina,
     /// Alvarez's van der Waals radii from the distribution of intermolecular
     /// contact distances in crystal structures, Dalton Trans. 2013, 42,
     /// 8617, DOI 10.1039/C3DT50599E, Table 1 (the `rvdW` column), tabulated
@@ -80,12 +98,12 @@ impl Element {
 
     /// Returns a van der Waals radius from the selected column, in the unit
     /// the column is tabulated in: bohr for the Charry–Tkatchenko columns,
-    /// ångström for Bondi and Alvarez.
+    /// ångström for the others.
     ///
     /// If the requested Charry–Tkatchenko column is unavailable for this
     /// element, the other Charry–Tkatchenko column is used, and `None` is
-    /// returned only when Kekule has neither. The Bondi and Alvarez columns
-    /// have no fallback and return `None` outside their coverage. Each
+    /// returned only when Kekule has neither. The other columns have no
+    /// fallback and return `None` outside their coverage. Each
     /// [`VanDerWaalsRadiusSource`] variant documents its source and
     /// coverage.
     ///
@@ -110,6 +128,8 @@ impl Element {
             VanDerWaalsRadiusSource::Bondi => {
                 BONDI_VDW_RADIUS_ANGSTROM[index].map(|radius| Quantity::new(radius, ANGSTROM))
             }
+            VanDerWaalsRadiusSource::BondiMantina => BONDI_MANTINA_VDW_RADIUS_ANGSTROM[index]
+                .map(|radius| Quantity::new(radius, ANGSTROM)),
             VanDerWaalsRadiusSource::Alvarez => {
                 ALVAREZ_VDW_RADIUS_ANGSTROM[index].map(|radius| Quantity::new(radius, ANGSTROM))
             }
@@ -138,6 +158,7 @@ impl Element {
                 .charry_tkatchenko_radius_bohr(source)
                 .map(|radius| radius * BOHR_TO_ANGSTROM),
             VanDerWaalsRadiusSource::Bondi => BONDI_VDW_RADIUS_ANGSTROM[index],
+            VanDerWaalsRadiusSource::BondiMantina => BONDI_MANTINA_VDW_RADIUS_ANGSTROM[index],
             VanDerWaalsRadiusSource::Alvarez => ALVAREZ_VDW_RADIUS_ANGSTROM[index],
         }
     }
@@ -511,26 +532,26 @@ const REFERENCE_VDW_RADIUS_BOHR: [Option<f64>; 119] = [
 
 const BONDI_VDW_RADIUS_ANGSTROM: [Option<f64>; 119] = [
     None,       // 0: no element
-    Some(1.10), // 1: H (Rowland & Taylor)
-    Some(1.40), // 2: He
-    Some(1.81), // 3: Li
-    Some(1.53), // 4: Be (Mantina)
-    Some(1.92), // 5: B (Mantina)
-    Some(1.70), // 6: C
-    Some(1.55), // 7: N
-    Some(1.52), // 8: O
-    Some(1.47), // 9: F
-    Some(1.54), // 10: Ne
-    Some(2.27), // 11: Na
-    Some(1.73), // 12: Mg
-    Some(1.84), // 13: Al (Mantina)
-    Some(2.10), // 14: Si
-    Some(1.80), // 15: P
-    Some(1.80), // 16: S
-    Some(1.75), // 17: Cl
-    Some(1.88), // 18: Ar
-    Some(2.75), // 19: K
-    Some(2.31), // 20: Ca (Mantina)
+    Some(1.20), // 1: H, Table I
+    Some(1.40), // 2: He, Table I
+    Some(1.82), // 3: Li, Table XIV
+    Some(1.53), // 4: Be, completion: Mantina 2009
+    Some(1.92), // 5: B, completion: Mantina 2009
+    Some(1.70), // 6: C, Table I
+    Some(1.55), // 7: N, Table I
+    Some(1.52), // 8: O, Table I
+    Some(1.47), // 9: F, Table I
+    Some(1.54), // 10: Ne, Table I
+    Some(2.27), // 11: Na, Table XIV
+    Some(1.73), // 12: Mg, Table XIV
+    Some(1.84), // 13: Al, completion: Mantina 2009
+    Some(2.10), // 14: Si, Table I
+    Some(1.80), // 15: P, Table I
+    Some(1.80), // 16: S, Table I
+    Some(1.75), // 17: Cl, Table I
+    Some(1.88), // 18: Ar, Table I
+    Some(2.75), // 19: K, Table XIV
+    Some(2.31), // 20: Ca, completion: Mantina 2009
     None,       // 21: Sc
     None,       // 22: Ti
     None,       // 23: V
@@ -538,17 +559,17 @@ const BONDI_VDW_RADIUS_ANGSTROM: [Option<f64>; 119] = [
     None,       // 25: Mn
     None,       // 26: Fe
     None,       // 27: Co
-    Some(1.63), // 28: Ni
-    Some(1.40), // 29: Cu
-    Some(1.39), // 30: Zn
-    Some(1.87), // 31: Ga
-    Some(2.11), // 32: Ge (Mantina)
-    Some(1.85), // 33: As
-    Some(1.90), // 34: Se
-    Some(1.83), // 35: Br
-    Some(2.02), // 36: Kr
-    Some(3.03), // 37: Rb (Mantina)
-    Some(2.49), // 38: Sr (Mantina)
+    Some(1.63), // 28: Ni, Table XIV
+    Some(1.40), // 29: Cu, Table XIV, printed 1.4
+    Some(1.39), // 30: Zn, Table XIV
+    Some(1.87), // 31: Ga, Table XIV
+    Some(2.11), // 32: Ge, completion: Mantina 2009
+    Some(1.85), // 33: As, Table I
+    Some(1.90), // 34: Se, Table I
+    Some(1.85), // 35: Br, Table I
+    Some(2.02), // 36: Kr, Table I
+    Some(3.03), // 37: Rb, completion: Mantina 2009
+    Some(2.49), // 38: Sr, completion: Mantina 2009
     None,       // 39: Y
     None,       // 40: Zr
     None,       // 41: Nb
@@ -556,17 +577,17 @@ const BONDI_VDW_RADIUS_ANGSTROM: [Option<f64>; 119] = [
     None,       // 43: Tc
     None,       // 44: Ru
     None,       // 45: Rh
-    Some(1.63), // 46: Pd
-    Some(1.72), // 47: Ag
-    Some(1.62), // 48: Cd
-    Some(1.93), // 49: In
-    Some(2.17), // 50: Sn
-    Some(2.06), // 51: Sb (Mantina)
-    Some(2.06), // 52: Te
-    Some(1.98), // 53: I
-    Some(2.16), // 54: Xe
-    Some(3.43), // 55: Cs (Mantina)
-    Some(2.68), // 56: Ba (Mantina)
+    Some(1.63), // 46: Pd, Table XIV
+    Some(1.72), // 47: Ag, Table XIV
+    Some(1.58), // 48: Cd, Table XIV
+    Some(1.93), // 49: In, Table XIV
+    Some(2.17), // 50: Sn, Table XIV
+    Some(2.06), // 51: Sb, completion: Mantina 2009
+    Some(2.06), // 52: Te, Table I
+    Some(1.98), // 53: I, Table I
+    Some(2.16), // 54: Xe, Table I
+    Some(3.43), // 55: Cs, completion: Mantina 2009
+    Some(2.68), // 56: Ba, completion: Mantina 2009
     None,       // 57: La
     None,       // 58: Ce
     None,       // 59: Pr
@@ -588,21 +609,143 @@ const BONDI_VDW_RADIUS_ANGSTROM: [Option<f64>; 119] = [
     None,       // 75: Re
     None,       // 76: Os
     None,       // 77: Ir
-    Some(1.72), // 78: Pt
-    Some(1.66), // 79: Au
-    Some(1.70), // 80: Hg
-    Some(1.96), // 81: Tl
-    Some(2.02), // 82: Pb
-    Some(2.07), // 83: Bi (Mantina)
-    Some(1.97), // 84: Po (Mantina)
-    Some(2.02), // 85: At (Mantina)
-    Some(2.20), // 86: Rn (Mantina)
-    Some(3.48), // 87: Fr (Mantina)
-    Some(2.83), // 88: Ra (Mantina)
+    Some(1.72), // 78: Pt, Table XIV, X-ray; 1.75 from UV spectroscopy
+    Some(1.66), // 79: Au, Table XIV
+    Some(1.55), // 80: Hg, Table XIV
+    Some(1.96), // 81: Tl, Table XIV
+    Some(2.02), // 82: Pb, Table XIV
+    Some(2.07), // 83: Bi, completion: Mantina 2009
+    Some(1.97), // 84: Po, completion: Mantina 2009
+    Some(2.02), // 85: At, completion: Mantina 2009
+    Some(2.20), // 86: Rn, completion: Mantina 2009
+    Some(3.48), // 87: Fr, completion: Mantina 2009
+    Some(2.83), // 88: Ra, completion: Mantina 2009
     None,       // 89: Ac
     None,       // 90: Th
     None,       // 91: Pa
-    Some(1.86), // 92: U
+    Some(1.86), // 92: U, Table XIV
+    None,       // 93: Np
+    None,       // 94: Pu
+    None,       // 95: Am
+    None,       // 96: Cm
+    None,       // 97: Bk
+    None,       // 98: Cf
+    None,       // 99: Es
+    None,       // 100: Fm
+    None,       // 101: Md
+    None,       // 102: No
+    None,       // 103: Lr
+    None,       // 104: Rf
+    None,       // 105: Db
+    None,       // 106: Sg
+    None,       // 107: Bh
+    None,       // 108: Hs
+    None,       // 109: Mt
+    None,       // 110: Ds
+    None,       // 111: Rg
+    None,       // 112: Cn
+    None,       // 113: Nh
+    None,       // 114: Fl
+    None,       // 115: Mc
+    None,       // 116: Lv
+    None,       // 117: Ts
+    None,       // 118: Og
+];
+
+const BONDI_MANTINA_VDW_RADIUS_ANGSTROM: [Option<f64>; 119] = [
+    None,       // 0: no element
+    Some(1.10), // 1: H, Rowland and Taylor
+    Some(1.40), // 2: He, Bondi as Mantina gives it
+    Some(1.81), // 3: Li, Bondi as Mantina gives it
+    Some(1.53), // 4: Be, Mantina
+    Some(1.92), // 5: B, Mantina
+    Some(1.70), // 6: C, Bondi as Mantina gives it
+    Some(1.55), // 7: N, Bondi as Mantina gives it
+    Some(1.52), // 8: O, Bondi as Mantina gives it
+    Some(1.47), // 9: F, Bondi as Mantina gives it
+    Some(1.54), // 10: Ne, Bondi as Mantina gives it
+    Some(2.27), // 11: Na, Bondi as Mantina gives it
+    Some(1.73), // 12: Mg, Bondi as Mantina gives it
+    Some(1.84), // 13: Al, Mantina
+    Some(2.10), // 14: Si, Bondi as Mantina gives it
+    Some(1.80), // 15: P, Bondi as Mantina gives it
+    Some(1.80), // 16: S, Bondi as Mantina gives it
+    Some(1.75), // 17: Cl, Bondi as Mantina gives it
+    Some(1.88), // 18: Ar, Bondi as Mantina gives it
+    Some(2.75), // 19: K, Bondi as Mantina gives it
+    Some(2.31), // 20: Ca, Mantina
+    None,       // 21: Sc
+    None,       // 22: Ti
+    None,       // 23: V
+    None,       // 24: Cr
+    None,       // 25: Mn
+    None,       // 26: Fe
+    None,       // 27: Co
+    None,       // 28: Ni
+    None,       // 29: Cu
+    None,       // 30: Zn
+    Some(1.87), // 31: Ga, Bondi as Mantina gives it
+    Some(2.11), // 32: Ge, Mantina
+    Some(1.85), // 33: As, Bondi as Mantina gives it
+    Some(1.90), // 34: Se, Bondi as Mantina gives it
+    Some(1.83), // 35: Br, Bondi as Mantina gives it
+    Some(2.02), // 36: Kr, Bondi as Mantina gives it
+    Some(3.03), // 37: Rb, Mantina
+    Some(2.49), // 38: Sr, Mantina
+    None,       // 39: Y
+    None,       // 40: Zr
+    None,       // 41: Nb
+    None,       // 42: Mo
+    None,       // 43: Tc
+    None,       // 44: Ru
+    None,       // 45: Rh
+    None,       // 46: Pd
+    None,       // 47: Ag
+    None,       // 48: Cd
+    Some(1.93), // 49: In, Bondi as Mantina gives it
+    Some(2.17), // 50: Sn, Bondi as Mantina gives it
+    Some(2.06), // 51: Sb, Mantina
+    Some(2.06), // 52: Te, Bondi as Mantina gives it
+    Some(1.98), // 53: I, Bondi as Mantina gives it
+    Some(2.16), // 54: Xe, Bondi as Mantina gives it
+    Some(3.43), // 55: Cs, Mantina
+    Some(2.68), // 56: Ba, Mantina
+    None,       // 57: La
+    None,       // 58: Ce
+    None,       // 59: Pr
+    None,       // 60: Nd
+    None,       // 61: Pm
+    None,       // 62: Sm
+    None,       // 63: Eu
+    None,       // 64: Gd
+    None,       // 65: Tb
+    None,       // 66: Dy
+    None,       // 67: Ho
+    None,       // 68: Er
+    None,       // 69: Tm
+    None,       // 70: Yb
+    None,       // 71: Lu
+    None,       // 72: Hf
+    None,       // 73: Ta
+    None,       // 74: W
+    None,       // 75: Re
+    None,       // 76: Os
+    None,       // 77: Ir
+    None,       // 78: Pt
+    None,       // 79: Au
+    None,       // 80: Hg
+    Some(1.96), // 81: Tl, Bondi as Mantina gives it
+    Some(2.02), // 82: Pb, Bondi as Mantina gives it
+    Some(2.07), // 83: Bi, Mantina
+    Some(1.97), // 84: Po, Mantina
+    Some(2.02), // 85: At, Mantina
+    Some(2.20), // 86: Rn, Mantina
+    Some(3.48), // 87: Fr, Mantina
+    Some(2.83), // 88: Ra, Mantina
+    None,       // 89: Ac
+    None,       // 90: Th
+    None,       // 91: Pa
+    None,       // 92: U
     None,       // 93: Np
     None,       // 94: Pu
     None,       // 95: Am
@@ -806,11 +949,20 @@ mod tests {
     }
 
     #[test]
-    fn bondi_column_follows_mantina_and_alvarez_transcriptions() {
+    fn bondi_column_follows_bondi_1964_with_mantina_completions() {
         use VanDerWaalsRadiusSource::Bondi;
-        // Rowland and Taylor hydrogen, Bondi carbon and halogens as Mantina
-        // Table 12 gives them, a Mantina completion, and a Bondi metal.
-        for (element, radius) in [(1, 1.10), (6, 1.70), (35, 1.83), (38, 2.49), (80, 1.70)] {
+        // Table I hydrogen, carbon, and bromine; Table XIV lithium, mercury,
+        // cadmium, and platinum's X-ray value; a Mantina completion.
+        for (element, radius) in [
+            (1, 1.20),
+            (6, 1.70),
+            (35, 1.85),
+            (3, 1.82),
+            (80, 1.55),
+            (48, 1.58),
+            (78, 1.72),
+            (38, 2.49),
+        ] {
             assert_eq!(angstrom(element, Bondi), Some(radius), "element {element}");
         }
         let covered = (1..=118).filter(|&z| angstrom(z, Bondi).is_some()).count();
@@ -819,6 +971,24 @@ mod tests {
         // Bondi radius.
         assert_eq!(angstrom(26, Bondi), None);
         assert_eq!(angstrom(64, Bondi), None);
+    }
+
+    #[test]
+    fn bondi_mantina_column_is_table_twelve() {
+        use VanDerWaalsRadiusSource::{Bondi, BondiMantina};
+        let covered = (1..=118)
+            .filter(|&z| angstrom(z, BondiMantina).is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(covered.len(), 44);
+        let differing = covered
+            .iter()
+            .copied()
+            .filter(|&z| angstrom(z, BondiMantina) != angstrom(z, Bondi))
+            .collect::<Vec<_>>();
+        // Hydrogen, lithium, and bromine.
+        assert_eq!(differing, [1, 3, 35]);
+        assert_eq!(angstrom(1, BondiMantina), Some(1.10));
+        assert_eq!(angstrom(29, BondiMantina), None);
     }
 
     #[test]
