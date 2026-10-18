@@ -11,5 +11,6 @@ mod export;
 mod mmcif;
 mod native;
 mod pdb;
+mod pdb_write;
 mod smiles_stereo;
 mod writers;

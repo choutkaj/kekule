@@ -13,6 +13,7 @@ mod molfile_document;
 mod molfile_write;
 mod native;
 mod pdb_document;
+mod pdb_write;
 mod sdf_document;
 mod sdf_ensemble;
 mod sdf_write;
@@ -56,6 +57,8 @@ pub use pdb_document::{
     PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel, PdbParseOptions,
     PdbPartner, PdbRecord, PdbSsbond, PdbTer,
 };
+pub(crate) use pdb_write::{write_pdb, write_pdb_to};
+pub use pdb_write::{PdbAtomField, PdbCellReason, PdbSource, PdbWriteIssue, PdbWriteOptions};
 pub(crate) use sdf_document::{parse_sdf_document, parse_sdf_reader};
 pub use sdf_document::{
     SdfDataField, SdfDocument, SdfParseOptions, SdfRecord, SdfRecordInterpretation,

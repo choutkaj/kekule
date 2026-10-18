@@ -22,10 +22,20 @@ fuzz_target!(|data: &[u8]| {
     let _ = document.alternate_locations();
 
     let options = StructureInterpretOptions::default().with_model_selection(ModelSelection::First);
-    if let Ok(interpreted) = document.interpret(options) {
+    if let Ok(interpreted) = document.interpret(options.clone()) {
         for atom in interpreted.model().topology().atom_ids() {
             let _ = interpreted.model().topology().atom(*atom);
             let _ = interpreted.model().position(*atom);
+        }
+        // Whatever the writer accepts reads back with the same atoms.
+        if let Ok(written) = kekule::pdb::write(interpreted.model(), Default::default()) {
+            let reread = parse_str(&written, PdbParseOptions::default())
+                .and_then(|document| document.interpret(options))
+                .expect("written PDB reads back");
+            assert_eq!(
+                reread.model().topology().atom_count(),
+                interpreted.model().topology().atom_count()
+            );
         }
     }
     if let Ok(interpreted) = document.interpret_ensemble(Default::default()) {
