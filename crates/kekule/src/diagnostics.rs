@@ -335,6 +335,8 @@ pub enum Format {
     Pdb,
     /// Kekule's native binary serialization.
     Native,
+    /// Kekule's atom selection language.
+    Selection,
 }
 
 impl fmt::Display for Format {
@@ -347,6 +349,7 @@ impl fmt::Display for Format {
             Self::Mmcif => "mmCIF",
             Self::Pdb => "PDB",
             Self::Native => "native",
+            Self::Selection => "selection",
         })
     }
 }
@@ -533,6 +536,7 @@ struct FormatErrorData {
     kind: DiagnosticKind,
     location: Option<SourceLocation>,
     byte_offset: Option<u64>,
+    span: Option<std::ops::Range<usize>>,
     record: Option<usize>,
     message: String,
     detail: Option<FormatErrorDetail>,
@@ -552,6 +556,7 @@ impl FormatError {
             kind,
             location: None,
             byte_offset: None,
+            span: None,
             record: None,
             message: message.into(),
             detail: None,
@@ -628,6 +633,13 @@ impl FormatError {
         self
     }
 
+    /// Records the byte range of the input the failure concerns.
+    #[must_use]
+    pub(crate) fn with_span(mut self, span: std::ops::Range<usize>) -> Self {
+        self.0.span = Some(span);
+        self
+    }
+
     #[must_use]
     pub(crate) fn in_record(mut self, record: usize) -> Self {
         self.0.record = Some(record);
@@ -696,6 +708,13 @@ impl FormatError {
     /// the native format, whose input has no lines.
     pub fn byte_offset(&self) -> Option<u64> {
         self.0.byte_offset
+    }
+
+    /// The byte range of the input the failure concerns, for inputs parsed
+    /// as one expression, such as selection-language text; the location
+    /// gives its start.
+    pub fn span(&self) -> Option<std::ops::Range<usize>> {
+        self.0.span.clone()
     }
 
     /// The 1-based number of the record the failure concerns, for

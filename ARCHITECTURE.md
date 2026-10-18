@@ -258,6 +258,20 @@ See [molecular editing](crates/kekule/src/molecule/molecule_edit.rs),
 [selections](crates/kekule/src/topology/selection.rs), and
 [subsets](crates/kekule/src/topology/transform.rs).
 
+The selection language (`select`) is text that evaluates to an
+`AtomSelection`; it is a query surface over these owners, not a second
+selection type. A parsed `SelectionExpr` is independent of any topology and
+prints canonically. Evaluation binds the result to the evaluated topology,
+reads hierarchy, classification, properties, and installed perception without
+changing them or perceiving, and reads coordinates only when evaluated on a
+structure, so `within` is one structure's result like other spatial
+selections. Identifier terms follow author identifiers, falling back to label
+identifiers, and `label_*` terms read label identifiers. Host applications
+extend the language through the `SelectionResolver` extension trait, whose
+answers must bind to the evaluated layout or be points for a spatial
+reference. See the [grammar](docs/selection-language.md) and the
+[evaluator](crates/kekule/src/selection_language/eval.rs).
+
 ## Properties and units
 
 Properties are annotations owned at the narrowest scope whose lifetime matches
@@ -719,7 +733,7 @@ The public modules of `kekule`, by domain:
 | --- | --- |
 | Foundations | `units`, `geometry`, `properties`, `diagnostics` |
 | Chemistry | `molecule`, `stereo` (`cip`, `coordinates`, `cleanup`), `perception` (`valence`, `rings`, `aromaticity`, `conjugation`, `resonance`), `hydrogens`, `descriptors` |
-| Queries | `query`, `substructure` |
+| Queries | `query`, `substructure`, `select` |
 | Systems and structures | `topology` (`edit`), `structure` (`measure`), `solvation` |
 | Analysis | `alignment`, `clustering`, `dssp` |
 | Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `macromolecular`, `components`, `native` |

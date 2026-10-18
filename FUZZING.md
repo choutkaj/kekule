@@ -17,6 +17,9 @@ The input-parser targets are `mol_v2000`, `mol_v3000`, `sdf_v2000`, `smiles`,
 `native` decodes Kekule's native binary format under small resource limits;
 every successfully decoded object must encode, decode again, and re-encode to
 the same bytes. Its seeds are native encodings of small objects of every kind.
+`select` parses selection-language text; every accepted expression must print
+canonical text that parses back to an equal expression and prints the same,
+and every error must carry a span within the input.
 `smarts` checks query parsing; `smarts_match` compares complete collection and
 streaming match results under shared resource bounds. `resonance` enumerates
 resonance contributors of small parsed SMILES molecules under structure and

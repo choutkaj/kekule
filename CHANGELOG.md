@@ -30,6 +30,24 @@ are marked **Breaking:**.
 - `InstanceAtomId::to_bits`/`from_bits` and `InstanceBondId::to_bits`/`from_bits`
   give instance-qualified IDs a documented stable `u64` encoding; the `raw()`
   value of every other identifier is documented as stable.
+- The selection language in the new `kekule::select` module: text such as
+  `within 5 of resname LIG and not water` evaluates to an `AtomSelection`.
+  `select::parse` returns a `SelectionExpr` whose `Display` is canonical
+  text; `evaluate` runs topology terms and `evaluate_structure` also spatial
+  and site terms against any `AsModelView`. Terms cover elements, names,
+  charges, isotopes, B factors, occupancies, properties with units,
+  residues with insertion codes, residue and molecule classes, chains,
+  instances, aromaticity, rings, SMARTS, hydrogens, the `protein`,
+  `nucleic`, `water`, `ion`, `ligand`, `backbone`, and `sidechain` macros,
+  grid-based `within`, and residue, chain, molecule, and bond expansion.
+  Author identifiers are the default, with `label_*` terms for label
+  identifiers. Parse errors are `FormatError`s of the new `Format::Selection`
+  with a byte `span`; evaluation errors are `SelectEvaluateError`. The
+  `SelectionResolver` extension trait resolves host `#...`, `$name`, and
+  keyword terms, including points of other objects for `within`. The grammar
+  is documented in `docs/selection-language.md`, with a conformance suite in
+  `tests/fixtures/select/conformance.txt` and a new `select` fuzz target.
+- `FormatError::span` returns the byte range a failure concerns.
 
 ## [0.4.0] - 2026-10-17
 

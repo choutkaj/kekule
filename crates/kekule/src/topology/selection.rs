@@ -440,6 +440,19 @@ impl AtomSelection {
         })
     }
 
+    /// Wraps indices that are already sorted, unique, and below the
+    /// topology's atom count, as an evaluator that walks dense order produces.
+    pub(crate) fn from_sorted_indices(
+        topology: Arc<Topology>,
+        indices: Vec<TopologyAtomIndex>,
+    ) -> Self {
+        debug_assert!(indices.windows(2).all(|pair| pair[0] < pair[1]));
+        debug_assert!(indices
+            .last()
+            .is_none_or(|last| last.index() < topology.atom_count()));
+        Self { topology, indices }
+    }
+
     /// Selects the atoms at the given dense indices; order and duplicates are
     /// ignored.
     ///

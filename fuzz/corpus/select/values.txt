@@ -1,0 +1,1 @@
+property q < -0.5 e or bfactor >= 20 or name "C1'" C2'
