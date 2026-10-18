@@ -869,7 +869,12 @@ fn compare_property(cell: Cell<'_>, literal: &Literal) -> Option<Option<Ordering
             if unit.is_some() {
                 return None;
             }
-            Some((value as f64).partial_cmp(&number))
+            // An integer literal compares exactly; `f64` cannot hold every
+            // `i64` above 2^53.
+            Some(Some(match text.parse::<i64>() {
+                Ok(literal) => value.cmp(&literal),
+                Err(_) => compare_integer_real(value, number),
+            }))
         }
         Cell::Real(value, column_unit) => {
             let number = (*number)?;
@@ -885,6 +890,24 @@ fn compare_property(cell: Cell<'_>, literal: &Literal) -> Option<Option<Ordering
             }
             Some(Some(value.cmp(text.as_str())))
         }
+    }
+}
+
+/// Orders an integer against a finite real number exactly.
+fn compare_integer_real(value: i64, number: f64) -> Ordering {
+    // 2^63 is exact in `f64`; every `i64` lies below it and at or above -2^63.
+    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    if number >= LIMIT {
+        return Ordering::Less;
+    }
+    if number < -LIMIT {
+        return Ordering::Greater;
+    }
+    let floor = number.floor();
+    // In range and integral, so the conversion is exact.
+    match value.cmp(&(floor as i64)) {
+        Ordering::Equal if floor < number => Ordering::Less,
+        ordering => ordering,
     }
 }
 
@@ -939,5 +962,31 @@ fn compare(value: Value<'_>, literal: &Literal, factor: f64) -> Option<Ordering>
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compare_integer_real;
+    use std::cmp::Ordering::{Equal, Greater, Less};
+
+    #[test]
+    fn integers_order_exactly_against_reals() {
+        assert_eq!(compare_integer_real(3, 3.0), Equal);
+        assert_eq!(compare_integer_real(3, 3.5), Less);
+        assert_eq!(compare_integer_real(4, 3.5), Greater);
+        assert_eq!(compare_integer_real(-4, -3.5), Less);
+        assert_eq!(compare_integer_real(-3, -3.5), Greater);
+        assert_eq!(compare_integer_real(i64::MAX, 9.3e18), Less);
+        assert_eq!(compare_integer_real(i64::MIN, -9.3e18), Greater);
+        assert_eq!(
+            compare_integer_real(i64::MIN, -9_223_372_036_854_775_808.0),
+            Equal
+        );
+        // 2^53 + 1 is not a float; 2^53 is.
+        assert_eq!(
+            compare_integer_real(9_007_199_254_740_993, 9_007_199_254_740_992.0),
+            Greater
+        );
     }
 }

@@ -567,6 +567,16 @@ fn properties_compare_in_their_units_and_scopes() {
                 PropertyColumn::Bool(vec![Some(true), Some(false), None]),
             )
             .unwrap();
+        atoms
+            .insert(
+                key("id"),
+                PropertyColumn::Int(vec![
+                    Some(9_007_199_254_740_992),
+                    Some(9_007_199_254_740_993),
+                    Some(-3),
+                ]),
+            )
+            .unwrap();
     }
     let indices = |text: &str| {
         parse(text)
@@ -584,6 +594,10 @@ fn properties_compare_in_their_units_and_scopes() {
     assert_eq!(indices("property tag x"), [0]);
     assert_eq!(indices("property flag"), [0]);
     assert_eq!(indices("property flag false"), [1]);
+    assert_eq!(indices("property id == 9007199254740993"), [1]);
+    assert_eq!(indices("property id 9007199254740992"), [0]);
+    assert_eq!(indices("property id < -2.5"), [2]);
+    assert_eq!(indices("property id > 9007199254740992.5"), [1]);
     let error = |text: &str| {
         parse(text)
             .evaluate(topology.clone(), SelectEvaluateOptions::default())
