@@ -133,6 +133,105 @@ impl Hierarchy {
         Ok(id)
     }
 
+    /// Reconstructs stored hierarchy from its node lists.
+    ///
+    /// Node IDs are list positions. Each residue must be listed by exactly one
+    /// chain and each site by exactly one residue; those lists give every
+    /// residue its chain and every site its residue, in stored child order.
+    /// Atom placements must be unique. Atoms are checked against a topology
+    /// only at publication.
+    pub(crate) fn from_raw_parts(
+        chains: Vec<RawChain>,
+        residues: Vec<RawResidue>,
+        sites: Vec<RawAtomSite>,
+    ) -> std::result::Result<Self, RawHierarchyError> {
+        let id = |index: usize, kind| {
+            crate::molecule::checked_raw_id(index)
+                .map_err(|_| RawHierarchyError::IdentifierCapacityExceeded(kind))
+        };
+        id(chains.len().saturating_sub(1), HierarchyIdKind::Chain)?;
+        id(residues.len().saturating_sub(1), HierarchyIdKind::Residue)?;
+        id(sites.len().saturating_sub(1), HierarchyIdKind::AtomSite)?;
+        let mut residue_chain = vec![None; residues.len()];
+        for (index, chain) in chains.iter().enumerate() {
+            let chain_id = ChainId::new(index as u32);
+            for &residue in &chain.residues {
+                let slot = residue_chain
+                    .get_mut(residue.index())
+                    .ok_or(RawHierarchyError::InvalidResidue(residue))?;
+                if slot.replace(chain_id).is_some() {
+                    return Err(RawHierarchyError::ResidueListedTwice(residue));
+                }
+            }
+        }
+        let mut site_residue = vec![None; sites.len()];
+        for (index, residue) in residues.iter().enumerate() {
+            let residue_id = ResidueId::new(index as u32);
+            for &site in &residue.atom_sites {
+                let slot = site_residue
+                    .get_mut(site.index())
+                    .ok_or(RawHierarchyError::InvalidAtomSite(site))?;
+                if slot.replace(residue_id).is_some() {
+                    return Err(RawHierarchyError::AtomSiteListedTwice(site));
+                }
+            }
+        }
+        let mut hierarchy = Self::new();
+        hierarchy.chains = chains
+            .into_iter()
+            .enumerate()
+            .map(|(index, chain)| Chain {
+                id: ChainId::new(index as u32),
+                label_id: chain.label_id,
+                author_id: chain.author_id,
+                residues: chain.residues,
+            })
+            .collect();
+        hierarchy.residues = residues
+            .into_iter()
+            .zip(residue_chain)
+            .enumerate()
+            .map(|(index, (residue, chain))| {
+                let id = ResidueId::new(index as u32);
+                Ok(Residue {
+                    id,
+                    chain: chain.ok_or(RawHierarchyError::ResidueUnlisted(id))?,
+                    class: residue.class,
+                    explicit_class: residue.explicit.then_some(residue.class),
+                    name: residue.name,
+                    label_comp_id: residue.label_comp_id,
+                    author_comp_id: residue.author_comp_id,
+                    label_seq_id: residue.label_seq_id,
+                    author_seq_id: residue.author_seq_id,
+                    insertion_code: residue.insertion_code,
+                    atom_sites: residue.atom_sites,
+                })
+            })
+            .collect::<std::result::Result<_, _>>()?;
+        let mut atom_sites = Vec::with_capacity(sites.len());
+        let mut lookup = Vec::with_capacity(sites.len());
+        for (index, (site, residue)) in sites.into_iter().zip(site_residue).enumerate() {
+            let id = AtomSiteId::new(index as u32);
+            let residue = residue.ok_or(RawHierarchyError::AtomSiteUnlisted(id))?;
+            lookup.push((site.atom, id));
+            atom_sites.push(AtomSite {
+                id,
+                residue,
+                atom: site.atom,
+                metadata: site.metadata,
+            });
+        }
+        // Sorted entries build the lookup in bulk rather than one insertion
+        // at a time.
+        lookup.sort_unstable();
+        if let Some(pair) = lookup.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+            return Err(RawHierarchyError::DuplicateAtomPlacement(pair[0].0));
+        }
+        hierarchy.atom_lookup = lookup.into_iter().collect();
+        hierarchy.atom_sites = atom_sites;
+        Ok(hierarchy)
+    }
+
     /// Mutable residue list of one chain, for corrupting hierarchies in tests.
     #[cfg(test)]
     pub(crate) fn chain_residues_mut(&mut self, chain: ChainId) -> &mut Vec<ResidueId> {
@@ -385,6 +484,68 @@ impl HierarchyBuilder {
     /// it or `residue` is not staged.
     pub fn explicit_residue_class(&self, residue: ResidueId) -> Option<ResidueClass> {
         self.hierarchy.residue(residue)?.explicit_class
+    }
+}
+
+/// One stored chain for [`Hierarchy::from_raw_parts`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RawChain {
+    pub(crate) label_id: String,
+    pub(crate) author_id: Option<String>,
+    pub(crate) residues: Vec<ResidueId>,
+}
+
+/// One stored residue for [`Hierarchy::from_raw_parts`]; `class` is its
+/// published class and `explicit` whether it was assigned explicitly.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RawResidue {
+    pub(crate) name: String,
+    pub(crate) label_comp_id: Option<String>,
+    pub(crate) author_comp_id: Option<String>,
+    pub(crate) label_seq_id: Option<i32>,
+    pub(crate) author_seq_id: Option<String>,
+    pub(crate) insertion_code: Option<String>,
+    pub(crate) class: ResidueClass,
+    pub(crate) explicit: bool,
+    pub(crate) atom_sites: Vec<AtomSiteId>,
+}
+
+/// One stored atom site for [`Hierarchy::from_raw_parts`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RawAtomSite {
+    pub(crate) atom: InstanceAtomId,
+    pub(crate) metadata: AtomSiteMetadata,
+}
+
+/// Why stored hierarchy node lists do not form a hierarchy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RawHierarchyError {
+    IdentifierCapacityExceeded(HierarchyIdKind),
+    InvalidResidue(ResidueId),
+    InvalidAtomSite(AtomSiteId),
+    ResidueListedTwice(ResidueId),
+    AtomSiteListedTwice(AtomSiteId),
+    ResidueUnlisted(ResidueId),
+    AtomSiteUnlisted(AtomSiteId),
+    DuplicateAtomPlacement(InstanceAtomId),
+}
+
+impl fmt::Display for RawHierarchyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IdentifierCapacityExceeded(kind) => {
+                write!(f, "{kind} identifier capacity exceeded")
+            }
+            Self::InvalidResidue(id) => write!(f, "a chain lists missing {id}"),
+            Self::InvalidAtomSite(id) => write!(f, "a residue lists missing {id}"),
+            Self::ResidueListedTwice(id) => write!(f, "{id} is listed by more than one chain"),
+            Self::AtomSiteListedTwice(id) => {
+                write!(f, "{id} is listed by more than one residue")
+            }
+            Self::ResidueUnlisted(id) => write!(f, "{id} belongs to no chain"),
+            Self::AtomSiteUnlisted(id) => write!(f, "{id} belongs to no residue"),
+            Self::DuplicateAtomPlacement(atom) => write!(f, "{atom} has more than one atom site"),
+        }
     }
 }
 

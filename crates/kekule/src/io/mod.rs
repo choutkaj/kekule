@@ -11,6 +11,7 @@ mod mmcif_document;
 mod mmcif_write;
 mod molfile_document;
 mod molfile_write;
+mod native;
 mod pdb_document;
 mod sdf_document;
 mod sdf_ensemble;
@@ -44,6 +45,12 @@ pub use molfile_document::{
 };
 pub(crate) use molfile_write::{write_molfile, write_molfile_to};
 pub use molfile_write::{MolfileSource, MolfileWriteOptions, MolfileWriteVersion};
+pub(crate) use native::{read_native, write_native, write_native_to};
+pub use native::{
+    NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
+    DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES,
+    DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+};
 pub(crate) use pdb_document::{parse_pdb_reader, parse_pdb_str};
 pub use pdb_document::{
     PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel, PdbParseOptions,

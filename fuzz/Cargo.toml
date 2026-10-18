@@ -113,3 +113,10 @@ path = "fuzz_targets/smarts_match.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "native"
+path = "fuzz_targets/native.rs"
+test = false
+doc = false
+bench = false
