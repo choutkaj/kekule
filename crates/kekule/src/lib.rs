@@ -35,7 +35,7 @@
 //! | Values and diagnostics | [`units`], [`properties`], [`geometry`], [`diagnostics`] |
 //! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`macromolecular`], [`components`] |
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
-//! | Queries | [`query`], [`smarts`], [`substructure`] |
+//! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
 //! | Structure analysis and preparation | [`alignment`], [`clustering`], [`dssp`], [`solvation`] |
 //!
 //! # Typical workflow
@@ -154,6 +154,7 @@ mod io;
 pub mod molecule;
 pub mod properties;
 pub mod query;
+mod selection_language;
 pub mod solvation;
 pub mod structure;
 pub mod topology;
@@ -580,6 +581,68 @@ pub mod smiles {
         writer
             .write_all(line.as_bytes())
             .map_err(|error| FormatError::sink(Format::Smiles, error))
+    }
+}
+
+/// The atom selection language: text such as `protein and name CA` or
+/// `within 5 of resname LIG and not water`, evaluated to an
+/// [`AtomSelection`](crate::topology::AtomSelection).
+///
+/// The keyword grammar follows VMD, PyMOL and MDAnalysis where they agree:
+/// `and`, `or`, `not`, parentheses, value lists (`resname ALA GLY`), ranges
+/// (`resid 10-50`), comparisons (`bfactor > 50`), quoted values, `within`
+/// distances in ångströms unless a unit follows, expansion (`byres`,
+/// `bychain`, `bymolecule`, `bonded to`), and macros such as `protein`,
+/// `water`, `ligand`, `backbone`, and `sidechain`. Chain, residue, and atom
+/// identifiers are author identifiers, falling back to label identifiers;
+/// `label_*` terms match label identifiers only. The full grammar is in
+/// `docs/selection-language.md`.
+///
+/// [`select::parse`] returns a [`select::SelectionExpr`] whose `Display` is
+/// its canonical text. [`select::SelectionExpr::evaluate`] evaluates
+/// topology terms against a topology;
+/// [`select::SelectionExpr::evaluate_structure`] also evaluates spatial and
+/// site terms against a model, ensemble member, or trajectory frame. Chemistry
+/// terms read installed perception and never perceive. Applications add
+/// `#...`, `$name`, and keyword terms through a [`select::SelectionResolver`],
+/// which may answer spatial references with another object's points.
+///
+/// ```
+/// use kekule::select::{self, SelectEvaluateOptions, SelectParseOptions};
+/// use kekule::smiles;
+///
+/// let topology = smiles::to_topology("c1ccccc1O.[OH2]")?.perceived()?;
+/// let expression = select::parse("aromatic or (element O and not water)", SelectParseOptions::default())?;
+/// assert_eq!(expression.to_string(), "aromatic or element O and not water");
+/// let atoms = expression.evaluate(topology, SelectEvaluateOptions::default())?;
+/// assert_eq!(atoms.len(), 7);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub mod select {
+    use crate::diagnostics::FormatError;
+    pub use crate::selection_language::{
+        HostRequest, HostRole, HostTerm, HostTermError, HostTermKind, HostValue,
+        SelectEvaluateError, SelectEvaluateOptions, SelectParseOptions, SelectionExpr,
+        SelectionResolver, DEFAULT_SELECT_MAX_DEPTH, DEFAULT_SELECT_MAX_INPUT_BYTES,
+        DEFAULT_SELECT_MAX_SMARTS_MATCHES,
+    };
+
+    /// Parses selection text. SMARTS patterns inside it are checked now, so
+    /// evaluation fails only on the evaluated structure, never on the text.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] of format
+    /// [`Format::Selection`](crate::diagnostics::Format::Selection) with the
+    /// byte [`span`](FormatError::span) of the offending text:
+    /// [`DiagnosticKind::Syntax`](crate::diagnostics::DiagnosticKind::Syntax)
+    /// for text outside the grammar,
+    /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
+    /// for a value a keyword cannot take, and
+    /// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
+    /// when `options` is exceeded.
+    pub fn parse(text: &str, options: SelectParseOptions) -> Result<SelectionExpr, FormatError> {
+        SelectionExpr::parse(text, &options)
     }
 }
 

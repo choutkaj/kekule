@@ -113,3 +113,10 @@ path = "fuzz_targets/smarts_match.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "select"
+path = "fuzz_targets/select.rs"
+test = false
+doc = false
+bench = false

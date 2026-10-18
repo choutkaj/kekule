@@ -333,6 +333,8 @@ pub enum Format {
     Mmcif,
     /// PDB.
     Pdb,
+    /// Kekule's atom selection language.
+    Selection,
 }
 
 impl fmt::Display for Format {
@@ -344,6 +346,7 @@ impl fmt::Display for Format {
             Self::Sdf => "SDF",
             Self::Mmcif => "mmCIF",
             Self::Pdb => "PDB",
+            Self::Selection => "selection",
         })
     }
 }
@@ -502,6 +505,7 @@ struct FormatErrorData {
     stage: FormatStage,
     kind: DiagnosticKind,
     location: Option<SourceLocation>,
+    span: Option<std::ops::Range<usize>>,
     record: Option<usize>,
     message: String,
     detail: Option<FormatErrorDetail>,
@@ -520,6 +524,7 @@ impl FormatError {
             stage,
             kind,
             location: None,
+            span: None,
             record: None,
             message: message.into(),
             detail: None,
@@ -589,6 +594,13 @@ impl FormatError {
         self
     }
 
+    /// Records the byte range of the input the failure concerns.
+    #[must_use]
+    pub(crate) fn with_span(mut self, span: std::ops::Range<usize>) -> Self {
+        self.0.span = Some(span);
+        self
+    }
+
     #[must_use]
     pub(crate) fn in_record(mut self, record: usize) -> Self {
         self.0.record = Some(record);
@@ -651,6 +663,13 @@ impl FormatError {
     /// the record; other formats locate a line.
     pub fn location(&self) -> Option<SourceLocation> {
         self.0.location
+    }
+
+    /// The byte range of the input the failure concerns, for inputs parsed
+    /// as one expression, such as selection-language text; the location
+    /// gives its start.
+    pub fn span(&self) -> Option<std::ops::Range<usize>> {
+        self.0.span.clone()
     }
 
     /// The 1-based number of the record the failure concerns, for

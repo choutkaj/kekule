@@ -14,6 +14,9 @@ cargo +nightly fuzz run <target> -- -runs=256 -max_len=4096 -seed=1
 The input-parser targets are `mol_v2000`, `mol_v3000`, `sdf_v2000`, `smiles`,
 `mmcif`, and `pdb`. The trajectory targets are `trajectory_detection`,
 `trajectory_xyz`, `trajectory_dcd`, `trajectory_trr`, and `trajectory_xtc`.
+`select` parses selection-language text; every accepted expression must print
+canonical text that parses back to an equal expression and prints the same,
+and every error must carry a span within the input.
 `smarts` checks query parsing; `smarts_match` compares complete collection and
 streaming match results under shared resource bounds. `resonance` enumerates
 resonance contributors of small parsed SMILES molecules under structure and
