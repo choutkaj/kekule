@@ -1,17 +1,69 @@
 use super::Element;
-use crate::units::{Quantity, BOHR, CUBIC_BOHR};
+use crate::units::{Quantity, ANGSTROM, BOHR, CUBIC_BOHR};
 
 const BOHR_TO_ANGSTROM: f64 = 0.529_177_210_903;
 
-/// Selects one of the neutral-atom van der Waals reference columns.
+/// Selects one of the van der Waals radius reference columns.
+///
+/// The columns come from different definitions and are not interchangeable:
+/// the free-atom radii of Charry and Tkatchenko are larger than the
+/// crystallographic contact radii of Bondi (carbon 1.91 Å against 1.70 Å),
+/// and Alvarez's contact-distribution radii are larger again for most
+/// metals. Only the two Charry–Tkatchenko columns fall back to each other;
+/// [`Bondi`](Self::Bondi) and [`Alvarez`](Self::Alvarez) never borrow values
+/// from another column, so a caller that wants one scale completed by another
+/// composes the lookups explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum VanDerWaalsRadiusSource {
-    /// Free-atom radii reported by Charry and Tkatchenko.
+    /// Free-atom radii reported by Charry and Tkatchenko, J. Chem. Theory
+    /// Comput. 2024, DOI 10.1021/acs.jctc.4c00784, tabulated in bohr.
+    ///
+    /// Elements 1–118 except livermorium (116); an element without a
+    /// free-atom value takes the [`Reference`](Self::Reference) value.
     #[default]
     FreeAtom,
-    /// The compiled bonded/reference-radius column reported in the same work.
+    /// The compiled bonded/reference-radius column reported in the same work,
+    /// tabulated in bohr.
+    ///
+    /// An element without a reference value, such as the lanthanides from
+    /// cerium and every element after protactinium, takes the
+    /// [`FreeAtom`](Self::FreeAtom) value.
     Reference,
+    /// Bondi's crystallographic van der Waals radii, J. Phys. Chem. 1964, 68,
+    /// 441, DOI 10.1021/j100785a001, with the usual completions, tabulated in
+    /// ångström. These are the radii molecular graphics conventionally
+    /// display.
+    ///
+    /// The 44 main-group elements, hydrogen to radium, are the consistent set
+    /// of Mantina, Chamberlin, Valero, Cramer and Truhlar, J. Phys. Chem. A
+    /// 2009, 113, 5806, DOI 10.1021/jp8111556, Table 12, transcribed
+    /// verbatim: Bondi's values for 27 elements, hydrogen 1.10 Å from Rowland
+    /// and Taylor, J. Phys. Chem. 1996, 100, 7384, DOI 10.1021/jp953141+,
+    /// in place of Bondi's 1.20 Å, and Mantina's own values for the 16
+    /// elements Bondi did not cover (Be, B, Al, Ca, Ge, Rb, Sr, Sb, Cs, Ba,
+    /// Bi, Po, At, Rn, Fr, Ra). Strontium is 2.49 Å as in Table 12; the
+    /// paper's abstract states 2.50 Å. The ten further elements Bondi gave
+    /// (Ni, Cu, Zn, Pd, Ag, Cd, Pt, Au, Hg, U) are transcribed from the Bondi
+    /// column of Alvarez 2013, Table 1, which draws on Bondi 1964 and on
+    /// Bondi's 1966 values for metals in covalent compounds, J. Phys. Chem.
+    /// 1966, 70, 3006, DOI 10.1021/j100881a503.
+    ///
+    /// Covers 54 elements; every other element, including the remaining
+    /// transition metals and lanthanides, has no Bondi radius.
+    Bondi,
+    /// Alvarez's van der Waals radii from the distribution of intermolecular
+    /// contact distances in crystal structures, Dalton Trans. 2013, 42,
+    /// 8617, DOI 10.1039/C3DT50599E, Table 1 (the `rvdW` column), tabulated
+    /// in ångström.
+    ///
+    /// Covers the 93 elements hydrogen to neodymium, samarium to bismuth,
+    /// and actinium to einsteinium; promethium, polonium to radium, and
+    /// elements after einsteinium have no Alvarez radius. Values the paper
+    /// brackets as rough estimates from very small datasets (He, Ne, Ac,
+    /// Pa, Cm, Bk, Cf, Es) are included as printed. Later revisions, such
+    /// as Vogt and Alvarez's noble-gas radii, are not part of this column.
+    Alvarez,
 }
 
 impl Element {
@@ -26,36 +78,68 @@ impl Element {
             .map(|value| Quantity::new(value, CUBIC_BOHR))
     }
 
-    /// Returns a van der Waals radius, in bohr as tabulated.
+    /// Returns a van der Waals radius from the selected column, in the unit
+    /// the column is tabulated in: bohr for the Charry–Tkatchenko columns,
+    /// ångström for Bondi and Alvarez.
     ///
-    /// The radii follow Charry and Tkatchenko, J. Chem. Theory Comput. 2024,
-    /// DOI 10.1021/acs.jctc.4c00784. If the requested reference column is
-    /// unavailable, the other archived column is used. `None` is returned
-    /// only when Kekule has neither.
+    /// If the requested Charry–Tkatchenko column is unavailable for this
+    /// element, the other Charry–Tkatchenko column is used, and `None` is
+    /// returned only when Kekule has neither. The Bondi and Alvarez columns
+    /// have no fallback and return `None` outside their coverage. Each
+    /// [`VanDerWaalsRadiusSource`] variant documents its source and
+    /// coverage.
+    ///
+    /// ```
+    /// use kekule::molecule::{Element, VanDerWaalsRadiusSource};
+    /// use kekule::units::ANGSTROM;
+    ///
+    /// let carbon = Element::C.van_der_waals_radius(VanDerWaalsRadiusSource::Bondi);
+    /// assert_eq!(carbon.unwrap().value_in(ANGSTROM)?, 1.70);
+    /// let iron = Element::from_symbol("Fe").unwrap();
+    /// assert!(iron.van_der_waals_radius(VanDerWaalsRadiusSource::Bondi).is_none());
+    /// let alvarez = iron.van_der_waals_radius(VanDerWaalsRadiusSource::Alvarez);
+    /// assert_eq!(alvarez.unwrap().value_in(ANGSTROM)?, 2.44);
+    /// # Ok::<(), kekule::units::UnitError>(())
+    /// ```
     pub fn van_der_waals_radius(self, source: VanDerWaalsRadiusSource) -> Option<Quantity<f64>> {
-        self.van_der_waals_radius_bohr(source)
-            .map(|radius| Quantity::new(radius, BOHR))
-    }
-
-    fn van_der_waals_radius_bohr(self, source: VanDerWaalsRadiusSource) -> Option<f64> {
         let index = usize::from(self.atomic_number());
         match source {
-            VanDerWaalsRadiusSource::FreeAtom => {
-                TKATCHENKO_VDW_RADIUS_BOHR[index].or(REFERENCE_VDW_RADIUS_BOHR[index])
+            VanDerWaalsRadiusSource::FreeAtom | VanDerWaalsRadiusSource::Reference => self
+                .charry_tkatchenko_radius_bohr(source)
+                .map(|radius| Quantity::new(radius, BOHR)),
+            VanDerWaalsRadiusSource::Bondi => {
+                BONDI_VDW_RADIUS_ANGSTROM[index].map(|radius| Quantity::new(radius, ANGSTROM))
             }
-            VanDerWaalsRadiusSource::Reference => {
-                REFERENCE_VDW_RADIUS_BOHR[index].or(TKATCHENKO_VDW_RADIUS_BOHR[index])
+            VanDerWaalsRadiusSource::Alvarez => {
+                ALVAREZ_VDW_RADIUS_ANGSTROM[index].map(|radius| Quantity::new(radius, ANGSTROM))
             }
         }
     }
 
-    /// The radius in ångström, converted as solvation has always converted it.
+    fn charry_tkatchenko_radius_bohr(self, source: VanDerWaalsRadiusSource) -> Option<f64> {
+        let index = usize::from(self.atomic_number());
+        match source {
+            VanDerWaalsRadiusSource::Reference => {
+                REFERENCE_VDW_RADIUS_BOHR[index].or(TKATCHENKO_VDW_RADIUS_BOHR[index])
+            }
+            _ => TKATCHENKO_VDW_RADIUS_BOHR[index].or(REFERENCE_VDW_RADIUS_BOHR[index]),
+        }
+    }
+
+    /// The radius in ångström. Charry–Tkatchenko radii are converted from
+    /// bohr as solvation has always converted them.
     pub(crate) fn van_der_waals_radius_angstrom(
         self,
         source: VanDerWaalsRadiusSource,
     ) -> Option<f64> {
-        self.van_der_waals_radius_bohr(source)
-            .map(|radius| radius * BOHR_TO_ANGSTROM)
+        let index = usize::from(self.atomic_number());
+        match source {
+            VanDerWaalsRadiusSource::FreeAtom | VanDerWaalsRadiusSource::Reference => self
+                .charry_tkatchenko_radius_bohr(source)
+                .map(|radius| radius * BOHR_TO_ANGSTROM),
+            VanDerWaalsRadiusSource::Bondi => BONDI_VDW_RADIUS_ANGSTROM[index],
+            VanDerWaalsRadiusSource::Alvarez => ALVAREZ_VDW_RADIUS_ANGSTROM[index],
+        }
     }
 }
 
@@ -425,6 +509,250 @@ const REFERENCE_VDW_RADIUS_BOHR: [Option<f64>; 119] = [
     None, // 118: Og
 ];
 
+const BONDI_VDW_RADIUS_ANGSTROM: [Option<f64>; 119] = [
+    None,       // 0: no element
+    Some(1.10), // 1: H (Rowland & Taylor)
+    Some(1.40), // 2: He
+    Some(1.81), // 3: Li
+    Some(1.53), // 4: Be (Mantina)
+    Some(1.92), // 5: B (Mantina)
+    Some(1.70), // 6: C
+    Some(1.55), // 7: N
+    Some(1.52), // 8: O
+    Some(1.47), // 9: F
+    Some(1.54), // 10: Ne
+    Some(2.27), // 11: Na
+    Some(1.73), // 12: Mg
+    Some(1.84), // 13: Al (Mantina)
+    Some(2.10), // 14: Si
+    Some(1.80), // 15: P
+    Some(1.80), // 16: S
+    Some(1.75), // 17: Cl
+    Some(1.88), // 18: Ar
+    Some(2.75), // 19: K
+    Some(2.31), // 20: Ca (Mantina)
+    None,       // 21: Sc
+    None,       // 22: Ti
+    None,       // 23: V
+    None,       // 24: Cr
+    None,       // 25: Mn
+    None,       // 26: Fe
+    None,       // 27: Co
+    Some(1.63), // 28: Ni
+    Some(1.40), // 29: Cu
+    Some(1.39), // 30: Zn
+    Some(1.87), // 31: Ga
+    Some(2.11), // 32: Ge (Mantina)
+    Some(1.85), // 33: As
+    Some(1.90), // 34: Se
+    Some(1.83), // 35: Br
+    Some(2.02), // 36: Kr
+    Some(3.03), // 37: Rb (Mantina)
+    Some(2.49), // 38: Sr (Mantina)
+    None,       // 39: Y
+    None,       // 40: Zr
+    None,       // 41: Nb
+    None,       // 42: Mo
+    None,       // 43: Tc
+    None,       // 44: Ru
+    None,       // 45: Rh
+    Some(1.63), // 46: Pd
+    Some(1.72), // 47: Ag
+    Some(1.62), // 48: Cd
+    Some(1.93), // 49: In
+    Some(2.17), // 50: Sn
+    Some(2.06), // 51: Sb (Mantina)
+    Some(2.06), // 52: Te
+    Some(1.98), // 53: I
+    Some(2.16), // 54: Xe
+    Some(3.43), // 55: Cs (Mantina)
+    Some(2.68), // 56: Ba (Mantina)
+    None,       // 57: La
+    None,       // 58: Ce
+    None,       // 59: Pr
+    None,       // 60: Nd
+    None,       // 61: Pm
+    None,       // 62: Sm
+    None,       // 63: Eu
+    None,       // 64: Gd
+    None,       // 65: Tb
+    None,       // 66: Dy
+    None,       // 67: Ho
+    None,       // 68: Er
+    None,       // 69: Tm
+    None,       // 70: Yb
+    None,       // 71: Lu
+    None,       // 72: Hf
+    None,       // 73: Ta
+    None,       // 74: W
+    None,       // 75: Re
+    None,       // 76: Os
+    None,       // 77: Ir
+    Some(1.72), // 78: Pt
+    Some(1.66), // 79: Au
+    Some(1.70), // 80: Hg
+    Some(1.96), // 81: Tl
+    Some(2.02), // 82: Pb
+    Some(2.07), // 83: Bi (Mantina)
+    Some(1.97), // 84: Po (Mantina)
+    Some(2.02), // 85: At (Mantina)
+    Some(2.20), // 86: Rn (Mantina)
+    Some(3.48), // 87: Fr (Mantina)
+    Some(2.83), // 88: Ra (Mantina)
+    None,       // 89: Ac
+    None,       // 90: Th
+    None,       // 91: Pa
+    Some(1.86), // 92: U
+    None,       // 93: Np
+    None,       // 94: Pu
+    None,       // 95: Am
+    None,       // 96: Cm
+    None,       // 97: Bk
+    None,       // 98: Cf
+    None,       // 99: Es
+    None,       // 100: Fm
+    None,       // 101: Md
+    None,       // 102: No
+    None,       // 103: Lr
+    None,       // 104: Rf
+    None,       // 105: Db
+    None,       // 106: Sg
+    None,       // 107: Bh
+    None,       // 108: Hs
+    None,       // 109: Mt
+    None,       // 110: Ds
+    None,       // 111: Rg
+    None,       // 112: Cn
+    None,       // 113: Nh
+    None,       // 114: Fl
+    None,       // 115: Mc
+    None,       // 116: Lv
+    None,       // 117: Ts
+    None,       // 118: Og
+];
+
+const ALVAREZ_VDW_RADIUS_ANGSTROM: [Option<f64>; 119] = [
+    None,       // 0: no element
+    Some(1.20), // 1: H
+    Some(1.43), // 2: He (rough estimate)
+    Some(2.12), // 3: Li
+    Some(1.98), // 4: Be
+    Some(1.91), // 5: B
+    Some(1.77), // 6: C
+    Some(1.66), // 7: N
+    Some(1.50), // 8: O
+    Some(1.46), // 9: F
+    Some(1.58), // 10: Ne (rough estimate)
+    Some(2.50), // 11: Na
+    Some(2.51), // 12: Mg
+    Some(2.25), // 13: Al
+    Some(2.19), // 14: Si
+    Some(1.90), // 15: P
+    Some(1.89), // 16: S
+    Some(1.82), // 17: Cl
+    Some(1.83), // 18: Ar
+    Some(2.73), // 19: K
+    Some(2.62), // 20: Ca
+    Some(2.58), // 21: Sc
+    Some(2.46), // 22: Ti
+    Some(2.42), // 23: V
+    Some(2.45), // 24: Cr
+    Some(2.45), // 25: Mn
+    Some(2.44), // 26: Fe
+    Some(2.40), // 27: Co
+    Some(2.40), // 28: Ni
+    Some(2.38), // 29: Cu
+    Some(2.39), // 30: Zn
+    Some(2.32), // 31: Ga
+    Some(2.29), // 32: Ge
+    Some(1.88), // 33: As
+    Some(1.82), // 34: Se
+    Some(1.86), // 35: Br
+    Some(2.25), // 36: Kr
+    Some(3.21), // 37: Rb
+    Some(2.84), // 38: Sr
+    Some(2.75), // 39: Y
+    Some(2.52), // 40: Zr
+    Some(2.56), // 41: Nb
+    Some(2.45), // 42: Mo
+    Some(2.44), // 43: Tc
+    Some(2.46), // 44: Ru
+    Some(2.44), // 45: Rh
+    Some(2.15), // 46: Pd
+    Some(2.53), // 47: Ag
+    Some(2.49), // 48: Cd
+    Some(2.43), // 49: In
+    Some(2.42), // 50: Sn
+    Some(2.47), // 51: Sb
+    Some(1.99), // 52: Te
+    Some(2.04), // 53: I
+    Some(2.06), // 54: Xe
+    Some(3.48), // 55: Cs
+    Some(3.03), // 56: Ba
+    Some(2.98), // 57: La
+    Some(2.88), // 58: Ce
+    Some(2.92), // 59: Pr
+    Some(2.95), // 60: Nd
+    None,       // 61: Pm
+    Some(2.90), // 62: Sm
+    Some(2.87), // 63: Eu
+    Some(2.83), // 64: Gd
+    Some(2.79), // 65: Tb
+    Some(2.87), // 66: Dy
+    Some(2.81), // 67: Ho
+    Some(2.83), // 68: Er
+    Some(2.79), // 69: Tm
+    Some(2.80), // 70: Yb
+    Some(2.74), // 71: Lu
+    Some(2.63), // 72: Hf
+    Some(2.53), // 73: Ta
+    Some(2.57), // 74: W
+    Some(2.49), // 75: Re
+    Some(2.48), // 76: Os
+    Some(2.41), // 77: Ir
+    Some(2.29), // 78: Pt
+    Some(2.32), // 79: Au
+    Some(2.45), // 80: Hg
+    Some(2.47), // 81: Tl
+    Some(2.60), // 82: Pb
+    Some(2.54), // 83: Bi
+    None,       // 84: Po
+    None,       // 85: At
+    None,       // 86: Rn
+    None,       // 87: Fr
+    None,       // 88: Ra
+    Some(2.8),  // 89: Ac (rough estimate)
+    Some(2.93), // 90: Th
+    Some(2.88), // 91: Pa (rough estimate)
+    Some(2.71), // 92: U
+    Some(2.82), // 93: Np
+    Some(2.81), // 94: Pu
+    Some(2.83), // 95: Am
+    Some(3.05), // 96: Cm (rough estimate)
+    Some(3.4),  // 97: Bk (rough estimate)
+    Some(3.05), // 98: Cf (rough estimate)
+    Some(2.7),  // 99: Es (rough estimate)
+    None,       // 100: Fm
+    None,       // 101: Md
+    None,       // 102: No
+    None,       // 103: Lr
+    None,       // 104: Rf
+    None,       // 105: Db
+    None,       // 106: Sg
+    None,       // 107: Bh
+    None,       // 108: Hs
+    None,       // 109: Mt
+    None,       // 110: Ds
+    None,       // 111: Rg
+    None,       // 112: Cn
+    None,       // 113: Nh
+    None,       // 114: Fl
+    None,       // 115: Mc
+    None,       // 116: Lv
+    None,       // 117: Ts
+    None,       // 118: Og
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,6 +795,66 @@ mod tests {
                 - 2.90)
                 .abs()
                 < 0.03
+        );
+    }
+
+    fn angstrom(element: u8, source: VanDerWaalsRadiusSource) -> Option<f64> {
+        Element::from_atomic_number(element)
+            .unwrap()
+            .van_der_waals_radius(source)
+            .map(|radius| radius.value_in(ANGSTROM).unwrap())
+    }
+
+    #[test]
+    fn bondi_column_follows_mantina_and_alvarez_transcriptions() {
+        use VanDerWaalsRadiusSource::Bondi;
+        // Rowland and Taylor hydrogen, Bondi carbon and halogens as Mantina
+        // Table 12 gives them, a Mantina completion, and a Bondi metal.
+        for (element, radius) in [(1, 1.10), (6, 1.70), (35, 1.83), (38, 2.49), (80, 1.70)] {
+            assert_eq!(angstrom(element, Bondi), Some(radius), "element {element}");
+        }
+        let covered = (1..=118).filter(|&z| angstrom(z, Bondi).is_some()).count();
+        assert_eq!(covered, 54);
+        // No fallback to another column: iron and the lanthanides have no
+        // Bondi radius.
+        assert_eq!(angstrom(26, Bondi), None);
+        assert_eq!(angstrom(64, Bondi), None);
+    }
+
+    #[test]
+    fn alvarez_column_follows_table_one() {
+        use VanDerWaalsRadiusSource::Alvarez;
+        for (element, radius) in [(1, 1.20), (6, 1.77), (26, 2.44), (54, 2.06), (99, 2.7)] {
+            assert_eq!(
+                angstrom(element, Alvarez),
+                Some(radius),
+                "element {element}"
+            );
+        }
+        let missing = (1..=118)
+            .filter(|&z| angstrom(z, Alvarez).is_none())
+            .collect::<Vec<_>>();
+        let expected = [61, 84, 85, 86, 87, 88]
+            .into_iter()
+            .chain(100..=118)
+            .collect::<Vec<_>>();
+        assert_eq!(missing, expected);
+    }
+
+    #[test]
+    fn charry_tkatchenko_conversion_is_unchanged_for_solvation() {
+        let oxygen = Element::from_atomic_number(8).unwrap();
+        assert_eq!(
+            oxygen.van_der_waals_radius_angstrom(VanDerWaalsRadiusSource::Reference),
+            Some(3.2314 * BOHR_TO_ANGSTROM)
+        );
+        assert_eq!(
+            oxygen.van_der_waals_radius_angstrom(VanDerWaalsRadiusSource::Bondi),
+            Some(1.52)
+        );
+        assert_eq!(
+            VanDerWaalsRadiusSource::default(),
+            VanDerWaalsRadiusSource::FreeAtom
         );
     }
 

@@ -48,6 +48,12 @@ are marked **Breaking:**.
   is documented in `docs/selection-language.md`, with a conformance suite in
   `tests/fixtures/select/conformance.txt` and a new `select` fuzz target.
 - `FormatError::span` returns the byte range a failure concerns.
+- `VanDerWaalsRadiusSource::Bondi` and `VanDerWaalsRadiusSource::Alvarez`
+  select two classic van der Waals radius columns, tabulated in ångström.
+  Bondi (1964) covers 54 elements, with hydrogen at 1.10 Å (Rowland and Taylor
+  1996) and the main-group gaps completed by Mantina et al. (2009). Alvarez
+  (2013) covers 93 elements. Neither column falls back to another column, and
+  the default stays `FreeAtom`.
 
 ## [0.4.0] - 2026-10-17
 
