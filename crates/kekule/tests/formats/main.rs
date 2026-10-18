@@ -1,5 +1,5 @@
-//! Reading, interpreting, and writing SMILES, Molfile, SDF, mmCIF, PDB, and
-//! the native format.
+//! Reading, interpreting, and writing SMILES, Molfile, SDF, mmCIF, PDB, XYZ,
+//! and the native format.
 
 #[path = "../support/mod.rs"]
 mod support;
@@ -13,3 +13,4 @@ mod native;
 mod pdb;
 mod smiles_stereo;
 mod writers;
+mod xyz;

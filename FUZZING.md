@@ -12,7 +12,8 @@ cargo +nightly fuzz run <target> -- -runs=256 -max_len=4096 -seed=1
 ```
 
 The input-parser targets are `mol_v2000`, `mol_v3000`, `sdf_v2000`, `smiles`,
-`mmcif`, and `pdb`. The trajectory targets are `trajectory_detection`,
+`mmcif`, `pdb`, and `xyz`; `xyz` also checks that every interpreted frame keeps
+its atoms and has one topology bond per reported inferred bond. The trajectory targets are `trajectory_detection`,
 `trajectory_xyz`, `trajectory_dcd`, `trajectory_trr`, and `trajectory_xtc`.
 `native` decodes Kekule's native binary format under small resource limits;
 every successfully decoded object must encode, decode again, and re-encode to

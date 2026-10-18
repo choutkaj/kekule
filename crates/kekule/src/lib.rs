@@ -33,7 +33,7 @@
 //! | --- | --- |
 //! | Molecules and systems | [`molecule`], [`topology`] (with [`topology::edit`]), [`structure`] (with [`structure::measure`]), [`prelude`] |
 //! | Values and diagnostics | [`units`], [`properties`], [`geometry`], [`diagnostics`] |
-//! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`macromolecular`], [`components`], [`native`] |
+//! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
 //! | Structure analysis and preparation | [`alignment`], [`clustering`], [`dssp`], [`solvation`] |
@@ -1163,6 +1163,98 @@ pub mod pdb {
         options: PdbParseOptions,
     ) -> Result<PdbDocument, FormatError> {
         crate::io::parse_pdb_reader(reader, options)
+    }
+}
+
+/// XYZ parsing and structure interpretation.
+///
+/// An XYZ file is a sequence of frames, each an atom count, a comment line,
+/// and one element and three coordinates per atom. It states no bonds, so
+/// interpretation infers connectivity from interatomic distances with the
+/// rule macromolecular interpretation applies to residues without a
+/// template: two atoms are bonded when they lie within the sum of their
+/// covalent radii (Cordero et al. 2008) plus 0.45 Å, and farther apart than
+/// 0.4 Å; an element without a tabulated radius is taken as 0.77 Å.
+///
+/// Interpretation never guesses chemistry the file does not state. Every
+/// inferred bond is single, except that a bond between a metal and a
+/// non-metal is dative, as for PDB `CONECT` records; bond orders, formal
+/// charges, radicals, and stereo are not assigned. XYZ lists every atom, so
+/// every atom has a fixed implicit hydrogen count of zero and perception
+/// never adds hydrogens. Each connected component becomes one molecule
+/// instance, under a synthetic hierarchy of one `UNL` residue per molecule
+/// in chain `A`. The [`XyzInterpretationReport`](xyz::XyzInterpretationReport)
+/// lists every inferred bond with its distance and cutoff, atoms that used
+/// the fallback radius, atoms too close to bond, and omitted content. The
+/// comment line is kept verbatim and not interpreted, and columns after the
+/// coordinates, such as extended XYZ properties, are rejected unless
+/// [`XyzInterpretOptions::with_extra_columns`](xyz::XyzInterpretOptions::with_extra_columns)
+/// reports them as omitted.
+///
+/// One frame becomes a [`Model`](crate::structure::Model); several frames of
+/// the same atoms become an equally weighted
+/// [`Ensemble`](crate::structure::Ensemble), and every frame must infer the
+/// same bonds. Interpretation keeps atom lines in source order as dense atom
+/// order, so a trajectory reader such as `kekule-traj`'s `XyzReader` can
+/// stream the frames of the same file against the interpreted topology.
+///
+/// ```
+/// use kekule::molecule::BondOrder;
+/// use kekule::xyz;
+///
+/// let text = "3\nwater\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.240 0.927 0.000\n";
+/// let document = xyz::parse_str(text, Default::default())?;
+/// let interpretation = document.interpret(Default::default())?;
+/// assert_eq!(interpretation.topology().instance_count(), 1);
+/// let report = interpretation.report();
+/// assert_eq!(report.comment(), "water");
+/// assert_eq!(report.inferred_bonds().len(), 2);
+/// assert!(report
+///     .inferred_bonds()
+///     .iter()
+///     .all(|bond| bond.order() == BondOrder::Single));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub mod xyz {
+    use crate::diagnostics::FormatError;
+    pub use crate::io::{
+        XyzAtom, XyzDocument, XyzEnsembleInterpretOptions, XyzEnsembleInterpretation, XyzFrame,
+        XyzFrameSelection, XyzInferredBond, XyzInterpretIssue, XyzInterpretOptions,
+        XyzInterpretation, XyzInterpretationReport, XyzParseOptions, DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+    };
+
+    /// Parses XYZ frames without assigning molecular meaning. `options` sets
+    /// the resource limits.
+    ///
+    /// Blank lines may follow the last frame; any other content after them
+    /// is a syntax error. Empty input has no frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] of format
+    /// [`Format::Xyz`](crate::diagnostics::Format::Xyz) and kind
+    /// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
+    /// when the input exceeds `options`,
+    /// [`DiagnosticKind::Syntax`](crate::diagnostics::DiagnosticKind::Syntax)
+    /// for a malformed count line or a truncated frame, and
+    /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
+    /// for a frame of zero atoms or a coordinate that is not a finite number.
+    pub fn parse_str(input: &str, options: XyzParseOptions) -> Result<XyzDocument, FormatError> {
+        crate::io::parse_xyz_str(input, options)
+    }
+
+    /// Reads and parses XYZ frames from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// As [`parse_str`]. The configured byte limit is enforced while reading,
+    /// before the input is held in memory; a read failure or non-UTF-8 input
+    /// fails with [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    pub fn parse_reader(
+        reader: impl std::io::Read,
+        options: XyzParseOptions,
+    ) -> Result<XyzDocument, FormatError> {
+        crate::io::parse_xyz_reader(reader, options)
     }
 }
 

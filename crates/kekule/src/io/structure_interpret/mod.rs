@@ -5,6 +5,7 @@ mod altloc;
 mod atom_site;
 mod build;
 mod connections;
+pub(crate) use connections::is_metal;
 mod ensemble;
 mod mmcif;
 mod pdb;
