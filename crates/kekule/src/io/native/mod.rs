@@ -38,7 +38,7 @@ pub const DEFAULT_NATIVE_MAX_ATOMS: usize = 100_000_000;
 /// Default [`NativeReadOptions::max_bonds`].
 pub const DEFAULT_NATIVE_MAX_BONDS: usize = 200_000_000;
 /// Default [`NativeReadOptions::max_items`].
-pub const DEFAULT_NATIVE_MAX_ITEMS: usize = 10_000_000;
+pub const DEFAULT_NATIVE_MAX_ITEMS: usize = 100_000_000;
 /// Default [`NativeReadOptions::max_string_bytes`]: 1 MiB.
 pub const DEFAULT_NATIVE_MAX_STRING_BYTES: usize = 1 << 20;
 
@@ -357,8 +357,9 @@ impl NativeReadOptions {
     );
     native_limit!(
         /// Maximum ensemble members or trajectory frames, and maximum entries
-        /// of any other stored list that is not bounded by atoms or bonds,
-        /// such as property columns.
+        /// of any other stored list that atoms or bonds do not bound: property
+        /// columns and owner values, hierarchy chains and residues, and the
+        /// residues listed by all chains together.
         max_items,
         with_max_items
     );

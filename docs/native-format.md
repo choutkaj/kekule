@@ -182,23 +182,45 @@ seqCis, `6` E, `7` Z, `8` M, `9` P, `10` m, `11` p.
 
 ### Topology
 
+The hierarchy is stored column by column: every value of one field for all
+nodes of a kind, then the next field. Columns of strings and of ID lists keep
+small reads few and fast for large systems.
+
 ```text
 topology   := definition_count:count (molecule class:u8 explicit:bool)[definition_count]
               instance_count:count definition:u32[instance_count]
               atom_order
-              chain_count:count chain[chain_count]
-              residue_count:count residue[residue_count]
-              site_count:count site[site_count]
+              chains residues sites
               topology_properties
 atom_order := 0                                  instance order, then local atom ID
             | 1 (instance:u32 atom:u32)[atom_count]
-chain      := label:str author:opt str residue_count:count residue:u32[residue_count]
-residue    := name:str label_comp:opt str author_comp:opt str
-              label_seq:opt i32 author_seq:opt str insertion_code:opt str
-              class:u8 explicit:bool site_count:count site:u32[site_count]
-site       := instance:u32 atom:u32 type_symbol:opt str label_asym:opt str
-              auth_asym:opt str label_atom:opt str auth_atom:opt str
+chains     := n:count
+              label:strings(n)                   required
+              author:strings(n)
+              residues:lists(n)                  each chain's residues in chain order
+residues   := n:count
+              name:strings(n)                    required
+              label_comp:strings(n)
+              author_comp:strings(n)
+              has_label_seq:bits(n) label_seq:i32[present]
+              author_seq:strings(n)
+              insertion_code:strings(n)
+              class:u8[n]
+              explicit:bits(n)
+              sites:lists(n)                     each residue's sites in residue order
+sites      := n:count
+              (instance:u32 atom:u32)[n]
+              type_symbol:strings(n) label_asym:strings(n) auth_asym:strings(n)
+              label_atom:strings(n) auth_atom:strings(n)
+strings(n) := length:u32[n] bytes                lengths first, 0xFFFF_FFFF for absent;
+                                                 then the present strings' UTF-8
+                                                 bytes, concatenated in order
+lists(n)   := length:u32[n] id:u32[total]        lengths first, then every list's
+                                                 IDs, concatenated in order
 ```
+
+A `required` string column has no absent entries. `label_seq` holds one `i32`
+for each set bit of `has_label_seq`, in residue order.
 
 Molecule classes: `0` protein, `1` DNA, `2` RNA, `3` carbohydrate, `4` water,
 `5` ion, `6` small molecule, `7` other. Residue classes: `0` amino acid,
@@ -235,14 +257,16 @@ topology atom and bond.
 
 ## Limits
 
-`NativeReadOptions` bounds the input bytes, the atoms and bonds of one
-molecule or topology (including the instance expansion of a topology),
-the members or frames of one collection, and the byte length of one string.
-The defaults are exported as `DEFAULT_MAX_*` constants. Exceeding a limit is
-a `FormatError` of kind `DiagnosticKind::Limit` carrying `LimitExceeded`.
-A topology can expand few input bytes into many atoms by instantiating a large
-definition many times, so set `max_atoms` to what the caller can hold when
-decoding untrusted input.
+`NativeReadOptions` bounds the input bytes; the atoms and bonds of one
+molecule or topology (including the instance expansion of a topology), which
+also bound atom sites and residue site lists; the members or frames of one
+collection, hierarchy chains and residues, property columns and owner
+values; and the byte length of one string. The defaults are exported as
+`DEFAULT_NATIVE_MAX_*` constants. Exceeding a limit is a `FormatError` of
+kind `DiagnosticKind::Limit` carrying `LimitExceeded`. A topology can expand
+few input bytes into many atoms by instantiating a large definition many
+times, so set `max_atoms` to what the caller can hold when decoding untrusted
+input.
 
 ## Identifier encoding
 

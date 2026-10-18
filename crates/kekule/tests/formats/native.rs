@@ -759,3 +759,34 @@ fn million_atom_model_round_trips_within_a_second() {
         );
     }
 }
+
+#[test]
+fn empty_hierarchy_nodes_count_against_items_not_atoms() {
+    let mut builder = TopologyBuilder::new();
+    builder
+        .add_molecule(smiles::to_molecules("[Na+]").unwrap().remove(0))
+        .unwrap();
+    let hierarchy = builder.hierarchy_mut();
+    for label in ["A", "B", "C"] {
+        let chain = hierarchy.add_chain(label, None).unwrap();
+        hierarchy
+            .add_residue(chain, "UNK", None, None, None)
+            .unwrap();
+    }
+    let topology = builder.build().unwrap();
+    let bytes = native::write(&topology, NativeWriteOptions::default()).unwrap();
+    // One atom, three empty chains and residues: the atom limit does not
+    // bound hierarchy nodes.
+    let options = NativeReadOptions::default().with_max_atoms(1).unwrap();
+    let decoded = native::read(bytes.as_slice(), options)
+        .unwrap()
+        .into_topology()
+        .unwrap();
+    assert_same_topology(&decoded, &topology);
+    let options = NativeReadOptions::default().with_max_items(2).unwrap();
+    let error = native::read(bytes.as_slice(), options).unwrap_err();
+    assert_eq!(
+        error.limit_exceeded().map(|limit| limit.resource()),
+        Some(Resource::Residues)
+    );
+}

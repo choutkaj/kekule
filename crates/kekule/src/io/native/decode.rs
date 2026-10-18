@@ -943,10 +943,13 @@ impl<R: Read> Decoder<'_, R> {
         } else {
             None
         };
-        let chain_count = self.count(max_atoms, Resource::Residues)?;
+        // Chains and residues may be empty, so the atom count does not bound
+        // them; sites and residue site lists are bounded by the atoms.
+        let max_items = self.options.max_items();
+        let chain_count = self.count(max_items, Resource::Residues)?;
         let labels = self.strings(chain_count, true)?;
         let authors = self.strings(chain_count, false)?;
-        let lists = self.lists(chain_count, max_atoms, Resource::Residues, ResidueId::new)?;
+        let lists = self.lists(chain_count, max_items, Resource::Residues, ResidueId::new)?;
         let chains = labels
             .into_iter()
             .zip(authors)
@@ -957,7 +960,7 @@ impl<R: Read> Decoder<'_, R> {
                 residues,
             })
             .collect::<Vec<_>>();
-        let residue_count = self.count(max_atoms, Resource::Residues)?;
+        let residue_count = self.count(max_items, Resource::Residues)?;
         let residues = self.residues(residue_count, atom_total)?;
         let site_count = self.count(atom_total, Resource::Atoms)?;
         let atoms = self.u32_array(site_count.saturating_mul(2))?;
