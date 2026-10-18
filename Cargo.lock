@@ -154,6 +154,7 @@ version = "0.4.0"
 name = "kekule-bench"
 version = "0.4.0"
 dependencies = [
+ "flate2",
  "kekule",
  "serde_json",
 ]

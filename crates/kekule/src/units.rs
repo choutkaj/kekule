@@ -833,6 +833,60 @@ pub const CANONICAL_GRADIENT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_NANOMETER;
 /// Canonical force constant: kJ/(mol nm²).
 pub const CANONICAL_FORCE_CONSTANT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER;
 
+// Every named unit constant, for restoring a symbol that was stored as text.
+const NAMED_UNITS: [Unit; 32] = [
+    DIMENSIONLESS,
+    METER,
+    NANOMETER,
+    ANGSTROM,
+    BOHR,
+    CUBIC_BOHR,
+    PER_NANOMETER,
+    SQUARE_ANGSTROM,
+    CUBIC_NANOMETER,
+    SQUARE_NANOMETER,
+    KILOGRAM,
+    DALTON,
+    SECOND,
+    PICOSECOND,
+    FEMTOSECOND,
+    KELVIN,
+    MOLAR,
+    MOLE,
+    COULOMB,
+    ELEMENTARY_CHARGE,
+    RADIAN,
+    DEGREE,
+    JOULE,
+    KILOJOULE,
+    KILOCALORIE,
+    KILOJOULE_PER_MOLE,
+    KILOCALORIE_PER_MOLE,
+    KILOJOULE_PER_MOLE_PER_ANGSTROM,
+    KILOJOULE_PER_MOLE_PER_NANOMETER,
+    KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM,
+    KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER,
+    NANOMETER_PER_PICOSECOND,
+];
+
+/// The unit with `dimension` and `scale`, carrying `symbol` when it names a
+/// unit constant of that dimension and scale and no symbol otherwise.
+pub(crate) fn unit_with_symbol(
+    dimension: Dimension,
+    scale: f64,
+    symbol: Option<&str>,
+) -> Result<Unit, UnitError> {
+    let unit = Unit::new(dimension, scale, None)?;
+    Ok(symbol
+        .and_then(|symbol| {
+            NAMED_UNITS
+                .iter()
+                .find(|named| named.symbol == Some(symbol) && **named == unit)
+        })
+        .copied()
+        .unwrap_or(unit))
+}
+
 /// Exact physical constants of the 2019 SI, as quantities.
 pub mod constants {
     use super::{BaseDimension, Dimension, Quantity, Unit};

@@ -58,6 +58,7 @@ mod entity_views;
 mod hierarchy;
 mod lookup;
 mod perception;
+mod reconstruct;
 mod selection;
 mod transform;
 
@@ -77,12 +78,15 @@ pub use builder::{TopologyBuildError, TopologyBuilder, TopologyIdKind};
 use dense_order::DenseOrder;
 pub(crate) use editor::AppendMapping;
 pub use entity_views::{AtomView, BondView};
-pub(crate) use hierarchy::{AtomSite, Chain, Hierarchy, Residue};
+pub(crate) use hierarchy::{
+    AtomSite, Chain, Hierarchy, RawAtomSite, RawChain, RawHierarchyError, RawResidue, Residue,
+};
 pub use hierarchy::{
     AtomSiteId, AtomSiteMetadata, ChainId, HierarchyBuilder, HierarchyError, HierarchyIdKind,
     ResidueId,
 };
 pub use perception::TopologyPerceptionError;
+pub(crate) use reconstruct::{RawDefinition, TopologyParts};
 pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
 pub use transform::{TopologySubset, TopologySubsetCorrespondence, TopologySubsetError};
 
@@ -279,6 +283,30 @@ impl InstanceAtomId {
     pub const fn atom(self) -> AtomId {
         self.atom
     }
+    /// The stable encoding of this ID for persistence: the instance's raw
+    /// value in the high 32 bits and the local atom's raw value in the low 32
+    /// bits. [`Self::from_bits`] restores it, and the encoding does not change
+    /// between Kekule versions.
+    ///
+    /// ```
+    /// use kekule::molecule::AtomId;
+    /// use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
+    ///
+    /// let id = InstanceAtomId::new(MoleculeInstanceId::new(2), AtomId::new(7));
+    /// assert_eq!(id.to_bits(), (2 << 32) | 7);
+    /// assert_eq!(InstanceAtomId::from_bits(id.to_bits()), id);
+    /// ```
+    pub const fn to_bits(self) -> u64 {
+        ((self.molecule.raw() as u64) << 32) | self.atom.raw() as u64
+    }
+
+    /// Restores an ID from [`Self::to_bits`]. Nothing is validated.
+    pub const fn from_bits(bits: u64) -> Self {
+        Self::new(
+            MoleculeInstanceId::new((bits >> 32) as u32),
+            AtomId::new(bits as u32),
+        )
+    }
 }
 
 impl fmt::Display for InstanceAtomId {
@@ -312,6 +340,30 @@ impl InstanceBondId {
     /// The definition-local bond ID.
     pub const fn bond(self) -> BondId {
         self.bond
+    }
+    /// The stable encoding of this ID for persistence: the instance's raw
+    /// value in the high 32 bits and the local bond's raw value in the low 32
+    /// bits. [`Self::from_bits`] restores it, and the encoding does not change
+    /// between Kekule versions.
+    ///
+    /// ```
+    /// use kekule::molecule::BondId;
+    /// use kekule::topology::{InstanceBondId, MoleculeInstanceId};
+    ///
+    /// let id = InstanceBondId::new(MoleculeInstanceId::new(2), BondId::new(7));
+    /// assert_eq!(id.to_bits(), (2 << 32) | 7);
+    /// assert_eq!(InstanceBondId::from_bits(id.to_bits()), id);
+    /// ```
+    pub const fn to_bits(self) -> u64 {
+        ((self.molecule.raw() as u64) << 32) | self.bond.raw() as u64
+    }
+
+    /// Restores an ID from [`Self::to_bits`]. Nothing is validated.
+    pub const fn from_bits(bits: u64) -> Self {
+        Self::new(
+            MoleculeInstanceId::new((bits >> 32) as u32),
+            BondId::new(bits as u32),
+        )
     }
 }
 
@@ -990,6 +1042,11 @@ impl Topology {
     /// The one authoritative system-level hierarchy storage.
     pub(crate) fn hierarchy(&self) -> &Hierarchy {
         &self.hierarchy
+    }
+
+    /// Whether `definition`'s class was assigned explicitly.
+    pub(crate) fn definition_class_is_explicit(&self, definition: MoleculeDefinitionId) -> bool {
+        self.molecule_class_overrides.contains_key(&definition)
     }
 
     /// Static annotations: owner values plus dense rows for molecule

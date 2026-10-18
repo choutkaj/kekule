@@ -33,7 +33,7 @@
 //! | --- | --- |
 //! | Molecules and systems | [`molecule`], [`topology`] (with [`topology::edit`]), [`structure`] (with [`structure::measure`]), [`prelude`] |
 //! | Values and diagnostics | [`units`], [`properties`], [`geometry`], [`diagnostics`] |
-//! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`macromolecular`], [`components`] |
+//! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`macromolecular`], [`components`], [`native`] |
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
 //! | Structure analysis and preparation | [`alignment`], [`clustering`], [`dssp`], [`solvation`] |
@@ -119,7 +119,9 @@ macro_rules! fixed_u32_id {
                 Self(raw)
             }
 
-            /// Returns the raw value.
+            /// Returns the raw value. It is this identifier's stable
+            /// encoding for persistence: `new(id.raw())` restores `id`, and
+            /// the encoding does not change between Kekule versions.
             pub const fn raw(self) -> u32 {
                 self.0
             }
@@ -1161,6 +1163,107 @@ pub mod pdb {
         options: PdbParseOptions,
     ) -> Result<PdbDocument, FormatError> {
         crate::io::parse_pdb_reader(reader, options)
+    }
+}
+
+/// Kekule's native binary serialization: exact, versioned persistence.
+///
+/// Scientific formats exchange chemistry with other tools; they are not exact
+/// persistence. The native format stores one [`Molecule`](crate::molecule::Molecule),
+/// [`Topology`](crate::topology::Topology), [`Model`](crate::structure::Model),
+/// [`Ensemble`](crate::structure::Ensemble), or in-memory
+/// [`Trajectory`](crate::structure::Trajectory) losslessly: represented
+/// chemistry, definitions and instances, semantic IDs, dense order,
+/// hierarchy, classifications with their explicit or inferred assignment,
+/// properties at every scope with units, coordinates as exact bits, and every
+/// structure and collection field. Installed perception is stored with its
+/// provenance unless
+/// [`NativeWriteOptions::with_perception`](native::NativeWriteOptions::with_perception)
+/// omits it.
+///
+/// [`native::write_to`] streams to a [`std::io::Write`] and [`native::read`] reads exactly one
+/// object from a [`std::io::Read`]; neither buffers the caller's I/O, so wrap
+/// unbuffered files in [`std::io::BufWriter`] or [`std::io::BufReader`].
+/// Decoding validates untrusted input through the owners' reconstruction rules
+/// under the resource limits of [`NativeReadOptions`](native::NativeReadOptions) and fails with a
+/// [`FormatError`](crate::diagnostics::FormatError), never a panic. A decoded
+/// topology keeps every semantic ID but is a new publication with a fresh
+/// layout identity. The byte layout and versioning policy are specified in
+/// `docs/native-format.md`.
+///
+/// ```
+/// use kekule::native::{self, NativeReadOptions, NativeWriteOptions};
+/// use kekule::smiles;
+///
+/// let mut molecule = smiles::to_molecules("c1ccccc1O")?.remove(0);
+/// molecule.perceive()?;
+/// let bytes = native::write(&molecule, NativeWriteOptions::default())?;
+/// let decoded = native::read(bytes.as_slice(), NativeReadOptions::default())?.into_molecule()?;
+/// assert_eq!(decoded, molecule);
+/// assert_eq!(decoded.perception(), molecule.perception());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub mod native {
+    use crate::diagnostics::FormatError;
+    pub use crate::io::{
+        NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
+        DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES,
+        DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_VERSION,
+        NATIVE_MAGIC,
+    };
+
+    /// Encodes one object into a new byte vector.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_to`], except that a vector never fails as a sink.
+    pub fn write<'a>(
+        source: impl Into<NativeSource<'a>>,
+        options: NativeWriteOptions,
+    ) -> Result<Vec<u8>, FormatError> {
+        crate::io::write_native(source, options)
+    }
+
+    /// Encodes one object into `writer`, staging output through a fixed
+    /// 64 KiB buffer rather than holding the whole encoding.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] of kind
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io) when
+    /// `writer` fails, or
+    /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
+    /// when a list or string is too long for its 32-bit length field.
+    pub fn write_to<'a>(
+        writer: &mut impl std::io::Write,
+        source: impl Into<NativeSource<'a>>,
+        options: NativeWriteOptions,
+    ) -> Result<(), FormatError> {
+        crate::io::write_native_to(writer, source, options)
+    }
+
+    /// Decodes one object from `reader`, reading exactly its bytes, so
+    /// further objects may follow in the same stream.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] of format
+    /// [`Format::Native`](crate::diagnostics::Format::Native) with a
+    /// [`byte_offset`](FormatError::byte_offset):
+    /// [`DiagnosticKind::Syntax`](crate::diagnostics::DiagnosticKind::Syntax)
+    /// for truncated input or wrong magic bytes,
+    /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
+    /// with [`FormatErrorDetail::NativeVersion`](crate::diagnostics::FormatErrorDetail::NativeVersion)
+    /// for another format version,
+    /// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
+    /// when `options` is exceeded, and `InvalidValue`, `InvalidReference`,
+    /// `Inconsistent`, or `Chemistry` when stored values do not reconstruct
+    /// a valid owner or the checksum does not match.
+    pub fn read(
+        mut reader: impl std::io::Read,
+        options: NativeReadOptions,
+    ) -> Result<NativeObject, FormatError> {
+        crate::io::read_native(&mut reader, options)
     }
 }
 

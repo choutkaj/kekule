@@ -115,6 +115,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "native"
+path = "fuzz_targets/native.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "select"
 path = "fuzz_targets/select.rs"
 test = false

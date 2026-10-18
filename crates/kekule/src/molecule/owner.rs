@@ -349,6 +349,28 @@ impl Molecule {
         Ok(())
     }
 
+    /// Replaces one atom's incident-bond traversal order, which publication
+    /// does not normalize, for exact reconstruction. Returns `false` and
+    /// changes nothing unless `order` is a permutation of the atom's current
+    /// incident bonds.
+    pub(crate) fn restore_adjacency_order(&mut self, atom: AtomId, order: Vec<BondId>) -> bool {
+        let Some(current) = self.graph.adjacency.get(atom.index()) else {
+            return false;
+        };
+        if current.len() != order.len() {
+            return false;
+        }
+        let mut sorted_current = current.clone();
+        let mut sorted_order = order.clone();
+        sorted_current.sort_unstable();
+        sorted_order.sort_unstable();
+        if sorted_current != sorted_order {
+            return false;
+        }
+        self.graph.adjacency[atom.index()] = order;
+        true
+    }
+
     /// Counts explicit hydrogen atoms among this atom's graph neighbors.
     /// Includes isotopic and charged hydrogen neighbors; requires no perception.
     /// Returns `None` when `atom` names no atom of this molecule.

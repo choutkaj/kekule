@@ -698,6 +698,20 @@ graphs must be partitioned or rejected. Export to scientific formats is not exac
 native persistence and must not weaken these boundaries. See
 [reconstruction regressions](crates/kekule/tests/molecule/identity.rs).
 
+Exact persistence is the `native` format module, the one owner of Kekule's
+binary encoding. It stores each owner's authoritative state, including
+explicit or inferred class assignments and adjacency order, and reconstructs
+it only through those owners' validating paths: molecule publication,
+topology publication with stored classes restored instead of inferred, and
+the structure constructors. Stored perception is reinstalled through
+`Molecule::install_perception` or discarded. A decoded topology keeps every
+semantic ID but is a new publication with a fresh layout identity. Decoding is
+bounded before allocation and never trusts the input. Semantic IDs have a
+stable encoding (`raw`, and `to_bits` for instance-qualified IDs) so
+applications can persist references next to native files. See the
+[format specification](docs/native-format.md) and
+[topology reconstruction](crates/kekule/src/topology/reconstruct.rs).
+
 ## API and maintenance rules
 
 The public API of every crate follows the rules below. Code that predates them
@@ -722,7 +736,7 @@ The public modules of `kekule`, by domain:
 | Queries | `query`, `substructure`, `select` |
 | Systems and structures | `topology` (`edit`), `structure` (`measure`), `solvation` |
 | Analysis | `alignment`, `clustering`, `dssp` |
-| Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `macromolecular`, `components` |
+| Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `macromolecular`, `components`, `native` |
 
 A type lives in the module of the domain that owns it:
 

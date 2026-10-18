@@ -11,6 +11,25 @@ are marked **Breaking:**.
 
 ### Added
 
+- Native binary serialization in the new `kekule::native` format module:
+  exact, versioned persistence of a `Molecule`, `Topology`, `Model`,
+  `Ensemble`, or in-memory `Trajectory`. `native::write_to` streams to a
+  `Write` and `native::read` reads exactly one object from a `Read`. A round
+  trip keeps represented chemistry, adjacency order, definitions and
+  instances, semantic IDs, dense order, hierarchy, explicit and inferred
+  classes, properties at every scope with units, coordinates as exact bits,
+  and every structure and collection field; installed perception is stored
+  with its provenance and validated on load, or omitted. A decoded topology
+  has a fresh layout identity. Decoding validates untrusted input through
+  reconstruction, bounds allocations by `NativeReadOptions`
+  (`LimitExceeded`), and fails with a `FormatError` of the new
+  `Format::Native`, which carries a `byte_offset`, never a panic. Unknown
+  versions fail with `FormatErrorDetail::NativeVersion`. The layout is
+  specified in `docs/native-format.md`, and the new `native` fuzz target
+  covers the decoder.
+- `InstanceAtomId::to_bits`/`from_bits` and `InstanceBondId::to_bits`/`from_bits`
+  give instance-qualified IDs a documented stable `u64` encoding; the `raw()`
+  value of every other identifier is documented as stable.
 - The selection language in the new `kekule::select` module: text such as
   `within 5 of resname LIG and not water` evaluates to an `AtomSelection`.
   `select::parse` returns a `SelectionExpr` whose `Display` is canonical
