@@ -332,3 +332,45 @@ fn water_boxes_partition_into_molecules() {
     assert_eq!(topology.instance_count(), 1000);
     assert_eq!(topology.bond_count(), 2000);
 }
+
+#[test]
+fn later_frames_keep_element_errors_and_locate_mismatches() {
+    // An invalid element in a later frame fails as it would in the first.
+    let document = xyz::parse_str(
+        &format!("{WATER}3\n\nXx 0 0 0\nH 1 0 0\nH 0 1 0\n"),
+        Default::default(),
+    )
+    .unwrap();
+    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(error.location().unwrap().line(), 8);
+    // Mismatches name the frame's count line.
+    let document = xyz::parse_str(
+        &format!("{WATER}3\n\nS 0 0 0\nH 0.957 0 0\nH -0.24 0.927 0\n"),
+        Default::default(),
+    )
+    .unwrap();
+    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    assert_eq!(error.location().unwrap().line(), 6);
+    let document = xyz::parse_str(
+        &format!("{WATER}3\n\nO 0 0 0\nH 0.957 0 0\nH -2.4 9.3 0\n"),
+        Default::default(),
+    )
+    .unwrap();
+    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    assert!(matches!(
+        error.detail(),
+        Some(FormatErrorDetail::InconsistentTopology { .. })
+    ));
+    assert_eq!(error.location().unwrap().line(), 6);
+}
+
+#[test]
+fn coordinates_beyond_the_grid_range_fail() {
+    let error = interpret_error("2\n\nC 0 0 0\nC 2e15 0 0\n", Default::default());
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(error.location().unwrap().line(), 4);
+    // Far apart but indexable atoms are simply unbonded.
+    let interpretation = interpret("2\n\nC 0 0 0\nC 1e14 0 0\n", Default::default());
+    assert_eq!(interpretation.topology().instance_count(), 2);
+}

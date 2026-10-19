@@ -74,7 +74,8 @@ are marked **Breaking:**.
   - Extended XYZ columns are rejected unless reported as omitted.
   - Errors are `FormatError`s of the new `Format::Xyz`.
   - Atom-line order is dense order, so `kekule-traj` streams the same file
-    against the interpreted topology.
+    against the interpreted topology when its element tokens are symbols in
+    standard letter case, the only form that reader accepts.
   - The new `xyz` fuzz target covers the parser and interpretation.
 
 ## [0.4.0] - 2026-10-17

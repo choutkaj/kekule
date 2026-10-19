@@ -140,7 +140,8 @@ impl XyzDocument {
     /// # Errors
     ///
     /// Returns a [`FormatError`] of format
-    /// [`Format::Xyz`]: `InvalidValue` for an unknown element, `Unsupported`
+    /// [`Format::Xyz`]: `InvalidValue` for an unknown element or a coordinate
+    /// beyond 1e15 Å, `Unsupported`
     /// for further columns unless `options` reports them, `Inconsistent` when
     /// the frame selection does not match the document, `Limit` when an atom
     /// has more contacts than `options` allows, and `Chemistry` when the

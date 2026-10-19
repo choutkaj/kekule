@@ -75,6 +75,10 @@ fn option_error(message: impl Into<String>) -> FormatError {
     FormatError::interpret(Format::Xyz, DiagnosticKind::InvalidValue, message)
 }
 
+/// The largest coordinate magnitude, in ångström, that distance inference
+/// indexes; larger ones fail rather than collapse into one grid cell.
+const MAX_COORDINATE_ANGSTROM: f64 = 1.0e15;
+
 /// The [`Default`] bound of [`XyzInterpretOptions::max_atom_contacts`].
 ///
 /// No atom of a molecule or crystal has this many atoms within covalent
@@ -495,17 +499,17 @@ pub(crate) fn interpret_xyz_ensemble(
     reports.push(first_report);
     for &index in &selected[1..] {
         let frame = &frames[index];
-        let same_atoms = frame.atoms().len() == first.elements.len()
-            && frame
-                .atoms()
-                .iter()
-                .zip(&first.elements)
-                .all(|(atom, &element)| resolve_element(atom).ok() == Some(element));
+        let mut same_atoms = frame.atoms().len() == first.elements.len();
+        for (atom, &element) in frame.atoms().iter().zip(&first.elements) {
+            let resolved = resolve_element(atom).map_err(|error| in_frame(error, index))?;
+            same_atoms &= resolved == element;
+        }
         if !same_atoms {
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
                 format!("frame {index} has different atoms than frame {first_index}"),
             )
+            .at(frame.location())
             .with_detail(FormatErrorDetail::InconsistentAtomSet {
                 model_id: index.to_string(),
             }));
@@ -519,6 +523,7 @@ pub(crate) fn interpret_xyz_ensemble(
                     "frame {index} infers different bonds than frame {first_index} from its distances"
                 ),
             )
+            .at(frame.location())
             .with_detail(FormatErrorDetail::InconsistentTopology {
                 model_id: index.to_string(),
             }));
@@ -625,8 +630,19 @@ impl Frame {
                     }
                 }
             }
+            let position = atom.position();
+            if [position.x, position.y, position.z]
+                .into_iter()
+                .any(|value| (value * scale).abs() > MAX_COORDINATE_ANGSTROM)
+            {
+                return Err(interpret_error(
+                    DiagnosticKind::InvalidValue,
+                    "a coordinate exceeds 1e15 Å, beyond what distance inference indexes",
+                )
+                .at(atom.location()));
+            }
             elements.push(element);
-            points.push(atom.position());
+            points.push(position);
         }
         let angstrom = points
             .iter()
@@ -793,8 +809,9 @@ fn infer_contacts(
         .fold(0.0_f64, f64::max);
     let cell = 2.0 * largest_radius + COVALENT_BOND_TOLERANCE_ANGSTROM;
     let key = |point: &Point3| {
-        // Saturating float-to-integer casts keep extreme coordinates in
-        // edge cells; neighbour keys below are deduplicated.
+        // Coordinates are bounded by `MAX_COORDINATE_ANGSTROM`, so every key
+        // is exact and distant atoms never share a cell; a cell then holds
+        // few atoms that are not contacts, which keeps the work linear.
         (
             (point.x / cell).floor() as i64,
             (point.y / cell).floor() as i64,

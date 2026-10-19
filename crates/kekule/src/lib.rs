@@ -1196,7 +1196,10 @@ pub mod pdb {
 /// [`Ensemble`](crate::structure::Ensemble), and every frame must infer the
 /// same bonds. Interpretation keeps atom lines in source order as dense atom
 /// order, so a trajectory reader such as `kekule-traj`'s `XyzReader` can
-/// stream the frames of the same file against the interpreted topology.
+/// stream the frames of the same file against the interpreted topology when
+/// the file spells every element as a symbol in its standard letter case,
+/// the only element tokens that reader accepts; interpretation also accepts
+/// other letter cases and atomic numbers.
 ///
 /// ```
 /// use kekule::molecule::BondOrder;

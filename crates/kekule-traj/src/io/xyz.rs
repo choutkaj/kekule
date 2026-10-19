@@ -6,7 +6,9 @@
 //! positions only: the writer rejects cells, velocities, forces, time, step
 //! and properties instead of dropping them. To obtain a topology from an XYZ
 //! file itself, interpret one of its frames with `kekule::xyz`, which keeps
-//! atom-line order as dense order and infers bonds from distances.
+//! atom-line order as dense order and infers bonds from distances. This
+//! reader accepts element symbols in their standard letter case only, while
+//! interpretation also accepts other cases and atomic numbers.
 //!
 //! # Examples
 //!
