@@ -59,6 +59,17 @@ are marked **Breaking:**.
   - None of the three falls back to another column, and the default stays
     `FreeAtom`.
 
+### Changed
+
+- mmCIF interpretation treats a `_chem_comp_bond` row whose
+  `pdbx_metal_coordination_flag` the source leaves unstated, as wwPDB entry
+  files do, as metal coordination when the component template flags that bond
+  (the caller's library first, then the bundled one). Without a template, a
+  bond between a metal and a non-metal is coordination, as for PDB `LINK` and
+  `CONECT`. Coordination is a `Dative` bond, so heme Fe–N and iron–sulfur Fe–S
+  bonds are now dative from mmCIF, as they already were from PDB. A stated
+  flag still decides.
+
 ## [0.4.0] - 2026-10-17
 
 This release curates the public API of every crate before it settles: one

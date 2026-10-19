@@ -559,7 +559,11 @@ them. Close contacts that no evidence bonds are counted, never bonded.
 Coordination is covalent: metal-ligand links become `Dative` bonds, so a metal
 complex or a metalloprotein site is one connected molecule. Links whose records
 state no type, such as PDB `LINK`, are coordination between a metal and a
-non-metal. Hydrogen bonds, salt bridges, and links to symmetry mates are never
+non-metal. A source component bond table states coordination with its own
+flag; where the source leaves the flag unstated, as wwPDB entry files do, the
+flag comes from the component template, as charges do, and without one a
+bond between a metal and a non-metal is coordination. An mmCIF block and its
+PDB rendering therefore give the same bonds. Hydrogen bonds, salt bridges, and links to symmetry mates are never
 bonds; unresolvable links are reported. A heavy atom whose name does not match
 its residue template is an error, not a silently separate molecule. The report
 records the evidence for every bond and names residues whose resolved atoms

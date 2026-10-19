@@ -122,6 +122,9 @@ struct ComponentBond {
     atom_1: String,
     atom_2: String,
     order: SourceBondOrder,
+    /// The row's `pdbx_metal_coordination_flag`, or `None` when the source
+    /// does not state it, as wwPDB entry files do not.
+    coordination: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -176,17 +179,14 @@ impl ConnectivityCatalog {
                 let comp_id = required(table, row, "_chem_comp_bond.comp_id")?;
                 let atom_1 = required(table, row, "_chem_comp_bond.atom_id_1")?;
                 let atom_2 = required(table, row, "_chem_comp_bond.atom_id_2")?;
-                let order = if optional(table, row, "_chem_comp_bond.pdbx_metal_coordination_flag")
-                    .is_some_and(is_yes)
-                {
-                    SourceBondOrder::Localized(BondOrder::Dative)
-                } else {
-                    component_bond_order(
-                        optional(table, row, "_chem_comp_bond.value_order").unwrap_or("sing"),
-                        table,
-                        row,
-                    )?
-                };
+                let coordination =
+                    optional(table, row, "_chem_comp_bond.pdbx_metal_coordination_flag")
+                        .map(is_yes);
+                let order = component_bond_order(
+                    optional(table, row, "_chem_comp_bond.value_order").unwrap_or("sing"),
+                    table,
+                    row,
+                )?;
                 catalog
                     .component_bonds
                     .entry(normalized(comp_id))
@@ -195,6 +195,7 @@ impl ConnectivityCatalog {
                         atom_1: atom_1.to_owned(),
                         atom_2: atom_2.to_owned(),
                         order,
+                        coordination,
                     });
             }
         }
@@ -396,6 +397,21 @@ pub(crate) fn within_bonding_distance(
     distance_squared > MIN_COVALENT_BOND_DISTANCE_SQUARED && distance_squared <= cutoff * cutoff
 }
 
+/// The coordination flag `component` gives the bond between the two named
+/// atoms of a component-table row, if it lists that bond.
+fn template_coordination(component: &Component, bond: &ComponentBond) -> Option<bool> {
+    let (left, _) = component.atom(&bond.atom_1)?;
+    let (right, _) = component.atom(&bond.atom_2)?;
+    component
+        .bonds()
+        .iter()
+        .find(|candidate| {
+            let [a, b] = candidate.atoms();
+            (a, b) == (left, right) || (a, b) == (right, left)
+        })
+        .map(TemplateBond::metal_coordination)
+}
+
 fn is_hydrogen(element: Element) -> bool {
     element.atomic_number() == 1
 }
@@ -450,7 +466,13 @@ impl<'r> Resolver<'r, '_> {
                     ) else {
                         continue;
                     };
-                    self.add_bond(left, right, bond.order, raw::BondEvidence::ComponentTable)?;
+                    let order =
+                        if self.is_coordination(bond, residue, template.as_ref(), [left, right]) {
+                            SourceBondOrder::Localized(BondOrder::Dative)
+                        } else {
+                            bond.order
+                        };
+                    self.add_bond(left, right, order, raw::BondEvidence::ComponentTable)?;
                 }
                 self.add_listed_bonds(&listed)?;
                 // Hydrogens the table leaves unbonded, such as N-terminal or
@@ -600,6 +622,39 @@ impl<'r> Resolver<'r, '_> {
             )?;
         }
         Ok(())
+    }
+
+    /// Whether a bond of the block's own component table is metal
+    /// coordination, which is dative whatever its stated order. A stated
+    /// `pdbx_metal_coordination_flag` decides. Otherwise the flag comes from
+    /// the component's template, or one of its variants, when it lists the
+    /// bond, as charges do; without one, a bond between a metal and a
+    /// non-metal is coordination, as for PDB `LINK` and `CONECT` records. A
+    /// source and its PDB rendering then give the same bonds.
+    fn is_coordination(
+        &self,
+        bond: &ComponentBond,
+        residue: &ResidueAtoms,
+        template: Option<&(&Component, Vec<&Component>)>,
+        atoms: [AtomId; 2],
+    ) -> bool {
+        if let Some(stated) = bond.coordination {
+            return stated;
+        }
+        let templated = template.and_then(|(component, variants)| {
+            std::iter::once(*component)
+                .chain(variants.iter().copied())
+                .find_map(|component| template_coordination(component, bond))
+        });
+        templated.unwrap_or_else(|| {
+            let [left, right] = atoms.map(|atom| {
+                residue
+                    .site(atom)
+                    .expect("component-table atoms are residue sites")
+                    .element
+            });
+            raw::is_metal(left) != raw::is_metal(right)
+        })
     }
 
     /// Bonds every pair of a residue's atoms within covalent bonding
@@ -1906,6 +1961,51 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn unstated_coordination_in_a_component_table_follows_template_then_elements() {
+        // wwPDB entry files list `_chem_comp_bond` without the coordination
+        // flag; the SF4 template flags its Fe-S bonds, so they are dative as
+        // a PDB reading of the same structure makes them.
+        let table = |flag_column: bool, rows: &str| {
+            let mut text = String::from(
+                "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n",
+            );
+            if flag_column {
+                text.push_str("_chem_comp_bond.pdbx_metal_coordination_flag\n");
+            }
+            text.push_str(rows);
+            text
+        };
+        let sf4 = "FE FE1 SF4 A 1 40.988 0.074 22.637
+             S S2 SF4 A 1 43.144 0.781 22.394";
+        let unstated = interpret(&block(sf4, &table(false, "SF4 FE1 S2 sing\n")));
+        assert_eq!(
+            bonds(&unstated)
+                .iter()
+                .map(|(_, _, order, evidence)| (*order, evidence.clone()))
+                .collect::<Vec<_>>(),
+            [(BondOrder::Dative, BondEvidence::ComponentTable)]
+        );
+        // A stated flag wins over the template.
+        let stated = interpret(&block(sf4, &table(true, "SF4 FE1 S2 sing N\n")));
+        assert_eq!(bonds(&stated)[0].2, BondOrder::Single);
+        // Without a template, a metal and a non-metal are coordinated, as for
+        // PDB `LINK` and `CONECT`; other pairs keep their stated order.
+        let unknown = interpret(&block(
+            "FE FE XFC A 1 0.000 0.000 0.000
+             CL CL1 XFC A 1 2.200 0.000 0.000
+             C C1 XFC A 1 -1.900 0.000 0.000
+             O O1 XFC A 1 -3.050 0.000 0.000",
+            &table(false, "XFC FE CL1 sing\nXFC C1 O1 doub\n"),
+        ));
+        let orders = bonds(&unknown)
+            .into_iter()
+            .map(|(a, b, order, _)| (a, b, order))
+            .collect::<Vec<_>>();
+        assert!(orders.contains(&("FE".to_owned(), "CL1".to_owned(), BondOrder::Dative)));
+        assert!(orders.contains(&("C1".to_owned(), "O1".to_owned(), BondOrder::Double)));
     }
 
     #[test]
