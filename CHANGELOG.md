@@ -48,6 +48,16 @@ are marked **Breaking:**.
   is documented in `docs/selection-language.md`, with a conformance suite in
   `tests/fixtures/select/conformance.txt` and a new `select` fuzz target.
 - `FormatError::span` returns the byte range a failure concerns.
+- `VanDerWaalsRadiusSource::Bondi`, `BondiMantina`, and `Alvarez` select three
+  classic van der Waals radius columns, tabulated in ångström.
+  - `Bondi` transcribes Bondi (1964), Tables I and XIV, for 38 elements, with
+    hydrogen at Bondi's 1.20 Å, and completes 16 main-group elements from
+    Mantina et al. (2009).
+  - `BondiMantina` is Mantina et al.'s Table 12: 44 main-group elements, with
+    Rowland and Taylor's hydrogen at 1.10 Å.
+  - `Alvarez` covers the 93 elements of Alvarez (2013).
+  - None of the three falls back to another column, and the default stays
+    `FreeAtom`.
 - The PDB writer: `pdb::write` and `pdb::write_to` write a model, an ensemble
   member or trajectory frame view (`PdbSource::structure`), or an ensemble
   (one `MODEL` per member) as one entry that reads back with the same atoms,
