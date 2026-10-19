@@ -337,6 +337,8 @@ pub enum Format {
     Native,
     /// Kekule's atom selection language.
     Selection,
+    /// XYZ coordinate files.
+    Xyz,
 }
 
 impl fmt::Display for Format {
@@ -350,6 +352,7 @@ impl fmt::Display for Format {
             Self::Pdb => "PDB",
             Self::Native => "native",
             Self::Selection => "selection",
+            Self::Xyz => "XYZ",
         })
     }
 }

@@ -1,6 +1,6 @@
 //! Format parsing, interpretation, and writing. Items are published through
 //! the format modules of the crate root (`smiles`, `molfile`, `sdf`, `mmcif`,
-//! `pdb`, `components`, `macromolecular`); this module only organizes them.
+//! `pdb`, `xyz`, `components`, `macromolecular`); this module only organizes them.
 
 mod components;
 mod element_symbol;
@@ -25,6 +25,8 @@ mod structure_interpret;
 mod v2000;
 mod v3000;
 pub(crate) mod write_error;
+mod xyz_document;
+mod xyz_interpret;
 
 pub use components::{
     Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary, ComponentLinking,
@@ -93,3 +95,10 @@ pub use structure_interpret::{
     StructureInterpretationReport,
 };
 pub use write_error::UnrepresentablePolicy;
+pub(crate) use xyz_document::{parse_xyz_reader, parse_xyz_str};
+pub use xyz_document::{XyzAtom, XyzDocument, XyzFrame, XyzParseOptions};
+pub use xyz_interpret::{
+    XyzEnsembleInterpretOptions, XyzEnsembleInterpretation, XyzFrameSelection, XyzInferredBond,
+    XyzInterpretIssue, XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport,
+    DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+};
