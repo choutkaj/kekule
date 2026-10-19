@@ -6,8 +6,8 @@ use crate::io::structure_interpret::{
     EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
     StructureInterpretationReport,
 };
-use crate::io::write_error::check_structure_state;
-use crate::io::UnrepresentablePolicy;
+use crate::io::write_error::{check_structure_state, Omissions};
+use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::molecule::BondOrder;
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
@@ -30,8 +30,8 @@ const MAX_COORDINATE_PRECISION: usize = 15;
 /// Options of the mmCIF writer.
 ///
 /// The default writes a block named `model` with coordinates to 3 decimal
-/// places and fails on ensemble metadata or a periodic cell mmCIF cannot
-/// carry.
+/// places and fails on ensemble metadata, a periodic cell, or fixed
+/// implicit-hydrogen counts mmCIF cannot carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifWriteOptions {
     block_name: String,
@@ -39,6 +39,7 @@ pub struct MmcifWriteOptions {
     ensemble_metadata: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
+    implicit_hydrogens: UnrepresentablePolicy,
 }
 
 impl MmcifWriteOptions {
@@ -136,6 +137,23 @@ impl MmcifWriteOptions {
         self.cell = cell;
         self
     }
+
+    /// Fixed implicit-hydrogen counts, which mmCIF cannot carry: readers
+    /// infer implicit hydrogens from valence. By default an atom with one
+    /// fails to write; [`UnrepresentablePolicy::Omit`] writes it without the
+    /// count and reports [`WriteOmission::ImplicitHydrogens`]. Structures
+    /// whose files list every atom, such as XYZ interpretations, fix their
+    /// counts at zero.
+    pub const fn implicit_hydrogens(&self) -> UnrepresentablePolicy {
+        self.implicit_hydrogens
+    }
+
+    /// Sets [`Self::implicit_hydrogens`].
+    #[must_use]
+    pub fn with_implicit_hydrogens(mut self, implicit_hydrogens: UnrepresentablePolicy) -> Self {
+        self.implicit_hydrogens = implicit_hydrogens;
+        self
+    }
 }
 
 impl Default for MmcifWriteOptions {
@@ -146,6 +164,7 @@ impl Default for MmcifWriteOptions {
             ensemble_metadata: UnrepresentablePolicy::Fail,
             frame_metadata: UnrepresentablePolicy::Fail,
             cell: UnrepresentablePolicy::Fail,
+            implicit_hydrogens: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -739,10 +758,13 @@ impl<'a> From<&'a StructureEnsembleInterpretation> for MmcifBlockSource<'a> {
 pub(crate) fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
     blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,
-) -> Result<String, FormatError> {
+) -> Result<(String, WriteReport), FormatError> {
     let mut output = Vec::new();
-    write_mmcif_to(&mut output, blocks, options)?;
-    Ok(String::from_utf8(output).expect("mmCIF writer emits UTF-8"))
+    let report = write_mmcif_to(&mut output, blocks, options)?;
+    Ok((
+        String::from_utf8(output).expect("mmCIF writer emits UTF-8"),
+        report,
+    ))
 }
 
 /// Writes one deterministic data block per source in input order.
@@ -754,7 +776,8 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     writer: &mut impl Write,
     blocks: impl IntoIterator<Item = B>,
     options: MmcifWriteOptions,
-) -> Result<(), FormatError> {
+) -> Result<WriteReport, FormatError> {
+    let mut omissions = Omissions::default();
     let blocks = blocks.into_iter().map(Into::into).collect::<Vec<_>>();
     let numbered = blocks.len() > 1;
     for (index, block) in blocks.into_iter().enumerate() {
@@ -768,14 +791,18 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
         };
         match block.content {
             BlockContent::Model(view) => {
-                write_model_block_to(writer, view, block.entities, &block_options)?
+                write_model_block_to(writer, view, block.entities, &block_options, &mut omissions)?
             }
-            BlockContent::Ensemble(ensemble) => {
-                write_ensemble_block_to(writer, ensemble, block.entities, &block_options)?
-            }
+            BlockContent::Ensemble(ensemble) => write_ensemble_block_to(
+                writer,
+                ensemble,
+                block.entities,
+                &block_options,
+                &mut omissions,
+            )?,
         }
     }
-    Ok(())
+    Ok(omissions.into_report())
 }
 
 fn write_model_block_to(
@@ -783,6 +810,7 @@ fn write_model_block_to(
     view: ModelView<'_>,
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
+    omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
     check_structure_state(
         Format::Mmcif,
@@ -815,8 +843,21 @@ fn write_model_block_to(
         }
     };
     let cell = block_cell([view.cell()], options.cell)?;
-    let prepared = prepare_model(view, plan)?;
-    render_model_to(writer, &prepared, cell, options)
+    let prepared = prepare_model(view, plan, options.implicit_hydrogens)?;
+    render_model_to(writer, &prepared, cell, options)?;
+    // Nothing is reported for a block that did not reach the sink.
+    omissions.record_structure_state(
+        view.kind(),
+        Some(options.ensemble_metadata),
+        options.frame_metadata,
+    );
+    if cell.is_none() && view.cell().is_some() {
+        omissions.record(WriteOmission::Cell { structures: 1 });
+    }
+    omissions.record(WriteOmission::ImplicitHydrogens {
+        atoms: prepared.omitted_hydrogens,
+    });
+    Ok(())
 }
 
 /// The `_cell` parameters of a block whose models have these cells, or none
@@ -852,6 +893,7 @@ fn write_ensemble_block_to(
     ensemble: &Ensemble,
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
+    omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
     let (classifications, reports) = match entities {
         EntitySemantics::Canonical => (None, None),
@@ -894,7 +936,7 @@ fn write_ensemble_block_to(
         .ok_or_else(|| fail(MmcifWriteIssue::EmptyEnsemble))?;
     let first_view = first_member.as_model_view();
     let first_plan = ensemble_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
-    let first = prepare_model(first_view, first_plan)?;
+    let first = prepare_model(first_view, first_plan, options.implicit_hydrogens)?;
 
     write_block_start(writer, &first, cell, options)?;
     let mut atom_serial = 1u64;
@@ -903,7 +945,7 @@ fn write_ensemble_block_to(
     for (index, member) in members {
         let view = member.as_model_view();
         let plan = ensemble_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
-        let candidate = prepare_model(view, plan)?;
+        let candidate = prepare_model(view, plan, options.implicit_hydrogens)?;
         validate_ensemble_member(&first, &candidate, index + 1)?;
         write_atom_rows(
             writer,
@@ -913,7 +955,39 @@ fn write_ensemble_block_to(
             options,
         )?;
     }
-    write_block_end(writer, &first)
+    write_block_end(writer, &first)?;
+    // Members share one topology, so the block omits each atom's count once.
+    if options.ensemble_metadata == UnrepresentablePolicy::Omit {
+        let weight = ensemble.get(0).map(|member| member.weight());
+        if ensemble
+            .iter()
+            .any(|member| Some(member.weight()) != weight)
+        {
+            omissions.record(WriteOmission::StructureState {
+                field: crate::diagnostics::StructureField::Weight,
+                structures: ensemble.len(),
+            });
+        }
+        omissions.record(WriteOmission::StructureState {
+            field: crate::diagnostics::StructureField::Energy,
+            structures: ensemble
+                .iter()
+                .filter(|member| member.energy().is_some())
+                .count(),
+        });
+    }
+    if cell.is_none() {
+        omissions.record(WriteOmission::Cell {
+            structures: ensemble
+                .iter()
+                .filter(|member| member.as_model_view().cell().is_some())
+                .count(),
+        });
+    }
+    omissions.record(WriteOmission::ImplicitHydrogens {
+        atoms: first.omitted_hydrogens,
+    });
+    Ok(())
 }
 
 fn one_based_serial(raw: u32) -> u64 {

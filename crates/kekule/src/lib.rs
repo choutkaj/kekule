@@ -992,7 +992,8 @@ pub mod macromolecular {
 /// let interpretation = document.interpret(Default::default())?;
 /// assert_eq!(interpretation.model().atom_count(), 3);
 ///
-/// let written = mmcif::write([interpretation.model()], Default::default())?;
+/// let (written, report) = mmcif::write([interpretation.model()], Default::default())?;
+/// assert!(report.omissions().is_empty());
 /// let reread = mmcif::parse_str(&written, Default::default())?.interpret(Default::default())?;
 /// assert_eq!(reread.model().atom_count(), 3);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1038,7 +1039,9 @@ pub mod mmcif {
         crate::io::parse_mmcif_reader(reader, options)
     }
 
-    /// Writes one data block per source.
+    /// Writes one data block per source and returns the text with a
+    /// [`WriteReport`](crate::diagnostics::WriteReport) of what the options
+    /// chose to omit, summed over the blocks.
     ///
     /// Sources convert from models (one block), ensembles (one multi-model
     /// block), and interpretations (keeping their source reports). Entity kinds
@@ -1058,9 +1061,9 @@ pub mod mmcif {
     /// # fn example(model: &kekule::structure::Model, other: &kekule::structure::Model,
     /// #     interpretation: &kekule::macromolecular::StructureInterpretation)
     /// #     -> Result<(), kekule::diagnostics::FormatError> {
-    /// let one = mmcif::write([model], MmcifWriteOptions::default())?;
-    /// let two = mmcif::write([model, other], MmcifWriteOptions::default())?;
-    /// let faithful = mmcif::write([interpretation], MmcifWriteOptions::default())?;
+    /// let (one, _) = mmcif::write([model], MmcifWriteOptions::default())?;
+    /// let (two, _) = mmcif::write([model, other], MmcifWriteOptions::default())?;
+    /// let (faithful, _) = mmcif::write([interpretation], MmcifWriteOptions::default())?;
     /// # let _ = (one, two, faithful);
     /// # Ok(())
     /// # }
@@ -1068,11 +1071,12 @@ pub mod mmcif {
     pub fn write<'a, B: Into<MmcifBlockSource<'a>>>(
         blocks: impl IntoIterator<Item = B>,
         options: MmcifWriteOptions,
-    ) -> Result<String, FormatError> {
+    ) -> Result<(String, crate::diagnostics::WriteReport), FormatError> {
         crate::io::write_mmcif(blocks, options)
     }
 
-    /// Streams the blocks [`write()`] would return. Values reach `writer` as
+    /// Streams the blocks [`write()`] would return and returns its report.
+    /// Values reach `writer` as
     /// they are formatted, so memory stays bounded however large the
     /// structure; wrap an unbuffered sink such as a `File` in a
     /// [`BufWriter`](std::io::BufWriter).
@@ -1086,7 +1090,7 @@ pub mod mmcif {
         writer: &mut impl std::io::Write,
         blocks: impl IntoIterator<Item = B>,
         options: MmcifWriteOptions,
-    ) -> Result<(), FormatError> {
+    ) -> Result<crate::diagnostics::WriteReport, FormatError> {
         crate::io::write_mmcif_to(writer, blocks, options)
     }
 }
@@ -1169,7 +1173,9 @@ pub mod pdb {
     }
 
     /// Writes one entry: a model or collection item without `MODEL` records,
-    /// or an ensemble with one `MODEL` per member.
+    /// or an ensemble with one `MODEL` per member. Returns the text with a
+    /// [`WriteReport`](crate::diagnostics::WriteReport) of what the options
+    /// chose to omit.
     ///
     /// Records follow dense atom order, which interpretation keeps, so
     /// interpreting the output gives the same atoms in the same order.
@@ -1210,10 +1216,11 @@ pub mod pdb {
     /// than four, insertion codes longer than one, residue numbers outside
     /// -999..=2,436,111, more than 87,440,031 atom and `TER` records, and
     /// residues whose atoms are not consecutive. So do values outside their
-    /// columns and formal charges outside -9..=9. Represented chemistry,
-    /// ensemble or frame state, and cells PDB cannot carry fail unless
-    /// [`PdbWriteOptions`] omits them. Nothing is written when validation
-    /// fails.
+    /// columns and formal charges outside -9..=9. Fixed implicit-hydrogen
+    /// counts, other represented chemistry, ensemble or frame state, and
+    /// cells PDB cannot carry fail unless [`PdbWriteOptions`] omits them,
+    /// each under its own policy, and every omission is in the report.
+    /// Nothing is written when validation fails.
     ///
     /// ```
     /// use kekule::pdb;
@@ -1227,18 +1234,20 @@ pub mod pdb {
     /// let model = pdb::parse_str(text, Default::default())?
     ///     .interpret(Default::default())?
     ///     .into_model();
-    /// let written = pdb::write(&model, Default::default())?;
+    /// let (written, report) = pdb::write(&model, Default::default())?;
     /// assert_eq!(written, text);
+    /// assert!(report.omissions().is_empty());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn write<'a>(
         source: impl Into<PdbSource<'a>>,
         options: PdbWriteOptions,
-    ) -> Result<String, FormatError> {
+    ) -> Result<(String, crate::diagnostics::WriteReport), FormatError> {
         crate::io::write_pdb(source, options)
     }
 
-    /// Streams the entry [`write()`] would return. The entry is validated
+    /// Streams the entry [`write()`] would return and returns its report.
+    /// The entry is validated
     /// before the first record reaches `writer`; wrap an unbuffered sink
     /// such as a `File` in a [`BufWriter`](std::io::BufWriter).
     ///
@@ -1250,7 +1259,7 @@ pub mod pdb {
         writer: &mut impl std::io::Write,
         source: impl Into<PdbSource<'a>>,
         options: PdbWriteOptions,
-    ) -> Result<(), FormatError> {
+    ) -> Result<crate::diagnostics::WriteReport, FormatError> {
         crate::io::write_pdb_to(writer, source, options)
     }
 }

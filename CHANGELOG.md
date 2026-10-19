@@ -104,6 +104,21 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** `pdb::write` and `mmcif::write` return the text together with
+  a `diagnostics::WriteReport`, and `pdb::write_to` and `mmcif::write_to`
+  return the report. The report lists every omission an
+  `UnrepresentablePolicy::Omit` made as a typed `WriteOmission` with the
+  number of atoms, bonds, residues, molecules, or structures affected:
+  implicit-hydrogen counts, isotopes, radicals, atom maps, stereo, unstatable
+  bonds, dictionary bond conflicts, cells, and member or frame state.
+- `PdbWriteOptions::with_implicit_hydrogens` and
+  `MmcifWriteOptions::with_implicit_hydrogens` omit fixed implicit-hydrogen
+  counts alone, so structures that fix them, such as XYZ interpretations,
+  export to PDB and mmCIF. The default still fails.
+  - **Breaking:** `PdbWriteOptions::with_chemistry` no longer covers fixed
+    implicit-hydrogen counts; it covers isotopes, radicals, atom maps,
+    stereo, unstatable bonds, and dictionary bond conflicts.
+
 - mmCIF interpretation treats a `_chem_comp_bond` row whose
   `pdbx_metal_coordination_flag` the source leaves unstated, as wwPDB entry
   files do, as metal coordination when the component template flags that bond

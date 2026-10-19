@@ -56,6 +56,175 @@ pub enum UnrepresentablePolicy {
     Omit,
 }
 
+/// What a structure writer left out of its output because the caller chose
+/// [`UnrepresentablePolicy::Omit`] for it.
+///
+/// A writer reports every omission it makes, once per kind, with the number
+/// of entities it affects summed over everything one call writes. An empty
+/// report means the output holds everything the source does that the format
+/// can carry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteReport {
+    omissions: Vec<WriteOmission>,
+}
+
+impl WriteReport {
+    /// The omissions, in the order the writer first made each kind.
+    pub fn omissions(&self) -> &[WriteOmission] {
+        &self.omissions
+    }
+}
+
+/// One kind of content a writer omitted, with how much of it.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WriteOmission {
+    /// Fixed implicit-hydrogen counts of this many atoms. Readers of the
+    /// format infer implicit hydrogens from valence instead.
+    ImplicitHydrogens {
+        /// The atoms whose fixed counts were left out.
+        atoms: usize,
+    },
+    /// Isotopes the format cannot name, of this many atoms.
+    Isotopes {
+        /// The atoms written as their element alone.
+        atoms: usize,
+    },
+    /// Radical electrons of this many atoms.
+    Radicals {
+        /// The atoms written without their radicals.
+        atoms: usize,
+    },
+    /// Atom-map numbers of this many atoms.
+    AtomMaps {
+        /// The atoms written without their atom maps.
+        atoms: usize,
+    },
+    /// Represented stereo of this many molecule instances.
+    Stereo {
+        /// The molecule instances written without their stereo.
+        molecules: usize,
+    },
+    /// Bonds the format's connectivity records cannot state, left out.
+    Bonds {
+        /// The bonds left out.
+        bonds: usize,
+    },
+    /// Residues whose bonds differ from the component dictionary that
+    /// readers apply to them, so readers will see the dictionary's bonds.
+    DictionaryBonds {
+        /// The residues affected.
+        residues: usize,
+    },
+    /// A periodic cell the format cannot carry, of this many written
+    /// structures or blocks.
+    Cell {
+        /// The structures or blocks written without their cell.
+        structures: usize,
+    },
+    /// Ensemble member or trajectory frame state the format cannot carry.
+    StructureState {
+        /// The state left out.
+        field: StructureField,
+        /// The members or frames whose state was left out.
+        structures: usize,
+    },
+}
+
+/// Collects a writer's omissions, merging repeated kinds by summing counts.
+#[derive(Debug, Default)]
+pub(crate) struct Omissions(Vec<WriteOmission>);
+
+impl Omissions {
+    /// Records `omission`, adding its count to an earlier one of its kind.
+    /// Zero counts record nothing.
+    pub(crate) fn record(&mut self, omission: WriteOmission) {
+        use WriteOmission as O;
+        let count = |omission: &WriteOmission| match *omission {
+            O::ImplicitHydrogens { atoms }
+            | O::Isotopes { atoms }
+            | O::Radicals { atoms }
+            | O::AtomMaps { atoms } => atoms,
+            O::Stereo { molecules } => molecules,
+            O::Bonds { bonds } => bonds,
+            O::DictionaryBonds { residues } => residues,
+            O::Cell { structures } | O::StructureState { structures, .. } => structures,
+        };
+        let added = count(&omission);
+        if added == 0 {
+            return;
+        }
+        let same_kind = |existing: &WriteOmission| match (existing, &omission) {
+            (O::StructureState { field: a, .. }, O::StructureState { field: b, .. }) => a == b,
+            _ => std::mem::discriminant(existing) == std::mem::discriminant(&omission),
+        };
+        let Some(existing) = self.0.iter_mut().find(|existing| same_kind(existing)) else {
+            self.0.push(omission);
+            return;
+        };
+        match existing {
+            O::ImplicitHydrogens { atoms }
+            | O::Isotopes { atoms }
+            | O::Radicals { atoms }
+            | O::AtomMaps { atoms } => *atoms += added,
+            O::Stereo { molecules } => *molecules += added,
+            O::Bonds { bonds } => *bonds += added,
+            O::DictionaryBonds { residues } => *residues += added,
+            O::Cell { structures } | O::StructureState { structures, .. } => *structures += added,
+        }
+    }
+
+    /// Records the member or frame state `kind` has that the policies omit;
+    /// call it after [`check_structure_state`] has passed.
+    pub(crate) fn record_structure_state(
+        &mut self,
+        kind: StructureKind<'_>,
+        member: Option<UnrepresentablePolicy>,
+        frame: UnrepresentablePolicy,
+    ) {
+        let mut fields = Vec::new();
+        match kind {
+            StructureKind::Member { energy, .. } if member == Some(UnrepresentablePolicy::Omit) => {
+                // A lone record cannot carry a weight relative to other
+                // members, so its weight is always left out.
+                fields.push(StructureField::Weight);
+                if energy.is_some() {
+                    fields.push(StructureField::Energy);
+                }
+            }
+            StructureKind::Frame {
+                time,
+                step,
+                velocities,
+                forces,
+                ..
+            } if frame == UnrepresentablePolicy::Omit => {
+                for (present, field) in [
+                    (time.is_some(), StructureField::Time),
+                    (step.is_some(), StructureField::Step),
+                    (velocities.is_some(), StructureField::Velocities),
+                    (forces.is_some(), StructureField::Forces),
+                ] {
+                    if present {
+                        fields.push(field);
+                    }
+                }
+            }
+            _ => {}
+        }
+        for field in fields {
+            self.record(WriteOmission::StructureState {
+                field,
+                structures: 1,
+            });
+        }
+    }
+
+    pub(crate) fn into_report(self) -> WriteReport {
+        WriteReport { omissions: self.0 }
+    }
+}
+
 /// Fails for ensemble member or trajectory frame state that `format` cannot
 /// carry, unless the caller chose to omit it. `member` is `None` for a format
 /// that writes member state itself.

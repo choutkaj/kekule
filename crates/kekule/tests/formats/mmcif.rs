@@ -275,7 +275,8 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         [mmcif::MmcifBlockSource::model(interpreted.model())
             .with_reports(std::slice::from_ref(interpreted.report()))],
         MmcifWriteOptions::default(),
-    )?;
+    )
+    .map(|(text, _)| text)?;
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written, Default::default()).is_ok());
     let custom_written = mmcif::write(
@@ -284,7 +285,8 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         MmcifWriteOptions::default()
             .with_block_name("custom".to_owned())
             .unwrap(),
-    )?;
+    )
+    .map(|(text, _)| text)?;
     assert!(custom_written.starts_with("data_custom\n"));
     let unnamed = MmcifWriteOptions::default()
         .with_block_name(String::new())
@@ -295,7 +297,8 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
             MmcifWriteIssue::InvalidBlockName(String::new())
         ))
     );
-    let automatic = mmcif::write([interpreted.model()], MmcifWriteOptions::default())?;
+    let automatic =
+        mmcif::write([interpreted.model()], MmcifWriteOptions::default()).map(|(text, _)| text)?;
     assert!(automatic.contains("1 non-polymer"));
     let mut classifications = MmcifEntityClassifications::new();
     classifications.insert(provenance.instance(), EntityKind::Polymer)?;
@@ -303,7 +306,8 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         [mmcif::MmcifBlockSource::model(interpreted.model())
             .with_classifications(&classifications)],
         MmcifWriteOptions::default(),
-    )?;
+    )
+    .map(|(text, _)| text)?;
     assert!(written.contains("1 polymer"));
     let model = interpreted.into_model();
     assert_eq!(model.topology().instance_count(), 1);

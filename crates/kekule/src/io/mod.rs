@@ -94,7 +94,7 @@ pub use structure_interpret::{
     StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
     StructureInterpretationReport,
 };
-pub use write_error::UnrepresentablePolicy;
+pub use write_error::{UnrepresentablePolicy, WriteOmission, WriteReport};
 pub(crate) use xyz_document::{parse_xyz_reader, parse_xyz_str};
 pub use xyz_document::{XyzAtom, XyzDocument, XyzFrame, XyzParseOptions};
 pub use xyz_interpret::{

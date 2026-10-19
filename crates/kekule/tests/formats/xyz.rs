@@ -374,3 +374,68 @@ fn coordinates_beyond_the_grid_range_fail() {
     let interpretation = interpret("2\n\nC 0 0 0\nC 1e14 0 0\n", Default::default());
     assert_eq!(interpretation.topology().instance_count(), 2);
 }
+
+#[test]
+fn xyz_structures_export_to_pdb_and_mmcif_when_implicit_hydrogens_are_omitted() {
+    use kekule::diagnostics::{UnrepresentablePolicy, WriteOmission};
+    use kekule::mmcif::{self, MmcifWriteOptions};
+    use kekule::pdb::{self, PdbWriteOptions};
+
+    // XYZ lists every atom, so every count is fixed at zero.
+    let model = interpret(WATER, Default::default()).into_model();
+    let omitted = [WriteOmission::ImplicitHydrogens { atoms: 3 }];
+
+    assert_eq!(
+        pdb::write(&model, Default::default()).unwrap_err().kind(),
+        DiagnosticKind::Unsupported
+    );
+    let options = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let (text, report) = pdb::write(&model, options).unwrap();
+    assert_eq!(report.omissions(), omitted);
+    let reread = pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(reread.topology().atom_count(), 3);
+    assert_eq!(reread.topology().bond_count(), 2);
+
+    assert_eq!(
+        mmcif::write([&model], Default::default())
+            .unwrap_err()
+            .kind(),
+        DiagnosticKind::Unsupported
+    );
+    let options = MmcifWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let (text, report) = mmcif::write([&model], options.clone()).unwrap();
+    assert_eq!(report.omissions(), omitted);
+    let reread = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(reread.topology().atom_count(), 3);
+    // `write_to` returns the same report.
+    let mut sink = Vec::new();
+    let streamed = mmcif::write_to(&mut sink, [&model], options).unwrap();
+    assert_eq!(streamed.omissions(), omitted);
+    assert_eq!(String::from_utf8(sink).unwrap(), text);
+}
+
+#[test]
+fn omitting_implicit_hydrogens_still_rejects_other_chemistry() {
+    use kekule::diagnostics::UnrepresentablePolicy;
+    use kekule::mmcif::{self, MmcifWriteOptions};
+    use kekule::pdb::{self, PdbWriteOptions};
+    use kekule::structure::{Model, Positions};
+
+    // Carbon-13 is an isotope neither format can name.
+    let topology = kekule::smiles::to_topology("[13CH4]").unwrap();
+    let model = Model::new(topology, Positions::zeros(1)).unwrap();
+    let pdb_options =
+        PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let error = pdb::write(&model, pdb_options).unwrap_err();
+    assert!(error.message().contains("isotope"), "{error}");
+    let mmcif_options =
+        MmcifWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let error = mmcif::write([&model], mmcif_options).unwrap_err();
+    assert!(error.message().contains("isotope"), "{error}");
+}

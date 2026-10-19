@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use kekule::diagnostics::{
-    DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy,
+    DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy, WriteOmission,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
@@ -49,7 +49,9 @@ fn issue(error: &kekule::diagnostics::FormatError) -> &PdbWriteIssue {
 fn deposited_entries_round_trip_through_the_writer() {
     for (name, text) in [("1CRN", CRAMBIN), ("1AKE", ADENYLATE_KINASE)] {
         let model = interpret(text);
-        let written = pdb::write(&model, Default::default()).unwrap();
+        let written = pdb::write(&model, Default::default())
+            .map(|(text, _)| text)
+            .unwrap();
         let reread = interpret(&written);
         let (left, right) = (reread.topology(), model.topology());
         assert_eq!(left.atom_count(), right.atom_count(), "{name}");
@@ -66,7 +68,9 @@ fn deposited_entries_round_trip_through_the_writer() {
         assert_eq!(reread.cell(), model.cell(), "{name}");
         // PDB -> model -> PDB is a fixed point.
         assert_eq!(
-            pdb::write(&reread, Default::default()).unwrap(),
+            pdb::write(&reread, Default::default())
+                .map(|(text, _)| text)
+                .unwrap(),
             written,
             "{name}"
         );
@@ -81,7 +85,9 @@ fn deposited_entries_round_trip_through_the_writer() {
         );
     }
     // 1CRN's P 1 21 1 cell is not the model's cell, so no CRYST1 is written.
-    let crambin = pdb::write(&interpret(CRAMBIN), Default::default()).unwrap();
+    let crambin = pdb::write(&interpret(CRAMBIN), Default::default())
+        .map(|(text, _)| text)
+        .unwrap();
     assert!(interpret(CRAMBIN).cell().is_none());
     assert!(!crambin.contains("CRYST1"));
     // Three disulfides, each listed from both atoms.
@@ -107,8 +113,13 @@ fn bonds_without_a_template_are_conect_listings_by_order() {
         Positions::from_vec(Quantity::new(points, ANGSTROM)).unwrap(),
     )
     .unwrap();
-    let omit = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
-    let written = pdb::write(&model, omit).unwrap();
+    let omit = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let (written, report) = pdb::write(&model, omit).unwrap();
+    // [O-] and [Na+] fix their counts.
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::ImplicitHydrogens { atoms: 2 }]
+    );
     let lines = written.lines().collect::<Vec<_>>();
     assert_eq!(
         lines[0],
@@ -137,7 +148,9 @@ HETATM    2  O   HOH AA000       3.000   0.000   0.000  1.00  0.00           O
 END
 ";
     let model = interpret(text);
-    let written = pdb::write(&model, Default::default()).unwrap();
+    let written = pdb::write(&model, Default::default())
+        .map(|(text, _)| text)
+        .unwrap();
     assert_eq!(written, text);
     let numbers = model
         .topology()
@@ -178,20 +191,26 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
             .unwrap()
             .into_model()
     };
-    let error = pdb::write(&model(&cif("AB", "HOH")), Default::default()).unwrap_err();
+    let error = pdb::write(&model(&cif("AB", "HOH")), Default::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert!(matches!(
         issue(&error),
         PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "AB"
     ));
-    let error = pdb::write(&model(&cif("A", "LONG")), Default::default()).unwrap_err();
+    let error = pdb::write(&model(&cif("A", "LONG")), Default::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
     assert!(matches!(
         issue(&error),
         PdbWriteIssue::ResidueNameTooLong { name, .. } if name == "LONG"
     ));
     // Omitting chemistry does not relax identifiers.
     let options = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
-    assert!(pdb::write(&model(&cif("AB", "HOH")), options).is_err());
+    assert!(pdb::write(&model(&cif("AB", "HOH")), options)
+        .map(|(text, _)| text)
+        .is_err());
 }
 
 #[test]
@@ -199,7 +218,9 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
     // A bracket atom fixes its implicit hydrogen count.
     let topology = smiles::to_topology("[CH4]").unwrap();
     let model = Model::new(topology, Positions::zeros(1)).unwrap();
-    let error = pdb::write(&model, Default::default()).unwrap_err();
+    let error = pdb::write(&model, Default::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
     assert!(matches!(
         issue(&error),
         PdbWriteIssue::UnsupportedAtomField {
@@ -207,12 +228,21 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
             ..
         }
     ));
-    let options = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
-    assert!(pdb::write(&model, options).is_ok());
+    // The chemistry policy no longer covers implicit hydrogens.
+    let chemistry = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
+    assert!(pdb::write(&model, chemistry).is_err());
+    let hydrogens = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let (_, report) = pdb::write(&model, hydrogens).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::ImplicitHydrogens { atoms: 1 }]
+    );
 
     let topology = smiles::to_topology("C$C").unwrap();
     let model = Model::new(topology, Positions::zeros(2)).unwrap();
-    let error = pdb::write(&model, Default::default()).unwrap_err();
+    let error = pdb::write(&model, Default::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
     assert!(matches!(
         issue(&error),
         PdbWriteIssue::UnsupportedBondOrder {
@@ -220,8 +250,11 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
             ..
         }
     ));
-    let written = pdb::write(&model, options).unwrap();
+    // Omitting implicit hydrogens does not omit other chemistry.
+    assert!(pdb::write(&model, hydrogens).is_err());
+    let (written, report) = pdb::write(&model, chemistry).unwrap();
     assert!(!written.contains("CONECT"));
+    assert_eq!(report.omissions(), [WriteOmission::Bonds { bonds: 1 }]);
 }
 
 #[test]
@@ -243,8 +276,8 @@ fn residues_must_be_consecutive_in_dense_order() {
         ])
         .unwrap();
     let model = builder.build().unwrap();
-    let omit = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
-    let error = pdb::write(&model, omit).unwrap_err();
+    let omit = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let error = pdb::write(&model, omit).map(|(text, _)| text).unwrap_err();
     assert!(matches!(
         issue(&error),
         PdbWriteIssue::NonContiguousResidue { .. }
@@ -264,7 +297,9 @@ fn ensembles_write_models_and_member_state_fails_unless_omitted() {
     let mut ensemble = Ensemble::new(Arc::clone(&topology));
     ensemble.push(member(0.0)).unwrap();
     ensemble.push(member(1.0)).unwrap();
-    let written = pdb::write(&ensemble, Default::default()).unwrap();
+    let written = pdb::write(&ensemble, Default::default())
+        .map(|(text, _)| text)
+        .unwrap();
     assert_eq!(written.matches("MODEL ").count(), 2);
     assert_eq!(written.matches("ENDMDL").count(), 2);
     let reread = pdb::parse_str(&written, Default::default())
@@ -273,7 +308,9 @@ fn ensembles_write_models_and_member_state_fails_unless_omitted() {
         .unwrap();
     assert_eq!(reread.ensemble().len(), 2);
     assert_eq!(
-        pdb::write(reread.ensemble(), Default::default()).unwrap(),
+        pdb::write(reread.ensemble(), Default::default())
+            .map(|(text, _)| text)
+            .unwrap(),
         written
     );
 
@@ -282,7 +319,9 @@ fn ensembles_write_models_and_member_state_fails_unless_omitted() {
         .unwrap()
         .set_energy(Some(Quantity::new(1.0, kekule::units::KILOJOULE_PER_MOLE)))
         .unwrap();
-    let error = pdb::write(&ensemble, Default::default()).unwrap_err();
+    let error = pdb::write(&ensemble, Default::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
     assert!(matches!(
         issue(&error),
         PdbWriteIssue::UnrepresentableEnsembleMember {
@@ -291,11 +330,29 @@ fn ensembles_write_models_and_member_state_fails_unless_omitted() {
         }
     ));
     let options = PdbWriteOptions::default().with_ensemble_metadata(UnrepresentablePolicy::Omit);
-    assert!(pdb::write(&ensemble, options).is_ok());
+    let (_, report) = pdb::write(&ensemble, options).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::StructureState {
+            field: StructureField::Energy,
+            structures: 1
+        }]
+    );
     // A lone member's weight is relative to members the entry does not hold.
     let lone = ensemble.get(0).unwrap();
-    assert!(pdb::write(pdb::PdbSource::structure(&lone), Default::default()).is_err());
-    assert!(pdb::write(pdb::PdbSource::structure(&lone), options).is_ok());
+    assert!(
+        pdb::write(pdb::PdbSource::structure(&lone), Default::default())
+            .map(|(text, _)| text)
+            .is_err()
+    );
+    let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::StructureState {
+            field: StructureField::Weight,
+            structures: 1
+        }]
+    );
 }
 
 #[test]
@@ -313,6 +370,7 @@ fn cells_crystal_records_cannot_carry_fail_unless_omitted() {
         &model(cell(Vector3::new(10.0, 20.0, 30.0), [true; 3])),
         Default::default(),
     )
+    .map(|(text, _)| text)
     .unwrap();
     assert!(written
         .starts_with("CRYST1   10.000   20.000   30.000  90.00  90.00  90.00 P 1           1\n"));
@@ -329,14 +387,18 @@ fn cells_crystal_records_cannot_carry_fail_unless_omitted() {
         ),
     ] {
         let source = model(cell(lengths, periodic));
-        let error = pdb::write(&source, Default::default()).unwrap_err();
+        let error = pdb::write(&source, Default::default())
+            .map(|(text, _)| text)
+            .unwrap_err();
         assert_eq!(
             issue(&error),
             &PdbWriteIssue::UnrepresentableCell { reason },
             "{reason:?}"
         );
         let options = PdbWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
-        assert!(!pdb::write(&source, options).unwrap().contains("CRYST1"));
+        let (text, report) = pdb::write(&source, options).unwrap();
+        assert!(!text.contains("CRYST1"));
+        assert_eq!(report.omissions(), [WriteOmission::Cell { structures: 1 }]);
     }
 }
 
@@ -358,6 +420,8 @@ fn sink_failures_are_io_errors_after_validation() {
     pdb::write_to(&mut sink, &model, Default::default()).unwrap();
     assert_eq!(
         String::from_utf8(sink).unwrap(),
-        pdb::write(&model, Default::default()).unwrap()
+        pdb::write(&model, Default::default())
+            .map(|(text, _)| text)
+            .unwrap()
     );
 }

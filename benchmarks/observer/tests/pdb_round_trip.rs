@@ -184,7 +184,7 @@ fn is_representability_limit(issue: &PdbWriteIssue) -> bool {
 /// Writes, rereads, and rewrites one model; `None` when PDB cannot represent
 /// it.
 fn round_trip_model(model: &Model, label: &str) -> Result<Model, String> {
-    let written = match pdb::write(model, Default::default()) {
+    let written = match pdb::write(model, Default::default()).map(|(text, _)| text) {
         Ok(written) => written,
         Err(error) => {
             let Some(FormatErrorDetail::PdbWrite(issue)) = error.detail() else {
@@ -205,6 +205,7 @@ fn round_trip_model(model: &Model, label: &str) -> Result<Model, String> {
         .into_model();
     assert_same_structure(reread.as_model_view(), model.as_model_view(), label);
     let again = pdb::write(&reread, Default::default())
+        .map(|(text, _)| text)
         .unwrap_or_else(|error| panic!("{label}: reread model does not write: {error}"));
     assert!(
         again == written,
@@ -215,6 +216,7 @@ fn round_trip_model(model: &Model, label: &str) -> Result<Model, String> {
 
 fn round_trip_ensemble(ensemble: &Ensemble, label: &str) {
     let written = pdb::write(ensemble, Default::default())
+        .map(|(text, _)| text)
         .unwrap_or_else(|error| panic!("{label}: ensemble does not write: {error}"));
     let reread = pdb::parse_str(&written, Default::default())
         .and_then(|document| document.interpret_ensemble(Default::default()))
@@ -229,6 +231,7 @@ fn round_trip_ensemble(ensemble: &Ensemble, label: &str) {
         );
     }
     let again = pdb::write(&reread, Default::default())
+        .map(|(text, _)| text)
         .unwrap_or_else(|error| panic!("{label}: reread ensemble does not write: {error}"));
     assert!(
         again == written,

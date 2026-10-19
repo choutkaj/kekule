@@ -596,7 +596,9 @@ fn sdf_ensemble_members_carry_their_weight_and_energy_through_data_fields() {
 #[test]
 fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
     let mut ensemble = weighted_ensemble();
-    let error = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap_err();
+    let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "mmCIF write error: mmCIF cannot represent the energy of ensemble member 1"
@@ -604,7 +606,9 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
     for index in 0..2 {
         ensemble.get_mut(index).unwrap().set_energy(None).unwrap();
     }
-    let error = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap_err();
+    let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "mmCIF write error: mmCIF cannot represent the weight of ensemble member 2"
@@ -613,6 +617,7 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
         [&weighted_ensemble()],
         MmcifWriteOptions::default().with_ensemble_metadata(UnrepresentablePolicy::Omit),
     )
+    .map(|(text, _)| text)
     .unwrap();
     let reread = mmcif::parse_str(&omitted, Default::default())
         .unwrap()
@@ -625,7 +630,9 @@ fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
 
     // Equal weights without energies are what interpretation gives back.
     ensemble.get_mut(1).unwrap().set_weight(1.0).unwrap();
-    mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap();
+    mmcif::write([&ensemble], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap();
 }
 
 /// One-atom methane frames with exactly one piece of frame state each:
@@ -682,7 +689,8 @@ fn write_structure(
             MmcifWriteOptions::default()
                 .with_ensemble_metadata(policy)
                 .with_frame_metadata(policy),
-        ),
+        )
+        .map(|(text, _)| text),
     ]
 }
 
@@ -831,7 +839,9 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
             .copied()
     };
     let boxed = boxed_model([true; 3]);
-    let text = mmcif::write([&boxed], MmcifWriteOptions::default()).unwrap();
+    let text = mmcif::write([&boxed], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap();
     assert!(text.starts_with(
         "data_model\n#\n_cell.length_a 20.000\n_cell.length_b 30.000\n_cell.length_c 40.000\n\
          _cell.angle_alpha 90.000\n_cell.angle_beta 90.000\n_cell.angle_gamma 90.000\n#\n\
@@ -849,16 +859,25 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
 
     let slab = boxed_model([true, true, false]);
     assert_eq!(
-        mmcif::write([&slab], MmcifWriteOptions::default())
+        mmcif::write([&slab], MmcifWriteOptions::default()).map(|(text, _)| text)
             .unwrap_err()
             .to_string(),
         "mmCIF write error: mmCIF cannot represent the periodic cell: an mmCIF cell is periodic along all three axes"
     );
     let omit = MmcifWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
-    assert_eq!(cell_of(&mmcif::write([&slab], omit.clone()).unwrap()), None);
+    assert_eq!(
+        cell_of(
+            &mmcif::write([&slab], omit.clone())
+                .map(|(text, _)| text)
+                .unwrap()
+        ),
+        None
+    );
 
     let mut ensemble = Ensemble::from_models([boxed.clone(), boxed]).unwrap();
-    let text = mmcif::write([&ensemble], MmcifWriteOptions::default()).unwrap();
+    let text = mmcif::write([&ensemble], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap();
     let members = mmcif::parse_str(&text, Default::default())
         .unwrap()
         .interpret_ensemble(Default::default())
@@ -870,12 +889,14 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
     assert_eq!(members, [true, true]);
     ensemble.get_mut(1).unwrap().set_cell(None);
     assert_eq!(
-        mmcif::write([&ensemble], MmcifWriteOptions::default())
+        mmcif::write([&ensemble], MmcifWriteOptions::default()).map(|(text, _)| text)
             .unwrap_err()
             .to_string(),
         "mmCIF write error: mmCIF cannot represent the periodic cell: ensemble members have different cells"
     );
-    mmcif::write([&ensemble], omit).unwrap();
+    mmcif::write([&ensemble], omit)
+        .map(|(text, _)| text)
+        .unwrap();
 }
 
 #[test]
@@ -980,6 +1001,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
             }),
         MmcifWriteOptions::default(),
     )
+    .map(|(text, _)| text)
     .unwrap();
     let independent_document = mmcif::parse_str(&independent, Default::default()).unwrap();
     assert_eq!(independent_document.blocks().len(), 2);
@@ -1005,6 +1027,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
             .with_classifications(&classifications(&first))],
         MmcifWriteOptions::default(),
     )
+    .map(|(text, _)| text)
     .unwrap();
     let ensemble_document = mmcif::parse_str(&ensemble_text, Default::default()).unwrap();
     assert_eq!(ensemble_document.blocks().len(), 1);
@@ -1043,7 +1066,9 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
             <= 1e-9
     );
 
-    let round_trip = mmcif::write([&parsed], MmcifWriteOptions::default()).unwrap();
+    let round_trip = mmcif::write([&parsed], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap();
     let reparsed = (mmcif::parse_str(&round_trip, Default::default()).unwrap())
         .interpret_ensemble(Default::default())
         .unwrap();
@@ -1053,12 +1078,15 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
 #[test]
 fn mmcif_model_is_one_block_with_coordinate_model_one_and_automatic_classification() {
     let model = model("C", &[[4.0, 5.0, 6.0]]);
-    let automatic = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
+    let automatic = mmcif::write([&model], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap();
     assert!(automatic.contains("1 non-polymer"));
     let text = mmcif::write(
         [mmcif::MmcifBlockSource::model(&model).with_classifications(&classifications(&model))],
         MmcifWriteOptions::default(),
     )
+    .map(|(text, _)| text)
     .unwrap();
     assert_eq!(
         mmcif::parse_str(&text, Default::default())
@@ -1119,7 +1147,9 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
             .set_occupancy(row, Some((index + 1) as f64 / 10.0))
             .unwrap();
     }
-    let text = mmcif::write([&model], MmcifWriteOptions::default()).unwrap();
+    let text = mmcif::write([&model], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap();
     let document = mmcif::parse_str(&text, Default::default()).unwrap();
     let rows = document.blocks()[0].loop_with_tag("_atom_site.id").unwrap();
     assert_eq!(rows.row_count(), 4);
@@ -1201,7 +1231,7 @@ fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
         .unwrap();
     let model = Model::new(builder.build().unwrap(), Positions::zeros(2)).unwrap();
     assert_eq!(
-        mmcif_issue(mmcif::write([&model], MmcifWriteOptions::default())),
+        mmcif_issue(mmcif::write([&model], MmcifWriteOptions::default()).map(|(text, _)| text)),
         Some(MmcifWriteIssue::MissingAtomSite(InstanceAtomId::new(
             instance, atoms[0]
         )))
@@ -1223,6 +1253,7 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
             }),
         MmcifWriteOptions::default(),
     )
+    .map(|(text, _)| text)
     .unwrap();
     let mut streamed_models = BoundedChunkWriter {
         bytes: Vec::new(),
@@ -1266,6 +1297,7 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
             .with_classifications(&classifications(&first))],
         MmcifWriteOptions::default(),
     )
+    .map(|(text, _)| text)
     .unwrap();
     let mut streamed_ensemble = BoundedChunkWriter {
         bytes: Vec::new(),
@@ -1311,6 +1343,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
         [mmcif::MmcifBlockSource::model(&first).with_reports(&[])],
         MmcifWriteOptions::default(),
     )
+    .map(|(text, _)| text)
     .unwrap_err();
     assert_eq!(
         model_error.detail(),
@@ -1331,6 +1364,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
         [mmcif::MmcifBlockSource::ensemble(&ensemble).with_reports(&[])],
         MmcifWriteOptions::default(),
     )
+    .map(|(text, _)| text)
     .unwrap_err();
     assert_eq!(
         ensemble_error.detail(),

@@ -4,7 +4,8 @@
 //! a structured [`DiagnosticKind`] that callers can match on, and a
 //! [`SourceLocation`] in the original input. Messages remain human-readable
 //! detail, not an API contract. Writers share [`UnrepresentablePolicy`] for
-//! state a format cannot represent, and readers share [`UnsupportedContent`]
+//! state a format cannot represent, and structure writers return a
+//! [`WriteReport`] of what that policy left out; readers share [`UnsupportedContent`]
 //! for valid content Kekule does not support.
 //!
 //! Bounded operations, in formats and elsewhere, report an exhausted resource
@@ -24,7 +25,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-pub use crate::io::UnrepresentablePolicy;
+pub use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 
 /// A position in the original input text.
 ///
