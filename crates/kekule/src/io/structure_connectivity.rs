@@ -398,10 +398,18 @@ pub(crate) fn within_bonding_distance(
 }
 
 /// The coordination flag `component` gives the bond between the two named
-/// atoms of a component-table row, if it lists that bond.
-fn template_coordination(component: &Component, bond: &ComponentBond) -> Option<bool> {
-    let (left, _) = component.atom(&bond.atom_1)?;
-    let (right, _) = component.atom(&bond.atom_2)?;
+/// atoms of a component-table row, if it lists that bond and its atoms have
+/// the source atoms' elements; templates match by name and element.
+fn template_coordination(
+    component: &Component,
+    bond: &ComponentBond,
+    elements: [Element; 2],
+) -> Option<bool> {
+    let (left, left_atom) = component.atom(&bond.atom_1)?;
+    let (right, right_atom) = component.atom(&bond.atom_2)?;
+    if [left_atom.element(), right_atom.element()] != elements {
+        return None;
+    }
     component
         .bonds()
         .iter()
@@ -641,20 +649,18 @@ impl<'r> Resolver<'r, '_> {
         if let Some(stated) = bond.coordination {
             return stated;
         }
+        let elements = atoms.map(|atom| {
+            residue
+                .site(atom)
+                .expect("component-table atoms are residue sites")
+                .element
+        });
         let templated = template.and_then(|(component, variants)| {
             std::iter::once(*component)
                 .chain(variants.iter().copied())
-                .find_map(|component| template_coordination(component, bond))
+                .find_map(|component| template_coordination(component, bond, elements))
         });
-        templated.unwrap_or_else(|| {
-            let [left, right] = atoms.map(|atom| {
-                residue
-                    .site(atom)
-                    .expect("component-table atoms are residue sites")
-                    .element
-            });
-            raw::is_metal(left) != raw::is_metal(right)
-        })
+        templated.unwrap_or_else(|| raw::is_metal(elements[0]) != raw::is_metal(elements[1]))
     }
 
     /// Bonds every pair of a residue's atoms within covalent bonding
@@ -1988,6 +1994,14 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 .collect::<Vec<_>>(),
             [(BondOrder::Dative, BondEvidence::ComponentTable)]
         );
+        // A template atom of another element does not lend its flag: two
+        // non-metals named like the cluster's atoms keep their single bond.
+        let renamed = interpret(&block(
+            "C FE1 SF4 A 1 40.988 0.074 22.637
+             S S2 SF4 A 1 41.900 0.781 22.394",
+            &table(false, "SF4 FE1 S2 sing\n"),
+        ));
+        assert_eq!(bonds(&renamed)[0].2, BondOrder::Single);
         // A stated flag wins over the template.
         let stated = interpret(&block(sf4, &table(true, "SF4 FE1 S2 sing N\n")));
         assert_eq!(bonds(&stated)[0].2, BondOrder::Single);
