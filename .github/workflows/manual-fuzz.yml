@@ -18,6 +18,7 @@ on:
           - smarts_match
           - mmcif
           - pdb
+          - xyz
           - trajectory_detection
           - trajectory_xyz
           - trajectory_dcd

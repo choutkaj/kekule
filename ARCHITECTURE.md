@@ -496,7 +496,10 @@ identify the source records they concern.
 
 Coordinate-only trajectory formats are the deliberate exception: they carry no
 chemistry to interpret, so streaming codecs decode frames directly against a
-caller-supplied topology (see Trajectories and streaming).
+caller-supplied topology (see Trajectories and streaming). XYZ is read both
+ways: `kekule::xyz` interprets its frames into structures through this
+pipeline, and `kekule-traj` streams its coordinates against a topology, such
+as the one that interpretation produced.
 
 | Format scope | Interpretation and projection |
 | --- | --- |
@@ -505,6 +508,7 @@ caller-supplied topology (see Trajectories and streaming).
 | SDF record | Model, title, fields, and reports; each record independent |
 | CIF data block | One model or compatible coordinate models as an ensemble |
 | PDB entry | One model or compatible coordinate models as an ensemble |
+| XYZ file | One frame as a model, or frames of the same atoms and inferred bonds as an ensemble |
 
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
@@ -555,6 +559,14 @@ Explicit bonds outrank the levels below them. A residue whose internal bonds the
 source enumerates, as files that write complete connectivity do, takes exactly
 those bonds; templates and inference only fill residues the source leaves without
 them. Close contacts that no evidence bonds are counted, never bonded.
+
+XYZ states elements and coordinates only. Its interpretation applies the
+same distance rule to the whole frame: every bond is inferred and single, or
+dative between a metal and a non-metal, every atom fixes zero implicit
+hydrogens because the file lists all atoms, and nothing assigns bond orders
+or charges. Each frame infers its own bonds, and frames of an ensemble must
+agree on them. The report lists every bond with its distance and cutoff,
+fallback radii, and contacts too close to bond.
 
 Coordination is covalent: metal-ligand links become `Dative` bonds, so a metal
 complex or a metalloprotein site is one connected molecule. Links whose records
@@ -647,13 +659,26 @@ universal save trait or implicit trajectory-to-structure export.
   one asym stays one, while a chain without a source asym that holds a
   polymer, ligands, and water, as a PDB author chain does, is written as
   several asyms that keep its author chain identifier.
+- PDB writes one entry per call, with `MODEL` records only for an
+  ensemble. It writes what its reader reads back and no more: author
+  identifiers, a `TER` record after each chain's polymer, and `CONECT` for
+  every bond the reader cannot derive. Standard residues covered by the
+  bundled component dictionary, polymer linkage, and water are derived and
+  not listed. The dictionary applies to its residues whatever `CONECT`
+  lists, so a covered residue whose bonds differ from every variant of its
+  template is unrepresentable, as are bonds `CONECT` cannot state.
+  Identifiers that do not fit their columns, and residues whose atoms are
+  not consecutive in dense order, always fail. Hybrid-36 extends serial and
+  residue numbers. A cell is written as `CRYST1` under the rule its reader
+  applies.
 
 Exact capability and numerical policies live with
 [SMILES writing](crates/kekule/src/io/smiles/write.rs),
 [canonical labeling](crates/kekule/src/io/smiles/canonical.rs),
 [Molfile writing](crates/kekule/src/io/molfile_write.rs),
 [SDF writing](crates/kekule/src/io/sdf_write.rs), and
-[mmCIF writing](crates/kekule/src/io/mmcif_write.rs). Writer failures say why
+[mmCIF writing](crates/kekule/src/io/mmcif_write.rs), and
+[PDB writing](crates/kekule/src/io/pdb_write.rs). Writer failures say why
 no output was produced: the format cannot encode the content, the source lacks
 required perception, a work limit was reached, the source is inconsistent, or
 the sink failed.
@@ -740,7 +765,7 @@ The public modules of `kekule`, by domain:
 | Queries | `query`, `substructure`, `select` |
 | Systems and structures | `topology` (`edit`), `structure` (`measure`), `solvation` |
 | Analysis | `alignment`, `clustering`, `dssp` |
-| Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `macromolecular`, `components`, `native` |
+| Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `xyz`, `macromolecular`, `components`, `native` |
 
 A type lives in the module of the domain that owns it:
 

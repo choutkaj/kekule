@@ -337,6 +337,8 @@ pub enum Format {
     Native,
     /// Kekule's atom selection language.
     Selection,
+    /// XYZ coordinate files.
+    Xyz,
 }
 
 impl fmt::Display for Format {
@@ -350,6 +352,7 @@ impl fmt::Display for Format {
             Self::Pdb => "PDB",
             Self::Native => "native",
             Self::Selection => "selection",
+            Self::Xyz => "XYZ",
         })
     }
 }
@@ -451,6 +454,8 @@ pub enum FormatErrorDetail {
     },
     /// A failure specific to the mmCIF writer.
     MmcifWrite(crate::io::MmcifWriteIssue),
+    /// A failure specific to the PDB writer.
+    PdbWrite(crate::io::PdbWriteIssue),
     /// The written structure is an ensemble member or a trajectory frame
     /// with this state, which the format cannot carry, and the writer's
     /// policy for it is [`UnrepresentablePolicy::Fail`].

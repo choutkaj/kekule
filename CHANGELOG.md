@@ -58,6 +58,49 @@ are marked **Breaking:**.
   - `Alvarez` covers the 93 elements of Alvarez (2013).
   - None of the three falls back to another column, and the default stays
     `FreeAtom`.
+- XYZ structure interpretation in the new `kekule::xyz` format module.
+  `xyz::parse_str` and `xyz::parse_reader` return an `XyzDocument` of typed
+  frames. `XyzDocument::interpret` builds a `Model` from one frame, and
+  `interpret_ensemble` builds an equally weighted `Ensemble` from frames of
+  the same atoms.
+  - Connectivity is inferred from distances with the macromolecular
+    resolver's rule: covalent radii plus 0.45 Å.
+  - Every bond is single, or dative between a metal and a non-metal, and
+    implicit hydrogens are fixed at zero.
+  - Bond orders, charges and stereo are not assigned.
+  - Frames of an ensemble must infer the same bonds.
+  - `XyzInterpretationReport` lists every inferred bond with its distance and
+    cutoff, plus fallback radii, close contacts and omitted columns.
+  - Extended XYZ columns are rejected unless reported as omitted.
+  - Errors are `FormatError`s of the new `Format::Xyz`.
+  - Atom-line order is dense order, so `kekule-traj` streams the same file
+    against the interpreted topology when its element tokens are symbols in
+    standard letter case, the only form that reader accepts.
+  - The new `xyz` fuzz target covers the parser and interpretation.
+- The PDB writer: `pdb::write` and `pdb::write_to` write a model, an ensemble
+  member or trajectory frame view (`PdbSource::structure`), or an ensemble
+  (one `MODEL` per member) as one entry that reads back with the same atoms,
+  identities, bonds, coordinates, occupancies, and B factors at PDB
+  precision.
+  - Records follow dense atom order.
+  - Standard polymer residues are `ATOM` records with a `TER` after each
+    chain's polymer; everything else is `HETATM`.
+  - `CONECT` lists every bond the reader cannot derive from the bundled
+    component dictionary, once per step of bond order.
+  - Serial and residue numbers beyond their decimal range use hybrid-36.
+  - A representable cell is a `CRYST1` record in P 1.
+  - Identifiers that do not fit their columns always fail with a typed
+    `PdbWriteIssue` (`FormatErrorDetail::PdbWrite`): chain IDs longer than
+    one character, residue names longer than three, atom names longer than
+    four, insertion codes, and residue numbers. So do non-consecutive
+    residues and values outside their columns.
+  - Chemistry PDB cannot carry fails unless `PdbWriteOptions` omits it:
+    isotopes, radicals, fixed implicit hydrogens, atom maps, stereo, bonds
+    `CONECT` cannot state, and residues whose bonds differ from the
+    dictionary template a reader applies. So do member weights and energies,
+    frame state, and cells `CRYST1` cannot carry.
+  - The curated `bio` benchmark entries round-trip in a new acceptance test,
+    and the `pdb` fuzz target checks that written entries read back.
 
 ### Changed
 

@@ -375,9 +375,24 @@ fn residue_atoms<'a>(
     residues
 }
 
-const COVALENT_BOND_TOLERANCE_ANGSTROM: f64 = 0.45;
-const MIN_COVALENT_BOND_DISTANCE_SQUARED: f64 = 0.16;
-const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
+/// The distance, in ångström, that distance inference adds to the sum of two
+/// covalent radii.
+pub(crate) const COVALENT_BOND_TOLERANCE_ANGSTROM: f64 = 0.45;
+/// The distance, in ångström, at or below which two atoms are too close to
+/// bond.
+pub(crate) const MIN_COVALENT_BOND_DISTANCE_ANGSTROM: f64 = 0.4;
+/// The covalent radius, in ångström, assumed for an element without a
+/// tabulated one.
+pub(crate) const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
+
+/// The covalent radius distance inference uses for `element`, in ångström,
+/// and whether it is the fallback for an element without a tabulated one.
+pub(crate) fn covalent_bonding_radius(element: Element) -> (f64, bool) {
+    match element.covalent_radius_angstrom() {
+        Some(radius) => (radius, false),
+        None => (FALLBACK_COVALENT_RADIUS_ANGSTROM, true),
+    }
+}
 
 /// Whether two atoms lie within covalent bonding distance: the sum of their
 /// covalent radii plus a tolerance, and not implausibly close.
@@ -385,16 +400,14 @@ pub(crate) fn within_bonding_distance(
     (left, left_point): (Element, Point3),
     (right, right_point): (Element, Point3),
 ) -> bool {
-    let radius = |element: Element| {
-        element
-            .covalent_radius_angstrom()
-            .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM)
-    };
-    let cutoff = radius(left) + radius(right) + COVALENT_BOND_TOLERANCE_ANGSTROM;
+    let cutoff = covalent_bonding_radius(left).0
+        + covalent_bonding_radius(right).0
+        + COVALENT_BOND_TOLERANCE_ANGSTROM;
     let distance_squared = (left_point.x - right_point.x).powi(2)
         + (left_point.y - right_point.y).powi(2)
         + (left_point.z - right_point.z).powi(2);
-    distance_squared > MIN_COVALENT_BOND_DISTANCE_SQUARED && distance_squared <= cutoff * cutoff
+    distance_squared > MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2)
+        && distance_squared <= cutoff * cutoff
 }
 
 /// The coordination flag `component` gives the bond between the two named
