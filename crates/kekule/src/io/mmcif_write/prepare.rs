@@ -5,6 +5,7 @@ use super::one_based_serial;
 use super::{fail, invalid_model, MmcifAtomField, MmcifMemberField, MmcifWriteIssue};
 use crate::diagnostics::FormatError;
 use crate::geometry::Point3;
+use crate::io::UnrepresentablePolicy;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::structure::ModelView;
 use crate::topology::{
@@ -49,11 +50,14 @@ pub(super) struct PreparedModel {
     pub(super) asyms: Vec<AsymRow>,
     pub(super) atoms: Vec<AtomRow>,
     pub(super) connections: Vec<ConnectionRow>,
+    /// Atoms whose fixed implicit-hydrogen counts the rows leave out.
+    pub(super) omitted_hydrogens: usize,
 }
 
 pub(super) fn prepare_model(
     model: ModelView<'_>,
     plan: EntityPlan,
+    implicit_hydrogens: UnrepresentablePolicy,
 ) -> Result<PreparedModel, FormatError> {
     let EntityPlan {
         entities,
@@ -62,6 +66,7 @@ pub(super) fn prepare_model(
     } = plan;
 
     let mut atoms = Vec::new();
+    let mut omitted_hydrogens = 0;
     let hierarchy = model.topology().hierarchy();
     for (id, molecule) in model.topology().instance_records() {
         let definition = model
@@ -69,7 +74,7 @@ pub(super) fn prepare_model(
             .instance(id)
             .expect("listed instances are topology molecules")
             .definition();
-        validate_graph_chemistry(molecule, definition)?;
+        omitted_hydrogens += validate_graph_chemistry(molecule, definition, implicit_hydrogens)?;
         if definition.molecule().atom_ids().any(|atom| {
             hierarchy
                 .atom_site_for_atom(molecule.qualify_atom(atom))
@@ -117,13 +122,18 @@ pub(super) fn prepare_model(
         asyms,
         atoms,
         connections,
+        omitted_hydrogens,
     })
 }
 
+/// Fails on chemistry mmCIF cannot carry; returns how many atoms have a
+/// fixed implicit-hydrogen count that `implicit_hydrogens` omits.
 fn validate_graph_chemistry(
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
-) -> Result<(), FormatError> {
+    implicit_hydrogens: UnrepresentablePolicy,
+) -> Result<usize, FormatError> {
+    let mut omitted_hydrogens = 0;
     let molecule_definition = definition.molecule();
     if molecule_definition.stereo_elements().next().is_some()
         || molecule_definition.stereo_groups().next().is_some()
@@ -147,10 +157,13 @@ fn validate_graph_chemistry(
             }));
         }
         if atom.hydrogens != ImplicitHydrogens::default() {
-            return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
-                atom: atom_id,
-                field: MmcifAtomField::Hydrogens,
-            }));
+            if implicit_hydrogens == UnrepresentablePolicy::Fail {
+                return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
+                    atom: atom_id,
+                    field: MmcifAtomField::Hydrogens,
+                }));
+            }
+            omitted_hydrogens += 1;
         }
         if atom.atom_map.is_some() {
             return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
@@ -165,7 +178,7 @@ fn validate_graph_chemistry(
             }));
         }
     }
-    Ok(())
+    Ok(omitted_hydrogens)
 }
 
 fn collect_macro_rows(

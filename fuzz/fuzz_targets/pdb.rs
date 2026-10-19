@@ -28,7 +28,7 @@ fuzz_target!(|data: &[u8]| {
             let _ = interpreted.model().position(*atom);
         }
         // Whatever the writer accepts reads back with the same atoms.
-        if let Ok(written) = kekule::pdb::write(interpreted.model(), Default::default()) {
+        if let Ok(written) = kekule::pdb::write(interpreted.model(), Default::default()).map(|(text, _)| text) {
             let reread = parse_str(&written, PdbParseOptions::default())
                 .and_then(|document| document.interpret(options))
                 .expect("written PDB reads back");

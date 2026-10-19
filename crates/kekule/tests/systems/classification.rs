@@ -450,19 +450,25 @@ fn generic_mmcif_writing_maps_canonical_protein_water_and_small_molecule_classes
     let molecule = kekule::smiles::to_molecules("CC").unwrap().pop().unwrap();
     let model =
         Model::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count())).unwrap();
-    let written = kekule::mmcif::write([&model], Default::default()).unwrap();
+    let written = kekule::mmcif::write([&model], Default::default())
+        .map(|(text, _)| text)
+        .unwrap();
     assert!(written.contains("1 non-polymer"));
 
     let (protein, _) = linear_residue_topology(&["ALA", "GLY"], ("N", "C"));
     let protein = Model::new(protein, Positions::zeros(4)).unwrap();
-    let written = kekule::mmcif::write([&protein], Default::default()).unwrap();
+    let written = kekule::mmcif::write([&protein], Default::default())
+        .map(|(text, _)| text)
+        .unwrap();
     assert!(written.contains("1 polymer"));
 
     let mut water_editor = MoleculeEditor::new();
     water_editor.add_atom(atom("O")).unwrap();
     let (water, _) = one_residue_topology(&water_editor.finish().unwrap(), "HOH");
     let water = Model::new(water, Positions::zeros(1)).unwrap();
-    let written = kekule::mmcif::write([&water], Default::default()).unwrap();
+    let written = kekule::mmcif::write([&water], Default::default())
+        .map(|(text, _)| text)
+        .unwrap();
     assert!(written.contains("1 water"));
 }
 

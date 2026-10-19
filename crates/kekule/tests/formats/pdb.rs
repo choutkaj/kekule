@@ -1220,8 +1220,9 @@ fn hydrogen_isotope_symbols_read_as_isotopes_and_write_back() {
         ]
     );
 
-    let written =
-        kekule::mmcif::write([&interpreted], kekule::mmcif::MmcifWriteOptions::default()).unwrap();
+    let written = kekule::mmcif::write([&interpreted], kekule::mmcif::MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap();
     let type_symbols = written
         .lines()
         .filter(|line| line.starts_with("HETATM"))
@@ -1337,14 +1338,16 @@ fn author_chains_holding_ligands_and_water_write_as_separate_mmcif_asyms() {
     // entities without source identifiers are numbered by each plan.
     for (written, entities) in [
         (
-            kekule::mmcif::write([&interpreted], kekule::mmcif::MmcifWriteOptions::default()),
+            kekule::mmcif::write([&interpreted], kekule::mmcif::MmcifWriteOptions::default())
+                .map(|(text, _)| text),
             ["K1", "K2", "K3", "K4"],
         ),
         (
             kekule::mmcif::write(
                 [interpreted.model()],
                 kekule::mmcif::MmcifWriteOptions::default(),
-            ),
+            )
+            .map(|(text, _)| text),
             ["1", "2", "3", "4"],
         ),
     ] {
@@ -1915,8 +1918,8 @@ fn pdb_connectivity_matches_an_independent_reference() {
         // from canonical classification, and reads back whole.
         let options = kekule::mmcif::MmcifWriteOptions::default;
         for written in [
-            kekule::mmcif::write([&interpreted], options()),
-            kekule::mmcif::write([interpreted.model()], options()),
+            kekule::mmcif::write([&interpreted], options()).map(|(text, _)| text),
+            kekule::mmcif::write([interpreted.model()], options()).map(|(text, _)| text),
         ] {
             let reread = kekule::mmcif::parse_str(&written.unwrap(), Default::default())
                 .unwrap()

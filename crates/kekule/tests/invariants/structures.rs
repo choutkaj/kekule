@@ -25,6 +25,7 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
             [MmcifBlockSource::model(&original).with_reports(std::slice::from_ref(&report))],
             MmcifWriteOptions::default(),
         )
+        .map(|(text, _)| text)
         .unwrap_or_else(|error| panic!("{entry}: {error}"));
         let (reread, _) = interpret(&written);
 

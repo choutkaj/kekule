@@ -14,8 +14,10 @@ use crate::geometry::{PeriodicCell, Point3};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::is_metal;
-use crate::io::write_error::check_structure_state;
-use crate::io::{ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy};
+use crate::io::write_error::{check_structure_state, Omissions};
+use crate::io::{
+    ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
+};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
 use crate::topology::{
@@ -41,6 +43,7 @@ pub struct PdbWriteOptions {
     ensemble_metadata: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
+    implicit_hydrogens: UnrepresentablePolicy,
     chemistry: UnrepresentablePolicy,
 }
 
@@ -92,11 +95,34 @@ impl PdbWriteOptions {
         self
     }
 
-    /// Represented chemistry PDB cannot carry: isotopes other than
-    /// deuterium and tritium, radicals, fixed implicit hydrogen counts, atom
-    /// maps, represented stereo, and bonds `CONECT` cannot state (see
-    /// [`PdbWriteIssue::UnsupportedBondOrder`]). By default it fails to
-    /// write; [`UnrepresentablePolicy::Omit`] writes the records without it.
+    /// Fixed implicit-hydrogen counts, which PDB cannot carry: readers infer
+    /// implicit hydrogens from valence. By default an atom with one fails to
+    /// write; [`UnrepresentablePolicy::Omit`] writes it without the count
+    /// and reports [`WriteOmission::ImplicitHydrogens`]. Structures whose
+    /// files list every atom, such as XYZ interpretations, fix their counts
+    /// at zero.
+    pub const fn implicit_hydrogens(&self) -> UnrepresentablePolicy {
+        self.implicit_hydrogens
+    }
+
+    /// Sets [`Self::implicit_hydrogens`].
+    #[must_use]
+    pub const fn with_implicit_hydrogens(
+        mut self,
+        implicit_hydrogens: UnrepresentablePolicy,
+    ) -> Self {
+        self.implicit_hydrogens = implicit_hydrogens;
+        self
+    }
+
+    /// Other represented chemistry PDB cannot carry: isotopes other than
+    /// deuterium and tritium, radicals, atom maps, represented stereo, bonds
+    /// `CONECT` cannot state (see [`PdbWriteIssue::UnsupportedBondOrder`]),
+    /// and residue bonds that differ from the dictionary readers apply (see
+    /// [`PdbWriteIssue::DictionaryBondConflict`]). By default it fails to
+    /// write; [`UnrepresentablePolicy::Omit`] writes the records without it
+    /// and reports each kind left out. Fixed implicit-hydrogen counts have
+    /// their own policy, [`Self::implicit_hydrogens`].
     pub const fn chemistry(&self) -> UnrepresentablePolicy {
         self.chemistry
     }
@@ -253,7 +279,9 @@ pub enum PdbWriteIssue {
         charge: i8,
     },
     /// An atom has state PDB cannot carry, with
-    /// [`PdbWriteOptions::chemistry`] set to fail.
+    /// [`PdbWriteOptions::implicit_hydrogens`] (for
+    /// [`PdbAtomField::Hydrogens`]) or [`PdbWriteOptions::chemistry`] set to
+    /// fail.
     UnsupportedAtomField {
         /// The atom.
         atom: InstanceAtomId,
@@ -447,10 +475,13 @@ impl<'a> From<&'a Ensemble> for PdbSource<'a> {
 pub(crate) fn write_pdb<'a>(
     source: impl Into<PdbSource<'a>>,
     options: PdbWriteOptions,
-) -> Result<String, FormatError> {
+) -> Result<(String, WriteReport), FormatError> {
     let mut output = Vec::new();
-    write_pdb_to(&mut output, source, options)?;
-    Ok(String::from_utf8(output).expect("the PDB writer emits UTF-8"))
+    let report = write_pdb_to(&mut output, source, options)?;
+    Ok((
+        String::from_utf8(output).expect("the PDB writer emits UTF-8"),
+        report,
+    ))
 }
 
 /// Validates the whole entry, then streams its records into `writer`.
@@ -458,7 +489,8 @@ pub(crate) fn write_pdb_to<'a>(
     writer: &mut impl Write,
     source: impl Into<PdbSource<'a>>,
     options: PdbWriteOptions,
-) -> Result<(), FormatError> {
+) -> Result<WriteReport, FormatError> {
+    let mut omissions = Omissions::default();
     let (views, models) = match source.into().content {
         Content::Structure(view) => {
             check_structure_state(
@@ -467,13 +499,18 @@ pub(crate) fn write_pdb_to<'a>(
                 Some(options.ensemble_metadata),
                 options.frame_metadata,
             )?;
+            omissions.record_structure_state(
+                view.kind(),
+                Some(options.ensemble_metadata),
+                options.frame_metadata,
+            );
             (vec![view], false)
         }
         Content::Ensemble(ensemble) => {
             if ensemble.is_empty() {
                 return Err(fail(PdbWriteIssue::EmptyEnsemble));
             }
-            check_member_metadata(ensemble, options.ensemble_metadata)?;
+            check_member_metadata(ensemble, options.ensemble_metadata, &mut omissions)?;
             let views = ensemble
                 .iter()
                 .map(|member| member.as_model_view())
@@ -482,7 +519,12 @@ pub(crate) fn write_pdb_to<'a>(
         }
     };
     let cell = entry_cell(views.iter().map(|view| view.cell()), options.cell)?;
-    let plan = Plan::new(views[0].topology(), options.chemistry)?;
+    if cell.is_none() {
+        omissions.record(WriteOmission::Cell {
+            structures: views.iter().filter(|view| view.cell().is_some()).count(),
+        });
+    }
+    let plan = Plan::new(views[0].topology(), &options, &mut omissions)?;
     // Check every structure's values before the first byte is written.
     let rows = views
         .iter()
@@ -507,19 +549,37 @@ pub(crate) fn write_pdb_to<'a>(
         }
     }
     plan.write_conect(writer).map_err(io)?;
-    writeln!(writer, "END").map_err(io)
+    writeln!(writer, "END").map_err(io)?;
+    Ok(omissions.into_report())
 }
 
 fn check_member_metadata(
     ensemble: &Ensemble,
     policy: UnrepresentablePolicy,
+    omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
-    if policy != UnrepresentablePolicy::Fail {
-        return Ok(());
-    }
     // Interpretation gives every member weight 1.0 and no energy, so only
     // equal weights and absent energies survive a round trip.
     let weight = ensemble.get(0).map(|member| member.weight());
+    if policy != UnrepresentablePolicy::Fail {
+        let unequal = ensemble
+            .iter()
+            .any(|member| Some(member.weight()) != weight);
+        if unequal {
+            omissions.record(WriteOmission::StructureState {
+                field: StructureField::Weight,
+                structures: ensemble.len(),
+            });
+        }
+        omissions.record(WriteOmission::StructureState {
+            field: StructureField::Energy,
+            structures: ensemble
+                .iter()
+                .filter(|member| member.energy().is_some())
+                .count(),
+        });
+        return Ok(());
+    }
     for (index, member) in ensemble.iter().enumerate() {
         let field = if member.energy().is_some() {
             StructureField::Energy
@@ -708,8 +768,15 @@ fn single_character(text: &str) -> Option<char> {
 }
 
 impl Plan {
-    fn new(topology: &Topology, chemistry: UnrepresentablePolicy) -> Result<Self, FormatError> {
-        let strict = chemistry == UnrepresentablePolicy::Fail;
+    fn new(
+        topology: &Topology,
+        options: &PdbWriteOptions,
+        omissions: &mut Omissions,
+    ) -> Result<Self, FormatError> {
+        let strict = options.chemistry == UnrepresentablePolicy::Fail;
+        let mut omitted_hydrogens = 0;
+        let (mut isotopes, mut radicals, mut atom_maps) = (0, 0, 0);
+        let mut stereo = BTreeSet::new();
         let mut synthetic = BTreeMap::new();
         let mut records = Vec::with_capacity(topology.atom_count());
         let mut residues = Vec::with_capacity(topology.atom_count());
@@ -720,31 +787,48 @@ impl Plan {
                 .expect("dense atom IDs name topology atoms");
             let atom = view.atom();
             let instance = view.instance();
-            if strict {
-                let molecule = instance.definition().molecule();
-                if molecule.stereo_elements().next().is_some()
-                    || molecule.stereo_groups().next().is_some()
-                {
+            let molecule = instance.definition().molecule();
+            if molecule.stereo_elements().next().is_some()
+                || molecule.stereo_groups().next().is_some()
+            {
+                if strict {
                     return Err(fail(PdbWriteIssue::UnsupportedStereo(instance.id())));
                 }
-                let isotope = atom.isotope.map(std::num::NonZero::get);
-                let field = if structure_element_symbol(atom.element, isotope).is_none() {
-                    Some(PdbAtomField::Isotope)
-                } else if atom.radical.is_some() {
-                    Some(PdbAtomField::Radical)
-                } else if atom.hydrogens != ImplicitHydrogens::default() {
-                    Some(PdbAtomField::Hydrogens)
-                } else if atom.atom_map.is_some() {
-                    Some(PdbAtomField::AtomMap)
-                } else {
-                    None
-                };
-                if let Some(field) = field {
+                stereo.insert(instance.id());
+            }
+            let isotope = atom.isotope.map(std::num::NonZero::get);
+            let fields = [
+                (
+                    structure_element_symbol(atom.element, isotope).is_none(),
+                    PdbAtomField::Isotope,
+                ),
+                (atom.radical.is_some(), PdbAtomField::Radical),
+                (atom.atom_map.is_some(), PdbAtomField::AtomMap),
+            ];
+            for (present, field) in fields {
+                if !present {
+                    continue;
+                }
+                if strict {
                     return Err(fail(PdbWriteIssue::UnsupportedAtomField {
                         atom: atom_id,
                         field,
                     }));
                 }
+                match field {
+                    PdbAtomField::Isotope => isotopes += 1,
+                    PdbAtomField::Radical => radicals += 1,
+                    _ => atom_maps += 1,
+                }
+            }
+            if atom.hydrogens != ImplicitHydrogens::default() {
+                if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
+                    return Err(fail(PdbWriteIssue::UnsupportedAtomField {
+                        atom: atom_id,
+                        field: PdbAtomField::Hydrogens,
+                    }));
+                }
+                omitted_hydrogens += 1;
             }
             if !(-9..=9).contains(&atom.formal_charge) {
                 return Err(fail(PdbWriteIssue::FormalChargeOutOfRange {
@@ -864,10 +948,21 @@ impl Plan {
             }
         }
 
-        if strict {
-            check_dictionary_bonds(topology, &records, &residues)?;
-        }
-        let conect = Self::conect(topology, &records, &residues, strict)?;
+        let conflicting = check_dictionary_bonds(topology, &records, &residues, strict)?;
+        let (conect, unstated) = Self::conect(topology, &records, &residues, strict)?;
+        omissions.record(WriteOmission::ImplicitHydrogens {
+            atoms: omitted_hydrogens,
+        });
+        omissions.record(WriteOmission::Isotopes { atoms: isotopes });
+        omissions.record(WriteOmission::Radicals { atoms: radicals });
+        omissions.record(WriteOmission::AtomMaps { atoms: atom_maps });
+        omissions.record(WriteOmission::Stereo {
+            molecules: stereo.len(),
+        });
+        omissions.record(WriteOmission::Bonds { bonds: unstated });
+        omissions.record(WriteOmission::DictionaryBonds {
+            residues: conflicting,
+        });
         Ok(Self { records, conect })
     }
 
@@ -961,9 +1056,10 @@ impl Plan {
         records: &[AtomRecord],
         residues: &[AtomResidue],
         strict: bool,
-    ) -> Result<BTreeMap<usize, Vec<usize>>, FormatError> {
+    ) -> Result<(BTreeMap<usize, Vec<usize>>, usize), FormatError> {
         let chain_positions = residue_chain_positions(topology);
         let mut conect = BTreeMap::<usize, Vec<usize>>::new();
+        let mut unstated = 0;
         for bond in topology.bonds() {
             let [left, right] = bond.atoms().map(|atom| atom.index().index());
             let standard = !records[left].hetatm && !records[right].hetatm;
@@ -999,6 +1095,7 @@ impl Plan {
                             order,
                         }));
                     }
+                    unstated += 1;
                     continue;
                 }
             };
@@ -1010,7 +1107,7 @@ impl Plan {
         for partners in conect.values_mut() {
             partners.sort_unstable();
         }
-        Ok(conect)
+        Ok((conect, unstated))
     }
 
     fn write_atoms(&self, writer: &mut impl Write, values: &[SiteValues]) -> std::io::Result<()> {
@@ -1068,7 +1165,8 @@ impl Plan {
     }
 }
 
-/// Fails when a residue the bundled dictionary covers has bonds between named
+/// Counts, or with `strict` fails on, residues the bundled dictionary covers
+/// with bonds between named
 /// heavy atoms that neither its template nor any of its protonation variants,
 /// one of which a reader selects, would give it: a missing bond or a different
 /// order (an extra bond is listed instead). Coordination is dative, aromatic
@@ -1078,7 +1176,9 @@ fn check_dictionary_bonds(
     topology: &Topology,
     records: &[AtomRecord],
     residues: &[AtomResidue],
-) -> Result<(), FormatError> {
+    strict: bool,
+) -> Result<usize, FormatError> {
+    let mut conflicting = 0;
     let mut named = BTreeMap::<&ResidueKey, BTreeMap<&str, usize>>::new();
     for (index, (record, residue)) in records.iter().zip(residues).enumerate() {
         named
@@ -1107,12 +1207,15 @@ fn check_dictionary_bonds(
         {
             continue;
         }
-        return Err(fail(PdbWriteIssue::DictionaryBondConflict {
-            atoms: [records[left].atom, records[right].atom],
-            order,
-        }));
+        if strict {
+            return Err(fail(PdbWriteIssue::DictionaryBondConflict {
+                atoms: [records[left].atom, records[right].atom],
+                order,
+            }));
+        }
+        conflicting += 1;
     }
-    Ok(())
+    Ok(conflicting)
 }
 
 /// The first heavy-atom bond of `template` that the residue, whose atoms are

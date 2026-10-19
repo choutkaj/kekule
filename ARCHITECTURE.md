@@ -627,8 +627,12 @@ structure path. Coordinate-bearing writers emit atoms in dense order.
 Unsupported representational content must fail explicitly. Writers read the
 view's `kind()`: member or frame state the format cannot carry fails unless
 the caller sets `UnrepresentablePolicy::Omit` for it, and a format that can
-carry it writes it whichever path supplied the view. There is no
-universal save trait or implicit trajectory-to-structure export.
+carry it writes it whichever path supplied the view. Each kind of
+unrepresentable content has its own policy, so omitting one never omits
+another. The PDB and mmCIF writers return a `WriteReport` with the text, or
+from `write_to`, that names every omission and the number of entities it
+affects. There is no universal save trait or implicit trajectory-to-structure
+export.
 
 - SMILES exports represented chemistry and supported stereo. Canonical output
   requires complete labeling under explicit resource bounds; exhaustion is an
