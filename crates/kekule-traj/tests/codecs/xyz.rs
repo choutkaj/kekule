@@ -794,3 +794,41 @@ fn xyz_streams_debug_their_options_and_progress_without_their_stream() {
         )
     );
 }
+
+#[test]
+fn interpreted_xyz_topology_streams_every_frame_of_its_file() {
+    // `kekule::xyz` interprets one frame into a topology in atom-line order;
+    // the streaming reader then decodes all frames against it.
+    let text = "3\nfirst\nO 0 0 0\nH 0.957 0 0\nH -0.24 0.927 0\n\
+                3\nsecond\nO 0 0 0.1\nH 0.96 0 0.1\nH -0.25 0.93 0.1\n";
+    let interpretation = kekule::xyz::parse_str(text, Default::default())
+        .unwrap()
+        .interpret(
+            kekule::xyz::XyzInterpretOptions::default()
+                .with_frame(kekule::xyz::XyzFrameSelection::First),
+        )
+        .unwrap();
+    let topology = interpretation.model().shared_topology();
+    assert_eq!(topology.bond_count(), 2);
+    let mut reader = XyzReader::new(
+        Cursor::new(text.as_bytes()),
+        topology,
+        XyzReadOptions::default(),
+    )
+    .unwrap();
+    let mut frame = reader.frame_buffer();
+    let mut z = Vec::new();
+    while reader.read_next(&mut frame).unwrap() {
+        z.push(
+            frame
+                .positions()
+                .get(0)
+                .unwrap()
+                .value_in(ANGSTROM)
+                .unwrap()
+                .z,
+        );
+    }
+    assert_eq!(z.len(), 2);
+    assert!((z[1] - 0.1).abs() < 1e-12);
+}
