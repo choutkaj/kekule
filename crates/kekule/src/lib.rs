@@ -1091,7 +1091,7 @@ pub mod mmcif {
     }
 }
 
-/// PDB-format parsing and interpretation.
+/// PDB-format parsing, interpretation, and writing.
 ///
 /// A PDB file holds one entry, whose coordinate models share one
 /// interpretation scope. Parsing types the unit-cell, coordinate,
@@ -1113,7 +1113,9 @@ pub mod mmcif {
 /// and the report lists them. A `CRYST1` cell is the model's periodic cell
 /// under the rule mmCIF `_cell` follows; otherwise the report says why not.
 ///
-/// Interpretation keeps coordinate records in source order as dense atom order.
+/// Interpretation keeps coordinate records in source order as dense atom order,
+/// and [`write()`](pdb::write) emits records in dense atom order, so a written
+/// entry interprets back to the same atoms in the same order.
 ///
 /// ```
 /// use kekule::pdb;
@@ -1133,8 +1135,9 @@ pub mod mmcif {
 pub mod pdb {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
-        PdbAtom, PdbAtomKind, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel,
-        PdbParseOptions, PdbPartner, PdbRecord, PdbSsbond, PdbTer,
+        PdbAtom, PdbAtomField, PdbAtomKind, PdbCellReason, PdbConect, PdbCryst1, PdbDocument,
+        PdbLink, PdbModel, PdbParseOptions, PdbPartner, PdbRecord, PdbSource, PdbSsbond, PdbTer,
+        PdbWriteIssue, PdbWriteOptions,
     };
 
     /// Parses a PDB entry into typed records without assigning molecular
@@ -1163,6 +1166,92 @@ pub mod pdb {
         options: PdbParseOptions,
     ) -> Result<PdbDocument, FormatError> {
         crate::io::parse_pdb_reader(reader, options)
+    }
+
+    /// Writes one entry: a model or collection item without `MODEL` records,
+    /// or an ensemble with one `MODEL` per member.
+    ///
+    /// Records follow dense atom order, which interpretation keeps, so
+    /// interpreting the output gives the same atoms in the same order.
+    /// Identity comes from the hierarchy:
+    /// - author chain, residue, and atom identifiers, falling back to label
+    ///   identifiers;
+    /// - residues of protein and nucleic-acid instances with an amino-acid or
+    ///   nucleotide class are `ATOM` records, everything else `HETATM`;
+    /// - a `TER` record, which takes the next serial number, follows each
+    ///   chain's last polymer atom;
+    /// - an instance without atom sites becomes one `MOL` (or `HOH`) residue
+    ///   without a chain identifier, and atoms without a name are named by
+    ///   their element and 1-based molecule-local number.
+    ///
+    /// Serial numbers beyond 99,999 and residue numbers beyond 9,999 use
+    /// hybrid-36. Coordinates are written to 0.001 Å, occupancies and B
+    /// factors to 0.01, and absent occupancies and B factors are blank. A
+    /// representable periodic cell is a `CRYST1` record in space group P 1.
+    ///
+    /// `CONECT` lists every bond a reader could not derive, each from both
+    /// atoms and once per step of bond order:
+    /// - bonds within `HETATM` residues and residues the bundled
+    ///   [`ComponentLibrary`](crate::components::ComponentLibrary) does not
+    ///   cover;
+    /// - bonds between residues other than the linkage of standard residues
+    ///   adjacent in one chain, such as disulfides and ligand attachments.
+    ///
+    /// Bonds within standard residues the dictionary covers, polymer
+    /// linkage, and bonds within water are derived by readers and not listed.
+    ///
+    /// # Errors
+    ///
+    /// A write-stage [`FormatError`] of kind
+    /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
+    /// with a [`PdbWriteIssue`] when PDB cannot hold the content. Identifiers
+    /// that do not fit their columns always fail: chain identifiers longer
+    /// than one character, residue names longer than three, atom names longer
+    /// than four, insertion codes longer than one, residue numbers outside
+    /// -999..=2,436,111, more than 87,440,031 atom and `TER` records, and
+    /// residues whose atoms are not consecutive. So do values outside their
+    /// columns and formal charges outside -9..=9. Represented chemistry,
+    /// ensemble or frame state, and cells PDB cannot carry fail unless
+    /// [`PdbWriteOptions`] omits them. Nothing is written when validation
+    /// fails.
+    ///
+    /// ```
+    /// use kekule::pdb;
+    ///
+    /// let text = "\
+    /// HETATM    1  O   HOH A   1       0.000   0.000   0.000  1.00  0.00           O
+    /// HETATM    2  H1  HOH A   1       0.960   0.000   0.000  1.00  0.00           H
+    /// HETATM    3  H2  HOH A   1      -0.240   0.930   0.000  1.00  0.00           H
+    /// END
+    /// ";
+    /// let model = pdb::parse_str(text, Default::default())?
+    ///     .interpret(Default::default())?
+    ///     .into_model();
+    /// let written = pdb::write(&model, Default::default())?;
+    /// assert_eq!(written, text);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn write<'a>(
+        source: impl Into<PdbSource<'a>>,
+        options: PdbWriteOptions,
+    ) -> Result<String, FormatError> {
+        crate::io::write_pdb(source, options)
+    }
+
+    /// Streams the entry [`write()`] would return. The entry is validated
+    /// before the first record reaches `writer`; wrap an unbuffered sink
+    /// such as a `File` in a [`BufWriter`](std::io::BufWriter).
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`write()`]; a failing `writer` gives
+    /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+    pub fn write_to<'a>(
+        writer: &mut impl std::io::Write,
+        source: impl Into<PdbSource<'a>>,
+        options: PdbWriteOptions,
+    ) -> Result<(), FormatError> {
+        crate::io::write_pdb_to(writer, source, options)
     }
 }
 

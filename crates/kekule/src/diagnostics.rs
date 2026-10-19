@@ -454,6 +454,8 @@ pub enum FormatErrorDetail {
     },
     /// A failure specific to the mmCIF writer.
     MmcifWrite(crate::io::MmcifWriteIssue),
+    /// A failure specific to the PDB writer.
+    PdbWrite(crate::io::PdbWriteIssue),
     /// The written structure is an ensemble member or a trajectory frame
     /// with this state, which the format cannot carry, and the writer's
     /// policy for it is [`UnrepresentablePolicy::Fail`].

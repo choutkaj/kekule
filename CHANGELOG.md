@@ -77,6 +77,30 @@ are marked **Breaking:**.
     against the interpreted topology when its element tokens are symbols in
     standard letter case, the only form that reader accepts.
   - The new `xyz` fuzz target covers the parser and interpretation.
+- The PDB writer: `pdb::write` and `pdb::write_to` write a model, an ensemble
+  member or trajectory frame view (`PdbSource::structure`), or an ensemble
+  (one `MODEL` per member) as one entry that reads back with the same atoms,
+  identities, bonds, coordinates, occupancies, and B factors at PDB
+  precision.
+  - Records follow dense atom order.
+  - Standard polymer residues are `ATOM` records with a `TER` after each
+    chain's polymer; everything else is `HETATM`.
+  - `CONECT` lists every bond the reader cannot derive from the bundled
+    component dictionary, once per step of bond order.
+  - Serial and residue numbers beyond their decimal range use hybrid-36.
+  - A representable cell is a `CRYST1` record in P 1.
+  - Identifiers that do not fit their columns always fail with a typed
+    `PdbWriteIssue` (`FormatErrorDetail::PdbWrite`): chain IDs longer than
+    one character, residue names longer than three, atom names longer than
+    four, insertion codes, and residue numbers. So do non-consecutive
+    residues and values outside their columns.
+  - Chemistry PDB cannot carry fails unless `PdbWriteOptions` omits it:
+    isotopes, radicals, fixed implicit hydrogens, atom maps, stereo, bonds
+    `CONECT` cannot state, and residues whose bonds differ from the
+    dictionary template a reader applies. So do member weights and energies,
+    frame state, and cells `CRYST1` cannot carry.
+  - The curated `bio` benchmark entries round-trip in a new acceptance test,
+    and the `pdb` fuzz target checks that written entries read back.
 
 ## [0.4.0] - 2026-10-17
 
