@@ -61,6 +61,15 @@ examples = ["pdb:3LTR", "pdb:1MLK"]
 max_cases = { curated = 8, full = 72 }
 
 [[known]]
+id = "bio-unflagged-metal-coordination"
+task = "bio.connectivity"
+match = ["bond.order||1→dative"]
+verdict = "intended-policy"
+reason = "wwPDB entry files list _chem_comp_bond without pdbx_metal_coordination_flag. Kekule takes the unstated flag from the component template, which marks heme Fe-N and iron-sulfur Fe-S bonds as coordination, so they are dative as a PDB reading of the same structure makes them; Biotite reads the file's 'sing' as a single bond."
+examples = ["pdb:1MLK", "pdb:1XDB"]
+max_cases = { curated = 3 }
+
+[[known]]
 id = "bio-undeclared-bonds"
 task = "bio.connectivity"
 match = ["bond.order||1→missing", "bond.order||2→missing"]

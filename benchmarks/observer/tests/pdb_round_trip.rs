@@ -269,4 +269,10 @@ fn curated_biomolecules_round_trip_through_pdb() {
         "{written} entries round-tripped, {ensembles} as ensembles; unrepresentable: {unrepresentable:#?}"
     );
     assert!(written >= 15, "only {written} entries round-tripped");
+    // mmCIF and PDB readings agree on metal coordination, so every curated
+    // entry is representable.
+    assert!(
+        unrepresentable.is_empty(),
+        "unrepresentable entries: {unrepresentable:#?}"
+    );
 }

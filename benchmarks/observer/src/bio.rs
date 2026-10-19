@@ -167,10 +167,10 @@ fn connectivity(document: &MmcifDocument) -> Result<Facts, Failure> {
         let molecule = instance.molecule();
         let id = |atom| ids[&InstanceAtomId::new(instance.id(), atom)].clone();
         for (_, bond) in molecule.bonds() {
+            // Biotite's coordination bonds have no direction, so every pair
+            // is keyed in site order, dative ones included.
             let mut ends = [id(bond.a()), id(bond.b())];
-            if bond.order != BondOrder::Dative {
-                ends.sort_by_key(|id| site_order(id));
-            }
+            ends.sort_by_key(|id| site_order(id));
             let order = match bond.order {
                 BondOrder::Zero => json!(0),
                 BondOrder::Single => json!(1),
