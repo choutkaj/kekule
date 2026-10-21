@@ -2,6 +2,7 @@
 //! host extensions, and a conformance suite whose expectations come from
 //! per-atom reference predicates independent of the evaluator.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use kekule::select::{
 };
 use kekule::structure::{Model, Positions};
 use kekule::topology::{AtomSelection, AtomView, MoleculeClass, ResidueClass, Topology};
-use kekule::units::{Quantity, ANGSTROM, ELEMENTARY_CHARGE, NANOMETER};
+use kekule::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT, ELEMENTARY_CHARGE, NANOMETER};
 use kekule::{mmcif, smiles};
 
 use super::support::fixture;
@@ -708,6 +709,285 @@ fn host_terms_resolve_atoms_and_points_across_objects() {
     let unknown = error("$nothing", options);
     assert!(matches!(unknown, SelectEvaluateError::Host { .. }));
     assert_eq!(unknown.span(), 0..8);
+}
+
+/// Structures kept apart in one frame, as a viewer holds a receptor and its
+/// ligand: a `within` reference evaluated on one also measures against the
+/// atoms it selects in the others.
+struct Scene<'a> {
+    models: &'a [Model],
+    /// The evaluated model.
+    current: usize,
+}
+
+impl Scene<'_> {
+    fn select(&self, text: &str) -> Result<Vec<usize>, SelectEvaluateError> {
+        let options = SelectEvaluateOptions::default().with_resolver(self);
+        let selection = parse(text).evaluate_structure(&self.models[self.current], options)?;
+        Ok(selection
+            .indices()
+            .iter()
+            .map(|index| index.index())
+            .collect())
+    }
+}
+
+impl SelectionResolver for Scene<'_> {
+    fn resolve(&self, term: &HostTerm<'_>, _: HostRequest<'_>) -> Result<HostValue, HostTermError> {
+        Err(HostTermError::new(format!("unknown {}", term.text())))
+    }
+
+    fn reference_points(
+        &self,
+        reference: &SelectionExpr,
+        request: HostRequest<'_>,
+    ) -> Result<Positions, HostTermError> {
+        let evaluated = &self.models[self.current];
+        assert_eq!(request.role(), HostRole::Reference);
+        assert!(request.topology().shares_layout(evaluated.topology()));
+        assert!(request
+            .structure()
+            .is_some_and(|view| std::ptr::eq(view.positions(), evaluated.positions())));
+        let mut points = Vec::new();
+        for (index, model) in self.models.iter().enumerate() {
+            if index == self.current {
+                continue;
+            }
+            let scene = Scene {
+                models: self.models,
+                current: index,
+            };
+            let options = SelectEvaluateOptions::default().with_resolver(&scene);
+            let atoms = reference
+                .evaluate_structure(model, options)
+                .map_err(|error| {
+                    HostTermError::new(format!("evaluating on model {index} failed"))
+                        .with_source(error)
+                })?;
+            let positions: &[Point3] = model.positions().values().value();
+            points.extend(atoms.indices().iter().map(|atom| positions[atom.index()]));
+        }
+        Positions::from_vec(Quantity::new(points, CANONICAL_LENGTH_UNIT))
+            .map_err(|error| HostTermError::new("invalid points").with_source(error))
+    }
+}
+
+/// Indices of the points within `cutoff` ångströms of any reference, by brute
+/// force over every pair.
+fn within_points(points: &[Point3], references: &[Point3], cutoff: f64) -> Vec<usize> {
+    let cutoff = cutoff / 10.0;
+    points
+        .iter()
+        .enumerate()
+        .filter(|(_, here)| {
+            references.iter().any(|there| {
+                let (x, y, z) = (here.x - there.x, here.y - there.y, here.z - there.z);
+                (x * x + y * y + z * z).sqrt() <= cutoff
+            })
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+#[test]
+fn within_measures_against_structures_the_resolver_holds() {
+    // 1AKE split as a docking project keeps it: receptor, ligand, and water
+    // as separate models.
+    let complex = model("mmcif/1AKE.cif");
+    let part = |text: &str| {
+        let atoms = parse(text)
+            .evaluate_structure(&complex, SelectEvaluateOptions::default())
+            .unwrap();
+        (complex.subset(&atoms).unwrap(), atoms)
+    };
+    let (receptor, protein) = part("protein");
+    let models = [receptor, part("ligand").0, part("water").0];
+    let points = |index: usize| models[index].positions().values().value().to_vec();
+    let on_receptor = Scene {
+        models: &models,
+        current: 0,
+    };
+    // The subset keeps the protein atoms in dense order.
+    let in_complex = |text: &str| {
+        parse(text)
+            .evaluate_structure(&complex, SelectEvaluateOptions::default())
+            .unwrap()
+            .indices()
+            .iter()
+            .map(|index| protein.indices().binary_search(index).unwrap())
+            .collect::<Vec<_>>()
+    };
+
+    // The pocket: receptor atoms within 5 Å of a ligand atom.
+    let pocket = on_receptor.select("within 5 of ligand").unwrap();
+    assert!(!pocket.is_empty());
+    assert_eq!(pocket, within_points(&points(0), &points(1), 5.0));
+    assert_eq!(pocket, in_complex("within 5 of ligand and protein"));
+
+    // Water-mediated contacts: the nested reference reaches the resolver
+    // again from the water model, which measures against the ligand model.
+    let bridged = on_receptor
+        .select("within 3.5 of (water and within 3.5 of ligand)")
+        .unwrap();
+    let water = points(2);
+    let bridging = within_points(&water, &points(1), 3.5)
+        .into_iter()
+        .map(|index| water[index])
+        .collect::<Vec<_>>();
+    assert!(!bridging.is_empty() && !bridged.is_empty());
+    assert_eq!(bridged, within_points(&points(0), &bridging, 3.5));
+    assert_eq!(
+        bridged,
+        in_complex("within 3.5 of (water and within 3.5 of ligand) and protein")
+    );
+
+    // Without reference points, the receptor alone holds no ligand.
+    let evaluate = |options| {
+        parse("within 5 of ligand")
+            .evaluate_structure(&models[0], options)
+            .unwrap()
+    };
+    assert!(evaluate(SelectEvaluateOptions::default()).is_empty());
+    let terms_only = Resolver {
+        other: Positions::default(),
+    };
+    assert!(evaluate(SelectEvaluateOptions::default().with_resolver(&terms_only)).is_empty());
+}
+
+#[test]
+fn resolvers_without_reference_points_keep_todays_results() {
+    let model = model("mmcif/1AKE.cif");
+    let terms_only = Resolver {
+        other: Positions::default(),
+    };
+    for (structure, expression, _) in cases() {
+        if structure != "1AKE" {
+            continue;
+        }
+        let evaluate = |options| {
+            parse(expression)
+                .evaluate_structure(&model, options)
+                .unwrap()
+        };
+        assert_eq!(
+            evaluate(SelectEvaluateOptions::default().with_resolver(&terms_only)),
+            evaluate(SelectEvaluateOptions::default()),
+            "{expression}"
+        );
+    }
+}
+
+/// Records what evaluation asks of it.
+#[derive(Default)]
+struct Recorder {
+    calls: RefCell<Vec<String>>,
+}
+
+impl SelectionResolver for Recorder {
+    fn resolve(
+        &self,
+        term: &HostTerm<'_>,
+        request: HostRequest<'_>,
+    ) -> Result<HostValue, HostTermError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("resolve {} as {:?}", term.text(), request.role()));
+        Ok(HostValue::Atoms(AtomSelection::empty(
+            request.shared_topology(),
+        )))
+    }
+
+    fn reference_points(
+        &self,
+        reference: &SelectionExpr,
+        request: HostRequest<'_>,
+    ) -> Result<Positions, HostTermError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("points of {reference} as {:?}", request.role()));
+        Ok(Positions::default())
+    }
+}
+
+#[test]
+fn host_term_references_still_resolve_through_resolve() {
+    let topology = smiles::to_topology("C.C.C").unwrap();
+    let points = (0..3)
+        .map(|index| Point3::new(10.0 * f64::from(index), 0.0, 0.0))
+        .collect::<Vec<_>>();
+    let model = Model::new(
+        topology,
+        Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
+    )
+    .unwrap();
+    let recorder = Recorder::default();
+    let selected = parse("within 2 of #2 or within 3 of (#2) or within 4 of (not $site)")
+        .evaluate_structure(
+            &model,
+            SelectEvaluateOptions::default().with_resolver(&recorder),
+        )
+        .unwrap();
+    assert_eq!(selected.len(), 3);
+    assert_eq!(
+        *recorder.calls.borrow(),
+        [
+            "resolve 2 as Reference",
+            "resolve 2 as Reference",
+            "resolve site as Atoms",
+            "points of not $site as Reference",
+        ]
+    );
+}
+
+#[test]
+fn reference_point_failures_name_the_reference_and_its_span() {
+    // The same molecule twice, perceived only in the evaluated model.
+    let aniline = |perceived: bool| {
+        let mut topology = smiles::to_topology("c1ccccc1N").unwrap();
+        if perceived {
+            topology = Arc::new(topology.perceived().unwrap());
+        }
+        let points = (0..7)
+            .map(|index| Point3::new(1.4 * f64::from(index), 0.0, 0.0))
+            .collect::<Vec<_>>();
+        Model::new(
+            topology,
+            Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
+        )
+        .unwrap()
+    };
+    let models = [aniline(true), aniline(false)];
+    let scene = Scene {
+        models: &models,
+        current: 0,
+    };
+
+    // The reference evaluates on the evaluated model and fails where the
+    // resolver evaluates it, on the unperceived one.
+    let text = "element O or within 5 of (element N and aromatic)";
+    let error = scene.select(text).unwrap_err();
+    let SelectEvaluateError::Host { term, span, source } = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(term, "element N and aromatic");
+    assert_eq!(&text[span.clone()], "(element N and aromatic)");
+    assert_eq!(source.message(), "evaluating on model 1 failed");
+    // The host's evaluation error locates its term in the same text.
+    let cause = std::error::Error::source(source)
+        .and_then(|cause| cause.downcast_ref::<SelectEvaluateError>())
+        .expect("the resolver attaches its evaluation error");
+    assert!(matches!(
+        cause,
+        SelectEvaluateError::MissingPerception { .. }
+    ));
+    assert_eq!(&text[cause.span()], "aromatic");
+
+    // A nested reference fails first, in the evaluated model's own pass,
+    // and names itself.
+    let text = "within 5 of (element C and within 3 of aromatic)";
+    let error = scene.select(text).unwrap_err();
+    assert!(matches!(&error, SelectEvaluateError::Host { term, .. } if term == "aromatic"));
+    assert_eq!(&text[error.span()], "aromatic");
 }
 
 #[test]

@@ -45,7 +45,7 @@ pub(crate) fn node(formatter: &mut fmt::Formatter<'_>, node: &Node, required: u8
                 DistanceUnit::Bohr => formatter.write_str(" bohr")?,
             }
             formatter.write_str(" of ")?;
-            self::node(formatter, reference, 3)?;
+            self::node(formatter, &reference.root, 3)?;
         }
         NodeKind::Expand { level, inner } => {
             formatter.write_str(match level {

@@ -161,6 +161,17 @@ against another object's coordinates. Points are accepted only as the
 reference of `within`. Evaluating a host term without a resolver fails with
 `SelectEvaluateError::NoResolver`.
 
+A `within` reference that is not a host term, such as `ligand` in
+`within 5 of ligand`, selects atoms of the evaluated structure, and a resolver
+may add points to it through `SelectionResolver::reference_points`. A host
+that keeps a receptor and its ligand as two structures evaluates the
+reference, itself a `SelectionExpr`, on the ligand structure and returns the
+positions of the atoms it selects there, so `within 5 of ligand` evaluated on
+the receptor selects the pocket. References nested in it reach the resolver
+again during that evaluation. Evaluation still reads one structure: others
+contribute only the points the host supplies, and without them a reference
+reads the evaluated structure alone.
+
 ## Canonical form
 
 `SelectionExpr` displays its canonical text: lower-case keywords with aliases

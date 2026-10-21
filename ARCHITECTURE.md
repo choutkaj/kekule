@@ -269,7 +269,8 @@ selections. Identifier terms follow author identifiers, falling back to label
 identifiers, and `label_*` terms read label identifiers. Host applications
 extend the language through the `SelectionResolver` extension trait, whose
 answers must bind to the evaluated layout or be points for a spatial
-reference. See the [grammar](docs/selection-language.md) and the
+reference; other structures enter an evaluation only as such points. See the
+[grammar](docs/selection-language.md) and the
 [evaluator](crates/kekule/src/selection_language/eval.rs).
 
 ## Properties and units

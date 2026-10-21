@@ -607,7 +607,8 @@ pub mod smiles {
 /// site terms against a model, ensemble member, or trajectory frame. Chemistry
 /// terms read installed perception and never perceive. Applications add
 /// `#...`, `$name`, and keyword terms through a [`select::SelectionResolver`],
-/// which may answer spatial references with another object's points.
+/// which may answer spatial references with another object's points and add
+/// such points to any `within` reference, as in `within 5 of ligand`.
 ///
 /// ```
 /// use kekule::select::{self, SelectEvaluateOptions, SelectParseOptions};
