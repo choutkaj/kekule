@@ -6,7 +6,7 @@ use super::ast::{
     CompareOp, DistanceUnit, Field, FieldType, Flag, HostTermKind, Level, Literal, Node, NodeKind,
     Span, ValueMatch,
 };
-use super::SelectParseOptions;
+use super::{SelectParseOptions, SelectionExpr};
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
 };
@@ -517,7 +517,7 @@ impl Parser<'_> {
                     kind: NodeKind::Within {
                         distance,
                         unit,
-                        reference: Box::new(reference),
+                        reference: Box::new(SelectionExpr { root: reference }),
                     },
                     span: Span(start..end),
                 }

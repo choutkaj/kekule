@@ -14,7 +14,7 @@ use super::{
 use crate::geometry::Point3;
 use crate::molecule::{Element, Molecule};
 use crate::properties::{PropertyColumn, PropertyKey};
-use crate::structure::ModelView;
+use crate::structure::{ModelView, Positions};
 use crate::topology::{
     AtomSelection, InstanceAtomId, MoleculeClass, ResidueClass, ResidueView, Topology,
     TopologyAtomIndex,
@@ -310,6 +310,14 @@ impl<'a> Evaluator<'a> {
         })
     }
 
+    fn request(&self, role: HostRole) -> HostRequest<'a> {
+        HostRequest {
+            topology: self.topology,
+            structure: self.structure,
+            role,
+        }
+    }
+
     fn host(
         &self,
         node: &Node,
@@ -321,13 +329,8 @@ impl<'a> Evaluator<'a> {
         let Some(resolver) = self.options.resolver() else {
             return Err(SelectEvaluateError::NoResolver { term, span });
         };
-        let request = HostRequest {
-            topology: self.topology,
-            structure: self.structure,
-            role,
-        };
         let value = resolver
-            .resolve(&HostTerm { kind, text }, request)
+            .resolve(&HostTerm { kind, text }, self.request(role))
             .map_err(|source| SelectEvaluateError::Host {
                 term: term.clone(),
                 span: span.clone(),
@@ -341,12 +344,26 @@ impl<'a> Evaluator<'a> {
         Ok(value)
     }
 
+    /// The points a resolver adds to a `within` reference that is not a host
+    /// term.
+    fn reference_points(&self, reference: &SelectionExpr) -> Result<Positions> {
+        let Some(resolver) = self.options.resolver() else {
+            return Ok(Positions::default());
+        };
+        resolver
+            .reference_points(reference, self.request(HostRole::Reference))
+            .map_err(|source| {
+                let (term, span) = self.term(&reference.root);
+                SelectEvaluateError::Host { term, span, source }
+            })
+    }
+
     fn within(
         &mut self,
         node: &Node,
         distance: f64,
         unit: DistanceUnit,
-        reference: &Node,
+        reference: &SelectionExpr,
     ) -> Result<Bits> {
         let view = self.requires_structure(node)?;
         let unit = match unit {
@@ -374,9 +391,10 @@ impl<'a> Evaluator<'a> {
                 }
             })?;
         let positions: &[Point3] = view.positions().values().value();
-        let references: Vec<Point3> = match &reference.kind {
+        let root = &reference.root;
+        let references: Vec<Point3> = match &root.kind {
             NodeKind::Host(kind, text) => {
-                match self.host(reference, *kind, text, HostRole::Reference)? {
+                match self.host(root, *kind, text, HostRole::Reference)? {
                     HostValue::Atoms(selection) => selection
                         .indices()
                         .iter()
@@ -386,9 +404,11 @@ impl<'a> Evaluator<'a> {
                 }
             }
             _ => {
-                let bits = self.node(reference)?;
+                let bits = self.node(root)?;
+                let added = self.reference_points(reference)?;
                 bits.ones()
                     .filter_map(|index| positions.get(index).copied())
+                    .chain(added.values().value().iter().copied())
                     .collect()
             }
         };

@@ -47,6 +47,16 @@ are marked **Breaking:**.
   keyword terms, including points of other objects for `within`. The grammar
   is documented in `docs/selection-language.md`, with a conformance suite in
   `tests/fixtures/select/conformance.txt` and a new `select` fuzz target.
+- `SelectionResolver::reference_points` lets a host add points to a `within`
+  reference written as an expression rather than a host term, so
+  `within 5 of ligand` evaluated on a receptor measures against a ligand held
+  in another structure. The resolver receives the reference as a
+  `SelectionExpr`, evaluates it on its other structures, and returns the
+  positions of the atoms it selects there; `within` measures against them
+  together with the atoms the reference selects in the evaluated structure.
+  References nested in it reach the resolver again. The default adds no
+  points, so existing resolvers keep their results. A failure is
+  `SelectEvaluateError::Host`, naming the reference and its span.
 - `FormatError::span` returns the byte range a failure concerns.
 - `VanDerWaalsRadiusSource::Bondi`, `BondiMantina`, and `Alvarez` select three
   classic van der Waals radius columns, tabulated in ångström.

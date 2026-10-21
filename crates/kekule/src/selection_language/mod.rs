@@ -106,10 +106,8 @@ impl SelectionExpr {
                 }
                 ast::NodeKind::Not(inner)
                 | ast::NodeKind::Bonded(inner)
-                | ast::NodeKind::Expand { inner, .. }
-                | ast::NodeKind::Within {
-                    reference: inner, ..
-                } => visit(inner, terms),
+                | ast::NodeKind::Expand { inner, .. } => visit(inner, terms),
+                ast::NodeKind::Within { reference, .. } => visit(&reference.root, terms),
                 _ => {}
             }
         }
@@ -386,14 +384,22 @@ impl std::error::Error for HostTermError {
     }
 }
 
-/// Resolves host terms: `#...` references, `$name` named selections, and
-/// registered host keywords.
+/// Resolves host terms (`#...` references, `$name` named selections, and
+/// registered host keywords) and may add points to the references of
+/// `within`.
 ///
 /// This is an extension point. An implementation must be deterministic for
 /// one request, must return [`HostValue::Atoms`] bound to a snapshot sharing
 /// the request's topology layout, and may return [`HostValue::Points`] only
-/// when the request's role is [`HostRole::Reference`]. Points are Cartesian,
-/// in the evaluated structure's frame; no imaging is applied.
+/// when the request's role is [`HostRole::Reference`]. Points, from either
+/// method, are Cartesian, in the evaluated structure's frame; no imaging is
+/// applied.
+///
+/// Evaluation reads one structure. Other structures, such as a ligand kept
+/// apart from its receptor, enter it only as points the resolver supplies
+/// for a `within` reference: [`Self::resolve`] answers a reference that is a
+/// host term (`within 5 of #2`), and [`Self::reference_points`] adds points
+/// to any other reference (`within 5 of ligand`).
 pub trait SelectionResolver {
     /// Resolves one term.
     ///
@@ -406,6 +412,40 @@ pub trait SelectionResolver {
         term: &HostTerm<'_>,
         request: HostRequest<'_>,
     ) -> Result<HostValue, HostTermError>;
+
+    /// Points to add to a `within` reference that is not a host term, such as
+    /// `ligand` in `within 5 of ligand`.
+    ///
+    /// `within` measures against these points together with the atoms the
+    /// reference selects in the evaluated structure. A host holding other
+    /// structures in the same frame evaluates `reference` on them with
+    /// [`SelectionExpr::evaluate_structure`] and returns the positions of the
+    /// atoms it selects there. That evaluation takes whatever resolver the
+    /// host passes, so references and host terms nested in `reference`
+    /// resolve as in any evaluation; each nested reference is a strictly
+    /// smaller part of `reference`.
+    ///
+    /// `reference` is part of the evaluated expression: it displays as
+    /// canonical text, and spans in its evaluation errors index the text the
+    /// whole expression was parsed from. `request` carries the evaluated
+    /// structure and the role [`HostRole::Reference`]. A reference that is a
+    /// host term goes to [`Self::resolve`] instead.
+    ///
+    /// The default adds no points, so a reference reads the evaluated
+    /// structure alone.
+    ///
+    /// # Errors
+    ///
+    /// A [`HostTermError`] when the host cannot supply the points; evaluation
+    /// then fails with [`SelectEvaluateError::Host`] naming the reference.
+    fn reference_points(
+        &self,
+        reference: &SelectionExpr,
+        request: HostRequest<'_>,
+    ) -> Result<Positions, HostTermError> {
+        let _ = (reference, request);
+        Ok(Positions::default())
+    }
 }
 
 /// A failure to evaluate a selection expression.
@@ -488,7 +528,8 @@ pub enum SelectEvaluateError {
         /// Its span.
         span: Range<usize>,
     },
-    /// The resolver failed.
+    /// The resolver failed to resolve a host term or to supply the points of
+    /// a `within` reference.
     Host {
         /// The term.
         term: String,

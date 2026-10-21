@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use super::SelectionExpr;
 use crate::molecule::Element;
 use crate::properties::PropertyKey;
 use crate::topology::{MoleculeClass, ResidueClass};
@@ -37,7 +38,9 @@ pub(crate) enum NodeKind {
     Within {
         distance: f64,
         unit: DistanceUnit,
-        reference: Box<Node>,
+        /// An expression of its own, so a resolver can evaluate it on other
+        /// structures.
+        reference: Box<SelectionExpr>,
     },
     Expand {
         level: Level,
