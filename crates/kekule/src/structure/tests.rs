@@ -1200,6 +1200,17 @@ fn boltzmann_populations_scale_the_samples_of_each_state_together() {
     }
     assert_eq!(ensemble.partition().assignments(), [0, 1, 0]);
 
+    // States whose weights differ by more than the floating-point range
+    // still get representable populations.
+    let mut spread = grouped(&[1.0e-200, 1.0e200], &[0, 1], &[0, 1]);
+    set_energies(&mut spread, &[Some(0.0), Some(0.0)]);
+    spread
+        .assign_boltzmann_populations(Quantity::new(temperature, KELVIN))
+        .unwrap();
+    for weight in weights(&spread) {
+        assert!((weight / 5.0e199 - 1.0).abs() <= 1.0e-12, "{weight}");
+    }
+
     // Weighting one state changes nothing: its population is all there is.
     let mut one = grouped(&[1.0, 2.0, 5.0], &[0, 0, 0], &[1]);
     set_energies(&mut one, &[Some(7.0)]);

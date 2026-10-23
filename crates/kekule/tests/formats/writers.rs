@@ -665,6 +665,17 @@ fn sdf_ensemble_samples_carry_their_weight_state_and_energy_through_data_fields(
             "this field carries the ensemble sample's own metadata".to_owned(),
         )
     );
+    // So does a field the sample does not write, such as a second
+    // representative marker on a sample that represents nothing.
+    let clustered = clustered_ensemble();
+    let fields = [SdfDataField::new(sdf::REPRESENTATIVE_FIELD, "true")];
+    let sample = sdf::SdfRecordSource::from(clustered.get(0).unwrap()).with_data_fields(&fields);
+    assert_eq!(
+        described(sdf::write([sample], SdfWriteOptions::default()).unwrap_err()).1,
+        Some(FormatErrorDetail::DataField {
+            name: sdf::REPRESENTATIVE_FIELD.to_owned(),
+        })
+    );
 }
 
 #[test]

@@ -888,18 +888,41 @@ impl Ensemble {
         let target_total = targets.iter().sum::<f64>();
         let scaled = self.scaled_weights();
         let total = scaled.iter().sum::<f64>();
+        let maximum = self.max_weight();
         let populations = self.scaled_state_populations();
-        // Each state's share of the total weight becomes its target share.
-        let factors = targets
+        // Each state's share of the total weight becomes its target share:
+        // its samples scale by that share times the total over its
+        // population. A state far lighter than the heaviest sample has a
+        // population that underflows when scaled by the heaviest weight, so
+        // its samples are normalized within the state instead, keeping every
+        // intermediate value representable.
+        let mut state_maxima = vec![0.0_f64; self.states.len()];
+        for (sample, state) in self.samples.iter().zip(self.partition.assignments()) {
+            state_maxima[*state] = state_maxima[*state].max(sample.weight);
+        }
+        let mut within = vec![0.0; self.states.len()];
+        for (sample, state) in self.samples.iter().zip(self.partition.assignments()) {
+            within[*state] += sample.weight / state_maxima[*state];
+        }
+        let shares = targets
             .iter()
-            .zip(&populations)
-            .map(|(target, population)| (target / target_total) * (total / population))
+            .map(|target| target / target_total)
             .collect::<Vec<_>>();
         let weights = self
             .samples
             .iter()
             .zip(self.partition.assignments())
-            .map(|(sample, state)| checked_weight(sample.weight * factors[*state]))
+            .map(|(sample, state)| {
+                let factor = shares[*state] * (total / populations[*state]);
+                let weight = if factor.is_finite() {
+                    sample.weight * factor
+                } else {
+                    (sample.weight / state_maxima[*state])
+                        * (shares[*state] * total / within[*state])
+                        * maximum
+                };
+                checked_weight(weight)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         for (sample, weight) in self.samples.iter_mut().zip(weights) {
             sample.weight = weight;
@@ -908,13 +931,17 @@ impl Ensemble {
         Ok(())
     }
 
-    /// Weights divided by the largest one, so sums cannot overflow.
-    pub(crate) fn scaled_weights(&self) -> Vec<f64> {
-        let maximum = self
-            .samples
+    /// The largest weight, or zero for no samples.
+    fn max_weight(&self) -> f64 {
+        self.samples
             .iter()
             .map(|sample| sample.weight)
-            .fold(0.0_f64, f64::max);
+            .fold(0.0_f64, f64::max)
+    }
+
+    /// Weights divided by the largest one, so sums cannot overflow.
+    pub(crate) fn scaled_weights(&self) -> Vec<f64> {
+        let maximum = self.max_weight();
         self.samples
             .iter()
             .map(|sample| sample.weight / maximum)

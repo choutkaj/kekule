@@ -79,6 +79,15 @@ pub const SDF_ENERGY_FIELD: &str = "kekule.energy.kJ_per_mol";
 /// written to, in kelvin, on every record of the ensemble.
 pub const SDF_TEMPERATURE_FIELD: &str = "kekule.temperature.K";
 
+/// The data fields an ensemble sample's own metadata uses.
+const SAMPLE_FIELDS: [&str; 5] = [
+    SDF_WEIGHT_FIELD,
+    SDF_STATE_FIELD,
+    SDF_REPRESENTATIVE_FIELD,
+    SDF_ENERGY_FIELD,
+    SDF_TEMPERATURE_FIELD,
+];
+
 /// One SDF record: a model view with an optional title and data fields.
 ///
 /// Convert from `&Model`, a borrowed ensemble sample or trajectory frame, or
@@ -193,6 +202,7 @@ fn write_record(
         None,
         options.frame_metadata,
     )?;
+    let sample = matches!(record.model.kind(), StructureKind::Sample { .. });
     let sample_fields = match record.model.kind() {
         StructureKind::Sample {
             weight,
@@ -206,10 +216,9 @@ fn write_record(
     };
     for field in record.data_fields {
         validate_data_field(field)?;
-        if sample_fields
-            .iter()
-            .any(|sample| sample.name() == field.name())
-        {
+        // Every sample owns these names, whether or not it writes them, so
+        // a caller's field never adds a second representative or energy.
+        if sample && SAMPLE_FIELDS.contains(&field.name()) {
             return Err(FormatError::write(
                 Format::Sdf,
                 DiagnosticKind::Inconsistent,
