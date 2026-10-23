@@ -1,11 +1,10 @@
-//! Periodic coordinate reconstruction, imaging, temporal unwrapping, and
-//! image-aware smoothing.
+//! Periodic coordinate reconstruction, imaging, imaging onto a reference
+//! frame, and temporal unwrapping.
 //!
 //! These operations change positions only, in place. The shared topology, cells,
 //! velocities, forces, time, step, and all properties are retained. Collection
 //! functions publish only after every item succeeds; clone the collection first
-//! to keep the original. Every processed item must have a periodic cell, except
-//! in smoothing, which averages cell-free frames as stored.
+//! to keep the original. Every processed item must have a periodic cell.
 //!
 //! Molecules and bonds come from the authoritative topology. No bonds are guessed
 //! from distances or hierarchy. Orthorhombic, triclinic, rotated, and partially
@@ -16,8 +15,9 @@
 //! for cells requiring more; it never substitutes an approximate image silently.
 //!
 //! Collection functions operate on an in-memory [`Trajectory`];
-//! [`MoleculeImager`], [`TrajectoryUnwrapper`], and [`FrameSmoother`] apply
-//! the same operations to streamed [`FrameBuffer`](crate::FrameBuffer)s.
+//! [`MoleculeImager`] and
+//! [`TrajectoryUnwrapper`] apply the same operations to streamed
+//! [`FrameBuffer`](crate::FrameBuffer)s.
 //!
 //! # Examples
 //!
@@ -100,13 +100,11 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{DenseArrayError, Positions, Trajectory, TrajectoryError};
+use kekule::structure::{AsModelView, DenseArrayError, Positions, Trajectory, TrajectoryError};
 use kekule::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
-mod smooth;
 mod stream;
-pub use smooth::FrameSmoother;
 pub use stream::{MoleculeImager, TrajectoryUnwrapper};
 
 /// Failure to reconstruct or publish periodic coordinates.
@@ -120,6 +118,8 @@ pub enum PeriodicError {
     },
     /// The anchor selection belongs to another topology.
     SelectionTopologyMismatch,
+    /// The reference structure belongs to another topology.
+    ReferenceTopologyMismatch,
     /// A frame belongs to another topology.
     TopologyMismatch {
         /// The frame index.
@@ -139,14 +139,6 @@ pub enum PeriodicError {
     },
     /// Imaging was requested with no anchor atom.
     EmptyAnchors,
-    /// A smoothing neighbor is outside the window, is the smoothed frame
-    /// itself, or does not follow the previous neighbor's index.
-    InvalidNeighbor {
-        /// The smoothed frame index.
-        frame: usize,
-        /// The rejected neighbor index.
-        neighbor: usize,
-    },
     /// Selected shortest bond images do not form a consistent finite molecule (e.g. a winding ring).
     InconsistentBondImages {
         /// The frame index.
@@ -198,11 +190,11 @@ impl fmt::Display for PeriodicError {
         match self {
             Self::MissingCell { frame } => write!(f, "frame {frame} has no periodic cell"),
             Self::SelectionTopologyMismatch => f.write_str("anchor selection belongs to another topology"),
+            Self::ReferenceTopologyMismatch => f.write_str("reference structure belongs to another topology"),
             Self::TopologyMismatch { frame } => write!(f, "frame {frame} belongs to another topology"),
             Self::NonSequentialFrame { previous, frame } => write!(f, "frame {frame} must immediately follow frame {previous} for temporal unwrapping"),
             Self::NonMonotonicTime { frame } => write!(f, "time decreases at frame {frame} during temporal unwrapping"),
             Self::EmptyAnchors => f.write_str("imaging requires at least one anchor atom"),
-            Self::InvalidNeighbor { frame, neighbor } => write!(f, "frame {neighbor} is not a valid next smoothing neighbor of frame {frame}"),
             Self::InconsistentBondImages { frame, bond } => write!(f, "frame {frame} has inconsistent periodic images around {bond}"),
             Self::PeriodicAxesChanged { frame } => write!(f, "periodic axes change at frame {frame}"),
             Self::AmbiguousDisplacement { frame, atom, axis } => write!(f, "frame {frame}, {atom}, cell axis {axis}: ambiguous half-cell displacement"),
@@ -271,6 +263,55 @@ pub fn image_molecules(
     publish(trajectory, positions)
 }
 
+/// Moves each molecule of every frame to its periodic image nearest the same
+/// molecule in `reference`.
+///
+/// Each bonded molecule of a frame is translated as a whole by the lattice
+/// vector of the frame's own cell that brings its geometric center nearest,
+/// by the exact Cartesian nearest-image search, to the center of the same
+/// molecule in `reference`. Positions change only by lattice vectors, so each
+/// frame stays the same periodic system; the frame's cell, velocities, forces,
+/// time, step, and properties are retained.
+///
+/// Molecules rather than atoms are imaged, as in [`image_molecules`], so that
+/// molecules made whole by earlier steps stay whole: per-atom images would
+/// split a molecule whose atoms lie on either side of a half-cell distance from
+/// the reference. Make molecules whole in both structures first (see
+/// [`make_molecules_whole`]), or the centers are not meaningful; this function
+/// does not repair split molecules.
+///
+/// The frame's cell defines the images. The reference's cell is not used, so
+/// the reference may have a different cell or none; with a changing cell, the
+/// nearest image is the nearest under the frame's cell. A frame without a cell
+/// is an error. Ties between equally near images are resolved
+/// deterministically. This is a per-frame operation, independent of frame
+/// order and unlike [`unwrap_trajectory`] free of temporal state. To image onto
+/// a frame of the same trajectory, retain a copy of it first, for example with
+/// `trajectory.get(0).unwrap().to_model()`.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::ReferenceTopologyMismatch`] when `reference` does
+/// not share the trajectory's layout, [`PeriodicError::MissingCell`] for a
+/// frame without a cell, [`PeriodicError::LimitExceeded`] or
+/// [`PeriodicError::NumericalFailure`] for an ill-conditioned cell or
+/// out-of-range coordinates, and [`PeriodicError::Position`] or
+/// [`PeriodicError::Publication`] when the result cannot be stored. On error
+/// the trajectory is unchanged.
+pub fn image_onto(
+    trajectory: &mut Trajectory,
+    reference: &(impl AsModelView + ?Sized),
+) -> Result<(), PeriodicError> {
+    let imager = MoleculeImager::new(trajectory.shared_topology());
+    let reference = reference.as_model_view();
+    let positions = trajectory
+        .iter()
+        .enumerate()
+        .map(|(index, item)| imager.reference_positions(index, item.as_model_view(), reference))
+        .collect::<Result<Vec<_>, _>>()?;
+    publish(trajectory, positions)
+}
+
 /// Unwraps a trajectory through time using fractional-coordinate continuity.
 ///
 /// Frame zero is unchanged. For each subsequent frame, integer periodic images
@@ -303,42 +344,6 @@ pub fn unwrap_trajectory(trajectory: &mut Trajectory) -> Result<(), PeriodicErro
         .iter()
         .enumerate()
         .map(|(index, frame)| unwrapper.next_positions(index, frame))
-        .collect::<Result<Vec<_>, _>>()?;
-    publish(trajectory, positions)
-}
-
-/// Smooths every frame with a moving average of positions over the frames
-/// within `half_width` of it.
-///
-/// Every frame is averaged from the unsmoothed frames, with windows truncated
-/// at both ends of the trajectory and neighbor atoms imaged onto each frame
-/// under its cell, as described for [`FrameSmoother`]. Velocities, forces,
-/// cells, time, step, and properties are retained unaveraged.
-///
-/// # Errors
-///
-/// Returns [`PeriodicError::MissingCell`] when a window mixes frames with and
-/// without cells, [`PeriodicError::LimitExceeded`] or
-/// [`PeriodicError::NumericalFailure`] for an ill-conditioned cell or
-/// out-of-range coordinates, and [`PeriodicError::Position`] or
-/// [`PeriodicError::Publication`] when the result cannot be stored. On error
-/// the trajectory is unchanged.
-pub fn smooth_trajectory(
-    trajectory: &mut Trajectory,
-    half_width: usize,
-) -> Result<(), PeriodicError> {
-    let smoother = FrameSmoother::new(trajectory.shared_topology(), half_width);
-    let frames: Vec<_> = trajectory.iter().collect();
-    let positions = frames
-        .iter()
-        .enumerate()
-        .map(|(index, &frame)| {
-            let neighbors = smoother
-                .window(index, frames.len())
-                .filter(|&neighbor| neighbor != index)
-                .map(|neighbor| (neighbor, frames[neighbor]));
-            smoother.smoothed_positions(index, frame, neighbors)
-        })
         .collect::<Result<Vec<_>, _>>()?;
     publish(trajectory, positions)
 }
@@ -463,6 +468,24 @@ impl MoleculePlan {
             }
         }
         Ok(points)
+    }
+
+    fn image_onto(
+        &self,
+        points: &mut [Point3],
+        reference: &[Point3],
+        lattice: &Lattice,
+    ) -> Result<(), PeriodicError> {
+        for group in &self.groups {
+            let delta =
+                center(points, group, lattice.frame)? - center(reference, group, lattice.frame)?;
+            let (_, images) = lattice.nearest_image(delta)?;
+            let shift = lattice.cartesian(images.map(|n| n as f64));
+            for &atom in group {
+                points[atom] = points[atom] - shift;
+            }
+        }
+        Ok(())
     }
 
     fn image(

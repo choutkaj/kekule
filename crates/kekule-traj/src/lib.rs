@@ -84,12 +84,11 @@
 //! not assert chemical equality.
 //!
 //! [`analysis`] adds the streaming [`analysis::FrameSuperposer`] and per-atom
-//! reductions. Molecular reconstruction, imaging, temporal unwrapping, and
-//! image-aware moving-average smoothing live in [`periodic`] and are explicit
-//! preprocessing steps, independent of alignment. [`analysis::FrameSuperposer`],
-//! [`periodic::MoleculeImager`], [`periodic::TrajectoryUnwrapper`], and
-//! [`periodic::FrameSmoother`] apply the in-memory operations to streamed
-//! frames.
+//! reductions. Molecular reconstruction, imaging around anchors or onto a
+//! reference frame, and temporal unwrapping live in [`periodic`] and are
+//! explicit preprocessing steps, independent of alignment. [`analysis::FrameSuperposer`], [`periodic::MoleculeImager`], and
+//! [`periodic::TrajectoryUnwrapper`] apply the in-memory operations to
+//! streamed frames.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
