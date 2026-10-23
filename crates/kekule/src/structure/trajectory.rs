@@ -14,7 +14,7 @@ use super::state::{
     transform_positions, validate_binding,
 };
 use super::{
-    AsModelView, Ensemble, EnsembleMember, Forces, Model, ModelView, Positions, StructureError,
+    AsModelView, Ensemble, EnsembleSample, Forces, Model, ModelView, Positions, StructureError,
     StructureKind, Velocities,
 };
 
@@ -278,21 +278,23 @@ impl Trajectory {
         Ok(())
     }
 
-    /// Reinterprets the frames as an equally weighted ensemble (every member
-    /// has weight `1.0`), dropping temporal order, velocities, forces, time,
-    /// and step. Positions, cells, and properties move without copying.
+    /// Reinterprets the frames as an equally weighted ensemble of one state
+    /// (every sample has weight `1.0`, frame `i` becoming sample `i`),
+    /// dropping temporal order, velocities, forces, time, and step.
+    /// Positions, cells, and properties move without copying. The state has
+    /// no energy: the frames already follow their distribution.
     ///
     /// Equal weights are right for frames sampled from equilibrium at a
     /// constant interval; reweight explicitly otherwise.
     pub fn into_ensemble(self) -> Ensemble {
-        let members = self
+        let samples = self
             .frames
             .into_iter()
             .map(|frame| {
-                EnsembleMember::from_frame_state(frame.positions, frame.cell, frame.properties)
+                EnsembleSample::from_frame_state(frame.positions, frame.cell, frame.properties)
             })
             .collect();
-        Ensemble::from_bound_members(self.topology, self.properties, members)
+        Ensemble::from_bound_samples(self.topology, self.properties, samples)
     }
 
     /// Applies one rigid transform per frame transactionally.

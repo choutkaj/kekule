@@ -4,7 +4,7 @@
 //! force fields, machine-learned models, and quantum-chemical backends can all
 //! implement it. A prepared potential binds one topology layout and evaluates
 //! any [`ModelView`] sharing it, including perceived snapshots: a
-//! [`kekule::structure::Model`], an ensemble member, or a trajectory frame.
+//! [`kekule::structure::Model`], an ensemble sample, or a trajectory frame.
 //! Results are validated at this boundary and stored in Kekule's canonical
 //! units (kJ/mol and kJ/mol/nm).
 

@@ -2,9 +2,9 @@
 use std::io::Write;
 
 use crate::structure::{
-    AsModelView, EnsembleMemberView, Model, ModelView, StructureKind, TrajectoryFrameView,
+    AsModelView, EnsembleSampleView, Model, ModelView, StructureKind, TrajectoryFrameView,
 };
-use crate::units::{Quantity, KILOJOULE_PER_MOLE};
+use crate::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
@@ -50,8 +50,8 @@ impl SdfWriteOptions {
 
     /// A trajectory frame's time, step, velocities, and forces, which an SDF
     /// record cannot carry: by default writing a frame with any of them
-    /// fails. An ensemble member's weight and energy are always written as
-    /// data fields.
+    /// fails. An ensemble sample's weight, state, state energy, and
+    /// temperature are always written as data fields.
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
         self.frame_metadata
     }
@@ -64,20 +64,42 @@ impl SdfWriteOptions {
     }
 }
 
-/// The data field an ensemble member's relative weight is written to and
+/// The data field an ensemble sample's relative weight is written to and
 /// [`sdf::ensemble`](crate::sdf::ensemble) reads it from.
 pub const SDF_WEIGHT_FIELD: &str = "kekule.weight";
-/// The data field an ensemble member's energy is written to, in kJ/mol.
+/// The data field the index of an ensemble sample's state is written to.
+pub const SDF_STATE_FIELD: &str = "kekule.state";
+/// The data field, `true`, that marks the record of a state's representative
+/// sample.
+pub const SDF_REPRESENTATIVE_FIELD: &str = "kekule.representative";
+/// The data field a state's energy is written to, in kJ/mol, on the record of
+/// its representative sample.
 pub const SDF_ENERGY_FIELD: &str = "kekule.energy.kJ_per_mol";
+/// The data field the temperature an ensemble's populations describe is
+/// written to, in kelvin, on every record of the ensemble.
+pub const SDF_TEMPERATURE_FIELD: &str = "kekule.temperature.K";
+
+/// The data fields an ensemble sample's own metadata uses.
+const SAMPLE_FIELDS: [&str; 5] = [
+    SDF_WEIGHT_FIELD,
+    SDF_STATE_FIELD,
+    SDF_REPRESENTATIVE_FIELD,
+    SDF_ENERGY_FIELD,
+    SDF_TEMPERATURE_FIELD,
+];
 
 /// One SDF record: a model view with an optional title and data fields.
 ///
-/// Convert from `&Model`, a borrowed ensemble member or trajectory frame, or
+/// Convert from `&Model`, a borrowed ensemble sample or trajectory frame, or
 /// `&SdfRecordInterpretation` (which keeps its title and data fields). An
-/// ensemble member's weight and energy follow its data fields as
-/// [`SDF_WEIGHT_FIELD`] and [`SDF_ENERGY_FIELD`], whichever way its view is
-/// passed; a trajectory frame's time, step, velocities, and forces fail to
-/// write unless [`SdfWriteOptions::frame_metadata`] omits them.
+/// ensemble sample's weight, its state, and the ensemble's temperature follow
+/// its data fields as [`SDF_WEIGHT_FIELD`], [`SDF_STATE_FIELD`], and
+/// [`SDF_TEMPERATURE_FIELD`]; a representative's record is marked with
+/// [`SDF_REPRESENTATIVE_FIELD`] and carries its state's energy as
+/// [`SDF_ENERGY_FIELD`], whichever way its view is passed. State and
+/// ensemble properties are not written. A trajectory frame's time, step,
+/// velocities, and forces fail to write unless
+/// [`SdfWriteOptions::frame_metadata`] omits them.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
     model: ModelView<'a>,
@@ -107,11 +129,11 @@ impl<'a> SdfRecordSource<'a> {
         self
     }
 
-    /// Sets the data fields, written in order; an ensemble member's weight
-    /// and energy fields still follow them. Writing fails with `Unsupported`
+    /// Sets the data fields, written in order; an ensemble sample's fields
+    /// still follow them. Writing fails with `Unsupported`
     /// for a field SDF cannot frame (an empty, untrimmed, or bracketed name,
     /// or a value with a carriage return, blank line, or `$$$$` line) and
-    /// with `Inconsistent` for a field named like the member metadata.
+    /// with `Inconsistent` for a field named like the sample metadata.
     #[must_use]
     pub fn with_data_fields(mut self, data_fields: &'a [SdfDataField]) -> Self {
         self.data_fields = data_fields;
@@ -125,9 +147,9 @@ impl<'a> From<&'a Model> for SdfRecordSource<'a> {
     }
 }
 
-impl<'a> From<EnsembleMemberView<'a>> for SdfRecordSource<'a> {
-    fn from(member: EnsembleMemberView<'a>) -> Self {
-        Self::view(member.as_model_view())
+impl<'a> From<EnsembleSampleView<'a>> for SdfRecordSource<'a> {
+    fn from(sample: EnsembleSampleView<'a>) -> Self {
+        Self::view(sample.as_model_view())
     }
 }
 
@@ -156,7 +178,7 @@ pub(crate) fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
 }
 
 /// Writes independent records in input order. An ensemble or trajectory
-/// writes one record per item (`sdf::write(&ensemble, options)`).
+/// writes one record per sample or frame (`sdf::write(&ensemble, options)`).
 pub(crate) fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     writer: &mut impl Write,
     records: impl IntoIterator<Item = R>,
@@ -180,20 +202,27 @@ fn write_record(
         None,
         options.frame_metadata,
     )?;
-    let member_fields = match record.model.kind() {
-        StructureKind::Member { weight, energy, .. } => member_fields(weight, energy),
+    let sample = matches!(record.model.kind(), StructureKind::Sample { .. });
+    let sample_fields = match record.model.kind() {
+        StructureKind::Sample {
+            weight,
+            state,
+            representative,
+            energy,
+            temperature,
+            ..
+        } => sample_fields(weight, state, representative, energy, temperature),
         _ => Vec::new(),
     };
     for field in record.data_fields {
         validate_data_field(field)?;
-        if member_fields
-            .iter()
-            .any(|member| member.name() == field.name())
-        {
+        // Every sample owns these names, whether or not it writes them, so
+        // a caller's field never adds a second representative or energy.
+        if sample && SAMPLE_FIELDS.contains(&field.name()) {
             return Err(FormatError::write(
                 Format::Sdf,
                 DiagnosticKind::Inconsistent,
-                "this field carries the ensemble member's own metadata",
+                "this field carries the ensemble sample's own metadata",
             )
             .with_detail(FormatErrorDetail::DataField {
                 name: field.name().to_owned(),
@@ -205,21 +234,40 @@ fn write_record(
     let ctab = render_model(record.model, record.title, options.version).map_err(molfile)?;
     let sink = |error| FormatError::sink(Format::Sdf, error);
     writer.write_all(ctab.as_bytes()).map_err(sink)?;
-    for field in record.data_fields.iter().chain(&member_fields) {
+    for field in record.data_fields.iter().chain(&sample_fields) {
         writeln!(writer, ">  <{}>\n{}\n", field.name(), field.value()).map_err(sink)?;
     }
     writer.write_all(b"$$$$\n").map_err(sink)
 }
 
-/// An ensemble member's weight and energy as data fields, in the shortest
-/// decimal text that reads back to the same value.
-fn member_fields(weight: f64, energy: Option<Quantity<f64>>) -> Vec<SdfDataField> {
-    let mut fields = vec![SdfDataField::new(SDF_WEIGHT_FIELD, weight.to_string())];
-    if let Some(energy) = energy {
-        let kj_per_mol = energy
-            .value_in(KILOJOULE_PER_MOLE)
-            .expect("member energies have an energy-per-amount dimension");
-        fields.push(SdfDataField::new(SDF_ENERGY_FIELD, kj_per_mol.to_string()));
+/// An ensemble sample's weight and state, its state's energy on a
+/// representative's record, and the ensemble's temperature as data fields,
+/// numbers in the shortest decimal text that reads back to the same value.
+fn sample_fields(
+    weight: f64,
+    state: usize,
+    representative: bool,
+    energy: Option<&Quantity<f64>>,
+    temperature: Option<&Quantity<f64>>,
+) -> Vec<SdfDataField> {
+    let mut fields = vec![
+        SdfDataField::new(SDF_WEIGHT_FIELD, weight.to_string()),
+        SdfDataField::new(SDF_STATE_FIELD, state.to_string()),
+    ];
+    if representative {
+        fields.push(SdfDataField::new(SDF_REPRESENTATIVE_FIELD, "true"));
+        if let Some(energy) = energy {
+            let kj_per_mol = energy
+                .value_in(KILOJOULE_PER_MOLE)
+                .expect("state energies have an energy-per-amount dimension");
+            fields.push(SdfDataField::new(SDF_ENERGY_FIELD, kj_per_mol.to_string()));
+        }
+    }
+    if let Some(temperature) = temperature {
+        let kelvin = temperature
+            .value_in(KELVIN)
+            .expect("ensemble temperatures have a temperature dimension");
+        fields.push(SdfDataField::new(SDF_TEMPERATURE_FIELD, kelvin.to_string()));
     }
     fields
 }

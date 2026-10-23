@@ -1,10 +1,12 @@
-//! Partitions of an [`Ensemble`] into clusters of similar members.
+//! Partitions of an [`Ensemble`]'s samples into states of similar
+//! structures.
 //!
 //! Clustering never changes the ensemble. It returns an
-//! [`EnsemblePartition`], a separate result that assigns every member to one
-//! cluster and names one representative member per cluster.
-//! [`Ensemble::collapse`] then keeps one member per cluster, carrying the
-//! summed weight of its cluster.
+//! [`EnsemblePartition`] that assigns every sample to one state and names one
+//! representative sample per state. [`Ensemble::regroup`] applies it without
+//! changing any weight, so populations follow the samples, and
+//! [`Ensemble::collapse`] then keeps one sample per state, carrying the
+//! state's population.
 //!
 //! [`Ensemble::cluster_hierarchical`] cuts the [`Dendrogram`] of a
 //! [`DistanceMatrix`], such as [`Ensemble::pairwise_fitted_rmsd`], at a height or
@@ -13,29 +15,31 @@
 //! diameter by `h`.
 //!
 //! [`Ensemble::cluster_k_medoids`] finds a given number of clusters directly,
-//! choosing medoid members that minimize the weight-summed distance from
-//! every member to its nearest medoid, so populated members attract medoids.
+//! choosing medoid samples that minimize the weight-summed distance from
+//! every sample to its nearest medoid, so heavy samples attract medoids.
 //!
 //! [`Ensemble::cluster_by_radius`] is leader clustering on fitted RMSD. It
 //! needs no matrix, so it scales to larger ensembles. With
 //! a [`SymmetricSelection`](crate::alignment::SymmetricSelection) and a small
 //! radius it merges rotamers, copies of one conformer that differ only by
-//! exchanged equivalent atoms. Weight members by energy before collapsing, so
-//! each conformer's weight includes its degeneracy:
+//! exchanged equivalent atoms. Weight the conformers by energy first; the
+//! merged state keeps its representative's energy and gains the population
+//! of every rotamer, its degeneracy:
 //!
 //! ```
 //! use std::error::Error;
 //!
 //! use kekule::alignment::SymmetricSelection;
 //! use kekule::geometry::Point3;
-//! use kekule::structure::{Ensemble, EnsembleMember, Positions};
+//! use kekule::structure::{Ensemble, EnsembleSample, EnsembleState, Positions};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM, KELVIN, KILOJOULE_PER_MOLE};
 //!
 //! // Acetate, then a rotamer with its oxygens exchanged, then a distinct
-//! // conformer 5 kJ/mol higher.
+//! // conformer 5 kJ/mol higher, each its own state.
 //! let topology = kekule::smiles::to_topology("CC(=O)[O-]")?;
-//! let member = |o2: f64, o3: f64, energy: f64| -> Result<EnsembleMember, Box<dyn Error>> {
+//! let mut ensemble = Ensemble::new(topology.clone());
+//! for (o2, o3, energy) in [(1.1, -1.1, 0.0), (-1.1, 1.1, 0.0), (1.1, -0.3, 5.0)] {
 //!     let points = [
 //!         Point3::new(0.0, 0.0, 0.0),
 //!         Point3::new(1.5, 0.0, 0.0),
@@ -43,23 +47,22 @@
 //!         Point3::new(2.2, o3, 0.5),
 //!     ];
 //!     let positions = Positions::new(Quantity::new(points, ANGSTROM))?;
-//!     Ok(EnsembleMember::new(positions, 1.0)?
-//!         .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))?)
-//! };
-//! let mut ensemble = Ensemble::from_items(
-//!     topology.clone(),
-//!     [member(1.1, -1.1, 0.0)?, member(-1.1, 1.1, 0.0)?, member(1.1, -0.3, 5.0)?],
-//! )?;
-//! ensemble.assign_boltzmann_weights(Quantity::new(298.15, KELVIN))?;
+//!     let state = EnsembleState::new().with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))?;
+//!     ensemble.push_state(EnsembleSample::new(positions, 1.0)?, state)?;
+//! }
+//! ensemble.assign_boltzmann_populations(Quantity::new(298.15, KELVIN))?;
 //!
 //! let atoms = SymmetricSelection::new(&AtomSelection::all(topology.clone()))?;
 //! let radius = Quantity::new(0.125, ANGSTROM);
 //! let rotamers = ensemble.cluster_by_radius(radius, &atoms, Default::default())?;
 //! assert_eq!(rotamers.assignments(), [0, 0, 1]);
 //!
-//! let conformers = ensemble.collapse(&rotamers)?;
+//! ensemble.regroup(rotamers)?;
+//! assert_eq!(ensemble.state_count(), 2);
+//! assert!(ensemble.state(0).unwrap().energy().is_some());
+//! let conformers = ensemble.collapse()?;
 //! assert_eq!(conformers.len(), 2);
-//! assert_eq!(conformers.get(0).unwrap().weight(), 2.0);
+//! assert_eq!(conformers.get(0).unwrap().weight(), ensemble.state(0).unwrap().population());
 //! # Ok::<(), Box<dyn Error>>(())
 //! ```
 
@@ -72,110 +75,20 @@ pub use hierarchical::{Cut, Dendrogram, DistanceMatrix, Linkage, Merge};
 use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentError, AlignmentOptions, FitAtoms, NormalizedWeights,
 };
-use crate::structure::{Ensemble, EnsembleError, ModelView, StructureError};
+use crate::structure::{Ensemble, EnsembleError, EnsemblePartition, ModelView, StructureError};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
-
-/// An assignment of every member of one ensemble to exactly one cluster,
-/// with one representative member per cluster.
-///
-/// Clusters are numbered from zero; a cluster always contains its
-/// representative, so none is empty. The partition records member indices
-/// only: it applies to any ensemble with the same member count, and
-/// [`Ensemble::collapse`] checks that count.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnsemblePartition {
-    assignments: Vec<usize>,
-    representatives: Vec<usize>,
-}
-
-impl EnsemblePartition {
-    /// Validates a partition built elsewhere: `assignments[m]` is the cluster
-    /// of member `m`, and `representatives[c]` is a member assigned to
-    /// cluster `c`.
-    ///
-    /// # Errors
-    ///
-    /// [`PartitionError::ClusterOutOfRange`] when a member's cluster has no
-    /// representative, [`PartitionError::RepresentativeOutOfRange`] when a
-    /// representative is not a member, and
-    /// [`PartitionError::RepresentativeNotInCluster`] when a representative is
-    /// assigned to another cluster.
-    pub fn new(
-        assignments: Vec<usize>,
-        representatives: Vec<usize>,
-    ) -> Result<Self, PartitionError> {
-        for (member, cluster) in assignments.iter().enumerate() {
-            if *cluster >= representatives.len() {
-                return Err(PartitionError::ClusterOutOfRange {
-                    member,
-                    cluster: *cluster,
-                    clusters: representatives.len(),
-                });
-            }
-        }
-        for (cluster, member) in representatives.iter().enumerate() {
-            match assignments.get(*member) {
-                None => {
-                    return Err(PartitionError::RepresentativeOutOfRange {
-                        cluster,
-                        member: *member,
-                        members: assignments.len(),
-                    })
-                }
-                Some(assigned) if *assigned != cluster => {
-                    return Err(PartitionError::RepresentativeNotInCluster {
-                        cluster,
-                        member: *member,
-                    })
-                }
-                Some(_) => {}
-            }
-        }
-        Ok(Self {
-            assignments,
-            representatives,
-        })
-    }
-
-    /// The number of partitioned members.
-    pub fn member_count(&self) -> usize {
-        self.assignments.len()
-    }
-
-    /// The number of clusters, one per representative.
-    pub fn cluster_count(&self) -> usize {
-        self.representatives.len()
-    }
-
-    /// The cluster of every member, in member order.
-    pub fn assignments(&self) -> &[usize] {
-        &self.assignments
-    }
-
-    /// The representative member of every cluster, in cluster order.
-    pub fn representatives(&self) -> &[usize] {
-        &self.representatives
-    }
-
-    /// The members of one cluster in member order; empty for a cluster that
-    /// does not exist.
-    pub fn members(&self, cluster: usize) -> impl Iterator<Item = usize> + '_ {
-        self.assignments
-            .iter()
-            .enumerate()
-            .filter(move |(_, assigned)| **assigned == cluster)
-            .map(|(member, _)| member)
-    }
-}
 
 /// The order in which leader clustering visits members.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum ClusterOrder {
-    /// Descending weight, so the most populated member of a cluster leads it.
+    /// Descending sample weight, so the heaviest sample of a cluster leads
+    /// it.
     #[default]
     Weight,
-    /// Ascending energy, so the lowest-energy member of a cluster leads it.
+    /// Ascending energy of each sample's state, so a sample of the
+    /// lowest-energy state leads its cluster; samples of one state keep
+    /// sample order.
     Energy,
 }
 
@@ -248,7 +161,7 @@ impl Ensemble {
     ///   member being placed.
     /// - [`ClusteringError::Ensemble`] wrapping
     ///   [`EnsembleError::MissingEnergy`] when ordering by
-    ///   [`ClusterOrder::Energy`] and a member has no energy.
+    ///   [`ClusterOrder::Energy`] and a state has no energy.
     pub fn cluster_by_radius<'a>(
         &self,
         radius: Quantity<f64>,
@@ -262,17 +175,20 @@ impl Ensemble {
         }
         let order = match options.order {
             ClusterOrder::Weight => self.ranked_by_weight(),
-            ClusterOrder::Energy => self.ranked_by_energy()?,
+            ClusterOrder::Energy => {
+                let energies = self.state_energies()?;
+                let states = self.partition().assignments();
+                let mut order = (0..self.len()).collect::<Vec<_>>();
+                order.sort_by(|&a, &b| energies[states[a]].total_cmp(&energies[states[b]]));
+                order
+            }
         };
         let views = self
             .iter()
             .map(|member| member.as_model_view())
             .collect::<Vec<ModelView<'_>>>();
         let Some(first) = views.first() else {
-            return Ok(EnsemblePartition {
-                assignments: Vec::new(),
-                representatives: Vec::new(),
-            });
+            return Ok(EnsemblePartition::state_per_sample(0));
         };
         let sets = atoms.pair_sets(*first, *first)?;
         check_fit_count(atoms.pair_count())?;
@@ -309,45 +225,10 @@ impl Ensemble {
                 }
             };
         }
-        Ok(EnsemblePartition {
+        Ok(EnsemblePartition::from_parts_unchecked(
             assignments,
             representatives,
-        })
-    }
-
-    /// One member per cluster of `partition`, in cluster order: a copy of
-    /// the representative carrying the summed weight of its cluster.
-    ///
-    /// The representative keeps its own positions, energy, and other state,
-    /// and the topology and ensemble properties are shared. Summed weights
-    /// stay relative, so collapsing Boltzmann-weighted rotamers gives each
-    /// conformer its degeneracy-weighted population.
-    ///
-    /// # Errors
-    ///
-    /// [`ClusteringError::PartitionMismatch`] when the partition has a
-    /// different member count, and [`ClusteringError::Ensemble`] when a summed
-    /// weight is not finite.
-    pub fn collapse(&self, partition: &EnsemblePartition) -> Result<Self, ClusteringError> {
-        if partition.member_count() != self.len() {
-            return Err(ClusteringError::PartitionMismatch {
-                expected: self.len(),
-                actual: partition.member_count(),
-            });
-        }
-        let mut totals = vec![0.0; partition.cluster_count()];
-        for (member, cluster) in self.iter().zip(partition.assignments()) {
-            totals[*cluster] += member.weight();
-        }
-        let mut collapsed = self.select(partition.representatives().iter().copied())?;
-        for (cluster, total) in totals.into_iter().enumerate() {
-            collapsed
-                .get_mut(cluster)
-                .expect("one member per cluster")
-                .set_weight(total)
-                .map_err(EnsembleError::from)?;
-        }
-        Ok(collapsed)
+        ))
     }
 }
 
@@ -364,79 +245,12 @@ fn undirected(atoms: FitAtoms<'_>) -> Result<FitAtoms<'_>, ClusteringError> {
     }
 }
 
-/// An invalid [`EnsemblePartition`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PartitionError {
-    /// A member is assigned to a cluster without a representative.
-    ClusterOutOfRange {
-        /// The assigned member.
-        member: usize,
-        /// The cluster it is assigned to.
-        cluster: usize,
-        /// The number of clusters, one per representative.
-        clusters: usize,
-    },
-    /// A representative is not a partitioned member.
-    RepresentativeOutOfRange {
-        /// The represented cluster.
-        cluster: usize,
-        /// The representative member index.
-        member: usize,
-        /// The number of partitioned members.
-        members: usize,
-    },
-    /// A representative is assigned to another cluster.
-    RepresentativeNotInCluster {
-        /// The represented cluster.
-        cluster: usize,
-        /// The representative member index.
-        member: usize,
-    },
-}
-
-impl fmt::Display for PartitionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ClusterOutOfRange {
-                member,
-                cluster,
-                clusters,
-            } => write!(
-                formatter,
-                "member {member} is assigned to cluster {cluster}, but there are {clusters} clusters"
-            ),
-            Self::RepresentativeOutOfRange {
-                cluster,
-                member,
-                members,
-            } => write!(
-                formatter,
-                "cluster {cluster} is represented by member {member}, but there are {members} members"
-            ),
-            Self::RepresentativeNotInCluster { cluster, member } => write!(
-                formatter,
-                "member {member} represents cluster {cluster} but is assigned to another"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for PartitionError {}
-
 /// Failure of an ensemble clustering operation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ClusteringError {
     /// A clustering radius is not finite and nonnegative.
     InvalidRadius,
-    /// A partition has a different member count than the ensemble.
-    PartitionMismatch {
-        /// The ensemble's member count.
-        expected: usize,
-        /// The partition's member count.
-        actual: usize,
-    },
     /// A distance matrix covers a different member count than the ensemble.
     MatrixMismatch {
         /// The ensemble's member count.
@@ -499,10 +313,6 @@ impl fmt::Display for ClusteringError {
             Self::InvalidRadius => {
                 formatter.write_str("clustering radius must be finite and nonnegative")
             }
-            Self::PartitionMismatch { expected, actual } => write!(
-                formatter,
-                "partition covers {actual} members, but the ensemble has {expected}"
-            ),
             Self::MatrixMismatch { expected, actual } => write!(
                 formatter,
                 "distance matrix covers {actual} members, but the ensemble has {expected}"

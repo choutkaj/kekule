@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{Ensemble, Model, ModelView, Positions};
+use kekule::structure::{Ensemble, EnsemblePartition, Model, ModelView, Positions};
 use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
@@ -326,7 +326,7 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
         potential.energy(periodic.as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
     );
-    let ensemble = Ensemble::from_models([periodic]).unwrap();
+    let ensemble = Ensemble::from_models([periodic], EnsemblePartition::one_state(1)).unwrap();
     assert_eq!(
         potential.evaluate(ensemble.get(0).unwrap().as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
@@ -340,7 +340,7 @@ fn ensemble_members_and_trajectory_frames_evaluate_like_models() {
     let model = model(&topology);
     let expected = potential.evaluate(model.as_model_view()).unwrap();
 
-    let ensemble = Ensemble::from_models([model.clone()]).unwrap();
+    let ensemble = Ensemble::from_models([model.clone()], EnsemblePartition::one_state(1)).unwrap();
     assert_eq!(
         potential
             .evaluate(ensemble.get(0).unwrap().as_model_view())

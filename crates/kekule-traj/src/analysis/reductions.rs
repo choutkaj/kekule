@@ -478,7 +478,7 @@ impl ContactOccupancyResult {
 /// trajectory, and the errors of [`RmsfAccumulator::new`] and
 /// [`RmsfAccumulator::observe`].
 ///
-/// Ensemble statistics must use member weights, so this does not accept an
+/// Ensemble statistics must use sample weights, so this does not accept an
 /// [`kekule::structure::Ensemble`]:
 ///
 /// ```compile_fail,E0308

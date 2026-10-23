@@ -7,7 +7,7 @@ use crate::topology::{AtomSiteId, ChainId, InstanceAtomId, InstanceBondId, Resid
 impl ModelEditor {
     /// Appends a complete borrowed model, including its existing coordinates.
     ///
-    /// Accepts any [`AsModelView`] source, such as a model, an ensemble member,
+    /// Accepts any [`AsModelView`] source, such as a model, an ensemble sample,
     /// or a trajectory frame, without first creating an owned model. Positions are used as supplied:
     /// the caller is responsible for their placement in the destination coordinate
     /// system. No fitting, imaging, bond inference or geometry generation is done.

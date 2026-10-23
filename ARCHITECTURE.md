@@ -14,18 +14,28 @@ Rustdoc beside their implementations. The links below point to those sources;
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
 | `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
 | `Model` | One shared `Topology` and one structure of it: dense positions, optional cell, occupancies, B factors, and `StructureProperties`, addressed by dense topology index | A second chemical or hierarchy model; temporal state |
-| `Ensemble` | One shared topology, collection owner properties, and a weighted, unordered sample of `EnsembleMember` payloads (positions, optional cell, occupancies, B factors, properties, a finite positive relative weight, and an optional energy) | An owned `Model` or topology in each member; temporal meaning |
+| `Ensemble` | One shared topology, collection owner properties, an optional temperature, `EnsembleSample` payloads in a stable order (positions, optional cell, occupancies, B factors, properties, and a finite positive relative weight), their grouping into states as one `EnsemblePartition`, and one `EnsembleState` per state (an optional energy and owner properties) | An owned `Model` or topology in each sample; an energy on a sample; a stored population; temporal meaning |
 | `Trajectory` | One shared topology, collection owner properties, and time-ordered `TrajectoryFrame` payloads (positions, optional cell, properties, and optional velocities, forces, time, and step) | Implicit topology changes between frames; statistical weights; crystallographic site parameters |
 
 `Ensemble` and `Trajectory` are distinct scientific concepts and distinct
-types. An ensemble is a weighted sample of a distribution: member order carries
-no meaning, every member has a weight, and its statistics must be weighted.
-Member energies are annotations on one shared scale; weights derive from them
-only through an explicit Boltzmann assignment, never implicitly. A
+types. An ensemble is a distribution of conformations on two levels. A sample
+is one structure with a weight, the share of probability it carries; sample
+order carries no meaning, and statistics over samples must be weighted. A
+state is a distinct conformation: a group of samples, one of them its
+representative. Every sample is in exactly one state and every state has at
+least one sample; a state's population is the total weight of its samples,
+derived and never stored. Only states have energies, on one scale per
+ensemble: a conformer's minimized energy or a computed free energy, never a
+snapshot's instantaneous energy. Populations derive from them only through an
+explicit Boltzmann assignment, which scales each state's samples together and
+records the temperature; samples drawn from a simulation form a state without
+an energy and are never weighted twice. Samples are stored flat, each with its
+state, so regrouping, weighting, and editing states never reorder them and
+hosts may keep sample indices. A
 trajectory is a path produced by dynamics: frame order and spacing are
 physical. A trajectory samples an ensemble only under ergodicity, so
-`Trajectory::into_ensemble` is an explicit, lossy projection with equal
-weights, and nothing converts the other way. Each type owns its topology,
+`Trajectory::into_ensemble` is an explicit, lossy projection to one state of
+equally weighted samples, and nothing converts the other way. Each type owns its topology,
 collection properties, and items and implements its own operations, including
 those whose meaning is currently the same for both, such as item access,
 selection, subsetting, perception, superposition, and RMSD; the two types are
@@ -36,13 +46,14 @@ behavior belongs to one type only; do not add a public abstraction that erases
 the difference.
 
 Structures are flat. A structure is one set of coordinates and per-atom state
-of a topology: a `Model`, an `EnsembleMember`, or a `TrajectoryFrame`. Each
+of a topology: a `Model`, an `EnsembleSample`, or a `TrajectoryFrame`. Each
 owns exactly the fields that are meaningful for it; there is no shared payload
 type. Positions, cell, and structure properties are common to all three.
 Occupancies and B factors are crystallographic per-atom fields of a model or
-ensemble member and never belong to a trajectory frame. Velocities,
-forces, time, and step belong only to frames, and a weight and an energy only
-to an ensemble member. Coordinate kernels share code through the borrowed
+ensemble sample and never belong to a trajectory frame. Velocities,
+forces, time, and step belong only to frames, and a weight only to an
+ensemble sample; an energy belongs to an ensemble state, not to any
+structure. Coordinate kernels share code through the borrowed
 `ModelView`, not through a common owned payload.
 
 Both live in `kekule::structure`. `kekule-traj` owns file codecs, streaming
@@ -285,8 +296,9 @@ repeated entity.
 | --- | --- | --- |
 | Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
-| Structure (model, ensemble member, trajectory frame) | `StructureProperties` | Dense atoms and bonds |
+| Structure (model, ensemble sample, trajectory frame) | `StructureProperties` | Dense atoms and bonds |
 | Ensemble or trajectory collection | `OwnerProperties` | Owner values only |
+| Ensemble state | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
 take the table's row type. Writes go through length-preserving
@@ -311,7 +323,7 @@ perception does; only builders, editors, and transformations publish a new
 layout. Transformations transfer entity values explicitly and do not infer annotation
 validity or recompute arbitrary properties. Arbitrary source fields stay in
 format sidecars unless canonical semantics, scope, and domain justify promotion.
-Occupancy and B factors are typed site fields of models and ensemble members,
+Occupancy and B factors are typed site fields of models and ensemble samples,
 with checked semantics independent of any generic property with the same name. Positions, cells,
 weights, energies, time, steps, velocities, and forces retain their dedicated APIs.
 
@@ -326,18 +338,20 @@ values. Exact units, tolerances, and conversion policies belong with
 
 ## Geometry and structure ownership
 
-A model, ensemble, or trajectory owns its shared topology once. Members and frames
+A model, ensemble, or trajectory owns its shared topology once. Samples and frames
 store flat payloads, not nested models; a detached payload has
 atom rows only and acquires bond rows when its collection binds it. Borrowed
 `ModelView` access, obtained through the sealed `AsModelView` (or a frame
 buffer's `as_model_view`), lets coordinate algorithms and writers share
-kernels across models, members, frames, and buffers. A view's `kind()`
+kernels across models, samples, frames, and buffers. A view's `kind()`
 says which structure it borrows and carries that structure's own state (a
-member's weight and energy, a frame's time, step, velocities, and forces), so
+sample's weight and state with its state's energy and the ensemble's
+temperature, a frame's time, step, velocities, and forces), so
 writers and reductions never lose it silently. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
-one shared layout; there is no special single-member ownership model.
+one shared layout and a partition saying what they are; there is no special
+single-sample ownership model.
 
 Read access is through views: `Topology` lookups return `Option` views
 (`AtomView`, `BondView`, molecule, chain, residue, and atom-site views), and
@@ -371,7 +385,7 @@ policies and supported geometries live with
 
 Cartesian geometry edits mutate `Model` coordinates atomically while retaining
 the exact topology, cell, and properties. A rigid motion of a whole structure
-(`apply_rigid_transform` on a model, member, or frame) rotates its cell with
+(`apply_rigid_transform` on a model, sample, or frame) rotates its cell with
 its coordinates; selection edits such as `transform_atoms` keep the cell. Prepared distance, angle, and dihedral
 edits bind references and moving selections to that layout, never to cached
 coordinates. Automatic fragments must separate from fixed references; explicit
@@ -418,7 +432,7 @@ RMSF and contact-occupancy reductions are trajectory statistics in which every
 frame counts once; they do not accept ensembles, whose statistics must be
 weighted. Their accumulators take frames through the sealed `AsFrameView`,
 implemented only by trajectory frame views and frame buffers, so an ensemble
-member or an untyped `ModelView` does not compile. They consume borrowed frames sharing the source
+sample or an untyped `ModelView` does not compile. They consume borrowed frames sharing the source
 topology's layout with memory bounded by selected atoms or pairs, not frame count. Failed
 observations leave accumulators unchanged. Results retain atom/pair associations;
 frame indices are diagnostic labels, not statistical weights. Preprocessing,
@@ -426,10 +440,13 @@ including alignment or imaging, is explicit. These are separate analysis results
 not new topology state or a generic reduction framework.
 
 Ensemble clustering is weight-aware and belongs to ensembles only. It returns an
-`EnsemblePartition`, a separate result of member assignments and one
-representative per cluster, and never changes the ensemble. Collapsing a
-partition keeps each representative's own state with its cluster's summed
-weight. Visiting order and tie-breaking are deterministic. Pairwise distances
+`EnsemblePartition`, the same grouping type an ensemble owns, and never changes
+the ensemble. `Ensemble::regroup` applies a partition without changing any
+weight or sample order: a new state that contains every sample of an old state
+keeps the energy and properties of its representative's old state, and a state
+split apart loses them. Collapsing makes a new ensemble of each state's
+representative carrying the state's population. Visiting order and
+tie-breaking are deterministic. Pairwise distances
 are a separate `DistanceMatrix` result. A hierarchical `Dendrogram` depends on
 distances alone, and ensemble weights enter only when choosing representatives;
 k-medoids instead minimizes the weight-summed distance to medoids, so weights
@@ -513,9 +530,9 @@ the shared write report.
 | SMILES record | All connected components, with topology projection |
 | Molfile | One model with topology and molecule projections |
 | SDF record | Model, title, fields, and reports; each record independent |
-| CIF data block | One model or compatible coordinate models as an ensemble |
-| PDB entry | One model or compatible coordinate models as an ensemble |
-| XYZ file | One frame as a model, or frames of the same atoms and inferred bonds as an ensemble |
+| CIF data block | One model or compatible coordinate models as an ensemble of one state |
+| PDB entry | One model or compatible coordinate models as an ensemble of one state |
+| XYZ file | One frame as a model, or frames of the same atoms and inferred bonds as an ensemble of one state |
 
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
@@ -539,7 +556,8 @@ the format report. Occupancy ranks representatives, not whole-structure
 probabilities. Coordinate-model ensemble conversion never expands alternate
 labels; caller-supplied conformation selections must pass the same identity and
 topology checks. mmCIF carries no model weights, so every coordinate model
-becomes an equally weighted member; occupancy is never converted into a weight.
+becomes an equally weighted sample of one state; occupancy is never converted
+into a weight.
 
 Macromolecular formats (mmCIF and PDB) do not carry complete bonds, and molecule
 boundaries follow bonds, so one resolver shared by these formats derives connectivity
@@ -632,7 +650,7 @@ models, collection items, interpreted records, or mmCIF block sources carrying
 classifications or reports. Models and collection items share a borrowed
 structure path. Coordinate-bearing writers emit atoms in dense order.
 Unsupported representational content must fail explicitly. Writers read the
-view's `kind()`: member or frame state the format cannot carry fails unless
+view's `kind()`: sample or frame state the format cannot carry fails unless
 the caller sets `UnrepresentablePolicy::Omit` for it, and a format that can
 carry it writes it whichever path supplied the view. Each kind of
 unrepresentable content has its own policy, so omitting one never omits
@@ -651,13 +669,17 @@ export.
   must not invent assertions from an unasserted drawing or hide a conflict. A
   Molfile or SDF record cannot carry a periodic cell, so writing a model with
   one fails unless the caller chooses to omit it.
-- SDF represents independent records; an ensemble member's weight and energy
-  travel as data fields, and only the explicit `sdf::ensemble` assembles
-  records into an ensemble. A Molfile, an SDF record, and an mmCIF block
-  cannot carry a frame's time, step, velocities, or forces. A Molfile cannot
-  carry a member's weight or energy. mmCIF distinguishes independent model blocks
-  from one ensemble's multi-model block, and cannot carry member weights or
-  energies, so writing unequal weights, any energy, or one member as a model
+- SDF represents independent records; an ensemble sample's weight and state,
+  its state's energy on the representative's record, and the ensemble's
+  temperature travel as data fields, and only the explicit `sdf::ensemble`
+  assembles records into an ensemble, one state per record unless the records
+  name their states. State and ensemble properties are not written. A Molfile,
+  an SDF record, and an mmCIF block cannot carry a frame's time, step,
+  velocities, or forces. A Molfile cannot carry a sample's weight or its
+  state's energy. mmCIF distinguishes independent model blocks from one
+  ensemble's multi-model block, which, like a PDB entry, reads back as one
+  state of equal weights without an energy or temperature, so writing unequal
+  weights, several states, any energy, a temperature, or one sample as a model
   block fails unless the caller chooses to omit them. mmCIF writes a cell periodic along all three
   axes in the standard crystallographic frame as `_cell` in space group P 1,
   and reads `_cell` as the model's cell only in P 1 (or with no space group),

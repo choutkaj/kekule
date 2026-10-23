@@ -2,7 +2,7 @@
 use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::one_based_serial;
-use super::{fail, invalid_model, MmcifAtomField, MmcifMemberField, MmcifWriteIssue};
+use super::{fail, invalid_model, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
 use crate::diagnostics::FormatError;
 use crate::geometry::Point3;
 use crate::io::UnrepresentablePolicy;
@@ -477,27 +477,27 @@ fn invalid_hierarchy(message: impl Into<String>) -> FormatError {
     invalid_model(message)
 }
 
-pub(super) fn validate_ensemble_member(
+pub(super) fn validate_ensemble_sample(
     model: &PreparedModel,
     candidate: &PreparedModel,
-    member: usize,
+    sample: usize,
 ) -> Result<(), FormatError> {
     if candidate.entities != model.entities {
-        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleMember {
-            member,
-            field: MmcifMemberField::Entities,
+        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
+            sample,
+            field: MmcifSampleField::Entities,
         }));
     }
     if candidate.asyms != model.asyms {
-        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleMember {
-            member,
-            field: MmcifMemberField::StructuralAsymmetry,
+        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
+            sample,
+            field: MmcifSampleField::StructuralAsymmetry,
         }));
     }
     if candidate.connections != model.connections {
-        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleMember {
-            member,
-            field: MmcifMemberField::Connectivity,
+        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
+            sample,
+            field: MmcifSampleField::Connectivity,
         }));
     }
     if candidate.atoms.len() != model.atoms.len()
@@ -507,9 +507,9 @@ pub(super) fn validate_ensemble_member(
             .zip(&model.atoms)
             .any(|(left, right)| !same_static_atom_row(left, right))
     {
-        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleMember {
-            member,
-            field: MmcifMemberField::AtomSites,
+        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
+            sample,
+            field: MmcifSampleField::AtomSites,
         }));
     }
     Ok(())

@@ -23,7 +23,7 @@
 //! [`TrajectoryIoErrorKind`]. A buffer reads frame state through `Deref`
 //! and lends a [`kekule::structure::ModelView`] through
 //! [`FrameBuffer::as_model_view`], so analyses and prepared potentials operate
-//! on models, ensemble members, trajectory frames, and buffered frames through
+//! on models, ensemble samples, trajectory frames, and buffered frames through
 //! one contract.
 //!
 //! # In-memory trajectory

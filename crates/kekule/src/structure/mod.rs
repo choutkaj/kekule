@@ -13,16 +13,17 @@
 //!   ([`ModelAppend`], [`ModelAppendReport`]). [`ModelEditor::topology_mut`]
 //!   ([`ModelEditorTopologyMut`]) and [`ModelEditor::properties_mut`]
 //!   ([`ModelEditorPropertiesMut`]) reach annotations without geometry.
-//! - Collections of one shared topology: [`Ensemble`] is a weighted,
-//!   unordered sample ([`EnsembleMember`]); [`Trajectory`] is a time-ordered
+//! - Collections of one shared topology: [`Ensemble`] is a distribution of
+//!   weighted samples ([`EnsembleSample`]) grouped into states
+//!   ([`EnsembleState`]) by an [`EnsemblePartition`]; [`Trajectory`] is a time-ordered
 //!   in-memory sequence of [`TrajectoryFrame`]s, which may carry time, step,
 //!   velocities and forces. File codecs and streaming live in `kekule-traj`.
 //! - Borrowed access: [`ModelView`] is the common input of coordinate-dependent
-//!   kernels. Models, ensemble members ([`EnsembleMemberView`]) and trajectory
+//!   kernels. Models, ensemble samples ([`EnsembleSampleView`]) and trajectory
 //!   frames ([`TrajectoryFrameView`]) all borrow as one without copying
 //!   ([`AsModelView`]); [`ModelAtomView`] pairs one topology atom with its
 //!   structure state. [`ModelView::kind`] says which structure a view borrows
-//!   ([`StructureKind`]), so member and frame state is never silently dropped.
+//!   ([`StructureKind`]), so sample and frame state is never silently dropped.
 //! - [`measure`]: checked distances, angles, dihedrals, bond dihedrals and
 //!   distance-based selections.
 //! - Geometry edits: [`DistanceEdit`], [`AngleEdit`] and [`DihedralEdit`] (see
@@ -105,6 +106,7 @@ pub mod measure;
 mod model;
 mod model_editor;
 mod model_state;
+mod partition;
 mod positions;
 mod scalars;
 mod state;
@@ -112,7 +114,8 @@ mod trajectory;
 
 pub use dynamics::{Forces, Velocities};
 pub use ensemble::{
-    Ensemble, EnsembleError, EnsembleIter, EnsembleMember, EnsembleMemberMut, EnsembleMemberView,
+    Ensemble, EnsembleError, EnsembleIter, EnsembleSample, EnsembleSampleMut, EnsembleSampleView,
+    EnsembleState, EnsembleStateIter, EnsembleStateView,
 };
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
 pub use model::{
@@ -123,6 +126,7 @@ pub use model_editor::{
     ModelAppend, ModelAppendReport, ModelEditError, ModelEditor, ModelEditorProperties,
     ModelEditorPropertiesMut, ModelEditorTopologyMut,
 };
+pub use partition::{EnsemblePartition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
 pub use state::StructureError;
 pub use trajectory::{

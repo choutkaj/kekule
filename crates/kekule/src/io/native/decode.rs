@@ -35,7 +35,8 @@ use crate::properties::{
     RawPropertyTable, StructureProperties, TopologyProperties,
 };
 use crate::structure::{
-    Ensemble, EnsembleMember, Forces, Model, Positions, Trajectory, TrajectoryFrame, Velocities,
+    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Forces, Model, Positions,
+    Trajectory, TrajectoryFrame, Velocities,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
@@ -44,7 +45,8 @@ use crate::topology::{
 };
 use crate::units::{
     unit_with_symbol, Dimension, Quantity, Unit, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_UNIT,
-    CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT, CANONICAL_VELOCITY_UNIT, SQUARE_NANOMETER,
+    CANONICAL_LENGTH_UNIT, CANONICAL_TEMPERATURE_UNIT, CANONICAL_TIME_UNIT,
+    CANONICAL_VELOCITY_UNIT, SQUARE_NANOMETER,
 };
 
 /// Bytes read per chunk of a large array; a multiple of 24 and 8.
@@ -1186,9 +1188,11 @@ impl<R: Read> Decoder<'_, R> {
         let topology = Arc::new(self.topology()?);
         let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let owner = self.owner()?;
+        let temperature = self.opt_f64()?;
         let count = self.count(self.options.max_items(), Resource::Records)?;
-        let mut members = Vec::with_capacity(count.min(CHUNK_BYTES));
+        let mut samples = Vec::with_capacity(count.min(CHUNK_BYTES));
         let mut properties = Vec::with_capacity(count.min(CHUNK_BYTES));
+        let mut assignments = Vec::with_capacity(count.min(CHUNK_BYTES));
         for _ in 0..count {
             let positions = self.positions(atoms)?;
             let cell = self.cell()?;
@@ -1196,28 +1200,51 @@ impl<R: Read> Decoder<'_, R> {
             let b_factors = self.scalars(atoms)?;
             properties.push(self.structure_properties(atoms, bonds)?);
             let weight = self.f64()?;
-            let energy = self.opt_f64()?;
-            let mut member = EnsembleMember::new(positions, weight)
+            assignments.push(self.u32()? as usize);
+            let mut sample = EnsembleSample::new(positions, weight)
                 .map_err(|error| self.structure_error(error))?;
-            member.set_cell(cell);
-            member
+            sample.set_cell(cell);
+            sample
                 .set_occupancies(occupancies)
                 .map_err(|error| self.structure_error(error))?;
-            member
+            sample
                 .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
                 .map_err(|error| self.structure_error(error))?;
-            member
+            samples.push(sample);
+        }
+        let state_count = self.count(self.options.max_items(), Resource::Records)?;
+        let mut representatives = Vec::with_capacity(state_count.min(CHUNK_BYTES));
+        let mut states = Vec::with_capacity(state_count.min(CHUNK_BYTES));
+        for _ in 0..state_count {
+            representatives.push(self.u32()? as usize);
+            let energy = self.opt_f64()?;
+            let mut state = EnsembleState::new();
+            state
                 .set_energy(energy.map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT)))
                 .map_err(|error| self.structure_error(error))?;
-            members.push(member);
+            *state.properties_mut() = self.owner()?;
+            states.push(state);
         }
-        let mut ensemble =
-            Ensemble::from_items(topology, members).map_err(|error| self.structure_error(error))?;
+        let partition = EnsemblePartition::new(assignments, representatives)
+            .map_err(|error| self.structure_error(error))?;
+        let mut ensemble = Ensemble::from_samples(topology, samples, partition)
+            .map_err(|error| self.structure_error(error))?;
         *ensemble.properties_mut() = owner;
+        ensemble
+            .set_temperature(
+                temperature
+                    .map(|temperature| Quantity::new(temperature, CANONICAL_TEMPERATURE_UNIT)),
+            )
+            .map_err(|error| self.structure_error(error))?;
+        for (index, state) in states.into_iter().enumerate() {
+            *ensemble
+                .state_mut(index)
+                .expect("the partition numbers every decoded state") = state;
+        }
         for (index, properties) in properties.into_iter().enumerate() {
             ensemble
                 .get_mut(index)
-                .expect("every decoded member was added")
+                .expect("every decoded sample was added")
                 .set_properties(properties)
                 .map_err(|error| self.structure_error(error))?;
         }

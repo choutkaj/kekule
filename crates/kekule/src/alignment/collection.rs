@@ -1,4 +1,4 @@
-//! Superposition and RMSD over every member of an [`Ensemble`] or frame of a
+//! Superposition and RMSD over every sample of an [`Ensemble`] or frame of a
 //! [`Trajectory`].
 
 use crate::geometry::RigidTransform;
@@ -292,7 +292,7 @@ fn item_error(index: usize, source: AlignmentError) -> AlignmentError {
 }
 
 impl Ensemble {
-    /// Fits every member onto `reference` and applies each transform in place.
+    /// Fits every sample onto `reference` and applies each transform in place.
     ///
     /// `reference` is an index into this ensemble or any borrowed view
     /// (`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an
@@ -312,7 +312,7 @@ impl Ensemble {
     /// first failing item, and otherwise the errors of
     /// [`fit`](super::fit) for the pairing and weights.
     /// [`AlignmentError::Transform`] when a fitted transform cannot be
-    /// applied to a member.
+    /// applied to a sample.
     pub fn superpose<'a>(
         &mut self,
         reference: impl Into<Reference<'a>>,
@@ -329,16 +329,16 @@ impl Ensemble {
                 options,
             )?
         };
-        self.transform_members(&transforms(&report))
+        self.transform_samples(&transforms(&report))
             .map_err(AlignmentError::Transform)?;
         Ok(report)
     }
 
-    /// Direct RMSD from every member to `reference`, measured as stored.
+    /// Direct RMSD from every sample to `reference`, measured as stored.
     ///
     /// Never fits or changes the ensemble. Values are in
-    /// [`CANONICAL_LENGTH_UNIT`], one per member in order; weight them by the
-    /// member weights for ensemble statistics. `options` selects the pair
+    /// [`CANONICAL_LENGTH_UNIT`], one per sample in order; weight them by the
+    /// sample weights for ensemble statistics. `options` selects the pair
     /// weights and the periodic policy.
     ///
     /// # Errors
@@ -363,7 +363,7 @@ impl Ensemble {
         )
     }
 
-    /// Fits every member on `fit` pairs and measures RMSD over `measurement`
+    /// Fits every sample on `fit` pairs and measures RMSD over `measurement`
     /// pairs, without changing the ensemble or copying coordinates.
     ///
     /// For example, fit a protein backbone and measure ligand motion. `options`

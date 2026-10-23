@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
-use crate::structure::{Ensemble, EnsembleError, EnsembleMember};
+use crate::structure::{Ensemble, EnsembleError, EnsembleSample, EnsembleState};
 
 use super::types::{
     ensemble_error, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
@@ -147,8 +147,12 @@ fn assemble(
     let shared_atom_identity = provenance_identity(&first.report);
     let mut ensemble = Ensemble::new(Arc::clone(&shared_topology));
     let (first_model, first_report) = first.into_parts();
+    // Coordinate models are draws of one distribution: one state.
     ensemble
-        .push(EnsembleMember::from_model(first_model))
+        .push_state(
+            EnsembleSample::from_model(first_model),
+            EnsembleState::new(),
+        )
         .map_err(assembly_error)?;
     let mut reports = vec![first_report];
     for interpreted in remaining {
@@ -182,7 +186,7 @@ fn assemble(
             return Err(inconsistent_dense_atom_order(model_id));
         }
         ensemble
-            .push(EnsembleMember::from_model(model))
+            .push_sample(EnsembleSample::from_model(model), 0)
             .map_err(assembly_error)?;
         reports.push(report);
     }
