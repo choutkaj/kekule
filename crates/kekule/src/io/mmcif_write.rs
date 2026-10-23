@@ -11,7 +11,7 @@ use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::molecule::BondOrder;
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Write;
 
@@ -44,7 +44,9 @@ pub struct MmcifWriteOptions {
 
 impl MmcifWriteOptions {
     /// The name of the written data block, after `data_`; `model` by default.
-    /// Several sources are written as blocks `{name}_1`, `{name}_2`, and so on.
+    /// Several sources are written as blocks `{name}_1`, `{name}_2`, and so
+    /// on, numbered by position; a source with its own
+    /// [`MmcifBlockSource::block_name`] takes that name instead.
     pub fn block_name(&self) -> &str {
         &self.block_name
     }
@@ -58,13 +60,7 @@ impl MmcifWriteOptions {
     /// and `.`.
     pub fn with_block_name(mut self, block_name: impl Into<String>) -> Result<Self, FormatError> {
         let block_name = block_name.into();
-        if block_name.is_empty()
-            || !block_name
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || "_-.".contains(character))
-        {
-            return Err(fail(MmcifWriteIssue::InvalidBlockName(block_name)));
-        }
+        validate_block_name(&block_name)?;
         self.block_name = block_name;
         Ok(self)
     }
@@ -176,9 +172,13 @@ impl Default for MmcifWriteOptions {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MmcifWriteIssue {
-    /// [`MmcifWriteOptions::block_name`] is empty or not a valid data block
+    /// [`MmcifWriteOptions::block_name`] or
+    /// [`MmcifBlockSource::block_name`] is empty or not a valid data block
     /// name.
     InvalidBlockName(String),
+    /// Two written data blocks would have this name, compared
+    /// case-insensitively as mmCIF block names are.
+    DuplicateBlockName(String),
     /// [`MmcifWriteOptions::coordinate_precision`] exceeds the supported
     /// maximum.
     CoordinatePrecisionTooLarge(usize),
@@ -417,9 +417,9 @@ impl MmcifWriteIssue {
     /// The diagnostic kind of a write error with this detail.
     pub const fn kind(&self) -> DiagnosticKind {
         match self {
-            Self::InvalidBlockName(_) | Self::CoordinatePrecisionTooLarge(_) => {
-                DiagnosticKind::InvalidValue
-            }
+            Self::InvalidBlockName(_)
+            | Self::DuplicateBlockName(_)
+            | Self::CoordinatePrecisionTooLarge(_) => DiagnosticKind::InvalidValue,
             Self::UnknownClassifiedMolecule(_) | Self::UnknownAtomProvenance(_) => {
                 DiagnosticKind::InvalidReference
             }
@@ -458,6 +458,9 @@ impl fmt::Display for MmcifWriteIssue {
         match self {
             Self::InvalidBlockName(name) => {
                 write!(f, "invalid mmCIF data block name `{name}`")
+            }
+            Self::DuplicateBlockName(name) => {
+                write!(f, "duplicate mmCIF data block name `{name}`")
             }
             Self::CoordinatePrecisionTooLarge(precision) => write!(
                 f,
@@ -582,6 +585,19 @@ impl fmt::Display for MmcifWriteIssue {
     }
 }
 
+/// Fails with [`MmcifWriteIssue::InvalidBlockName`] unless `name` is a
+/// nonempty run of ASCII letters, digits, `_`, `-` and `.`.
+fn validate_block_name(name: &str) -> Result<(), FormatError> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_-.".contains(character))
+    {
+        return Err(fail(MmcifWriteIssue::InvalidBlockName(name.to_owned())));
+    }
+    Ok(())
+}
+
 /// The write error carrying `issue` as its detail.
 pub(super) fn fail(issue: MmcifWriteIssue) -> FormatError {
     FormatError::write(Format::Mmcif, issue.kind(), issue.to_string())
@@ -666,10 +682,14 @@ impl MmcifEntityClassifications {
 /// [`Self::model`] accepts any borrowed model view; an ensemble member's
 /// weight and energy and a trajectory frame's time, step, velocities, and
 /// forces fail to write unless the write options omit them.
+///
+/// A block is named by [`MmcifWriteOptions::block_name`] unless
+/// [`Self::with_block_name`] names it.
 #[derive(Debug, Clone, Copy)]
 pub struct MmcifBlockSource<'a> {
     content: BlockContent<'a>,
     entities: EntitySemantics<'a>,
+    block_name: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -692,6 +712,7 @@ impl<'a> MmcifBlockSource<'a> {
         Self {
             content: BlockContent::Model(model.as_model_view()),
             entities: EntitySemantics::Canonical,
+            block_name: None,
         }
     }
 
@@ -700,6 +721,7 @@ impl<'a> MmcifBlockSource<'a> {
         Self {
             content: BlockContent::Ensemble(ensemble),
             entities: EntitySemantics::Canonical,
+            block_name: None,
         }
     }
 
@@ -726,6 +748,32 @@ impl<'a> MmcifBlockSource<'a> {
     pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
         self.entities = EntitySemantics::Reports(reports);
         self
+    }
+
+    /// The name of this block, after `data_`, or `None` when the write
+    /// options name it.
+    pub const fn block_name(&self) -> Option<&'a str> {
+        self.block_name
+    }
+
+    /// Names this block `block_name`, overriding
+    /// [`MmcifWriteOptions::block_name`] and its numbering. Reading the file
+    /// back gives the name as [`MmcifBlock::name`](crate::mmcif::MmcifBlock::name).
+    ///
+    /// Blocks of one write must have different names, compared
+    /// case-insensitively, including the names the options give unnamed
+    /// blocks; a clash fails the write with
+    /// [`MmcifWriteIssue::DuplicateBlockName`] before anything is written.
+    ///
+    /// # Errors
+    ///
+    /// A write [`FormatError`] with [`MmcifWriteIssue::InvalidBlockName`]
+    /// unless the name is a nonempty run of ASCII letters, digits, `_`, `-`
+    /// and `.`.
+    pub fn with_block_name(mut self, block_name: &'a str) -> Result<Self, FormatError> {
+        validate_block_name(block_name)?;
+        self.block_name = Some(block_name);
+        Ok(self)
     }
 }
 
@@ -769,9 +817,10 @@ pub(crate) fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
 
 /// Writes one deterministic data block per source in input order.
 ///
-/// A single block is named [`MmcifWriteOptions::block_name`]; several blocks
-/// are named `{block_name}_1`, `{block_name}_2`, and so on. Rows follow
-/// dense atom order.
+/// A block with its own [`MmcifBlockSource::block_name`] takes it. Otherwise a
+/// single block is named [`MmcifWriteOptions::block_name`], and among several
+/// blocks the one at 1-based position `n` is named `{block_name}_n`. Rows
+/// follow dense atom order.
 pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     writer: &mut impl Write,
     blocks: impl IntoIterator<Item = B>,
@@ -780,13 +829,25 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     let mut omissions = Omissions::default();
     let blocks = blocks.into_iter().map(Into::into).collect::<Vec<_>>();
     let numbered = blocks.len() > 1;
-    for (index, block) in blocks.into_iter().enumerate() {
+    let names = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| match block.block_name {
+            Some(name) => name.to_owned(),
+            None if numbered => format!("{}_{}", options.block_name, index + 1),
+            None => options.block_name.clone(),
+        })
+        .collect::<Vec<_>>();
+    let mut seen = BTreeSet::new();
+    if let Some(duplicate) = names
+        .iter()
+        .find(|name| !seen.insert(name.to_ascii_lowercase()))
+    {
+        return Err(fail(MmcifWriteIssue::DuplicateBlockName(duplicate.clone())));
+    }
+    for (block, block_name) in blocks.into_iter().zip(names) {
         let block_options = MmcifWriteOptions {
-            block_name: if numbered {
-                format!("{}_{}", options.block_name, index + 1)
-            } else {
-                options.block_name.clone()
-            },
+            block_name,
             ..options.clone()
         };
         match block.content {

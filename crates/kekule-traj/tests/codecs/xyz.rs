@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::diagnostics::{LimitExceeded, Resource};
+use kekule::diagnostics::{LimitExceeded, Resource, WriteOmission, WriteReport};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
@@ -831,4 +831,153 @@ fn interpreted_xyz_topology_streams_every_frame_of_its_file() {
     }
     assert_eq!(z.len(), 2);
     assert!((z[1] - 0.1).abs() < 1e-12);
+}
+
+/// Writes one all-zero frame of `topology` and returns the text and report.
+fn write_one_frame(topology: Arc<Topology>) -> (String, WriteReport) {
+    let points = vec![Point3::new(0.0, 0.0, 0.0); topology.atom_count()];
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
+    buffer
+        .replace_from_data(FrameData::new(Quantity::new(&points, ANGSTROM)))
+        .unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        topology,
+        XyzWriteOptions::default()
+            .with_decimal_places(1)
+            .with_comment("report"),
+        "report.xyz",
+    )
+    .unwrap();
+    writer.write_frame(buffer.frame_view()).unwrap();
+    let report = writer.report().clone();
+    let text = String::from_utf8(writer.finish().unwrap()).unwrap();
+    (text, report)
+}
+
+#[test]
+fn xyz_writer_reports_the_charges_isotopes_and_hydrogens_it_leaves_out() {
+    // Acetate labeled with carbon-13.
+    let topology = kekule::smiles::to_topology("[13CH3]C(=O)[O-]").unwrap();
+    let (text, report) = write_one_frame(Arc::clone(&topology));
+    // Before perception the carbonyl carbon and oxygen have unknown inferred
+    // counts, which XYZ readers would fix at zero, as well as the methyl's
+    // three fixed hydrogens.
+    assert_eq!(
+        report.omissions(),
+        [
+            WriteOmission::Bonds { bonds: 3 },
+            WriteOmission::ImplicitHydrogens { atoms: 3 },
+            WriteOmission::FormalCharges { atoms: 1 },
+            WriteOmission::Isotopes { atoms: 1 },
+        ]
+    );
+    // The text is elements and coordinates only, whatever the report says.
+    assert_eq!(
+        text,
+        "4
+report
+C 0.0 0.0 0.0
+C 0.0 0.0 0.0
+O 0.0 0.0 0.0
+O 0.0 0.0 0.0
+"
+    );
+
+    // Perceived counts are known: only the methyl carbon has hydrogens.
+    let (perceived_text, perceived) = write_one_frame(Arc::new(topology.perceived().unwrap()));
+    assert_eq!(
+        perceived.omissions(),
+        [
+            WriteOmission::Bonds { bonds: 3 },
+            WriteOmission::ImplicitHydrogens { atoms: 1 },
+            WriteOmission::FormalCharges { atoms: 1 },
+            WriteOmission::Isotopes { atoms: 1 },
+        ]
+    );
+    assert_eq!(perceived_text, text);
+}
+
+const DIPEPTIDE: &str =
+    "ATOM      1  N   ALA A   1      -0.677  -1.230  -0.491  1.00  0.00           N
+ATOM      2  CA  ALA A   1      -0.001   0.064  -0.491  1.00  0.00           C
+ATOM      3  C   ALA A   1       1.499  -0.110  -0.491  1.00  0.00           C
+ATOM      4  O   ALA A   1       2.030  -1.227  -0.502  1.00  0.00           O
+ATOM      5  CB  ALA A   1      -0.509   0.856   0.727  1.00  0.00           C
+ATOM      6  N   GLY A   2       2.250   0.989  -0.479  1.00  0.00           N
+ATOM      7  CA  GLY A   2       3.700   0.871  -0.479  1.00  0.00           C
+ATOM      8  C   GLY A   2       4.250   2.290  -0.479  1.00  0.00           C
+ATOM      9  O   GLY A   2       3.500   3.250  -0.479  1.00  0.00           O
+ATOM     10  OXT GLY A   2       5.480   2.400  -0.479  1.00  0.00           O
+END
+";
+
+#[test]
+fn xyz_writer_reports_the_atom_sites_and_hydrogens_of_a_protein() {
+    let interpretation = kekule::pdb::parse_str(DIPEPTIDE, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let topology = interpretation.model().shared_topology();
+    let (_, report) = write_one_frame(Arc::clone(&topology));
+    // Heavy atoms only: every implicit count is inferred and unperceived.
+    assert_eq!(
+        report.omissions(),
+        [
+            WriteOmission::Bonds { bonds: 9 },
+            WriteOmission::ImplicitHydrogens { atoms: 10 },
+            WriteOmission::AtomSites { atoms: 10 },
+        ]
+    );
+    // Perceived, the hydrogens of N, CA and CB of alanine, N and CA of
+    // glycine, and the terminal OXT.
+    let (_, perceived) = write_one_frame(Arc::new(topology.perceived().unwrap()));
+    assert_eq!(
+        perceived.omissions(),
+        [
+            WriteOmission::Bonds { bonds: 9 },
+            WriteOmission::ImplicitHydrogens { atoms: 6 },
+            WriteOmission::AtomSites { atoms: 10 },
+        ]
+    );
+}
+
+#[test]
+fn an_interpreted_xyz_structure_loses_only_its_bonds() {
+    let text = "3
+water
+O 0 0 0
+H 0.957 0 0
+H -0.24 0.927 0
+";
+    let interpretation = kekule::xyz::parse_str(text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let topology = interpretation.model().shared_topology();
+    // Interpretation fixes every count at zero and gives unnamed sites.
+    let bonds = [WriteOmission::Bonds { bonds: 2 }];
+    let (_, report) = write_one_frame(Arc::clone(&topology));
+    assert_eq!(report.omissions(), bonds);
+
+    // Path writers and `write_trajectory` return the codec's report; DCD
+    // stores coordinates for a separately supplied topology, so it omits
+    // nothing.
+    for (extension, expected) in [("xyz", &bonds[..]), ("dcd", &[])] {
+        let path = temporary_path(Some(extension));
+        let writer =
+            create_trajectory_writer(&path, Arc::clone(&topology), Default::default()).unwrap();
+        assert_eq!(writer.report().omissions(), expected);
+    }
+    let trajectory = kekule::structure::Trajectory::from_items(
+        Arc::clone(&topology),
+        [kekule::structure::TrajectoryFrame::new(
+            interpretation.model().positions().clone(),
+        )],
+    )
+    .unwrap();
+    let path = temporary_path(Some("xyz"));
+    let saved = kekule_traj::io::write_trajectory(&path, &trajectory, Default::default());
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(saved.unwrap().omissions(), bonds);
 }

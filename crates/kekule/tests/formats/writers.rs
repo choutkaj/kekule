@@ -989,6 +989,105 @@ fn sdf_explicit_records_preserve_title_and_data_fields() {
 }
 
 #[test]
+fn mmcif_blocks_take_their_own_names_and_read_back_under_them() {
+    let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
+    let second = model("N", &[[3.0, 0.0, 0.0]]);
+    let third = model("O", &[[4.0, 0.0, 0.0]]);
+    let source = |model, name: Option<&'static str>| {
+        let block = mmcif::MmcifBlockSource::model(model);
+        match name {
+            Some(name) => block.with_block_name(name).unwrap(),
+            None => block,
+        }
+    };
+
+    // Named blocks keep their names; an unnamed block keeps its position's
+    // number.
+    let (text, report) = mmcif::write(
+        [
+            source(&first, Some("ligand")),
+            source(&second, None),
+            source(&third, Some("Water.1")),
+        ],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    assert!(report.is_empty());
+    assert_eq!(source(&first, Some("ligand")).block_name(), Some("ligand"));
+    assert_eq!(source(&first, None).block_name(), None);
+    let document = mmcif::parse_str(&text, Default::default()).unwrap();
+    let names = document
+        .blocks()
+        .iter()
+        .map(|block| block.name())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["ligand", "model_2", "Water.1"]);
+    let atoms = document
+        .blocks()
+        .iter()
+        .map(|block| {
+            block
+                .interpret(Default::default())
+                .unwrap()
+                .model()
+                .topology()
+                .atom_count()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(atoms, [2, 1, 1]);
+    assert!(document.block("water.1").is_some());
+
+    // A lone named block takes its name rather than the options'.
+    let (lone, _) = mmcif::write(
+        [source(&first, Some("ligand"))],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    assert!(lone.starts_with(
+        "data_ligand
+"
+    ));
+
+    // Names must be valid block names.
+    let invalid = mmcif::MmcifBlockSource::model(&first)
+        .with_block_name("two words")
+        .unwrap_err();
+    assert_eq!(
+        invalid.detail(),
+        Some(&FormatErrorDetail::MmcifWrite(
+            MmcifWriteIssue::InvalidBlockName("two words".to_owned())
+        ))
+    );
+
+    // Names clash case-insensitively, including with generated names, and a
+    // clash fails before anything is written.
+    for (blocks, clash) in [
+        (
+            [
+                source(&first, Some("Ligand")),
+                source(&second, Some("LIGAND")),
+            ],
+            "LIGAND",
+        ),
+        (
+            [source(&first, None), source(&second, Some("MODEL_1"))],
+            "MODEL_1",
+        ),
+    ] {
+        let mut sink = Vec::new();
+        let error = mmcif::write_to(&mut sink, blocks, MmcifWriteOptions::default()).unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+        assert_eq!(
+            error.detail(),
+            Some(&FormatErrorDetail::MmcifWrite(
+                MmcifWriteIssue::DuplicateBlockName(clash.to_owned())
+            ))
+        );
+        assert!(sink.is_empty());
+    }
+}
+
+#[test]
 fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
     let unrelated = model("N", &[[3.0, 0.0, 0.0]]);

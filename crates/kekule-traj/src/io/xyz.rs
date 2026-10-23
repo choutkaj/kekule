@@ -4,11 +4,13 @@
 //! element/x/y/z frames whose atom lines follow the topology's dense order and
 //! elements; [`XyzWriter`] writes them deterministically. XYZ stores
 //! positions only: the writer rejects cells, velocities, forces, time, step
-//! and properties instead of dropping them. To obtain a topology from an XYZ
-//! file itself, interpret one of its frames with `kekule::xyz`, which keeps
-//! atom-line order as dense order and infers bonds from distances. This
-//! reader accepts element symbols in their standard letter case only, while
-//! interpretation also accepts other cases and atomic numbers.
+//! and properties instead of dropping them, and reports the topology content
+//! it leaves out, such as bonds and charges, in [`XyzWriter::report`]. To
+//! obtain a topology from an XYZ file itself, interpret one of its frames
+//! with `kekule::xyz`, which keeps atom-line order as dense order and infers
+//! bonds from distances. This reader accepts element symbols in their
+//! standard letter case only, while interpretation also accepts other cases
+//! and atomic numbers.
 //!
 //! # Examples
 //!
@@ -45,7 +47,7 @@
 //! ```
 
 use crate::TrajectoryField;
-use kekule::diagnostics::{LimitExceeded, Resource};
+use kekule::diagnostics::{LimitExceeded, Resource, WriteOmission, WriteReport};
 use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
@@ -791,6 +793,49 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
     }
 }
 
+/// The topology content an XYZ file of `topology` leaves out; see
+/// [`XyzWriter::report`].
+fn topology_omissions(topology: &Topology) -> WriteReport {
+    let (mut hydrogens, mut charges, mut isotopes, mut radicals, mut maps, mut sites) =
+        (0, 0, 0, 0, 0, 0);
+    for &atom_id in topology.atom_ids() {
+        let view = topology
+            .atom(atom_id)
+            .expect("dense topology atom IDs name topology atoms");
+        let atom = view.atom();
+        hydrogens += usize::from(view.implicit_hydrogens() != Some(0));
+        charges += usize::from(atom.formal_charge() != 0);
+        isotopes += usize::from(atom.isotope().is_some());
+        radicals += usize::from(atom.radical().is_some());
+        maps += usize::from(atom.atom_map().is_some());
+        sites += usize::from(view.atom_site().is_some_and(|site| {
+            let metadata = site.metadata();
+            metadata.label_atom_id().is_some() || metadata.auth_atom_id().is_some()
+        }));
+    }
+    let stereo = topology
+        .instances()
+        .filter(|instance| {
+            let molecule = instance.definition().molecule();
+            molecule.stereo_elements().next().is_some() || molecule.stereo_groups().next().is_some()
+        })
+        .count();
+    [
+        WriteOmission::Bonds {
+            bonds: topology.bond_count(),
+        },
+        WriteOmission::ImplicitHydrogens { atoms: hydrogens },
+        WriteOmission::FormalCharges { atoms: charges },
+        WriteOmission::Isotopes { atoms: isotopes },
+        WriteOmission::Radicals { atoms: radicals },
+        WriteOmission::AtomMaps { atoms: maps },
+        WriteOmission::AtomSites { atoms: sites },
+        WriteOmission::Stereo { molecules: stereo },
+    ]
+    .into_iter()
+    .collect()
+}
+
 /// Strict multi-frame XYZ writer over a caller-supplied stream.
 pub struct XyzWriter<W> {
     writer: W,
@@ -802,6 +847,7 @@ pub struct XyzWriter<W> {
     /// fails, so a stream that may end in a partial frame is never extended
     /// or reported as finished.
     partial: bool,
+    report: WriteReport,
 }
 
 impl<W> fmt::Debug for XyzWriter<W> {
@@ -886,12 +932,29 @@ impl<W: Write> XyzWriter<W> {
         }
         Ok(Self {
             writer,
-            topology,
             options,
             source_label,
             frame_count: 0,
             partial: false,
+            report: topology_omissions(&topology),
+            topology,
         })
+    }
+
+    /// The topology content every written frame leaves out, which depends on
+    /// the topology alone: XYZ carries each atom's element and position only.
+    ///
+    /// The report counts bonds; atoms whose implicit-hydrogen count is
+    /// nonzero, or inferred and not yet perceived, since XYZ readers fix
+    /// every count at zero; atoms with a nonzero formal charge, an isotope,
+    /// radical electrons, or an atom-map number; atoms whose hierarchy atom
+    /// site has an atom name, which is lost with the site's residue and
+    /// chain; and molecule instances with represented stereo. Sites without
+    /// a name, such as the synthetic `UNL` residues `kekule::xyz` gives an
+    /// interpreted file, are not counted. The writer writes the same text
+    /// whatever it reports.
+    pub fn report(&self) -> &WriteReport {
+        &self.report
     }
 
     /// The topology every written frame must share.

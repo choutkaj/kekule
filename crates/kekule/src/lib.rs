@@ -1047,7 +1047,9 @@ pub mod mmcif {
     /// Sources convert from models (one block), ensembles (one multi-model
     /// block), and interpretations (keeping their source reports). Entity kinds
     /// derive from canonical topology classification unless a source carries
-    /// explicit classifications or reports ([`MmcifBlockSource`]).
+    /// explicit classifications or reports ([`MmcifBlockSource`]). Blocks are
+    /// named by [`MmcifWriteOptions::block_name`], numbered when there are
+    /// several, unless [`MmcifBlockSource::with_block_name`] names them.
     ///
     /// # Errors
     ///
@@ -1055,7 +1057,8 @@ pub mod mmcif {
     /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
     /// when mmCIF cannot hold the content, and `Inconsistent`,
     /// `InvalidReference` or `InvalidValue` when a source's classifications or
-    /// reports do not fit its topology.
+    /// reports do not fit its topology, and `InvalidValue` when two blocks
+    /// would share a name.
     ///
     /// ```no_run
     /// use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};

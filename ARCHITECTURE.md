@@ -500,7 +500,9 @@ chemistry to interpret, so streaming codecs decode frames directly against a
 caller-supplied topology (see Trajectories and streaming). XYZ is read both
 ways: `kekule::xyz` interprets its frames into structures through this
 pipeline, and `kekule-traj` streams its coordinates against a topology, such
-as the one that interpretation produced.
+as the one that interpretation produced. Writing XYZ keeps elements and
+coordinates only, so the writer reports the topology content it leaves out in
+the shared write report.
 
 | Format scope | Interpretation and projection |
 | --- | --- |

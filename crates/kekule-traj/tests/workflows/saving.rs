@@ -162,7 +162,7 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
         match options {
             Some(options) => write_trajectory(&path, &trajectory, options).unwrap(),
             None => write_trajectory(&path, &trajectory, Default::default()).unwrap(),
-        }
+        };
         let read = read_trajectory(&path, topology, Default::default()).unwrap();
         assert_eq!(read.len(), trajectory.len());
         for (actual, expected) in read.iter().zip(trajectory.iter()) {
