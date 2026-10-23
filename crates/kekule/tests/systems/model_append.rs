@@ -816,7 +816,11 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
 #[test]
 fn borrowed_ensemble_member_and_plain_finish_need_no_intermediate_model() {
     let source = annotated(None);
-    let ensemble = Ensemble::from_models([source.clone()]).unwrap();
+    let ensemble = Ensemble::from_models(
+        [source.clone()],
+        kekule::structure::EnsemblePartition::one_state(1),
+    )
+    .unwrap();
     let member = ensemble.iter().next().unwrap();
     let mut editor = ModelEditor::new();
     let imported = editor.append_model(&member).unwrap();

@@ -1,8 +1,8 @@
 //! Validation and accessors shared by the flat structure owners: models,
-//! ensemble members, trajectory frames, and model drafts.
+//! ensemble samples, trajectory frames, and model drafts.
 //!
 //! Each owner stores its own `positions`, `cell`, and `properties` fields, and
-//! models and ensemble members also `occupancies` and `b_factors`. The macros
+//! models and ensemble samples also `occupancies` and `b_factors`. The macros
 //! below generate the
 //! common public accessors from those fields; an owner provides
 //! `storage_ref(&self)` and `storage(&mut self)` returning the value that holds
@@ -151,7 +151,7 @@ macro_rules! structure_readers {
 }
 pub(crate) use structure_readers;
 
-/// Occupancy and B-factor readers of models and ensemble members.
+/// Occupancy and B-factor readers of models and ensemble samples.
 macro_rules! site_readers {
     () => {
         /// Occupancy of one atom; `None` when it was never recorded or `atom`
@@ -236,7 +236,7 @@ macro_rules! structure_mutators {
 }
 pub(crate) use structure_mutators;
 
-/// Occupancy and B-factor mutators of models and ensemble members.
+/// Occupancy and B-factor mutators of models and ensemble samples.
 macro_rules! site_mutators {
     () => {
         /// Sets or clears one occupancy. Values must be finite.
@@ -302,7 +302,7 @@ pub enum StructureError {
     },
     /// A frame time is not finite.
     NonFiniteTime,
-    /// An ensemble member energy is not finite.
+    /// An ensemble state energy is not finite.
     NonFiniteEnergy,
     /// An ensemble weight is not finite and positive.
     InvalidWeight,
@@ -325,7 +325,7 @@ impl fmt::Display for StructureError {
                 "structure requires {expected} bond property rows, but has {actual}"
             ),
             Self::NonFiniteTime => formatter.write_str("frame time must be finite"),
-            Self::NonFiniteEnergy => formatter.write_str("ensemble member energy must be finite"),
+            Self::NonFiniteEnergy => formatter.write_str("ensemble state energy must be finite"),
             Self::InvalidWeight => {
                 formatter.write_str("ensemble weight must be finite and positive")
             }

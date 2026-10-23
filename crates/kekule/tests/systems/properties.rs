@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kekule::molecule::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Ensemble, EnsembleMember, EnsembleMemberView, Model, Positions, StructureError, Trajectory,
+    Ensemble, EnsemblePartition, EnsembleSample, Model, Positions, StructureError, Trajectory,
     TrajectoryFrame,
 };
 use kekule::topology::{
@@ -168,8 +168,8 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     );
     assert_eq!(model.properties(), &original);
 
-    // A detached member has no bond rows yet.
-    let mut member = EnsembleMember::new(Positions::zeros(2), 1.0).unwrap();
+    // A detached sample has no bond rows yet.
+    let mut member = EnsembleSample::new(Positions::zeros(2), 1.0).unwrap();
     let detached = member.properties().clone();
     assert_eq!(
         member.set_properties(bound.clone()),
@@ -179,9 +179,13 @@ fn structures_reject_mismatched_property_rows_transactionally() {
         })
     );
     assert_eq!(member.properties(), &detached);
-    assert!(EnsembleMemberView::new(&ethane, &member).is_err());
 
-    let mut ensemble = Ensemble::from_items(Arc::clone(&ethane), [member]).unwrap();
+    let mut ensemble = Ensemble::from_samples(
+        Arc::clone(&ethane),
+        [member],
+        EnsemblePartition::one_state(1),
+    )
+    .unwrap();
     assert_eq!(ensemble.get(0).unwrap().properties().bonds().len(), 1);
     ensemble
         .get_mut(0)
@@ -195,7 +199,6 @@ fn structures_reject_mismatched_property_rows_transactionally() {
         .set_properties(original)
         .is_err());
     assert_eq!(ensemble.get(0).unwrap().properties(), &bound);
-    assert!(EnsembleMemberView::new(&ethane, ensemble.get(0).unwrap().payload()).is_ok());
 }
 
 #[test]
@@ -233,9 +236,10 @@ fn owner_topology_property_edits_keep_layout_without_touching_other_holders() {
         Some(&PropertyValue::Int(2))
     );
 
-    let mut ensemble = Ensemble::from_items(
+    let mut ensemble = Ensemble::from_samples(
         Arc::clone(&topology),
-        [EnsembleMember::new(Positions::zeros(3), 1.0).unwrap()],
+        [EnsembleSample::new(Positions::zeros(3), 1.0).unwrap()],
+        EnsemblePartition::one_state(1),
     )
     .unwrap();
     ensemble

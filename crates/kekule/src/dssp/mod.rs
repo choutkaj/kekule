@@ -71,7 +71,7 @@ mod kernel;
 /// otherwise its topology hierarchy order. Insertion codes break numbered ties.
 ///
 /// `model` is any model view: a [`Model`](crate::structure::Model), an
-/// ensemble member, a trajectory frame, or a borrowed
+/// ensemble sample, a trajectory frame, or a borrowed
 /// [`ModelView`](crate::structure::ModelView).
 ///
 /// # Errors

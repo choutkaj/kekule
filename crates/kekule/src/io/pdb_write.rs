@@ -1,7 +1,7 @@
 //! PDB writing of models, ensembles, and collection items.
 //!
 //! A written entry holds an optional `CRYST1` record, one `MODEL` per
-//! ensemble member (none for a single structure), `ATOM` and `HETATM`
+//! ensemble sample (none for a single structure), `ATOM` and `HETATM`
 //! records in dense atom order with a `TER` record after each chain's
 //! polymer, `CONECT` records for the bonds a reader cannot derive from the
 //! Chemical Component Dictionary, and `END`.
@@ -14,7 +14,7 @@ use crate::geometry::{PeriodicCell, Point3};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::is_metal;
-use crate::io::write_error::{check_structure_state, Omissions};
+use crate::io::write_error::{check_multi_model_ensemble, check_structure_state, Omissions};
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
@@ -48,10 +48,11 @@ pub struct PdbWriteOptions {
 }
 
 impl PdbWriteOptions {
-    /// Ensemble member weights and energies, which PDB cannot carry: by
-    /// default an ensemble with unequal weights or any energy fails to write,
-    /// and so does a single ensemble member, whose weight is relative to
-    /// members the entry does not hold.
+    /// Ensemble sample weights, states, state energies, and the temperature,
+    /// which PDB cannot carry: by default an ensemble with unequal weights,
+    /// more than one state, any energy, or a temperature fails to write, and
+    /// so does a single ensemble sample, whose weight is relative to samples
+    /// the entry does not hold.
     pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
         self.ensemble_metadata
     }
@@ -81,7 +82,7 @@ impl PdbWriteOptions {
 
     /// A periodic cell `CRYST1` cannot carry as the model's cell: one not
     /// periodic along all three axes, not in the standard crystallographic
-    /// orientation, differing between ensemble members, or written as PDB's
+    /// orientation, differing between ensemble samples, or written as PDB's
     /// 1 Å placeholder cube. By default such a cell fails to write;
     /// representable cells are written as `CRYST1` in space group P 1.
     pub const fn cell(&self) -> UnrepresentablePolicy {
@@ -165,8 +166,8 @@ impl fmt::Display for PdbAtomField {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PdbCellReason {
-    /// Ensemble members have different cells; an entry has one `CRYST1`.
-    MemberCellsDiffer,
+    /// Ensemble samples have different cells; an entry has one `CRYST1`.
+    SampleCellsDiffer,
     /// The cell is not periodic along all three axes.
     PartiallyPeriodic,
     /// The cell does not have `a` along x and `b` in the xy plane, as PDB
@@ -182,7 +183,7 @@ pub enum PdbCellReason {
 impl fmt::Display for PdbCellReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::MemberCellsDiffer => "ensemble members have different cells",
+            Self::SampleCellsDiffer => "ensemble samples have different cells",
             Self::PartiallyPeriodic => "a CRYST1 cell is periodic along all three axes",
             Self::NonstandardOrientation => {
                 "a CRYST1 cell has a along x and b in the xy plane, as its coordinates assume"
@@ -303,12 +304,15 @@ pub enum PdbWriteIssue {
         /// Its order.
         order: BondOrder,
     },
-    /// The 1-based ensemble member `member` has a weight or energy PDB cannot
-    /// carry, with [`PdbWriteOptions::ensemble_metadata`] set to fail.
-    UnrepresentableEnsembleMember {
-        /// The 1-based member number.
-        member: usize,
-        /// [`StructureField::Weight`] or [`StructureField::Energy`].
+    /// The 1-based ensemble sample `sample` has a weight, state, energy, or
+    /// temperature PDB cannot carry, with
+    /// [`PdbWriteOptions::ensemble_metadata`] set to fail. A temperature is
+    /// reported for the first sample.
+    UnrepresentableEnsembleSample {
+        /// The 1-based sample number.
+        sample: usize,
+        /// [`StructureField::Weight`], [`StructureField::State`],
+        /// [`StructureField::Energy`], or [`StructureField::Temperature`].
         field: StructureField,
     },
     /// A periodic cell `CRYST1` cannot carry, with
@@ -330,7 +334,7 @@ pub enum PdbWriteIssue {
         /// The structure's bond order between them, if they are bonded.
         order: Option<BondOrder>,
     },
-    /// The ensemble has no members.
+    /// The ensemble has no samples.
     EmptyEnsemble,
 }
 
@@ -405,9 +409,9 @@ impl fmt::Display for PdbWriteIssue {
             Self::UnsupportedBondOrder { bond, order } => {
                 write!(f, "CONECT records cannot state {bond} as {order:?}")
             }
-            Self::UnrepresentableEnsembleMember { member, field } => write!(
+            Self::UnrepresentableEnsembleSample { sample, field } => write!(
                 f,
-                "PDB cannot represent the {field} of ensemble member {member}"
+                "PDB cannot represent the {field} of ensemble sample {sample}"
             ),
             Self::UnrepresentableCell { reason } => {
                 write!(f, "CRYST1 cannot represent the periodic cell: {reason}")
@@ -430,7 +434,7 @@ fn fail(issue: PdbWriteIssue) -> FormatError {
 /// One PDB entry to write: a structure or an ensemble.
 ///
 /// Convert from `&Model` or `&Ensemble`; [`Self::structure`] accepts any
-/// borrowed model view, such as an ensemble member or a trajectory frame,
+/// borrowed model view, such as an ensemble sample or a trajectory frame,
 /// whose own state fails to write unless the write options omit it.
 #[derive(Debug, Clone, Copy)]
 pub struct PdbSource<'a> {
@@ -451,7 +455,7 @@ impl<'a> PdbSource<'a> {
         }
     }
 
-    /// An ensemble, one `MODEL` per member in member order.
+    /// An ensemble, one `MODEL` per sample in sample order.
     pub fn ensemble(ensemble: &'a Ensemble) -> Self {
         Self {
             content: Content::Ensemble(ensemble),
@@ -510,10 +514,13 @@ pub(crate) fn write_pdb_to<'a>(
             if ensemble.is_empty() {
                 return Err(fail(PdbWriteIssue::EmptyEnsemble));
             }
-            check_member_metadata(ensemble, options.ensemble_metadata, &mut omissions)?;
+            check_multi_model_ensemble(ensemble, options.ensemble_metadata, &mut omissions)
+                .map_err(|(sample, field)| {
+                    fail(PdbWriteIssue::UnrepresentableEnsembleSample { sample, field })
+                })?;
             let views = ensemble
                 .iter()
-                .map(|member| member.as_model_view())
+                .map(|sample| sample.as_model_view())
                 .collect();
             (views, true)
         }
@@ -553,49 +560,6 @@ pub(crate) fn write_pdb_to<'a>(
     Ok(omissions.into_report())
 }
 
-fn check_member_metadata(
-    ensemble: &Ensemble,
-    policy: UnrepresentablePolicy,
-    omissions: &mut Omissions,
-) -> Result<(), FormatError> {
-    // Interpretation gives every member weight 1.0 and no energy, so only
-    // equal weights and absent energies survive a round trip.
-    let weight = ensemble.get(0).map(|member| member.weight());
-    if policy != UnrepresentablePolicy::Fail {
-        let unequal = ensemble
-            .iter()
-            .any(|member| Some(member.weight()) != weight);
-        if unequal {
-            omissions.record(WriteOmission::StructureState {
-                field: StructureField::Weight,
-                structures: ensemble.len(),
-            });
-        }
-        omissions.record(WriteOmission::StructureState {
-            field: StructureField::Energy,
-            structures: ensemble
-                .iter()
-                .filter(|member| member.energy().is_some())
-                .count(),
-        });
-        return Ok(());
-    }
-    for (index, member) in ensemble.iter().enumerate() {
-        let field = if member.energy().is_some() {
-            StructureField::Energy
-        } else if Some(member.weight()) != weight {
-            StructureField::Weight
-        } else {
-            continue;
-        };
-        return Err(fail(PdbWriteIssue::UnrepresentableEnsembleMember {
-            member: index + 1,
-            field,
-        }));
-    }
-    Ok(())
-}
-
 /// The `CRYST1` parameters of an entry whose structures have these cells, or
 /// none when they have none or the caller omits one PDB cannot represent.
 fn entry_cell<'a>(
@@ -605,7 +569,7 @@ fn entry_cell<'a>(
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
-        Err(PdbCellReason::MemberCellsDiffer)
+        Err(PdbCellReason::SampleCellsDiffer)
     } else {
         match first.map(cell_parameters).transpose() {
             Ok(Some(parameters)) if is_written_placeholder(parameters) => {

@@ -28,7 +28,7 @@ use super::{DenseArrayError, Forces, Positions, StructureError, Velocities};
 /// topology's dense atom order: a position for every atom, an optional
 /// [`PeriodicCell`], optional crystallographic occupancies and B-factors, and
 /// structure properties. The topology stays coordinate-free and may be
-/// shared with other models, ensemble members, trajectory frames, selections,
+/// shared with other models, ensemble samples, trajectory frames, selections,
 /// and prepared potentials.
 ///
 /// Read and change structure state through the model's own
@@ -175,7 +175,7 @@ impl Model {
     }
 
     /// Applies a rigid transform to the whole model transactionally:
-    /// positions move and the cell rotates, as for ensemble members and
+    /// positions move and the cell rotates, as for ensemble samples and
     /// trajectory frames. Use [`Self::transform_atoms`] to move a selection
     /// while keeping the cell.
     ///
@@ -390,7 +390,7 @@ pub(crate) mod sealed {
 }
 
 /// Anything that can be borrowed as a [`ModelView`] without copying: models,
-/// views, ensemble members and trajectory frames.
+/// views, ensemble samples and trajectory frames.
 ///
 /// Each implementor also has an inherent `as_model_view` method, so the trait
 /// only needs importing for generic code. This trait is sealed; other
@@ -422,24 +422,32 @@ impl<'a> From<&'a Model> for ModelView<'a> {
     }
 }
 
-/// What a [`ModelView`] borrows: a model, an ensemble member, or a trajectory
+/// What a [`ModelView`] borrows: a model, an ensemble sample, or a trajectory
 /// frame, with the state only that kind of structure owns.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
-/// it so that member and frame state is written, rejected, or deliberately
+/// it so that sample and frame state is written, rejected, or deliberately
 /// omitted, never silently dropped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum StructureKind<'a> {
     /// A [`Model`], or a view materialized as one.
     Model,
-    /// An [`EnsembleMember`](super::EnsembleMember).
+    /// An [`EnsembleSample`](super::EnsembleSample), with what its
+    /// ensemble records about it.
     #[non_exhaustive]
-    Member {
-        /// The member's finite, positive relative weight.
+    Sample {
+        /// The sample's finite, positive relative weight.
         weight: f64,
-        /// The member's energy, when recorded.
-        energy: Option<Quantity<f64>>,
+        /// The index of the sample's state.
+        state: usize,
+        /// Whether the sample represents its state.
+        representative: bool,
+        /// The energy of the sample's state, when recorded.
+        energy: Option<&'a Quantity<f64>>,
+        /// The temperature the ensemble's populations describe, when
+        /// recorded.
+        temperature: Option<&'a Quantity<f64>>,
     },
     /// A [`TrajectoryFrame`](super::TrajectoryFrame) or a frame buffer.
     #[non_exhaustive]
@@ -458,7 +466,7 @@ pub enum StructureKind<'a> {
 /// A borrowed topology plus the structure state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
-/// Models, ensemble members, trajectory frames, and frame buffers all borrow
+/// Models, ensemble samples, trajectory frames, and frame buffers all borrow
 /// as a view, and [`Self::kind`] says which one it is. Accessors return
 /// borrows with the view's full lifetime. A view of a trajectory frame has no
 /// occupancies or B-factors. Views preserve exact topology identity.

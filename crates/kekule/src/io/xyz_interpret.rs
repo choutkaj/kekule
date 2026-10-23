@@ -8,7 +8,7 @@ use crate::diagnostics::{
 };
 use crate::geometry::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
-use crate::structure::{Ensemble, EnsembleMember, Model, ModelBuilder, Positions};
+use crate::structure::{Ensemble, EnsembleSample, EnsembleState, Model, ModelBuilder, Positions};
 use crate::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, Unit, ANGSTROM};
 
@@ -495,7 +495,7 @@ pub(crate) fn interpret_xyz_ensemble(
     let mut ensemble = Ensemble::new(first_model.shared_topology());
     let shared_bonds = bond_identity(&first_report.bonds);
     let mut reports = Vec::with_capacity(selected.len());
-    push_member(&mut ensemble, first.points, common.length_unit, first_index)?;
+    push_sample(&mut ensemble, first.points, common.length_unit, first_index)?;
     reports.push(first_report);
     for &index in &selected[1..] {
         let frame = &frames[index];
@@ -528,7 +528,7 @@ pub(crate) fn interpret_xyz_ensemble(
                 model_id: index.to_string(),
             }));
         }
-        push_member(&mut ensemble, analysed.points, common.length_unit, index)?;
+        push_sample(&mut ensemble, analysed.points, common.length_unit, index)?;
         reports.push(analysed.report);
     }
     drop(first_model);
@@ -539,7 +539,9 @@ fn bond_identity(bonds: &[XyzInferredBond]) -> Vec<([TopologyAtomIndex; 2], Bond
     bonds.iter().map(|bond| (bond.atoms, bond.order)).collect()
 }
 
-fn push_member(
+/// Appends one frame as an equally weighted sample of the ensemble's one
+/// state.
+fn push_sample(
     ensemble: &mut Ensemble,
     points: Vec<Point3>,
     unit: Unit,
@@ -556,8 +558,17 @@ fn push_member(
     };
     let positions =
         Positions::from_vec(Quantity::new(points, unit)).map_err(|error| chemistry(&error))?;
-    let member = EnsembleMember::new(positions, 1.0).map_err(|error| chemistry(&error))?;
-    ensemble.push(member).map_err(|error| chemistry(&error))
+    let sample = EnsembleSample::new(positions, 1.0).map_err(|error| chemistry(&error))?;
+    if ensemble.is_empty() {
+        ensemble
+            .push_state(sample, EnsembleState::new())
+            .map(|_| ())
+            .map_err(|error| chemistry(&error))
+    } else {
+        ensemble
+            .push_sample(sample, 0)
+            .map_err(|error| chemistry(&error))
+    }
 }
 
 /// The element an atom line names: a symbol in any letter case, or an

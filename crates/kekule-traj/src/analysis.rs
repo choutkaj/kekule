@@ -57,7 +57,7 @@ mod sealed {
 /// [`TrajectoryFrameView`] or a [`FrameBuffer`].
 ///
 /// Reductions count every frame once, so they accept trajectory frames only.
-/// Ensemble members are weighted samples whose statistics must use their
+/// Ensemble samples are weighted, and their statistics must use their
 /// weights, and a [`ModelView`] may borrow either kind of structure, so
 /// neither implements this sealed trait:
 ///

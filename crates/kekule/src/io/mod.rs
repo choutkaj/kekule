@@ -38,7 +38,7 @@ pub use mmcif_document::{
 pub(crate) use mmcif_write::{write_mmcif, write_mmcif_to};
 pub use mmcif_write::{
     MmcifAtomField, MmcifBlockSource, MmcifCellReason, MmcifEntityClassifications,
-    MmcifMemberField, MmcifWriteIssue, MmcifWriteOptions,
+    MmcifSampleField, MmcifWriteIssue, MmcifWriteOptions,
 };
 pub(crate) use molfile_document::{parse_molfile_document, parse_molfile_reader};
 pub use molfile_document::{
@@ -68,7 +68,10 @@ pub use sdf_document::{
 };
 pub(crate) use sdf_ensemble::sdf_ensemble;
 pub(crate) use sdf_write::{write_sdf, write_sdf_to};
-pub use sdf_write::{SdfRecordSource, SdfWriteOptions, SDF_ENERGY_FIELD, SDF_WEIGHT_FIELD};
+pub use sdf_write::{
+    SdfRecordSource, SdfWriteOptions, SDF_ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD, SDF_STATE_FIELD,
+    SDF_TEMPERATURE_FIELD, SDF_WEIGHT_FIELD,
+};
 pub(crate) use smiles::{
     parse_smiles_document, parse_smiles_reader, write_canonical_smiles, write_isomeric_smiles,
     write_smiles,

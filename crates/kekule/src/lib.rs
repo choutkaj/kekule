@@ -12,8 +12,8 @@
 //!   more explicit molecule instances plus an optional biological hierarchy.
 //! - [`structure::Model`] is one structure of a topology: positions, an
 //!   optional periodic cell, and structure-scoped properties.
-//! - [`structure::Ensemble`] stores several weighted, unordered structures of
-//!   one shared topology.
+//! - [`structure::Ensemble`] stores weighted samples of one shared topology,
+//!   grouped into states that may carry energies.
 //! - [`structure::Trajectory`] stores ordered
 //!   [`structure::TrajectoryFrame`]s of one shared topology, each with
 //!   positions and optional cell, velocities, forces, time, and step. File
@@ -96,7 +96,7 @@
 //! a bond addition can join two occurrences. New model atoms require coordinates.
 //!
 //! Coordinate-dependent algorithms consume [`structure::ModelView`]. A model,
-//! ensemble member, trajectory frame, or reusable trajectory buffer can
+//! ensemble sample, trajectory frame, or reusable trajectory buffer can
 //! therefore share kernels without copying coordinates. APIs that address atoms
 //! by index accept any topology snapshot sharing their layout
 //! ([`topology::Topology::shares_layout`]), so perception never detaches
@@ -604,7 +604,7 @@ pub mod smiles {
 /// its canonical text. [`select::SelectionExpr::evaluate`] evaluates
 /// topology terms against a topology;
 /// [`select::SelectionExpr::evaluate_structure`] also evaluates spatial and
-/// site terms against a model, ensemble member, or trajectory frame. Chemistry
+/// site terms against a model, ensemble sample, or trajectory frame. Chemistry
 /// terms read installed perception and never perceive. Applications add
 /// `#...`, `$name`, and keyword terms through a [`select::SelectionResolver`],
 /// which may answer spatial references with another object's points and add
@@ -802,24 +802,37 @@ pub mod sdf {
     pub use crate::io::{
         SdfDataField, SdfDocument, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
         SdfRecordInterpretationReport, SdfRecordSource, SdfRecords, SdfWriteOptions,
-        SDF_ENERGY_FIELD as ENERGY_FIELD, SDF_WEIGHT_FIELD as WEIGHT_FIELD,
+        SDF_ENERGY_FIELD as ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD as REPRESENTATIVE_FIELD,
+        SDF_STATE_FIELD as STATE_FIELD, SDF_TEMPERATURE_FIELD as TEMPERATURE_FIELD,
+        SDF_WEIGHT_FIELD as WEIGHT_FIELD,
     };
 
     /// Assembles interpreted records, in order, into one ensemble whose
-    /// members share the first record's topology. Each member takes its
-    /// relative weight from [`WEIGHT_FIELD`] (1.0 when absent) and its energy
-    /// from [`ENERGY_FIELD`] in kJ/mol (none when absent), the fields
-    /// [`write()`] emits for ensemble members. Sibling records never form an
-    /// ensemble implicitly.
+    /// samples share the first record's topology, record `i` becoming sample
+    /// `i`. Sibling records never form an ensemble implicitly.
+    ///
+    /// Each sample takes its relative weight from [`WEIGHT_FIELD`] (1.0 when
+    /// absent). Records without [`STATE_FIELD`], such as a conformer set
+    /// from another program, are one state each, with the energy of
+    /// [`ENERGY_FIELD`] in kJ/mol (none when absent). Records with it, as
+    /// [`write()`] emits for ensemble samples, are grouped by it: states are
+    /// numbered in ascending order of its values, each represented by the
+    /// one record marked with [`REPRESENTATIVE_FIELD`], which alone may carry
+    /// the state's energy. [`TEMPERATURE_FIELD`], in kelvin, is the
+    /// ensemble's temperature, the same on every record or on none.
     ///
     /// # Errors
     ///
     /// Returns a [`FormatError`] of kind
     /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
     /// when the records do not form an ensemble (none, or differing
-    /// topologies) or a weight or energy field is repeated, and
+    /// topologies), a field is repeated, some records name a state and
+    /// others do not, a state has no or two representatives, an energy is
+    /// on a record that does not represent its state, or temperatures
+    /// differ, and
     /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
-    /// when such a field is not a valid number, weight or energy.
+    /// when a field is not a valid number, state index, weight, energy,
+    /// temperature, or `true`.
     pub fn ensemble<'a>(
         records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
     ) -> Result<crate::structure::Ensemble, FormatError> {
@@ -866,8 +879,10 @@ pub mod sdf {
 
     /// Writes independent records in input order.
     ///
-    /// Records convert from models, ensemble members and trajectory frames
-    /// (`sdf::write(&ensemble, options)` writes one record per member), or
+    /// Records convert from models, ensemble samples and trajectory frames
+    /// (`sdf::write(&ensemble, options)` writes one record per sample, which
+    /// [`ensemble`] reads back with its weight, state, state energy, and
+    /// temperature), or
     /// interpreted records, which keep their titles and data fields.
     ///
     /// # Errors
@@ -1003,8 +1018,8 @@ pub mod mmcif {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
         MmcifAtomField, MmcifBlock, MmcifBlockSource, MmcifCellReason, MmcifDocument,
-        MmcifEntityClassifications, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifMemberField,
-        MmcifParseOptions, MmcifValue, MmcifWriteIssue, MmcifWriteOptions,
+        MmcifEntityClassifications, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifParseOptions,
+        MmcifSampleField, MmcifValue, MmcifWriteIssue, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular
