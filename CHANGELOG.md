@@ -148,6 +148,72 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** an `Ensemble` holds samples grouped into states (SeekDelta
+  K27). A member was a sample in one ensemble and a state in another, so its
+  weight and energy meant different things, Boltzmann weighting counted the
+  Boltzmann factor twice for simulation samples, and `collapse` folded
+  degeneracy into weights that the next weighting discarded.
+  - `EnsembleMember`, `EnsembleMemberView`, and `EnsembleMemberMut` become
+    `EnsembleSample`, `EnsembleSampleView`, and `EnsembleSampleMut`. A sample
+    has a weight and no energy; `EnsembleSampleView::new` is removed, and a
+    view knows its `index`, its `state`, and whether it `is_representative`.
+  - The new `EnsembleState` holds an optional energy, on one scale per
+    ensemble, and owner properties; `EnsembleStateView` adds its
+    representative, samples, and `population`, the total weight of its
+    samples, which is derived and never stored. `Ensemble::state`,
+    `state_mut`, `states`, and `state_count` reach them.
+  - The ensemble owns its grouping as an `EnsemblePartition` (`partition`),
+    which moves with `PartitionError` from `clustering` to `structure`, with
+    state vocabulary (`sample_count`, `state_count`, `samples`,
+    `StateOutOfRange`, `RepresentativeNotInState`) and the constructors
+    `one_state` and `state_per_sample`. Every sample is in exactly one state,
+    and every state contains its representative. Regrouping, weighting, and
+    state edits never reorder samples.
+  - The ensemble records an optional `temperature`, the one its populations
+    describe.
+  - `assign_boltzmann_weights` becomes `assign_boltzmann_populations`: it sets
+    state populations in proportion to exp(-ΔE/RT), scaling each state's
+    samples together and keeping the total weight, so a one-state ensemble is
+    unchanged; it refuses a state without an energy and records the
+    temperature. `ranked_by_energy` and `within_energy_window` rank states;
+    `covering_weight` becomes `covering_population`, and `ranked_by_population`
+    and `state_probabilities` are new. `probabilities`,
+    `effective_sample_size`, and `ranked_by_weight` stay over samples.
+  - `Ensemble::regroup` applies a partition, such as a clustering result,
+    without changing any weight. A new state that contains every sample of an
+    old state keeps the energy and properties of its representative's old
+    state; a state split apart loses them. `Ensemble::collapse` takes no
+    partition and makes a new ensemble of each state's representative
+    carrying its population; `ClusteringError::PartitionMismatch` is replaced
+    by `EnsembleError::PartitionMismatch`. `ClusterOrder::Energy` orders
+    samples by their state's energy.
+  - `from_items` becomes `from_samples`, and it, `from_models`, and
+    `from_molecule_positions` take the partition saying what the samples are.
+    `push` is replaced by `push_state` and `push_sample`; `remove` removes a
+    state with its last sample and refuses a representative of a state with
+    other samples. `select` keeps whole states' energies, `select_states`
+    copies whole states, and `into_items` becomes `into_samples`.
+  - `Trajectory::into_ensemble`, multi-model PDB and mmCIF, and multi-frame
+    XYZ give one state. `sdf::ensemble` gives one state per record unless the
+    records name their states.
+  - `StructureKind::Member` becomes `StructureKind::Sample`, with the sample's
+    state, whether it represents it, the state's energy, and the temperature.
+    `StructureField` gains `State` and `Temperature`.
+  - SDF writes each sample's weight and state (`sdf::STATE_FIELD`), marks
+    representatives (`sdf::REPRESENTATIVE_FIELD`), writes a state's energy on
+    its representative's record, and writes the temperature
+    (`sdf::TEMPERATURE_FIELD`), so ensembles of one state, of one state per
+    sample, and of clustered states round-trip.
+  - PDB and mmCIF ensembles, which read back as one state of equal weights
+    without an energy, also fail on several states or a temperature unless
+    omitted. `PdbWriteIssue::UnrepresentableEnsembleMember`,
+    `MmcifWriteIssue::UnrepresentableEnsembleMember`, and
+    `IncompatibleEnsembleMember` become `...EnsembleSample { sample, field }`,
+    `MmcifMemberField` becomes `MmcifSampleField` with `State` and
+    `Temperature`, and `MemberCellsDiffer` becomes `SampleCellsDiffer`.
+  - The native format moves to version 2: it stores samples with their state,
+    states with their representative, energy, and properties, and the
+    temperature. Version 1 input is rejected.
 - **Breaking:** `kekule_traj::io::write_trajectory` returns the
   `WriteReport` of the written file instead of `()`.
 - **Breaking:** `pdb::write` and `mmcif::write` return the text together with
@@ -156,7 +222,7 @@ are marked **Breaking:**.
   `UnrepresentablePolicy::Omit` made as a typed `WriteOmission` with the
   number of atoms, bonds, residues, molecules, or structures affected:
   implicit-hydrogen counts, isotopes, radicals, atom maps, stereo, unstatable
-  bonds, dictionary bond conflicts, cells, and member or frame state.
+  bonds, dictionary bond conflicts, cells, and sample or frame state.
 - `PdbWriteOptions::with_implicit_hydrogens` and
   `MmcifWriteOptions::with_implicit_hydrogens` omit fixed implicit-hydrogen
   counts alone, so structures that fix them, such as XYZ interpretations,

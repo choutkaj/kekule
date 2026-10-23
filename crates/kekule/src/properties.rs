@@ -4,7 +4,7 @@
 //! type: definition-invariant annotations are [`MoleculeProperties`] of a
 //! [`crate::molecule::Molecule`], system annotations are [`TopologyProperties`] of a
 //! [`crate::topology::Topology`], and coordinate-dependent annotations are
-//! [`StructureProperties`] of a [`crate::structure::Model`], ensemble member,
+//! [`StructureProperties`] of a [`crate::structure::Model`], ensemble sample,
 //! or trajectory frame. Each scope holds [`OwnerProperties`] plus one
 //! [`PropertyTable`] per entity domain, addressed by that domain's identifier
 //! ([`PropertyRow`]).

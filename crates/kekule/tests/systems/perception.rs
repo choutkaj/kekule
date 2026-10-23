@@ -5,7 +5,7 @@ use std::sync::{Arc, Weak};
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{Ensemble, EnsembleMember, Model, Positions};
+use kekule::structure::{Ensemble, EnsemblePartition, EnsembleSample, Model, Positions};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
     ResidueClass, SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
@@ -286,7 +286,7 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
 #[test]
 fn ensemble_perception_preserves_members_weights_and_collection_properties() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
-    let mut member = EnsembleMember::new(Positions::zeros(6), 1.0).unwrap();
+    let mut member = EnsembleSample::new(Positions::zeros(6), 1.0).unwrap();
     member.set_weight(0.25).unwrap();
     member.set_cell(Some(
         PeriodicCell::orthorhombic(
@@ -308,9 +308,14 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
             Some(PropertyValue::Int(11)),
         )
         .unwrap();
-    let mut second = EnsembleMember::new(Positions::zeros(6), 1.0).unwrap();
+    let mut second = EnsembleSample::new(Positions::zeros(6), 1.0).unwrap();
     second.set_weight(0.75).unwrap();
-    let mut ensemble = Ensemble::from_items(Arc::clone(&topology), [member, second]).unwrap();
+    let mut ensemble = Ensemble::from_samples(
+        Arc::clone(&topology),
+        [member, second],
+        EnsemblePartition::one_state(2),
+    )
+    .unwrap();
     // Bond rows exist once the member is bound to the ensemble topology.
     ensemble
         .get_mut(0)
@@ -381,9 +386,10 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
     assert_eq!(model, before);
     assert_eq!(installed(model.topology()), previous);
 
-    let mut ensemble = Ensemble::from_items(
+    let mut ensemble = Ensemble::from_samples(
         Arc::clone(&topology),
-        [EnsembleMember::new(Positions::zeros(topology.atom_count()), 1.0).unwrap()],
+        [EnsembleSample::new(Positions::zeros(topology.atom_count()), 1.0).unwrap()],
+        EnsemblePartition::one_state(1),
     )
     .unwrap();
     ensemble

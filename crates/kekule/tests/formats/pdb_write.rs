@@ -8,7 +8,9 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::molecule::{AtomId, BondOrder};
 use kekule::pdb::{self, PdbAtomField, PdbCellReason, PdbWriteIssue, PdbWriteOptions};
-use kekule::structure::{Ensemble, EnsembleMember, Model, ModelBuilder, Positions};
+use kekule::structure::{
+    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Model, ModelBuilder, Positions,
+};
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{Quantity, ANGSTROM};
 use kekule::{mmcif, smiles};
@@ -285,18 +287,20 @@ fn residues_must_be_consecutive_in_dense_order() {
 }
 
 #[test]
-fn ensembles_write_models_and_member_state_fails_unless_omitted() {
+fn ensembles_write_models_and_sample_state_fails_unless_omitted() {
     let topology = smiles::to_topology("C").unwrap();
-    let member = |x: f64| {
-        EnsembleMember::new(
+    let sample = |x: f64| {
+        EnsembleSample::new(
             Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap(),
             1.0,
         )
         .unwrap()
     };
     let mut ensemble = Ensemble::new(Arc::clone(&topology));
-    ensemble.push(member(0.0)).unwrap();
-    ensemble.push(member(1.0)).unwrap();
+    ensemble
+        .push_state(sample(0.0), EnsembleState::new())
+        .unwrap();
+    ensemble.push_sample(sample(1.0), 0).unwrap();
     let written = pdb::write(&ensemble, Default::default())
         .map(|(text, _)| text)
         .unwrap();
@@ -314,8 +318,22 @@ fn ensembles_write_models_and_member_state_fails_unless_omitted() {
         written
     );
 
+    // A second state fails, and so does its energy, which comes first.
     ensemble
-        .get_mut(1)
+        .regroup(EnsemblePartition::state_per_sample(2))
+        .unwrap();
+    let error = pdb::write(&ensemble, Default::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
+    assert!(matches!(
+        issue(&error),
+        PdbWriteIssue::UnrepresentableEnsembleSample {
+            sample: 2,
+            field: StructureField::State
+        }
+    ));
+    ensemble
+        .state_mut(1)
         .unwrap()
         .set_energy(Some(Quantity::new(1.0, kekule::units::KILOJOULE_PER_MOLE)))
         .unwrap();
@@ -324,8 +342,8 @@ fn ensembles_write_models_and_member_state_fails_unless_omitted() {
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableEnsembleMember {
-            member: 2,
+        PdbWriteIssue::UnrepresentableEnsembleSample {
+            sample: 2,
             field: StructureField::Energy
         }
     ));
@@ -333,12 +351,18 @@ fn ensembles_write_models_and_member_state_fails_unless_omitted() {
     let (_, report) = pdb::write(&ensemble, options).unwrap();
     assert_eq!(
         report.omissions(),
-        [WriteOmission::StructureState {
-            field: StructureField::Energy,
-            structures: 1
-        }]
+        [
+            WriteOmission::StructureState {
+                field: StructureField::Energy,
+                structures: 1
+            },
+            WriteOmission::StructureState {
+                field: StructureField::State,
+                structures: 2
+            }
+        ]
     );
-    // A lone member's weight is relative to members the entry does not hold.
+    // A lone sample's weight is relative to samples the entry does not hold.
     let lone = ensemble.get(0).unwrap();
     assert!(
         pdb::write(pdb::PdbSource::structure(&lone), Default::default())

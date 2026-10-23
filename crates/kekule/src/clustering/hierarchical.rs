@@ -6,7 +6,8 @@ use crate::alignment::{
 use crate::structure::{Ensemble, ModelView};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
-use super::{undirected, ClusteringError, EnsemblePartition};
+use super::{undirected, ClusteringError};
+use crate::structure::EnsemblePartition;
 
 /// Symmetric pairwise distances between the members of one ensemble, stored
 /// once per unordered pair in [`CANONICAL_LENGTH_UNIT`].
@@ -391,10 +392,10 @@ impl Ensemble {
         }
         let assignments = distances.dendrogram(linkage).cut(cut)?;
         let representatives = self.weighted_medoids(distances, &assignments);
-        Ok(EnsemblePartition {
+        Ok(EnsemblePartition::from_parts_unchecked(
             assignments,
             representatives,
-        })
+        ))
     }
 
     /// The weighted medoid of every cluster of `assignments`, whose clusters

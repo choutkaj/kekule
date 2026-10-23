@@ -65,8 +65,8 @@ impl MolfileWriteOptions {
         self
     }
 
-    /// An ensemble member's weight and energy, which a Molfile cannot carry:
-    /// by default writing a view of an ensemble member fails.
+    /// An ensemble sample's weight and its state's energy, which a Molfile
+    /// cannot carry: by default writing a view of an ensemble sample fails.
     pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
         self.ensemble_metadata
     }
@@ -133,7 +133,7 @@ impl<'a> MolfileSource<'a> {
         }
     }
 
-    /// A geometry-bearing model, ensemble member, or trajectory frame.
+    /// A geometry-bearing model, ensemble sample, or trajectory frame.
     pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
         Self {
             content: MolfileContent::Model(model.as_model_view()),

@@ -638,16 +638,28 @@ impl<W: Write> Encoder<'_, W> {
     fn ensemble(&mut self, ensemble: &Ensemble) -> Result {
         self.topology(ensemble.topology())?;
         self.owner(ensemble.properties())?;
+        self.opt_f64(
+            ensemble
+                .temperature()
+                .map(|temperature| *temperature.value()),
+        )?;
         self.count(ensemble.len())?;
-        for member in ensemble.iter() {
-            let member = member.payload();
-            self.points(member.positions().values().value())?;
-            self.cell(member.cell())?;
-            self.scalars(member.occupancies())?;
-            self.scalars(member.b_factors().map(|values| *values.value()))?;
-            self.structure_properties(member.properties())?;
-            self.f64(member.weight())?;
-            self.opt_f64(member.energy().map(|energy| *energy.value()))?;
+        for sample in ensemble.iter() {
+            let state = sample.state().index();
+            let sample = sample.payload();
+            self.points(sample.positions().values().value())?;
+            self.cell(sample.cell())?;
+            self.scalars(sample.occupancies())?;
+            self.scalars(sample.b_factors().map(|values| *values.value()))?;
+            self.structure_properties(sample.properties())?;
+            self.f64(sample.weight())?;
+            self.count(state)?;
+        }
+        self.count(ensemble.state_count())?;
+        for state in ensemble.states() {
+            self.count(state.representative())?;
+            self.opt_f64(state.energy().map(|energy| *energy.value()))?;
+            self.owner(state.properties())?;
         }
         Ok(())
     }
