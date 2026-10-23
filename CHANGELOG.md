@@ -145,6 +145,18 @@ are marked **Breaking:**.
   separately. `WriteOmission` gains `FormalCharges` and `AtomSites`, and
   `WriteReport` gains `is_empty`, `Default`, and `FromIterator`, which merges
   repeated kinds as writers do.
+- Frame smoothing in `kekule_traj::periodic`: `FrameSmoother` replaces a
+  buffered frame's positions with their moving average over the neighboring
+  frames the caller supplies, within a fixed half width, so playback and
+  scrubbing can smooth any frame in any order from already processed frames.
+  With a periodic cell, each neighbor atom is first placed at its nearest image
+  to the same atom of the smoothed frame under that frame's cell, so an atom
+  crossing the cell is not averaged across it; without one, positions are
+  averaged as stored, and a window mixing both fails. Windows are truncated at
+  the trajectory ends (`FrameSmoother::window`). Only positions change: cell,
+  time, step, properties, velocities, and forces stay the frame's own.
+  `smooth_trajectory` is the in-memory form. Failures leave the buffer or
+  trajectory unchanged; `PeriodicError` gains `InvalidNeighbor`.
 
 ### Changed
 

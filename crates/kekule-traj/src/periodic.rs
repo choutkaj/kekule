@@ -1,9 +1,11 @@
-//! Periodic coordinate reconstruction, imaging, and temporal unwrapping.
+//! Periodic coordinate reconstruction, imaging, temporal unwrapping, and
+//! image-aware smoothing.
 //!
 //! These operations change positions only, in place. The shared topology, cells,
 //! velocities, forces, time, step, and all properties are retained. Collection
 //! functions publish only after every item succeeds; clone the collection first
-//! to keep the original. Every processed item must have a periodic cell.
+//! to keep the original. Every processed item must have a periodic cell, except
+//! in smoothing, which averages cell-free frames as stored.
 //!
 //! Molecules and bonds come from the authoritative topology. No bonds are guessed
 //! from distances or hierarchy. Orthorhombic, triclinic, rotated, and partially
@@ -14,9 +16,8 @@
 //! for cells requiring more; it never substitutes an approximate image silently.
 //!
 //! Collection functions operate on an in-memory [`Trajectory`];
-//! [`MoleculeImager`] and
-//! [`TrajectoryUnwrapper`] apply the same operations to streamed
-//! [`FrameBuffer`](crate::FrameBuffer)s.
+//! [`MoleculeImager`], [`TrajectoryUnwrapper`], and [`FrameSmoother`] apply
+//! the same operations to streamed [`FrameBuffer`](crate::FrameBuffer)s.
 //!
 //! # Examples
 //!
@@ -103,7 +104,9 @@ use kekule::structure::{DenseArrayError, Positions, Trajectory, TrajectoryError}
 use kekule::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
+mod smooth;
 mod stream;
+pub use smooth::FrameSmoother;
 pub use stream::{MoleculeImager, TrajectoryUnwrapper};
 
 /// Failure to reconstruct or publish periodic coordinates.
@@ -136,6 +139,14 @@ pub enum PeriodicError {
     },
     /// Imaging was requested with no anchor atom.
     EmptyAnchors,
+    /// A smoothing neighbor is outside the window, is the smoothed frame
+    /// itself, or does not follow the previous neighbor's index.
+    InvalidNeighbor {
+        /// The smoothed frame index.
+        frame: usize,
+        /// The rejected neighbor index.
+        neighbor: usize,
+    },
     /// Selected shortest bond images do not form a consistent finite molecule (e.g. a winding ring).
     InconsistentBondImages {
         /// The frame index.
@@ -191,6 +202,7 @@ impl fmt::Display for PeriodicError {
             Self::NonSequentialFrame { previous, frame } => write!(f, "frame {frame} must immediately follow frame {previous} for temporal unwrapping"),
             Self::NonMonotonicTime { frame } => write!(f, "time decreases at frame {frame} during temporal unwrapping"),
             Self::EmptyAnchors => f.write_str("imaging requires at least one anchor atom"),
+            Self::InvalidNeighbor { frame, neighbor } => write!(f, "frame {neighbor} is not a valid next smoothing neighbor of frame {frame}"),
             Self::InconsistentBondImages { frame, bond } => write!(f, "frame {frame} has inconsistent periodic images around {bond}"),
             Self::PeriodicAxesChanged { frame } => write!(f, "periodic axes change at frame {frame}"),
             Self::AmbiguousDisplacement { frame, atom, axis } => write!(f, "frame {frame}, {atom}, cell axis {axis}: ambiguous half-cell displacement"),
@@ -291,6 +303,42 @@ pub fn unwrap_trajectory(trajectory: &mut Trajectory) -> Result<(), PeriodicErro
         .iter()
         .enumerate()
         .map(|(index, frame)| unwrapper.next_positions(index, frame))
+        .collect::<Result<Vec<_>, _>>()?;
+    publish(trajectory, positions)
+}
+
+/// Smooths every frame with a moving average of positions over the frames
+/// within `half_width` of it.
+///
+/// Every frame is averaged from the unsmoothed frames, with windows truncated
+/// at both ends of the trajectory and neighbor atoms imaged onto each frame
+/// under its cell, as described for [`FrameSmoother`]. Velocities, forces,
+/// cells, time, step, and properties are retained unaveraged.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::MissingCell`] when a window mixes frames with and
+/// without cells, [`PeriodicError::LimitExceeded`] or
+/// [`PeriodicError::NumericalFailure`] for an ill-conditioned cell or
+/// out-of-range coordinates, and [`PeriodicError::Position`] or
+/// [`PeriodicError::Publication`] when the result cannot be stored. On error
+/// the trajectory is unchanged.
+pub fn smooth_trajectory(
+    trajectory: &mut Trajectory,
+    half_width: usize,
+) -> Result<(), PeriodicError> {
+    let smoother = FrameSmoother::new(trajectory.shared_topology(), half_width);
+    let frames: Vec<_> = trajectory.iter().collect();
+    let positions = frames
+        .iter()
+        .enumerate()
+        .map(|(index, &frame)| {
+            let neighbors = smoother
+                .window(index, frames.len())
+                .filter(|&neighbor| neighbor != index)
+                .map(|neighbor| (neighbor, frames[neighbor]));
+            smoother.smoothed_positions(index, frame, neighbors)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     publish(trajectory, positions)
 }

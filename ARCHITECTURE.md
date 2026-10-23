@@ -407,7 +407,10 @@ same kernel to a buffer. Streaming tools take the caller's frame index for
 diagnostics. Superposition rotates cells, velocities, and forces consistently.
 Periodic reconstruction uses asserted bonds and checks ring closure. Imaging
 acts on whole molecules. Unwrapping retains temporal state and requires ordered,
-sufficiently close samples; it precedes downsampling. Failed streaming operations
+sufficiently close samples; it precedes downsampling. Smoothing averages each
+frame's positions with caller-supplied neighbors within a fixed window, imaged
+onto that frame's cell, so it serves random access; it comes last and changes
+positions only. Failed streaming operations
 change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
 RMSF and contact-occupancy reductions are trajectory statistics in which every

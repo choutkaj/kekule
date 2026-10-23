@@ -8,5 +8,6 @@ mod frame_buffers;
 mod loading;
 mod readers;
 mod saving;
+mod smoothing;
 mod streaming;
 mod streaming_transforms;

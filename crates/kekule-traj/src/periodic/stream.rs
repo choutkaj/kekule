@@ -284,7 +284,10 @@ impl TrajectoryUnwrapper {
     }
 }
 
-fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), PeriodicError> {
+pub(super) fn publish_buffer(
+    frame: &mut FrameBuffer,
+    positions: &Positions,
+) -> Result<(), PeriodicError> {
     frame
         .frame_mut()
         .set_positions(positions.values())
