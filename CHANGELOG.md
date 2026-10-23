@@ -111,7 +111,6 @@ are marked **Breaking:**.
     frame state, and cells `CRYST1` cannot carry.
   - The curated `bio` benchmark entries round-trip in a new acceptance test,
     and the `pdb` fuzz target checks that written entries read back.
-<<<<<<< HEAD
 - Cooperative cancellation of long-running structure work. A
   `diagnostics::Cancellation` wraps a host check, such as
   `Cancellation::from_flag` over an `AtomicBool`.
@@ -127,10 +126,9 @@ are marked **Breaking:**.
   - No partial result is returned, and a check that never turns true does
     not change any result. Without a cancellation, nothing is polled.
   - On 7K00 (149k atoms), polls are at most 66 ms apart. A cancelled
-    interpretation returns 80–115 ms after its check turns true; most of
+    interpretation returns 80â€“115 ms after its check turns true; most of
     that time is spent freeing intermediate data. Perception of 6SPB returns
     within 15 ms.
-=======
 - `MmcifBlockSource::with_block_name` names one mmCIF data block, so a file
   of several objects keeps each object's name; reading it back gives the name
   as `MmcifBlock::name`. Names are validated as `MmcifWriteOptions` block
@@ -147,7 +145,6 @@ are marked **Breaking:**.
   separately. `WriteOmission` gains `FormalCharges` and `AtomSites`, and
   `WriteReport` gains `is_empty`, `Default`, and `FromIterator`, which merges
   repeated kinds as writers do.
->>>>>>> 5b48fdf1e9085dc6de009a6d48f6efc338abfbac
 
 ### Changed
 
