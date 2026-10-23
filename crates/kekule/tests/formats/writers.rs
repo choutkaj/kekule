@@ -3,7 +3,7 @@ use std::{io, io::Write};
 
 use kekule::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, FormatStage, StructureField,
-    UnrepresentablePolicy,
+    UnrepresentablePolicy, WriteOmission,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::EntityKind;
@@ -12,11 +12,12 @@ use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{
-    Ensemble, Forces, Model, ModelView, Positions, Trajectory, TrajectoryFrame, Velocities,
+    Ensemble, EnsemblePartition, Forces, Model, ModelView, Positions, Trajectory, TrajectoryFrame,
+    Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{
-    Quantity, ANGSTROM, KILOJOULE_PER_MOLE, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
+    Quantity, ANGSTROM, KELVIN, KILOJOULE_PER_MOLE, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
     NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
 
@@ -471,7 +472,7 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
         Positions::new(Quantity::new([Point3::new(9.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
     .unwrap();
-    let ensemble = Ensemble::from_models([first, later]).unwrap();
+    let ensemble = Ensemble::from_models([first, later], EnsemblePartition::one_state(2)).unwrap();
     let ensemble_text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
     let records = interpret_records(&ensemble_text);
     assert_eq!(records.len(), 2);
@@ -503,7 +504,8 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
     );
 }
 
-/// A two-member methane ensemble weighted 1:3 with energies 0 and 5 kJ/mol.
+/// Two methane conformers, one state each, weighted 1:3 with state energies
+/// 0 and 5 kJ/mol.
 fn weighted_ensemble() -> Ensemble {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let later = Model::new(
@@ -511,37 +513,78 @@ fn weighted_ensemble() -> Ensemble {
         Positions::new(Quantity::new([Point3::new(9.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
     .unwrap();
-    let mut ensemble = Ensemble::from_models([first, later]).unwrap();
+    let mut ensemble =
+        Ensemble::from_models([first, later], EnsemblePartition::state_per_sample(2)).unwrap();
     for (index, weight, energy) in [(0, 1.0, 0.0), (1, 3.0, 5.0)] {
-        let mut member = ensemble.get_mut(index).unwrap();
-        member.set_weight(weight).unwrap();
-        member
+        ensemble.get_mut(index).unwrap().set_weight(weight).unwrap();
+        ensemble
+            .state_mut(index)
+            .unwrap()
             .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
             .unwrap();
     }
     ensemble
 }
 
-fn member_metadata(ensemble: &Ensemble) -> Vec<(f64, Option<f64>)> {
+/// Four methane samples weighted 1 to 4 in two states, {1, 3} represented
+/// by 3 and {0, 2} represented by 2, the latter at -2.5 kJ/mol, at 300 K.
+fn clustered_ensemble() -> Ensemble {
+    let first = model("C", &[[0.0, 0.0, 0.0]]);
+    let models = (0..4).map(|index| {
+        Model::new(
+            first.shared_topology(),
+            Positions::new(Quantity::new(
+                [Point3::new(f64::from(index), 0.0, 0.0)],
+                ANGSTROM,
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    });
+    let partition = EnsemblePartition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap();
+    let mut ensemble = Ensemble::from_models(models.collect::<Vec<_>>(), partition).unwrap();
+    for index in 0..4 {
+        ensemble
+            .get_mut(index)
+            .unwrap()
+            .set_weight(f64::from(index as u8 + 1))
+            .unwrap();
+    }
     ensemble
-        .iter()
-        .map(|member| {
-            (
-                member.weight(),
-                member
-                    .energy()
-                    .map(|energy| energy.value_in(KILOJOULE_PER_MOLE).unwrap()),
-            )
-        })
-        .collect()
+        .state_mut(1)
+        .unwrap()
+        .set_energy(Some(Quantity::new(-2.5, KILOJOULE_PER_MOLE)))
+        .unwrap();
+    ensemble
+        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
+        .unwrap();
+    ensemble
 }
 
-#[test]
-fn sdf_ensemble_members_carry_their_weight_and_energy_through_data_fields() {
-    let ensemble = weighted_ensemble();
-    let text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
-    let records = interpret_records(&text);
-    let fields = records
+/// Every weight, the partition, every state energy in kJ/mol, and the
+/// temperature in kelvin.
+type EnsembleMetadata = (Vec<f64>, EnsemblePartition, Vec<Option<f64>>, Option<f64>);
+
+fn ensemble_metadata(ensemble: &Ensemble) -> EnsembleMetadata {
+    (
+        ensemble.iter().map(|sample| sample.weight()).collect(),
+        ensemble.partition().clone(),
+        ensemble
+            .states()
+            .map(|state| {
+                state
+                    .energy()
+                    .map(|energy| energy.value_in(KILOJOULE_PER_MOLE).unwrap())
+            })
+            .collect(),
+        ensemble
+            .temperature()
+            .map(|temperature| temperature.value_in(KELVIN).unwrap()),
+    )
+}
+
+fn data_fields(records: &[SdfRecordInterpretation]) -> Vec<Vec<(String, String)>> {
+    records
         .iter()
         .map(|record| {
             record
@@ -550,26 +593,57 @@ fn sdf_ensemble_members_carry_their_weight_and_energy_through_data_fields() {
                 .map(|field| (field.name().to_owned(), field.value().to_owned()))
                 .collect::<Vec<_>>()
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+#[test]
+fn sdf_ensemble_samples_carry_their_weight_state_and_energy_through_data_fields() {
+    let ensemble = weighted_ensemble();
+    let text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
+    let records = interpret_records(&text);
     let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
     assert_eq!(
-        fields,
+        data_fields(&records),
         [
-            vec![field(sdf::WEIGHT_FIELD, "1"), field(sdf::ENERGY_FIELD, "0")],
-            vec![field(sdf::WEIGHT_FIELD, "3"), field(sdf::ENERGY_FIELD, "5")],
+            vec![
+                field(sdf::WEIGHT_FIELD, "1"),
+                field(sdf::STATE_FIELD, "0"),
+                field(sdf::REPRESENTATIVE_FIELD, "true"),
+                field(sdf::ENERGY_FIELD, "0"),
+            ],
+            vec![
+                field(sdf::WEIGHT_FIELD, "3"),
+                field(sdf::STATE_FIELD, "1"),
+                field(sdf::REPRESENTATIVE_FIELD, "true"),
+                field(sdf::ENERGY_FIELD, "5"),
+            ],
         ]
     );
     let reread = sdf::ensemble(&records).unwrap();
-    assert_eq!(member_metadata(&reread), member_metadata(&ensemble));
+    assert_eq!(ensemble_metadata(&reread), ensemble_metadata(&ensemble));
     assert_eq!(reread.probabilities().unwrap(), [0.25, 0.75]);
 
-    // Records without the fields are equally weighted and have no energy.
+    // Records without state fields, as other programs write conformers, are
+    // one state each with their energies; without weights they are equal.
+    let foreign = text
+        .replace(">  <kekule.state>\n0\n\n", "")
+        .replace(">  <kekule.state>\n1\n\n", "")
+        .replace(">  <kekule.representative>\ntrue\n\n", "");
+    assert_eq!(
+        ensemble_metadata(&sdf::ensemble(&interpret_records(&foreign)).unwrap()),
+        ensemble_metadata(&ensemble)
+    );
     let plain = interpret_records(
         &sdf::write(&[model("C", &[[0.0; 3]])], SdfWriteOptions::default()).unwrap(),
     );
     assert_eq!(
-        member_metadata(&sdf::ensemble(&plain).unwrap()),
-        [(1.0, None)]
+        ensemble_metadata(&sdf::ensemble(&plain).unwrap()),
+        (
+            vec![1.0],
+            EnsemblePartition::state_per_sample(1),
+            vec![None],
+            None
+        )
     );
 
     let malformed = text.replacen(">  <kekule.weight>\n3\n", ">  <kekule.weight>\nheavy\n", 1);
@@ -579,57 +653,179 @@ fn sdf_ensemble_members_carry_their_weight_and_energy_through_data_fields() {
             .to_string(),
         "SDF interpretation error in record 2: data field `kekule.weight` is not a number: `heavy`"
     );
-    let fields = [SdfDataField::new(sdf::WEIGHT_FIELD, "2")];
-    let member = sdf::SdfRecordSource::from(ensemble.get(0).unwrap()).with_data_fields(&fields);
+    let fields = [SdfDataField::new(sdf::STATE_FIELD, "2")];
+    let sample = sdf::SdfRecordSource::from(ensemble.get(0).unwrap()).with_data_fields(&fields);
     assert_eq!(
-        described(sdf::write([member], SdfWriteOptions::default()).unwrap_err()),
+        described(sdf::write([sample], SdfWriteOptions::default()).unwrap_err()),
         (
             DiagnosticKind::Inconsistent,
             Some(FormatErrorDetail::DataField {
-                name: sdf::WEIGHT_FIELD.to_owned(),
+                name: sdf::STATE_FIELD.to_owned(),
             }),
-            "this field carries the ensemble member's own metadata".to_owned(),
+            "this field carries the ensemble sample's own metadata".to_owned(),
         )
+    );
+    // So does a field the sample does not write, such as a second
+    // representative marker on a sample that represents nothing.
+    let clustered = clustered_ensemble();
+    let fields = [SdfDataField::new(sdf::REPRESENTATIVE_FIELD, "true")];
+    let sample = sdf::SdfRecordSource::from(clustered.get(0).unwrap()).with_data_fields(&fields);
+    assert_eq!(
+        described(sdf::write([sample], SdfWriteOptions::default()).unwrap_err()).1,
+        Some(FormatErrorDetail::DataField {
+            name: sdf::REPRESENTATIVE_FIELD.to_owned(),
+        })
     );
 }
 
 #[test]
-fn mmcif_rejects_ensemble_weights_and_energies_it_cannot_carry() {
+fn sdf_round_trips_ensembles_of_one_state_and_of_clustered_states() {
+    let ensemble = clustered_ensemble();
+    let text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
+    let records = interpret_records(&text);
+    let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
+    // Only representatives carry their state's energy; every record carries
+    // the temperature.
+    assert_eq!(
+        data_fields(&records)[2],
+        [
+            field(sdf::WEIGHT_FIELD, "3"),
+            field(sdf::STATE_FIELD, "1"),
+            field(sdf::REPRESENTATIVE_FIELD, "true"),
+            field(sdf::ENERGY_FIELD, "-2.5"),
+            field(sdf::TEMPERATURE_FIELD, "300"),
+        ]
+    );
+    assert_eq!(
+        data_fields(&records)[0],
+        [
+            field(sdf::WEIGHT_FIELD, "1"),
+            field(sdf::STATE_FIELD, "1"),
+            field(sdf::TEMPERATURE_FIELD, "300"),
+        ]
+    );
+    let reread = sdf::ensemble(&records).unwrap();
+    assert_eq!(ensemble_metadata(&reread), ensemble_metadata(&ensemble));
+    for (left, right) in reread.iter().zip(ensemble.iter()) {
+        assert_eq!(left.positions(), right.positions());
+    }
+
+    // One state of equally weighted samples.
+    let mut one = clustered_ensemble();
+    one.regroup(EnsemblePartition::one_state(4)).unwrap();
+    one.set_temperature(None).unwrap();
+    let reread = sdf::ensemble(&interpret_records(
+        &sdf::write(&one, SdfWriteOptions::default()).unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(ensemble_metadata(&reread), ensemble_metadata(&one));
+    assert_eq!(reread.state_count(), 1);
+
+    // Records that do not describe a partition are rejected.
+    let error = |text: &str| {
+        sdf::ensemble(&interpret_records(text))
+            .unwrap_err()
+            .to_string()
+    };
+    assert_eq!(
+        error(&text.replacen(">  <kekule.representative>\ntrue\n\n", "", 1)),
+        "SDF interpretation error in record 1: data field `kekule.representative` marks no \
+         record of state 1"
+    );
+    assert_eq!(
+        error(&text.replacen(">  <kekule.state>\n1\n\n", "", 1)),
+        "SDF interpretation error in record 1: data field `kekule.state` is missing, but other \
+         records of the ensemble have it"
+    );
+    assert_eq!(
+        error(&text.replacen(
+            ">  <kekule.weight>\n1\n\n",
+            ">  <kekule.weight>\n1\n\n>  <kekule.energy.kJ_per_mol>\n4\n\n",
+            1
+        )),
+        "SDF interpretation error in record 1: data field `kekule.energy.kJ_per_mol` belongs to \
+         the record of a state's representative"
+    );
+    assert_eq!(
+        error(&text.replacen(
+            ">  <kekule.temperature.K>\n300\n",
+            ">  <kekule.temperature.K>\n310\n",
+            1
+        )),
+        "SDF interpretation error in record 2: data field `kekule.temperature.K` differs from the \
+         first record's"
+    );
+}
+
+#[test]
+fn mmcif_rejects_ensemble_weights_states_energies_and_temperatures_it_cannot_carry() {
+    use StructureField::{Energy, State, Temperature, Weight};
     let mut ensemble = weighted_ensemble();
     let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "mmCIF write error: mmCIF cannot represent the energy of ensemble member 1"
+        "mmCIF write error: mmCIF cannot represent the state energy of ensemble sample 1"
     );
     for index in 0..2 {
-        ensemble.get_mut(index).unwrap().set_energy(None).unwrap();
+        ensemble.state_mut(index).unwrap().set_energy(None).unwrap();
     }
     let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "mmCIF write error: mmCIF cannot represent the weight of ensemble member 2"
+        "mmCIF write error: mmCIF cannot represent the weight of ensemble sample 2"
     );
-    let omitted = mmcif::write(
-        [&weighted_ensemble()],
+    ensemble.get_mut(1).unwrap().set_weight(1.0).unwrap();
+    let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "mmCIF write error: mmCIF cannot represent the state of ensemble sample 2"
+    );
+    ensemble.regroup(EnsemblePartition::one_state(2)).unwrap();
+    ensemble
+        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
+        .unwrap();
+    let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "mmCIF write error: mmCIF cannot represent the temperature of ensemble sample 1"
+    );
+    ensemble.set_temperature(None).unwrap();
+    let (omitted, report) = mmcif::write(
+        [&clustered_ensemble()],
         MmcifWriteOptions::default().with_ensemble_metadata(UnrepresentablePolicy::Omit),
     )
-    .map(|(text, _)| text)
     .unwrap();
+    assert_eq!(
+        report.omissions(),
+        [Weight, Energy, State, Temperature].map(|field| WriteOmission::StructureState {
+            field,
+            structures: if field == Energy { 2 } else { 4 },
+        })
+    );
     let reread = mmcif::parse_str(&omitted, Default::default())
         .unwrap()
         .interpret_ensemble(Default::default())
         .unwrap();
     assert_eq!(
-        member_metadata(reread.ensemble()),
-        [(1.0, None), (1.0, None)]
+        ensemble_metadata(reread.ensemble()),
+        (
+            vec![1.0; 4],
+            EnsemblePartition::one_state(4),
+            vec![None],
+            None
+        )
     );
 
-    // Equal weights without energies are what interpretation gives back.
-    ensemble.get_mut(1).unwrap().set_weight(1.0).unwrap();
+    // One state of equal weights without an energy is what interpretation
+    // gives back.
     mmcif::write([&ensemble], MmcifWriteOptions::default())
         .map(|(text, _)| text)
         .unwrap();
@@ -695,15 +891,15 @@ fn write_structure(
 }
 
 #[test]
-fn structure_writers_fail_on_member_and_frame_state_unless_told_to_omit_it() {
+fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
     use StructureField::{
         Energy, Forces as ForceField, Step, Time, Velocities as VelocityField, Weight,
     };
     let mut ensemble = weighted_ensemble();
-    ensemble.get_mut(1).unwrap().set_energy(None).unwrap();
+    ensemble.state_mut(1).unwrap().set_energy(None).unwrap();
     let trajectory = stateful_trajectory();
-    // Expected detail per writer (Molfile, SDF, mmCIF); SDF writes member
-    // weights and energies as data fields.
+    // Expected detail per writer (Molfile, SDF, mmCIF); SDF writes sample
+    // weights, states, and state energies as data fields.
     let rows: [(ModelView<'_>, [Option<StructureField>; 3]); 7] = [
         (
             ensemble.get(0).unwrap().as_model_view(),
@@ -753,9 +949,9 @@ fn structure_writers_fail_on_member_and_frame_state_unless_told_to_omit_it() {
                     );
                 }
                 None if format == Format::Sdf && row < 2 => {
-                    // Both SDF paths write the member's own data fields.
-                    let member = ensemble.get(row).unwrap();
-                    let typed = sdf::write([member], SdfWriteOptions::default()).unwrap();
+                    // Both SDF paths write the sample's own data fields.
+                    let sample = ensemble.get(row).unwrap();
+                    let typed = sdf::write([sample], SdfWriteOptions::default()).unwrap();
                     assert_eq!(failed[writer].as_ref().unwrap(), &typed);
                     assert!(typed.contains(
                         ">  <kekule.weight>
@@ -874,7 +1070,8 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
         None
     );
 
-    let mut ensemble = Ensemble::from_models([boxed.clone(), boxed]).unwrap();
+    let mut ensemble =
+        Ensemble::from_models([boxed.clone(), boxed], EnsemblePartition::one_state(2)).unwrap();
     let text = mmcif::write([&ensemble], MmcifWriteOptions::default())
         .map(|(text, _)| text)
         .unwrap();
@@ -892,7 +1089,7 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
         mmcif::write([&ensemble], MmcifWriteOptions::default()).map(|(text, _)| text)
             .unwrap_err()
             .to_string(),
-        "mmCIF write error: mmCIF cannot represent the periodic cell: ensemble members have different cells"
+        "mmCIF write error: mmCIF cannot represent the periodic cell: ensemble samples have different cells"
     );
     mmcif::write([&ensemble], omit)
         .map(|(text, _)| text)
@@ -1120,7 +1317,8 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
         .unwrap(),
     )
     .unwrap();
-    let ensemble = Ensemble::from_models([first.clone(), second]).unwrap();
+    let ensemble =
+        Ensemble::from_models([first.clone(), second], EnsemblePartition::one_state(2)).unwrap();
     let ensemble_text = mmcif::write(
         [mmcif::MmcifBlockSource::ensemble(&ensemble)
             .with_classifications(&classifications(&first))],
@@ -1390,7 +1588,8 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
         .unwrap(),
     )
     .unwrap();
-    let ensemble = Ensemble::from_models([first.clone(), second]).unwrap();
+    let ensemble =
+        Ensemble::from_models([first.clone(), second], EnsemblePartition::one_state(2)).unwrap();
     let expected_ensemble = mmcif::write(
         [mmcif::MmcifBlockSource::ensemble(&ensemble)
             .with_classifications(&classifications(&first))],
@@ -1458,7 +1657,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
         "mmCIF write error: mmCIF writing requires 1 interpretation reports, but received 0"
     );
 
-    let ensemble = Ensemble::from_models([first, second]).unwrap();
+    let ensemble = Ensemble::from_models([first, second], EnsemblePartition::one_state(2)).unwrap();
     let ensemble_error = mmcif::write(
         [mmcif::MmcifBlockSource::ensemble(&ensemble).with_reports(&[])],
         MmcifWriteOptions::default(),

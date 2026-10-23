@@ -13,7 +13,8 @@ use kekule::native::{
 };
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Ensemble, EnsembleMember, Forces, Model, Positions, Trajectory, TrajectoryFrame, Velocities,
+    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Forces, Model, Positions,
+    Trajectory, TrajectoryFrame, Velocities,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology, TopologyBuilder,
@@ -378,39 +379,113 @@ fn cell() -> PeriodicCell {
     .unwrap()
 }
 
-#[test]
-fn ensembles_keep_weights_energies_and_site_values() {
-    let topology = water_topology();
-    let mut first = EnsembleMember::new(positions(0.5), 0.25)
-        .unwrap()
-        .with_cell(cell())
-        .with_energy(Quantity::new(-12.5, KILOJOULE_PER_MOLE))
-        .unwrap();
-    first.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
-    let second = EnsembleMember::new(positions(f64::MIN_POSITIVE), 3.0).unwrap();
-    let mut ensemble = Ensemble::from_items(topology, [first, second]).unwrap();
-    ensemble
-        .properties_mut()
-        .insert(key("method"), PropertyValue::String("REMD".into()))
-        .unwrap();
-    ensemble
-        .get_mut(1)
-        .unwrap()
-        .properties_mut()
-        .owner_mut()
-        .insert(key("replica"), PropertyValue::Int(4))
-        .unwrap();
-    let decoded = round_trip(&ensemble).into_ensemble().unwrap();
-    assert_same_topology(decoded.topology(), ensemble.topology());
-    assert_eq!(decoded.properties(), ensemble.properties());
-    assert_eq!(decoded.len(), 2);
-    for (left, right) in decoded.iter().zip(ensemble.iter()) {
+fn assert_same_ensemble(decoded: &Ensemble, source: &Ensemble) {
+    assert_same_topology(decoded.topology(), source.topology());
+    assert_eq!(decoded.properties(), source.properties());
+    assert_eq!(decoded.len(), source.len());
+    for (left, right) in decoded.iter().zip(source.iter()) {
         assert_eq!(left.payload(), right.payload());
         assert_eq!(
             left.payload().weight().to_bits(),
             right.payload().weight().to_bits()
         );
     }
+    assert_eq!(decoded.partition(), source.partition());
+    for (left, right) in decoded.states().zip(source.states()) {
+        assert_eq!(left.payload(), right.payload());
+    }
+    assert_eq!(decoded.temperature(), source.temperature());
+}
+
+/// Four samples of water: the first with a cell, an occupancy, and an
+/// owner property, the last with the smallest positive coordinate.
+fn water_samples() -> Vec<EnsembleSample> {
+    let mut first = EnsembleSample::new(positions(0.5), 0.25)
+        .unwrap()
+        .with_cell(cell());
+    first.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
+    first
+        .properties_mut()
+        .owner_mut()
+        .insert(key("replica"), PropertyValue::Int(4))
+        .unwrap();
+    vec![
+        first,
+        EnsembleSample::new(positions(1.0), 3.0).unwrap(),
+        EnsembleSample::new(positions(2.0), 0.1).unwrap(),
+        EnsembleSample::new(positions(f64::MIN_POSITIVE), 1.0e-300).unwrap(),
+    ]
+}
+
+#[test]
+fn ensembles_of_one_state_keep_samples_weights_and_site_values() {
+    let mut ensemble = Ensemble::from_samples(
+        water_topology(),
+        water_samples(),
+        EnsemblePartition::one_state(4),
+    )
+    .unwrap();
+    ensemble
+        .properties_mut()
+        .insert(key("method"), PropertyValue::String("REMD".into()))
+        .unwrap();
+    let decoded = round_trip(&ensemble).into_ensemble().unwrap();
+    assert_same_ensemble(&decoded, &ensemble);
+    assert_eq!(decoded.state_count(), 1);
+}
+
+#[test]
+fn ensembles_of_one_state_per_sample_keep_energies_and_the_temperature() {
+    let mut ensemble = Ensemble::from_samples(
+        water_topology(),
+        water_samples(),
+        EnsemblePartition::state_per_sample(4),
+    )
+    .unwrap();
+    for (state, energy) in [(0, -12.5), (2, 0.0)] {
+        ensemble
+            .state_mut(state)
+            .unwrap()
+            .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
+            .unwrap();
+    }
+    ensemble
+        .set_temperature(Some(Quantity::new(298.15, kekule::units::KELVIN)))
+        .unwrap();
+    let decoded = round_trip(&ensemble).into_ensemble().unwrap();
+    assert_same_ensemble(&decoded, &ensemble);
+    assert_eq!(decoded.state_count(), 4);
+}
+
+#[test]
+fn clustered_ensembles_keep_their_partition_and_state_properties() {
+    let mut ensemble = Ensemble::from_samples(
+        water_topology(),
+        water_samples(),
+        EnsemblePartition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap(),
+    )
+    .unwrap();
+    let mut state = EnsembleState::new()
+        .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
+        .unwrap();
+    state
+        .properties_mut()
+        .insert(key("cluster"), PropertyValue::String("open".into()))
+        .unwrap();
+    *ensemble.state_mut(1).unwrap() = state;
+    let decoded = round_trip(&ensemble).into_ensemble().unwrap();
+    assert_same_ensemble(&decoded, &ensemble);
+    assert_eq!(
+        decoded
+            .state(1)
+            .unwrap()
+            .energy()
+            .unwrap()
+            .value()
+            .to_bits(),
+        (-0.0_f64).to_bits()
+    );
+    assert_eq!(decoded.state(0).unwrap().energy(), None);
 }
 
 #[test]

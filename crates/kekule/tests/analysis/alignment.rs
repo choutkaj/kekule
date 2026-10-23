@@ -12,7 +12,8 @@ use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Ensemble, EnsembleMember, Forces, Model, Positions, Trajectory, TrajectoryFrame, Velocities,
+    Ensemble, EnsemblePartition, EnsembleSample, Forces, Model, Positions, Trajectory,
+    TrajectoryFrame, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use kekule::units::{
@@ -552,7 +553,7 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
 fn ensembles_share_the_collection_contract_and_keep_weights() {
     let topology = chain(4);
     let reference = spread();
-    let member = EnsembleMember::new(
+    let member = EnsembleSample::new(
         Positions::new(Quantity::new(
             transformed(&reference, quarter_turn()),
             NANOMETER,
@@ -561,7 +562,12 @@ fn ensembles_share_the_collection_contract_and_keep_weights() {
         0.25,
     )
     .unwrap();
-    let mut ensemble = Ensemble::from_items(Arc::clone(&topology), [member]).unwrap();
+    let mut ensemble = Ensemble::from_samples(
+        Arc::clone(&topology),
+        [member],
+        EnsemblePartition::one_state(1),
+    )
+    .unwrap();
     let model = Model::new(
         Arc::clone(&topology),
         Positions::new(Quantity::new(reference, NANOMETER)).unwrap(),
@@ -987,13 +993,18 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     let reference = acetate_points(false);
     let moved_swapped = transformed(&acetate_points(true), quarter_turn());
     let members = [reference.to_vec(), moved_swapped.clone()].map(|points| {
-        EnsembleMember::new(
+        EnsembleSample::new(
             Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
             1.0,
         )
         .unwrap()
     });
-    let mut ensemble = Ensemble::from_items(Arc::clone(&topology), members).unwrap();
+    let mut ensemble = Ensemble::from_samples(
+        Arc::clone(&topology),
+        members,
+        EnsemblePartition::state_per_sample(2),
+    )
+    .unwrap();
     let all = AtomSelection::all(Arc::clone(&topology));
     let symmetric = SymmetricSelection::new(&all).unwrap();
     let oxygens = selection(&topology, &[2, 3]);

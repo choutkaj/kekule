@@ -3,7 +3,8 @@
 use crate::structure::Ensemble;
 
 use super::hierarchical::ObjectiveDistances;
-use super::{ClusteringError, DistanceMatrix, EnsemblePartition};
+use super::{ClusteringError, DistanceMatrix};
+use crate::structure::EnsemblePartition;
 
 impl Ensemble {
     /// Partitions the members into `clusters` clusters around medoid
@@ -234,10 +235,7 @@ fn partition(distances: &DistanceMatrix, medoids: &[usize]) -> EnsemblePartition
         }
         assignments.push(labels[slot]);
     }
-    EnsemblePartition {
-        assignments,
-        representatives,
-    }
+    EnsemblePartition::from_parts_unchecked(assignments, representatives)
 }
 
 #[cfg(test)]

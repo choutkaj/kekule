@@ -11,7 +11,7 @@ use kekule::{
     },
     structure::{
         measure::{self, BondDihedral, BondDihedralError, ConnectivityCheck, MeasurementError},
-        Ensemble, EnsembleMember, Model, Positions,
+        Ensemble, EnsembleSample, EnsembleState, Model, Positions,
     },
     topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId},
     units::{Quantity, DEGREE, NANOMETER},
@@ -419,7 +419,7 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
     assert_ne!(first, second);
     let expected = selected.measure(model.as_model_view()).unwrap();
     let mut ensemble = Ensemble::new(model.shared_topology());
-    let mut member = EnsembleMember::new(model.positions().clone(), 1.0).unwrap();
+    let mut member = EnsembleSample::new(model.positions().clone(), 1.0).unwrap();
     member.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
@@ -427,7 +427,7 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
         )
         .unwrap(),
     ));
-    ensemble.push(member).unwrap();
+    ensemble.push_state(member, EnsembleState::new()).unwrap();
     assert_eq!(
         selected
             .measure(ensemble.get(0).unwrap().as_model_view())

@@ -569,7 +569,7 @@ pub enum FormatErrorDetail {
     MmcifWrite(crate::io::MmcifWriteIssue),
     /// A failure specific to the PDB writer.
     PdbWrite(crate::io::PdbWriteIssue),
-    /// The written structure is an ensemble member or a trajectory frame
+    /// The written structure is an ensemble sample or a trajectory frame
     /// with this state, which the format cannot carry, and the writer's
     /// policy for it is [`UnrepresentablePolicy::Fail`].
     UnrepresentableState(StructureField),
@@ -605,15 +605,20 @@ pub enum FormatErrorDetail {
     },
 }
 
-/// Ensemble member or trajectory frame state named by
+/// Ensemble sample or trajectory frame state named by
 /// [`FormatErrorDetail::UnrepresentableState`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StructureField {
-    /// An ensemble member's relative weight.
+    /// An ensemble sample's relative weight.
     Weight,
-    /// An ensemble member's energy.
+    /// The energy of an ensemble sample's state.
     Energy,
+    /// The state an ensemble sample belongs to: the grouping of samples
+    /// into states.
+    State,
+    /// The temperature an ensemble's populations describe.
+    Temperature,
     /// A trajectory frame's time.
     Time,
     /// A trajectory frame's step.
@@ -627,8 +632,10 @@ pub enum StructureField {
 impl fmt::Display for StructureField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Weight => "ensemble member weight",
-            Self::Energy => "ensemble member energy",
+            Self::Weight => "ensemble sample weight",
+            Self::Energy => "ensemble state energy",
+            Self::State => "ensemble state",
+            Self::Temperature => "ensemble temperature",
             Self::Time => "trajectory frame time",
             Self::Step => "trajectory frame step",
             Self::Velocities => "trajectory frame velocities",

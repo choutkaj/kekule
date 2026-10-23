@@ -2,7 +2,7 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
 };
-use crate::structure::StructureKind;
+use crate::structure::{Ensemble, StructureKind};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -154,11 +154,11 @@ pub enum WriteOmission {
         /// The structures or blocks written without their cell.
         structures: usize,
     },
-    /// Ensemble member or trajectory frame state the format cannot carry.
+    /// Ensemble sample or trajectory frame state the format cannot carry.
     StructureState {
         /// The state left out.
         field: StructureField,
-        /// The members or frames whose state was left out.
+        /// The samples or frames whose state was left out.
         structures: usize,
     },
 }
@@ -210,22 +210,29 @@ impl Omissions {
         }
     }
 
-    /// Records the member or frame state `kind` has that the policies omit;
+    /// Records the sample or frame state `kind` has that the policies omit;
     /// call it after [`check_structure_state`] has passed.
     pub(crate) fn record_structure_state(
         &mut self,
         kind: StructureKind<'_>,
-        member: Option<UnrepresentablePolicy>,
+        sample: Option<UnrepresentablePolicy>,
         frame: UnrepresentablePolicy,
     ) {
         let mut fields = Vec::new();
         match kind {
-            StructureKind::Member { energy, .. } if member == Some(UnrepresentablePolicy::Omit) => {
+            StructureKind::Sample {
+                energy,
+                temperature,
+                ..
+            } if sample == Some(UnrepresentablePolicy::Omit) => {
                 // A lone record cannot carry a weight relative to other
-                // members, so its weight is always left out.
+                // samples, so its weight is always left out.
                 fields.push(StructureField::Weight);
                 if energy.is_some() {
                     fields.push(StructureField::Energy);
+                }
+                if temperature.is_some() {
+                    fields.push(StructureField::Temperature);
                 }
             }
             StructureKind::Frame {
@@ -261,18 +268,18 @@ impl Omissions {
     }
 }
 
-/// Fails for ensemble member or trajectory frame state that `format` cannot
-/// carry, unless the caller chose to omit it. `member` is `None` for a format
-/// that writes member state itself.
+/// Fails for ensemble sample or trajectory frame state that `format` cannot
+/// carry, unless the caller chose to omit it. `sample` is `None` for a format
+/// that writes sample state itself.
 pub(crate) fn check_structure_state(
     format: Format,
     kind: StructureKind<'_>,
-    member: Option<UnrepresentablePolicy>,
+    sample: Option<UnrepresentablePolicy>,
     frame: UnrepresentablePolicy,
 ) -> Result<(), FormatError> {
     let field = match kind {
-        StructureKind::Member { energy, .. } if member == Some(UnrepresentablePolicy::Fail) => {
-            // A lone record cannot carry a weight relative to other members.
+        StructureKind::Sample { energy, .. } if sample == Some(UnrepresentablePolicy::Fail) => {
+            // A lone record cannot carry a weight relative to other samples.
             Some(if energy.is_some() {
                 StructureField::Energy
             } else {
@@ -309,4 +316,66 @@ pub(crate) fn check_structure_state(
         )
         .with_detail(FormatErrorDetail::UnrepresentableState(field))),
     }
+}
+
+/// Records or rejects the state of `ensemble` that a multi-model format
+/// cannot carry. Its readers give one state of equally weighted samples
+/// without an energy or temperature, so only that survives a round trip.
+///
+/// With [`UnrepresentablePolicy::Fail`], returns the 1-based number of the
+/// first sample with such state and the field; the temperature is the first
+/// sample's. With [`UnrepresentablePolicy::Omit`], records the omissions.
+pub(crate) fn check_multi_model_ensemble(
+    ensemble: &Ensemble,
+    policy: UnrepresentablePolicy,
+    omissions: &mut Omissions,
+) -> Result<(), (usize, StructureField)> {
+    let weight = ensemble.get(0).map(|sample| sample.weight());
+    if policy == UnrepresentablePolicy::Fail {
+        for sample in ensemble.iter() {
+            let field = if sample.state().energy().is_some() {
+                StructureField::Energy
+            } else if Some(sample.weight()) != weight {
+                StructureField::Weight
+            } else if sample.state().index() != 0 {
+                StructureField::State
+            } else {
+                continue;
+            };
+            return Err((sample.index() + 1, field));
+        }
+        if ensemble.temperature().is_some() {
+            return Err((1, StructureField::Temperature));
+        }
+        return Ok(());
+    }
+    let all = ensemble.len();
+    let unequal = ensemble
+        .iter()
+        .any(|sample| Some(sample.weight()) != weight);
+    for (field, structures) in [
+        (StructureField::Weight, if unequal { all } else { 0 }),
+        (
+            StructureField::Energy,
+            ensemble
+                .iter()
+                .filter(|sample| sample.state().energy().is_some())
+                .count(),
+        ),
+        (
+            StructureField::State,
+            if ensemble.state_count() > 1 { all } else { 0 },
+        ),
+        (
+            StructureField::Temperature,
+            if ensemble.temperature().is_some() {
+                all
+            } else {
+                0
+            },
+        ),
+    ] {
+        omissions.record(WriteOmission::StructureState { field, structures });
+    }
+    Ok(())
 }

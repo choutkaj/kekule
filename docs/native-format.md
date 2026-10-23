@@ -16,9 +16,10 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   insertion codes, component IDs, atom-site metadata, and child order), and
   classifications together with whether each was assigned explicitly. It also
   preserves properties at every scope with their units, molecular adjacency
-  order, positions, cells, occupancies, B factors, ensemble weights and
-  energies, frame time, step, velocities, and forces, and collection owner
-  properties. Floating-point values are stored as their IEEE-754 bits, so
+  order, positions, cells, occupancies, B factors, ensemble sample weights,
+  states (each sample's state and each state's representative), state energies
+  and owner properties, and temperature, frame time, step, velocities, and
+  forces, and collection owner properties. Floating-point values are stored as their IEEE-754 bits, so
   coordinates come back bitwise identical (`-0.0` stays `-0.0`).
 - **Identity.** Semantic IDs round-trip exactly. A decoded topology is a new
   publication and therefore gets a fresh layout identity; selections bound to
@@ -48,13 +49,17 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 
 ## Versioning
 
-The header carries one format version, currently **1**. A reader accepts only
+The header carries one format version, currently **2**. A reader accepts only
 the versions it implements and rejects any other with
 `FormatErrorDetail::NativeVersion { found, supported }` of kind
 `DiagnosticKind::Unsupported`. Before kekule 1.0 a version may change
 incompatibly, but every incompatible change increments the version. Unknown
 header flags are rejected the same way, so a newer optional section is never
 silently ignored.
+
+Version 2 stores an ensemble as samples grouped into states, with energies on
+states and an optional temperature; version 1 stored ensemble members with
+their own weights and energies.
 
 ## Layout
 
@@ -234,10 +239,13 @@ reclassification.
 
 ```text
 model       := topology structure
-ensemble    := topology owner member_count:count member[member_count]
+ensemble    := topology owner temperature:opt f64
+               sample_count:count sample[sample_count]
+               state_count:count state[state_count]
 trajectory  := topology owner frame_count:count frame[frame_count]
 structure   := positions cell:opt cell occupancies b_factors structure_properties
-member      := structure weight:f64 energy:opt f64
+sample      := structure weight:f64 state:u32
+state       := representative:u32 energy:opt f64 owner
 frame       := positions cell:opt cell structure_properties
                velocities:opt vectors forces:opt vectors time:opt f64 step:opt u64
 positions   := (x:f64 y:f64 z:f64)[atom_count]
@@ -250,16 +258,21 @@ scalars     := 0 (absent) | 1 present:bits(atom_count) f64[populated]
 
 Values are in Kekule's canonical units: positions and cell vectors in nm,
 B factors in nm², velocities in nm/ps, forces in kJ/(mol·nm), energies in
-kJ/mol, and time in ps. Cell vectors are the columns a, b, c;
+kJ/mol, temperatures in K, and time in ps. Cell vectors are the columns a, b, c;
 `periodic_axes` bits 0–2 mark a, b, c. Positions and vectors have exactly
 the topology's atom count; structure property tables have one row per
 topology atom and bond.
+
+An ensemble's samples are stored in their stable order, each with the index of
+its state; each state stores the index of its representative sample. The
+reader validates the partition: every state index names a stored state, and
+every representative is a sample of its own state, so no state is empty.
 
 ## Limits
 
 `NativeReadOptions` bounds the input bytes; the atoms and bonds of one
 molecule or topology (including the instance expansion of a topology), which
-also bound atom sites and residue site lists; the members or frames of one
+also bound atom sites and residue site lists; the samples, states, or frames of one
 collection, hierarchy chains and residues, property columns and owner
 values; and the byte length of one string. The defaults are exported as
 `DEFAULT_NATIVE_MAX_*` constants. Exceeding a limit is a `FormatError` of

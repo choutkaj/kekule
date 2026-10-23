@@ -70,7 +70,7 @@ impl std::error::Error for BondDihedralError {
 /// the selected outer atoms coincide (a three-atom closed walk). Coordinate
 /// degeneracy is determined separately by [`Self::measure`].
 ///
-/// Prepare once, then measure models, ensemble members, or trajectory frames
+/// Prepare once, then measure models, ensemble samples, or trajectory frames
 /// sharing this topology:
 /// ```
 /// use kekule::structure::{measure::BondDihedral, Model};
