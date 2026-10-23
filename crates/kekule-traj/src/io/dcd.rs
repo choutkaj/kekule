@@ -71,9 +71,9 @@ use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_T
 
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
-    codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_no_partial_frame, require_nonempty_writer, reserve_index_for_push, validation_detail,
-    TrajectoryIoLimits,
+    codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
+    projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_detail,
+    FrameOffsets, IndexBuildControl, TrajectoryIoLimits,
 };
 
 const HEADER_BYTES: usize = 84;
@@ -987,8 +987,17 @@ impl<R: Read + Seek> DcdReader<R> {
     }
 
     /// Indexes a freshly opened reader, whose next frame is frame 0.
-    fn index_frames(mut self) -> Result<IndexedDcdReader<R>, TrajectoryIoError> {
-        let mut offsets = Vec::new();
+    fn index_frames(
+        mut self,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<IndexedDcdReader<R>, TrajectoryIoError> {
+        let mut offsets = FrameOffsets::empty(self.header.data_start);
+        control.checkpoint(
+            0,
+            self.header.data_start,
+            TrajectoryFormat::Dcd,
+            &self.options.source_label,
+        )?;
         loop {
             if offsets.len() == self.header.declared_frames {
                 if probe_seekable_eof(
@@ -1056,14 +1065,27 @@ impl<R: Read + Seek> DcdReader<R> {
                 .with_counts(self.header.declared_frames as u64, offsets.len() as u64)
                 .with_detail("DCD ended before its declared NSET count"));
             }
-            reserve_index_for_push(
-                &mut offsets,
+            let end = self.reader.stream_position().map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.options.source_label,
+                    error,
+                )
+            })?;
+            offsets.push(
+                offset,
+                end,
                 &self.options.limits,
                 TrajectoryFormat::Dcd,
                 &self.options.source_label,
-                self.frame_cursor.saturating_sub(1),
             )?;
-            offsets.push(offset);
+            control.checkpoint(
+                offsets.len(),
+                end,
+                TrajectoryFormat::Dcd,
+                &self.options.source_label,
+            )?;
         }
         self.reader
             .seek(SeekFrom::Start(self.header.data_start))
@@ -1123,7 +1145,7 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
 /// reference coordinates remain immutable during random reads.
 pub struct IndexedDcdReader<R> {
     inner: DcdReader<R>,
-    offsets: Vec<u64>,
+    offsets: FrameOffsets,
 }
 
 impl<R> fmt::Debug for IndexedDcdReader<R> {
@@ -1158,7 +1180,71 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         topology: impl Into<Arc<Topology>>,
         options: DcdReadOptions,
     ) -> Result<Self, TrajectoryIoError> {
-        DcdReader::new(reader, topology, options)?.index_frames()
+        Self::build(
+            reader,
+            topology.into(),
+            options,
+            &IndexBuildControl::default(),
+        )
+    }
+
+    /// Indexes the stream like [`Self::new`], reporting to `control`.
+    pub(crate) fn build(
+        reader: R,
+        topology: Arc<Topology>,
+        options: DcdReadOptions,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<Self, TrajectoryIoError> {
+        DcdReader::new(reader, topology, options)?.index_frames(control)
+    }
+
+    /// Opens the stream with previously verified `offsets` instead of
+    /// scanning it; random reads verify each frame against them. The offsets
+    /// must count the header's `NSET` frames. With fixed atoms, frame 0 is
+    /// decoded and verified here for their reference coordinates.
+    pub(crate) fn from_offsets(
+        reader: R,
+        topology: Arc<Topology>,
+        options: DcdReadOptions,
+        offsets: FrameOffsets,
+    ) -> Result<Self, TrajectoryIoError> {
+        let mut inner = DcdReader::new(reader, topology, options)?;
+        let label = inner.options.source_label.clone();
+        if offsets.len() != inner.header.declared_frames {
+            return Err(index_mismatch(
+                TrajectoryIoOperation::Open,
+                TrajectoryFormat::Dcd,
+                &label,
+                "DCD index frame count differs from the header NSET count",
+            )
+            .with_counts(inner.header.declared_frames as u64, offsets.len() as u64));
+        }
+        offsets.verify_start(inner.header.data_start, TrajectoryFormat::Dcd, &label)?;
+        if inner.header.fixed_count > 0 && !offsets.is_empty() {
+            let data_start = inner.header.data_start;
+            inner
+                .parse_next(true)
+                .map_err(|error| frame_offset_context(error, 0, data_start))?
+                .ok_or(TrajectoryIoError::frame_index_out_of_range(0))?;
+            offsets.verify_stream_frame_end(0, &mut inner.reader, TrajectoryFormat::Dcd, &label)?;
+            inner
+                .reader
+                .seek(SeekFrom::Start(data_start))
+                .map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Open,
+                        Some(TrajectoryFormat::Dcd),
+                        &label,
+                        error,
+                    )
+                })?;
+            inner.frame_cursor = 0;
+        }
+        Ok(Self { inner, offsets })
+    }
+
+    pub(crate) fn offsets(&self) -> &FrameOffsets {
+        &self.offsets
     }
 
     /// The topology every frame belongs to.
@@ -1200,10 +1286,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        let offset = self
+        let (offset, _) = self
             .offsets
-            .get(index)
-            .copied()
+            .frame(index)
             .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
         let saved_offset = self.inner.reader.stream_position().map_err(|error| {
             io_context(
@@ -1230,7 +1315,16 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
             .inner
             .parse_next(false)
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::frame_index_out_of_range(index)));
+            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::frame_index_out_of_range(index)))
+            .and_then(|decoded| {
+                self.offsets.verify_stream_frame_end(
+                    index,
+                    &mut self.inner.reader,
+                    TrajectoryFormat::Dcd,
+                    &self.inner.options.source_label,
+                )?;
+                Ok(decoded)
+            });
         let restore = self
             .inner
             .reader

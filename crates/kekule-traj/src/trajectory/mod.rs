@@ -136,6 +136,15 @@ pub enum TrajectoryIoErrorKind {
     /// Frames cannot form an in-memory trajectory; the [`TrajectoryError`]
     /// is the source.
     InvalidTrajectory,
+    /// The caller's [`kekule::diagnostics::Cancellation`] stopped the
+    /// operation; [`kekule::diagnostics::Cancelled`] is the source.
+    Cancelled,
+    /// An encoded frame index is malformed or of an unsupported version.
+    InvalidIndex,
+    /// A frame index does not describe the file: it was built for another
+    /// file, the file changed since, or a frame does not lie where the index
+    /// places it.
+    IndexMismatch,
 }
 
 impl fmt::Display for TrajectoryIoErrorKind {
@@ -161,6 +170,9 @@ impl fmt::Display for TrajectoryIoErrorKind {
             Self::FrameIndexOutOfRange => "trajectory frame index is out of range",
             Self::InvalidStructure => "invalid trajectory frame",
             Self::InvalidTrajectory => "invalid trajectory",
+            Self::Cancelled => "trajectory operation cancelled",
+            Self::InvalidIndex => "invalid trajectory frame index",
+            Self::IndexMismatch => "trajectory frame index does not match the file",
         };
         formatter.write_str(description)
     }

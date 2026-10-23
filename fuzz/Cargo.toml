@@ -108,6 +108,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "trajectory_index"
+path = "fuzz_targets/trajectory_index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "smarts"
 path = "fuzz_targets/smarts.rs"
 test = false

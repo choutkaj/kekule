@@ -8,12 +8,16 @@ use kekule::topology::Topology;
 
 use crate::{
     FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryFormat,
-    TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
+    TrajectoryWriter,
 };
+use kekule::diagnostics::{LimitExceeded, Resource};
 use kekule::structure::Trajectory;
 
+use super::limits::index_hard_capacity;
 use super::{
-    dcd, detect, io_context, trr, xtc, xyz, FileTrajectoryMetadata, TrajectoryOpenOptions,
+    dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata, FrameOffsets,
+    IndexBuildControl, TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryOpenOptions,
     TrajectoryOpenReport,
 };
 
@@ -97,11 +101,23 @@ enum IndexedReaderInner {
     Xtc(xtc::IndexedXtcReader<BufReader<File>>),
 }
 
+impl IndexedReaderInner {
+    fn offsets(&self) -> &FrameOffsets {
+        match self {
+            Self::Xyz(reader) => reader.offsets(),
+            Self::Dcd(reader) => reader.offsets(),
+            Self::Trr(reader) => reader.offsets(),
+            Self::Xtc(reader) => reader.offsets(),
+        }
+    }
+}
+
 /// Format-agnostic path-backed indexed reader retaining one file handle.
 pub struct IndexedFileTrajectoryReader {
     inner: IndexedReaderInner,
     metadata: FileTrajectoryMetadata,
     open_report: TrajectoryOpenReport,
+    fingerprint: TrajectoryFileFingerprint,
 }
 
 impl fmt::Debug for IndexedFileTrajectoryReader {
@@ -120,9 +136,25 @@ impl IndexedFileTrajectoryReader {
         &self.open_report
     }
 
-    /// Metadata verified for the whole file while building the index.
+    /// Metadata verified for the whole file while building the index, or
+    /// recorded in the imported index whose fingerprint the file matched.
     pub fn metadata(&self) -> &FileTrajectoryMetadata {
         &self.metadata
+    }
+
+    /// Exports the frame offsets with the file's fingerprint, copying them,
+    /// for [`open_indexed_trajectory_from_index`].
+    pub fn to_frame_index(&self) -> TrajectoryFrameIndex {
+        let precision_mixed = match &self.inner {
+            IndexedReaderInner::Trr(reader) => reader.precision_mixed(),
+            _ => false,
+        };
+        TrajectoryFrameIndex::new(
+            self.metadata.format(),
+            self.fingerprint.clone(),
+            self.inner.offsets().clone(),
+            precision_mixed,
+        )
     }
 }
 
@@ -373,25 +405,105 @@ pub fn open_trajectory(
 /// index `i` is topology dense atom index `i`, and readers check counts and
 /// available metadata, including XYZ element order. Opening scans and validates
 /// the entire file and stores bounded frame offsets for random access.
-/// `options` sets the format policies and limits.
+/// `options` sets the format policies and limits, and may set a cancellation
+/// and a progress callback for the scan
+/// ([`TrajectoryOpenOptions::with_index_cancellation`],
+/// [`TrajectoryOpenOptions::with_index_progress`]).
+///
+/// The file is fingerprinted before and after the scan, so
+/// [`IndexedFileTrajectoryReader::to_frame_index`] can export the offsets for
+/// [`open_indexed_trajectory_from_index`] to reopen the file without
+/// scanning it again.
 ///
 /// # Errors
 ///
 /// Returns the errors of [`open_trajectory`], the decoding error of the first
-/// invalid frame, and [`TrajectoryIoErrorKind::LimitExceeded`] when the index
-/// outgrows the limits.
+/// invalid frame, [`TrajectoryIoErrorKind::LimitExceeded`] when the index
+/// outgrows the limits, [`TrajectoryIoErrorKind::Cancelled`] when the
+/// cancellation stops the scan, and [`TrajectoryIoErrorKind::IndexMismatch`]
+/// when the file changes while it is scanned.
 ///
 /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::TrajectoryIoErrorKind::LimitExceeded
+/// [`TrajectoryIoErrorKind::Cancelled`]: crate::TrajectoryIoErrorKind::Cancelled
+/// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::TrajectoryIoErrorKind::IndexMismatch
+///
+/// ```no_run
+/// use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+/// use std::sync::Arc;
+///
+/// use kekule::diagnostics::Cancellation;
+/// use kekule::{smiles, topology::Topology};
+/// use kekule_traj::io::{open_indexed_trajectory, TrajectoryOpenOptions};
+///
+/// let molecule = smiles::to_molecules("CC")?.pop().unwrap();
+/// let topology = Topology::from_molecule(molecule)?;
+/// let cancel = Arc::new(AtomicBool::new(false));
+/// let done = Arc::new(AtomicU64::new(0));
+/// let progress = Arc::clone(&done);
+/// let options = TrajectoryOpenOptions::default()
+///     .with_index_cancellation(Cancellation::from_flag(Arc::clone(&cancel)))
+///     .with_index_progress(move |step| progress.store(step.byte_count(), Ordering::Relaxed));
+/// // Another thread may read `done` for a progress bar and set `cancel`.
+/// let reader = open_indexed_trajectory("ethane.xtc", topology, options)?;
+/// let index = reader.to_frame_index();
+/// println!("{} frames", index.frame_count());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn open_indexed_trajectory(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
 ) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
-    let topology = topology.into();
-    let path = path.as_ref();
+    open_indexed(path.as_ref(), topology.into(), None, options)
+}
+
+/// Opens an indexed path-backed trajectory reader from a previously exported
+/// [`TrajectoryFrameIndex`] without scanning the file.
+///
+/// The topology order contract and `options` are those of
+/// [`open_indexed_trajectory`]; the index cancellation and progress callback
+/// are not used. Opening fingerprints the file and checks the fingerprint,
+/// the format, the header, and the first frame against the index, and reads
+/// the frame offsets from the index alone. Every frame read later is fully
+/// verified as it is decoded, and a random read checks that the frame ends
+/// exactly where the index places the next frame, or at the end of the file,
+/// so a wrong index yields an error rather than a wrong frame. Metadata
+/// reports the index's frame count and, for TRR, whether its frames mix
+/// scalar widths.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::IndexMismatch`] when the index was built
+/// for a different file or the file changed since: its fingerprint, format,
+/// first frame offset, or DCD frame count disagrees. Returns the open and
+/// header errors of [`open_trajectory`], and the frame index limits of
+/// `options` bound the index as [`TrajectoryIoErrorKind::LimitExceeded`].
+/// Later reads return [`TrajectoryIoErrorKind::IndexMismatch`] for a frame
+/// that does not end where the index says, besides the codec's decoding
+/// errors.
+///
+/// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::TrajectoryIoErrorKind::IndexMismatch
+/// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::TrajectoryIoErrorKind::LimitExceeded
+pub fn open_indexed_trajectory_from_index(
+    path: impl AsRef<Path>,
+    topology: impl Into<Arc<Topology>>,
+    index: TrajectoryFrameIndex,
+    options: TrajectoryOpenOptions,
+) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
+    open_indexed(path.as_ref(), topology.into(), Some(index), options)
+}
+
+/// Opens an indexed reader, scanning the file unless `index` is given.
+fn open_indexed(
+    path: &Path,
+    topology: Arc<Topology>,
+    index: Option<TrajectoryFrameIndex>,
+    options: TrajectoryOpenOptions,
+) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
     let label = path.display().to_string();
-    let file = File::open(path)
+    let mut file = File::open(path)
         .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
+    let fingerprint = TrajectoryFileFingerprint::of_file(&mut file, &label)?;
     let mut reader = BufReader::new(file);
     let detection = detect::select_format(
         &mut reader,
@@ -400,50 +512,103 @@ pub fn open_indexed_trajectory(
         &options.limits,
         &label,
     )?;
-    let (inner, metadata, notes) = match detection.format {
+    let format = detection.format;
+    let imported = match index {
+        Some(index) => {
+            if index.format() != format {
+                return Err(index_mismatch(
+                    TrajectoryIoOperation::Open,
+                    format,
+                    &label,
+                    format!("the index was built for a {} file", index.format()),
+                ));
+            }
+            if index.fingerprint() != &fingerprint {
+                return Err(index_mismatch(
+                    TrajectoryIoOperation::Open,
+                    format,
+                    &label,
+                    "the file's fingerprint differs from the index's",
+                ));
+            }
+            if index.frame_count() > index_hard_capacity(&options.limits) {
+                return Err(TrajectoryIoError::codec(
+                    TrajectoryIoErrorKind::LimitExceeded,
+                    TrajectoryIoOperation::Open,
+                    Some(format),
+                )
+                .with_source_label(&label)
+                .with_detail("the index frame count exceeds the configured index limits")
+                .with_limit(LimitExceeded::new(
+                    Resource::Frames,
+                    index_hard_capacity(&options.limits),
+                    index.frame_count(),
+                )));
+            }
+            Some(index.into_parts())
+        }
+        None => None,
+    };
+    let is_imported = imported.is_some();
+    let control = IndexBuildControl::new(
+        options.index_cancellation.as_ref(),
+        options.index_progress.as_ref(),
+        fingerprint.byte_count(),
+    );
+    let (inner, metadata, note) = match format {
         TrajectoryFormat::Xyz => {
-            let reader = xyz::IndexedXyzReader::new(
-                reader,
-                topology,
-                options
-                    .xyz
-                    .with_limits(options.limits)
-                    .with_source_label(label),
-            )?;
+            let xyz_options = options
+                .xyz
+                .with_limits(options.limits)
+                .with_source_label(label.clone());
+            let reader = match imported {
+                Some((offsets, _)) => {
+                    xyz::IndexedXyzReader::from_offsets(reader, topology, xyz_options, offsets)?
+                }
+                None => xyz::IndexedXyzReader::build(reader, topology, xyz_options, &control)?,
+            };
             let count = reader.frame_count().unwrap_or(0);
             let atom_count = reader.topology().atom_count();
             (
                 IndexedReaderInner::Xyz(reader),
                 FileTrajectoryMetadata::xyz(atom_count, Some(count)),
-                vec!["XYZ index verified every complete frame".into()],
+                "XYZ index verified every complete frame",
             )
         }
         TrajectoryFormat::Dcd => {
-            let reader = dcd::IndexedDcdReader::new(
-                reader,
-                topology,
-                options
-                    .dcd
-                    .with_limits(options.limits)
-                    .with_source_label(label),
-            )?;
+            let dcd_options = options
+                .dcd
+                .with_limits(options.limits)
+                .with_source_label(label.clone());
+            let reader = match imported {
+                Some((offsets, _)) => {
+                    dcd::IndexedDcdReader::from_offsets(reader, topology, dcd_options, offsets)?
+                }
+                None => dcd::IndexedDcdReader::build(reader, topology, dcd_options, &control)?,
+            };
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), Some(count));
             (
                 IndexedReaderInner::Dcd(reader),
                 metadata,
-                vec!["DCD index verified record markers and the declared frame count".into()],
+                "DCD index verified record markers and the declared frame count",
             )
         }
         TrajectoryFormat::Trr => {
-            let reader = trr::IndexedTrrReader::new(
-                reader,
-                topology,
-                options
-                    .trr
-                    .with_limits(options.limits)
-                    .with_source_label(label),
-            )?;
+            let trr_options = options
+                .trr
+                .with_limits(options.limits)
+                .with_source_label(label.clone());
+            let reader = match imported {
+                Some((offsets, precision_mixed)) => trr::IndexedTrrReader::from_offsets(
+                    reader,
+                    topology,
+                    trr_options,
+                    offsets,
+                    precision_mixed,
+                )?,
+                None => trr::IndexedTrrReader::build(reader, topology, trr_options, &control)?,
+            };
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::trr(
                 reader.first_header(),
@@ -453,37 +618,57 @@ pub fn open_indexed_trajectory(
             (
                 IndexedReaderInner::Trr(Box::new(reader)),
                 metadata,
-                vec!["TRR index verified every XDR frame and payload block".into()],
+                "TRR index verified every XDR frame and payload block",
             )
         }
         TrajectoryFormat::Xtc => {
             let cell_policy = options.xtc.cell_policy();
-            let xtc_options = options.xtc;
-            let reader = xtc::IndexedXtcReader::new(
-                reader,
-                topology,
-                xtc_options
-                    .with_limits(options.limits)
-                    .with_source_label(label),
-            )?;
+            let xtc_options = options
+                .xtc
+                .with_limits(options.limits)
+                .with_source_label(label.clone());
+            let reader = match imported {
+                Some((offsets, _)) => {
+                    xtc::IndexedXtcReader::from_offsets(reader, topology, xtc_options, offsets)?
+                }
+                None => xtc::IndexedXtcReader::build(reader, topology, xtc_options, &control)?,
+            };
             let count = reader.frame_count().unwrap_or(0);
             let metadata =
                 FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, Some(count));
             (
                 IndexedReaderInner::Xtc(reader),
                 metadata,
-                vec!["XTC index fully decoded and verified every compressed frame".into()],
+                "XTC index fully decoded and verified every compressed frame",
             )
         }
     };
+    let note = if is_imported {
+        format!("{format} index imported; every frame is verified as it is read")
+    } else {
+        let mut file = File::open(path)
+            .map_err(|error| io_context(TrajectoryIoOperation::Index, None, &label, error))?;
+        let unchanged = TrajectoryFileFingerprint::of_file(&mut file, &label)? == fingerprint
+            && inner.offsets().end() == fingerprint.byte_count();
+        if !unchanged {
+            return Err(index_mismatch(
+                TrajectoryIoOperation::Index,
+                format,
+                &label,
+                "the file changed while it was indexed",
+            ));
+        }
+        note.to_owned()
+    };
     let report = TrajectoryOpenReport {
-        selected_format: detection.format,
+        selected_format: format,
         detection_evidence: detection.evidence,
-        notes,
+        notes: vec![note],
     };
     Ok(IndexedFileTrajectoryReader {
         inner,
         metadata,
         open_report: report,
+        fingerprint,
     })
 }

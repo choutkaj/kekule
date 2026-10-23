@@ -372,6 +372,20 @@ impl Cancellation {
         (self.check)()
     }
 
+    /// Fails with [`Cancelled`] once cancellation has been requested, running
+    /// the check once; for cancellable operations outside this crate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Cancelled`] when the check returns `true`.
+    pub fn check(&self) -> Result<(), Cancelled> {
+        if self.is_cancelled() {
+            Err(Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Polls `cancellation`, which is `None` for an operation that cannot be
     /// cancelled.
     #[inline]
