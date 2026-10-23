@@ -142,6 +142,51 @@ fn pdb_interpretation_stops_once_cancellation_is_requested() {
 }
 
 #[test]
+fn distance_inference_within_one_residue_polls_per_site() {
+    // One untemplated residue: inferring its bonds scans every pair of its
+    // sites, which must stay interruptible.
+    const SITES: usize = 400;
+    let mut text = String::from(
+        "data_chain
+loop_
+_entity.id
+_entity.type
+1 non-polymer
+loop_
+         _atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+         _atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.auth_seq_id
+         _atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+",
+    );
+    for site in 0..SITES {
+        text.push_str(&format!(
+            "C C{site} ZQ9 A 1 1 {:.1} 0.0 0.0
+",
+            site as f64 * 1.5
+        ));
+    }
+    let document = mmcif::parse_str(&text, Default::default()).unwrap();
+    let (never, polls) = requested_after(usize::MAX);
+    document
+        .interpret(StructureInterpretOptions::default().with_cancellation(Some(never)))
+        .unwrap();
+    let polls = polls.load(Ordering::Relaxed);
+    assert!(polls >= SITES, "interpretation polled only {polls} times");
+    assert_cancellable(
+        |cancellation| {
+            document.interpret(StructureInterpretOptions::default().with_cancellation(cancellation))
+        },
+        same_interpretation,
+    );
+}
+
+#[test]
 fn options_with_a_cancellation_keep_their_auto_traits() {
     fn assert_auto_traits<
         T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe + Unpin,

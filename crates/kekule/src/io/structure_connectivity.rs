@@ -708,6 +708,8 @@ impl<'r> Resolver<'r, '_> {
         }
         let mut bonds = 0;
         for (index, left) in residue.sites.iter().enumerate() {
+            // The pair scan is quadratic in a residue's sites, so each row polls.
+            raw::poll(self.cancellation)?;
             for right in &residue.sites[index + 1..] {
                 if within_bonding_distance((left.element, left.point), (right.element, right.point))
                     && self
@@ -745,6 +747,7 @@ impl<'r> Resolver<'r, '_> {
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
     ) -> Result<(), FormatError> {
         for link in &self.catalog.branch_links {
+            raw::poll(self.cancellation)?;
             let asyms = self
                 .catalog
                 .branch_sites
@@ -826,7 +829,8 @@ impl<'r> Resolver<'r, '_> {
             let declared = entity
                 .as_ref()
                 .and_then(|entity| self.catalog.polymer_types.get(entity));
-            for pair in chain.windows(2) {
+            for (step, pair) in chain.windows(2).enumerate() {
+                raw::poll_every(self.cancellation, step)?;
                 let (left, right) = (pair[0], pair[1]);
                 let (Some(left_seq), Some(right_seq)) =
                     (left.key.polymer_position, right.key.polymer_position)
@@ -913,6 +917,8 @@ impl<'r> Resolver<'r, '_> {
         stray_hydrogens: Vec<(ResidueKey, AtomId)>,
     ) -> Result<(), FormatError> {
         for (key, hydrogen) in stray_hydrogens {
+            // Each hydrogen scans its residue's sites.
+            raw::poll(self.cancellation)?;
             let residue = &residues[&key];
             let site = residue
                 .site(hydrogen)
