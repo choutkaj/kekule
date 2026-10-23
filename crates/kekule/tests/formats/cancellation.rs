@@ -142,6 +142,17 @@ fn pdb_interpretation_stops_once_cancellation_is_requested() {
 }
 
 #[test]
+fn options_with_a_cancellation_keep_their_auto_traits() {
+    fn assert_auto_traits<
+        T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe + Unpin,
+    >() {
+    }
+    assert_auto_traits::<Cancellation>();
+    assert_auto_traits::<StructureInterpretOptions>();
+    assert_auto_traits::<StructureEnsembleInterpretOptions>();
+}
+
+#[test]
 fn cancellation_is_an_identity_option() {
     let (cancellation, _) = requested_after(usize::MAX);
     let options =

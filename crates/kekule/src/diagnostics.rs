@@ -411,6 +411,12 @@ impl PartialEq for Cancellation {
 
 impl Eq for Cancellation {}
 
+// Kekule only calls the check and reads its answer, so a panic inside it
+// cannot leave Kekule state broken, and options holding a cancellation stay
+// unwind safe as they were without one.
+impl std::panic::UnwindSafe for Cancellation {}
+impl std::panic::RefUnwindSafe for Cancellation {}
+
 /// An operation stopped because its [`Cancellation`] was requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
