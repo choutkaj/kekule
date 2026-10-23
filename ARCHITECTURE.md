@@ -854,6 +854,12 @@ Every operation has exactly one home.
 - Resource exhaustion is reported everywhere as
   `diagnostics::LimitExceeded`, naming the resource, the limit, and the
   observed value. Default limits are exported as constants.
+- Cancellation is cooperative. A long-running operation accepts an optional
+  `diagnostics::Cancellation`, through its options or a `*_cancellable`
+  lifecycle method when it has none. It polls the cancellation between
+  stages and inside long loops, and fails with `diagnostics::Cancelled`, or
+  `DiagnosticKind::Cancelled` in a `FormatError`. It never returns a partial
+  result. Without a cancellation, it does not poll.
 - A recoverable draft (`try_build`, `try_finish`) fails with
   `DraftError<D, E>`, which returns the draft with the error. It is the only
   generic error wrapper.

@@ -2,7 +2,7 @@
 //! evidence: the source's own component bond table or connection records,
 //! component templates, polymer and branch linkage, and, for residues nothing
 //! else covers, covalent radii.
-use crate::diagnostics::{DiagnosticKind, FormatError};
+use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -63,6 +63,7 @@ pub(crate) fn record_evidence(
 
 /// Resolves the bonds of one staged molecule group in place. Bonds already
 /// present, from connection records, must agree with every other source.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn complete_editor_connectivity<'a>(
     catalog: &ConnectivityCatalog,
     editor: &mut MoleculeEditor,
@@ -71,6 +72,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
     model_id: &str,
     evidence: &mut BondEvidenceMap,
     issues: &mut Vec<raw::StructureInterpretIssue>,
+    cancellation: Option<&Cancellation>,
 ) -> Result<(), FormatError> {
     let mut source_aromatic_bonds = BTreeSet::new();
     let mut resolver = Resolver {
@@ -80,8 +82,11 @@ pub(crate) fn complete_editor_connectivity<'a>(
         evidence,
         issues,
         model_id,
+        cancellation,
     };
-    resolver.resolve(residue_atoms(atoms), listed)?;
+    let residues = residue_atoms(atoms, cancellation)?;
+    resolver.resolve(residues, listed)?;
+    raw::poll(cancellation)?;
     localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds)
         .map_err(interpret_error)
 }
@@ -344,9 +349,11 @@ struct TemplatedResidue<'c> {
 
 fn residue_atoms<'a>(
     atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
-) -> BTreeMap<ResidueKey, ResidueAtoms> {
+    cancellation: Option<&Cancellation>,
+) -> Result<BTreeMap<ResidueKey, ResidueAtoms>, FormatError> {
     let mut residues = BTreeMap::new();
-    for atom in atoms {
+    for (step, atom) in atoms.into_iter().enumerate() {
+        raw::poll_every(cancellation, step)?;
         let key = ResidueKey {
             asym_id: atom.asym_id.to_owned(),
             entity_id: atom.entity_id.map(str::to_owned),
@@ -372,7 +379,8 @@ fn residue_atoms<'a>(
             stated_charge: atom.stated_charge,
         });
     }
-    residues
+    raw::poll(cancellation)?;
+    Ok(residues)
 }
 
 /// The distance, in ångström, that distance inference adds to the sum of two
@@ -448,6 +456,7 @@ struct Resolver<'r, 'g> {
     evidence: &'g mut BondEvidenceMap,
     issues: &'g mut Vec<raw::StructureInterpretIssue>,
     model_id: &'r str,
+    cancellation: Option<&'r Cancellation>,
 }
 
 impl<'r> Resolver<'r, '_> {
@@ -457,7 +466,8 @@ impl<'r> Resolver<'r, '_> {
         listed: &[ListedBond],
     ) -> Result<(), FormatError> {
         let mut residue_of = BTreeMap::new();
-        for residue in residues.values() {
+        for (step, residue) in residues.values().enumerate() {
+            raw::poll_every(self.cancellation, step)?;
             for site in &residue.sites {
                 residue_of.insert(site.atom, &residue.key);
             }
@@ -476,6 +486,7 @@ impl<'r> Resolver<'r, '_> {
         let mut templated = Vec::new();
         let mut stray_hydrogens = Vec::new();
         for residue in residues.values() {
+            raw::poll(self.cancellation)?;
             let listed = listed_in.remove(&residue.key).unwrap_or_default();
             let component_id = normalized(&residue.key.component_id);
             let template = self.catalog.template(&component_id);
@@ -551,13 +562,19 @@ impl<'r> Resolver<'r, '_> {
                 self.infer_residue_bonds(residue)?;
             }
         }
+        raw::poll(self.cancellation)?;
         self.add_listed_bonds(&listed_across)?;
+        raw::poll(self.cancellation)?;
         self.apply_branch_links(&residues)?;
+        raw::poll(self.cancellation)?;
         self.apply_polymer_links(&residues)?;
+        raw::poll(self.cancellation)?;
         self.attach_stray_hydrogens(&residues, stray_hydrogens)?;
         for residue in &templated {
+            raw::poll(self.cancellation)?;
             self.assign_template_charges(residue, &residues[&residue.key])?;
         }
+        raw::poll(self.cancellation)?;
         self.report_fragmented_residues(&residues);
         Ok(())
     }

@@ -13,7 +13,7 @@ mod types;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::diagnostics::{DiagnosticKind, FormatError};
+use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::geometry::PeriodicCell;
 use crate::structure::ModelBuilder;
 use crate::topology::HierarchyBuilder;
@@ -37,7 +37,7 @@ pub(crate) use mmcif::{
 pub(crate) use pdb::{
     interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
 };
-pub(in crate::io) use types::structure_error;
+pub(in crate::io) use types::{poll, poll_every, structure_error};
 pub use types::{
     AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConflictingSelector,
     ConnectionResolutionReason, ConnectivityOptions, EntityKind, EntityMetadataPolicy,
@@ -69,7 +69,11 @@ fn interpret_source(
     source: StructureSource,
     options: &StructureInterpretOptions,
 ) -> Result<StructureInterpretation, FormatError> {
-    let mut prepared = PreparedSource::new(source, options.altloc_policy())?;
+    let mut prepared = PreparedSource::new(
+        source,
+        options.altloc_policy(),
+        options.cancellation().cloned(),
+    )?;
     let model_id = match &options.model_selection() {
         ModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
             prepared.model_sizes[0].0.clone()
@@ -105,10 +109,15 @@ struct PreparedSource {
     connections: Vec<ConnectionRecord>,
     catalog: ConnectivityCatalog,
     cell: Option<PeriodicCell>,
+    cancellation: Option<Cancellation>,
 }
 
 impl PreparedSource {
-    fn new(source: StructureSource, altloc_policy: &AltLocPolicy) -> Result<Self, FormatError> {
+    fn new(
+        source: StructureSource,
+        altloc_policy: &AltLocPolicy,
+        cancellation: Option<Cancellation>,
+    ) -> Result<Self, FormatError> {
         let StructureSource {
             name,
             entity_definitions,
@@ -128,17 +137,25 @@ impl PreparedSource {
         };
         // Alternate-location validation still covers the complete source,
         // including models omitted from the eventual projection.
-        let selected = select_alt_locations(&rows, &conformations, altloc_policy, &mut report)?;
+        let selected = select_alt_locations(
+            &rows,
+            &conformations,
+            altloc_policy,
+            &mut report,
+            cancellation.as_ref(),
+        )?;
         let mut models = BTreeMap::<String, ModelRows>::new();
         let mut model_ids = Vec::new();
-        for row in rows {
+        for (step, row) in rows.into_iter().enumerate() {
+            poll_every(cancellation.as_ref(), step)?;
             let model = models.entry(row.model_id.clone()).or_default();
             if model.all.is_empty() {
                 model_ids.push(row.model_id.clone());
             }
             model.all.push(row);
         }
-        for row in selected {
+        for (step, row) in selected.into_iter().enumerate() {
+            poll_every(cancellation.as_ref(), step)?;
             let model = models
                 .get_mut(&row.model_id)
                 .expect("selected row has a source model");
@@ -160,10 +177,12 @@ impl PreparedSource {
             connections,
             catalog,
             cell,
+            cancellation,
         })
     }
 
     fn interpret_model(&mut self, model_id: &str) -> Result<StructureInterpretation, FormatError> {
+        poll(self.cancellation.as_ref())?;
         let rows = self.models.remove(model_id).ok_or_else(|| {
             structure_error(
                 DiagnosticKind::Inconsistent,
@@ -216,6 +235,7 @@ impl PreparedSource {
             &self.catalog,
             self.cell,
             report,
+            self.cancellation.as_ref(),
         )
     }
 }
@@ -227,6 +247,7 @@ fn publish_model(
     catalog: &ConnectivityCatalog,
     cell: Option<PeriodicCell>,
     mut report: StructureInterpretationReport,
+    cancellation: Option<&Cancellation>,
 ) -> Result<StructureInterpretation, FormatError> {
     let ModelRows {
         all: rows,
@@ -245,10 +266,12 @@ fn publish_model(
         &selected_model,
         &mut union,
         &mut report,
-    );
-    let groups = group_rows(selected, &mut union, polymer_asym_order);
+        cancellation,
+    )?;
+    let groups = group_rows(selected, &mut union, polymer_asym_order, cancellation)?;
     let mut group_connections = BTreeMap::<String, Vec<&DeclaredConnection>>::new();
-    for connection in &connections {
+    for (step, connection) in connections.iter().enumerate() {
+        poll_every(cancellation, step)?;
         group_connections
             .entry(union.find(&connection.instance_key))
             .or_default()
@@ -257,18 +280,21 @@ fn publish_model(
     let mut builder = ModelBuilder::new();
     let mut qualified_atom_data = Vec::new();
     for group in groups {
+        poll(cancellation)?;
         let declared = group_connections.remove(group.root()).unwrap_or_default();
-        let mut built = build_molecule(group, &declared)?;
-        built.complete_connectivity(catalog, &mut report)?;
-        for built in built.publish_components()? {
+        let mut built = build_molecule(group, &declared, cancellation)?;
+        built.complete_connectivity(catalog, &mut report, cancellation)?;
+        for built in built.publish_components(cancellation)? {
             let id = builder
                 .add_molecule(built.molecule, &built.positions)
                 .map_err(graph_error)?;
+            poll(cancellation)?;
             let (provenance, atom_data) = built.provenance.qualify(id);
             report.instances.push(provenance);
             qualified_atom_data.extend(atom_data);
         }
     }
+    poll(cancellation)?;
     // Dense atom order follows the selected atom-site rows, so coordinate
     // files in this row order address the same atoms.
     let mut rows = report
@@ -281,11 +307,15 @@ fn publish_model(
     builder
         .set_atom_order(rows.into_iter().map(|(_, atom)| atom))
         .map_err(graph_error)?;
+    poll(cancellation)?;
     *builder.hierarchy_mut() = HierarchyBuilder::from_storage(build_topology_hierarchy(
         &report.instances,
         polymer_asym_order,
+        cancellation,
     )?);
+    poll(cancellation)?;
     let mut model = builder.build().map_err(graph_error)?;
+    poll(cancellation)?;
     model.set_cell(cell);
     let mut occupancies = vec![None; model.atom_count()];
     let mut b_factors = vec![None; model.atom_count()];

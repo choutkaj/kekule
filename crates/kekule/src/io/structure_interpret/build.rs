@@ -1,7 +1,7 @@
 //! Builds molecules, provenance, and the topology hierarchy from the selected
 //! atom rows of one coordinate model.
-use super::types::structure_error;
-use crate::diagnostics::{DiagnosticKind, FormatError};
+use super::types::{poll, poll_every, structure_error};
+use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::chemistry::canonicalize_molecule_for_publication;
@@ -41,10 +41,12 @@ pub(super) fn group_rows(
     rows: Vec<AtomRow>,
     union: &mut InstanceUnion,
     polymer_asym_order: &BTreeMap<String, usize>,
-) -> Vec<MoleculeGroup> {
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<MoleculeGroup>, FormatError> {
     let mut group_indices = BTreeMap::new();
     let mut groups = Vec::new();
-    for row in rows {
+    for (step, row) in rows.into_iter().enumerate() {
+        poll_every(cancellation, step)?;
         let root = union.find(&row.instance_key);
         let index = *group_indices.entry(root.clone()).or_insert_with(|| {
             groups.push(MoleculeGroup {
@@ -61,6 +63,7 @@ pub(super) fn group_rows(
         group.rows.push(row);
     }
     for group in &mut groups {
+        poll(cancellation)?;
         group.rows.sort_by_key(|row| {
             polymer_asym_order
                 .get(&row.asym_id)
@@ -76,7 +79,7 @@ pub(super) fn group_rows(
             .min()
             .unwrap_or(usize::MAX)
     });
-    groups
+    Ok(groups)
 }
 
 pub(super) struct BuiltMolecule {
@@ -204,6 +207,7 @@ impl BuiltMolecule {
         &mut self,
         catalog: &super::super::structure_connectivity::ConnectivityCatalog,
         report: &mut StructureInterpretationReport,
+        cancellation: Option<&Cancellation>,
     ) -> Result<(), FormatError> {
         let Self {
             editor,
@@ -238,14 +242,16 @@ impl BuiltMolecule {
             &provenance.coordinate_model_id,
             evidence,
             &mut report.issues,
+            cancellation,
         )?;
+        poll(cancellation)?;
         // Close contacts that no evidence bonds, counted once every bond is known.
         let sites = provenance
             .atoms
             .iter()
             .map(|atom| (atom.atom, atom.element, atom.point, atom.source_line))
             .collect::<Vec<_>>();
-        let candidates = count_bond_candidates(editor.working(), &sites)?;
+        let candidates = count_bond_candidates(editor.working(), &sites, cancellation)?;
         if candidates > 0 {
             report.connectivity_candidates += candidates;
             report
@@ -258,7 +264,10 @@ impl BuiltMolecule {
         Ok(())
     }
 
-    pub(super) fn publish_components(self) -> Result<Vec<PublishedMolecule>, FormatError> {
+    pub(super) fn publish_components(
+        self,
+        cancellation: Option<&Cancellation>,
+    ) -> Result<Vec<PublishedMolecule>, FormatError> {
         let components = self.editor.working().connected_components();
         if components.is_empty() {
             return Err(structure_error(
@@ -269,10 +278,12 @@ impl BuiltMolecule {
         }
         let mut published = Vec::with_capacity(components.len());
         for component in components {
+            poll(cancellation)?;
             let selected = component.iter().copied().collect::<BTreeSet<_>>();
             let mut editor = crate::molecule::MoleculeEditor::new();
             let mut atom_map = BTreeMap::new();
-            for source_atom in component.iter().copied() {
+            for (step, source_atom) in component.iter().copied().enumerate() {
+                poll_every(cancellation, step)?;
                 let atom = self
                     .editor
                     .working()
@@ -283,7 +294,8 @@ impl BuiltMolecule {
                 atom_map.insert(source_atom, target_atom);
             }
             let mut bonds = Vec::new();
-            for (_, source_bond) in self.editor.working().bonds() {
+            for (step, (_, source_bond)) in self.editor.working().bonds().enumerate() {
+                poll_every(cancellation, step)?;
                 let (left, right) = source_bond.endpoints();
                 if !selected.contains(&left) || !selected.contains(&right) {
                     continue;
@@ -340,15 +352,21 @@ impl BuiltMolecule {
                         .map_err(graph_error)?;
                 }
             }
+            poll(cancellation)?;
             canonicalize_molecule_for_publication(editor.working_mut(), Some(&coordinates), &[])
                 .map_err(graph_error)?;
+            poll(cancellation)?;
             let molecule = editor.finish().map_err(graph_error)?;
+            poll(cancellation)?;
             let positions = coordinates.to_positions(&molecule).map_err(graph_error)?;
+            poll(cancellation)?;
             let mut provenance = self.provenance.clone();
+            poll(cancellation)?;
             provenance
                 .atoms
                 .retain(|atom| selected.contains(&atom.atom));
-            for atom in &mut provenance.atoms {
+            for (step, atom) in provenance.atoms.iter_mut().enumerate() {
+                poll_every(cancellation, step)?;
                 atom.atom = atom_map[&atom.atom];
             }
             provenance.bonds = bonds;
@@ -365,12 +383,14 @@ impl BuiltMolecule {
 pub(super) fn build_molecule(
     group: MoleculeGroup,
     connections: &[&DeclaredConnection],
+    cancellation: Option<&Cancellation>,
 ) -> Result<BuiltMolecule, FormatError> {
     let mut editor = crate::molecule::MoleculeEditor::new();
     let mut atoms = BTreeMap::new();
     let mut representative = Vec::<(String, AtomRow)>::new();
     let mut seen_atoms = BTreeMap::<String, usize>::new();
-    for row in &group.rows {
+    for (step, row) in group.rows.iter().enumerate() {
+        poll_every(cancellation, step)?;
         let key = row.atom_key();
         if let Some(&index) = seen_atoms.get(&key) {
             let prior = &representative[index].1;
@@ -394,7 +414,8 @@ pub(super) fn build_molecule(
             representative.push((key, row.clone()));
         }
     }
-    for (key, row) in &representative {
+    for (step, (key, row)) in representative.iter().enumerate() {
+        poll_every(cancellation, step)?;
         let mut atom = Atom::new(row.element);
         atom.isotope = row.isotope.and_then(std::num::NonZeroU16::new);
         atom.formal_charge = row.formal_charge.unwrap_or_default();
@@ -407,7 +428,8 @@ pub(super) fn build_molecule(
         .ok_or_else(|| structure_error(DiagnosticKind::Chemistry, None, "empty molecule group"))?;
     let mut coordinates =
         StagedCoordinates::with_atom_capacity(atoms.len(), ANGSTROM).map_err(graph_error)?;
-    for row in &group.rows {
+    for (step, row) in group.rows.iter().enumerate() {
+        poll_every(cancellation, step)?;
         let point = row.point.ok_or_else(|| {
             structure_error(
                 DiagnosticKind::InvalidValue,
@@ -424,7 +446,8 @@ pub(super) fn build_molecule(
     }
     let mut evidence = BondEvidenceMap::new();
     let mut listed = Vec::new();
-    for connection in connections {
+    for (step, connection) in connections.iter().enumerate() {
+        poll_every(cancellation, step)?;
         let Some(&left) = atoms.get(&connection.left_atom) else {
             continue;
         };
@@ -474,6 +497,7 @@ pub(super) fn build_molecule(
             }
         }
     }
+    poll(cancellation)?;
     let asym_ids = representative
         .iter()
         .map(|(_, row)| row)
@@ -489,43 +513,48 @@ pub(super) fn build_molecule(
         .into_iter()
         .collect::<Vec<_>>();
     let entity_kinds = group.kinds.iter().cloned().collect::<Vec<_>>();
+    poll(cancellation)?;
     let atom_provenance = representative
         .iter()
-        .map(|(key, row)| BuiltAtomProvenance {
-            atom: atoms[key],
-            element: row.element,
-            point: row
-                .point
-                .expect("selected mmCIF atom rows have complete positions"),
-            stated_charge: row.formal_charge,
-            type_symbol: structure_element_symbol(row.element, row.isotope)
-                .expect("read element symbols name their isotope")
-                .to_owned(),
-            source_line: row.line,
-            source_order: row.site_order,
-            atom_site_id: row.atom_site_id.clone(),
-            label_atom_name: row.label_atom_name.clone(),
-            atom_name: row.atom_name.clone(),
-            auth_atom_name: row.auth_atom_name.clone(),
-            label_component_id: row.label_comp_id.clone(),
-            component_id: row.comp_id.clone(),
-            auth_component_id: row.auth_comp_id.clone(),
-            label_asym_id: row.label_asym_id.clone(),
-            asym_id: row.asym_id.clone(),
-            auth_asym_id: row.auth_asym_id.clone(),
-            entity_id: row.entity_id.clone(),
-            entity_kind: row.kind.clone(),
-            residue_key: row.residue_key.clone(),
-            label_sequence_id: row.label_seq_id,
-            polymer_position: row.polymer_position,
-            author_sequence_id: row.auth_seq_id.clone(),
-            insertion_code: row.insertion_code.clone(),
-            occurrence: row.occurrence,
-            selected_alternate_location: row.alt_id.clone(),
-            occupancy: row.occupancy,
-            b_factor: row.b_factor,
+        .enumerate()
+        .map(|(step, (key, row))| {
+            poll_every(cancellation, step)?;
+            Ok(BuiltAtomProvenance {
+                atom: atoms[key],
+                element: row.element,
+                point: row
+                    .point
+                    .expect("selected mmCIF atom rows have complete positions"),
+                stated_charge: row.formal_charge,
+                type_symbol: structure_element_symbol(row.element, row.isotope)
+                    .expect("read element symbols name their isotope")
+                    .to_owned(),
+                source_line: row.line,
+                source_order: row.site_order,
+                atom_site_id: row.atom_site_id.clone(),
+                label_atom_name: row.label_atom_name.clone(),
+                atom_name: row.atom_name.clone(),
+                auth_atom_name: row.auth_atom_name.clone(),
+                label_component_id: row.label_comp_id.clone(),
+                component_id: row.comp_id.clone(),
+                auth_component_id: row.auth_comp_id.clone(),
+                label_asym_id: row.label_asym_id.clone(),
+                asym_id: row.asym_id.clone(),
+                auth_asym_id: row.auth_asym_id.clone(),
+                entity_id: row.entity_id.clone(),
+                entity_kind: row.kind.clone(),
+                residue_key: row.residue_key.clone(),
+                label_sequence_id: row.label_seq_id,
+                polymer_position: row.polymer_position,
+                author_sequence_id: row.auth_seq_id.clone(),
+                insertion_code: row.insertion_code.clone(),
+                occurrence: row.occurrence,
+                selected_alternate_location: row.alt_id.clone(),
+                occupancy: row.occupancy,
+                b_factor: row.b_factor,
+            })
         })
-        .collect();
+        .collect::<Result<_, FormatError>>()?;
     let provenance = BuiltMoleculeProvenance {
         coordinate_model_id: model_id,
         asym_ids,
@@ -552,12 +581,14 @@ const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
 fn count_bond_candidates(
     graph: &Molecule,
     sites: &[(AtomId, Element, Point3, usize)],
+    cancellation: Option<&Cancellation>,
 ) -> Result<usize, FormatError> {
     let mut cells = BTreeMap::<[i64; 3], Vec<usize>>::new();
     let mut candidates = 0usize;
 
     for (right_index, &(right, right_element, right_point, right_line)) in sites.iter().enumerate()
     {
+        poll_every(cancellation, right_index)?;
         let right_cell = covalent_bond_cell(right_point, right_line)?;
         for offset_x in -1_i64..=1 {
             for offset_y in -1_i64..=1 {
@@ -656,6 +687,7 @@ fn point_distance_squared(left: Point3, right: Point3) -> f64 {
 pub(super) fn build_topology_hierarchy(
     instances: &[InstanceProvenance],
     polymer_asym_order: &BTreeMap<String, usize>,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Hierarchy, FormatError> {
     #[derive(Clone)]
     struct ResidueMetadata {
@@ -675,10 +707,13 @@ pub(super) fn build_topology_hierarchy(
         .iter()
         .flat_map(|instance| instance.atoms.iter())
         .collect::<Vec<_>>();
+    poll(cancellation)?;
     atoms.sort_by_key(|atom| atom.source_order);
+    poll(cancellation)?;
     let mut chain_authors = BTreeMap::<String, Option<String>>::new();
     let mut residue_metadata = BTreeMap::<(String, String), ResidueMetadata>::new();
-    for atom in &atoms {
+    for (step, atom) in atoms.iter().enumerate() {
+        poll_every(cancellation, step)?;
         merge_optional_source_value(
             chain_authors.entry(atom.asym_id.clone()).or_default(),
             atom.auth_asym_id.as_ref(),
@@ -737,6 +772,8 @@ pub(super) fn build_topology_hierarchy(
     let mut ordered_polymer_chains = polymer_asym_order.iter().collect::<Vec<_>>();
     ordered_polymer_chains.sort_by_key(|(_, order)| **order);
     for (asym_id, _) in ordered_polymer_chains {
+        // Finding the chain's first atom can scan every atom.
+        poll(cancellation)?;
         let Some(_) = atoms.iter().find(|atom| &atom.asym_id == asym_id) else {
             continue;
         };
@@ -745,7 +782,8 @@ pub(super) fn build_topology_hierarchy(
             .map_err(hierarchy_error)?;
         chains.insert(asym_id.clone(), chain);
     }
-    for atom in atoms {
+    for (step, atom) in atoms.into_iter().enumerate() {
+        poll_every(cancellation, step)?;
         let chain = if let Some(chain) = chains.get(&atom.asym_id) {
             *chain
         } else {

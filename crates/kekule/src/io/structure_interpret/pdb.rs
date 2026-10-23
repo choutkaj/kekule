@@ -9,8 +9,8 @@
 //! polymer adjacency.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::types::structure_error;
-use crate::diagnostics::{DiagnosticKind, FormatError};
+use super::types::{poll, poll_every, structure_error};
+use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::molecule::{BondOrder, Element};
 
 use super::super::element_symbol::parse_structure_element_symbol;
@@ -39,6 +39,7 @@ pub(crate) fn interpret_pdb(
         document,
         options.requires_entity_metadata(),
         options.connectivity(),
+        options.cancellation(),
     )?;
     interpret_source(source, &options)
 }
@@ -62,6 +63,7 @@ pub(crate) fn interpret_pdb_ensemble(
             document,
             options.requires_entity_metadata(),
             options.connectivity(),
+            options.cancellation(),
         )
     })
 }
@@ -80,13 +82,14 @@ pub(crate) fn interpret_pdb_conformations(
 pub(crate) fn pdb_alternate_locations(
     document: &PdbDocument,
 ) -> Result<Vec<AltLocResidue>, FormatError> {
-    inventory(&read_rows(document)?.0)
+    inventory(&read_rows(document, None)?.0)
 }
 
 fn pdb_source(
     document: &PdbDocument,
     strict_entity_metadata: bool,
     connectivity: &ConnectivityOptions,
+    cancellation: Option<&Cancellation>,
 ) -> Result<StructureSource, FormatError> {
     if strict_entity_metadata {
         return Err(structure_error(
@@ -95,7 +98,8 @@ fn pdb_source(
             "PDB entries declare no entity types; strict entity metadata cannot be satisfied",
         ));
     }
-    let (rows, inferred) = read_rows(document)?;
+    let (rows, inferred) = read_rows(document, cancellation)?;
+    poll(cancellation)?;
     let mut polymer_order = BTreeMap::new();
     for row in rows.iter().filter(|row| row.polymer_position.is_some()) {
         let next = polymer_order.len();
@@ -133,13 +137,16 @@ fn pdb_source(
             }
         }
     };
+    poll(cancellation)?;
+    let connections = connection_records(document)?;
+    poll(cancellation)?;
     Ok(StructureSource {
         name: document.id_code().unwrap_or_default().to_owned(),
         entity_definitions: 0,
         rows,
         conformations: BTreeMap::new(),
         polymer_order,
-        connections: connection_records(document)?,
+        connections,
         catalog: ConnectivityCatalog::new(connectivity),
         cell,
         issues,
@@ -227,7 +234,10 @@ impl ChainRuns {
 
 /// Atom rows of every model, and the lines of records whose element was
 /// inferred from the atom name.
-fn read_rows(document: &PdbDocument) -> Result<(Vec<AtomRow>, Vec<usize>), FormatError> {
+fn read_rows(
+    document: &PdbDocument,
+    cancellation: Option<&Cancellation>,
+) -> Result<(Vec<AtomRow>, Vec<usize>), FormatError> {
     let atoms = document.atoms();
     if atoms.is_empty() {
         return Err(structure_error(
@@ -252,6 +262,7 @@ fn read_rows(document: &PdbDocument) -> Result<(Vec<AtomRow>, Vec<usize>), Forma
     let mut current = None;
     let mut repeats = HashMap::<(String, i32, Option<char>), usize>::new();
     for (index, atom) in atoms.iter().enumerate() {
+        poll_every(cancellation, index)?;
         if model != Some(atom.model()) {
             runs.close_all(&mut residues);
             runs = ChainRuns::default();
@@ -300,6 +311,7 @@ fn read_rows(document: &PdbDocument) -> Result<(Vec<AtomRow>, Vec<usize>), Forma
     let mut inferred = Vec::new();
     let mut rows = Vec::with_capacity(atoms.len());
     for (index, atom) in atoms.iter().enumerate() {
+        poll_every(cancellation, index)?;
         let residue = &residues[residue_of[index]];
         let line = atom.location().line();
         let (element, isotope) = match atom.element() {

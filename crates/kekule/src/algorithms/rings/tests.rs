@@ -1,5 +1,5 @@
 use super::*;
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{Cancellation, Cancelled, LimitExceeded, Resource};
 
 // Independent small-graph oracle: enumerate edge subsets, then recognize a
 // simple cycle by connectedness and degree two. No production ring search,
@@ -577,7 +577,7 @@ fn degree_three_recovery_preserves_rdkit_candidate_order() {
         ],
     );
     let active = ActiveRingGraph::new(&molecule);
-    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 6, 8).unwrap();
+    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 6, 8, None).unwrap();
     let mut rings = Vec::new();
     find_rings_from_degree_three_node(
         AtomId::new(0),
@@ -614,7 +614,7 @@ fn symmetrization_only_uses_the_original_sssr_as_replacement_witnesses() {
     let original = vec![ring(&[0, 1, 2]), ring(&[0, 1, 3, 4]), ring(&[2, 3, 5, 6])];
     let accepted = ring(&[0, 1, 3]);
     let chained = ring(&[3, 4, 5]);
-    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 0, 7).unwrap();
+    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 0, 7, None).unwrap();
     let result = symmetrize_ring_set(
         original.clone(),
         vec![accepted.clone(), chained],
@@ -636,12 +636,12 @@ fn pruning_and_symmetrization_charge_comparison_work() {
         })
         .collect::<Vec<_>>();
     let options = RingPerceptionOptions::default().with_max_total_work(100);
-    let mut tracker = RingWorkTracker::new(options, 0, 0).unwrap();
+    let mut tracker = RingWorkTracker::new(options, 0, 0, None).unwrap();
     assert!(matches!(
         remove_extra_rings(rings.clone(), 60, &mut tracker),
         Err(RingPerceptionError::LimitExceeded(limit)) if limit.resource() == Resource::Work
     ));
-    let mut tracker = RingWorkTracker::new(options, 0, 0).unwrap();
+    let mut tracker = RingWorkTracker::new(options, 0, 0, None).unwrap();
     let extra = Ring {
         atoms: Vec::new(),
         bonds: vec![BondId::new(0), BondId::new(3), BondId::new(6)],
@@ -653,6 +653,36 @@ fn pruning_and_symmetrization_charge_comparison_work() {
 }
 
 #[test]
+fn work_polls_cancellation_once_per_stride() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let polls = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&polls);
+    // Requested from the second poll on.
+    let cancellation = Cancellation::new(move || counter.fetch_add(1, Ordering::Relaxed) + 1 >= 2);
+    let mut tracker = RingWorkTracker::new(
+        RingPerceptionOptions::default().with_max_total_work(usize::MAX),
+        0,
+        0,
+        Some(cancellation),
+    )
+    .unwrap();
+    for _ in 1..RingWorkTracker::WORK_PER_POLL {
+        tracker.add_work(1).unwrap();
+    }
+    assert_eq!(polls.load(Ordering::Relaxed), 0);
+    tracker.add_work(1).unwrap();
+    assert_eq!(polls.load(Ordering::Relaxed), 1);
+    // One charge spanning a stride boundary polls once.
+    assert_eq!(
+        tracker.add_work(RingWorkTracker::WORK_PER_POLL),
+        Err(RingPerceptionError::Cancelled(Cancelled))
+    );
+    assert_eq!(polls.load(Ordering::Relaxed), 2);
+}
+
+#[test]
 fn search_and_recovery_charge_setup_before_visiting_paths() {
     let molecule = graph(3, &[(0, 1), (1, 2), (2, 0)]);
     let active = ActiveRingGraph::new(&molecule);
@@ -661,6 +691,7 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
             RingPerceptionOptions::default().with_max_total_work(max_total_work),
             0,
             0,
+            None,
         )
         .unwrap()
     };
@@ -737,7 +768,7 @@ fn smallest_ring_search_cost_follows_visited_ring_atoms() {
     edges.extend((2..1002).map(|atom| (atom, atom + 1)));
     let molecule = graph(1003, &edges);
     let active = ActiveRingGraph::new(&molecule);
-    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 0, 0).unwrap();
+    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 0, 0, None).unwrap();
     let rings =
         smallest_rings_bfs(AtomId::new(0), &active, &BTreeSet::new(), &mut tracker).unwrap();
     assert_eq!(rings.len(), 1);
@@ -760,7 +791,7 @@ fn connecting_recovery_charges_every_bond_scan() {
         atom_flags: vec![true; 3],
         bond_flags: vec![false; 3],
     };
-    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 0, 0).unwrap();
+    let mut tracker = RingWorkTracker::new(RingPerceptionOptions::default(), 0, 0, None).unwrap();
     recover_connecting_cycles(
         &molecule,
         &atoms,

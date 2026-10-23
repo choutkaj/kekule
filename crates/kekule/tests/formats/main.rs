@@ -4,6 +4,7 @@
 #[path = "../support/mod.rs"]
 mod support;
 
+mod cancellation;
 mod canonical_smiles;
 mod components;
 mod documents;

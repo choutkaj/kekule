@@ -49,7 +49,13 @@ pub(super) fn interpret_ensemble(
     }
 
     let mut prepared = source(&options)
-        .and_then(|source| PreparedSource::new(source, options.altloc_policy()))
+        .and_then(|source| {
+            PreparedSource::new(
+                source,
+                options.altloc_policy(),
+                options.cancellation().cloned(),
+            )
+        })
         .map_err(|error| in_model(error, selected[0].clone()))?;
     let mut selected = selected.into_iter();
     let first_id = selected.next().expect("validated nonempty model selection");

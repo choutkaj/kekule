@@ -482,3 +482,93 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
         Err(SelectionError::TopologyMismatch)
     );
 }
+
+/// A cancellation requested from the `after`th poll on, counting every poll.
+fn requested_after(
+    after: usize,
+) -> (
+    kekule::diagnostics::Cancellation,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let polls = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&polls);
+    let cancellation = kekule::diagnostics::Cancellation::new(move || {
+        counter.fetch_add(1, Ordering::Relaxed) + 1 >= after
+    });
+    (cancellation, polls)
+}
+
+fn assert_unperceived(topology: &Topology) {
+    assert!(topology.definitions().all(|definition| definition
+        .molecule()
+        .perception()
+        .rings()
+        .is_none()));
+}
+
+#[test]
+fn cancellable_perception_stops_once_cancellation_is_requested() {
+    use std::sync::atomic::Ordering;
+
+    let document = kekule::mmcif::parse_str(
+        include_str!("../fixtures/mmcif/1AKE.cif"),
+        Default::default(),
+    )
+    .unwrap();
+    let model = document.interpret(Default::default()).unwrap().into_model();
+    let ensemble = document
+        .interpret_ensemble(Default::default())
+        .unwrap()
+        .into_ensemble();
+    assert_unperceived(model.topology());
+    let mut expected = model.clone();
+    expected.perceive().unwrap();
+
+    // A check that never turns true changes nothing.
+    let (never, polls) = requested_after(usize::MAX);
+    let mut perceived = model.clone();
+    perceived.perceive_cancellable(&never).unwrap();
+    assert!(perceived.topology().shares_layout(model.topology()));
+    for (left, right) in perceived
+        .topology()
+        .definitions()
+        .zip(expected.topology().definitions())
+    {
+        assert_eq!(left.molecule().perception(), right.molecule().perception());
+    }
+    let polls = polls.load(Ordering::Relaxed);
+    assert!(
+        polls > model.topology().definitions().len(),
+        "perception polled only {polls} times"
+    );
+
+    // A check that turns true partway stops perception and keeps the owner.
+    for after in [1, polls / 2, polls] {
+        let (cancellation, _) = requested_after(after);
+        let mut cancelled = model.clone();
+        let error = cancelled.perceive_cancellable(&cancellation).unwrap_err();
+        assert!(
+            matches!(error.source, perception::PerceptionError::Cancelled(_)),
+            "poll {after}: {error}"
+        );
+        assert!(Arc::ptr_eq(
+            &cancelled.shared_topology(),
+            &model.shared_topology()
+        ));
+        assert_unperceived(cancelled.topology());
+
+        let (cancellation, _) = requested_after(after);
+        let mut cancelled = ensemble.clone();
+        let error = cancelled.perceive_cancellable(&cancellation).unwrap_err();
+        assert!(matches!(
+            error.source,
+            perception::PerceptionError::Cancelled(_)
+        ));
+        assert_unperceived(cancelled.topology());
+    }
+    let (never, _) = requested_after(usize::MAX);
+    let mut perceived = ensemble.clone();
+    perceived.perceive_cancellable(&never).unwrap();
+    assert_default_perception(perceived.topology());
+}

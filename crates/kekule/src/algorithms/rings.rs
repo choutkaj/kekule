@@ -1,4 +1,4 @@
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{Cancellation, Cancelled, LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 
@@ -368,12 +368,19 @@ pub enum RingPerceptionError {
         /// Cyclic bonds not covered by the candidate basis.
         uncovered_bonds: Vec<BondId>,
     },
+    /// The caller's [`Cancellation`] stopped ring perception. Only
+    /// cancellable perception, such as
+    /// [`Model::perceive_cancellable`](crate::structure::Model::perceive_cancellable),
+    /// reports it, as [`PerceptionError::Cancelled`](crate::perception::PerceptionError::Cancelled);
+    /// [`perceive_rings`] never does.
+    Cancelled(Cancelled),
 }
 
 impl fmt::Display for RingPerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::LimitExceeded(limit) => write!(f, "ring perception {limit}"),
+            Self::Cancelled(_) => f.write_str("ring perception cancelled"),
             Self::IncompleteRingCoverage {
                 uncovered_bonds, ..
             } => write!(
@@ -414,6 +421,15 @@ pub fn perceive_rings(
     mol: &mut Molecule,
     options: RingPerceptionOptions,
 ) -> std::result::Result<(), RingPerceptionError> {
+    perceive_rings_cancellable(mol, options, None)
+}
+
+/// [`perceive_rings`], polling `cancellation` as the basis search works.
+pub(crate) fn perceive_rings_cancellable(
+    mol: &mut Molecule,
+    options: RingPerceptionOptions,
+    cancellation: Option<&Cancellation>,
+) -> std::result::Result<(), RingPerceptionError> {
     if options.scope == RingPerceptionScope::Membership {
         let membership = compute_ring_membership(mol);
         mol.install_ring_membership(membership);
@@ -423,6 +439,7 @@ pub fn perceive_rings(
         options,
         mol.graph.atom_slot_count(),
         mol.graph.bond_slot_count(),
+        cancellation.cloned(),
     )?;
     let membership = compute_ring_membership(mol);
     let (mut rings, mut extras) = figueras_sssr_candidates(mol, &membership, &mut tracker)?;
@@ -1212,13 +1229,19 @@ struct RingWorkTracker {
     equivalent_shortest_paths: usize,
     path_expansions: usize,
     total_work: usize,
+    cancellation: Option<Cancellation>,
 }
 
 impl RingWorkTracker {
+    /// Work units between polls of the cancellation; a unit is a few
+    /// nanoseconds of search.
+    const WORK_PER_POLL: usize = 1 << 16;
+
     fn new(
         options: RingPerceptionOptions,
         atom_count: usize,
         bond_count: usize,
+        cancellation: Option<Cancellation>,
     ) -> std::result::Result<Self, RingPerceptionError> {
         let total_work = atom_count.saturating_add(bond_count);
         let tracker = Self {
@@ -1228,6 +1251,7 @@ impl RingWorkTracker {
             equivalent_shortest_paths: 0,
             path_expansions: 0,
             total_work,
+            cancellation,
         };
         tracker.check(Resource::Atoms, atom_count, options.max_atoms)?;
         tracker.check(Resource::Bonds, bond_count, options.max_bonds)?;
@@ -1245,7 +1269,14 @@ impl RingWorkTracker {
     }
 
     fn add_work(&mut self, amount: usize) -> std::result::Result<(), RingPerceptionError> {
+        let before = self.total_work;
         self.total_work = self.total_work.saturating_add(amount);
+        if self.cancellation.is_some()
+            && before / Self::WORK_PER_POLL != self.total_work / Self::WORK_PER_POLL
+        {
+            Cancellation::poll(self.cancellation.as_ref())
+                .map_err(RingPerceptionError::Cancelled)?;
+        }
         self.check(Resource::Work, self.total_work, self.options.max_total_work)
     }
 

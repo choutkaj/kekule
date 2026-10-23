@@ -1,3 +1,4 @@
+use crate::diagnostics::Cancellation;
 use crate::DraftError;
 use std::fmt;
 use std::sync::Arc;
@@ -236,6 +237,37 @@ impl Model {
     /// ```
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
         self.topology = Arc::new(self.topology.perceived()?);
+        Ok(())
+    }
+
+    /// [`Self::perceive`], stopping partway once `cancellation` is requested.
+    ///
+    /// Delegates to [`Topology::perceived_cancellable`]. A cancelled call
+    /// leaves the model unchanged; a completed one installs exactly what
+    /// [`Self::perceive`] would.
+    ///
+    /// ```
+    /// use kekule::{diagnostics::Cancellation, perception::PerceptionError};
+    /// use kekule::{smiles, structure::{Model, Positions}};
+    ///
+    /// let topology = smiles::to_topology("c1ccccc1")?;
+    /// let mut model = Model::new(topology, Positions::zeros(6))?;
+    /// let error = model.perceive_cancellable(&Cancellation::new(|| true)).unwrap_err();
+    /// assert!(matches!(error.source, PerceptionError::Cancelled(_)));
+    /// assert!(model.topology().instances().all(|m| m.molecule().perception().rings().is_none()));
+    /// model.perceive_cancellable(&Cancellation::new(|| false))?;
+    /// assert!(model.topology().instances().all(|m| m.molecule().perception().rings().is_some()));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`Topology::perceived_cancellable`].
+    pub fn perceive_cancellable(
+        &mut self,
+        cancellation: &Cancellation,
+    ) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived_cancellable(cancellation)?);
         Ok(())
     }
 

@@ -1,10 +1,11 @@
 use std::fmt;
 
 use crate::algorithms::{
-    perceive_aromaticity_in_place, perceive_rings, perceive_valence, AromaticityError,
+    perceive_aromaticity_in_place, perceive_rings_cancellable, perceive_valence, AromaticityError,
     RingPerceptionError, RingPerceptionOptions, ValenceError, ValenceOptions,
 };
 use crate::algorithms::{perceive_conjugation, ConjugationError};
+use crate::diagnostics::{Cancellation, Cancelled};
 use crate::molecule::ConjugationModel;
 use crate::molecule::{AromaticityModel, Molecule, ValenceModel};
 
@@ -20,6 +21,11 @@ pub enum PerceptionError {
     Rings(RingPerceptionError),
     /// Aromaticity perception failed; see the source.
     Aromaticity(AromaticityError),
+    /// The caller's [`Cancellation`] stopped perception, as cancellable
+    /// perception such as
+    /// [`Model::perceive_cancellable`](crate::structure::Model::perceive_cancellable)
+    /// reports.
+    Cancelled(Cancelled),
 }
 
 impl fmt::Display for PerceptionError {
@@ -29,6 +35,7 @@ impl fmt::Display for PerceptionError {
             Self::Valence(_) => f.write_str("valence perception failed"),
             Self::Rings(_) => f.write_str("ring perception failed"),
             Self::Aromaticity(_) => f.write_str("aromaticity perception failed"),
+            Self::Cancelled(_) => f.write_str("perception cancelled"),
         }
     }
 }
@@ -40,6 +47,7 @@ impl std::error::Error for PerceptionError {
             Self::Valence(error) => Some(error),
             Self::Rings(error) => Some(error),
             Self::Aromaticity(error) => Some(error),
+            Self::Cancelled(cancelled) => Some(cancelled),
         }
     }
 }
@@ -50,8 +58,17 @@ impl std::error::Error for PerceptionError {
 /// the default deterministic ring set, RDKit-like aromaticity and conjugation. The complete
 /// operation is transactional and never rewrites represented chemistry.
 pub(crate) fn perceive_molecule(molecule: &mut Molecule) -> Result<(), PerceptionError> {
+    perceive_molecule_cancellable(molecule, None)
+}
+
+/// [`perceive_molecule`], polling `cancellation` between stages and during
+/// ring perception, which dominates on large molecules.
+pub(crate) fn perceive_molecule_cancellable(
+    molecule: &mut Molecule,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), PerceptionError> {
     let previous = molecule.perception().clone();
-    if let Err(error) = perceive_molecule_in_place(molecule) {
+    if let Err(error) = perceive_molecule_in_place(molecule, cancellation) {
         molecule
             .install_perception(previous)
             .expect("previous perception state must remain valid");
@@ -60,13 +77,26 @@ pub(crate) fn perceive_molecule(molecule: &mut Molecule) -> Result<(), Perceptio
     Ok(())
 }
 
-pub(crate) fn perceive_molecule_in_place(molecule: &mut Molecule) -> Result<(), PerceptionError> {
+fn perceive_molecule_in_place(
+    molecule: &mut Molecule,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), PerceptionError> {
+    let poll = || Cancellation::poll(cancellation).map_err(PerceptionError::Cancelled);
+    poll()?;
     perceive_valence(molecule, ValenceModel::RdkitLike, ValenceOptions::default())
         .map_err(PerceptionError::Valence)?;
+    poll()?;
     let ring_options = RingPerceptionOptions::for_molecule(molecule);
-    perceive_rings(molecule, ring_options).map_err(PerceptionError::Rings)?;
+    perceive_rings_cancellable(molecule, ring_options, cancellation).map_err(
+        |error| match error {
+            RingPerceptionError::Cancelled(cancelled) => PerceptionError::Cancelled(cancelled),
+            error => PerceptionError::Rings(error),
+        },
+    )?;
+    poll()?;
     perceive_aromaticity_in_place(molecule, AromaticityModel::RdkitLike)
         .map_err(PerceptionError::Aromaticity)?;
+    poll()?;
     perceive_conjugation(molecule, ConjugationModel::RdkitLike)
         .map_err(PerceptionError::Conjugation)
 }

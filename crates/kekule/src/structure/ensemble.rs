@@ -1,3 +1,4 @@
+use crate::diagnostics::Cancellation;
 use crate::structure::DenseArrayError;
 use std::fmt;
 use std::sync::Arc;
@@ -286,6 +287,23 @@ impl Ensemble {
     /// buffers, and prepared potentials stay usable.
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
         self.topology = Arc::new(self.topology.perceived()?);
+        Ok(())
+    }
+
+    /// [`Self::perceive`], stopping partway once `cancellation` is requested.
+    ///
+    /// Delegates to [`Topology::perceived_cancellable`]. A cancelled call
+    /// leaves the ensemble unchanged; a completed one installs exactly what
+    /// [`Self::perceive`] would.
+    ///
+    /// # Errors
+    ///
+    /// As [`Topology::perceived_cancellable`].
+    pub fn perceive_cancellable(
+        &mut self,
+        cancellation: &Cancellation,
+    ) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived_cancellable(cancellation)?);
         Ok(())
     }
 
