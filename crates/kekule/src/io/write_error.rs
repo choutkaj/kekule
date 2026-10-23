@@ -56,14 +56,19 @@ pub enum UnrepresentablePolicy {
     Omit,
 }
 
-/// What a structure writer left out of its output because the caller chose
-/// [`UnrepresentablePolicy::Omit`] for it.
+/// What a structure writer left out of its output: content the caller chose
+/// [`UnrepresentablePolicy::Omit`] for, or, for a writer without such a
+/// choice, such as `kekule-traj`'s XYZ writer, everything its format cannot
+/// carry.
 ///
 /// A writer reports every omission it makes, once per kind, with the number
 /// of entities it affects summed over everything one call writes. An empty
 /// report means the output holds everything the source does that the format
 /// can carry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Collecting omissions into a report merges repeated kinds by summing their
+/// counts and drops zero counts, as writers do.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WriteReport {
     omissions: Vec<WriteOmission>,
 }
@@ -73,16 +78,37 @@ impl WriteReport {
     pub fn omissions(&self) -> &[WriteOmission] {
         &self.omissions
     }
+
+    /// Whether the writer omitted nothing.
+    pub fn is_empty(&self) -> bool {
+        self.omissions.is_empty()
+    }
+}
+
+impl FromIterator<WriteOmission> for WriteReport {
+    fn from_iter<I: IntoIterator<Item = WriteOmission>>(omissions: I) -> Self {
+        let mut collected = Omissions::default();
+        for omission in omissions {
+            collected.record(omission);
+        }
+        collected.into_report()
+    }
 }
 
 /// One kind of content a writer omitted, with how much of it.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WriteOmission {
-    /// Fixed implicit-hydrogen counts of this many atoms. Readers of the
-    /// format infer implicit hydrogens from valence instead.
+    /// Implicit-hydrogen counts of this many atoms that readers of the format
+    /// do not recover: PDB and mmCIF readers infer counts from valence in
+    /// place of fixed ones, and XYZ readers fix every count at zero.
     ImplicitHydrogens {
-        /// The atoms whose fixed counts were left out.
+        /// The atoms whose counts were left out.
+        atoms: usize,
+    },
+    /// Nonzero formal charges of this many atoms.
+    FormalCharges {
+        /// The atoms written without their charges.
         atoms: usize,
     },
     /// Isotopes the format cannot name, of this many atoms.
@@ -104,6 +130,12 @@ pub enum WriteOmission {
     Stereo {
         /// The molecule instances written without their stereo.
         molecules: usize,
+    },
+    /// Named hierarchy atom sites of this many atoms: their atom names and
+    /// their residues and chains.
+    AtomSites {
+        /// The atoms written without their sites.
+        atoms: usize,
     },
     /// Bonds the format's connectivity records cannot state, left out.
     Bonds {
@@ -142,9 +174,11 @@ impl Omissions {
         use WriteOmission as O;
         let count = |omission: &WriteOmission| match *omission {
             O::ImplicitHydrogens { atoms }
+            | O::FormalCharges { atoms }
             | O::Isotopes { atoms }
             | O::Radicals { atoms }
-            | O::AtomMaps { atoms } => atoms,
+            | O::AtomMaps { atoms }
+            | O::AtomSites { atoms } => atoms,
             O::Stereo { molecules } => molecules,
             O::Bonds { bonds } => bonds,
             O::DictionaryBonds { residues } => residues,
@@ -164,9 +198,11 @@ impl Omissions {
         };
         match existing {
             O::ImplicitHydrogens { atoms }
+            | O::FormalCharges { atoms }
             | O::Isotopes { atoms }
             | O::Radicals { atoms }
-            | O::AtomMaps { atoms } => *atoms += added,
+            | O::AtomMaps { atoms }
+            | O::AtomSites { atoms } => *atoms += added,
             O::Stereo { molecules } => *molecules += added,
             O::Bonds { bonds } => *bonds += added,
             O::DictionaryBonds { residues } => *residues += added,
