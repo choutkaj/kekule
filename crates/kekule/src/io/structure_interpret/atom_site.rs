@@ -1,7 +1,7 @@
 //! Reads mmCIF `_atom_site`, `_entity`, and `_struct_asym` rows into typed
 //! atom rows, the source-neutral input of interpretation.
-use super::types::structure_error;
-use crate::diagnostics::{DiagnosticKind, FormatError};
+use super::types::{poll_every, structure_error};
+use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::geometry::Point3;
@@ -242,12 +242,14 @@ pub(super) fn read_atom_rows(
     asym_entities: &BTreeMap<String, String>,
     strict_entity_metadata: bool,
     report: &mut StructureInterpretationReport,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Vec<AtomRow>, FormatError> {
     let mut rows = Vec::with_capacity(table.row_count());
     let mut occurrences = BTreeMap::<(String, String, String), OccurrenceState>::new();
     let mut inferred = BTreeSet::new();
     let fields = AtomSiteFields::resolve(table);
     for row in 0..table.row_count() {
+        poll_every(cancellation, row)?;
         let type_symbol = required(table, row, fields.type_symbol)?;
         let type_value = fields.type_symbol.lookup(table, row).expect("required");
         let (element, isotope) = parse_structure_element_symbol(type_symbol).ok_or_else(|| {

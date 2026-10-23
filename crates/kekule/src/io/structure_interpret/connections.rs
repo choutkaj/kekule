@@ -2,11 +2,12 @@
 //! of each selected coordinate model.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use crate::diagnostics::{Cancellation, FormatError};
 use crate::molecule::{BondOrder, Element};
 
 use super::atom_site::AtomRow;
 use super::types::{
-    ConnectionResolutionReason, StructureInterpretIssue, StructureInterpretationReport,
+    poll, ConnectionResolutionReason, StructureInterpretIssue, StructureInterpretationReport,
 };
 
 /// One connection record of a source, before a coordinate model is chosen.
@@ -69,7 +70,8 @@ pub(super) fn resolve_connections(
     selected_model: &str,
     union: &mut InstanceUnion,
     report: &mut StructureInterpretationReport,
-) -> Vec<DeclaredConnection> {
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<DeclaredConnection>, FormatError> {
     let sites = records
         .iter()
         .any(|record| {
@@ -83,6 +85,8 @@ pub(super) fn resolve_connections(
     let mut connections = Vec::new();
     let mut declared = BTreeSet::new();
     for record in records {
+        // Resolving a partner can scan every row of the model.
+        poll(cancellation)?;
         let bond = match record {
             ConnectionRecord::Ignored { connection_type } => {
                 report
@@ -142,7 +146,7 @@ pub(super) fn resolve_connections(
         });
         report.applied_connections += 1;
     }
-    connections
+    Ok(connections)
 }
 
 /// Alkali, alkaline-earth, transition, post-transition, lanthanide, and

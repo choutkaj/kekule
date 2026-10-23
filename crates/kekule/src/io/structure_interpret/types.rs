@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use super::altloc::{AltLocDecision, AltLocPolicy, SourceResidueId};
 use crate::components::ComponentLibrary;
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, SourceLocation};
+use crate::diagnostics::{
+    Cancellation, Cancelled, DiagnosticKind, Format, FormatError, FormatErrorDetail, SourceLocation,
+};
 use crate::molecule::Molecule;
 use crate::structure::{Ensemble, Model};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
@@ -103,14 +105,15 @@ impl EntityMetadataPolicy {
 /// PDB entry as a [`Model`].
 ///
 /// The default requires a single coordinate model, keeps the
-/// highest-occupancy alternate locations, infers missing entity types, and
-/// uses the default [`ConnectivityOptions`].
+/// highest-occupancy alternate locations, infers missing entity types, uses
+/// the default [`ConnectivityOptions`], and cannot be cancelled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureInterpretOptions {
     entity_metadata: EntityMetadataPolicy,
     altloc_policy: AltLocPolicy,
     model_selection: ModelSelection,
     connectivity: ConnectivityOptions,
+    cancellation: Option<Cancellation>,
 }
 
 impl StructureInterpretOptions {
@@ -167,6 +170,23 @@ impl StructureInterpretOptions {
         self.connectivity = connectivity;
         self
     }
+
+    /// The cancellation interpretation polls, if any; `None` by default.
+    ///
+    /// Interpretation polls it between its stages and periodically inside
+    /// them, and once it is requested fails with a [`FormatError`] of kind
+    /// [`DiagnosticKind::Cancelled`] instead of returning a partial result.
+    /// It does not change what a completed interpretation returns.
+    pub fn cancellation(&self) -> Option<&Cancellation> {
+        self.cancellation.as_ref()
+    }
+
+    /// Sets [`Self::cancellation`].
+    #[must_use]
+    pub fn with_cancellation(mut self, cancellation: Option<Cancellation>) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
 }
 
 impl Default for StructureInterpretOptions {
@@ -176,6 +196,7 @@ impl Default for StructureInterpretOptions {
             altloc_policy: AltLocPolicy::HighestOccupancy,
             model_selection: ModelSelection::RequireSingle,
             connectivity: ConnectivityOptions::default(),
+            cancellation: None,
         }
     }
 }
@@ -897,6 +918,31 @@ pub(in crate::io) fn structure_error(
         .with_location(line.map(SourceLocation::at_line))
 }
 
+/// Interpretation stopped because its cancellation was requested.
+pub(in crate::io) fn cancelled(cancelled: Cancelled) -> FormatError {
+    FormatError::interpret(
+        Format::Mmcif,
+        DiagnosticKind::Cancelled,
+        "interpretation cancelled",
+    )
+    .with_source(cancelled)
+}
+
+/// Polls interpretation's cancellation, if any.
+#[inline]
+pub(in crate::io) fn poll(cancellation: Option<&Cancellation>) -> Result<(), FormatError> {
+    Cancellation::poll(cancellation).map_err(cancelled)
+}
+
+/// Polls interpretation's cancellation on every few steps of a cheap loop.
+#[inline]
+pub(in crate::io) fn poll_every(
+    cancellation: Option<&Cancellation>,
+    step: usize,
+) -> Result<(), FormatError> {
+    Cancellation::poll_every(cancellation, step).map_err(cancelled)
+}
+
 /// An ensemble-level failure with typed `detail`.
 pub(in crate::io) fn ensemble_error(
     kind: DiagnosticKind,
@@ -915,6 +961,7 @@ pub struct StructureEnsembleInterpretOptions {
     altloc_policy: AltLocPolicy,
     connectivity: ConnectivityOptions,
     model_ids: Option<Vec<String>>,
+    cancellation: Option<Cancellation>,
 }
 
 impl StructureEnsembleInterpretOptions {
@@ -977,6 +1024,24 @@ impl StructureEnsembleInterpretOptions {
         self.model_ids = model_ids;
         Ok(self)
     }
+
+    /// The cancellation interpretation polls, if any; `None` by default.
+    ///
+    /// Interpretation polls it between its stages and periodically inside
+    /// them, for every member, and once it is requested fails with a
+    /// [`FormatError`] of kind [`DiagnosticKind::Cancelled`] instead of
+    /// returning a partial ensemble. It does not change what a completed
+    /// interpretation returns.
+    pub fn cancellation(&self) -> Option<&Cancellation> {
+        self.cancellation.as_ref()
+    }
+
+    /// Sets [`Self::cancellation`].
+    #[must_use]
+    pub fn with_cancellation(mut self, cancellation: Option<Cancellation>) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
 }
 
 impl Default for StructureEnsembleInterpretOptions {
@@ -986,6 +1051,7 @@ impl Default for StructureEnsembleInterpretOptions {
             altloc_policy: AltLocPolicy::HighestOccupancy,
             connectivity: ConnectivityOptions::default(),
             model_ids: None,
+            cancellation: None,
         }
     }
 }

@@ -111,6 +111,24 @@ are marked **Breaking:**.
     frame state, and cells `CRYST1` cannot carry.
   - The curated `bio` benchmark entries round-trip in a new acceptance test,
     and the `pdb` fuzz target checks that written entries read back.
+- Cooperative cancellation of long-running structure work. A
+  `diagnostics::Cancellation` wraps a host check, such as
+  `Cancellation::from_flag` over an `AtomicBool`.
+  - `StructureInterpretOptions::with_cancellation` and
+    `StructureEnsembleInterpretOptions::with_cancellation` make mmCIF and PDB
+    interpretation poll it between stages and periodically inside them.
+    Once it turns true, interpretation fails with a `FormatError` of the new
+    `DiagnosticKind::Cancelled`, whose source is `diagnostics::Cancelled`.
+  - `Model::perceive_cancellable`, `Ensemble::perceive_cancellable`, and
+    `Topology::perceived_cancellable` poll it between definitions and
+    stages and during ring perception. They fail with the new
+    `PerceptionError::Cancelled` and leave the owner unchanged.
+  - No partial result is returned, and a check that never turns true does
+    not change any result. Without a cancellation, nothing is polled.
+  - On 7K00 (149k atoms), polls are at most 66 ms apart. A cancelled
+    interpretation returns 80–115 ms after its check turns true; most of
+    that time is spent freeing intermediate data. Perception of 6SPB returns
+    within 15 ms.
 - `MmcifBlockSource::with_block_name` names one mmCIF data block, so a file
   of several objects keeps each object's name; reading it back gives the name
   as `MmcifBlock::name`. Names are validated as `MmcifWriteOptions` block

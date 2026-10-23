@@ -32,7 +32,7 @@ pub use resonance::{
     enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError, ResonanceFlags,
     ResonanceOptions, ResonanceStructures,
 };
-pub(crate) use rings::{compute_ring_membership, ordered_atom_pair};
+pub(crate) use rings::{compute_ring_membership, ordered_atom_pair, perceive_rings_cancellable};
 pub use rings::{perceive_rings, RingPerceptionError, RingPerceptionOptions, RingPerceptionScope};
 pub use rotatable_bonds::{rotatable_bonds, RotatableBondOptions, RotatableBondSet};
 pub(crate) use stereo::{

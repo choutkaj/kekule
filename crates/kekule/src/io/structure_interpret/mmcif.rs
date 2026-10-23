@@ -1,8 +1,8 @@
 //! Reads an mmCIF data block into the source-neutral interpretation input.
 use std::collections::BTreeMap;
 
-use super::types::structure_error;
-use crate::diagnostics::{DiagnosticKind, FormatError, FormatErrorDetail};
+use super::types::{poll, structure_error};
+use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError, FormatErrorDetail};
 use crate::geometry::PeriodicCell;
 use crate::molecule::BondOrder;
 
@@ -62,6 +62,7 @@ pub(crate) fn interpret_mmcif_block(
         block,
         options.requires_entity_metadata(),
         options.connectivity(),
+        options.cancellation(),
     )?;
     interpret_source(source, &options)
 }
@@ -90,6 +91,7 @@ pub(crate) fn interpret_mmcif_ensemble_block(
             block,
             options.requires_entity_metadata(),
             options.connectivity(),
+            options.cancellation(),
         )
     })
 }
@@ -130,6 +132,7 @@ pub(crate) fn alternate_location_inventory(
         &asym,
         false,
         &mut StructureInterpretationReport::default(),
+        None,
     )?;
     conformations(block, &rows)?;
     inventory(&rows)
@@ -155,7 +158,9 @@ fn mmcif_source(
     block: &MmcifBlock,
     strict_entity_metadata: bool,
     connectivity: &ConnectivityOptions,
+    cancellation: Option<&Cancellation>,
 ) -> Result<StructureSource, FormatError> {
+    poll(cancellation)?;
     let entities = read_entity_types(block)?;
     let asym_entities = read_asym_entities(block)?;
     let atom_table = block.category("_atom_site")?.ok_or_else(|| {
@@ -179,15 +184,24 @@ fn mmcif_source(
         &asym_entities,
         strict_entity_metadata,
         &mut report,
+        cancellation,
     )?;
+    poll(cancellation)?;
+    let conformations = conformations(block, &rows)?;
+    let polymer_order = polymer_asym_order(block)?;
+    poll(cancellation)?;
+    let connections = read_struct_conn(block)?;
+    poll(cancellation)?;
+    let catalog = ConnectivityCatalog::from_block(block, connectivity)?;
+    poll(cancellation)?;
     Ok(StructureSource {
         name: block.name().to_owned(),
         entity_definitions: entities.len(),
-        conformations: conformations(block, &rows)?,
+        conformations,
         rows,
-        polymer_order: polymer_asym_order(block)?,
-        connections: read_struct_conn(block)?,
-        catalog: ConnectivityCatalog::from_block(block, connectivity)?,
+        polymer_order,
+        connections,
+        catalog,
         cell: read_cell(block, &mut report.issues)?,
         issues: report.issues,
     })

@@ -1,6 +1,6 @@
 //! Alternate-location selection and inventory over typed atom rows.
-use super::super::types::structure_error;
-use crate::diagnostics::{DiagnosticKind, FormatError};
+use super::super::types::{poll, poll_every, structure_error};
+use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::atom_site::AtomRow;
@@ -16,9 +16,13 @@ struct Residue<'a> {
     labels: BTreeSet<String>,
 }
 
-fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, FormatError> {
+fn residues<'a>(
+    rows: &'a [AtomRow],
+    cancellation: Option<&Cancellation>,
+) -> Result<Vec<Residue<'a>>, FormatError> {
     let mut grouped = BTreeMap::<SourceResidueId, Vec<&AtomRow>>::new();
-    for row in rows {
+    for (step, row) in rows.iter().enumerate() {
+        poll_every(cancellation, step)?;
         grouped
             .entry(SourceResidueId::of(row))
             .or_default()
@@ -26,7 +30,9 @@ fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, FormatError> {
     }
     grouped
         .into_iter()
-        .map(|(id, rows)| {
+        .enumerate()
+        .map(|(step, (id, rows))| {
+            poll_every(cancellation, step)?;
             let mut identities = BTreeSet::new();
             for row in &rows {
                 if !identities.insert((&row.comp_id, &row.atom_name, &row.alt_id)) {
@@ -50,7 +56,7 @@ fn residues(rows: &[AtomRow]) -> Result<Vec<Residue<'_>>, FormatError> {
 pub(in crate::io::structure_interpret) fn inventory(
     rows: &[AtomRow],
 ) -> Result<Vec<AltLocResidue>, FormatError> {
-    Ok(residues(rows)?
+    Ok(residues(rows, None)?
         .into_iter()
         .filter(|residue| !residue.labels.is_empty())
         .map(|residue| AltLocResidue {
@@ -268,8 +274,9 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
     conformations: &BTreeMap<String, BTreeSet<String>>,
     policy: &AltLocPolicy,
     report: &mut StructureInterpretationReport,
+    cancellation: Option<&Cancellation>,
 ) -> Result<Vec<AtomRow>, FormatError> {
-    let residues = residues(rows)?;
+    let residues = residues(rows, cancellation)?;
     let selection = configuration(policy);
     if let Some(id) = &selection.source_conformation {
         if !conformations.contains_key(id) {
@@ -281,8 +288,10 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
         }
     }
     let grouped = groups(&residues, &selection, !conformations.is_empty())?;
+    poll(cancellation)?;
     let mut selected = Vec::new();
-    for residue in &residues {
+    for (step, residue) in residues.iter().enumerate() {
+        poll_every(cancellation, step)?;
         if residue.labels.is_empty() {
             selected.extend(candidate_rows(residue, &BTreeSet::new())?);
         } else {
@@ -314,6 +323,7 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
         }
     }
     for group in grouped {
+        poll(cancellation)?;
         let alternatives = if conformations.is_empty() {
             residues[group[0]]
                 .labels
@@ -384,19 +394,23 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
     // Dense atom order follows each site's first source occurrence, independently
     // of which alternative's row supplied its coordinates.
     let mut order = BTreeMap::new();
-    for row in rows {
+    for (step, row) in rows.iter().enumerate() {
+        poll_every(cancellation, step)?;
         order
             .entry((SourceResidueId::of(row), &row.comp_id, &row.atom_name))
             .or_insert(row.row_index);
     }
     let mut selected = selected
         .into_iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(step, row)| {
+            poll_every(cancellation, step)?;
             let mut chosen = row.clone();
             chosen.site_order = order[&(SourceResidueId::of(row), &row.comp_id, &row.atom_name)];
-            chosen
+            Ok(chosen)
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, FormatError>>()?;
+    poll(cancellation)?;
     selected.sort_by_key(|row| row.site_order);
     Ok(selected)
 }

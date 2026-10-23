@@ -1,7 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::chemistry::PerceptionError;
+use crate::chemistry::{perceive_molecule_cancellable, PerceptionError};
+use crate::diagnostics::Cancellation;
 
 use super::{MoleculeDefinitionId, Topology};
 
@@ -62,18 +63,43 @@ impl Topology {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceived(&self) -> Result<Self, TopologyPerceptionError> {
+        self.perceived_polling(None)
+    }
+
+    /// [`Self::perceived`], stopping partway once `cancellation` is
+    /// requested.
+    ///
+    /// Perception polls `cancellation` between definitions, between the
+    /// stages of each, and during ring perception, which dominates on large
+    /// molecules. A result is identical to that of [`Self::perceived`].
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::perceived`], and, once `cancellation` is
+    /// requested, an error whose source is [`PerceptionError::Cancelled`],
+    /// naming the definition being perceived. No partial snapshot is returned.
+    pub fn perceived_cancellable(
+        &self,
+        cancellation: &Cancellation,
+    ) -> Result<Self, TopologyPerceptionError> {
+        self.perceived_polling(Some(cancellation))
+    }
+
+    fn perceived_polling(
+        &self,
+        cancellation: Option<&Cancellation>,
+    ) -> Result<Self, TopologyPerceptionError> {
         let definitions = self
             .definitions
             .iter()
             .map(|definition| {
                 let mut perceived = definition.clone();
-                perceived
-                    .molecule
-                    .perceive()
-                    .map_err(|source| TopologyPerceptionError {
+                perceive_molecule_cancellable(&mut perceived.molecule, cancellation).map_err(
+                    |source| TopologyPerceptionError {
                         definition: definition.id,
                         source,
-                    })?;
+                    },
+                )?;
                 Ok(perceived)
             })
             .collect::<Result<_, TopologyPerceptionError>>()?;
