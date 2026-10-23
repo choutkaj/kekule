@@ -111,9 +111,27 @@ are marked **Breaking:**.
     frame state, and cells `CRYST1` cannot carry.
   - The curated `bio` benchmark entries round-trip in a new acceptance test,
     and the `pdb` fuzz target checks that written entries read back.
+- `MmcifBlockSource::with_block_name` names one mmCIF data block, so a file
+  of several objects keeps each object's name; reading it back gives the name
+  as `MmcifBlock::name`. Names are validated as `MmcifWriteOptions` block
+  names are, and two blocks whose names match case-insensitively, including
+  the `{block_name}_n` names unnamed blocks keep, fail the write with the new
+  `MmcifWriteIssue::DuplicateBlockName` before anything is written.
+- `kekule-traj`'s XYZ writer reports the topology content its files leave
+  out, as `XyzWriter::report` and `FileTrajectoryWriter::report`, in the
+  `WriteReport` vocabulary of the PDB and mmCIF writers: bonds, implicit
+  hydrogens XYZ readers would not recover (nonzero or unperceived counts),
+  formal charges, isotopes, radicals, atom maps, named atom sites, and stereo.
+  What it writes is unchanged, and frame fields it cannot store still fail.
+  DCD, TRR, and XTC report nothing, since their readers take the topology
+  separately. `WriteOmission` gains `FormalCharges` and `AtomSites`, and
+  `WriteReport` gains `is_empty`, `Default`, and `FromIterator`, which merges
+  repeated kinds as writers do.
 
 ### Changed
 
+- **Breaking:** `kekule_traj::io::write_trajectory` returns the
+  `WriteReport` of the written file instead of `()`.
 - **Breaking:** `pdb::write` and `mmcif::write` return the text together with
   a `diagnostics::WriteReport`, and `pdb::write_to` and `mmcif::write_to`
   return the report. The report lists every omission an

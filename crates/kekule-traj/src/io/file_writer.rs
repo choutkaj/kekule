@@ -8,6 +8,7 @@ use std::sync::{
     Arc,
 };
 
+use kekule::diagnostics::WriteReport;
 use kekule::topology::Topology;
 
 use crate::{
@@ -232,6 +233,7 @@ pub struct FileTrajectoryWriter {
     overwrite: OverwritePolicy,
     failed: bool,
     published: bool,
+    report: WriteReport,
 }
 
 impl fmt::Debug for FileTrajectoryWriter {
@@ -304,6 +306,14 @@ impl FileTrajectoryWriter {
     pub const fn format(&self) -> TrajectoryFormat {
         self.format
     }
+
+    /// The topology content the written frames leave out: for XYZ,
+    /// [`xyz::XyzWriter::report`]. DCD, TRR, and XTC store coordinates for a
+    /// topology their readers receive separately, so their reports are
+    /// empty.
+    pub fn report(&self) -> &WriteReport {
+        &self.report
+    }
 }
 
 impl TrajectoryWriter for FileTrajectoryWriter {
@@ -368,6 +378,9 @@ impl Drop for FileTrajectoryWriter {
 /// The destination is published atomically only after every frame and finalization
 /// succeeds. Empty trajectories are rejected by the writer.
 ///
+/// Returns the [`FileTrajectoryWriter::report`] of the topology content the
+/// file leaves out, such as the bonds of an XYZ file.
+///
 /// # Errors
 ///
 /// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when no format is given and
@@ -380,14 +393,17 @@ impl Drop for FileTrajectoryWriter {
 /// ```no_run
 /// # use kekule::structure::Trajectory;
 /// # fn save(trajectory: &Trajectory) -> Result<(), kekule_traj::TrajectoryIoError> {
-/// kekule_traj::io::write_trajectory("aligned.trr", trajectory, Default::default())?;
+/// let report = kekule_traj::io::write_trajectory("aligned.xyz", trajectory, Default::default())?;
+/// for omission in report.omissions() {
+///     eprintln!("left out {omission:?}");
+/// }
 /// # Ok(()) }
 /// ```
 pub fn write_trajectory(
     path: impl AsRef<Path>,
     trajectory: &Trajectory,
     options: TrajectoryWriteOptions,
-) -> Result<(), TrajectoryIoError> {
+) -> Result<WriteReport, TrajectoryIoError> {
     let path = path.as_ref();
     resolve_format(path, options.format)?;
     if !trajectory.properties().is_empty() {
@@ -399,7 +415,9 @@ pub fn write_trajectory(
     for frame in trajectory {
         writer.write_frame(frame)?;
     }
-    writer.finish()
+    let report = writer.report().clone();
+    writer.finish()?;
+    Ok(report)
 }
 
 /// The explicit format, or the one the destination extension names.
@@ -493,6 +511,10 @@ pub fn create_trajectory_writer(
             return Err(error);
         }
     };
+    let report = match &inner {
+        FileWriterInner::Xyz(writer) => writer.report().clone(),
+        _ => WriteReport::default(),
+    };
     Ok(FileTrajectoryWriter {
         inner: Some(inner),
         format,
@@ -501,6 +523,7 @@ pub fn create_trajectory_writer(
         overwrite: options.overwrite,
         failed: false,
         published: false,
+        report,
     })
 }
 
