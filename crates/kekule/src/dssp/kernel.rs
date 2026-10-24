@@ -7,8 +7,8 @@ use crate::structure::ModelView;
 use crate::topology::{Chain, Hierarchy, Residue, ResidueClass, ResidueId};
 use crate::units::ANGSTROM;
 
-use super::parallel::map_ranges;
 use super::*;
+use crate::parallel::map_ranges;
 
 /// Fewest residues or residue pairs a stage gives one thread.
 const MIN_CHUNK: usize = 256;
@@ -195,7 +195,7 @@ struct BetaCounts {
 pub(super) fn assign(
     model: ModelView<'_>,
     options: DsspOptions,
-    executor: &dyn DsspExecutor,
+    executor: &dyn Executor,
 ) -> Result<DsspResult, DsspError> {
     let (mut residues, mut report, chain_segments) =
         extract_backbones(model, options.limits, executor)?;
@@ -263,7 +263,7 @@ pub(super) fn assign(
 fn extract_backbones(
     model: ModelView<'_>,
     limits: DsspLimits,
-    executor: &dyn DsspExecutor,
+    executor: &dyn Executor,
 ) -> Result<(Vec<BackboneResidue>, DsspReport, usize), DsspError> {
     let mut report = DsspReport {
         ignored_instances: Vec::new(),
@@ -687,7 +687,7 @@ struct RangeAnalysis {
 fn analyze_backbone(
     residues: &mut [BackboneResidue],
     max_candidate_pairs: usize,
-    executor: &dyn DsspExecutor,
+    executor: &dyn Executor,
 ) -> Result<Vec<(usize, usize)>, DsspError> {
     let grid = CellGrid::new(residues);
     let found = AtomicUsize::new(0);
@@ -1104,7 +1104,7 @@ fn calculate_beta_sheets(
     residues: &mut [BackboneResidue],
     candidates: &[(usize, usize)],
     max_ladders: usize,
-    executor: &dyn DsspExecutor,
+    executor: &dyn Executor,
 ) -> Result<BetaCounts, DsspError> {
     let shared = &*residues;
     let found = map_ranges(executor, candidates.len(), MIN_CHUNK, |range| {

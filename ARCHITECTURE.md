@@ -185,7 +185,10 @@ it through one `HierarchyBuilder`. Atom sites refer to live
 molecules, and one molecule may span chains. Molecular and domain-specific
 hierarchy views borrow and filter this single hierarchy. Source labels and author
 identifiers remain typed metadata, with their namespaces and insertion codes
-preserved. Hierarchy membership never fabricates covalent bonds.
+preserved. Hierarchy membership never fabricates covalent bonds. Publication
+derives one private hierarchy index beside it, shared by every snapshot of the
+layout: each site's dense atom, each dense atom's site, and each instance's
+sites, residues, and chains, so hierarchy walks cost what they return.
 
 Each reusable definition has one `MoleculeClass` shared by all its instances;
 each residue has one `ResidueClass`. These are intrinsic classifications, not
@@ -463,7 +466,11 @@ tie-breaking are deterministic. Pairwise distances
 are a separate `DistanceMatrix` result. A hierarchical `Dendrogram` depends on
 distances alone, and ensemble weights enter only when choosing representatives;
 k-medoids instead minimizes the weight-summed distance to medoids, so weights
-shape its clusters. See [clustering](crates/kekule/src/clustering.rs),
+shape its clusters. Pairwise fits and leader clustering may run on a
+`parallel::Executor`, poll a `Cancellation`, and report progress through a
+`ClusteringRun`; fits split into contiguous ranges merged in a fixed order,
+and leader clustering still places members one at a time, so every executor
+and thread count returns the single-threaded result or error. See [clustering](crates/kekule/src/clustering.rs),
 [hierarchical clustering](crates/kekule/src/clustering/hierarchical.rs), and
 [k-medoids](crates/kekule/src/clustering/medoids.rs).
 
@@ -810,7 +817,7 @@ The public modules of `kekule`, by domain:
 
 | Domain | Modules |
 | --- | --- |
-| Foundations | `units`, `geometry`, `properties`, `diagnostics` |
+| Foundations | `units`, `geometry`, `properties`, `diagnostics`, `parallel` |
 | Chemistry | `molecule`, `stereo` (`cip`, `coordinates`, `cleanup`), `perception` (`valence`, `rings`, `aromaticity`, `conjugation`, `resonance`), `hydrogens`, `descriptors` |
 | Queries | `query`, `substructure`, `select` |
 | Systems and structures | `topology` (`edit`), `structure` (`measure`), `solvation` |

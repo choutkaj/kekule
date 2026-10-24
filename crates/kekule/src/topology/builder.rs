@@ -7,6 +7,7 @@ use crate::molecule::Molecule;
 use crate::properties::{PropertyError, TopologyProperties, TopologyPropertiesMut};
 
 use super::dense_order::{DenseOrder, OrderError};
+use super::hierarchy_index::HierarchyIndex;
 use super::{
     AtomSiteId, ChainId, Hierarchy, HierarchyBuilder, InstanceAtomId, InstanceBondId, LayoutId,
     MoleculeClass, MoleculeDefinition, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId,
@@ -199,6 +200,7 @@ impl TopologyBuilder {
             atom_order: atoms,
             bond_order: bonds,
             hierarchy,
+            hierarchy_index: _,
             molecule_class_overrides,
             properties,
             layout: _,
@@ -534,12 +536,14 @@ impl TopologyBuilder {
             .validate_dimensions(dimensions)
             .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
 
+        let hierarchy_index = HierarchyIndex::new(&hierarchy, &self.atoms, self.instances.len());
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
             atom_order: Arc::new(self.atoms),
             bond_order: Arc::new(self.bonds),
             hierarchy: Arc::new(hierarchy),
+            hierarchy_index: Arc::new(hierarchy_index),
             molecule_class_overrides: self.molecule_class_overrides,
             properties: Arc::new(self.properties),
             layout: LayoutId::mint(),

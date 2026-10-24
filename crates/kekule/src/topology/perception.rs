@@ -112,6 +112,7 @@ impl Topology {
             atom_order: Arc::clone(&self.atom_order),
             bond_order: Arc::clone(&self.bond_order),
             hierarchy: Arc::clone(&self.hierarchy),
+            hierarchy_index: Arc::clone(&self.hierarchy_index),
             molecule_class_overrides: self.molecule_class_overrides.clone(),
             properties: Arc::clone(&self.properties),
             layout: self.layout,

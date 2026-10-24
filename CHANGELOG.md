@@ -30,6 +30,11 @@ are marked **Breaking:**.
   takes 0.7 ms from sorted indices, 1.1 ms from a mask (allocating and
   writing the indices alone takes 1.4 ms), and 4.6 ms through `from_indices`,
   against 9–11 ms through atom IDs. `to_mask` takes 1.1 ms and `ranges` 0.7 ms.
+- `AtomSiteView::atom_index` gives a site's dense atom index and
+  `Topology::atom_site_at` the site of the atom at a dense index, both in
+  constant time without reading the atom (SeekDelta K44). On 973,824 atoms,
+  the dense indices of every residue's sites take 1.0 ms, as does the
+  residue of every dense index.
 - `FrameBuffer::into_trajectory` hands the buffered frame out, without
   copying it, as a one-frame `Trajectory` bound to the buffer's topology, so a
   host can keep decoded frames (in a frame cache, for example) and view them
@@ -301,11 +306,13 @@ are marked **Breaking:**.
 - DSSP assignment runs on several threads (SeekDelta K34), so per-frame
   secondary structure of large systems keeps up with playback.
   `DsspOptions::with_threads` runs `dssp::assign` on scoped
-  standard-library threads, the new default `dssp::ScopedThreads` executor;
+  standard-library threads, the default `parallel::ScopedThreads` executor;
   the default, one thread, spawns none. `dssp::assign_with` runs it on a
-  host's own thread pool through the new `dssp::DsspExecutor` trait, a
+  host's own thread pool through the `parallel::Executor` trait, a
   parallel-for that reports its `parallelism` and runs indexed work items in
-  any order on any threads, passing a work item's panic to the caller.
+  any order on any threads, passing a work item's panic to the caller. Both
+  live in the new `kekule::parallel` module, shared by every parallel
+  analysis.
   Residue reading, backbone geometry, candidate pairs, hydrogen-bond
   energies, and bridge tests split into contiguous ranges whose results are
   combined in DSSP order, so every executor and thread count returns
@@ -315,9 +322,40 @@ are marked **Breaking:**.
   against 20 ms on one (38 ms before this release), 1,000,000 atoms 144 ms
   against 266 ms. Starting scoped threads costs a fraction of a millisecond
   per stage, which a host pool passed to `assign_with` avoids.
+- Pairwise fitted RMSD and leader clustering run on several threads, report
+  progress, and can be cancelled (SeekDelta K38).
+  `Ensemble::pairwise_fitted_rmsd_with` and `Ensemble::cluster_by_radius_with`
+  take a `clustering::ClusteringRun` naming a `parallel::Executor`, a
+  `diagnostics::Cancellation`, and a callback of `ClusteringProgress` (pairs
+  fitted or members placed, of the total), called one at a time with
+  nondecreasing counts; by default fits run on the calling thread as before.
+  The matrix splits its pairs, in condensed order, into contiguous ranges.
+  Leader clustering still places members one at a time in visiting order,
+  splitting one member's fits against many representatives into ranges and
+  choosing the nearest in cluster order. Ranges merge in order, so every
+  executor and thread count returns exactly the single-threaded matrix or
+  partition, and a failed fit reports the same first failing pair or member.
+  A cancelled run fails with the new `ClusteringError::Cancelled` and returns
+  no partial result. 1,000 samples of the first 352 alpha carbons of 1AKE,
+  release, i5-11400F, shared machine: the matrix takes 9.5 s on one thread,
+  2.8 s on four and 2.0 s on eight; leader clustering into 528 clusters
+  within 1 Å takes 6.2 s, 1.8 s and 1.2 s.
 
 ### Changed
 
+- Hierarchy walks cost what they return (SeekDelta K44). Publication indexes
+  the hierarchy once, and every snapshot of the layout shares the index:
+  each site's dense atom and residue, each dense atom's site, each residue's
+  sites, and each molecule instance's sites, residues, and chains.
+  `InstanceView::residues`, `chains`, and `atom_sites` no longer build sets
+  on every call, and `ResidueView::atom_sites`, `AtomSiteView::atom` and
+  `residue`, and `AtomView::atom_site`, `residue`, and `chain` no longer read
+  the larger hierarchy nodes or search the atom lookup. Results are
+  unchanged. On 973,824 atoms (256 copies of 1AKE), the residues of every
+  molecule take 0.3 ms instead of 94 ms, their atom sites 0.3 ms instead of
+  78 ms, their chains 0.2 ms instead of 99 ms, the atoms of every residue's
+  sites 8 ms instead of 18 ms, and the residue of every atom 6 ms instead of
+  57 ms. Building the index adds about 45 ms to publishing those atoms.
 - `Ensemble::from_models` accepts models whose topologies have equal layouts
   (`Topology::same_layout`), not only models sharing one published layout
   (SeekDelta K39), so models read from separate files become samples keeping
