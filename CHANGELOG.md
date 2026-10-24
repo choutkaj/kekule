@@ -148,6 +148,27 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** RMSF and contact occupancy are weighted statistics in the new
+  `kekule::statistics` module (SeekDelta K28), so ensembles can be reduced
+  with their weights and trajectory reductions become the equal-weight case.
+  - `RmsfAccumulator::observe` and `ContactOccupancyAccumulator::observe`
+    take any `AsModelView` structure and an explicit, finite, positive
+    weight. Weighted RMSF is `√(Σ wₖ |xₖ − μ|² / Σ wₖ)` about the weighted
+    mean, the population RMSF for equal weights; contact occupancy is the
+    fraction of the total weight in contact.
+  - The new `Ensemble::rmsf` and `Ensemble::contact_occupancy` observe each
+    sample with its probability. `kekule_traj::analysis::rmsf` and
+    `contact_occupancy` become `Trajectory::rmsf` and
+    `Trajectory::contact_occupancy`, which observe every frame with weight
+    one; reweighted frames go through the accumulators.
+  - Streamed frames are observed through `buffer.as_model_view()`; the
+    sealed `kekule_traj::analysis::AsFrameView` is removed.
+  - `ReductionError` becomes `StatisticsError`: `NoFrames` becomes
+    `NoObservations`, `frame` fields become `index`, the new `InvalidWeight`
+    and `WeightOverflow` report weights, and `FrameCountOverflow` is removed.
+    Results report `observation_count` and `total_weight` in place of
+    `frame_count`, and `ContactOccupancyResult::contact_weights` replaces
+    `hit_counts`; with weights of one it holds the frame counts.
 - **Breaking:** an `Ensemble` holds samples grouped into states (SeekDelta
   K27). A member was a sample in one ensemble and a state in another, so its
   weight and energy meant different things, Boltzmann weighting counted the

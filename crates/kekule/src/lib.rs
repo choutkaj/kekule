@@ -36,7 +36,7 @@
 //! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
-//! | Structure analysis and preparation | [`alignment`], [`clustering`], [`dssp`], [`solvation`] |
+//! | Structure analysis and preparation | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`solvation`] |
 //!
 //! # Typical workflow
 //!
@@ -158,6 +158,7 @@ pub mod properties;
 pub mod query;
 mod selection_language;
 pub mod solvation;
+pub mod statistics;
 pub mod structure;
 pub mod topology;
 pub mod units;

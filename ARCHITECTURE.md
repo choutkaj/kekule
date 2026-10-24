@@ -58,7 +58,7 @@ structure. Coordinate kernels share code through the borrowed
 
 Both live in `kekule::structure`. `kekule-traj` owns file codecs, streaming
 reader and writer contracts, the reusable `FrameBuffer`, periodic
-preprocessing, and trajectory reductions; it owns no second in-memory
+preprocessing, and streaming superposition; it owns no second in-memory
 trajectory type.
 
 A salt, solvent box, or protein-ligand complex is a topology containing connected
@@ -424,16 +424,20 @@ acts on whole molecules. Unwrapping retains temporal state and requires ordered,
 sufficiently close samples; it precedes downsampling. Failed streaming operations
 change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
-RMSF and contact-occupancy reductions are trajectory statistics in which every
-frame counts once; they do not accept ensembles, whose statistics must be
-weighted. Their accumulators take frames through the sealed `AsFrameView`,
-implemented only by trajectory frame views and frame buffers, so an ensemble
-sample or an untyped `ModelView` does not compile. They consume borrowed frames sharing the source
-topology's layout with memory bounded by selected atoms or pairs, not frame count. Failed
-observations leave accumulators unchanged. Results retain atom/pair associations;
-frame indices are diagnostic labels, not statistical weights. Preprocessing,
-including alignment or imaging, is explicit. These are separate analysis results,
-not new topology state or a generic reduction framework.
+RMSF and contact occupancy are weighted statistics in `kekule::statistics`.
+Every observation is a borrowed structure together with an explicit, finite,
+positive weight, so no structure is reduced with an implied weight.
+`Ensemble` methods observe each sample with its probability; `Trajectory`
+methods observe every frame with weight one, taking frames as equally weighted
+equilibrium samples, and other frame weights are passed to the accumulators
+explicitly. Streamed frames reach the same accumulators through their buffer's
+`ModelView`; `kekule-traj` adds no statistics of its own. Accumulators consume
+structures sharing the source topology's layout with memory bounded by
+selected atoms or pairs, not observation count. Failed observations leave
+accumulators unchanged. Results retain atom/pair associations; observation
+indices are diagnostic labels. Preprocessing, including alignment or imaging,
+is explicit. These are separate analysis results, not new topology state or a
+generic reduction framework.
 
 Ensemble clustering is weight-aware and belongs to ensembles only. It returns an
 `EnsemblePartition`, the same grouping type an ensemble owns, and never changes
@@ -458,7 +462,7 @@ streaming sequence/reset contracts, see
 [file I/O](crates/kekule-traj/src/io/mod.rs),
 [periodic operations](crates/kekule-traj/src/periodic.rs),
 [streaming periodic operations](crates/kekule-traj/src/periodic/stream.rs), and
-[analysis reductions](crates/kekule-traj/src/analysis/reductions.rs).
+[weighted statistics](crates/kekule/src/statistics.rs).
 
 ## Parsing, interpretation, and export
 
