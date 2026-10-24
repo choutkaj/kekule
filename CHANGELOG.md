@@ -318,6 +318,12 @@ are marked **Breaking:**.
 
 ### Changed
 
+- `Ensemble::from_models` accepts models whose topologies have equal layouts
+  (`Topology::same_layout`), not only models sharing one published layout
+  (SeekDelta K39), so models read from separate files become samples keeping
+  each model's positions, cell, occupancies, B-factors, and structure
+  properties, bound to the first model's topology. Different layouts still
+  fail with `EnsembleError::TopologyMismatch`.
 - Ensemble samples share their structure storage (SeekDelta K40). An
   `EnsembleSample`'s positions, cell, occupancies, B-factors, and properties
   sit behind shared storage that is copied on write, one sample at a time,
