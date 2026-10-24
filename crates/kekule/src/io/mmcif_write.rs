@@ -17,6 +17,7 @@ use std::io::Write;
 
 mod emit;
 mod entities;
+mod implied;
 mod prepare;
 use emit::{render_model_to, write_atom_rows, write_block_end, write_block_start};
 use entities::{
@@ -830,7 +831,8 @@ pub(crate) fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
 /// A block with its own [`MmcifBlockSource::block_name`] takes it. Otherwise a
 /// single block is named [`MmcifWriteOptions::block_name`], and among several
 /// blocks the one at 1-based position `n` is named `{block_name}_n`. Rows
-/// follow dense atom order.
+/// follow dense atom order, and `_struct_conn` states the bonds the reader
+/// does not derive (see the `implied` module).
 pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     writer: &mut impl Write,
     blocks: impl IntoIterator<Item = B>,
@@ -914,7 +916,12 @@ fn write_model_block_to(
         }
     };
     let cell = block_cell([view.cell()], options.cell)?;
-    let prepared = prepare_model(view, plan, options.implicit_hydrogens)?;
+    let prepared = prepare_model(
+        view,
+        plan,
+        options.implicit_hydrogens,
+        options.coordinate_precision,
+    )?;
     render_model_to(writer, &prepared, cell, options)?;
     // Nothing is reported for a block that did not reach the sink.
     omissions.record_structure_state(
@@ -1001,7 +1008,12 @@ fn write_ensemble_block_to(
         .ok_or_else(|| fail(MmcifWriteIssue::EmptyEnsemble))?;
     let first_view = first_sample.as_model_view();
     let first_plan = ensemble_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
-    let first = prepare_model(first_view, first_plan, options.implicit_hydrogens)?;
+    let mut first = prepare_model(
+        first_view,
+        first_plan,
+        options.implicit_hydrogens,
+        options.coordinate_precision,
+    )?;
 
     write_block_start(writer, &first, cell, options)?;
     let mut atom_serial = 1u64;
@@ -1010,8 +1022,19 @@ fn write_ensemble_block_to(
     for (index, sample) in samples {
         let view = sample.as_model_view();
         let plan = ensemble_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
-        let candidate = prepare_model(view, plan, options.implicit_hydrogens)?;
+        let candidate = prepare_model(
+            view,
+            plan,
+            options.implicit_hydrogens,
+            options.coordinate_precision,
+        )?;
         validate_ensemble_sample(&first, &candidate, index + 1)?;
+        // A bond the reader derives in one model but not another is stated.
+        for (connection, sample) in first.connections.iter_mut().zip(&candidate.connections) {
+            if connection.implied != sample.implied {
+                connection.implied = None;
+            }
+        }
         write_atom_rows(
             writer,
             &candidate.atoms,
