@@ -137,9 +137,9 @@ impl<'a> AtomView<'a> {
     /// The hierarchy atom site placing this atom, or `None` when it has none.
     pub fn atom_site(self) -> Option<AtomSiteView<'a>> {
         self.topology
-            .hierarchy()
-            .atom_site_for_atom(self.id)
-            .map(|site| AtomSiteView::new(self.topology, site.id()))
+            .hierarchy_index
+            .atom_site(self.index)
+            .map(|site| AtomSiteView::new(self.topology, site))
     }
 
     /// The residue of this atom's site, or `None` when the atom has no site.

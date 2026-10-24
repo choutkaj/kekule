@@ -11,6 +11,11 @@ are marked **Breaking:**.
 
 ### Added
 
+- `AtomSiteView::atom_index` gives a site's dense atom index and
+  `Topology::atom_site_at` the site of the atom at a dense index, both in
+  constant time without reading the atom (SeekDelta K44). On 973,824 atoms,
+  the dense indices of every residue's sites take 1.0 ms, as does the
+  residue of every dense index.
 - `FrameBuffer::into_trajectory` hands the buffered frame out, without
   copying it, as a one-frame `Trajectory` bound to the buffer's topology, so a
   host can keep decoded frames (in a frame cache, for example) and view them
@@ -298,6 +303,20 @@ are marked **Breaking:**.
   per stage, which a host pool passed to `assign_with` avoids.
 
 ### Changed
+
+- Hierarchy walks cost what they return (SeekDelta K44). Publication indexes
+  the hierarchy once, and every snapshot of the layout shares the index:
+  each site's dense atom and residue, each dense atom's site, each residue's
+  sites, and each molecule instance's sites, residues, and chains.
+  `InstanceView::residues`, `chains`, and `atom_sites` no longer build sets
+  on every call, and `ResidueView::atom_sites`, `AtomSiteView::atom` and
+  `residue`, and `AtomView::atom_site`, `residue`, and `chain` no longer read
+  the larger hierarchy nodes or search the atom lookup. Results are
+  unchanged. On 973,824 atoms (256 copies of 1AKE), the residues of every
+  molecule take 0.3 ms instead of 94 ms, their atom sites 0.3 ms instead of
+  78 ms, their chains 0.2 ms instead of 99 ms, the atoms of every residue's
+  sites 8 ms instead of 18 ms, and the residue of every atom 6 ms instead of
+  57 ms. Building the index adds about 45 ms to publishing those atoms.
 
 - Ensemble samples share their structure storage (SeekDelta K40). An
   `EnsembleSample`'s positions, cell, occupancies, B-factors, and properties
