@@ -94,7 +94,8 @@ impl TrajectoryIoLimits {
     }
 
     /// Largest memory in bytes an indexed reader's offset table may occupy;
-    /// default 800 000 000.
+    /// default 800 000 000. Frame times and steps, where the format records
+    /// them, are tables of the same length and size.
     pub const fn max_index_bytes(&self) -> usize {
         self.max_index_bytes
     }

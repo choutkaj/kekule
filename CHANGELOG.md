@@ -11,6 +11,13 @@ are marked **Breaking:**.
 
 ### Added
 
+- `FrameBuffer::into_trajectory` hands the buffered frame out, without
+  copying it, as a one-frame `Trajectory` bound to the buffer's topology, so a
+  host can keep decoded frames (in a frame cache, for example) and view them
+  through `Trajectory::get` without validating them again.
+  `FrameBuffer::from_frame` makes a buffer of a frame, validating it and
+  binding its bond rows once, so storage no longer needed takes the next
+  decoded frame without allocating.
 - Native binary serialization in the new `kekule::native` format module:
   exact, versioned persistence of a `Molecule`, `Topology`, `Model`,
   `Ensemble`, or in-memory `Trajectory`. `native::write_to` streams to a
@@ -210,6 +217,16 @@ are marked **Breaking:**.
     an index of another or a changed file. Every frame is still verified as it
     is decoded, and a random read must end where the index places the next
     frame, so a stale index is an error, never a wrong frame.
+  - `TrajectoryFrameIndex::times` and `steps` give every frame's time, in the
+    canonical time unit, and step, collected while the index is built, so a
+    host need not read the file again for times that are not evenly spaced.
+    TRR and XTC record both, DCD records steps and, under
+    `DcdTimePolicy::HeaderDelta`, times, and XYZ records neither (`None`). A
+    random read through an imported index fails with `IndexMismatch` for a
+    frame that records another time or step, and a DCD index opens only under
+    the time policy it was built with. The encoding is version 2; indexes of
+    version 1, from earlier development builds, which recorded no times, are
+    refused with `InvalidIndex` and must be built again.
   - An imported index is untrusted input: `from_bytes` checks its frame count
     against `TrajectoryIoLimits` before allocating and rejects malformed,
     corrupted, or other-version encodings with the new
@@ -226,6 +243,17 @@ are marked **Breaking:**.
     `IndexMismatch`.
   - `Cancellation::check` returns `Cancelled` once cancellation is requested,
     for cancellable operations in companion crates.
+  - `TrajectoryFileFingerprint::of_path` and `of_file` fingerprint a file
+    without building an index, `matches_path` and `matches_file` check a file
+    against a fingerprint, and `same_content` compares size and content hash
+    regardless of modification time, so a host can tell whether a moved or
+    copied file is the one it recorded. `to_bytes` and `from_bytes` give the
+    fingerprint a stable, versioned, checksummed encoding that shares the
+    index's field layout but has its own version, and `Display`/`FromStr`
+    write and read it as 112 lowercase hexadecimal digits for project files
+    and cache keys.
+    Decoding either form rejects anything else with `InvalidIndex`, never a
+    panic, and the `trajectory_index` fuzz target covers both decoders.
 - Sampling a trajectory into an ensemble of one state, without consuming it.
   - `TrajectorySampling` chooses the frames, in sample order, so sample `i`
     is frame `frames()[i]`; ranges and strides are

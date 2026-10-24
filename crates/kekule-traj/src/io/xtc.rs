@@ -68,7 +68,7 @@ use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_no_partial_frame, require_nonempty_writer, validation_detail, FrameOffsets,
+    require_no_partial_frame, require_nonempty_writer, validation_detail, FrameOffsets, FrameStamp,
     IndexBuildControl, TrajectoryIoLimits,
 };
 
@@ -295,6 +295,14 @@ impl XtcFrameInfo {
 
     pub(crate) const fn precision(&self) -> Option<f32> {
         self.precision
+    }
+
+    /// The time, in picoseconds, and step the frame records.
+    const fn stamp(&self) -> FrameStamp {
+        FrameStamp {
+            time: Some(self.time),
+            step: Some(self.step),
+        }
     }
 
     pub(crate) const fn compressed_bytes(&self) -> usize {
@@ -1017,13 +1025,12 @@ impl<R: Read + Seek> XtcReader<R> {
                 },
                 |info| Ok(info.start),
             )?;
-            if self
+            let Some(info) = self
                 .parse_next()
                 .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
-                .is_none()
-            {
+            else {
                 break;
-            }
+            };
             let end = self.adapter.reader.stream_position().map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
@@ -1035,6 +1042,7 @@ impl<R: Read + Seek> XtcReader<R> {
             offsets.push(
                 offset,
                 end,
+                info.stamp(),
                 &self.options.limits,
                 TrajectoryFormat::Xtc,
                 &self.options.source_label,
@@ -1277,6 +1285,13 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
                 self.offsets.verify_stream_frame_end(
                     index,
                     &mut self.inner.adapter.reader,
+                    TrajectoryFormat::Xtc,
+                    &self.inner.options.source_label,
+                )?;
+                self.offsets.verify_stamp(
+                    index,
+                    info.stamp(),
+                    TrajectoryIoOperation::ReadFrame,
                     TrajectoryFormat::Xtc,
                     &self.inner.options.source_label,
                 )?;

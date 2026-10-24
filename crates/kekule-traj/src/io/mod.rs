@@ -128,7 +128,7 @@ pub use metadata::{
     TrajectoryFormatDetection, TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryOpenReport,
 };
 
-pub(crate) use frame_index::{index_mismatch, FrameOffsets, IndexBuildControl};
+pub(crate) use frame_index::{index_mismatch, FrameOffsets, FrameStamp, IndexBuildControl};
 pub(crate) use limits::{projected_index_limit, reserve_index_for_push};
 pub(crate) use util::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, require_no_partial_frame,
