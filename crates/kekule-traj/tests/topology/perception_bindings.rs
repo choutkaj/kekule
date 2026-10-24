@@ -6,11 +6,11 @@ use std::sync::Arc;
 
 use kekule::geometry::Point3;
 use kekule::smiles;
+use kekule::statistics::RmsfAccumulator;
 use kekule::structure::Positions;
 use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, ANGSTROM};
-use kekule_traj::analysis::RmsfAccumulator;
 use kekule_traj::io::{open_trajectory, write_trajectory};
 use kekule_traj::{FrameBuffer, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryReader};
 
@@ -52,9 +52,9 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
         .unwrap();
     assert!(Arc::ptr_eq(&perceived, &trajectory.shared_topology()));
     for (index, frame) in trajectory.iter().enumerate() {
-        rmsf.observe(index, &frame).unwrap();
+        rmsf.observe(index, &frame, 1.0).unwrap();
     }
-    assert_eq!(rmsf.finish().unwrap().frame_count(), 2);
+    assert_eq!(rmsf.finish().unwrap().observation_count(), 2);
 
     // Streaming through a reader bound to the perceived snapshot fills the
     // buffer bound to the original one, which keeps its own snapshot.
