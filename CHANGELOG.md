@@ -11,6 +11,25 @@ are marked **Breaking:**.
 
 ### Added
 
+- Atom selections from and to dense order (SeekDelta K43), so a host that
+  holds atom sets as sorted indices or bit masks (a resolver's `selected`,
+  `visible`, or secondary-structure terms) makes and reads selections in
+  linear time without translating atoms to IDs.
+  `AtomSelection::from_sorted_indices` keeps a strictly increasing index
+  vector as the selection after one checking pass, and
+  `AtomSelection::from_mask` reads a mask of one bit per atom in 64-bit
+  words, least significant bit first. `AtomSelection::to_mask` and
+  `AtomSelection::ranges` give the selection back as such a mask or as runs
+  of consecutive indices. Input that is out of order, repeated, past the
+  last atom, or of the wrong length is refused with the new
+  `SelectionError::UnsortedAtomIndex` and `SelectionError::AtomMaskLength`,
+  or `InvalidAtomIndex`. `AtomSelection::from_indices` no longer translates
+  each index to an atom ID and back. The selection language builds its
+  result from its bit mask the same way. On 1,000,000 atoms (the new
+  `selection_dense` benchmark, release, i5-11400F), selecting all of them
+  takes 0.7 ms from sorted indices, 1.1 ms from a mask (allocating and
+  writing the indices alone takes 1.4 ms), and 4.6 ms through `from_indices`,
+  against 9–11 ms through atom IDs. `to_mask` takes 1.1 ms and `ranges` 0.7 ms.
 - `FrameBuffer::into_trajectory` hands the buffered frame out, without
   copying it, as a one-frame `Trajectory` bound to the buffer's topology, so a
   host can keep decoded frames (in a frame cache, for example) and view them
