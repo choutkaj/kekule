@@ -12,7 +12,7 @@ use kekule::geometry::Point3;
 use kekule::molecule::Element;
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::select::{
-    self, HostRequest, HostRole, HostTerm, HostTermError, HostTermKind, HostValue,
+    self, HostRequest, HostRole, HostTerm, HostTermError, HostTermKind, HostValue, ReferencePoints,
     SelectEvaluateError, SelectEvaluateOptions, SelectParseOptions, SelectionExpr,
     SelectionResolver,
 };
@@ -619,7 +619,7 @@ fn properties_compare_in_their_units_and_scopes() {
 }
 
 struct Resolver {
-    other: Positions,
+    other: ReferencePoints,
 }
 
 impl SelectionResolver for Resolver {
@@ -669,7 +669,9 @@ fn host_terms_resolve_atoms_and_points_across_objects() {
     )
     .unwrap();
     let resolver = Resolver {
-        other: Positions::new(Quantity::new(vec![Point3::new(19.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
+        other: Positions::new(Quantity::new(vec![Point3::new(19.0, 0.0, 0.0)], ANGSTROM))
+            .unwrap()
+            .into(),
     };
     let options = SelectEvaluateOptions::default().with_resolver(&resolver);
     let indices = |text: &str| {
@@ -741,7 +743,7 @@ impl SelectionResolver for Scene<'_> {
         &self,
         reference: &SelectionExpr,
         request: HostRequest<'_>,
-    ) -> Result<Positions, HostTermError> {
+    ) -> Result<ReferencePoints, HostTermError> {
         let evaluated = &self.models[self.current];
         assert_eq!(request.role(), HostRole::Reference);
         assert!(request.topology().shares_layout(evaluated.topology()));
@@ -768,6 +770,7 @@ impl SelectionResolver for Scene<'_> {
             points.extend(atoms.indices().iter().map(|atom| positions[atom.index()]));
         }
         Positions::from_vec(Quantity::new(points, CANONICAL_LENGTH_UNIT))
+            .map(ReferencePoints::new)
             .map_err(|error| HostTermError::new("invalid points").with_source(error))
     }
 }
@@ -849,16 +852,182 @@ fn within_measures_against_structures_the_resolver_holds() {
     };
     assert!(evaluate(SelectEvaluateOptions::default()).is_empty());
     let terms_only = Resolver {
-        other: Positions::default(),
+        other: ReferencePoints::default(),
     };
     assert!(evaluate(SelectEvaluateOptions::default().with_resolver(&terms_only)).is_empty());
+}
+
+/// Structures in one frame answered as a host evaluating one selection over
+/// all of them does: each reference's points over every structure, the
+/// evaluated one included, built once and shared by every evaluation.
+struct SharedScene<'a> {
+    models: &'a [Model],
+    current: usize,
+    /// Reference points by canonical text, and how often they were built.
+    built: &'a RefCell<BTreeMap<String, (ReferencePoints, usize)>>,
+}
+
+impl SharedScene<'_> {
+    fn select(&self, text: &str) -> Vec<usize> {
+        let options = SelectEvaluateOptions::default().with_resolver(self);
+        parse(text)
+            .evaluate_structure(&self.models[self.current], options)
+            .unwrap_or_else(|error| panic!("{text}: {error}"))
+            .indices()
+            .iter()
+            .map(|index| index.index())
+            .collect()
+    }
+}
+
+impl SelectionResolver for SharedScene<'_> {
+    fn resolve(&self, term: &HostTerm<'_>, _: HostRequest<'_>) -> Result<HostValue, HostTermError> {
+        Err(HostTermError::new(format!("unknown {}", term.text())))
+    }
+
+    fn reference_points(
+        &self,
+        reference: &SelectionExpr,
+        _: HostRequest<'_>,
+    ) -> Result<ReferencePoints, HostTermError> {
+        let key = reference.to_string();
+        if let Some((points, count)) = self.built.borrow_mut().get_mut(&key) {
+            *count += 1;
+            return Ok(points.clone());
+        }
+        let mut points = Vec::new();
+        for (index, model) in self.models.iter().enumerate() {
+            let scene = SharedScene {
+                current: index,
+                ..*self
+            };
+            let options = SelectEvaluateOptions::default().with_resolver(&scene);
+            let atoms = reference.evaluate_structure(model, options).unwrap();
+            let positions: &[Point3] = model.positions().values().value();
+            points.extend(atoms.indices().iter().map(|atom| positions[atom.index()]));
+        }
+        let points = ReferencePoints::new(
+            Positions::from_vec(Quantity::new(points, CANONICAL_LENGTH_UNIT)).unwrap(),
+        );
+        self.built.borrow_mut().insert(key, (points.clone(), 1));
+        Ok(points)
+    }
+}
+
+#[test]
+fn shared_reference_points_select_what_per_structure_points_select() {
+    // 1AKE as many structures in one frame: each protein chain cut in two,
+    // the ligands, and the water.
+    let complex = model("mmcif/1AKE.cif");
+    let part = |text: &str| {
+        let atoms = parse(text)
+            .evaluate_structure(&complex, SelectEvaluateOptions::default())
+            .unwrap();
+        complex.subset(&atoms).unwrap()
+    };
+    let models = [
+        part("protein and chain A and resid 1-100"),
+        part("protein and chain A and resid 101-300"),
+        part("protein and chain B and resid 1-100"),
+        part("protein and chain B and resid 101-300"),
+        part("ligand"),
+        part("water"),
+    ];
+    let expressions = [
+        "within 5 of ligand",
+        "within 5 of protein",
+        "within 4 of protein and not within 2 of protein",
+        "within 3.5 of (water and within 3.5 of ligand)",
+        "byres (within 5 of ligand) and protein",
+        "within 0 of chain A",
+    ];
+    let built = RefCell::new(BTreeMap::new());
+    let mut selected = 0;
+    for expression in expressions {
+        for current in 0..models.len() {
+            let apart = Scene {
+                models: &models,
+                current,
+            }
+            .select(expression)
+            .unwrap();
+            let shared = SharedScene {
+                models: &models,
+                current,
+                built: &built,
+            }
+            .select(expression);
+            assert_eq!(shared, apart, "{expression} on structure {current}");
+            selected += shared.len();
+        }
+    }
+    assert!(selected > 0);
+    // Each reference was built once and reused by every other structure.
+    for (reference, (_, count)) in built.borrow().iter() {
+        assert!(*count >= models.len(), "{reference}: {count}");
+    }
+    assert_eq!(
+        built
+            .borrow()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "chain A",
+            "ligand",
+            "protein",
+            "water and within 3.5 of ligand"
+        ]
+    );
+}
+
+#[test]
+fn shared_host_points_measure_each_cutoff_exactly() {
+    let topology = smiles::to_topology("C.C.C.C").unwrap();
+    let points = (0..4)
+        .map(|index| Point3::new(f64::from(index), 0.5 * f64::from(index), 0.0))
+        .collect::<Vec<_>>();
+    let model = Model::new(
+        topology,
+        Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
+    )
+    .unwrap();
+    let others = vec![Point3::new(3.2, 1.5, 0.0), Point3::new(-1.0, 0.0, 0.0)];
+    let resolver = Resolver {
+        other: Positions::new(Quantity::new(others, ANGSTROM))
+            .unwrap()
+            .into(),
+    };
+    // One set of points, measured at several cutoffs in turn, two of them
+    // equal: each answers as a fresh set of points does.
+    for cutoff in [1.0, 0.25, 2.5, 1.0, 0.0, 10.0] {
+        let text = format!("within {cutoff} of #2");
+        let shared = select::parse(&text, host_options())
+            .unwrap()
+            .evaluate_structure(
+                &model,
+                SelectEvaluateOptions::default().with_resolver(&resolver),
+            )
+            .unwrap()
+            .indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>();
+        let expected = within_points(
+            model.positions().values().value(),
+            resolver.other.positions().values().value(),
+            cutoff,
+        );
+        assert_eq!(shared, expected, "{text}");
+    }
+    assert_eq!(resolver.other.len(), 2);
 }
 
 #[test]
 fn resolvers_without_reference_points_keep_todays_results() {
     let model = model("mmcif/1AKE.cif");
     let terms_only = Resolver {
-        other: Positions::default(),
+        other: ReferencePoints::default(),
     };
     for (structure, expression, _) in cases() {
         if structure != "1AKE" {
@@ -901,11 +1070,11 @@ impl SelectionResolver for Recorder {
         &self,
         reference: &SelectionExpr,
         request: HostRequest<'_>,
-    ) -> Result<Positions, HostTermError> {
+    ) -> Result<ReferencePoints, HostTermError> {
         self.calls
             .borrow_mut()
             .push(format!("points of {reference} as {:?}", request.role()));
-        Ok(Positions::default())
+        Ok(ReferencePoints::default())
     }
 }
 
@@ -1069,5 +1238,108 @@ fn within_on_a_million_atoms_takes_under_fifty_milliseconds() {
     assert!(count >= 9);
     if !cfg!(debug_assertions) {
         assert!(best < std::time::Duration::from_millis(50), "took {best:?}");
+    }
+}
+
+#[test]
+#[ignore = "timing of `within` over many structures; run in release with --ignored"]
+fn within_over_many_structures_grows_with_atoms_plus_points() {
+    // 27 copies of 1AKE without water, about 92k atoms, as a host holds them:
+    // apart on a grid, and stacked in one place as an ensemble's members are.
+    let complex = model("mmcif/1AKE.cif");
+    let dry = complex
+        .subset(
+            &parse("not water")
+                .evaluate_structure(&complex, SelectEvaluateOptions::default())
+                .unwrap(),
+        )
+        .unwrap();
+    let points: &[Point3] = dry.positions().values().value();
+    let copies = |spacing: f64| {
+        (0..27)
+            .map(|copy| {
+                let (x, y, z) = (copy % 3, (copy / 3) % 3, copy / 9);
+                let shift = Point3::new(
+                    f64::from(x) * spacing,
+                    f64::from(y) * spacing,
+                    f64::from(z) * spacing,
+                );
+                let moved = points
+                    .iter()
+                    .map(|p| Point3::new(p.x + shift.x, p.y + shift.y, p.z + shift.z))
+                    .collect();
+                Model::new(
+                    dry.shared_topology(),
+                    Positions::from_vec(Quantity::new(moved, CANONICAL_LENGTH_UNIT)).unwrap(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    let time = |run: &dyn Fn() -> usize| {
+        let mut best = std::time::Duration::MAX;
+        let mut count = 0;
+        for _ in 0..10 {
+            let start = std::time::Instant::now();
+            count = run();
+            best = best.min(start.elapsed());
+        }
+        (best, count)
+    };
+    // 1AKE spans under 7 nm.
+    for (layout, spacing) in [("apart", 10.0), ("stacked", 0.0)] {
+        let models = copies(spacing);
+        let atoms = models.len() * points.len();
+        for expression in [
+            "within 5 of protein",
+            "byres (within 5 of ligand) and protein",
+        ] {
+            let shared = time(&|| {
+                let built = RefCell::new(BTreeMap::new());
+                (0..models.len())
+                    .map(|current| {
+                        SharedScene {
+                            models: &models,
+                            current,
+                            built: &built,
+                        }
+                        .select(expression)
+                        .len()
+                    })
+                    .sum()
+            });
+            // Points gathered and gridded anew for each structure.
+            let apart = time(&|| {
+                (0..models.len())
+                    .map(|current| {
+                        Scene {
+                            models: &models,
+                            current,
+                        }
+                        .select(expression)
+                        .unwrap()
+                        .len()
+                    })
+                    .sum()
+            });
+            eprintln!(
+                "{layout}, {atoms} atoms, `{expression}`: shared {:?}, per structure {:?}",
+                shared.0, apart.0
+            );
+            assert_eq!(shared.1, apart.1, "{layout} {expression}");
+            assert!(shared.1 > 0);
+            if !cfg!(debug_assertions) {
+                assert!(
+                    shared.0 < std::time::Duration::from_millis(50),
+                    "{layout} {expression}: {:?}",
+                    shared.0
+                );
+                // Gridding every other copy's protein for each copy costs
+                // copies times points; shared points cost atoms plus points.
+                if expression == "within 5 of protein" {
+                    assert!(shared.0 * 3 < apart.0, "{layout}: {shared:?} {apart:?}");
+                }
+            }
+        }
     }
 }

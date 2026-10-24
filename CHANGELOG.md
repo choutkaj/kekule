@@ -57,6 +57,24 @@ are marked **Breaking:**.
   References nested in it reach the resolver again. The default adds no
   points, so existing resolvers keep their results. A failure is
   `SelectEvaluateError::Host`, naming the reference and its span.
+- `select::ReferencePoints` carries a host's points for `within`, both from
+  `SelectionResolver::reference_points` and in `HostValue::Points`. It wraps
+  `Positions` (`ReferencePoints::new`, or `From<Positions>`), builds its
+  spatial grid on first use for each cutoff, and shares points and grids
+  among clones. A host that evaluates one selection over many structures
+  builds the points of a reference once, over every structure including the
+  evaluated one, and returns a clone for each structure, so `within` costs
+  time in the atoms plus the reference points instead of their product; a
+  reference's own atoms of the evaluated structure among the points change
+  nothing. The grid of `within` stores every cell of its box in one array
+  when the box has at most eight cells per point, and otherwise only its
+  occupied cells behind a filter that answers most empty cells without a
+  hash lookup. On 27 copies of 1AKE without water (92,502 atoms; release
+  build), `within 5 of protein` evaluated over every copy takes 16 ms with
+  shared points, against 96 ms when each copy gathers and grids the other
+  copies' points, and 360 ms that way with the previous grid; `byres
+  (within 5 of ligand) and protein` takes 21 ms (70 ms with the previous
+  grid).
 - `FormatError::span` returns the byte range a failure concerns.
 - `VanDerWaalsRadiusSource::Bondi`, `BondiMantina`, and `Alvarez` select three
   classic van der Waals radius columns, tabulated in ångström.
