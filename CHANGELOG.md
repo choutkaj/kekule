@@ -251,9 +251,32 @@ are marked **Breaking:**.
     `TrajectoryIoErrorKind::Cancelled` and returns no ensemble.
   - `TrajectoryError` gains `WeightCountMismatch`, `InvalidWeight`,
     `TopologyMismatch`, and `FrameNotSampled`.
+- DSSP assignment runs on several threads (SeekDelta K34), so per-frame
+  secondary structure of large systems keeps up with playback.
+  `DsspOptions::with_threads` runs `dssp::assign` on scoped
+  standard-library threads, the new default `dssp::ScopedThreads` executor;
+  the default, one thread, spawns none. `dssp::assign_with` runs it on a
+  host's own thread pool through the new `dssp::DsspExecutor` trait, a
+  parallel-for that reports its `parallelism` and runs indexed work items in
+  any order on any threads, passing a work item's panic to the caller.
+  Residue reading, backbone geometry, candidate pairs, hydrogen-bond
+  energies, and bridge tests split into contiguous ranges whose results are
+  combined in DSSP order, so every executor and thread count returns
+  exactly the single-threaded result, including tied hydrogen bonds, ladder,
+  sheet and strand numbers, reports, and errors. Tiled 1AKE, release,
+  i5-11400F, system allocator: 100,000 atoms take 14 ms on 6–8 threads
+  against 20 ms on one (38 ms before this release), 1,000,000 atoms 144 ms
+  against 266 ms. Starting scoped threads costs a fraction of a millisecond
+  per stage, which a host pool passed to `assign_with` avoids.
 
 ### Changed
 
+- DSSP assignment is faster on one thread with unchanged results: candidate
+  pairs come from a dense cell grid, ladders extend through an index of
+  ladder ends, bulge merging examines only ladders starting within five
+  residues, and sheets and strands are numbered in linear time. Ladder and
+  sheet assembly no longer grows quadratically with the number of ladders:
+  1,000,000 atoms take 0.27 s instead of 1.4 s.
 - **Breaking:** RMSF and contact occupancy are weighted statistics in the new
   `kekule::statistics` module (SeekDelta K28), so ensembles can be reduced
   with their weights and trajectory reductions become the equal-weight case.

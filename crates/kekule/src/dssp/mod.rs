@@ -8,6 +8,12 @@
 //! of skipped residues and work counts. [`DsspOptions`] and [`DsspLimits`]
 //! configure the run; failures are [`DsspError`].
 //!
+//! [`DsspOptions::with_threads`] spreads one assignment over several scoped
+//! threads, and [`assign_with`] runs it on a host's own thread pool through a
+//! [`DsspExecutor`]. Every executor and thread count returns the same result
+//! as the default single thread, including the order of tied hydrogen bonds
+//! and every identifier.
+//!
 //! Assignment does not parse structures, choose coordinate models or alternate
 //! locations, repair hierarchy data, or install derived state in the model.
 //! Geometry uses single-precision coordinates and arithmetic, matching DSSP 4;
@@ -54,12 +60,16 @@
 use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroUsize;
 
 use crate::structure::AsModelView;
 use crate::topology::{MoleculeInstanceId, ResidueId};
 use crate::units::{Quantity, DEGREE, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE};
 
 mod kernel;
+mod parallel;
+
+pub use parallel::{DsspExecutor, ScopedThreads};
 
 /// Assign DSSP secondary structure to the protein residues in `model`.
 ///
@@ -89,7 +99,61 @@ pub fn assign(
     model: &(impl AsModelView + ?Sized),
     options: DsspOptions,
 ) -> Result<DsspResult, DsspError> {
-    kernel::assign(model.as_model_view(), options)
+    assign_with(model, options, &ScopedThreads::new(options.threads()))
+}
+
+/// [`assign`], with its work items run by `executor` instead of
+/// [`ScopedThreads`] of [`DsspOptions::threads`], which this ignores.
+///
+/// The result, including any error, is the one [`assign`] returns: the
+/// executor decides only where and when each work item runs.
+///
+/// ```
+/// use kekule::dssp::{self, DsspExecutor, DsspOptions};
+/// use std::num::NonZeroUsize;
+///
+/// /// Runs every work item on the calling thread, last first.
+/// struct Reversed;
+///
+/// impl DsspExecutor for Reversed {
+///     fn parallelism(&self) -> NonZeroUsize {
+///         NonZeroUsize::new(4).unwrap()
+///     }
+///
+///     fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
+///         (0..count).rev().for_each(body);
+///     }
+/// }
+///
+/// let text = std::fs::read_to_string(concat!(
+///     env!("CARGO_MANIFEST_DIR"),
+///     "/tests/fixtures/mmcif/1AKE.cif"
+/// ))?;
+/// let model = kekule::mmcif::parse_str(&text, Default::default())?
+///     .interpret(Default::default())?
+///     .into_model();
+/// let options = DsspOptions::default();
+/// assert_eq!(
+///     dssp::assign_with(&model, options, &Reversed),
+///     dssp::assign(&model, options)
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// As [`assign`].
+///
+/// # Panics
+///
+/// When a work item panics, which [`DsspExecutor::run`] passes on, or when
+/// `executor` skips or repeats a work item.
+pub fn assign_with(
+    model: &(impl AsModelView + ?Sized),
+    options: DsspOptions,
+    executor: &dyn DsspExecutor,
+) -> Result<DsspResult, DsspError> {
+    kernel::assign(model.as_model_view(), options, executor)
 }
 
 /// DSSP 4 summary assignment.
@@ -709,6 +773,7 @@ impl Default for DsspLimits {
 pub struct DsspOptions {
     min_polyproline_stretch: usize,
     limits: DsspLimits,
+    threads: NonZeroUsize,
 }
 
 impl DsspOptions {
@@ -746,6 +811,39 @@ impl DsspOptions {
         self.limits = limits;
         self
     }
+
+    /// Most threads [`assign`] uses, as [`ScopedThreads`], the calling
+    /// thread included; the default, one, runs on the calling thread alone.
+    /// [`assign_with`] uses its executor instead.
+    pub const fn threads(&self) -> NonZeroUsize {
+        self.threads
+    }
+
+    /// Sets [`Self::threads`].
+    ///
+    /// Each stage splits its residues or residue pairs into contiguous
+    /// ranges, one per thread, and combines their results in DSSP order, so
+    /// the result is identical for every thread count. Threads are scoped to
+    /// the call; a stage with too little work for two ranges, or whose thread
+    /// cannot be spawned, runs on the calling thread. Starting threads costs
+    /// a fraction of a millisecond per stage, so a caller that already runs
+    /// many small assignments in parallel gains nothing from more threads,
+    /// and a host with its own thread pool can run assignment on it with
+    /// [`assign_with`] instead.
+    ///
+    /// ```
+    /// use kekule::dssp::DsspOptions;
+    /// use std::num::NonZeroUsize;
+    ///
+    /// let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+    /// let options = DsspOptions::default().with_threads(threads);
+    /// assert_eq!(options.threads(), threads);
+    /// ```
+    #[must_use]
+    pub const fn with_threads(mut self, threads: NonZeroUsize) -> Self {
+        self.threads = threads;
+        self
+    }
 }
 
 impl Default for DsspOptions {
@@ -753,6 +851,7 @@ impl Default for DsspOptions {
         Self {
             min_polyproline_stretch: 3,
             limits: DsspLimits::default(),
+            threads: NonZeroUsize::MIN,
         }
     }
 }

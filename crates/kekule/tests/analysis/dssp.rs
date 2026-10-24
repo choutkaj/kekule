@@ -349,3 +349,289 @@ fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
         assert_eq!(result.report().non_peptide_residues(), 1);
     }
 }
+
+const ADENYLATE_KINASE_MMCIF: &str = include_str!("../fixtures/mmcif/1AKE.cif");
+
+fn adenylate_kinase_model() -> kekule::structure::Model {
+    mmcif::parse_str(ADENYLATE_KINASE_MMCIF, Default::default())
+        .expect("checked-in RCSB 1AKE fixture parses")
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
+        .expect("checked-in RCSB 1AKE fixture interprets")
+        .into_model()
+}
+
+/// `copies` copies of `model` on a cubic lattice whose spacing is the
+/// model's largest extent, so neighboring copies touch: residues of
+/// different copies become hydrogen-bond candidates, and copies repeat chain
+/// labels.
+fn tiled(model: &kekule::structure::Model, copies: usize) -> kekule::structure::Model {
+    use kekule::geometry::Point3;
+    let positions = model.positions().values();
+    let points = positions.value();
+    let (low, high) = points.iter().fold(
+        (
+            Point3::new(f64::MAX, f64::MAX, f64::MAX),
+            Point3::new(f64::MIN, f64::MIN, f64::MIN),
+        ),
+        |(low, high), point| {
+            (
+                Point3::new(low.x.min(point.x), low.y.min(point.y), low.z.min(point.z)),
+                Point3::new(
+                    high.x.max(point.x),
+                    high.y.max(point.y),
+                    high.z.max(point.z),
+                ),
+            )
+        },
+    );
+    let spacing = (high.x - low.x).max(high.y - low.y).max(high.z - low.z);
+    let side = (copies as f64).cbrt().ceil() as usize;
+    let mut editor = kekule::structure::ModelEditor::new();
+    for copy in 0..copies {
+        let [x, y, z] =
+            [copy % side, copy / side % side, copy / side / side].map(|step| step as f64 * spacing);
+        let mut moved = model.clone();
+        moved
+            .set_positions(positions.map(|points| {
+                points
+                    .iter()
+                    .map(|point| Point3::new(point.x + x, point.y + y, point.z + z))
+                    .collect::<Vec<_>>()
+            }))
+            .expect("translated positions stay finite");
+        editor.append_model(&moved).expect("copies share no cell");
+    }
+    editor.finish().expect("appended copies form a model")
+}
+
+fn with_threads(options: DsspOptions, threads: usize) -> DsspOptions {
+    options.with_threads(std::num::NonZeroUsize::new(threads).expect("nonzero thread count"))
+}
+
+/// One backbone atom of the analyzed residue at `index`.
+fn backbone_atom(
+    model: &kekule::structure::Model,
+    index: usize,
+    atom: &str,
+) -> kekule::topology::InstanceAtomId {
+    let residue = dssp::assign(model, DsspOptions::default())
+        .expect("unmodified model is analyzable")
+        .residues()
+        .nth(index)
+        .expect("residue index within the result")
+        .key();
+    model
+        .topology()
+        .residue(residue)
+        .expect("analyzed residue is in the hierarchy")
+        .atom_sites()
+        .find(|site| site.metadata().label_atom_id() == Some(atom))
+        .expect("analyzed residues have every backbone atom")
+        .atom()
+        .id()
+}
+
+#[test]
+fn dssp_threads_return_the_serial_result() {
+    for model in [
+        tiled(&crambin_model(), 27),
+        tiled(&adenylate_kinase_model(), 8),
+    ] {
+        let serial = dssp::assign(&model, DsspOptions::default()).expect("tiled model analyzes");
+        // Enough residues for every stage to split across the threads.
+        assert!(serial.residues().len() > 1000);
+        for threads in [2, 3, 5, 8, 16] {
+            let parallel = dssp::assign(&model, with_threads(DsspOptions::default(), threads))
+                .expect("tiled model analyzes");
+            assert_eq!(parallel, serial, "{threads} threads");
+        }
+    }
+}
+
+#[test]
+fn dssp_threads_report_the_serial_error() {
+    let model = tiled(&adenylate_kinase_model(), 8);
+    let serial = dssp::assign(&model, DsspOptions::default()).unwrap();
+    let pairs = serial.report().candidate_hydrogen_bond_pairs();
+    let ladders = serial.report().generated_ladders();
+    let residues = serial.statistics().analyzed_residues();
+    for limits in [
+        DsspLimits::default().with_max_residues(residues - 1),
+        DsspLimits::default().with_max_candidate_pairs(0),
+        DsspLimits::default().with_max_candidate_pairs(pairs / 2),
+        DsspLimits::default().with_max_candidate_pairs(pairs - 1),
+        DsspLimits::default().with_max_ladders(ladders / 2),
+        // Bounds that are met exactly succeed.
+        DsspLimits::default()
+            .with_max_residues(residues)
+            .with_max_candidate_pairs(pairs)
+            .with_max_ladders(ladders),
+    ] {
+        let options = DsspOptions::default().with_limits(limits);
+        let expected = dssp::assign(&model, options);
+        for threads in [2, 7] {
+            assert_eq!(
+                dssp::assign(&model, with_threads(options, threads)),
+                expected
+            );
+        }
+    }
+
+    // A degenerate carbonyl early in the table and a coordinate DSSP cannot
+    // index later: extraction fails first, as serially.
+    let (oxygen, carbon, far) = (
+        backbone_atom(&model, 100, "O"),
+        backbone_atom(&model, 100, "C"),
+        backbone_atom(&model, 3000, "O"),
+    );
+    let mut carbonyl = model.clone();
+    carbonyl
+        .set_position(oxygen, model.position(carbon).unwrap())
+        .unwrap();
+    let mut broken = carbonyl.clone();
+    let position = broken.position(far).unwrap().map(|mut point| {
+        point.x = f32::MAX as f64;
+        point
+    });
+    broken.set_position(far, position).unwrap();
+    for (model, expected) in [(&carbonyl, "degenerate"), (&broken, "out of range")] {
+        let serial = dssp::assign(model, DsspOptions::default());
+        match (&serial, expected) {
+            (Err(DsspError::DegenerateBackboneGeometry { .. }), "degenerate")
+            | (Err(DsspError::CoordinateOutOfRange { .. }), "out of range") => {}
+            _ => panic!("{expected}: {serial:?}"),
+        }
+        for threads in [2, 7] {
+            assert_eq!(
+                dssp::assign(model, with_threads(DsspOptions::default(), threads)),
+                serial
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "timing of DSSP on 100k and 1M atoms; run in release with --ignored --nocapture"]
+fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
+    let base = adenylate_kinase_model();
+    let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    for (atoms, runs) in [(100_000_usize, 30), (1_000_000, 5)] {
+        let model = tiled(&base, atoms.div_ceil(base.atom_count()));
+        let serial = dssp::assign(&model, DsspOptions::default()).unwrap();
+        let mut report = format!(
+            "{} atoms, {} residues:",
+            model.atom_count(),
+            serial.residues().len()
+        );
+        for threads in [1, 2, 4, 6, 8, available] {
+            let options = with_threads(DsspOptions::default(), threads);
+            let mut times = (0..runs)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let result = dssp::assign(&model, options).unwrap();
+                    let elapsed = start.elapsed();
+                    assert_eq!(result, serial, "{threads} threads");
+                    elapsed
+                })
+                .collect::<Vec<_>>();
+            times.sort();
+            report += &format!(
+                " {threads}: {:.1?} (median {:.1?})",
+                times[0],
+                times[runs / 2]
+            );
+        }
+        eprintln!("{report}");
+    }
+}
+
+/// Runs work items last first, on the calling thread.
+struct Reversed(usize);
+
+impl dssp::DsspExecutor for Reversed {
+    fn parallelism(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(self.0).unwrap()
+    }
+
+    fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
+        (0..count).rev().for_each(body);
+    }
+}
+
+/// Runs the odd work items on one spawned thread and the even ones, last
+/// first, on another, concurrently.
+struct Interleaved;
+
+impl dssp::DsspExecutor for Interleaved {
+    fn parallelism(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(5).unwrap()
+    }
+
+    fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
+        std::thread::scope(|scope| {
+            let odd = scope.spawn(|| (1..count).step_by(2).for_each(body));
+            let even = scope.spawn(|| (0..count).step_by(2).rev().for_each(body));
+            for worker in [odd, even] {
+                if let Err(panic) = worker.join() {
+                    std::panic::resume_unwind(panic);
+                }
+            }
+        });
+    }
+}
+
+#[test]
+fn dssp_executors_return_the_serial_result_in_any_work_order() {
+    let model = tiled(&adenylate_kinase_model(), 8);
+    let serial = dssp::assign(&model, DsspOptions::default()).unwrap();
+    let limited = DsspOptions::default().with_limits(
+        DsspLimits::default()
+            .with_max_candidate_pairs(serial.report().candidate_hydrogen_bond_pairs() / 2),
+    );
+    let executors: [&dyn dssp::DsspExecutor; 3] = [&Reversed(3), &Reversed(16), &Interleaved];
+    for executor in executors {
+        assert_eq!(
+            dssp::assign_with(&model, DsspOptions::default(), executor).unwrap(),
+            serial
+        );
+        assert_eq!(
+            dssp::assign_with(&model, limited, executor),
+            dssp::assign(&model, limited)
+        );
+    }
+}
+
+#[test]
+fn scoped_threads_pass_a_work_item_panic_to_the_caller() {
+    use dssp::{DsspExecutor, ScopedThreads};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    for threads in [1, 2, 4, 16] {
+        let executor = ScopedThreads::new(std::num::NonZeroUsize::new(threads).unwrap());
+        // Item 0 runs on the calling thread; item 5 on a spawned one when
+        // there are several.
+        for failing in [0, 5] {
+            let ran = AtomicUsize::new(0);
+            let panic = std::panic::catch_unwind(|| {
+                executor.run(8, &|index| {
+                    ran.fetch_add(1, Ordering::Relaxed);
+                    assert_ne!(index, failing, "work item {index} fails");
+                });
+            })
+            .expect_err("the work item panic reaches the caller");
+            let message = panic
+                .downcast_ref::<String>()
+                .expect("formatted panic message");
+            assert!(
+                message.contains(&format!("work item {failing} fails")),
+                "{message}"
+            );
+            assert!(ran.into_inner() >= 1);
+        }
+        let ran = AtomicUsize::new(0);
+        executor.run(8, &|_| {
+            ran.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(ran.into_inner(), 8, "{threads} threads run every item once");
+    }
+}
