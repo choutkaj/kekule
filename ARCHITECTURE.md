@@ -342,7 +342,10 @@ values. Exact units, tolerances, and conversion policies belong with
 
 A model, ensemble, or trajectory owns its shared topology once. Samples and frames
 store flat payloads, not nested models; a detached payload has
-atom rows only and acquires bond rows when its collection binds it. Borrowed
+atom rows only and acquires bond rows when its collection binds it. An
+ensemble sample's structure is shared storage, copied on write per sample,
+and its weight is its own, so copies of an ensemble that differ only in
+weights or grouping share every coordinate. Borrowed
 `ModelView` access, obtained through the sealed `AsModelView` (or a frame
 buffer's `as_model_view`), lets coordinate algorithms and writers share
 kernels across models, samples, frames, and buffers. A view's `kind()`
@@ -352,7 +355,8 @@ temperature, a frame's time, step, velocities, and forces), so
 writers and reductions never lose it silently. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
-one shared layout and a partition saying what they are; there is no special
+equal layouts (`same_layout`), keeping the first model's topology, and a
+partition saying what they are; there is no special
 single-sample ownership model.
 
 Read access is through views: `Topology` lookups return `Option` views

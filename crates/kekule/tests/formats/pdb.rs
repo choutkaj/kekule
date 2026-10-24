@@ -1948,3 +1948,100 @@ fn bonds_with_evidence(result: &StructureInterpretation, evidence: &BondEvidence
         .filter(|bond| bond.evidence() == evidence)
         .count()
 }
+
+fn read_model(text: &str) -> kekule::structure::Model {
+    interpret(text).into_model()
+}
+
+#[test]
+fn separately_read_models_become_samples_with_their_own_state() {
+    use kekule::geometry::{PeriodicCell, Point3, Vector3};
+    use kekule::properties::{PropertyKey, PropertyValue};
+    use kekule::structure::{Ensemble, EnsembleError, EnsemblePartition};
+    use kekule::topology::{TopologyAtomIndex, TopologyBondIndex};
+    use kekule::units::{Quantity, ANGSTROM, SQUARE_NANOMETER};
+
+    // Two readings of one file: equal topologies, each published on its own.
+    let first = read_model(CRAMBIN);
+    let mut second = read_model(CRAMBIN);
+    assert!(first.topology().same_layout(second.topology()));
+    assert!(!first.topology().shares_layout(second.topology()));
+    let topology = first.shared_topology();
+
+    // Give the second reading state of its own.
+    let atom = TopologyAtomIndex::new(5);
+    let bond = TopologyBondIndex::new(7);
+    let note = PropertyKey::new("note").unwrap();
+    second
+        .set_position_at(atom, Quantity::new(Point3::new(1.0, 2.0, 3.0), ANGSTROM))
+        .unwrap();
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(40.0, 20.0, 25.0), ANGSTROM),
+        [true; 3],
+    )
+    .unwrap();
+    second.set_cell(Some(cell));
+    second.set_occupancy(atom, Some(0.25)).unwrap();
+    second
+        .set_b_factor(atom, Some(Quantity::new(0.5, SQUARE_NANOMETER)))
+        .unwrap();
+    let mut properties = second.properties_mut();
+    properties
+        .owner_mut()
+        .insert(note.clone(), PropertyValue::Int(1))
+        .unwrap();
+    properties
+        .atoms_mut()
+        .set_value(note.clone(), atom, Some(PropertyValue::Int(2)))
+        .unwrap();
+    properties
+        .bonds_mut()
+        .set_value(note.clone(), bond, Some(PropertyValue::Int(3)))
+        .unwrap();
+    let expected = [first.clone(), second.clone()];
+
+    let ensemble = Ensemble::from_models([first, second], EnsemblePartition::one_state(2)).unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &ensemble.shared_topology(),
+        &topology
+    ));
+    assert_eq!(ensemble.state_count(), 1);
+    for (sample, model) in ensemble.iter().zip(&expected) {
+        assert_eq!(sample.weight(), 1.0);
+        assert_eq!(sample.positions(), model.positions());
+        assert_eq!(sample.cell(), model.cell());
+        assert_eq!(sample.occupancies(), model.occupancies());
+        assert_eq!(sample.b_factors(), model.b_factors());
+        assert_eq!(sample.properties(), model.properties());
+    }
+    let second = ensemble.get(1).unwrap();
+    assert_eq!(second.cell(), Some(&cell));
+    assert_eq!(second.occupancy(atom), Some(0.25));
+    assert_ne!(second.occupancies(), ensemble.get(0).unwrap().occupancies());
+    assert_eq!(
+        second.properties().bonds().value(&note, bond).unwrap(),
+        Some(PropertyValue::Int(3))
+    );
+    // Its rows read through the first reading's topology.
+    let projected = second.to_model();
+    assert!(projected.topology().shares_layout(&topology));
+    assert_eq!(projected.atom_at(atom).unwrap().occupancy(), Some(0.25));
+
+    // The partition the caller passes is kept.
+    let conformers = Ensemble::from_models(
+        [read_model(CRAMBIN), read_model(CRAMBIN)],
+        EnsemblePartition::state_per_sample(2),
+    )
+    .unwrap();
+    assert_eq!(conformers.state_count(), 2);
+
+    // A different topology is refused.
+    assert_eq!(
+        Ensemble::from_models(
+            [read_model(CRAMBIN), read_model(ADENYLATE_KINASE)],
+            EnsemblePartition::one_state(2),
+        )
+        .unwrap_err(),
+        EnsembleError::TopologyMismatch
+    );
+}
