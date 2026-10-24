@@ -5,6 +5,7 @@ mod support;
 
 mod dense_vectors;
 mod frame_buffers;
+mod frame_index;
 mod loading;
 mod readers;
 mod saving;

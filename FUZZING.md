@@ -16,7 +16,12 @@ The input-parser targets are `mol_v2000`, `mol_v3000`, `sdf_v2000`, `smiles`,
 writer accepts and checks that it reads back with the same atoms, and `xyz`
 checks that every interpreted frame keeps its atoms and has one topology bond
 per reported inferred bond. The trajectory targets are `trajectory_detection`,
-`trajectory_xyz`, `trajectory_dcd`, `trajectory_trr`, and `trajectory_xtc`.
+`trajectory_xyz`, `trajectory_dcd`, `trajectory_trr`, `trajectory_xtc`, and
+`trajectory_index`. `trajectory_index` decodes untrusted frame indexes, each
+accepted one re-encoding to the same bytes, and opens a fixture of every
+format through checksummed indexes with fuzzed offsets: every frame read
+through one must be a frame of the file. Its seeds are the indexes of those
+fixtures.
 `native` decodes Kekule's native binary format under small resource limits;
 every successfully decoded object must encode, decode again, and re-encode to
 the same bytes. Its seeds are native encodings of small objects of every kind.

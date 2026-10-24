@@ -74,9 +74,9 @@ use kekule::units::{
 };
 
 use super::{
-    codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_no_partial_frame, require_nonempty_writer, reserve_index_for_push, validation_detail,
-    TrajectoryIoLimits,
+    codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
+    projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_detail,
+    FrameOffsets, IndexBuildControl, TrajectoryIoLimits,
 };
 
 const TRR_MAGIC: i32 = 1993;
@@ -647,8 +647,17 @@ impl<R: Read + Seek> TrrReader<R> {
     }
 
     /// Indexes a freshly opened reader, whose next frame is frame 0.
-    fn index_frames(mut self) -> Result<IndexedTrrReader<R>, TrajectoryIoError> {
-        let mut offsets = Vec::new();
+    fn index_frames(
+        mut self,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<IndexedTrrReader<R>, TrajectoryIoError> {
+        let mut offsets = FrameOffsets::empty(self.stream_start);
+        control.checkpoint(
+            0,
+            self.stream_start,
+            TrajectoryFormat::Trr,
+            &self.options.source_label,
+        )?;
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
                 let clean_eof = if self.pending_header.is_some() {
@@ -689,17 +698,31 @@ impl<R: Read + Seek> TrrReader<R> {
             {
                 break;
             }
-            reserve_index_for_push(
-                &mut offsets,
+            let end = self.reader.stream_position().map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Trr),
+                    &self.options.source_label,
+                    error,
+                )
+            })?;
+            offsets.push(
+                offset,
+                end,
                 &self.options.limits,
                 TrajectoryFormat::Trr,
                 &self.options.source_label,
-                self.frame_cursor.saturating_sub(1),
             )?;
-            offsets.push(offset);
+            control.checkpoint(
+                offsets.len(),
+                end,
+                TrajectoryFormat::Trr,
+                &self.options.source_label,
+            )?;
         }
         self.rewind()?;
         Ok(IndexedTrrReader {
+            precision_mixed: self.precision_mixed,
             inner: self,
             offsets,
         })
@@ -781,7 +804,9 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
 /// reads restore stream position and header state before publishing a frame.
 pub struct IndexedTrrReader<R> {
     inner: TrrReader<R>,
-    offsets: Vec<u64>,
+    offsets: FrameOffsets,
+    /// Whether frames of the whole file mix scalar widths.
+    precision_mixed: bool,
 }
 
 impl<R> fmt::Debug for IndexedTrrReader<R> {
@@ -814,7 +839,50 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         topology: impl Into<Arc<Topology>>,
         options: TrrReadOptions,
     ) -> Result<Self, TrajectoryIoError> {
-        TrrReader::new(reader, topology, options)?.index_frames()
+        Self::build(
+            reader,
+            topology.into(),
+            options,
+            &IndexBuildControl::default(),
+        )
+    }
+
+    /// Indexes the stream like [`Self::new`], reporting to `control`.
+    pub(crate) fn build(
+        reader: R,
+        topology: Arc<Topology>,
+        options: TrrReadOptions,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<Self, TrajectoryIoError> {
+        TrrReader::new(reader, topology, options)?.index_frames(control)
+    }
+
+    /// Opens the stream with previously verified `offsets` instead of
+    /// scanning it; random reads verify each frame against them, including
+    /// that its scalar width is the first frame's unless `precision_mixed`.
+    pub(crate) fn from_offsets(
+        reader: R,
+        topology: Arc<Topology>,
+        options: TrrReadOptions,
+        offsets: FrameOffsets,
+        precision_mixed: bool,
+    ) -> Result<Self, TrajectoryIoError> {
+        let mut inner = TrrReader::new(reader, topology, options)?;
+        offsets.verify_start(
+            inner.stream_start,
+            TrajectoryFormat::Trr,
+            &inner.options.source_label,
+        )?;
+        inner.precision_mixed = precision_mixed;
+        Ok(Self {
+            inner,
+            offsets,
+            precision_mixed,
+        })
+    }
+
+    pub(crate) fn offsets(&self) -> &FrameOffsets {
+        &self.offsets
     }
 
     /// The topology every frame belongs to.
@@ -827,7 +895,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
     }
 
     pub(crate) const fn precision_mixed(&self) -> bool {
-        self.inner.precision_mixed()
+        self.precision_mixed
     }
 }
 
@@ -860,10 +928,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        let offset = self
+        let (offset, _) = self
             .offsets
-            .get(index)
-            .copied()
+            .frame(index)
             .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
         let saved_offset = self.inner.reader.stream_position().map_err(|error| {
             io_context(
@@ -895,7 +962,27 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
             .inner
             .parse_next()
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::frame_index_out_of_range(index)));
+            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::frame_index_out_of_range(index)))
+            .and_then(|decoded| {
+                self.offsets.verify_stream_frame_end(
+                    index,
+                    &mut self.inner.reader,
+                    TrajectoryFormat::Trr,
+                    &self.inner.options.source_label,
+                )?;
+                if !self.precision_mixed
+                    && decoded.header.precision != self.inner.first_header.precision
+                {
+                    return Err(index_mismatch(
+                        TrajectoryIoOperation::ReadFrame,
+                        TrajectoryFormat::Trr,
+                        &self.inner.options.source_label,
+                        "TRR frame scalar width differs from the first frame's in an index of uniform width",
+                    )
+                    .with_frame(index));
+                }
+                Ok(decoded)
+            });
         let restore = self
             .inner
             .reader

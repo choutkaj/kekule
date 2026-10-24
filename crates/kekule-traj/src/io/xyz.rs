@@ -65,7 +65,7 @@ use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
-    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits,
+    require_nonempty_writer, FrameOffsets, IndexBuildControl, TrajectoryIoLimits,
 };
 
 const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
@@ -585,8 +585,18 @@ impl<R: BufRead + Seek> XyzReader<R> {
     }
 
     /// Indexes a freshly opened reader, whose next frame is frame 0.
-    fn index_frames(mut self, stream_start: u64) -> Result<IndexedXyzReader<R>, TrajectoryIoError> {
-        let mut offsets = Vec::new();
+    fn index_frames(
+        mut self,
+        stream_start: u64,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<IndexedXyzReader<R>, TrajectoryIoError> {
+        let mut offsets = FrameOffsets::empty(stream_start);
+        control.checkpoint(
+            0,
+            stream_start,
+            TrajectoryFormat::Xyz,
+            &self.options.source_label,
+        )?;
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
                 if self
@@ -623,14 +633,27 @@ impl<R: BufRead + Seek> XyzReader<R> {
             if !self.parse_next(false)? {
                 break;
             }
-            reserve_index_for_push(
-                &mut offsets,
+            let end = self.reader.stream_position().map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Xyz),
+                    &self.options.source_label,
+                    error,
+                )
+            })?;
+            offsets.push(
+                offset,
+                end,
                 &self.options.limits,
                 TrajectoryFormat::Xyz,
                 &self.options.source_label,
-                self.frame_cursor,
             )?;
-            offsets.push(offset);
+            control.checkpoint(
+                offsets.len(),
+                end,
+                TrajectoryFormat::Xyz,
+                &self.options.source_label,
+            )?;
             self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
                 frame_codec_error(
                     TrajectoryIoErrorKind::LimitExceeded,
@@ -671,7 +694,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
 /// Fully scanned XYZ reader with verified frame offsets.
 pub struct IndexedXyzReader<R> {
     reader: XyzReader<R>,
-    offsets: Vec<u64>,
+    offsets: FrameOffsets,
 }
 
 impl<R> fmt::Debug for IndexedXyzReader<R> {
@@ -700,9 +723,24 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
     /// index outgrows the limits, and [`TrajectoryIoErrorKind::Io`] when
     /// reading or seeking fails.
     pub fn new(
-        mut reader: R,
+        reader: R,
         topology: impl Into<Arc<Topology>>,
         options: XyzReadOptions,
+    ) -> Result<Self, TrajectoryIoError> {
+        Self::build(
+            reader,
+            topology.into(),
+            options,
+            &IndexBuildControl::default(),
+        )
+    }
+
+    /// Indexes the stream like [`Self::new`], reporting to `control`.
+    pub(crate) fn build(
+        mut reader: R,
+        topology: Arc<Topology>,
+        options: XyzReadOptions,
+        control: &IndexBuildControl<'_>,
     ) -> Result<Self, TrajectoryIoError> {
         let stream_start = reader.stream_position().map_err(|error| {
             io_context(
@@ -712,7 +750,38 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 error,
             )
         })?;
-        XyzReader::new(reader, topology, options)?.index_frames(stream_start)
+        XyzReader::new(reader, topology, options)?.index_frames(stream_start, control)
+    }
+
+    /// Opens the stream with previously verified `offsets` instead of
+    /// scanning it; frame 0 is verified here, and random reads verify each
+    /// frame against the offsets.
+    pub(crate) fn from_offsets(
+        mut reader: R,
+        topology: Arc<Topology>,
+        options: XyzReadOptions,
+        offsets: FrameOffsets,
+    ) -> Result<Self, TrajectoryIoError> {
+        let stream_start = reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &options.source_label,
+                error,
+            )
+        })?;
+        let mut reader = XyzReader::new(reader, topology, options)?;
+        offsets.verify_start(
+            stream_start,
+            TrajectoryFormat::Xyz,
+            &reader.options.source_label,
+        )?;
+        reader.validate_first_frame()?;
+        Ok(Self { reader, offsets })
+    }
+
+    pub(crate) fn offsets(&self) -> &FrameOffsets {
+        &self.offsets
     }
 }
 
@@ -745,10 +814,9 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        let index_usize = index;
-        let offset = *self
+        let (offset, _) = self
             .offsets
-            .get(index_usize)
+            .frame(index)
             .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
         let saved_offset = self.reader.reader.stream_position().map_err(|error| {
             io_context(
@@ -771,7 +839,17 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
                 )
             })?;
         self.reader.frame_cursor = index;
-        let parsed = self.reader.parse_next(true);
+        let parsed = self.reader.parse_next(true).and_then(|parsed| {
+            if parsed {
+                self.offsets.verify_stream_frame_end(
+                    index,
+                    &mut self.reader.reader,
+                    TrajectoryFormat::Xyz,
+                    &self.reader.options.source_label,
+                )?;
+            }
+            Ok(parsed)
+        });
         let restore = self
             .reader
             .reader

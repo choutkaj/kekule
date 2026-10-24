@@ -507,6 +507,32 @@ fn fixed_atom_dcd_reconstructs_complete_frames_and_random_access() {
 }
 
 #[test]
+fn fixed_atom_dcd_reopened_from_its_index_reconstructs_later_frames_first() {
+    use kekule_traj::io::{open_indexed_trajectory, open_indexed_trajectory_from_index};
+
+    let topology = topology();
+    let path = std::env::temp_dir().join(format!(
+        "kekule-fixed-atom-index-{}.dcd",
+        std::process::id()
+    ));
+    std::fs::write(&path, fixed_atom_fixture(DcdEndian::Big)).unwrap();
+    let index = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
+        .unwrap()
+        .to_frame_index();
+    let mut reader =
+        open_indexed_trajectory_from_index(&path, Arc::clone(&topology), index, Default::default())
+            .unwrap();
+    // The fixed atoms' reference coordinates come from frame 0, which
+    // opening verified and decoded.
+    let mut buffer = FrameBuffer::new(topology);
+    reader.read_frame(1, &mut buffer).unwrap();
+    assert_xs_close(&buffer, &[0.0, 1.0, 0.2]);
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert_xs_close(&buffer, &[0.0, 0.1, 0.2]);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn indexed_dcd_addresses_frames_from_the_stream_position_it_was_opened_at() {
     let topology = topology();
     let mut writer = DcdWriter::new(

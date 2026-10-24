@@ -145,6 +145,36 @@ are marked **Breaking:**.
   separately. `WriteOmission` gains `FormalCharges` and `AtomSites`, and
   `WriteReport` gains `is_empty`, `Default`, and `FromIterator`, which merges
   repeated kinds as writers do.
+- Reusable frame indexes in `kekule-traj`, so a large trajectory is scanned
+  once rather than on every open.
+  - `IndexedFileTrajectoryReader::to_frame_index` exports the verified frame
+    offsets as a `TrajectoryFrameIndex`: the format, the frame count and
+    offsets, and a `TrajectoryFileFingerprint` of the file (its size,
+    modification time where available, and an FNV-1a hash of its size and
+    sampled content). `to_bytes` and `from_bytes` give it a stable, versioned,
+    checksummed little-endian encoding, specified on the type.
+  - `open_indexed_trajectory_from_index` opens the file from an index without
+    scanning it. Opening checks the fingerprint, format, header, and first
+    frame, and fails with the new `TrajectoryIoErrorKind::IndexMismatch` for
+    an index of another or a changed file. Every frame is still verified as it
+    is decoded, and a random read must end where the index places the next
+    frame, so a stale index is an error, never a wrong frame.
+  - An imported index is untrusted input: `from_bytes` checks its frame count
+    against `TrajectoryIoLimits` before allocating and rejects malformed,
+    corrupted, or other-version encodings with the new
+    `TrajectoryIoErrorKind::InvalidIndex`. The new `trajectory_index` fuzz
+    target covers decoding and reading through fuzzed offsets of every format.
+  - `TrajectoryOpenOptions::with_index_cancellation` and
+    `with_index_progress` make `open_indexed_trajectory` poll a
+    `diagnostics::Cancellation` and report a `TrajectoryIndexProgress`
+    (frames and bytes verified of the file's size) before the first frame
+    and after every frame. A cancelled scan fails with the new
+    `TrajectoryIoErrorKind::Cancelled`, whose source is
+    `diagnostics::Cancelled`, and returns no reader. The file is fingerprinted
+    before and after the scan, and a file that changes meanwhile fails with
+    `IndexMismatch`.
+  - `Cancellation::check` returns `Cancelled` once cancellation is requested,
+    for cancellable operations in companion crates.
 
 ### Changed
 

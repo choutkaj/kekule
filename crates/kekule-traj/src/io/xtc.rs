@@ -68,8 +68,8 @@ use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    require_no_partial_frame, require_nonempty_writer, reserve_index_for_push, validation_detail,
-    TrajectoryIoLimits,
+    require_no_partial_frame, require_nonempty_writer, validation_detail, FrameOffsets,
+    IndexBuildControl, TrajectoryIoLimits,
 };
 
 const XTC_HEADER_BYTES: usize = 56;
@@ -972,8 +972,17 @@ impl<R: Read + Seek> XtcReader<R> {
     }
 
     /// Indexes a freshly opened reader, whose next frame is frame 0.
-    fn index_frames(mut self) -> Result<IndexedXtcReader<R>, TrajectoryIoError> {
-        let mut offsets = Vec::new();
+    fn index_frames(
+        mut self,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<IndexedXtcReader<R>, TrajectoryIoError> {
+        let mut offsets = FrameOffsets::empty(self.stream_start);
+        control.checkpoint(
+            0,
+            self.stream_start,
+            TrajectoryFormat::Xtc,
+            &self.options.source_label,
+        )?;
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
                 let clean_eof = if self.pending_info.is_some() {
@@ -1015,14 +1024,27 @@ impl<R: Read + Seek> XtcReader<R> {
             {
                 break;
             }
-            reserve_index_for_push(
-                &mut offsets,
+            let end = self.adapter.reader.stream_position().map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Xtc),
+                    &self.options.source_label,
+                    error,
+                )
+            })?;
+            offsets.push(
+                offset,
+                end,
                 &self.options.limits,
                 TrajectoryFormat::Xtc,
                 &self.options.source_label,
-                self.frame_cursor.saturating_sub(1),
             )?;
-            offsets.push(offset);
+            control.checkpoint(
+                offsets.len(),
+                end,
+                TrajectoryFormat::Xtc,
+                &self.options.source_label,
+            )?;
         }
         self.rewind()?;
         Ok(IndexedXtcReader {
@@ -1101,7 +1123,7 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
 /// frame is decoded again when it was already pending.
 pub struct IndexedXtcReader<R> {
     inner: XtcReader<R>,
-    offsets: Vec<u64>,
+    offsets: FrameOffsets,
 }
 
 impl<R> fmt::Debug for IndexedXtcReader<R> {
@@ -1134,7 +1156,43 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         topology: impl Into<Arc<Topology>>,
         options: XtcReadOptions,
     ) -> Result<Self, TrajectoryIoError> {
-        XtcReader::new(reader, topology, options)?.index_frames()
+        Self::build(
+            reader,
+            topology.into(),
+            options,
+            &IndexBuildControl::default(),
+        )
+    }
+
+    /// Indexes the stream like [`Self::new`], reporting to `control`.
+    pub(crate) fn build(
+        reader: R,
+        topology: Arc<Topology>,
+        options: XtcReadOptions,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<Self, TrajectoryIoError> {
+        XtcReader::new(reader, topology, options)?.index_frames(control)
+    }
+
+    /// Opens the stream with previously verified `offsets` instead of
+    /// scanning it; random reads verify each frame against them.
+    pub(crate) fn from_offsets(
+        reader: R,
+        topology: Arc<Topology>,
+        options: XtcReadOptions,
+        offsets: FrameOffsets,
+    ) -> Result<Self, TrajectoryIoError> {
+        let inner = XtcReader::new(reader, topology, options)?;
+        offsets.verify_start(
+            inner.stream_start,
+            TrajectoryFormat::Xtc,
+            &inner.options.source_label,
+        )?;
+        Ok(Self { inner, offsets })
+    }
+
+    pub(crate) fn offsets(&self) -> &FrameOffsets {
+        &self.offsets
     }
 
     /// The topology every frame belongs to.
@@ -1176,10 +1234,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        let offset = self
+        let (offset, _) = self
             .offsets
-            .get(index)
-            .copied()
+            .frame(index)
             .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
         let saved_offset = self
             .inner
@@ -1215,7 +1272,16 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             .inner
             .parse_next()
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|info| info.ok_or(TrajectoryIoError::frame_index_out_of_range(index)));
+            .and_then(|info| info.ok_or(TrajectoryIoError::frame_index_out_of_range(index)))
+            .and_then(|info| {
+                self.offsets.verify_stream_frame_end(
+                    index,
+                    &mut self.inner.adapter.reader,
+                    TrajectoryFormat::Xtc,
+                    &self.inner.options.source_label,
+                )?;
+                Ok(info)
+            });
         let restore = self
             .inner
             .adapter
