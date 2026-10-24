@@ -1,110 +1,39 @@
-//! Streaming superposition and trajectory reductions.
+//! Streaming superposition.
 //!
 //! In-memory superposition and RMSD are trajectory and ensemble methods in
 //! [`kekule::alignment`] (`trajectory.superpose(0, &selection, options)`,
 //! `trajectory.rmsd(&reference, &correspondence, options)`, ...). This module
-//! adds the streaming counterpart, [`FrameSuperposer`], and per-atom trajectory
-//! reductions, in which every frame counts once, that run either over a loaded
-//! trajectory ([`rmsf`], [`contact_occupancy`]) or frame by frame through
-//! accumulators.
+//! adds the streaming counterpart, [`FrameSuperposer`].
 //!
-//! Lengths are reported in the canonical length unit (nm).
+//! Weighted RMSF and contact occupancy live in [`kekule::statistics`]. Their
+//! accumulators observe a streamed frame through its buffer's
+//! `as_model_view()` with an explicit weight: one for equally weighted
+//! equilibrium frames, or a reweighting factor.
 //!
 //! # Examples
 //!
 //! ```
-//! use std::sync::Arc;
-//!
-//! use kekule::geometry::Point3;
-//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
-//! use kekule::topology::{AtomSelection, Topology};
-//! use kekule::units::{Quantity, NANOMETER};
-//! use kekule::smiles;
-//! use kekule_traj::analysis::{contact_occupancy, rmsf};
-//!
-//! let molecule = smiles::to_molecules("CC")?.pop().unwrap();
-//! let topology = Arc::new(Topology::from_molecule(molecule)?);
-//! let mut trajectory = Trajectory::new(Arc::clone(&topology));
-//! for x in [0.0, 0.5] {
-//!     let points = vec![Point3::new(x, 0.0, 0.0), Point3::new(0.15, 0.0, 0.0)];
-//!     let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
-//!     trajectory.push(TrajectoryFrame::new(positions))?;
+//! use kekule::statistics::{RmsfAccumulator, RmsfResult};
+//! use kekule::topology::AtomSelection;
+//! use kekule_traj::TrajectoryReader;
+//! # fn reduce(reader: &mut impl TrajectoryReader, atoms: &AtomSelection)
+//! # -> Result<RmsfResult, Box<dyn std::error::Error>> {
+//! let mut rmsf = RmsfAccumulator::new(atoms)?;
+//! let mut buffer = reader.frame_buffer();
+//! let mut index = 0;
+//! while reader.read_next(&mut buffer)? {
+//!     // Apply any intended periodic preprocessing and fitting here.
+//!     rmsf.observe(index, &buffer.as_model_view(), 1.0)?;
+//!     index += 1;
 //! }
-//!
-//! let fluctuation = rmsf(&trajectory, &AtomSelection::all(Arc::clone(&topology)))?;
-//! assert_eq!(fluctuation.frame_count(), 2);
-//! assert_eq!(fluctuation.values().value_in(NANOMETER)?, [0.25, 0.0]);
-//!
-//! let atoms = topology.atom_ids();
-//! let cutoff = Quantity::new(0.2, NANOMETER);
-//! let contacts = contact_occupancy(&trajectory, [(atoms[0], atoms[1])], cutoff)?;
-//! assert_eq!(contacts.hit_counts(), [1]);
-//! assert_eq!(contacts.contacts().next(), Some(((atoms[0], atoms[1]), 0.5)));
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! Ok(rmsf.finish()?)
+//! # }
 //! ```
 
 use kekule::alignment::{self, AlignmentError, AlignmentOptions, FitAtoms, RigidAlignment};
-use kekule::structure::{AsModelView, ModelView, TrajectoryFrameView};
+use kekule::structure::{AsModelView, ModelView};
 
 use crate::FrameBuffer;
-
-mod sealed {
-    /// Restricts [`super::AsFrameView`] to trajectory frames and buffers.
-    pub trait Sealed {}
-}
-
-/// A trajectory frame that reductions can observe: a borrowed
-/// [`TrajectoryFrameView`] or a [`FrameBuffer`].
-///
-/// Reductions count every frame once, so they accept trajectory frames only.
-/// Ensemble samples are weighted, and their statistics must use their
-/// weights, and a [`ModelView`] may borrow either kind of structure, so
-/// neither implements this sealed trait:
-///
-/// ```compile_fail,E0277
-/// # use kekule::{structure::Ensemble, topology::AtomSelection};
-/// # use kekule_traj::analysis::RmsfAccumulator;
-/// fn unweighted(ensemble: &Ensemble, atoms: &AtomSelection) {
-///     let mut rmsf = RmsfAccumulator::new(atoms).unwrap();
-///     let _ = rmsf.observe(0, &ensemble.get(0).unwrap());
-/// }
-/// ```
-///
-/// ```compile_fail,E0277
-/// # use kekule::{structure::Ensemble, topology::InstanceAtomId, units::{Quantity, ANGSTROM}};
-/// # use kekule_traj::analysis::ContactOccupancyAccumulator;
-/// fn unweighted(ensemble: &Ensemble, pairs: Vec<(InstanceAtomId, InstanceAtomId)>) {
-///     let topology = ensemble.shared_topology();
-///     let cutoff = Quantity::new(4.0, ANGSTROM);
-///     let mut contacts = ContactOccupancyAccumulator::new(&topology, pairs, cutoff).unwrap();
-///     let _ = contacts.observe(0, &ensemble.get(0).unwrap().as_model_view());
-/// }
-/// ```
-pub trait AsFrameView: sealed::Sealed {
-    /// Borrows the frame.
-    fn as_frame_view(&self) -> TrajectoryFrameView<'_>;
-}
-
-impl sealed::Sealed for TrajectoryFrameView<'_> {}
-impl sealed::Sealed for FrameBuffer {}
-
-impl AsFrameView for TrajectoryFrameView<'_> {
-    fn as_frame_view(&self) -> TrajectoryFrameView<'_> {
-        *self
-    }
-}
-
-impl AsFrameView for FrameBuffer {
-    fn as_frame_view(&self) -> TrajectoryFrameView<'_> {
-        self.frame_view()
-    }
-}
-
-mod reductions;
-pub use reductions::{
-    contact_occupancy, rmsf, ContactOccupancyAccumulator, ContactOccupancyResult, ReductionError,
-    RmsfAccumulator, RmsfResult,
-};
 
 /// A borrowed reference and fitting pairs for superposing streamed frames.
 ///
