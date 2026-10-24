@@ -75,6 +75,14 @@
 //! state before publication. Clean EOF is accepted only between frames,
 //! including through a bounded probe at exact frame/index limits.
 //!
+//! The path-backed scan reports [`TrajectoryIndexProgress`] and stops on a
+//! cancellation set in [`TrajectoryOpenOptions`]. Its offsets export as a
+//! portable, versioned [`TrajectoryFrameIndex`] bound to a
+//! [`TrajectoryFileFingerprint`] of the file, and
+//! [`open_indexed_trajectory_from_index`] reopens the file from it without
+//! scanning. Such a reader still verifies every frame it decodes and checks
+//! that each random read ends where the index places the next frame.
+//!
 //! Path writers stage a temporary sibling. Only consuming
 //! [`FileTrajectoryWriter::finish`] flushes, synchronizes, finalizes format
 //! metadata, and publishes a nonempty trajectory. Any failed frame write or an
@@ -96,6 +104,7 @@ pub mod dcd;
 mod detect;
 mod file_reader;
 mod file_writer;
+mod frame_index;
 mod limits;
 mod metadata;
 pub mod trr;
@@ -104,13 +113,14 @@ pub mod xtc;
 pub mod xyz;
 
 pub use file_reader::{
-    open_indexed_trajectory, open_trajectory, read_trajectory, IndexedFileTrajectoryReader,
-    SequentialFileTrajectoryReader,
+    open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory, read_trajectory,
+    IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
     create_trajectory_writer, write_trajectory, FileTrajectoryWriter, OverwritePolicy,
     TrajectoryWriteOptions,
 };
+pub use frame_index::{TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryIndexProgress};
 pub use limits::TrajectoryIoLimits;
 pub use metadata::{
     detect_trajectory_format, CoordinateEncoding, FieldAvailability, FileTrajectoryMetadata,
@@ -118,6 +128,7 @@ pub use metadata::{
     TrajectoryFormatDetection, TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryOpenReport,
 };
 
+pub(crate) use frame_index::{index_mismatch, FrameOffsets, IndexBuildControl};
 pub(crate) use limits::{projected_index_limit, reserve_index_for_push};
 pub(crate) use util::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, require_no_partial_frame,

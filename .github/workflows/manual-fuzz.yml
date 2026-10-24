@@ -24,6 +24,7 @@ on:
           - trajectory_dcd
           - trajectory_trr
           - trajectory_xtc
+          - trajectory_index
 
 permissions:
   contents: read

@@ -1,11 +1,13 @@
 use std::io;
 use std::path::Path;
 
+use kekule::diagnostics::Cancellation;
 use kekule::units::Quantity;
 
 use crate::{TrajectoryFormat, TrajectoryIoError};
 
-use super::{dcd, detect, trr, xtc, xyz, TrajectoryIoLimits};
+use super::frame_index::IndexProgressCallback;
+use super::{dcd, detect, trr, xtc, xyz, TrajectoryIndexProgress, TrajectoryIoLimits};
 
 /// Explicit selection or bounded automatic trajectory format detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -495,6 +497,8 @@ pub struct TrajectoryOpenOptions {
     pub(super) dcd: dcd::DcdReadOptions,
     pub(super) trr: trr::TrrReadOptions,
     pub(super) xtc: xtc::XtcReadOptions,
+    pub(super) index_cancellation: Option<Cancellation>,
+    pub(super) index_progress: Option<IndexProgressCallback>,
 }
 
 impl Default for TrajectoryOpenOptions {
@@ -506,6 +510,8 @@ impl Default for TrajectoryOpenOptions {
             dcd: dcd::DcdReadOptions::default(),
             trr: trr::TrrReadOptions::default(),
             xtc: xtc::XtcReadOptions::default(),
+            index_cancellation: None,
+            index_progress: None,
         }
     }
 }
@@ -551,6 +557,41 @@ impl TrajectoryOpenOptions {
     pub fn with_xtc_options(mut self, options: xtc::XtcReadOptions) -> Self {
         self.xtc = options;
         self
+    }
+
+    /// Sets [`Self::index_cancellation`].
+    #[must_use]
+    pub fn with_index_cancellation(mut self, cancellation: Cancellation) -> Self {
+        self.index_cancellation = Some(cancellation);
+        self
+    }
+
+    /// Sets the callback that [`open_indexed_trajectory`] calls with a
+    /// [`TrajectoryIndexProgress`] before the first frame and after every
+    /// verified frame while it builds its index, on the opening thread. It
+    /// should be cheap, such as storing atomics a progress bar reads. Clones
+    /// of these options share the callback. None by default.
+    ///
+    /// [`open_indexed_trajectory`]: super::open_indexed_trajectory
+    #[must_use]
+    pub fn with_index_progress(
+        mut self,
+        progress: impl Fn(TrajectoryIndexProgress) + Send + Sync + 'static,
+    ) -> Self {
+        self.index_progress = Some(IndexProgressCallback::new(progress));
+        self
+    }
+
+    /// The cancellation that [`open_indexed_trajectory`] polls before the
+    /// first frame and after every verified frame while it builds its index;
+    /// once requested, opening fails with
+    /// [`TrajectoryIoErrorKind::Cancelled`] and returns no reader. Other
+    /// operations do not poll it. None by default.
+    ///
+    /// [`open_indexed_trajectory`]: super::open_indexed_trajectory
+    /// [`TrajectoryIoErrorKind::Cancelled`]: crate::TrajectoryIoErrorKind::Cancelled
+    pub const fn index_cancellation(&self) -> Option<&Cancellation> {
+        self.index_cancellation.as_ref()
     }
 
     /// How the format is selected; [`TrajectoryFormatHint::Auto`] by default.
