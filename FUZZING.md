@@ -19,9 +19,9 @@ per reported inferred bond. The trajectory targets are `trajectory_detection`,
 `trajectory_xyz`, `trajectory_dcd`, `trajectory_trr`, `trajectory_xtc`, and
 `trajectory_index`. `trajectory_index` decodes untrusted frame indexes, each
 accepted one re-encoding to the same bytes, and opens a fixture of every
-format through checksummed indexes with fuzzed offsets: every frame read
-through one must be a frame of the file. Its seeds are the indexes of those
-fixtures.
+format through checksummed indexes with fuzzed offsets, each with the step
+and time of a frame of the file: every frame read through one must be a frame
+of the file. Its seeds are the version 2 indexes of those fixtures.
 `native` decodes Kekule's native binary format under small resource limits;
 every successfully decoded object must encode, decode again, and re-encode to
 the same bytes. Its seeds are native encodings of small objects of every kind.

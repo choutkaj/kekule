@@ -8,7 +8,8 @@ use kekule::diagnostics::{Cancellation, Cancelled};
 use kekule::geometry::Point3;
 use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule::units::{Quantity, FEMTOSECOND, NANOMETER, PICOSECOND};
+use kekule_traj::io::dcd::{DcdReadOptions, DcdTimePolicy};
 use kekule_traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions, TrrWriter};
 use kekule_traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, CoordinateEncoding,
@@ -106,16 +107,66 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     })
 }
 
-/// Re-encodes `bytes` with `starts` as its frame offsets and a valid checksum.
-fn forge(bytes: &[u8], starts: &[u64]) -> Vec<u8> {
-    let mut forged = bytes[..48].to_vec();
+/// Re-encodes `index` with `starts` as its frame offsets, the steps and times
+/// of its first `starts.len()` frames, and a valid checksum.
+fn forge(index: &TrajectoryFrameIndex, starts: &[u64]) -> Vec<u8> {
+    let mut forged = index.to_bytes()[..48].to_vec();
     forged.extend_from_slice(&(starts.len() as u64).to_le_bytes());
     for start in starts {
         forged.extend_from_slice(&start.to_le_bytes());
     }
+    for step in index
+        .steps()
+        .map(|steps| &steps[..starts.len()])
+        .unwrap_or_default()
+    {
+        forged.extend_from_slice(&step.to_le_bytes());
+    }
+    let times = index.times();
+    for time in times
+        .as_ref()
+        .map(|times| &times.value()[..starts.len()])
+        .unwrap_or_default()
+    {
+        forged.extend_from_slice(&time.to_le_bytes());
+    }
     let checksum = fnv1a(&forged);
     forged.extend_from_slice(&checksum.to_le_bytes());
     forged
+}
+
+/// Recomputes the checksum of an edited encoding.
+fn reencode(bytes: &mut [u8]) {
+    let body = bytes.len() - 8;
+    let checksum = fnv1a(&bytes[..body]);
+    bytes[body..].copy_from_slice(&checksum.to_le_bytes());
+}
+
+/// Checks that `index` holds exactly the steps and times, in picoseconds, of
+/// `frames`.
+fn assert_stamps(index: &TrajectoryFrameIndex, frames: &[TrajectoryFrame]) {
+    let (steps, times): (Vec<_>, Vec<_>) = frames
+        .iter()
+        .map(|frame| {
+            (
+                frame.step(),
+                frame.time().map(|time| time.value_in(PICOSECOND).unwrap()),
+            )
+        })
+        .unzip();
+    let indexed_steps = index.steps().map_or_else(
+        || vec![None; frames.len()],
+        |steps| steps.iter().copied().map(Some).collect(),
+    );
+    let indexed_times = index.times().map_or_else(
+        || vec![None; frames.len()],
+        |times| {
+            assert_eq!(times.unit(), PICOSECOND);
+            times.value().iter().copied().map(Some).collect()
+        },
+    );
+    assert_eq!(indexed_steps, steps);
+    assert_eq!(indexed_times, times);
 }
 
 fn kind<T>(result: Result<T, TrajectoryIoError>) -> TrajectoryIoErrorKind {
@@ -160,10 +211,20 @@ fn exported_indexes_reopen_every_format_with_identical_frames_and_metadata() {
             index.fingerprint().modified(),
             fs::metadata(&path).unwrap().modified().ok()
         );
+        // Steps and times are those the frames record, and survive encoding.
+        let (has_steps, has_times) = match index.format() {
+            TrajectoryFormat::Xyz => (false, false),
+            TrajectoryFormat::Dcd => (true, false),
+            _ => (true, true),
+        };
+        assert_eq!(index.steps().is_some(), has_steps, "{name}");
+        assert_eq!(index.times().is_some(), has_times, "{name}");
+        assert_stamps(&index, &expected);
         let bytes = index.to_bytes();
         let decoded =
             TrajectoryFrameIndex::from_bytes(&bytes, &TrajectoryIoLimits::default()).unwrap();
         assert_eq!(decoded, index);
+        assert_stamps(&decoded, &expected);
 
         let mut reopened = reopen(&path, &topology, &bytes).unwrap();
         assert_eq!(reopened.metadata(), built.metadata(), "{name}");
@@ -250,14 +311,13 @@ fn forged_offsets_fail_the_frames_they_misplace_and_no_other() {
             open_indexed_trajectory(&path, Arc::clone(&topology), Default::default()).unwrap();
         let expected = frames(&mut built);
         let index = built.to_frame_index();
-        let bytes = index.to_bytes();
         let starts = index.frame_offsets().to_vec();
 
         // A first offset that is not the file's first frame fails to open.
         for delta in [1_u64, 4] {
             let mut forged = starts.clone();
             forged[0] += delta;
-            let error = reopen(&path, &topology, &forge(&bytes, &forged)).unwrap_err();
+            let error = reopen(&path, &topology, &forge(&index, &forged)).unwrap_err();
             assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch, "{name}");
         }
 
@@ -268,7 +328,7 @@ fn forged_offsets_fail_the_frames_they_misplace_and_no_other() {
             for delta in [-4_i64, -1, 1, 4] {
                 let mut forged = starts.clone();
                 forged[moved] = forged[moved].checked_add_signed(delta).unwrap();
-                let mut reader = reopen(&path, &topology, &forge(&bytes, &forged)).unwrap();
+                let mut reader = reopen(&path, &topology, &forge(&index, &forged)).unwrap();
                 let mut buffer = reader.frame_buffer();
                 for (frame, expected) in expected.iter().enumerate() {
                     let result = reader.read_frame(frame, &mut buffer);
@@ -290,7 +350,7 @@ fn forged_offsets_fail_the_frames_they_misplace_and_no_other() {
         let mut swapped = starts.clone();
         swapped.swap(0, 1);
         assert_eq!(
-            kind(reopen(&path, &topology, &forge(&bytes, &swapped))),
+            kind(reopen(&path, &topology, &forge(&index, &swapped))),
             TrajectoryIoErrorKind::InvalidIndex
         );
     }
@@ -304,10 +364,110 @@ fn a_dcd_index_must_count_the_declared_frames() {
     let index = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
         .unwrap()
         .to_frame_index();
-    let bytes = forge(&index.to_bytes(), &index.frame_offsets()[..1]);
+    let bytes = forge(&index, &index.frame_offsets()[..1]);
     let error = reopen(&path, &topology, &bytes).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
     assert_eq!((error.expected(), error.actual()), (Some(2), Some(1)));
+}
+
+#[test]
+fn indexes_of_the_previous_version_are_refused() {
+    let directory = Directory::new();
+    for (name, topology) in fixtures() {
+        let path = directory.fixture(name);
+        let index = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
+            .unwrap()
+            .to_frame_index();
+        // Version 1 had the same header without step and time flags, then
+        // the offsets alone.
+        let mut previous = index.to_bytes()[..56 + 8 * index.frame_count()].to_vec();
+        previous[8..12].copy_from_slice(&1_u32.to_le_bytes());
+        previous[13] &= 1;
+        previous.extend_from_slice(&[0; 8]);
+        reencode(&mut previous);
+        let error = reopen(&path, &topology, &previous).unwrap_err();
+        assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidIndex, "{name}");
+        assert!(error.detail().unwrap().contains("version 1"), "{name}");
+    }
+}
+
+#[test]
+fn forged_times_and_steps_fail_their_frame_and_no_other() {
+    let directory = Directory::new();
+    for (name, topology) in &fixtures()[2..] {
+        let path = directory.fixture(name);
+        let mut built =
+            open_indexed_trajectory(&path, Arc::clone(topology), Default::default()).unwrap();
+        let expected = frames(&mut built);
+        let bytes = built.to_frame_index().to_bytes();
+        let count = expected.len();
+        let steps_at = 56 + 8 * count;
+        let times_at = steps_at + 8 * count;
+        for (table, frame) in [(steps_at, 1), (times_at, count - 1)] {
+            let mut forged = bytes.clone();
+            forged[table + 8 * frame] ^= 1;
+            reencode(&mut forged);
+            let mut reader = reopen(&path, topology, &forged).unwrap();
+            let mut buffer = reader.frame_buffer();
+            for (index, expected) in expected.iter().enumerate() {
+                let result = reader.read_frame(index, &mut buffer);
+                if index == frame {
+                    let error = result.unwrap_err();
+                    assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch, "{name}");
+                    assert_eq!(error.operation(), Some(TrajectoryIoOperation::ReadFrame));
+                    assert_eq!(error.frame(), Some(frame));
+                } else {
+                    result.unwrap();
+                    assert_eq!(buffer.frame_view().payload(), expected, "{name}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn dcd_indexes_record_times_under_the_header_delta_policy_they_were_built_with() {
+    let directory = Directory::new();
+    let path = directory.fixture("mdanalysis-2.9.0-three-atoms.dcd");
+    let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
+    let with_policy = |policy| {
+        TrajectoryOpenOptions::default()
+            .with_dcd_options(DcdReadOptions::default().with_time_policy(policy))
+    };
+    let timed = with_policy(DcdTimePolicy::HeaderDelta { unit: FEMTOSECOND });
+    let mut built = open_indexed_trajectory(&path, Arc::clone(&topology), timed.clone()).unwrap();
+    let expected = frames(&mut built);
+    let index = built.to_frame_index();
+    assert!(index.times().is_some());
+    assert_stamps(&index, &expected);
+    let bytes = index.to_bytes();
+    assert_eq!(bytes[13], 0b110);
+    let decoded = TrajectoryFrameIndex::from_bytes(&bytes, &TrajectoryIoLimits::default()).unwrap();
+    assert_stamps(&decoded, &expected);
+
+    // The same policy reopens it with the same frames.
+    let mut reopened =
+        open_indexed_trajectory_from_index(&path, Arc::clone(&topology), decoded.clone(), timed)
+            .unwrap();
+    assert_eq!(frames(&mut reopened), expected);
+    assert_eq!(reopened.to_frame_index(), index);
+
+    // Another policy would give the frames other times than the index.
+    for policy in [
+        DcdTimePolicy::Absent,
+        DcdTimePolicy::HeaderDelta { unit: PICOSECOND },
+    ] {
+        let error = open_indexed_trajectory_from_index(
+            &path,
+            Arc::clone(&topology),
+            decoded.clone(),
+            with_policy(policy),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
+        assert_eq!(error.operation(), Some(TrajectoryIoOperation::Open));
+        assert!(error.frame().is_some());
+    }
 }
 
 #[test]
@@ -422,17 +582,15 @@ fn trr_indexes_keep_mixed_precision_and_verify_it_per_frame() {
     };
     assert_eq!(built.metadata().coordinate_encoding(), mixed);
     let bytes = built.to_frame_index().to_bytes();
-    assert_eq!(bytes[13], 1);
+    assert_eq!(bytes[13] & 1, 1);
     let mut reopened = reopen(&path, &topology, &bytes).unwrap();
     assert_eq!(reopened.metadata().coordinate_encoding(), mixed);
     assert_eq!(frames(&mut reopened), expected);
 
     // An index claiming uniform width rejects the f64 frame.
     let mut uniform = bytes.clone();
-    uniform[13] = 0;
-    let body = uniform.len() - 8;
-    let checksum = fnv1a(&uniform[..body]);
-    uniform[body..].copy_from_slice(&checksum.to_le_bytes());
+    uniform[13] &= !1;
+    reencode(&mut uniform);
     let mut reader = reopen(&path, &topology, &uniform).unwrap();
     let mut buffer = reader.frame_buffer();
     reader.read_frame(0, &mut buffer).unwrap();

@@ -71,7 +71,7 @@ use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
-    require_nonempty_writer, FrameOffsets, IndexBuildControl, TrajectoryIoLimits,
+    require_nonempty_writer, FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
 };
 
 const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
@@ -694,6 +694,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
             offsets.push(
                 offset,
                 end,
+                FrameStamp::default(),
                 &self.options.limits,
                 TrajectoryFormat::Xyz,
                 &self.options.source_label,

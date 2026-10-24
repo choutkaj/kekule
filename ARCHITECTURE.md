@@ -412,8 +412,8 @@ the same atoms through that file's topology.
 An indexed reader verifies every frame before random access. One opened from
 an exported frame index instead checks the file's fingerprint, then verifies
 each frame as it decodes it and checks that the frame ends where the index
-places the next; an index never makes a reader return a frame it has not
-verified. Streaming buffers bind to one topology layout and publish complete frames
+places the next and records the time and step the index holds for it; an
+index never makes a reader return a frame it has not verified. Streaming buffers bind to one topology layout and publish complete frames
 transactionally. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
 unsupported fields and collection properties are rejected rather than discarded.

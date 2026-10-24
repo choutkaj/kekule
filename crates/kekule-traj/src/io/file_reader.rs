@@ -142,8 +142,8 @@ impl IndexedFileTrajectoryReader {
         &self.metadata
     }
 
-    /// Exports the frame offsets with the file's fingerprint, copying them,
-    /// for [`open_indexed_trajectory_from_index`].
+    /// Exports the frame offsets, times, and steps with the file's
+    /// fingerprint, copying them, for [`open_indexed_trajectory_from_index`].
     pub fn to_frame_index(&self) -> TrajectoryFrameIndex {
         let precision_mixed = match &self.inner {
             IndexedReaderInner::Trr(reader) => reader.precision_mixed(),
@@ -464,10 +464,12 @@ pub fn open_indexed_trajectory(
 /// [`open_indexed_trajectory`]; the index cancellation and progress callback
 /// are not used. Opening fingerprints the file and checks the fingerprint,
 /// the format, the header, and the first frame against the index, and reads
-/// the frame offsets from the index alone. Every frame read later is fully
-/// verified as it is decoded, and a random read checks that the frame ends
-/// exactly where the index places the next frame, or at the end of the file,
-/// so a wrong index yields an error rather than a wrong frame. Metadata
+/// the frame offsets, times, and steps from the index alone. Every frame read
+/// later is fully verified as it is decoded, and a random read checks that the
+/// frame ends exactly where the index places the next frame, or at the end of
+/// the file, and records the index's time and step, so a wrong index yields an
+/// error rather than a wrong frame. DCD times follow the reader's time policy,
+/// so a DCD index opens only under the policy it was built with. Metadata
 /// reports the index's frame count and, for TRR, whether its frames mix
 /// scalar widths.
 ///
@@ -475,12 +477,13 @@ pub fn open_indexed_trajectory(
 ///
 /// Returns [`TrajectoryIoErrorKind::IndexMismatch`] when the index was built
 /// for a different file or the file changed since: its fingerprint, format,
-/// first frame offset, or DCD frame count disagrees. Returns the open and
+/// first frame offset, DCD frame count, or DCD steps and times under the
+/// reader's time policy disagree. Returns the open and
 /// header errors of [`open_trajectory`], and the frame index limits of
 /// `options` bound the index as [`TrajectoryIoErrorKind::LimitExceeded`].
 /// Later reads return [`TrajectoryIoErrorKind::IndexMismatch`] for a frame
-/// that does not end where the index says, besides the codec's decoding
-/// errors.
+/// that does not end where the index says or records another time or step,
+/// besides the codec's decoding errors.
 ///
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::TrajectoryIoErrorKind::IndexMismatch
 /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::TrajectoryIoErrorKind::LimitExceeded

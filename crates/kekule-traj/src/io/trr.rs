@@ -76,7 +76,7 @@ use kekule::units::{
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_detail,
-    FrameOffsets, IndexBuildControl, TrajectoryIoLimits,
+    FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
 };
 
 const TRR_MAGIC: i32 = 1993;
@@ -251,6 +251,14 @@ impl TrrFrameHeader {
 
     pub(crate) const fn has_forces(&self) -> bool {
         self.f_size != 0
+    }
+
+    /// The time, in picoseconds, and step the frame records.
+    const fn stamp(&self) -> FrameStamp {
+        FrameStamp {
+            time: Some(self.time),
+            step: Some(self.step),
+        }
     }
 }
 
@@ -691,13 +699,12 @@ impl<R: Read + Seek> TrrReader<R> {
                     )
                 })?
             };
-            if self
+            let Some(decoded) = self
                 .parse_next()
                 .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
-                .is_none()
-            {
+            else {
                 break;
-            }
+            };
             let end = self.reader.stream_position().map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
@@ -709,6 +716,7 @@ impl<R: Read + Seek> TrrReader<R> {
             offsets.push(
                 offset,
                 end,
+                decoded.header.stamp(),
                 &self.options.limits,
                 TrajectoryFormat::Trr,
                 &self.options.source_label,
@@ -967,6 +975,13 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
                 self.offsets.verify_stream_frame_end(
                     index,
                     &mut self.inner.reader,
+                    TrajectoryFormat::Trr,
+                    &self.inner.options.source_label,
+                )?;
+                self.offsets.verify_stamp(
+                    index,
+                    decoded.header.stamp(),
+                    TrajectoryIoOperation::ReadFrame,
                     TrajectoryFormat::Trr,
                     &self.inner.options.source_label,
                 )?;
