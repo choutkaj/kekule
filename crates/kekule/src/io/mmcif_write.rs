@@ -6,7 +6,7 @@ use crate::io::structure_interpret::{
     EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
     StructureInterpretationReport,
 };
-use crate::io::write_error::{check_multi_model_ensemble, check_structure_state, Omissions};
+use crate::io::write_error::{check_structure_state, record_multi_model_ensemble, Omissions};
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::molecule::BondOrder;
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
@@ -981,7 +981,7 @@ fn write_ensemble_block_to(
     };
     // Omissions are recorded only once the block has reached the sink.
     let mut ensemble_omissions = Omissions::default();
-    check_multi_model_ensemble(ensemble, options.ensemble_metadata, &mut ensemble_omissions)
+    record_multi_model_ensemble(ensemble, options.ensemble_metadata, &mut ensemble_omissions)
         .map_err(|(sample, field)| {
             let field = match field {
                 StructureField::Weight => MmcifSampleField::Weight,

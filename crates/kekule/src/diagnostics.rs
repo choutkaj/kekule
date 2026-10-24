@@ -29,7 +29,10 @@
 use std::fmt;
 use std::sync::Arc;
 
-pub use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
+pub use crate::io::{
+    check_multi_model_ensemble, UnrepresentablePolicy, UnrepresentableSampleState, WriteOmission,
+    WriteReport,
+};
 
 /// A position in the original input text.
 ///

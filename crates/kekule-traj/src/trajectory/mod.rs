@@ -182,7 +182,7 @@ impl fmt::Display for TrajectoryIoErrorKind {
     }
 }
 
-/// Frame state a trajectory format cannot store.
+/// Frame or ensemble state a trajectory format cannot store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TrajectoryField {
@@ -202,8 +202,18 @@ pub enum TrajectoryField {
     BondProperties,
     /// Properties of the frame itself.
     Properties,
-    /// Properties of the frame collection.
+    /// Properties of the frame collection or ensemble.
     CollectionProperties,
+    /// An ensemble sample's relative weight.
+    Weight,
+    /// The energy of an ensemble sample's state.
+    Energy,
+    /// The grouping of ensemble samples into states.
+    State,
+    /// The temperature an ensemble's populations describe.
+    Temperature,
+    /// Properties of an ensemble state.
+    StateProperties,
 }
 
 impl fmt::Display for TrajectoryField {
@@ -218,6 +228,11 @@ impl fmt::Display for TrajectoryField {
             Self::BondProperties => "bond properties",
             Self::Properties => "frame properties",
             Self::CollectionProperties => "collection properties",
+            Self::Weight => "ensemble sample weight",
+            Self::Energy => "ensemble state energy",
+            Self::State => "ensemble state",
+            Self::Temperature => "ensemble temperature",
+            Self::StateProperties => "ensemble state properties",
         })
     }
 }

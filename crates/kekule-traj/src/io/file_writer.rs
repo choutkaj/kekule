@@ -307,7 +307,7 @@ impl FileTrajectoryWriter {
         self.format
     }
 
-    /// The topology content the written frames leave out: for XYZ,
+    /// The content the frames written so far leave out: for XYZ,
     /// [`xyz::XyzWriter::report`]. DCD, TRR, and XTC store coordinates for a
     /// topology their readers receive separately, so their reports are
     /// empty.
@@ -351,8 +351,10 @@ impl TrajectoryWriter for FileTrajectoryWriter {
                 "trajectory writer has already finished",
             )),
         };
-        if result.is_err() {
-            self.failed = true;
+        match (&result, &self.inner) {
+            (Err(_), _) => self.failed = true,
+            (Ok(()), Some(FileWriterInner::Xyz(writer))) => self.report = writer.report().clone(),
+            _ => {}
         }
         result
     }
@@ -378,8 +380,9 @@ impl Drop for FileTrajectoryWriter {
 /// The destination is published atomically only after every frame and finalization
 /// succeeds. Empty trajectories are rejected by the writer.
 ///
-/// Returns the [`FileTrajectoryWriter::report`] of the topology content the
-/// file leaves out, such as the bonds of an XYZ file.
+/// Returns the [`FileTrajectoryWriter::report`] of the content the file
+/// leaves out, such as the bonds of an XYZ file or the cells its options
+/// omit.
 ///
 /// # Errors
 ///

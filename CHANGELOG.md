@@ -145,6 +145,27 @@ are marked **Breaking:**.
   separately. `WriteOmission` gains `FormalCharges` and `AtomSites`, and
   `WriteReport` gains `is_empty`, `Default`, and `FromIterator`, which merges
   repeated kinds as writers do.
+- `XyzWriter::write_ensemble` writes an `Ensemble` as XYZ, one frame per
+  sample in sample order (SeekDelta K33), so a host no longer turns samples
+  into frames and reports the loss itself. The whole ensemble is checked
+  before its first frame. Sample state follows the PDB and mmCIF ensemble
+  rules under the new `XyzWriteOptions::ensemble_metadata`: unequal weights,
+  more than one state, state energies, and a temperature fail by default
+  (`TrajectoryIoErrorKind::UnsupportedField`, naming the sample's frame) and
+  are reported as `WriteOmission::StructureState` under
+  `UnrepresentablePolicy::Omit`; the file reads back as one state of equally
+  weighted samples. The new `XyzWriteOptions::cell` lets frames and samples
+  with a periodic cell be written without it, reported as
+  `WriteOmission::Cell`; cells still fail by default. Occupancies and B
+  factors are always left out and reported, as the new
+  `WriteOmission::Occupancies` and `WriteOmission::BFactors`; ensemble,
+  state, and sample properties fail. `XyzWriter::report` and
+  `FileTrajectoryWriter::report` now cover everything written so far.
+  `TrajectoryField` gains `Weight`, `Energy`, `State`, `Temperature`, and
+  `StateProperties`. The shared rules are public as
+  `diagnostics::check_multi_model_ensemble`, which returns the report of
+  what a multi-model file would lose or the first
+  `UnrepresentableSampleState`.
 - Imaging a frame onto a reference structure in `kekule_traj::periodic`:
   `MoleculeImager::image_onto` moves each whole molecule of a buffered frame
   by the lattice vector of the frame's cell that brings its center nearest the
