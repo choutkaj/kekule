@@ -10,9 +10,10 @@ mod syntax;
 
 use std::fmt;
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
+use crate::geometry::Point3;
 use crate::properties::PropertyKey;
 use crate::structure::{AsModelView, ModelView, Positions};
 use crate::substructure::{SubstructureMatchError, SubstructureMatchOptions};
@@ -338,7 +339,107 @@ pub enum HostValue {
     /// Atoms of the evaluated topology.
     Atoms(AtomSelection),
     /// Points, accepted only for [`HostRole::Reference`].
-    Points(Positions),
+    Points(ReferencePoints),
+}
+
+/// Points a host supplies to the reference of `within`, Cartesian, in the
+/// evaluated structure's frame; no imaging is applied.
+///
+/// The points are indexed for neighbor search on first use, once for each
+/// cutoff they are measured with, and clones share the points and their
+/// indexes. A host that evaluates one selection over many structures builds
+/// the reference points once and returns a clone for each structure, so
+/// `within` costs time in the evaluated atoms plus the reference points
+/// rather than in their product. The points may include atoms the reference
+/// also selects in the evaluated structure, so one set serves every
+/// structure of an evaluation; repeated points do not change a result.
+#[derive(Clone, Default)]
+pub struct ReferencePoints {
+    shared: Arc<SharedPoints>,
+}
+
+#[derive(Default)]
+struct SharedPoints {
+    positions: Positions,
+    /// Grids built so far, keyed by the bits of their cutoff.
+    grids: Mutex<Vec<(u64, Arc<grid::Grid>)>>,
+}
+
+impl ReferencePoints {
+    /// Wraps points for sharing; they are indexed when first measured.
+    pub fn new(positions: Positions) -> Self {
+        Self {
+            shared: Arc::new(SharedPoints {
+                positions,
+                grids: Mutex::default(),
+            }),
+        }
+    }
+
+    /// The points, in canonical length units.
+    pub fn positions(&self) -> &Positions {
+        &self.shared.positions
+    }
+
+    /// The number of points.
+    pub fn len(&self) -> usize {
+        self.points().len()
+    }
+
+    /// Whether there are no points.
+    pub fn is_empty(&self) -> bool {
+        self.points().is_empty()
+    }
+
+    fn points(&self) -> &[Point3] {
+        self.shared.positions.values().value()
+    }
+
+    /// Marks the index of every candidate within `cutoff` (canonical units,
+    /// inclusive) of a point, building the cutoff's grid on first use.
+    pub(crate) fn mark_within(
+        &self,
+        candidates: impl IntoIterator<Item = (usize, Point3)>,
+        cutoff: f64,
+        mark: impl FnMut(usize),
+    ) {
+        if self.is_empty() {
+            return;
+        }
+        let key = cutoff.to_bits();
+        let grid = {
+            // A poisoned lock holds only complete grids.
+            let mut grids = self
+                .shared
+                .grids
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match grids.iter().find(|(bits, _)| *bits == key) {
+                Some((_, grid)) => Arc::clone(grid),
+                None => {
+                    let grid = Arc::new(grid::Grid::new(self.points(), cutoff));
+                    grids.push((key, Arc::clone(&grid)));
+                    grid
+                }
+            }
+        };
+        grid.mark(self.points(), candidates, mark);
+    }
+}
+
+impl From<Positions> for ReferencePoints {
+    fn from(positions: Positions) -> Self {
+        Self::new(positions)
+    }
+}
+
+impl fmt::Debug for ReferencePoints {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ReferencePoints")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// A host's failure to resolve a term.
@@ -400,6 +501,11 @@ impl std::error::Error for HostTermError {
 /// for a `within` reference: [`Self::resolve`] answers a reference that is a
 /// host term (`within 5 of #2`), and [`Self::reference_points`] adds points
 /// to any other reference (`within 5 of ligand`).
+///
+/// A host that evaluates one selection over many structures answers a
+/// reference with the same [`ReferencePoints`] for each of them, built once
+/// per evaluation: clones share one spatial index, so the cost of `within`
+/// grows with the atoms plus the reference points, not their product.
 pub trait SelectionResolver {
     /// Resolves one term.
     ///
@@ -420,10 +526,12 @@ pub trait SelectionResolver {
     /// reference selects in the evaluated structure. A host holding other
     /// structures in the same frame evaluates `reference` on them with
     /// [`SelectionExpr::evaluate_structure`] and returns the positions of the
-    /// atoms it selects there. That evaluation takes whatever resolver the
-    /// host passes, so references and host terms nested in `reference`
-    /// resolve as in any evaluation; each nested reference is a strictly
-    /// smaller part of `reference`.
+    /// atoms it selects there. The points may also include the atoms the
+    /// reference selects in the evaluated structure, which change nothing, so
+    /// one [`ReferencePoints`] of every structure can answer for each of them.
+    /// That evaluation takes whatever resolver the host passes, so references
+    /// and host terms nested in `reference` resolve as in any evaluation; each
+    /// nested reference is a strictly smaller part of `reference`.
     ///
     /// `reference` is part of the evaluated expression: it displays as
     /// canonical text, and spans in its evaluation errors index the text the
@@ -442,9 +550,9 @@ pub trait SelectionResolver {
         &self,
         reference: &SelectionExpr,
         request: HostRequest<'_>,
-    ) -> Result<Positions, HostTermError> {
+    ) -> Result<ReferencePoints, HostTermError> {
         let _ = (reference, request);
-        Ok(Positions::default())
+        Ok(ReferencePoints::default())
     }
 }
 

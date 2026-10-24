@@ -625,7 +625,7 @@ pub mod smiles {
 pub mod select {
     use crate::diagnostics::FormatError;
     pub use crate::selection_language::{
-        HostRequest, HostRole, HostTerm, HostTermError, HostTermKind, HostValue,
+        HostRequest, HostRole, HostTerm, HostTermError, HostTermKind, HostValue, ReferencePoints,
         SelectEvaluateError, SelectEvaluateOptions, SelectParseOptions, SelectionExpr,
         SelectionResolver, DEFAULT_SELECT_MAX_DEPTH, DEFAULT_SELECT_MAX_INPUT_BYTES,
         DEFAULT_SELECT_MAX_SMARTS_MATCHES,

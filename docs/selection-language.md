@@ -143,7 +143,9 @@ perceives.
 
 `within` uses a uniform spatial grid with cells of the cutoff size, so its
 cost grows with the atoms near the reference, not with the product of the
-two sets.
+two sets. Points a host supplies come as `select::ReferencePoints`, which
+keep their grid, so a host evaluating one selection over many structures
+builds them once and grids them once for each cutoff.
 
 ## Host extensions
 
@@ -168,7 +170,10 @@ that keeps a receptor and its ligand as two structures evaluates the
 reference, itself a `SelectionExpr`, on the ligand structure and returns the
 positions of the atoms it selects there, so `within 5 of ligand` evaluated on
 the receptor selects the pocket. References nested in it reach the resolver
-again during that evaluation. Evaluation still reads one structure: others
+again during that evaluation. The points may include the atoms the reference
+selects in the evaluated structure itself, so a host evaluating one selection
+over many structures answers each reference with one `ReferencePoints` of
+every structure, shared by all of them. Evaluation still reads one structure: others
 contribute only the points the host supplies, and without them a reference
 reads the evaluated structure alone.
 

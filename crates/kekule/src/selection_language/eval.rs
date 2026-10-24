@@ -8,13 +8,13 @@ use super::ast::{
     DistanceUnit, Field, Flag, HostTermKind, Level, Literal, Node, NodeKind, ValueMatch,
 };
 use super::{
-    HostRequest, HostRole, HostTerm, HostValue, SelectEvaluateError, SelectEvaluateOptions,
-    SelectionExpr,
+    HostRequest, HostRole, HostTerm, HostValue, ReferencePoints, SelectEvaluateError,
+    SelectEvaluateOptions, SelectionExpr,
 };
 use crate::geometry::Point3;
 use crate::molecule::{Element, Molecule};
 use crate::properties::{PropertyColumn, PropertyKey};
-use crate::structure::{ModelView, Positions};
+use crate::structure::ModelView;
 use crate::topology::{
     AtomSelection, InstanceAtomId, MoleculeClass, ResidueClass, ResidueView, Topology,
     TopologyAtomIndex,
@@ -346,9 +346,9 @@ impl<'a> Evaluator<'a> {
 
     /// The points a resolver adds to a `within` reference that is not a host
     /// term.
-    fn reference_points(&self, reference: &SelectionExpr) -> Result<Positions> {
+    fn reference_points(&self, reference: &SelectionExpr) -> Result<ReferencePoints> {
         let Some(resolver) = self.options.resolver() else {
-            return Ok(Positions::default());
+            return Ok(ReferencePoints::default());
         };
         resolver
             .reference_points(reference, self.request(HostRole::Reference))
@@ -392,28 +392,43 @@ impl<'a> Evaluator<'a> {
             })?;
         let positions: &[Point3] = view.positions().values().value();
         let root = &reference.root;
-        let references: Vec<Point3> = match &root.kind {
+        // Atoms the reference selects here are gridded for this structure;
+        // host points carry their own grid, shared across structures.
+        let (local, host): (Vec<Point3>, ReferencePoints) = match &root.kind {
             NodeKind::Host(kind, text) => {
                 match self.host(root, *kind, text, HostRole::Reference)? {
-                    HostValue::Atoms(selection) => selection
-                        .indices()
-                        .iter()
-                        .filter_map(|index| positions.get(index.index()).copied())
-                        .collect(),
-                    HostValue::Points(points) => points.values().value().to_vec(),
+                    HostValue::Atoms(selection) => (
+                        selection
+                            .indices()
+                            .iter()
+                            .filter_map(|index| positions.get(index.index()).copied())
+                            .collect(),
+                        ReferencePoints::default(),
+                    ),
+                    HostValue::Points(points) => (Vec::new(), points),
                 }
             }
             _ => {
                 let bits = self.node(root)?;
                 let added = self.reference_points(reference)?;
-                bits.ones()
-                    .filter_map(|index| positions.get(index).copied())
-                    .chain(added.values().value().iter().copied())
-                    .collect()
+                (
+                    bits.ones()
+                        .filter_map(|index| positions.get(index).copied())
+                        .collect(),
+                    added,
+                )
             }
         };
         let mut bits = Bits::empty(self.len());
-        super::grid::within(positions, &references, cutoff, |index| bits.set(index));
+        super::grid::within(positions, &local, cutoff, |index| bits.set(index));
+        if !host.is_empty() {
+            // Atoms already near a local reference atom need no second look.
+            let pending = (0..positions.len())
+                .filter(|&index| !bits.get(index))
+                .map(|index| (index, positions[index]))
+                .collect::<Vec<_>>();
+            host.mark_within(pending, cutoff, |index| bits.set(index));
+        }
         Ok(bits)
     }
 
