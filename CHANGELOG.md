@@ -187,6 +187,31 @@ are marked **Breaking:**.
     `IndexMismatch`.
   - `Cancellation::check` returns `Cancelled` once cancellation is requested,
     for cancellable operations in companion crates.
+- Sampling a trajectory into an ensemble of one state, without consuming it.
+  - `TrajectorySampling` chooses the frames, in sample order, so sample `i`
+    is frame `frames()[i]`; ranges and strides are
+    `(start..end).step_by(stride)`, and reordering and duplicates are
+    allowed. `with_weights` gives each sample a finite, positive weight
+    (`1.0` by default), and `with_atoms` an `AtomSelection` whose induced
+    subset topology the ensemble gets, as `Trajectory::subset` publishes it.
+  - `Trajectory::to_ensemble` copies only the requested frames. Samples keep
+    positions, cells, and structure properties; time, step, velocities, and
+    forces are dropped, as `into_ensemble` drops them. Trajectory properties
+    are kept without an atom subset and dropped with one, together with
+    per-frame owner properties.
+  - `TrajectorySampler` prepares a sampling against a topology and collects
+    frames that arrive one at a time, in any order, for frames that are not
+    loaded.
+  - In `kekule-traj`, `read_ensemble` reads a `TrajectoryReader`
+    sequentially and stops after the last requested frame, and
+    `read_ensemble_seekable` reads only the requested frames of a
+    `SeekableTrajectoryReader`, keeping its cursor. Memory beyond the
+    ensemble is one `FrameBuffer`. `EnsembleReadOptions` polls a
+    `diagnostics::Cancellation` and reports an `EnsembleReadProgress` before
+    the first frame and after every frame; a cancelled read fails with
+    `TrajectoryIoErrorKind::Cancelled` and returns no ensemble.
+  - `TrajectoryError` gains `WeightCountMismatch`, `InvalidWeight`,
+    `TopologyMismatch`, and `FrameNotSampled`.
 
 ### Changed
 

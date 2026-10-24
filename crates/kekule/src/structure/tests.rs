@@ -755,6 +755,52 @@ fn trajectories_reinterpret_as_ensembles_without_copying_positions() {
 }
 
 #[test]
+fn trajectories_sample_chosen_frames_into_ensembles_without_consuming() {
+    let (model, carbon, _) = model_fixture();
+    let frames = (0..5).map(|index| {
+        let mut frame = TrajectoryFrame::new(
+            Positions::new(Quantity::new(
+                [Point3::new(index as f64, 0.0, 0.0), Point3::origin()],
+                NANOMETER,
+            ))
+            .unwrap(),
+        );
+        frame.set_velocities(Some(Velocities::zeros(2))).unwrap();
+        frame
+    });
+    let trajectory = Trajectory::from_items(model.shared_topology(), frames).unwrap();
+
+    // Leave out equilibration, take every second frame, and weight them.
+    let sampling = TrajectorySampling::new((1..5).step_by(2))
+        .with_weights([3.0, 1.0])
+        .unwrap();
+    let ensemble = trajectory.to_ensemble(&sampling).unwrap();
+    assert_eq!(trajectory.len(), 5);
+    assert_eq!(ensemble.state_count(), 1);
+    assert!(ensemble.state(0).unwrap().payload().energy().is_none());
+    let samples = ensemble
+        .iter()
+        .map(|sample| (sample.positions().values().value()[0].x, sample.weight()))
+        .collect::<Vec<_>>();
+    assert_eq!(samples, [(1.0, 3.0), (3.0, 1.0)]);
+
+    let atoms =
+        crate::topology::AtomSelection::from_atoms(model.shared_topology(), [carbon]).unwrap();
+    let subset = trajectory
+        .to_ensemble(&TrajectorySampling::new([4]).with_atoms(atoms))
+        .unwrap();
+    assert_eq!(subset.topology().atom_count(), 1);
+    assert_eq!(subset.get(0).unwrap().positions().len(), 1);
+
+    assert_eq!(
+        trajectory
+            .to_ensemble(&TrajectorySampling::new([5]))
+            .unwrap_err(),
+        TrajectoryError::IndexOutOfRange { index: 5, len: 5 }
+    );
+}
+
+#[test]
 fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
     let (mut model, _, _) = model_fixture();
     model.set_occupancy(ATOM0, Some(0.5)).unwrap();

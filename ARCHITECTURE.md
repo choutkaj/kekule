@@ -35,7 +35,9 @@ hosts may keep sample indices. A
 trajectory is a path produced by dynamics: frame order and spacing are
 physical. A trajectory samples an ensemble only under ergodicity, so
 `Trajectory::into_ensemble` is an explicit, lossy projection to one state of
-equally weighted samples, and nothing converts the other way. Each type owns its topology,
+equally weighted samples, and `Trajectory::to_ensemble` one of chosen frames,
+in requested order, with explicit weights and an optional atom subset;
+nothing converts the other way. Each type owns its topology,
 collection properties, and items and implements its own operations, including
 those whose meaning is currently the same for both, such as item access,
 selection, subsetting, perception, superposition, and RMSD; the two types are

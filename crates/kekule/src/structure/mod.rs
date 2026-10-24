@@ -18,6 +18,9 @@
 //!   ([`EnsembleState`]) by an [`EnsemblePartition`]; [`Trajectory`] is a time-ordered
 //!   in-memory sequence of [`TrajectoryFrame`]s, which may carry time, step,
 //!   velocities and forces. File codecs and streaming live in `kekule-traj`.
+//!   [`Trajectory::to_ensemble`] samples chosen frames into an ensemble of
+//!   one state ([`TrajectorySampling`]); [`TrajectorySampler`] does so for
+//!   frames that arrive one at a time.
 //! - Borrowed access: [`ModelView`] is the common input of coordinate-dependent
 //!   kernels. Models, ensemble samples ([`EnsembleSampleView`]) and trajectory
 //!   frames ([`TrajectoryFrameView`]) all borrow as one without copying
@@ -108,6 +111,7 @@ mod model_editor;
 mod model_state;
 mod partition;
 mod positions;
+mod sampling;
 mod scalars;
 mod state;
 mod trajectory;
@@ -128,6 +132,7 @@ pub use model_editor::{
 };
 pub use partition::{EnsemblePartition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
+pub use sampling::{TrajectorySampler, TrajectorySampling};
 pub use state::StructureError;
 pub use trajectory::{
     MissingTimePolicy, Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut,
