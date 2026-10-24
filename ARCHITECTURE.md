@@ -185,7 +185,10 @@ it through one `HierarchyBuilder`. Atom sites refer to live
 molecules, and one molecule may span chains. Molecular and domain-specific
 hierarchy views borrow and filter this single hierarchy. Source labels and author
 identifiers remain typed metadata, with their namespaces and insertion codes
-preserved. Hierarchy membership never fabricates covalent bonds.
+preserved. Hierarchy membership never fabricates covalent bonds. Publication
+derives one private hierarchy index beside it, shared by every snapshot of the
+layout: each site's dense atom, each dense atom's site, and each instance's
+sites, residues, and chains, so hierarchy walks cost what they return.
 
 Each reusable definition has one `MoleculeClass` shared by all its instances;
 each residue has one `ResidueClass`. These are intrinsic classifications, not

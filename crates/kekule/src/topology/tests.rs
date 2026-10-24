@@ -879,6 +879,157 @@ fn selections_distinguish_instances_elements_and_queries() {
     );
 }
 
+/// Hierarchy views computed from the published lists alone, without the
+/// publication index.
+fn assert_indexed_hierarchy_views_match_the_hierarchy(topology: &Topology) {
+    let sites = topology.atom_sites().collect::<Vec<_>>();
+    assert_eq!(sites.len(), topology.hierarchy().atom_sites().len());
+    for site in &sites {
+        let atom = site.local().atom();
+        assert_eq!(site.atom().id(), atom);
+        assert_eq!(Some(site.atom_index()), topology.atom_index(atom));
+        assert_eq!(site.atom().index(), site.atom_index());
+        assert_eq!(site.residue().id(), site.local().residue());
+    }
+    for residue in topology.residues() {
+        assert_eq!(
+            residue
+                .atom_sites()
+                .map(AtomSiteView::id)
+                .collect::<Vec<_>>(),
+            residue.local().atom_sites()
+        );
+    }
+    for atom in topology.atoms() {
+        let expected = sites.iter().find(|site| site.local().atom() == atom.id());
+        assert_eq!(
+            atom.atom_site().map(AtomSiteView::id),
+            expected.map(|site| site.id())
+        );
+        assert_eq!(
+            topology.atom_site_at(atom.index()).map(AtomSiteView::id),
+            expected.map(|site| site.id())
+        );
+        assert_eq!(
+            atom.residue().map(ResidueView::id),
+            expected.map(|site| site.local().residue())
+        );
+    }
+    for instance in topology.instances() {
+        let expected_sites = sites
+            .iter()
+            .filter(|site| site.local().atom().instance() == instance.id())
+            .map(|site| site.id())
+            .collect::<Vec<_>>();
+        let expected_residues = expected_sites
+            .iter()
+            .map(|&site| topology.atom_site(site).unwrap().residue().id())
+            .collect::<std::collections::BTreeSet<_>>();
+        let expected_chains = expected_residues
+            .iter()
+            .map(|&residue| topology.residue(residue).unwrap().chain().id())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            instance
+                .atom_sites()
+                .map(AtomSiteView::id)
+                .collect::<Vec<_>>(),
+            expected_sites
+        );
+        assert_eq!(
+            instance.residues().map(ResidueView::id).collect::<Vec<_>>(),
+            expected_residues.into_iter().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            instance.chains().map(ChainView::id).collect::<Vec<_>>(),
+            expected_chains.into_iter().collect::<Vec<_>>()
+        );
+        assert_eq!(instance.atom_sites().len(), instance.atom_sites().count());
+    }
+}
+
+#[test]
+fn indexed_hierarchy_views_follow_any_hierarchy_and_atom_order() {
+    let ethanol = perceived_molecule("CCO");
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(ethanol).unwrap();
+    let instances = [0; 3].map(|_| builder.add_instance(definition).unwrap());
+    let water = builder.add_molecule(perceived_molecule("O")).unwrap();
+    let atom =
+        |instance: usize, atom: u32| InstanceAtomId::new(instances[instance], AtomId::new(atom));
+    // Chains, residues, and sites are created out of instance order; residues
+    // span instances, instances span chains, and some atoms have no site.
+    let hierarchy = builder.hierarchy_mut();
+    let b = hierarchy.add_chain("B", None).unwrap();
+    let a = hierarchy.add_chain("A", None).unwrap();
+    let placements = [
+        (a, [atom(2, 0), atom(0, 2)]),
+        (b, [atom(0, 0), atom(1, 1)]),
+        (a, [atom(1, 0), atom(2, 1)]),
+    ];
+    for (chain, atoms) in placements {
+        let residue = hierarchy
+            .add_residue(chain, "UNK", None, None, None)
+            .unwrap();
+        for atom in atoms {
+            hierarchy
+                .add_atom_site(residue, atom, AtomSiteMetadata::default())
+                .unwrap();
+        }
+    }
+    let reversed = builder.atom_ids().iter().rev().copied().collect::<Vec<_>>();
+    builder.set_atom_order(reversed).unwrap();
+    let topology = builder.build().unwrap();
+
+    let ids = |instance: usize| {
+        let view = topology.instance(instances[instance]).unwrap();
+        (
+            view.residues().map(ResidueView::id).collect::<Vec<_>>(),
+            view.chains().map(ChainView::id).collect::<Vec<_>>(),
+        )
+    };
+    let residue = ResidueId::new;
+    assert_eq!(ids(0), (vec![residue(0), residue(1)], vec![b, a]));
+    assert_eq!(ids(1), (vec![residue(1), residue(2)], vec![b, a]));
+    assert_eq!(ids(2), (vec![residue(0), residue(2)], vec![a]));
+    let water = topology.instance(water).unwrap();
+    assert_eq!(
+        (
+            water.atom_sites().len(),
+            water.residues().len(),
+            water.chains().len()
+        ),
+        (0, 0, 0)
+    );
+    assert!(topology.atom(atom(0, 1)).unwrap().atom_site().is_none());
+    let past_end = TopologyAtomIndex::new(topology.atom_count() as u32);
+    assert!(topology.atom_site_at(past_end).is_none());
+
+    assert_indexed_hierarchy_views_match_the_hierarchy(&topology);
+    let perceived = topology.perceived().unwrap();
+    assert!(Arc::ptr_eq(
+        &perceived.hierarchy_index,
+        &topology.hierarchy_index
+    ));
+    assert_indexed_hierarchy_views_match_the_hierarchy(&perceived);
+    let mut rebuilt = topology.into_builder();
+    let extra = rebuilt.add_molecule(perceived_molecule("N")).unwrap();
+    let chain = rebuilt.hierarchy_mut().add_chain("C", None).unwrap();
+    let residue = rebuilt
+        .hierarchy_mut()
+        .add_residue(chain, "NH3", None, None, None)
+        .unwrap();
+    rebuilt
+        .hierarchy_mut()
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(extra, AtomId::new(0)),
+            AtomSiteMetadata::default(),
+        )
+        .unwrap();
+    assert_indexed_hierarchy_views_match_the_hierarchy(&rebuilt.build().unwrap());
+}
+
 #[test]
 fn topology_global_hierarchy_crosses_molecule_boundaries() {
     let mut macro_builder = crate::molecule::MoleculeEditor::new();
