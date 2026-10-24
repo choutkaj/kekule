@@ -57,9 +57,9 @@ pub enum UnrepresentablePolicy {
 }
 
 /// What a structure writer left out of its output: content the caller chose
-/// [`UnrepresentablePolicy::Omit`] for, or, for a writer without such a
-/// choice, such as `kekule-traj`'s XYZ writer, everything its format cannot
-/// carry.
+/// [`UnrepresentablePolicy::Omit`] for, and content a writer gives no such
+/// choice for because its format can never carry it, such as the bonds of
+/// `kekule-traj`'s XYZ writer.
 ///
 /// A writer reports every omission it makes, once per kind, with the number
 /// of entities it affects summed over everything one call writes. An empty
@@ -154,6 +154,16 @@ pub enum WriteOmission {
         /// The structures or blocks written without their cell.
         structures: usize,
     },
+    /// Crystallographic occupancies of this many written structures.
+    Occupancies {
+        /// The structures written without their occupancies.
+        structures: usize,
+    },
+    /// Crystallographic B factors of this many written structures.
+    BFactors {
+        /// The structures written without their B factors.
+        structures: usize,
+    },
     /// Ensemble sample or trajectory frame state the format cannot carry.
     StructureState {
         /// The state left out.
@@ -182,7 +192,10 @@ impl Omissions {
             O::Stereo { molecules } => molecules,
             O::Bonds { bonds } => bonds,
             O::DictionaryBonds { residues } => residues,
-            O::Cell { structures } | O::StructureState { structures, .. } => structures,
+            O::Cell { structures }
+            | O::Occupancies { structures }
+            | O::BFactors { structures }
+            | O::StructureState { structures, .. } => structures,
         };
         let added = count(&omission);
         if added == 0 {
@@ -206,7 +219,10 @@ impl Omissions {
             O::Stereo { molecules } => *molecules += added,
             O::Bonds { bonds } => *bonds += added,
             O::DictionaryBonds { residues } => *residues += added,
-            O::Cell { structures } | O::StructureState { structures, .. } => *structures += added,
+            O::Cell { structures }
+            | O::Occupancies { structures }
+            | O::BFactors { structures }
+            | O::StructureState { structures, .. } => *structures += added,
         }
     }
 
@@ -325,7 +341,7 @@ pub(crate) fn check_structure_state(
 /// With [`UnrepresentablePolicy::Fail`], returns the 1-based number of the
 /// first sample with such state and the field; the temperature is the first
 /// sample's. With [`UnrepresentablePolicy::Omit`], records the omissions.
-pub(crate) fn check_multi_model_ensemble(
+pub(crate) fn record_multi_model_ensemble(
     ensemble: &Ensemble,
     policy: UnrepresentablePolicy,
     omissions: &mut Omissions,
@@ -378,4 +394,60 @@ pub(crate) fn check_multi_model_ensemble(
         omissions.record(WriteOmission::StructureState { field, structures });
     }
     Ok(())
+}
+
+/// The first ensemble sample state that a file of equally weighted structures
+/// in one state cannot carry; see [`check_multi_model_ensemble`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UnrepresentableSampleState {
+    sample: usize,
+    field: StructureField,
+}
+
+impl UnrepresentableSampleState {
+    /// The 0-based index of the sample. The temperature is reported for the
+    /// first sample.
+    pub const fn sample(&self) -> usize {
+        self.sample
+    }
+
+    /// The state the sample has: [`StructureField::Energy`],
+    /// [`StructureField::Weight`], [`StructureField::State`] or
+    /// [`StructureField::Temperature`].
+    pub const fn field(&self) -> StructureField {
+        self.field
+    }
+}
+
+/// Checks the sample state of `ensemble` that a file of equally weighted
+/// structures in one state cannot carry, by the rules of the PDB and mmCIF
+/// ensemble writers, for writers of other formats that share them, such as
+/// `kekule-traj`'s XYZ writer.
+///
+/// Such a file reads back as one state of equally weighted samples without
+/// an energy or temperature. Unequal weights, more than one state, any state
+/// energy, and a temperature are therefore lost: with
+/// [`UnrepresentablePolicy::Omit`] the returned report counts the samples
+/// each one affects (every sample for weights, states and the temperature),
+/// and with [`UnrepresentablePolicy::Fail`] the report is empty when there is
+/// nothing to lose.
+///
+/// # Errors
+///
+/// With [`UnrepresentablePolicy::Fail`], returns the first sample, in sample
+/// order, whose state energy, weight (unequal to the first sample's) or
+/// state (other than the first) would be lost, checked in that order for
+/// each sample, and otherwise the temperature.
+pub fn check_multi_model_ensemble(
+    ensemble: &Ensemble,
+    policy: UnrepresentablePolicy,
+) -> Result<WriteReport, UnrepresentableSampleState> {
+    let mut omissions = Omissions::default();
+    record_multi_model_ensemble(ensemble, policy, &mut omissions).map_err(|(sample, field)| {
+        UnrepresentableSampleState {
+            sample: sample - 1,
+            field,
+        }
+    })?;
+    Ok(omissions.into_report())
 }

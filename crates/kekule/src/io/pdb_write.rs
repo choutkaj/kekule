@@ -14,7 +14,7 @@ use crate::geometry::{PeriodicCell, Point3};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::is_metal;
-use crate::io::write_error::{check_multi_model_ensemble, check_structure_state, Omissions};
+use crate::io::write_error::{check_structure_state, record_multi_model_ensemble, Omissions};
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
@@ -514,7 +514,7 @@ pub(crate) fn write_pdb_to<'a>(
             if ensemble.is_empty() {
                 return Err(fail(PdbWriteIssue::EmptyEnsemble));
             }
-            check_multi_model_ensemble(ensemble, options.ensemble_metadata, &mut omissions)
+            record_multi_model_ensemble(ensemble, options.ensemble_metadata, &mut omissions)
                 .map_err(|(sample, field)| {
                     fail(PdbWriteIssue::UnrepresentableEnsembleSample { sample, field })
                 })?;

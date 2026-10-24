@@ -8,3 +8,4 @@ mod trr;
 mod writers;
 mod xtc;
 mod xyz;
+mod xyz_ensembles;

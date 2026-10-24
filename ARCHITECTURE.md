@@ -531,7 +531,11 @@ ways: `kekule::xyz` interprets its frames into structures through this
 pipeline, and `kekule-traj` streams its coordinates against a topology, such
 as the one that interpretation produced. Writing XYZ keeps elements and
 coordinates only, so the writer reports the topology content it leaves out in
-the shared write report.
+the shared write report. It writes an ensemble as one frame per sample and
+treats sample state as the PDB and mmCIF ensemble writers do, through the
+same rules (`diagnostics::check_multi_model_ensemble`): an XYZ file reads
+back as one state of equally weighted samples, so anything more fails or is
+omitted with a report.
 
 | Format scope | Interpretation and projection |
 | --- | --- |
