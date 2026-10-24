@@ -1,7 +1,8 @@
 use kekule::molecule::{Atom, Element, MoleculeEditor};
 use kekule::topology::{
     edit::TopologyEditor, AtomSiteId, AtomSiteMetadata, AtomSiteView, ChainId, ChainView,
-    HierarchyIdKind, InstanceAtomId, MoleculeClass, ResidueId, ResidueView, TopologyBuilder,
+    HierarchyIdKind, InstanceAtomId, MoleculeClass, ResidueId, ResidueView, TopologyAtomIndex,
+    TopologyBuilder,
 };
 
 fn atom(symbol: &str) -> Atom {
@@ -127,4 +128,93 @@ fn editor_hierarchy_membership_stays_aligned_during_bulk_assembly_and_site_edits
         ),
         (0, 0, 0)
     );
+}
+
+#[test]
+#[ignore = "timing of hierarchy walks over 1M atoms; run in release with --ignored"]
+fn hierarchy_walks_over_a_million_atoms_cost_what_they_return() {
+    // 256 copies of 1AKE with its waters and ligands: 973,824 atoms in
+    // 206,848 residues.
+    let text = std::fs::read_to_string(super::support::fixture("mmcif/1AKE.cif")).unwrap();
+    let mut model = kekule::mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_model();
+    for _ in 0..8 {
+        let mut editor = model.to_editor();
+        editor.append_model(&model).unwrap();
+        model = editor.finish().unwrap();
+    }
+    let topology = model.topology();
+    let time = |run: &dyn Fn() -> usize| {
+        let mut best = std::time::Duration::MAX;
+        let mut count = 0;
+        for _ in 0..5 {
+            let start = std::time::Instant::now();
+            count = std::hint::black_box(run());
+            best = best.min(start.elapsed());
+        }
+        (best, count)
+    };
+    let walks: [(&str, &dyn Fn() -> usize); 7] = [
+        ("residues of every molecule", &|| {
+            topology.instances().map(|i| i.residues().len()).sum()
+        }),
+        ("atom sites of every molecule", &|| {
+            topology.instances().map(|i| i.atom_sites().len()).sum()
+        }),
+        ("chains of every molecule", &|| {
+            topology.instances().map(|i| i.chains().len()).sum()
+        }),
+        ("atoms of every residue's sites", &|| {
+            topology
+                .residues()
+                .flat_map(ResidueView::atom_sites)
+                .map(|site| site.atom().index().index())
+                .sum()
+        }),
+        ("dense indices of every residue's sites", &|| {
+            topology
+                .residues()
+                .flat_map(ResidueView::atom_sites)
+                .map(|site| site.atom_index().index())
+                .sum()
+        }),
+        ("residue of every atom", &|| {
+            topology
+                .atoms()
+                .filter_map(|atom| atom.residue())
+                .map(|residue| residue.id().index())
+                .sum()
+        }),
+        ("residue of every dense index", &|| {
+            (0..topology.atom_count())
+                .filter_map(|index| topology.atom_site_at(TopologyAtomIndex::new(index as u32)))
+                .map(|site| site.residue().id().index())
+                .sum()
+        }),
+    ];
+    eprintln!("{} atoms", topology.atom_count());
+    let results = walks.map(|(name, walk)| {
+        let (best, count) = time(walk);
+        eprintln!("{name}: {best:?} ({count})");
+        (best, count)
+    });
+    // Views and dense-index lookups walk the same hierarchy.
+    assert_eq!(results[3].1, results[4].1);
+    assert_eq!(results[5].1, results[6].1);
+    if !cfg!(debug_assertions) {
+        for (best, _) in &results {
+            assert!(
+                *best < std::time::Duration::from_millis(50),
+                "took {best:?}"
+            );
+        }
+    }
+    let (best, _) = time(&|| {
+        let rebuilt = topology.clone().into_builder().build().unwrap();
+        rebuilt.atom_count()
+    });
+    eprintln!("republication: {best:?}");
 }

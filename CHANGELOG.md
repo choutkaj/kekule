@@ -11,6 +11,30 @@ are marked **Breaking:**.
 
 ### Added
 
+- Atom selections from and to dense order (SeekDelta K43), so a host that
+  holds atom sets as sorted indices or bit masks (a resolver's `selected`,
+  `visible`, or secondary-structure terms) makes and reads selections in
+  linear time without translating atoms to IDs.
+  `AtomSelection::from_sorted_indices` keeps a strictly increasing index
+  vector as the selection after one checking pass, and
+  `AtomSelection::from_mask` reads a mask of one bit per atom in 64-bit
+  words, least significant bit first. `AtomSelection::to_mask` and
+  `AtomSelection::ranges` give the selection back as such a mask or as runs
+  of consecutive indices. Input that is out of order, repeated, past the
+  last atom, or of the wrong length is refused with the new
+  `SelectionError::UnsortedAtomIndex` and `SelectionError::AtomMaskLength`,
+  or `InvalidAtomIndex`. `AtomSelection::from_indices` no longer translates
+  each index to an atom ID and back. The selection language builds its
+  result from its bit mask the same way. On 1,000,000 atoms (the new
+  `selection_dense` benchmark, release, i5-11400F), selecting all of them
+  takes 0.7 ms from sorted indices, 1.1 ms from a mask (allocating and
+  writing the indices alone takes 1.4 ms), and 4.6 ms through `from_indices`,
+  against 9–11 ms through atom IDs. `to_mask` takes 1.1 ms and `ranges` 0.7 ms.
+- `AtomSiteView::atom_index` gives a site's dense atom index and
+  `Topology::atom_site_at` the site of the atom at a dense index, both in
+  constant time without reading the atom (SeekDelta K44). On 973,824 atoms,
+  the dense indices of every residue's sites take 1.0 ms, as does the
+  residue of every dense index.
 - `FrameBuffer::into_trajectory` hands the buffered frame out, without
   copying it, as a one-frame `Trajectory` bound to the buffer's topology, so a
   host can keep decoded frames (in a frame cache, for example) and view them
@@ -337,6 +361,19 @@ are marked **Breaking:**.
   of atom sites by asym and atom name instead of scanning every site per
   record: reading 32,000 `_struct_conn` rows over 40,000 atoms takes 1.6 s
   instead of 69 s in release.
+- Hierarchy walks cost what they return (SeekDelta K44). Publication indexes
+  the hierarchy once, and every snapshot of the layout shares the index:
+  each site's dense atom and residue, each dense atom's site, each residue's
+  sites, and each molecule instance's sites, residues, and chains.
+  `InstanceView::residues`, `chains`, and `atom_sites` no longer build sets
+  on every call, and `ResidueView::atom_sites`, `AtomSiteView::atom` and
+  `residue`, and `AtomView::atom_site`, `residue`, and `chain` no longer read
+  the larger hierarchy nodes or search the atom lookup. Results are
+  unchanged. On 973,824 atoms (256 copies of 1AKE), the residues of every
+  molecule take 0.3 ms instead of 94 ms, their atom sites 0.3 ms instead of
+  78 ms, their chains 0.2 ms instead of 99 ms, the atoms of every residue's
+  sites 8 ms instead of 18 ms, and the residue of every atom 6 ms instead of
+  57 ms. Building the index adds about 45 ms to publishing those atoms.
 - `Ensemble::from_models` accepts models whose topologies have equal layouts
   (`Topology::same_layout`), not only models sharing one published layout
   (SeekDelta K39), so models read from separate files become samples keeping

@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fmt;
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::molecule::Element;
@@ -28,7 +29,8 @@ pub use bonds::{BondSelection, BondSelectionMode};
 ///
 /// | Source | Constructors |
 /// | --- | --- |
-/// | Picking or dense masks | [`Self::from_atoms`], [`Self::from_indices`] |
+/// | Picking | [`Self::from_atoms`], [`Self::from_indices`] |
+/// | Dense order, such as a host's indices or bit mask | [`Self::from_sorted_indices`], [`Self::from_mask`] |
 /// | All/none | [`Self::all`], [`Self::empty`] |
 /// | Molecule occurrences or reused definitions | [`Self::for_instances`], [`Self::for_definitions`] |
 /// | Chemistry or custom properties | [`Self::for_elements`], [`Self::for_molecule_classes`], [`Self::from_predicate`] |
@@ -440,21 +442,11 @@ impl AtomSelection {
         })
     }
 
-    /// Wraps indices that are already sorted, unique, and below the
-    /// topology's atom count, as an evaluator that walks dense order produces.
-    pub(crate) fn from_sorted_indices(
-        topology: Arc<Topology>,
-        indices: Vec<TopologyAtomIndex>,
-    ) -> Self {
-        debug_assert!(indices.windows(2).all(|pair| pair[0] < pair[1]));
-        debug_assert!(indices
-            .last()
-            .is_none_or(|last| last.index() < topology.atom_count()));
-        Self { topology, indices }
-    }
-
     /// Selects the atoms at the given dense indices; order and duplicates are
     /// ignored.
+    ///
+    /// Use [`Self::from_sorted_indices`] when the indices are already sorted
+    /// and unique, or [`Self::from_mask`] for a bit mask.
     ///
     /// # Errors
     ///
@@ -464,16 +456,146 @@ impl AtomSelection {
         topology: impl Into<Arc<Topology>>,
         indices: impl IntoIterator<Item = TopologyAtomIndex>,
     ) -> Result<Self, SelectionError> {
-        let topology = &topology.into();
-        let atoms = indices
+        let topology = topology.into();
+        let count = topology.atom_count();
+        let mut indices = indices
             .into_iter()
             .map(|index| {
-                topology
-                    .atom_id(index)
-                    .ok_or(SelectionError::InvalidAtomIndex(index))
+                if index.index() < count {
+                    Ok(index)
+                } else {
+                    Err(SelectionError::InvalidAtomIndex(index))
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Self::from_atoms(Arc::clone(topology), atoms)
+        indices.sort_unstable();
+        indices.dedup();
+        Ok(Self { topology, indices })
+    }
+
+    /// Selects the atoms at dense indices that are already strictly
+    /// increasing, keeping the vector as the selection's storage.
+    ///
+    /// The indices are checked in one pass, without sorting or translating
+    /// them to atom IDs, so a host that walks dense order (for example a
+    /// selection language resolver) pays time linear in the selection and no
+    /// further allocation.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::UnsortedAtomIndex`] at the first index that is not
+    /// greater than the one before it, and otherwise
+    /// [`SelectionError::InvalidAtomIndex`] at the first index that is not
+    /// below the topology's atom count.
+    pub fn from_sorted_indices(
+        topology: impl Into<Arc<Topology>>,
+        indices: Vec<TopologyAtomIndex>,
+    ) -> Result<Self, SelectionError> {
+        let topology = topology.into();
+        // A branch-free pass vectorizes; the failing index is found only on error.
+        let increasing = indices
+            .windows(2)
+            .fold(true, |increasing, pair| increasing & (pair[0] < pair[1]));
+        if !increasing {
+            let pair = indices
+                .windows(2)
+                .find(|pair| pair[0] >= pair[1])
+                .expect("an index is out of order");
+            return Err(SelectionError::UnsortedAtomIndex(pair[1]));
+        }
+        let count = topology.atom_count();
+        if indices.last().is_some_and(|last| last.index() >= count) {
+            let first = indices.partition_point(|index| index.index() < count);
+            return Err(SelectionError::InvalidAtomIndex(indices[first]));
+        }
+        Ok(Self { topology, indices })
+    }
+
+    /// Selects the atoms whose bits are set in a mask over dense atom order.
+    ///
+    /// Bit `i % 64` of word `i / 64` (least significant bit first) selects the
+    /// atom at dense index `i`. The mask has exactly
+    /// `atom_count.div_ceil(64)` words, and the bits past the last atom in
+    /// its final word are clear. [`Self::to_mask`] produces this layout.
+    ///
+    /// # Errors
+    ///
+    /// [`SelectionError::AtomMaskLength`] when the mask has a different
+    /// number of words, or [`SelectionError::InvalidAtomIndex`] at the first
+    /// set bit past the last atom.
+    pub fn from_mask(
+        topology: impl Into<Arc<Topology>>,
+        mask: &[u64],
+    ) -> Result<Self, SelectionError> {
+        let topology = topology.into();
+        let count = topology.atom_count();
+        let expected = count.div_ceil(64);
+        if mask.len() != expected {
+            return Err(SelectionError::AtomMaskLength {
+                expected,
+                found: mask.len(),
+            });
+        }
+        let tail = count % 64;
+        if let Some(&last) = mask.last().filter(|_| tail != 0) {
+            let padding = last >> tail;
+            if padding != 0 {
+                let index = count + padding.trailing_zeros() as usize;
+                let index = u32::try_from(index).unwrap_or(u32::MAX);
+                return Err(SelectionError::InvalidAtomIndex(TopologyAtomIndex::new(
+                    index,
+                )));
+            }
+        }
+        let selected = mask.iter().map(|word| word.count_ones() as usize).sum();
+        let mut indices = Vec::with_capacity(selected);
+        for (position, &word) in mask.iter().enumerate() {
+            // Every set bit is a dense index, so its word's base fits in u32.
+            let base = (position * 64) as u32;
+            if word == u64::MAX {
+                indices.extend((base..base + 64).map(TopologyAtomIndex::new));
+                continue;
+            }
+            let mut word = word;
+            while word != 0 {
+                indices.push(TopologyAtomIndex::new(base + word.trailing_zeros()));
+                word &= word - 1;
+            }
+        }
+        Ok(Self { topology, indices })
+    }
+
+    /// The selection as a bit mask over dense atom order, in the layout
+    /// [`Self::from_mask`] accepts.
+    pub fn to_mask(&self) -> Vec<u64> {
+        let mut mask = vec![0; self.topology.atom_count().div_ceil(64)];
+        // Bits gather in a register and are stored once per word.
+        let (mut position, mut word) = (0, 0u64);
+        for index in &self.indices {
+            let index = index.index();
+            if index / 64 != position {
+                mask[position] = word;
+                (position, word) = (index / 64, 0);
+            }
+            word |= 1 << (index % 64);
+        }
+        if word != 0 {
+            mask[position] = word;
+        }
+        mask
+    }
+
+    /// The selection as maximal runs of consecutive dense indices, in order.
+    pub fn ranges(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+        let mut indices = self.indices.iter().map(|index| index.index()).peekable();
+        std::iter::from_fn(move || {
+            let start = indices.next()?;
+            let mut end = start + 1;
+            while indices.next_if_eq(&end).is_some() {
+                end += 1;
+            }
+            Some(start..end)
+        })
     }
 
     /// Selects every atom of the given molecule instances.
@@ -807,6 +929,16 @@ pub enum SelectionError {
     InvalidAtomSiteId(AtomSiteId),
     /// A dense atom index is outside the topology.
     InvalidAtomIndex(TopologyAtomIndex),
+    /// A dense atom index is not greater than the one before it, in input
+    /// that must be strictly increasing.
+    UnsortedAtomIndex(TopologyAtomIndex),
+    /// An atom mask does not have one bit per atom, rounded up to whole words.
+    AtomMaskLength {
+        /// The number of words the topology's atoms need.
+        expected: usize,
+        /// The number of words supplied.
+        found: usize,
+    },
     /// A bond is not in the topology.
     InvalidBondId(InstanceBondId),
     /// A dense bond index is outside the topology.
@@ -830,6 +962,13 @@ impl fmt::Display for SelectionError {
             Self::InvalidResidueId(id) => write!(formatter, "invalid selected residue: {id}"),
             Self::InvalidAtomSiteId(id) => write!(formatter, "invalid selected atom site: {id}"),
             Self::InvalidAtomIndex(index) => write!(formatter, "invalid selected {index}"),
+            Self::UnsortedAtomIndex(index) => {
+                write!(formatter, "selected {index} is out of order or repeated")
+            }
+            Self::AtomMaskLength { expected, found } => write!(
+                formatter,
+                "atom mask has {found} words; the topology needs {expected}"
+            ),
             Self::InvalidBondId(id) => write!(formatter, "invalid selected bond: {id}"),
             Self::InvalidBondIndex(index) => write!(formatter, "invalid selected {index}"),
         }

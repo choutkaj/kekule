@@ -433,3 +433,128 @@ fn all_selects_dense_atoms_across_reused_definitions_and_binds_the_exact_topolog
     assert!(topology.same_layout(&independent));
     assert!(all.ensure_compatible(&independent).is_err());
 }
+
+fn carbons(count: usize) -> Arc<Topology> {
+    let molecule = smiles::to_molecules("C").unwrap().pop().unwrap();
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_molecule_definition(molecule).unwrap();
+    for _ in 0..count {
+        builder.add_instance(definition).unwrap();
+    }
+    Arc::new(builder.build().unwrap())
+}
+
+fn indices(raw: &[u32]) -> Vec<TopologyAtomIndex> {
+    raw.iter().copied().map(TopologyAtomIndex::new).collect()
+}
+
+#[test]
+fn dense_indices_masks_and_ranges_round_trip() {
+    for count in [1, 63, 64, 65, 128, 130] {
+        let top = carbons(count);
+        // Every third atom, plus a full word and a run across a word boundary.
+        let raw = (0..count as u32)
+            .filter(|index| index % 3 == 0 || (64..128).contains(index) || (60..70).contains(index))
+            .collect::<Vec<_>>();
+        let expected = AtomSelection::from_atoms(
+            Arc::clone(&top),
+            raw.iter()
+                .map(|index| top.atom_id(TopologyAtomIndex::new(*index)).unwrap()),
+        )
+        .unwrap();
+        let sorted = AtomSelection::from_sorted_indices(Arc::clone(&top), indices(&raw)).unwrap();
+        assert_eq!(sorted, expected);
+        let mask = sorted.to_mask();
+        assert_eq!(mask.len(), count.div_ceil(64));
+        let masked = AtomSelection::from_mask(Arc::clone(&top), &mask).unwrap();
+        assert_eq!(masked, expected);
+        assert!(Arc::ptr_eq(&masked.shared_topology(), &top));
+        let mut reversed = indices(&raw);
+        reversed.reverse();
+        reversed.extend(indices(&raw));
+        assert_eq!(
+            AtomSelection::from_indices(Arc::clone(&top), reversed).unwrap(),
+            expected
+        );
+        let from_ranges = sorted
+            .ranges()
+            .flat_map(|range| range.map(|index| index as u32))
+            .collect::<Vec<_>>();
+        assert_eq!(from_ranges, raw);
+        assert!(sorted
+            .ranges()
+            .zip(sorted.ranges().skip(1))
+            .all(|(a, b)| a.end < b.start));
+        assert!(AtomSelection::all(Arc::clone(&top))
+            .ranges()
+            .eq(std::iter::once(0..count)));
+        assert_eq!(
+            AtomSelection::from_mask(
+                Arc::clone(&top),
+                &AtomSelection::all(Arc::clone(&top)).to_mask()
+            )
+            .unwrap(),
+            AtomSelection::all(Arc::clone(&top))
+        );
+    }
+    let top = carbons(130);
+    let selection =
+        AtomSelection::from_sorted_indices(Arc::clone(&top), indices(&[1, 2, 3, 7, 64, 65, 129]))
+            .unwrap();
+    assert_eq!(
+        selection.ranges().collect::<Vec<_>>(),
+        [1..4, 7..8, 64..66, 129..130]
+    );
+    assert_eq!(selection.to_mask(), [0b1000_1110, 0b11, 1 << 1]);
+}
+
+#[test]
+fn dense_index_and_mask_constructors_refuse_invalid_input() {
+    let top = carbons(130);
+    assert_eq!(
+        AtomSelection::from_sorted_indices(Arc::clone(&top), indices(&[1, 5, 5, 9])),
+        Err(SelectionError::UnsortedAtomIndex(TopologyAtomIndex::new(5)))
+    );
+    assert_eq!(
+        AtomSelection::from_sorted_indices(Arc::clone(&top), indices(&[1, 9, 4, 200])),
+        Err(SelectionError::UnsortedAtomIndex(TopologyAtomIndex::new(4)))
+    );
+    assert_eq!(
+        AtomSelection::from_sorted_indices(Arc::clone(&top), indices(&[1, 129, 130, 500])),
+        Err(SelectionError::InvalidAtomIndex(TopologyAtomIndex::new(
+            130
+        )))
+    );
+    assert_eq!(
+        AtomSelection::from_indices(Arc::clone(&top), indices(&[500, 1])),
+        Err(SelectionError::InvalidAtomIndex(TopologyAtomIndex::new(
+            500
+        )))
+    );
+    assert_eq!(
+        AtomSelection::from_mask(Arc::clone(&top), &[0, 0]),
+        Err(SelectionError::AtomMaskLength {
+            expected: 3,
+            found: 2
+        })
+    );
+    assert_eq!(
+        AtomSelection::from_mask(Arc::clone(&top), &[0, 0, 0, 0]),
+        Err(SelectionError::AtomMaskLength {
+            expected: 3,
+            found: 4
+        })
+    );
+    assert_eq!(
+        AtomSelection::from_mask(Arc::clone(&top), &[0, 0, 0b1010]),
+        Err(SelectionError::InvalidAtomIndex(TopologyAtomIndex::new(
+            131
+        )))
+    );
+    assert_eq!(
+        AtomSelection::from_mask(Arc::clone(&top), &[0, 0, u64::MAX]),
+        Err(SelectionError::InvalidAtomIndex(TopologyAtomIndex::new(
+            130
+        )))
+    );
+}
