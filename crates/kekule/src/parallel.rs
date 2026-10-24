@@ -12,7 +12,8 @@
 //! [`Ensemble::pairwise_fitted_rmsd_with`](crate::structure::Ensemble::pairwise_fitted_rmsd_with)
 //! and
 //! [`Ensemble::cluster_by_radius_with`](crate::structure::Ensemble::cluster_by_radius_with)
-//! take an executor.
+//! take an executor, and selections measure `within` on one given by
+//! [`SelectEvaluateOptions::with_executor`](crate::select::SelectEvaluateOptions::with_executor).
 //!
 //! ```
 //! use std::num::NonZeroUsize;

@@ -188,7 +188,9 @@ identifiers remain typed metadata, with their namespaces and insertion codes
 preserved. Hierarchy membership never fabricates covalent bonds. Publication
 derives one private hierarchy index beside it, shared by every snapshot of the
 layout: each site's dense atom, each dense atom's site, and each instance's
-sites, residues, and chains, so hierarchy walks cost what they return.
+sites, residues, and chains, so hierarchy walks cost what they return. The
+index numbers the sites' atom names against a table of the distinct names on
+first use, which name terms of the selection language read.
 
 Each reusable definition has one `MoleculeClass` shared by all its instances;
 each residue has one `ResidueClass`. These are intrinsic classifications, not
@@ -285,7 +287,9 @@ selections. Identifier terms follow author identifiers, falling back to label
 identifiers, and `label_*` terms read label identifiers. Host applications
 extend the language through the `SelectionResolver` extension trait, whose
 answers must bind to the evaluated layout or be points for a spatial
-reference; other structures enter an evaluation only as such points. See the
+reference; other structures enter an evaluation only as such points.
+Evaluation may run `within` on a host's `parallel::Executor`, which never
+changes the selected atoms. See the
 [grammar](docs/selection-language.md) and the
 [evaluator](crates/kekule/src/selection_language/eval.rs).
 
@@ -720,6 +724,16 @@ export.
   are not the model's cell are reported as omitted. Canonical classification informs entity
   kinds; hierarchy alone does not establish polymer status or contextual roles.
   Expert overrides and source provenance handle finer format distinctions.
+  The mmCIF writer, like the PDB writer, states only the bonds its reader
+  cannot derive, as the PDB's own files do: a residue whose bundled
+  template, after the protonation variant its hydrogens select, gives
+  exactly its bonds, and peptide and phosphodiester links within bonding
+  distance in the written coordinates, are left out; links between residues,
+  metal coordination, and the bonds of residues without such a template are
+  `_struct_conn` rows. A residue is either derived or stated whole, since a
+  stated internal bond makes the reader take the residue's bonds from the
+  source alone. Bond order within a molecule follows the reader's evidence,
+  which mmCIF does not carry.
   Every entity instance is its own label asym: a chain the source names as
   one asym stays one, while a chain without a source asym that holds a
   polymer, ligands, and water, as a PDB author chain does, is written as

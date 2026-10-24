@@ -1,39 +1,35 @@
 //! Uniform-grid neighbor search for `within`.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::geometry::Point3;
 
-/// Marks every candidate within `cutoff` (inclusive, Cartesian) of any
-/// reference point.
-pub(crate) fn within(
-    candidates: &[Point3],
-    references: &[Point3],
-    cutoff: f64,
-    mark: impl FnMut(usize),
-) {
-    Grid::new(references, cutoff).mark(references, candidates.iter().copied().enumerate(), mark);
-}
-
-/// A grid stores every cell of its box when the box has at most this many
-/// cells per reference point, plus [`DENSE_SPARE_CELLS`]; a larger box
-/// stores only its occupied cells.
-const DENSE_CELLS_PER_POINT: usize = 8;
-const DENSE_SPARE_CELLS: usize = 4096;
+/// A grid maps every cell of its box, at under two bits a cell, when the box
+/// has at most this many cells per reference point, plus
+/// [`DENSE_CELLS_PER_CANDIDATE`] per candidate it is built for and
+/// [`DENSE_SPARE_CELLS`]; a larger box keeps only its occupied cells.
+const DENSE_CELLS_PER_POINT: usize = 256;
+const DENSE_CELLS_PER_CANDIDATE: usize = 16;
+const DENSE_SPARE_CELLS: usize = 1 << 16;
 
 /// Reference points binned into cubic cells of edge `cutoff`, so each
 /// candidate inside the references' cutoff-expanded bounding box examines
 /// only the 27 cells around its own; candidates outside the box are rejected
 /// at once.
 ///
-/// The grid holds indices into the references it was built from; queries
-/// pass the same points back.
+/// The grid keeps a copy of each distinct point, cell by cell: repeated
+/// points, as of copies stacked in one place, are measured once.
 #[derive(Debug, Default)]
 pub(crate) struct Grid {
     low: Point3,
     high: Point3,
     edge: f64,
+    /// The reciprocal of `edge`.
+    scale: f64,
     cutoff: f64,
+    /// The distinct points, contiguous within each cell.
+    points: Vec<Point3>,
     cells: Cells,
 }
 
@@ -41,16 +37,20 @@ type Cell = (i64, i64, i64);
 
 #[derive(Debug)]
 enum Cells {
-    /// Every cell of the box, in x-major order: the members of slot `s` are
-    /// `members[starts[s]..starts[s + 1]]`.
+    /// Every cell of the box, in x-major order, as one bit each: set for a
+    /// cell with points. The points of the cells before slot `s` are
+    /// `points[..starts[rank(s)]]`, where `rank(s)` counts the occupied
+    /// cells before `s`: `ranks` holds that count at each word.
     Dense {
         dims: Cell,
+        occupied: Vec<u64>,
+        ranks: Vec<u32>,
         starts: Vec<u32>,
-        members: Vec<u32>,
     },
-    /// Only the occupied cells, for a box much larger than its points.
+    /// Only the occupied cells and the ranges of their points, for a box much
+    /// larger than its points.
     Sparse {
-        cells: HashMap<Cell, Vec<u32>>,
+        cells: HashMap<Cell, (u32, u32)>,
         /// A filter of the occupied cells, probed before each lookup, so a
         /// candidate far from every point costs 27 probes rather than 27
         /// hash lookups; a false positive costs only the lookup.
@@ -117,8 +117,15 @@ fn around((x, y, z): Cell) -> impl Iterator<Item = Cell> {
     })
 }
 
+/// The exact bits of a point, so equal coordinates sort and compare equal.
+fn bits(point: &Point3) -> (u64, u64, u64) {
+    (point.x.to_bits(), point.y.to_bits(), point.z.to_bits())
+}
+
 impl Grid {
-    pub(crate) fn new(references: &[Point3], cutoff: f64) -> Self {
+    /// Grids `references` for measuring `candidates` points once; a grid
+    /// shared by many measurements passes zero.
+    pub(crate) fn new(references: &[Point3], cutoff: f64, candidates: usize) -> Self {
         let Some(&first) = references.first() else {
             return Self::default();
         };
@@ -144,7 +151,9 @@ impl Grid {
             low: Point3::new(low.x - cutoff, low.y - cutoff, low.z - cutoff),
             high: Point3::new(high.x + cutoff, high.y + cutoff, high.z + cutoff),
             edge,
+            scale: edge.recip(),
             cutoff,
+            points: Vec::new(),
             cells: Cells::default(),
         };
         // Cells count from the low corner, so every point of the box lies
@@ -158,6 +167,7 @@ impl Grid {
         let limit = references
             .len()
             .saturating_mul(DENSE_CELLS_PER_POINT)
+            .saturating_add(candidates.saturating_mul(DENSE_CELLS_PER_CANDIDATE))
             .saturating_add(DENSE_SPARE_CELLS);
         let count = [dims.0, dims.1, dims.2]
             .into_iter()
@@ -165,39 +175,58 @@ impl Grid {
                 count.checked_mul(usize::try_from(side).ok()?)
             })
             .filter(|&count| count <= limit);
+        // Sorting by cell, x-major as slots are, then by exact coordinates
+        // makes each cell's points contiguous and repeats adjacent.
+        let mut order = references
+            .iter()
+            .enumerate()
+            .map(|(index, point)| (grid.cell(point), index as u32))
+            .collect::<Vec<_>>();
+        order.sort_unstable_by(|(cell, index), (other, next)| {
+            cell.cmp(other).then_with(|| {
+                bits(&references[*index as usize]).cmp(&bits(&references[*next as usize]))
+            })
+        });
+        order.dedup_by(|(cell, index), (other, next)| {
+            cell == other && bits(&references[*index as usize]) == bits(&references[*next as usize])
+        });
+        let points = order
+            .iter()
+            .map(|&(_, index)| references[index as usize])
+            .collect::<Vec<_>>();
+        let groups = order.chunk_by(|a, b| a.0 == b.0);
         grid.cells = match count {
             Some(count) => {
-                // A counting sort keeps each cell's members in index order.
-                let slots = references
-                    .iter()
-                    .map(|point| slot(dims, grid.cell(point)))
-                    .collect::<Vec<_>>();
-                let mut starts = vec![0u32; count + 1];
-                for &slot in &slots {
-                    starts[slot + 1] += 1;
+                let mut occupied = vec![0u64; count.div_ceil(64)];
+                let mut starts = Vec::new();
+                let mut start = 0;
+                for group in groups {
+                    let slot = slot(dims, group[0].0);
+                    occupied[slot / 64] |= 1 << (slot % 64);
+                    starts.push(start as u32);
+                    start += group.len();
                 }
-                for index in 1..starts.len() {
-                    starts[index] += starts[index - 1];
-                }
-                let mut next = starts.clone();
-                let mut members = vec![0u32; references.len()];
-                for (index, &slot) in slots.iter().enumerate() {
-                    members[next[slot] as usize] = index as u32;
-                    next[slot] += 1;
+                starts.push(start as u32);
+                let mut ranks = Vec::with_capacity(occupied.len());
+                let mut rank = 0;
+                for word in &occupied {
+                    ranks.push(rank);
+                    rank += word.count_ones();
                 }
                 Cells::Dense {
                     dims,
+                    occupied,
+                    ranks,
                     starts,
-                    members,
                 }
             }
             None => {
-                let mut cells: HashMap<Cell, Vec<u32>> = HashMap::new();
-                for (index, point) in references.iter().enumerate() {
-                    cells
-                        .entry(grid.cell(point))
-                        .or_default()
-                        .push(index as u32);
+                let mut cells = HashMap::new();
+                let mut start = 0;
+                for group in groups {
+                    let end = start + group.len() as u32;
+                    cells.insert(group[0].0, (start, end));
+                    start = end;
                 }
                 let mut occupied = CellFilter::new(cells.len());
                 for &cell in cells.keys() {
@@ -206,11 +235,14 @@ impl Grid {
                 Cells::Sparse { cells, occupied }
             }
         };
+        grid.points = points;
         grid
     }
 
     fn cell(&self, point: &Point3) -> Cell {
-        let axis = |value: f64, origin: f64| ((value - origin) / self.edge).floor() as i64;
+        // Points of the box lie at or above its low corner, so truncation
+        // rounds down; every point is placed by this one computation.
+        let axis = |value: f64, origin: f64| ((value - origin) * self.scale) as i64;
         (
             axis(point.x, self.low.x),
             axis(point.y, self.low.y),
@@ -218,50 +250,78 @@ impl Grid {
         )
     }
 
-    /// The references in one cell.
-    fn members(&self, cell: Cell) -> &[u32] {
+    /// Passes the points of the 27 cells around `cell` to `each`, a slice
+    /// at a time: a dense grid's three cells along z are one slice.
+    fn around(&self, cell: Cell, mut each: impl FnMut(&[Point3])) {
+        let range = |start: u32, end: u32| &self.points[start as usize..end as usize];
         match &self.cells {
             Cells::Dense {
                 dims,
+                occupied,
+                ranks,
                 starts,
-                members,
             } => {
+                // The occupied cells before `slot`.
+                let rank = |slot: usize| {
+                    let (word, bit) = (slot / 64, slot % 64);
+                    let below = occupied.get(word).map_or(0, |word| word & ((1 << bit) - 1));
+                    ranks
+                        .get(word)
+                        .map_or(starts.len() - 1, |&rank| rank as usize)
+                        + below.count_ones() as usize
+                };
                 let (x, y, z) = cell;
-                if x < 0 || y < 0 || z < 0 || x >= dims.0 || y >= dims.1 || z >= dims.2 {
-                    return &[];
+                let (low, high) = (
+                    z.saturating_sub(1).max(0),
+                    z.saturating_add(1).min(dims.2 - 1),
+                );
+                if low > high {
+                    return;
                 }
-                let slot = slot(*dims, cell);
-                &members[starts[slot] as usize..starts[slot + 1] as usize]
+                for x in x.saturating_sub(1).max(0)..=x.saturating_add(1).min(dims.0 - 1) {
+                    for y in y.saturating_sub(1).max(0)..=y.saturating_add(1).min(dims.1 - 1) {
+                        let first = rank(slot(*dims, (x, y, low)));
+                        let end = rank(slot(*dims, (x, y, high)) + 1);
+                        if first < end {
+                            each(range(starts[first], starts[end]));
+                        }
+                    }
+                }
             }
             Cells::Sparse { cells, occupied } => {
-                if !occupied.may_contain(cell) {
-                    return &[];
+                for cell in around(cell) {
+                    if occupied.may_contain(cell) {
+                        if let Some(&(start, end)) = cells.get(&cell) {
+                            each(range(start, end));
+                        }
+                    }
                 }
-                cells.get(&cell).map_or(&[], Vec::as_slice)
             }
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        match &self.cells {
-            Cells::Dense { members, .. } => members.is_empty(),
-            Cells::Sparse { cells, .. } => cells.is_empty(),
         }
     }
 
     /// Marks the index of every candidate within the grid's cutoff of any of
-    /// `references`, the points the grid was built from.
+    /// the points the grid was built from.
+    ///
+    /// Candidates in one cell measure against one list: the points of the
+    /// cells around it that can lie within the cutoff of the cell. Atoms in
+    /// dense order run through few cells in turn and come back to them, so
+    /// the lists of recent cells are kept. A candidate tries the point that
+    /// last matched first.
     pub(crate) fn mark(
         &self,
-        references: &[Point3],
         candidates: impl IntoIterator<Item = (usize, Point3)>,
         mut mark: impl FnMut(usize),
     ) {
-        if self.is_empty() {
+        if self.points.is_empty() {
             return;
         }
         let (low, high) = (self.low, self.high);
         let squared = self.cutoff * self.cutoff;
+        let mut lists = NearLists::new();
+        let mut current = None;
+        let mut near = 0..0;
+        let mut last = 0;
         for (index, point) in candidates {
             if point.x < low.x
                 || point.y < low.y
@@ -272,17 +332,123 @@ impl Grid {
             {
                 continue;
             }
-            let near = around(self.cell(&point)).any(|cell| {
-                self.members(cell).iter().any(|&member| {
-                    let other = references[member as usize];
-                    let (ex, ey, ez) = (point.x - other.x, point.y - other.y, point.z - other.z);
-                    ex * ex + ey * ey + ez * ez <= squared
-                })
-            });
-            if near {
+            let cell = self.cell(&point);
+            if current != Some(cell) {
+                current = Some(cell);
+                near = lists.near(self, cell);
+                last = near.start;
+            }
+            let within = |other: &Point3| {
+                let (ex, ey, ez) = (point.x - other.x, point.y - other.y, point.z - other.z);
+                ex * ex + ey * ey + ez * ez <= squared
+            };
+            let points = &lists.points[near.clone()];
+            let Some(previous) = lists.points.get(last).filter(|_| !points.is_empty()) else {
+                continue;
+            };
+            if within(previous) {
+                mark(index);
+            } else if let Some(found) = points.iter().position(within) {
+                last = near.start + found;
                 mark(index);
             }
         }
+    }
+
+    /// Appends to `near` the points of the cells around `cell` that can lie
+    /// within the cutoff of a point the grid places in `cell`.
+    fn gather(&self, cell: Cell, near: &mut Vec<Point3>) {
+        let (low, high) = (self.low, self.high);
+        // A point within the cutoff of a candidate lies within this reach of
+        // the candidate's cell as computed, whatever the rounding of the
+        // cell's bounds and of the distance to them.
+        let magnitude = [low.x, low.y, low.z, high.x, high.y, high.z]
+            .into_iter()
+            .fold(0.0f64, |largest, value| largest.max(value.abs()));
+        let reach = self.cutoff + self.edge * 1e-6 + magnitude * 1e-9;
+        let reach = reach * reach;
+        let corner = |origin: f64, step: i64| origin + step as f64 * self.edge;
+        let from = Point3::new(
+            corner(low.x, cell.0),
+            corner(low.y, cell.1),
+            corner(low.z, cell.2),
+        );
+        let to = Point3::new(from.x + self.edge, from.y + self.edge, from.z + self.edge);
+        let gap = |value: f64, from: f64, to: f64| (from - value).max(value - to).max(0.0);
+        self.around(cell, |members| {
+            near.extend(members.iter().filter(|other| {
+                let (x, y, z) = (
+                    gap(other.x, from.x, to.x),
+                    gap(other.y, from.y, to.y),
+                    gap(other.z, from.z, to.z),
+                );
+                x * x + y * y + z * z <= reach
+            }));
+        });
+    }
+}
+
+/// The near lists of the cells visited so far.
+struct NearLists {
+    /// The range of each visited cell's list in `points`.
+    kept: HashMap<Cell, std::ops::Range<usize>, BuildHasherDefault<CellHasher>>,
+    points: Vec<Point3>,
+}
+
+/// The points kept across near lists before they are dropped together,
+/// which bounds the memory of a measurement whatever its points. Unit tests
+/// drop them often.
+#[cfg(not(test))]
+const NEAR_POINTS: usize = 1 << 16;
+#[cfg(test)]
+const NEAR_POINTS: usize = 16;
+
+impl NearLists {
+    fn new() -> Self {
+        Self {
+            kept: HashMap::default(),
+            points: Vec::new(),
+        }
+    }
+
+    /// The range in [`Self::points`] of the near list of `cell`.
+    fn near(&mut self, grid: &Grid, cell: Cell) -> std::ops::Range<usize> {
+        if let Some(range) = self.kept.get(&cell) {
+            return range.clone();
+        }
+        if self.points.len() > NEAR_POINTS {
+            self.points.clear();
+            self.kept.clear();
+        }
+        let start = self.points.len();
+        grid.gather(cell, &mut self.points);
+        let range = start..self.points.len();
+        self.kept.insert(cell, range.clone());
+        range
+    }
+}
+
+/// A fast hash of cells, whose coordinates are small integers.
+#[derive(Default)]
+struct CellHasher(u64);
+
+impl Hasher for CellHasher {
+    fn finish(&self) -> u64 {
+        self.0 ^ (self.0 >> 29)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(21) ^ value).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+
+    fn write_i64(&mut self, value: i64) {
+        self.write_u64(value as u64);
     }
 }
 
@@ -293,8 +459,15 @@ fn slot(dims: Cell, (x, y, z): Cell) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{within, Cells, Grid};
+    use super::{Cells, Grid};
     use crate::geometry::Point3;
+
+    /// Marks every candidate within `cutoff` (inclusive, Cartesian) of any
+    /// reference point.
+    fn within(candidates: &[Point3], references: &[Point3], cutoff: f64, mark: impl FnMut(usize)) {
+        Grid::new(references, cutoff, candidates.len())
+            .mark(candidates.iter().copied().enumerate(), mark);
+    }
 
     fn brute(points: &[Point3], references: &[Point3], cutoff: f64) -> Vec<usize> {
         points
@@ -329,7 +502,7 @@ mod tests {
             if far {
                 references.push(points[400]);
             }
-            for cutoff in [0.0, 0.05, 0.4, 1.3, 10.0] {
+            for cutoff in [0.0, 0.01, 0.05, 0.4, 1.3, 10.0] {
                 let mut grid = Vec::new();
                 within(&points, &references, cutoff, |index| grid.push(index));
                 assert_eq!(
@@ -340,10 +513,75 @@ mod tests {
             }
         }
         let dense = |references: &[Point3], cutoff| {
-            matches!(Grid::new(references, cutoff).cells, Cells::Dense { .. })
+            matches!(Grid::new(references, cutoff, 0).cells, Cells::Dense { .. })
         };
         assert!(dense(&references[..17], 1.3));
-        assert!(!dense(&references[..17], 0.05));
+        assert!(!dense(&references[..17], 0.01));
         assert!(!dense(&references, 1.3));
+        // Grids measured once are dense for boxes up to their candidates'.
+        assert!(matches!(
+            Grid::new(&references[..17], 0.01, 1_000_000).cells,
+            Cells::Dense { .. }
+        ));
+    }
+
+    #[test]
+    fn repeated_points_and_scattered_candidates_change_nothing() {
+        // Copies stacked in one place repeat every point; candidates come in
+        // an order that jumps between cells and returns to them.
+        let base = (0..60)
+            .map(|index| {
+                let index = f64::from(index);
+                Point3::new(
+                    (index * 1.7).sin() * 6.0,
+                    (index * 0.3).cos() * 6.0,
+                    index * 0.1,
+                )
+            })
+            .collect::<Vec<_>>();
+        let stacked = base
+            .iter()
+            .cycle()
+            .take(base.len() * 5)
+            .copied()
+            .collect::<Vec<_>>();
+        let candidates = (0..300)
+            .map(|index| base[(index * 37) % base.len()])
+            .map(|point| Point3::new(point.x + 0.9, point.y - 0.4, point.z))
+            .collect::<Vec<_>>();
+        let references = &stacked[..stacked.len() / 3];
+        for cutoff in [0.0, 0.5, 1.5, 4.0] {
+            let grid = Grid::new(references, cutoff, 0);
+            assert!(grid.points.len() <= base.len());
+            let mut marked = Vec::new();
+            grid.mark(candidates.iter().copied().enumerate(), |index| {
+                marked.push(index)
+            });
+            assert_eq!(marked, brute(&candidates, references, cutoff), "{cutoff}");
+        }
+    }
+
+    #[test]
+    fn far_coordinates_keep_points_on_cell_edges() {
+        // Far from the origin, the rounding of cell bounds exceeds the
+        // relative slack of the cell edge; points exactly at the cutoff stay.
+        for offset in [0.0, 1.0e6, -3.0e9, 7.0e12] {
+            let references = [Point3::new(offset, offset, offset)];
+            let candidates = (0..64)
+                .map(|index| {
+                    let step = f64::from(index) * 0.125;
+                    Point3::new(offset + step, offset - step * 0.5, offset)
+                })
+                .collect::<Vec<_>>();
+            for cutoff in [1.0, 2.5, 5.0] {
+                let mut marked = Vec::new();
+                within(&candidates, &references, cutoff, |index| marked.push(index));
+                assert_eq!(
+                    marked,
+                    brute(&candidates, &references, cutoff),
+                    "{offset} {cutoff}"
+                );
+            }
+        }
     }
 }
