@@ -17,7 +17,6 @@ use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::ModelView;
 use crate::topology::{
     AtomSelection, InstanceAtomId, MoleculeClass, ResidueClass, ResidueView, Topology,
-    TopologyAtomIndex,
 };
 use crate::units::{self, Quantity, Unit, CANONICAL_LENGTH_UNIT};
 
@@ -148,14 +147,10 @@ impl<'a> Evaluator<'a> {
 
     pub(crate) fn run(mut self) -> Result<AtomSelection> {
         let bits = self.node(&self.expression.root)?;
-        let indices = bits
-            .ones()
-            .map(|index| TopologyAtomIndex::new(index as u32))
-            .collect();
-        Ok(AtomSelection::from_sorted_indices(
-            Arc::clone(self.topology),
-            indices,
-        ))
+        Ok(
+            AtomSelection::from_mask(Arc::clone(self.topology), &bits.words)
+                .expect("evaluated bits cover exactly the topology's atoms"),
+        )
     }
 
     fn len(&self) -> usize {
