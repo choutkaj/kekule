@@ -125,15 +125,39 @@ impl Ensemble {
         Ok(ensemble)
     }
 
-    /// Collects models that share one topology layout as equally weighted
-    /// samples (weight `1.0`), grouped by `partition`, keeping the first
-    /// model's snapshot. Positions, cells, occupancies, B-factors, and
-    /// properties move without copying.
+    /// Collects models of one topology layout as equally weighted samples
+    /// (weight `1.0`), grouped by `partition`, on the first model's topology
+    /// snapshot. Each model's positions, cell, occupancies, B-factors, and
+    /// structure properties become its sample, moving without copying.
+    ///
+    /// Every model's topology must have the first one's layout
+    /// ([`Topology::same_layout`]), so models read from separate files are
+    /// accepted as well as models sharing one published layout
+    /// ([`Topology::shares_layout`]). Equal layouts have the same atoms,
+    /// bonds, and dense order, so each model's dense atom and bond rows bind
+    /// to the first topology unchanged. Only the first topology is kept: the
+    /// perception and topology properties of the others are dropped. A
+    /// different layout fails with [`EnsembleError::TopologyMismatch`].
     ///
     /// The partition says what the models are:
     /// [`EnsemblePartition::one_state`] for draws of one distribution, such
     /// as the models of an NMR bundle, and
     /// [`EnsemblePartition::state_per_sample`] for distinct conformers.
+    ///
+    /// ```
+    /// use kekule::structure::{Ensemble, EnsemblePartition, Model, Positions};
+    /// // Two separate readings: equal topologies, each published on its own.
+    /// let read = || -> Result<Model, Box<dyn std::error::Error>> {
+    ///     let topology = kekule::smiles::to_topology("O")?;
+    ///     let atoms = topology.atom_count();
+    ///     Ok(Model::new(topology, Positions::zeros(atoms))?)
+    /// };
+    /// let (first, second) = (read()?, read()?);
+    /// assert!(!first.topology().shares_layout(second.topology()));
+    /// let ensemble = Ensemble::from_models([first, second], EnsemblePartition::one_state(2))?;
+    /// assert_eq!(ensemble.len(), 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn from_models(
         models: impl IntoIterator<Item = Model>,
         partition: EnsemblePartition,
@@ -143,7 +167,7 @@ impl Ensemble {
         let mut ensemble = Self::new(first.shared_topology());
         let mut samples = vec![EnsembleSample::from_model(first)];
         for model in models {
-            if !model.topology().shares_layout(&ensemble.topology) {
+            if !model.topology().same_layout(&ensemble.topology) {
                 return Err(EnsembleError::TopologyMismatch);
             }
             samples.push(EnsembleSample::from_model(model));
@@ -1529,7 +1553,8 @@ pub enum EnsembleError {
         /// The number of states.
         states: usize,
     },
-    /// A model belongs to a different topology layout.
+    /// A model's topology layout differs from the others'
+    /// ([`Topology::same_layout`]).
     TopologyMismatch,
     /// An ensemble-wide replacement has the wrong number of samples.
     SampleCountMismatch {

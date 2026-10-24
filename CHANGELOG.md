@@ -299,6 +299,12 @@ are marked **Breaking:**.
 
 ### Changed
 
+- `Ensemble::from_models` accepts models whose topologies have equal layouts
+  (`Topology::same_layout`), not only models sharing one published layout
+  (SeekDelta K39), so models read from separate files become samples keeping
+  each model's positions, cell, occupancies, B-factors, and structure
+  properties, bound to the first model's topology. Different layouts still
+  fail with `EnsembleError::TopologyMismatch`.
 - DSSP assignment is faster on one thread with unchanged results: candidate
   pairs come from a dense cell grid, ladders extend through an index of
   ladder ends, bulge merging examines only ladders starting within five

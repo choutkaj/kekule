@@ -248,6 +248,22 @@ fn canonical_ensemble_constructors_accept_owned_and_shared_topology() {
 }
 
 #[test]
+fn ensembles_from_models_accept_equal_layouts_and_refuse_others() {
+    let model = |smiles: &str| {
+        let topology = crate::smiles::to_topology(smiles).unwrap();
+        let atoms = topology.atom_count();
+        Model::new(topology, Positions::zeros(atoms)).unwrap()
+    };
+    // Published separately with equal contents: one layout.
+    let ensemble = bundle([model("CO"), model("CO")]).unwrap();
+    assert_eq!(ensemble.len(), 2);
+    // The same atoms and bonds in another dense order are another layout.
+    for models in [[model("CO"), model("OC")], [model("CO"), model("CC")]] {
+        assert_eq!(bundle(models).unwrap_err(), EnsembleError::TopologyMismatch);
+    }
+}
+
+#[test]
 fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
     let topology = Arc::new(single_atom_topology());
     let score = key("score");
