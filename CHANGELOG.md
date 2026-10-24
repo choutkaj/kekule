@@ -317,7 +317,12 @@ are marked **Breaking:**.
   78 ms, their chains 0.2 ms instead of 99 ms, the atoms of every residue's
   sites 8 ms instead of 18 ms, and the residue of every atom 6 ms instead of
   57 ms. Building the index adds about 45 ms to publishing those atoms.
-
+- `Ensemble::from_models` accepts models whose topologies have equal layouts
+  (`Topology::same_layout`), not only models sharing one published layout
+  (SeekDelta K39), so models read from separate files become samples keeping
+  each model's positions, cell, occupancies, B-factors, and structure
+  properties, bound to the first model's topology. Different layouts still
+  fail with `EnsembleError::TopologyMismatch`.
 - Ensemble samples share their structure storage (SeekDelta K40). An
   `EnsembleSample`'s positions, cell, occupancies, B-factors, and properties
   sit behind shared storage that is copied on write, one sample at a time,

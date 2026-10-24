@@ -358,7 +358,8 @@ temperature, a frame's time, step, velocities, and forces), so
 writers and reductions never lose it silently. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
-one shared layout and a partition saying what they are; there is no special
+equal layouts (`same_layout`), keeping the first model's topology, and a
+partition saying what they are; there is no special
 single-sample ownership model.
 
 Read access is through views: `Topology` lookups return `Option` views
