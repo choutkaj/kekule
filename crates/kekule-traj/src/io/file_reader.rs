@@ -506,7 +506,7 @@ fn open_indexed(
     let label = path.display().to_string();
     let mut file = File::open(path)
         .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
-    let fingerprint = TrajectoryFileFingerprint::of_file(&mut file, &label)?;
+    let fingerprint = TrajectoryFileFingerprint::of_labelled_file(&mut file, &label)?;
     let mut reader = BufReader::new(file);
     let detection = detect::select_format(
         &mut reader,
@@ -651,7 +651,8 @@ fn open_indexed(
     } else {
         let mut file = File::open(path)
             .map_err(|error| io_context(TrajectoryIoOperation::Index, None, &label, error))?;
-        let unchanged = TrajectoryFileFingerprint::of_file(&mut file, &label)? == fingerprint
+        let unchanged = TrajectoryFileFingerprint::of_labelled_file(&mut file, &label)?
+            == fingerprint
             && inner.offsets().end() == fingerprint.byte_count();
         if !unchanged {
             return Err(index_mismatch(

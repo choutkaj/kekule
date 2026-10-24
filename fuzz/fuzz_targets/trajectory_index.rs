@@ -1,6 +1,6 @@
 #![no_main]
 
-//! Decodes untrusted frame indexes, and opens real files of every trajectory
+//! Decodes untrusted frame indexes and file fingerprints, and opens real files of every trajectory
 //! format through checksummed indexes with fuzzed offsets.
 
 use std::path::PathBuf;
@@ -10,8 +10,8 @@ use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::structure::TrajectoryFrame;
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule_traj::io::{
-    open_indexed_trajectory, open_indexed_trajectory_from_index, TrajectoryFrameIndex,
-    TrajectoryIoLimits,
+    open_indexed_trajectory, open_indexed_trajectory_from_index, TrajectoryFileFingerprint,
+    TrajectoryFrameIndex, TrajectoryIoLimits,
 };
 use kekule_traj::{SeekableTrajectoryReader, TrajectoryReader};
 use libfuzzer_sys::fuzz_target;
@@ -121,6 +121,15 @@ fuzz_target!(|data: &[u8]| {
     // Any accepted encoding is canonical.
     if let Ok(index) = TrajectoryFrameIndex::from_bytes(data, &limits) {
         assert_eq!(index.to_bytes(), data);
+    }
+    if let Ok(fingerprint) = TrajectoryFileFingerprint::from_bytes(data) {
+        assert_eq!(fingerprint.to_bytes(), data);
+    }
+    if let Ok(fingerprint) = std::str::from_utf8(data)
+        .map_err(drop)
+        .and_then(|text| text.parse::<TrajectoryFileFingerprint>().map_err(drop))
+    {
+        assert_eq!(fingerprint.to_string().as_bytes(), data);
     }
 
     // Fuzzed, strictly increasing offsets in an otherwise valid index of a

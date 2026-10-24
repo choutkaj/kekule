@@ -13,8 +13,8 @@ use kekule_traj::io::dcd::{DcdReadOptions, DcdTimePolicy};
 use kekule_traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions, TrrWriter};
 use kekule_traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, CoordinateEncoding,
-    IndexedFileTrajectoryReader, ScalarPrecision, TrajectoryFrameIndex, TrajectoryIndexProgress,
-    TrajectoryIoLimits, TrajectoryOpenOptions,
+    IndexedFileTrajectoryReader, ScalarPrecision, TrajectoryFileFingerprint, TrajectoryFrameIndex,
+    TrajectoryIndexProgress, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule_traj::{
     SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
@@ -300,6 +300,78 @@ fn an_index_never_opens_a_changed_or_different_file() {
     file.write_all(&original[..original.len() / 2]).unwrap();
     drop(file);
     mismatch(&xtc, &xtc_topology);
+}
+
+#[test]
+fn a_host_computes_stores_and_checks_file_fingerprints() {
+    let directory = Directory::new();
+    for (name, topology) in fixtures() {
+        let path = directory.fixture(name);
+        let index = open_indexed_trajectory(&path, topology, Default::default())
+            .unwrap()
+            .to_frame_index();
+        let fingerprint = TrajectoryFileFingerprint::of_path(&path).unwrap();
+        assert_eq!(&fingerprint, index.fingerprint(), "{name}");
+        assert!(fingerprint.matches_path(&path).unwrap());
+
+        // An open file is fingerprinted from its start, wherever it was.
+        let mut file = File::open(&path).unwrap();
+        file.seek(SeekFrom::Start(5)).unwrap();
+        assert_eq!(
+            TrajectoryFileFingerprint::of_file(&mut file).unwrap(),
+            fingerprint
+        );
+        assert_eq!(file.stream_position().unwrap(), 0);
+        file.seek(SeekFrom::End(0)).unwrap();
+        assert!(fingerprint.matches_file(&mut file).unwrap());
+
+        // The stored forms decode to the same fingerprint.
+        let text = fingerprint.to_string();
+        assert_eq!(
+            text.parse::<TrajectoryFileFingerprint>().unwrap(),
+            fingerprint
+        );
+        assert_eq!(
+            TrajectoryFileFingerprint::from_bytes(&fingerprint.to_bytes()).unwrap(),
+            fingerprint
+        );
+    }
+
+    // A relinked copy with another modification time has the same content
+    // but no longer matches; a changed file has neither.
+    let original = directory.fixture("mdanalysis-2.9.0-twelve-atoms.xtc");
+    let recorded = TrajectoryFileFingerprint::of_path(&original).unwrap();
+    let copy = directory.0.join("moved.xtc");
+    fs::copy(&original, &copy).unwrap();
+    let modified = fs::metadata(&original).unwrap().modified().unwrap();
+    File::options()
+        .write(true)
+        .open(&copy)
+        .unwrap()
+        .set_modified(modified + std::time::Duration::from_secs(60))
+        .unwrap();
+    let relinked = TrajectoryFileFingerprint::of_path(&copy).unwrap();
+    assert!(recorded.same_content(&relinked));
+    assert!(!recorded.matches_path(&copy).unwrap());
+
+    let mut changed = fs::read(&original).unwrap();
+    let middle = changed.len() / 2;
+    changed[middle] ^= 0x40;
+    fs::write(&copy, &changed).unwrap();
+    assert!(!recorded.same_content(&TrajectoryFileFingerprint::of_path(&copy).unwrap()));
+
+    let missing = directory.0.join("missing.xtc");
+    let error = TrajectoryFileFingerprint::of_path(&missing).unwrap_err();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::Io);
+    assert_eq!(error.operation(), Some(TrajectoryIoOperation::Open));
+    assert_eq!(
+        error.source_label(),
+        Some(missing.display().to_string().as_str())
+    );
+    assert_eq!(
+        kind(recorded.matches_path(&missing)),
+        TrajectoryIoErrorKind::Io
+    );
 }
 
 #[test]
