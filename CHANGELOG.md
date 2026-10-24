@@ -11,6 +11,13 @@ are marked **Breaking:**.
 
 ### Added
 
+- `FrameBuffer::into_trajectory` hands the buffered frame out, without
+  copying it, as a one-frame `Trajectory` bound to the buffer's topology, so a
+  host can keep decoded frames (in a frame cache, for example) and view them
+  through `Trajectory::get` without validating them again.
+  `FrameBuffer::from_frame` makes a buffer of a frame, validating it and
+  binding its bond rows once, so storage no longer needed takes the next
+  decoded frame without allocating.
 - Native binary serialization in the new `kekule::native` format module:
   exact, versioned persistence of a `Molecule`, `Topology`, `Model`,
   `Ensemble`, or in-memory `Trajectory`. `native::write_to` streams to a
