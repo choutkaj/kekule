@@ -55,6 +55,15 @@ use super::{AsModelView, Model, ModelView, Positions, StructureError, StructureK
 /// [`super::Trajectory`] when order is temporal. Statistics over an ensemble
 /// must use its weights.
 ///
+/// Each sample's structure is shared storage (see [`EnsembleSample`]), so
+/// cloning an ensemble copies weights, the grouping, and the states but no
+/// coordinates. An ensemble held elsewhere, for example behind an [`Arc`],
+/// can therefore be regrouped or reweighted through a clone
+/// ([`Arc::make_mut`]) without copying coordinates; editing one sample's
+/// structure then copies that sample alone, and the other ensemble is
+/// unaffected. [`Self::select`], [`Self::select_states`], and
+/// [`Self::collapse`] share the selected structures in the same way.
+///
 /// Samples are validated against the shared topology on insertion, so they
 /// can be read as [`super::ModelView`]s without further checks. Superposition
 /// and RMSD are inherent methods; see [`crate::alignment`].
@@ -178,7 +187,7 @@ impl Ensemble {
     ) -> Self {
         debug_assert!(samples.iter().all(|sample| is_bound(
             sample.atom_count(),
-            &sample.properties,
+            &sample.structure.properties,
             &topology
         )));
         let partition = EnsemblePartition::one_state(samples.len());
@@ -430,15 +439,15 @@ impl Ensemble {
             }
         }
         for (sample, positions) in self.samples.iter_mut().zip(positions) {
-            sample.positions = positions;
+            sample.replace_positions(positions);
         }
         Ok(())
     }
 
-    /// Copies samples in the requested order, sharing the topology. Ranges
-    /// and strides can be written as `(start..end).step_by(stride)`;
-    /// duplicates and reordering are allowed. Weights, the temperature, and
-    /// ensemble properties are kept.
+    /// Copies samples in the requested order, sharing the topology and each
+    /// sample's structure. Ranges and strides can be written as
+    /// `(start..end).step_by(stride)`; duplicates and reordering are
+    /// allowed. Weights, the temperature, and ensemble properties are kept.
     ///
     /// Every state with a selected sample becomes a state of the copy, in
     /// state order, represented by the first copy of its representative or,
@@ -506,12 +515,12 @@ impl Ensemble {
     }
 
     /// Copies whole states in the requested order, each with all of its
-    /// samples in sample order, its representative, energy, and properties.
-    /// Duplicates and reordering are allowed. Weights, the temperature, and
-    /// ensemble properties are kept, so populations stay relative to one
-    /// another; [`Self::covering_population`],
-    /// [`Self::within_energy_window`], and [`Self::ranked_by_population`]
-    /// give states to extract.
+    /// samples in sample order (sharing their structures), its
+    /// representative, energy, and properties. Duplicates and reordering are
+    /// allowed. Weights, the temperature, and ensemble properties are kept,
+    /// so populations stay relative to one another;
+    /// [`Self::covering_population`], [`Self::within_energy_window`], and
+    /// [`Self::ranked_by_population`] give states to extract.
     pub fn select_states(
         &self,
         indices: impl IntoIterator<Item = usize>,
@@ -669,9 +678,9 @@ impl Ensemble {
         Ok(())
     }
 
-    /// A new ensemble of one sample per state, in state order: a copy of
-    /// each state's representative carrying the state's population as its
-    /// weight, so populations are kept.
+    /// A new ensemble of one sample per state, in state order: each state's
+    /// representative, sharing its structure, carrying the state's
+    /// population as its weight, so populations are kept.
     ///
     /// It coarse-grains, losing the spread within each state. Each state
     /// keeps its energy and properties; the topology, the ensemble
@@ -1027,8 +1036,16 @@ impl Ensemble {
     }
 
     fn bind(&self, sample: &mut EnsembleSample) -> Result<(), EnsembleError> {
-        validate_binding(sample.atom_count(), &sample.properties, &self.topology)?;
-        sample.properties.bind_bond_rows(self.topology.bond_count());
+        let atoms = sample.atom_count();
+        validate_binding(atoms, &sample.structure.properties, &self.topology)?;
+        // A bound sample, such as one taken from another ensemble of this
+        // topology, keeps its structure shared.
+        if !is_bound(atoms, &sample.structure.properties, &self.topology) {
+            sample
+                .storage()
+                .properties
+                .bind_bond_rows(self.topology.bond_count());
+        }
         Ok(())
     }
 }
@@ -1048,14 +1065,36 @@ impl<'a> IntoIterator for &'a Ensemble {
 ///
 /// A sample has no energy; its [`EnsembleState`] may. The sample carries no
 /// topology; it is bound when inserted into an [`Ensemble`].
+///
+/// The structure (positions, cell, occupancies, B-factors, and properties)
+/// is shared storage: cloning a sample, and therefore an ensemble, copies no
+/// coordinates, and a clone may be reweighted or regrouped freely. Editing
+/// the structure of a sample whose storage is shared first copies that one
+/// sample's structure (copy on write), so the other holders are unaffected.
+/// The weight belongs to each sample alone.
+///
+/// ```
+/// use kekule::structure::{EnsembleSample, Positions};
+/// let sample = EnsembleSample::new(Positions::zeros(3), 1.0)?;
+/// let mut reweighted = sample.clone();
+/// reweighted.set_weight(2.0)?;
+/// assert!(reweighted.shares_structure_with(&sample));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnsembleSample {
+    structure: Arc<SampleStructure>,
+    weight: f64,
+}
+
+/// The structure state of an [`EnsembleSample`], shared between clones.
+#[derive(Debug, Clone, PartialEq)]
+struct SampleStructure {
     positions: Positions,
     cell: Option<PeriodicCell>,
     occupancies: AtomScalars,
     b_factors: AtomScalars,
     properties: StructureProperties,
-    weight: f64,
 }
 
 impl EnsembleSample {
@@ -1070,27 +1109,19 @@ impl EnsembleSample {
     /// A sample of an equally weighted collection.
     fn unit(positions: Positions) -> Self {
         let properties = StructureProperties::new(positions.len());
-        Self {
-            positions,
-            cell: None,
-            occupancies: AtomScalars::default(),
-            b_factors: AtomScalars::default(),
-            properties,
-            weight: 1.0,
-        }
+        Self::from_frame_state(positions, None, properties)
     }
 
     /// An equally weighted sample holding a model's structure state; the
     /// model's topology is dropped.
     pub(crate) fn from_model(model: Model) -> Self {
-        Self {
+        Self::with_structure(SampleStructure {
             positions: model.positions,
             cell: model.cell,
             occupancies: model.occupancies,
             b_factors: model.b_factors,
             properties: model.properties,
-            weight: 1.0,
-        }
+        })
     }
 
     /// An equally weighted sample without occupancies or B-factors, for
@@ -1100,12 +1131,19 @@ impl EnsembleSample {
         cell: Option<PeriodicCell>,
         properties: StructureProperties,
     ) -> Self {
-        Self {
+        Self::with_structure(SampleStructure {
             positions,
             cell,
             occupancies: AtomScalars::default(),
             b_factors: AtomScalars::default(),
             properties,
+        })
+    }
+
+    /// An equally weighted sample owning `structure`.
+    fn with_structure(structure: SampleStructure) -> Self {
+        Self {
+            structure: Arc::new(structure),
             weight: 1.0,
         }
     }
@@ -1113,13 +1151,20 @@ impl EnsembleSample {
     /// Returns this sample with a periodic cell.
     #[must_use]
     pub fn with_cell(mut self, cell: PeriodicCell) -> Self {
-        self.cell = Some(cell);
+        self.storage().cell = Some(cell);
         self
     }
 
     /// Number of atoms, the length of every dense per-atom array of the sample.
     pub fn atom_count(&self) -> usize {
-        self.positions.len()
+        self.structure.positions.len()
+    }
+
+    /// Whether this sample and `other` share one structure's storage, so
+    /// that neither has copied the other's coordinates. Clones share until
+    /// one of them edits its structure; weights are never shared.
+    pub fn shares_structure_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.structure, &other.structure)
     }
 
     /// The relative statistical weight; always finite and positive.
@@ -1148,47 +1193,73 @@ impl EnsembleSample {
         topology: &'a Arc<Topology>,
         kind: StructureKind<'a>,
     ) -> ModelView<'a> {
+        let structure = &*self.structure;
         ModelView::bound(
             topology,
-            &self.positions,
-            self.cell.as_ref(),
-            &self.occupancies,
-            &self.b_factors,
-            &self.properties,
+            &structure.positions,
+            structure.cell.as_ref(),
+            &structure.occupancies,
+            &structure.b_factors,
+            &structure.properties,
             kind,
         )
     }
 
     /// Projects every dense row through a subset correspondence.
     fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, StructureError> {
+        let structure = &*self.structure;
         Ok(Self {
-            positions: self.positions.select_indices(atoms)?,
-            cell: self.cell,
-            occupancies: self.occupancies.select(atoms),
-            b_factors: self.b_factors.select(atoms),
-            properties: self.properties.project(atoms, bonds)?,
+            structure: Arc::new(SampleStructure {
+                positions: structure.positions.select_indices(atoms)?,
+                cell: structure.cell,
+                occupancies: structure.occupancies.select(atoms),
+                b_factors: structure.b_factors.select(atoms),
+                properties: structure.properties.project(atoms, bonds)?,
+            }),
             weight: self.weight,
         })
     }
 
     /// Positions move and the cell rotates.
     fn transformed(&self, transform: RigidTransform) -> Result<Self, StructureError> {
+        let structure = &*self.structure;
         Ok(Self {
-            cell: transform_cell(self.cell, transform)?,
-            positions: transform_positions(&self.positions, transform)?,
-            occupancies: self.occupancies.clone(),
-            b_factors: self.b_factors.clone(),
-            properties: self.properties.clone(),
+            structure: Arc::new(SampleStructure {
+                cell: transform_cell(structure.cell, transform)?,
+                positions: transform_positions(&structure.positions, transform)?,
+                occupancies: structure.occupancies.clone(),
+                b_factors: structure.b_factors.clone(),
+                properties: structure.properties.clone(),
+            }),
             weight: self.weight,
         })
     }
 
-    fn storage_ref(&self) -> &Self {
-        self
+    /// Replaces the positions, copying the rest of a shared structure but
+    /// never the positions being replaced.
+    fn replace_positions(&mut self, positions: Positions) {
+        match Arc::get_mut(&mut self.structure) {
+            Some(structure) => structure.positions = positions,
+            None => {
+                let structure = &*self.structure;
+                self.structure = Arc::new(SampleStructure {
+                    positions,
+                    cell: structure.cell,
+                    occupancies: structure.occupancies.clone(),
+                    b_factors: structure.b_factors.clone(),
+                    properties: structure.properties.clone(),
+                });
+            }
+        }
     }
 
-    fn storage(&mut self) -> &mut Self {
-        self
+    fn storage_ref(&self) -> &SampleStructure {
+        &self.structure
+    }
+
+    /// The structure for editing, copied first if it is shared.
+    fn storage(&mut self) -> &mut SampleStructure {
+        Arc::make_mut(&mut self.structure)
     }
 
     structure_readers!();
@@ -1452,8 +1523,8 @@ impl EnsembleSampleMut<'_> {
         self.sample.apply_rigid_transform(transform)
     }
 
-    fn storage(&mut self) -> &mut EnsembleSample {
-        self.sample
+    fn storage(&mut self) -> &mut SampleStructure {
+        self.sample.storage()
     }
 
     structure_mutators!();
