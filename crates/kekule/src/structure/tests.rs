@@ -1304,6 +1304,133 @@ fn boltzmann_populations_scale_the_samples_of_each_state_together() {
     assert_eq!(drawn.temperature(), None);
 }
 
+/// Whether every sample of `a` shares its structure with the same sample
+/// of `b`.
+fn shares_every_structure(a: &Ensemble, b: &Ensemble) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(a, b)| a.payload().shares_structure_with(b.payload()))
+}
+
+fn x(ensemble: &Ensemble, sample: usize) -> f64 {
+    ensemble.get(sample).unwrap().positions().values().value()[0].x
+}
+
+#[test]
+fn regrouping_and_reweighting_a_shared_ensemble_copy_no_structure() {
+    let shared = Arc::new(energy_ensemble(&[0.0, 1.0, 2.0, 3.0]));
+    let mut edited = Arc::clone(&shared);
+
+    let ensemble = Arc::make_mut(&mut edited);
+    ensemble
+        .regroup(EnsemblePartition::new(vec![0, 0, 1, 1], vec![0, 2]).unwrap())
+        .unwrap();
+    ensemble.get_mut(1).unwrap().set_weight(3.0).unwrap();
+    ensemble.normalize_weights().unwrap();
+    ensemble.state_mut(0).unwrap().set_energy(kj(0.0)).unwrap();
+    ensemble.state_mut(1).unwrap().set_energy(kj(1.0)).unwrap();
+    ensemble
+        .assign_boltzmann_populations(Quantity::new(300.0, KELVIN))
+        .unwrap();
+
+    assert!(shares_every_structure(&edited, &shared));
+    // The held ensemble keeps its own grouping and weights.
+    assert_eq!(shared.state_count(), 4);
+    assert_eq!(weights(&shared), [1.0; 4]);
+    assert_eq!(shared.temperature(), None);
+    assert_eq!(edited.state_count(), 2);
+    assert_ne!(weights(&edited), weights(&shared));
+
+    // Selections and collapsing share the structures they keep.
+    let selected = shared.select([3, 1]).unwrap();
+    assert!(selected
+        .get(0)
+        .unwrap()
+        .payload()
+        .shares_structure_with(shared.get(3).unwrap().payload()));
+    assert!(shares_every_structure(
+        &shared.select_states(0..4).unwrap(),
+        &shared
+    ));
+    assert!(shares_every_structure(&shared.collapse().unwrap(), &shared));
+
+    // A sample taken from an ensemble of the same topology stays shared.
+    let mut other = Ensemble::new(shared.shared_topology());
+    let sample = shared.get(2).unwrap().payload().clone();
+    other.push_state(sample, EnsembleState::new()).unwrap();
+    assert!(other
+        .get(0)
+        .unwrap()
+        .payload()
+        .shares_structure_with(shared.get(2).unwrap().payload()));
+}
+
+#[test]
+fn editing_one_sample_of_a_shared_ensemble_copies_that_sample_alone() {
+    let original = energy_ensemble(&[0.0, 1.0, 2.0]);
+    let mut copy = original.clone();
+    let moved = Quantity::new(Point3::new(5.0, 0.0, 0.0), NANOMETER);
+    copy.get_mut(1)
+        .unwrap()
+        .set_position_at(ATOM0, moved)
+        .unwrap();
+    copy.get_mut(2)
+        .unwrap()
+        .set_b_factor(ATOM0, Some(Quantity::new(1.0, SQUARE_ANGSTROM)))
+        .unwrap();
+
+    assert_eq!(x(&copy, 1), 5.0);
+    assert_eq!(x(&original, 1), 0.0);
+    assert!(original.get(2).unwrap().b_factors().is_none());
+    assert!(copy.get(2).unwrap().b_factors().is_some());
+    for (sample, shared) in [(0, true), (1, false), (2, false)] {
+        assert_eq!(
+            copy.get(sample)
+                .unwrap()
+                .payload()
+                .shares_structure_with(original.get(sample).unwrap().payload()),
+            shared,
+            "sample {sample}"
+        );
+    }
+
+    // Transforms and position replacement leave the original unchanged.
+    let mut transformed = original.clone();
+    use crate::geometry::{Matrix3, RigidTransform};
+    let shift =
+        RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(2.0, 0.0, 0.0)).unwrap();
+    transformed
+        .get_mut(0)
+        .unwrap()
+        .apply_rigid_transform(&shift)
+        .unwrap();
+    assert_eq!(x(&transformed, 0), 2.0);
+    let mut replaced = original.clone();
+    replaced
+        .replace_positions((0..3).map(|index| single_position(f64::from(index) + 7.0)))
+        .unwrap();
+    assert_eq!(x(&replaced, 2), 9.0);
+    assert_eq!(
+        (0..3)
+            .map(|sample| x(&original, sample))
+            .collect::<Vec<_>>(),
+        [0.0; 3]
+    );
+
+    // An edit that fails after copying changes neither ensemble.
+    let mut failed = original.clone();
+    assert!(failed
+        .get_mut(0)
+        .unwrap()
+        .set_positions(Quantity::new([Point3::origin(); 2], NANOMETER))
+        .is_err());
+    assert_eq!(
+        failed.get(0).unwrap().payload(),
+        original.get(0).unwrap().payload()
+    );
+}
+
 #[test]
 fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
     // Four conformers, energies 0..3 kJ/mol, weights 1..4.

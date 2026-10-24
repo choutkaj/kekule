@@ -305,6 +305,21 @@ are marked **Breaking:**.
   each model's positions, cell, occupancies, B-factors, and structure
   properties, bound to the first model's topology. Different layouts still
   fail with `EnsembleError::TopologyMismatch`.
+- Ensemble samples share their structure storage (SeekDelta K40). An
+  `EnsembleSample`'s positions, cell, occupancies, B-factors, and properties
+  sit behind shared storage that is copied on write, one sample at a time,
+  while its weight stays its own. Cloning an ensemble therefore copies no
+  coordinates, so an ensemble held elsewhere behind an `Arc` can be regrouped
+  or reweighted through `Arc::make_mut` cheaply, and editing one sample's
+  structure copies that sample alone without affecting the other holders.
+  `select`, `select_states`, and `collapse` share the structures they keep,
+  and a bound sample pushed into another ensemble of the same topology stays
+  shared. The new `EnsembleSample::shares_structure_with` tells whether two
+  samples share storage. The API and the native format are otherwise
+  unchanged. On 1,000 samples of a 9,958-atom protein (3KMF) held twice,
+  regrouping takes 0.03 ms and allocates 0.1 MB instead of 471 ms and
+  558 MB, and reweighting 0.02 ms and under 0.1 MB instead of 281 ms and
+  558 MB.
 - DSSP assignment is faster on one thread with unchanged results: candidate
   pairs come from a dense cell grid, ladders extend through an index of
   ladder ends, bulge merging examines only ladders starting within five
