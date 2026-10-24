@@ -14,6 +14,15 @@
 //! medoid. Complete linkage cut at height `h` bounds every cluster's
 //! diameter by `h`.
 //!
+//! [`Ensemble::pairwise_fitted_rmsd_with`] and
+//! [`Ensemble::cluster_by_radius_with`] take a [`ClusteringRun`]: a
+//! [`parallel::Executor`](crate::parallel::Executor) that spreads the fits
+//! over threads, a [`Cancellation`](crate::diagnostics::Cancellation), and a
+//! [`ClusteringProgress`] callback. Fits run in contiguous ranges whose
+//! results combine in a fixed order, so every executor and thread count
+//! returns exactly the single-threaded result, including which error is
+//! reported.
+//!
 //! [`Ensemble::cluster_k_medoids`] finds a given number of clusters directly,
 //! choosing medoid samples that minimize the weight-summed distance from
 //! every sample to its nearest medoid, so heavy samples attract medoids.
@@ -70,13 +79,18 @@ use std::fmt;
 
 mod hierarchical;
 mod medoids;
+mod run;
 pub use hierarchical::{Cut, Dendrogram, DistanceMatrix, Linkage, Merge};
+pub use run::{ClusteringProgress, ClusteringRun};
 
 use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentError, AlignmentOptions, FitAtoms, NormalizedWeights,
 };
+use crate::diagnostics::Cancelled;
+use crate::parallel::map_ranges;
 use crate::structure::{Ensemble, EnsembleError, EnsemblePartition, ModelView, StructureError};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
+use run::{FirstFailure, Stop, Tracker};
 
 /// The order in which leader clustering visits members.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -146,7 +160,9 @@ impl Ensemble {
     /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
     /// is rejected. Each member is fitted to at most every representative, so
     /// the cost grows with members times clusters (times symmetry
-    /// permutations). An empty ensemble gives an empty partition.
+    /// permutations). An empty ensemble gives an empty partition. Fits run
+    /// on the calling thread; [`Self::cluster_by_radius_with`] spreads them
+    /// over threads, reports progress, and can be cancelled.
     ///
     /// # Errors
     ///
@@ -168,6 +184,39 @@ impl Ensemble {
         atoms: impl Into<FitAtoms<'a>>,
         options: ClusteringOptions<'_>,
     ) -> Result<EnsemblePartition, ClusteringError> {
+        self.cluster_by_radius_with(radius, atoms, options, ClusteringRun::default())
+    }
+
+    /// [`Self::cluster_by_radius`], with its fits run, followed and stopped
+    /// as `run` says.
+    ///
+    /// Each member joins or founds a cluster depending on those placed
+    /// before it, so members are still placed one at a time in visiting
+    /// order. Their fits run ahead in batches: every member of a batch is
+    /// fitted, in ranges of members on `run`'s executor, to the
+    /// representatives founded before the batch, and then, as it is placed,
+    /// to the few founded within it. The nearest is chosen in cluster order
+    /// and the first failed fit in visiting order is reported, so the
+    /// partition or error is the one [`Self::cluster_by_radius`] returns.
+    /// Progress counts members placed, of the member count.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::cluster_by_radius`], and [`ClusteringError::Cancelled`]
+    /// once `run`'s cancellation is requested.
+    ///
+    /// # Panics
+    ///
+    /// When a work item panics, which
+    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
+    /// the executor skips or repeats a work item.
+    pub fn cluster_by_radius_with<'a>(
+        &self,
+        radius: Quantity<f64>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: ClusteringOptions<'_>,
+        run: ClusteringRun<'_>,
+    ) -> Result<EnsemblePartition, ClusteringError> {
         let atoms = undirected(atoms.into())?;
         let radius = radius.value_in(CANONICAL_LENGTH_UNIT)?;
         if !(radius.is_finite() && radius >= 0.0) {
@@ -188,18 +237,23 @@ impl Ensemble {
             .map(|member| member.as_model_view())
             .collect::<Vec<ModelView<'_>>>();
         let Some(first) = views.first() else {
+            Tracker::start(run, 0, 0)?;
             return Ok(EnsemblePartition::state_per_sample(0));
         };
         let sets = atoms.pair_sets(*first, *first)?;
         check_fit_count(atoms.pair_count())?;
         let weights = NormalizedWeights::new(options.alignment.weighting(), atoms.pair_count())?;
         let policy = options.alignment.periodic_policy();
+        let tracker = Tracker::start(run, views.len(), atoms.pair_count())?;
 
-        let mut assignments = vec![0; views.len()];
-        let mut representatives: Vec<usize> = Vec::new();
-        for member in order {
+        // The nearest of `representatives`, numbered from `first_cluster`,
+        // within `radius` of `member`; the earlier cluster on ties.
+        let search = |member: usize, representatives: &[usize], first_cluster: usize| {
             let mut nearest: Option<(usize, f64)> = None;
-            for (cluster, representative) in representatives.iter().enumerate() {
+            for (offset, representative) in representatives.iter().enumerate() {
+                if offset > 0 && offset % tracker.fits_per_checkpoint() == 0 {
+                    tracker.poll()?;
+                }
                 let rmsd = best_kabsch(
                     views[member],
                     views[*representative],
@@ -214,17 +268,86 @@ impl Ensemble {
                 .rmsd()
                 .into_value();
                 if rmsd <= radius && nearest.is_none_or(|(_, best)| rmsd < best) {
-                    nearest = Some((cluster, rmsd));
+                    nearest = Some((first_cluster + offset, rmsd));
                 }
             }
-            assignments[member] = match nearest {
-                Some((cluster, _)) => cluster,
-                None => {
-                    representatives.push(member);
-                    representatives.len() - 1
+            Ok::<_, ClusteringError>(nearest)
+        };
+
+        let parallelism = tracker.executor().parallelism().get();
+        let mut assignments = vec![0; views.len()];
+        let mut representatives: Vec<usize> = Vec::new();
+        // Members placed and fits made since the last checkpoint.
+        let (mut placed, mut fits) = (0, 0);
+        let mut pending = order.as_slice();
+        while !pending.is_empty() {
+            // A batch of members is fitted at once against the `known`
+            // representatives founded before it: a work item per thread, and
+            // no more members than representatives, so that fitting members
+            // to those founded within the batch stays the smaller share.
+            let known = representatives.len();
+            let members_per_item = tracker.fits_per_work_item().div_ceil(known.max(1));
+            let size = (parallelism * members_per_item)
+                .min(known.max(parallelism))
+                .min(pending.len());
+            let (batch, rest) = pending.split_at(size);
+            pending = rest;
+            let failure = FirstFailure::new();
+            let ranges = map_ranges(
+                tracker.executor(),
+                batch.len(),
+                members_per_item,
+                |positions| {
+                    let mut found = Vec::with_capacity(positions.len());
+                    for position in positions {
+                        if failure.precedes(position) {
+                            return (found, Some(Stop::Superseded));
+                        }
+                        match search(batch[position], &representatives[..known], 0) {
+                            Ok(nearest) => found.push(nearest),
+                            Err(error) => {
+                                failure.record(position);
+                                return (found, Some(Stop::Error(error)));
+                            }
+                        }
+                    }
+                    (found, None)
+                },
+            );
+            // Placing the batch in visiting order, each member also fitted to
+            // the representatives founded before it within the batch, whose
+            // clusters come after the known ones, makes every choice and
+            // error the serial one.
+            let mut members = batch.iter();
+            for (found, stop) in ranges {
+                for nearest in found {
+                    let member = *members.next().expect("one result per member");
+                    let founded = search(member, &representatives[known..], known)?;
+                    fits += known.max(1) + (representatives.len() - known);
+                    let nearest = match (nearest, founded) {
+                        (Some(old), Some(new)) if new.1 < old.1 => Some(new),
+                        (Some(old), _) => Some(old),
+                        (None, new) => new,
+                    };
+                    assignments[member] = match nearest {
+                        Some((cluster, _)) => cluster,
+                        None => {
+                            representatives.push(member);
+                            representatives.len() - 1
+                        }
+                    };
+                    placed += 1;
+                    if fits >= tracker.fits_per_checkpoint() {
+                        tracker.checkpoint(placed)?;
+                        (placed, fits) = (0, 0);
+                    }
                 }
-            };
+                if let Some(stop) = stop {
+                    return Err(stop.into_error());
+                }
+            }
         }
+        tracker.finish(placed);
         Ok(EnsemblePartition::from_parts_unchecked(
             assignments,
             representatives,
@@ -305,6 +428,9 @@ pub enum ClusteringError {
     Ensemble(Box<EnsembleError>),
     /// A quantity could not be converted to the required unit; see the source.
     Unit(Box<UnitError>),
+    /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
+    /// it; no partial result is returned.
+    Cancelled(Cancelled),
 }
 
 impl fmt::Display for ClusteringError {
@@ -354,6 +480,7 @@ impl fmt::Display for ClusteringError {
             Self::Alignment(_) => formatter.write_str("cannot fit members"),
             Self::Ensemble(_) => formatter.write_str("invalid ensemble"),
             Self::Unit(_) => formatter.write_str("invalid quantity unit"),
+            Self::Cancelled(_) => formatter.write_str("clustering cancelled"),
         }
     }
 }
@@ -364,6 +491,7 @@ impl std::error::Error for ClusteringError {
             Self::Alignment(error) | Self::PairFit { source: error, .. } => Some(error.as_ref()),
             Self::Ensemble(error) => Some(error.as_ref()),
             Self::Unit(error) => Some(error.as_ref()),
+            Self::Cancelled(cancelled) => Some(cancelled),
             _ => None,
         }
     }

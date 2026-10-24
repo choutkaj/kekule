@@ -1,17 +1,42 @@
-//! Host-supplied parallel-for, and ordered fork-join over index ranges on it.
+//! Host-supplied parallel-for for Kekule's parallel analyses.
+//!
+//! An analysis that can spread over threads splits its work into indexed
+//! items and runs them through an [`Executor`]. It combines the items'
+//! results in a fixed order, so the result never depends on the executor, on
+//! how many threads it has, or on where, when, or in which order the items
+//! run. [`ScopedThreads`], scoped standard-library threads, is the default;
+//! a host with its own thread pool implements [`Executor`] to run analyses
+//! on it.
+//!
+//! [`dssp::assign_with`](crate::dssp::assign_with),
+//! [`Ensemble::pairwise_fitted_rmsd_with`](crate::structure::Ensemble::pairwise_fitted_rmsd_with)
+//! and
+//! [`Ensemble::cluster_by_radius_with`](crate::structure::Ensemble::cluster_by_radius_with)
+//! take an executor.
+//!
+//! ```
+//! use std::num::NonZeroUsize;
+//! use std::sync::atomic::{AtomicUsize, Ordering};
+//! use kekule::parallel::{Executor, ScopedThreads};
+//!
+//! let executor = ScopedThreads::new(NonZeroUsize::new(4).unwrap());
+//! let sum = AtomicUsize::new(0);
+//! executor.run(10, &|index| {
+//!     sum.fetch_add(index, Ordering::Relaxed);
+//! });
+//! assert_eq!(sum.into_inner(), 45);
+//! ```
 
 use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 
-/// Runs the independent work items of one DSSP assignment, for
-/// [`assign_with`](super::assign_with).
+/// Runs the independent work items of one parallel analysis.
 ///
-/// A host with its own thread pool implements this to run assignments on
-/// it. Assignment splits each stage into at most [`Self::parallelism`] work
-/// items and combines their results in order, so the result never depends
-/// on where, when, or in which order the items run.
+/// An analysis splits each of its stages into at most [`Self::parallelism`]
+/// work items and combines their results in order, so the result never
+/// depends on where, when, or in which order the items run.
 ///
 /// # Contract
 ///
@@ -19,9 +44,9 @@ use std::thread;
 /// any threads and in any order, concurrently or not, and returns only after
 /// every call has returned. When a call of `body` panics, `run` panics too,
 /// after or instead of the remaining calls; it never returns normally. An
-/// executor that skips or repeats an index makes assignment panic.
-pub trait DsspExecutor: Sync {
-    /// How many work items are worth running at once; assignment splits a
+/// executor that skips or repeats an index makes the analysis panic.
+pub trait Executor: Sync {
+    /// How many work items are worth running at once; an analysis splits a
     /// stage into at most this many.
     fn parallelism(&self) -> NonZeroUsize;
 
@@ -30,14 +55,15 @@ pub trait DsspExecutor: Sync {
     fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync));
 }
 
-/// The default [`DsspExecutor`]: scoped standard-library threads, started
-/// for each stage and joined before it ends.
+/// The default [`Executor`]: scoped standard-library threads, started for
+/// each stage and joined before it ends.
 ///
 /// The calling thread takes part, so one thread runs everything on the
 /// calling thread and spawns none. An item whose thread cannot be spawned,
 /// as on targets without threads, runs on the calling thread. A panic in a
 /// work item is resumed on the calling thread once the other threads have
-/// finished.
+/// finished. Starting threads costs a fraction of a millisecond per stage,
+/// which a host's own pool avoids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScopedThreads {
     threads: NonZeroUsize,
@@ -56,7 +82,7 @@ impl ScopedThreads {
     }
 }
 
-impl DsspExecutor for ScopedThreads {
+impl Executor for ScopedThreads {
     fn parallelism(&self) -> NonZeroUsize {
         self.threads
     }
@@ -102,8 +128,12 @@ impl DsspExecutor for ScopedThreads {
 ///
 /// Too little work for two ranges runs `work(0..len)` on the calling thread
 /// without the executor.
-pub(super) fn map_ranges<R: Send>(
-    executor: &dyn DsspExecutor,
+///
+/// # Panics
+///
+/// When a work item panics, or when `executor` skips or repeats one.
+pub(crate) fn map_ranges<R: Send>(
+    executor: &dyn Executor,
     len: usize,
     min_chunk: usize,
     work: impl Fn(Range<usize>) -> R + Sync,
@@ -123,10 +153,7 @@ pub(super) fn map_ranges<R: Send>(
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .replace(result);
-        assert!(
-            previous.is_none(),
-            "DSSP executor ran work item {chunk} twice"
-        );
+        assert!(previous.is_none(), "executor ran work item {chunk} twice");
     });
     slots
         .into_iter()
@@ -134,7 +161,7 @@ pub(super) fn map_ranges<R: Send>(
         .map(|(chunk, slot)| {
             slot.into_inner()
                 .unwrap_or_else(PoisonError::into_inner)
-                .unwrap_or_else(|| panic!("DSSP executor skipped work item {chunk}"))
+                .unwrap_or_else(|| panic!("executor skipped work item {chunk}"))
         })
         .collect()
 }

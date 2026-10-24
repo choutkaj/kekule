@@ -282,11 +282,13 @@ are marked **Breaking:**.
 - DSSP assignment runs on several threads (SeekDelta K34), so per-frame
   secondary structure of large systems keeps up with playback.
   `DsspOptions::with_threads` runs `dssp::assign` on scoped
-  standard-library threads, the new default `dssp::ScopedThreads` executor;
+  standard-library threads, the default `parallel::ScopedThreads` executor;
   the default, one thread, spawns none. `dssp::assign_with` runs it on a
-  host's own thread pool through the new `dssp::DsspExecutor` trait, a
+  host's own thread pool through the `parallel::Executor` trait, a
   parallel-for that reports its `parallelism` and runs indexed work items in
-  any order on any threads, passing a work item's panic to the caller.
+  any order on any threads, passing a work item's panic to the caller. Both
+  live in the new `kekule::parallel` module, shared by every parallel
+  analysis.
   Residue reading, backbone geometry, candidate pairs, hydrogen-bond
   energies, and bridge tests split into contiguous ranges whose results are
   combined in DSSP order, so every executor and thread count returns
@@ -296,6 +298,24 @@ are marked **Breaking:**.
   against 20 ms on one (38 ms before this release), 1,000,000 atoms 144 ms
   against 266 ms. Starting scoped threads costs a fraction of a millisecond
   per stage, which a host pool passed to `assign_with` avoids.
+- Pairwise fitted RMSD and leader clustering run on several threads, report
+  progress, and can be cancelled (SeekDelta K38).
+  `Ensemble::pairwise_fitted_rmsd_with` and `Ensemble::cluster_by_radius_with`
+  take a `clustering::ClusteringRun` naming a `parallel::Executor`, a
+  `diagnostics::Cancellation`, and a callback of `ClusteringProgress` (pairs
+  fitted or members placed, of the total), called one at a time with
+  nondecreasing counts; by default fits run on the calling thread as before.
+  The matrix splits its pairs, in condensed order, into contiguous ranges.
+  Leader clustering still places members one at a time in visiting order,
+  splitting one member's fits against many representatives into ranges and
+  choosing the nearest in cluster order. Ranges merge in order, so every
+  executor and thread count returns exactly the single-threaded matrix or
+  partition, and a failed fit reports the same first failing pair or member.
+  A cancelled run fails with the new `ClusteringError::Cancelled` and returns
+  no partial result. 1,000 samples of the first 352 alpha carbons of 1AKE,
+  release, i5-11400F, shared machine: the matrix takes 9.5 s on one thread,
+  2.8 s on four and 2.0 s on eight; leader clustering into 528 clusters
+  within 1 Å takes 6.2 s, 1.8 s and 1.2 s.
 
 ### Changed
 
@@ -317,7 +337,12 @@ are marked **Breaking:**.
   of atom sites by asym and atom name instead of scanning every site per
   record: reading 32,000 `_struct_conn` rows over 40,000 atoms takes 1.6 s
   instead of 69 s in release.
-
+- `Ensemble::from_models` accepts models whose topologies have equal layouts
+  (`Topology::same_layout`), not only models sharing one published layout
+  (SeekDelta K39), so models read from separate files become samples keeping
+  each model's positions, cell, occupancies, B-factors, and structure
+  properties, bound to the first model's topology. Different layouts still
+  fail with `EnsembleError::TopologyMismatch`.
 - Ensemble samples share their structure storage (SeekDelta K40). An
   `EnsembleSample`'s positions, cell, occupancies, B-factors, and properties
   sit behind shared storage that is copied on write, one sample at a time,

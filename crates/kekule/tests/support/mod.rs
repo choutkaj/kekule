@@ -326,3 +326,38 @@ pub(crate) fn hierarchy_record(topology: &kekule::topology::Topology) -> Hierarc
         atom_sites: topology.atom_sites().map(atom_site_record).collect(),
     }
 }
+
+/// Runs work items last first, on the calling thread.
+pub(crate) struct Reversed(pub(crate) usize);
+
+impl kekule::parallel::Executor for Reversed {
+    fn parallelism(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(self.0).unwrap()
+    }
+
+    fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
+        (0..count).rev().for_each(body);
+    }
+}
+
+/// Runs the odd work items on one spawned thread and the even ones, last
+/// first, on another, concurrently.
+pub(crate) struct Interleaved;
+
+impl kekule::parallel::Executor for Interleaved {
+    fn parallelism(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(5).unwrap()
+    }
+
+    fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
+        std::thread::scope(|scope| {
+            let odd = scope.spawn(|| (1..count).step_by(2).for_each(body));
+            let even = scope.spawn(|| (0..count).step_by(2).rev().for_each(body));
+            for worker in [odd, even] {
+                if let Err(panic) = worker.join() {
+                    std::panic::resume_unwind(panic);
+                }
+            }
+        });
+    }
+}

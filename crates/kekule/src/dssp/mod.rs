@@ -10,7 +10,7 @@
 //!
 //! [`DsspOptions::with_threads`] spreads one assignment over several scoped
 //! threads, and [`assign_with`] runs it on a host's own thread pool through a
-//! [`DsspExecutor`]. Every executor and thread count returns the same result
+//! [`parallel::Executor`](crate::parallel::Executor). Every executor and thread count returns the same result
 //! as the default single thread, including the order of tied hydrogen bonds
 //! and every identifier.
 //!
@@ -62,14 +62,12 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroUsize;
 
+use crate::parallel::{Executor, ScopedThreads};
 use crate::structure::AsModelView;
 use crate::topology::{MoleculeInstanceId, ResidueId};
 use crate::units::{Quantity, DEGREE, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE};
 
 mod kernel;
-mod parallel;
-
-pub use parallel::{DsspExecutor, ScopedThreads};
 
 /// Assign DSSP secondary structure to the protein residues in `model`.
 ///
@@ -109,13 +107,14 @@ pub fn assign(
 /// executor decides only where and when each work item runs.
 ///
 /// ```
-/// use kekule::dssp::{self, DsspExecutor, DsspOptions};
+/// use kekule::dssp::{self, DsspOptions};
+/// use kekule::parallel::Executor;
 /// use std::num::NonZeroUsize;
 ///
 /// /// Runs every work item on the calling thread, last first.
 /// struct Reversed;
 ///
-/// impl DsspExecutor for Reversed {
+/// impl Executor for Reversed {
 ///     fn parallelism(&self) -> NonZeroUsize {
 ///         NonZeroUsize::new(4).unwrap()
 ///     }
@@ -146,12 +145,12 @@ pub fn assign(
 ///
 /// # Panics
 ///
-/// When a work item panics, which [`DsspExecutor::run`] passes on, or when
+/// When a work item panics, which [`Executor::run`] passes on, or when
 /// `executor` skips or repeats a work item.
 pub fn assign_with(
     model: &(impl AsModelView + ?Sized),
     options: DsspOptions,
-    executor: &dyn DsspExecutor,
+    executor: &dyn Executor,
 ) -> Result<DsspResult, DsspError> {
     kernel::assign(model.as_model_view(), options, executor)
 }

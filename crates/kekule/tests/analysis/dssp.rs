@@ -7,6 +7,8 @@ use kekule::mmcif;
 use kekule::topology::ResidueId;
 use kekule::units::{DEGREE, KILOCALORIE_PER_MOLE};
 
+use crate::support::{Interleaved, Reversed};
+
 const CRAMBIN_MMCIF: &str = include_str!("../fixtures/mmcif/1CRN.cif");
 
 fn crambin_model() -> kekule::structure::Model {
@@ -545,41 +547,6 @@ fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
     }
 }
 
-/// Runs work items last first, on the calling thread.
-struct Reversed(usize);
-
-impl dssp::DsspExecutor for Reversed {
-    fn parallelism(&self) -> std::num::NonZeroUsize {
-        std::num::NonZeroUsize::new(self.0).unwrap()
-    }
-
-    fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
-        (0..count).rev().for_each(body);
-    }
-}
-
-/// Runs the odd work items on one spawned thread and the even ones, last
-/// first, on another, concurrently.
-struct Interleaved;
-
-impl dssp::DsspExecutor for Interleaved {
-    fn parallelism(&self) -> std::num::NonZeroUsize {
-        std::num::NonZeroUsize::new(5).unwrap()
-    }
-
-    fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
-        std::thread::scope(|scope| {
-            let odd = scope.spawn(|| (1..count).step_by(2).for_each(body));
-            let even = scope.spawn(|| (0..count).step_by(2).rev().for_each(body));
-            for worker in [odd, even] {
-                if let Err(panic) = worker.join() {
-                    std::panic::resume_unwind(panic);
-                }
-            }
-        });
-    }
-}
-
 #[test]
 fn dssp_executors_return_the_serial_result_in_any_work_order() {
     let model = tiled(&adenylate_kinase_model(), 8);
@@ -588,7 +555,8 @@ fn dssp_executors_return_the_serial_result_in_any_work_order() {
         DsspLimits::default()
             .with_max_candidate_pairs(serial.report().candidate_hydrogen_bond_pairs() / 2),
     );
-    let executors: [&dyn dssp::DsspExecutor; 3] = [&Reversed(3), &Reversed(16), &Interleaved];
+    let executors: [&dyn kekule::parallel::Executor; 3] =
+        [&Reversed(3), &Reversed(16), &Interleaved];
     for executor in executors {
         assert_eq!(
             dssp::assign_with(&model, DsspOptions::default(), executor).unwrap(),
@@ -603,7 +571,7 @@ fn dssp_executors_return_the_serial_result_in_any_work_order() {
 
 #[test]
 fn scoped_threads_pass_a_work_item_panic_to_the_caller() {
-    use dssp::{DsspExecutor, ScopedThreads};
+    use kekule::parallel::{Executor, ScopedThreads};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     for threads in [1, 2, 4, 16] {

@@ -32,7 +32,7 @@
 //! | Area | Modules |
 //! | --- | --- |
 //! | Molecules and systems | [`molecule`], [`topology`] (with [`topology::edit`]), [`structure`] (with [`structure::measure`]), [`prelude`] |
-//! | Values and diagnostics | [`units`], [`properties`], [`geometry`], [`diagnostics`] |
+//! | Values and diagnostics | [`units`], [`properties`], [`geometry`], [`diagnostics`], [`parallel`] |
 //! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
@@ -154,6 +154,7 @@ pub mod dssp;
 pub mod geometry;
 mod io;
 pub mod molecule;
+pub mod parallel;
 pub mod properties;
 pub mod query;
 mod selection_language;

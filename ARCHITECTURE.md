@@ -355,7 +355,8 @@ temperature, a frame's time, step, velocities, and forces), so
 writers and reductions never lose it silently. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
-one shared layout and a partition saying what they are; there is no special
+equal layouts (`same_layout`), keeping the first model's topology, and a
+partition saying what they are; there is no special
 single-sample ownership model.
 
 Read access is through views: `Topology` lookups return `Option` views
@@ -462,7 +463,11 @@ tie-breaking are deterministic. Pairwise distances
 are a separate `DistanceMatrix` result. A hierarchical `Dendrogram` depends on
 distances alone, and ensemble weights enter only when choosing representatives;
 k-medoids instead minimizes the weight-summed distance to medoids, so weights
-shape its clusters. See [clustering](crates/kekule/src/clustering.rs),
+shape its clusters. Pairwise fits and leader clustering may run on a
+`parallel::Executor`, poll a `Cancellation`, and report progress through a
+`ClusteringRun`; fits split into contiguous ranges merged in a fixed order,
+and leader clustering still places members one at a time, so every executor
+and thread count returns the single-threaded result or error. See [clustering](crates/kekule/src/clustering.rs),
 [hierarchical clustering](crates/kekule/src/clustering/hierarchical.rs), and
 [k-medoids](crates/kekule/src/clustering/medoids.rs).
 
@@ -819,7 +824,7 @@ The public modules of `kekule`, by domain:
 
 | Domain | Modules |
 | --- | --- |
-| Foundations | `units`, `geometry`, `properties`, `diagnostics` |
+| Foundations | `units`, `geometry`, `properties`, `diagnostics`, `parallel` |
 | Chemistry | `molecule`, `stereo` (`cip`, `coordinates`, `cleanup`), `perception` (`valence`, `rings`, `aromaticity`, `conjugation`, `resonance`), `hydrogens`, `descriptors` |
 | Queries | `query`, `substructure`, `select` |
 | Systems and structures | `topology` (`edit`), `structure` (`measure`), `solvation` |
