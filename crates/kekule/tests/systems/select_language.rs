@@ -1343,3 +1343,166 @@ fn within_over_many_structures_grows_with_atoms_plus_points() {
         }
     }
 }
+
+/// Copies of `model` appended into one model: apart on a cubic grid, or
+/// stacked in one place as a host merges duplicated objects.
+fn copies_in_one_model(model: &Model, copies: usize, apart: bool) -> Model {
+    let points: &[Point3] = model.positions().values().value();
+    let (low, high) = points.iter().fold(
+        (
+            Point3::new(f64::MAX, f64::MAX, f64::MAX),
+            Point3::new(f64::MIN, f64::MIN, f64::MIN),
+        ),
+        |(low, high), p| {
+            (
+                Point3::new(low.x.min(p.x), low.y.min(p.y), low.z.min(p.z)),
+                Point3::new(high.x.max(p.x), high.y.max(p.y), high.z.max(p.z)),
+            )
+        },
+    );
+    let spacing = if apart {
+        (high.x - low.x).max(high.y - low.y).max(high.z - low.z)
+    } else {
+        0.0
+    };
+    let side = (copies as f64).cbrt().ceil() as usize;
+    let mut editor = kekule::structure::ModelEditor::new();
+    for copy in 0..copies {
+        let [x, y, z] =
+            [copy % side, copy / side % side, copy / side / side].map(|step| step as f64 * spacing);
+        let mut moved = model.clone();
+        moved
+            .set_positions(model.positions().values().map(|points| {
+                points
+                    .iter()
+                    .map(|p| Point3::new(p.x + x, p.y + y, p.z + z))
+                    .collect::<Vec<_>>()
+            }))
+            .unwrap();
+        editor.append_model(&moved).unwrap();
+    }
+    editor.finish().unwrap()
+}
+
+/// A host that names every atom of the evaluated structure.
+struct Everything;
+
+impl SelectionResolver for Everything {
+    fn resolve(
+        &self,
+        term: &HostTerm<'_>,
+        request: HostRequest<'_>,
+    ) -> Result<HostValue, HostTermError> {
+        match term.text() {
+            "everything" => Ok(HostValue::Atoms(AtomSelection::all(
+                request.shared_topology(),
+            ))),
+            _ => Err(HostTermError::new(format!("unknown {}", term.text()))),
+        }
+    }
+}
+
+/// Runs work items last first, on the calling thread.
+struct Reversed(usize);
+
+impl kekule::parallel::Executor for Reversed {
+    fn parallelism(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(self.0).unwrap()
+    }
+
+    fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
+        (0..count).rev().for_each(body);
+    }
+}
+
+fn threads(count: usize) -> kekule::parallel::ScopedThreads {
+    kekule::parallel::ScopedThreads::new(std::num::NonZeroUsize::new(count).unwrap())
+}
+
+#[test]
+fn within_selects_the_same_atoms_on_any_executor() {
+    // About 100k atoms, so `within` splits them into several work items.
+    let base = model("mmcif/1AKE.cif");
+    let model = copies_in_one_model(&base, 100_000 / base.atom_count() + 1, true);
+    let positions: &[Point3] = model.positions().values().value();
+    // Host points near the first and the last copies.
+    let points = [positions[17], positions[positions.len() - 40]]
+        .map(|point| Point3::new(point.x + 0.2, point.y, point.z));
+    let resolver = Resolver {
+        other: Positions::from_vec(Quantity::new(points.to_vec(), CANONICAL_LENGTH_UNIT))
+            .unwrap()
+            .into(),
+    };
+    let executors: [&dyn kekule::parallel::Executor; 4] =
+        [&threads(2), &threads(3), &threads(7), &Reversed(5)];
+    for text in [
+        "within 5 of resname GLY",
+        "within 3 of ligand and not water",
+        "within 0.4 nm of #2",
+        "within 6 of (resname AP5 or #2)",
+        "byres (within 4 of name CA and chain B)",
+    ] {
+        let expression = select::parse(text, host_options()).unwrap();
+        let options = SelectEvaluateOptions::default().with_resolver(&resolver);
+        let serial = expression.evaluate_structure(&model, options).unwrap();
+        assert!(!serial.is_empty(), "{text}");
+        for executor in executors {
+            let parallel = expression
+                .evaluate_structure(&model, options.with_executor(executor))
+                .unwrap();
+            assert_eq!(parallel, serial, "{text}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "timing of selection terms on a million atoms; run in release with --ignored --nocapture"]
+fn selection_terms_on_a_million_atoms_run_within_a_frame() {
+    // A million atoms of 1AKE copies, apart as a tiled system and stacked in
+    // one place as a host merges duplicated objects.
+    let base = model("mmcif/1AKE.cif");
+    let copies = 1_000_000usize.div_ceil(base.atom_count());
+    let parse_options = SelectParseOptions::default()
+        .with_host_keywords(["everything"])
+        .unwrap();
+    let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let pool = threads(available);
+    for apart in [true, false] {
+        let model = copies_in_one_model(&base, copies, apart);
+        let serial = SelectEvaluateOptions::default().with_resolver(&Everything);
+        let mut report = format!(
+            "{} ({} atoms), best and median of 7, one thread and {available}:",
+            if apart { "apart" } else { "stacked" },
+            model.atom_count()
+        );
+        for text in [
+            "name CA",
+            "chain A",
+            "everything",
+            "within 5 of resname GLY",
+            "resname GLY",
+            "protein",
+            "backbone",
+            "byres (within 3 of ligand)",
+        ] {
+            let expression = select::parse(text, parse_options.clone()).unwrap();
+            let time = |options| {
+                let mut times = (0..7)
+                    .map(|_| {
+                        let start = std::time::Instant::now();
+                        let selected = expression.evaluate_structure(&model, options).unwrap();
+                        (start.elapsed(), selected.len())
+                    })
+                    .collect::<Vec<_>>();
+                times.sort();
+                (times[0], times[3].0)
+            };
+            let ((best, count), median) = time(serial);
+            let ((pooled, _), pooled_median) = time(serial.with_executor(&pool));
+            report += &format!(
+                "\n  `{text}`: {count} atoms, {best:.1?} ({median:.1?}); {pooled:.1?} ({pooled_median:.1?})"
+            );
+        }
+        eprintln!("{report}");
+    }
+}

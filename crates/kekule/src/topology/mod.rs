@@ -87,6 +87,7 @@ pub use hierarchy::{
     ResidueId,
 };
 use hierarchy_index::HierarchyIndex;
+pub(crate) use hierarchy_index::SiteNames;
 pub use perception::TopologyPerceptionError;
 pub(crate) use reconstruct::{RawDefinition, TopologyParts};
 pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
@@ -1033,6 +1034,17 @@ impl Topology {
     /// The one authoritative system-level hierarchy storage.
     pub(crate) fn hierarchy(&self) -> &Hierarchy {
         &self.hierarchy
+    }
+
+    /// The dense atom of every hierarchy atom site, by site ID.
+    pub(crate) fn site_atoms(&self) -> &[TopologyAtomIndex] {
+        self.hierarchy_index.site_atoms()
+    }
+
+    /// The atom names of the hierarchy's sites, numbered on first use and
+    /// shared by every snapshot of this layout.
+    pub(crate) fn site_names(&self) -> &SiteNames {
+        self.hierarchy_index.names(&self.hierarchy)
     }
 
     /// Whether `definition`'s class was assigned explicitly.

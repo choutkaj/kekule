@@ -145,7 +145,11 @@ perceives.
 cost grows with the atoms near the reference, not with the product of the
 two sets. Points a host supplies come as `select::ReferencePoints`, which
 keep their grid, so a host evaluating one selection over many structures
-builds them once and grids them once for each cutoff.
+builds them once and grids them once for each cutoff. Repeated reference
+points, as of copies stacked in one place, are measured once.
+`SelectEvaluateOptions::with_executor` measures ranges of the evaluated atoms
+as separate work items on a `parallel::Executor`, such as a host's thread
+pool; every executor selects the same atoms.
 
 ## Host extensions
 
