@@ -3,10 +3,12 @@
 use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentOptions, FitAtoms, NormalizedWeights,
 };
+use crate::parallel::map_ranges;
 use crate::structure::{Ensemble, ModelView};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
-use super::{undirected, ClusteringError};
+use super::run::{FirstFailure, Stop, Tracker};
+use super::{undirected, ClusteringError, ClusteringRun};
 use crate::structure::EnsemblePartition;
 
 /// Symmetric pairwise distances between the members of one ensemble, stored
@@ -313,6 +315,8 @@ impl Ensemble {
     /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
     /// is rejected. Each unordered pair is fitted once, lower member moving,
     /// so the cost is `n (n - 1) / 2` fits (times symmetry permutations).
+    /// They run on the calling thread; [`Self::pairwise_fitted_rmsd_with`]
+    /// spreads them over threads, reports progress, and can be cancelled.
     ///
     /// # Errors
     ///
@@ -328,6 +332,72 @@ impl Ensemble {
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
+        self.pairwise_fitted_rmsd_with(atoms, options, ClusteringRun::default())
+    }
+
+    /// [`Self::pairwise_fitted_rmsd`], with its fits run, followed and
+    /// stopped as `run` says.
+    ///
+    /// The pairs split, in condensed order, into contiguous ranges on
+    /// `run`'s executor, whose distances join in order. Each distance is one
+    /// fit whatever thread makes it, and a failed fit reports the first
+    /// failing pair in condensed order, so the matrix and any error are the
+    /// ones [`Self::pairwise_fitted_rmsd`] returns. Progress counts pairs
+    /// fitted, of `n (n - 1) / 2`.
+    ///
+    /// ```
+    /// use std::num::NonZeroUsize;
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use kekule::clustering::{ClusteringProgress, ClusteringRun};
+    /// use kekule::geometry::Point3;
+    /// use kekule::parallel::ScopedThreads;
+    /// use kekule::structure::{Ensemble, EnsembleSample, Positions};
+    /// use kekule::topology::AtomSelection;
+    /// use kekule::units::{Quantity, ANGSTROM};
+    ///
+    /// let topology = kekule::smiles::to_topology("CCO")?;
+    /// let mut ensemble = Ensemble::new(topology.clone());
+    /// for stretch in [1.0, 1.1, 1.2, 1.3] {
+    ///     let points = [
+    ///         Point3::new(0.0, 0.0, 0.0),
+    ///         Point3::new(1.5 * stretch, 0.0, 0.0),
+    ///         Point3::new(2.0, 1.2, 0.0),
+    ///     ];
+    ///     let positions = Positions::new(Quantity::new(points, ANGSTROM))?;
+    ///     ensemble.push_state(EnsembleSample::new(positions, 1.0)?, Default::default())?;
+    /// }
+    /// let atoms = AtomSelection::all(topology);
+    ///
+    /// let threads = ScopedThreads::new(NonZeroUsize::new(2).unwrap());
+    /// let fitted = AtomicUsize::new(0);
+    /// let progress = |progress: ClusteringProgress| {
+    ///     fitted.store(progress.completed(), Ordering::Relaxed);
+    /// };
+    /// let run = ClusteringRun::default()
+    ///     .with_executor(&threads)
+    ///     .with_progress(&progress);
+    /// let matrix = ensemble.pairwise_fitted_rmsd_with(&atoms, Default::default(), run)?;
+    /// assert_eq!(matrix, ensemble.pairwise_fitted_rmsd(&atoms, Default::default())?);
+    /// assert_eq!(fitted.into_inner(), 6);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::pairwise_fitted_rmsd`], and [`ClusteringError::Cancelled`]
+    /// once `run`'s cancellation is requested.
+    ///
+    /// # Panics
+    ///
+    /// When a work item panics, which
+    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
+    /// the executor skips or repeats a work item.
+    pub fn pairwise_fitted_rmsd_with<'a>(
+        &self,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: AlignmentOptions<'_>,
+        run: ClusteringRun<'_>,
+    ) -> Result<DistanceMatrix, ClusteringError> {
         let atoms = undirected(atoms.into())?;
         let views = self
             .iter()
@@ -336,6 +406,7 @@ impl Ensemble {
         let members = views.len();
         let expected = condensed_len(members)?;
         let Some(first) = views.first() else {
+            Tracker::start(run, 0, 0)?;
             return Ok(DistanceMatrix {
                 members,
                 values: Vec::new(),
@@ -344,23 +415,49 @@ impl Ensemble {
         let sets = atoms.pair_sets(*first, *first)?;
         check_fit_count(atoms.pair_count())?;
         let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
+        let policy = options.periodic_policy();
+        let tracker = Tracker::start(run, expected, atoms.pair_count())?;
+        let failure = FirstFailure::new();
+        let ranges = map_ranges(
+            tracker.executor(),
+            expected,
+            tracker.fits_per_work_item(),
+            |pairs| {
+                let (mut moving, mut reference) = condensed_pair(members, pairs.start);
+                let mut values = Vec::with_capacity(pairs.len());
+                let mut fits = 0;
+                for pair in pairs {
+                    if failure.precedes(pair) {
+                        return Err(Stop::Superseded);
+                    }
+                    let fit = best_kabsch(views[moving], views[reference], &sets, weights, policy)
+                        .map_err(|source| {
+                            failure.record(pair);
+                            ClusteringError::PairFit {
+                                first: moving,
+                                second: reference,
+                                source: Box::new(source),
+                            }
+                        })?;
+                    values.push(fit.rmsd().into_value());
+                    fits += 1;
+                    if fits == tracker.fits_per_checkpoint() {
+                        tracker.checkpoint(fits)?;
+                        fits = 0;
+                    }
+                    reference += 1;
+                    if reference == members {
+                        moving += 1;
+                        reference = moving + 1;
+                    }
+                }
+                tracker.finish(fits);
+                Ok(values)
+            },
+        );
         let mut values = Vec::with_capacity(expected);
-        for (index, moving) in views.iter().enumerate() {
-            for (offset, reference) in views[index + 1..].iter().enumerate() {
-                let fit = best_kabsch(
-                    *moving,
-                    *reference,
-                    &sets,
-                    weights,
-                    options.periodic_policy(),
-                )
-                .map_err(|source| ClusteringError::PairFit {
-                    first: index,
-                    second: index + 1 + offset,
-                    source: Box::new(source),
-                })?;
-                values.push(fit.rmsd().into_value());
-            }
+        for range in ranges {
+            values.extend(range.map_err(Stop::into_error)?);
         }
         Ok(DistanceMatrix { members, values })
     }
@@ -438,6 +535,17 @@ fn condensed_len(members: usize) -> Result<usize, ClusteringError> {
 /// The condensed position of the pair `(first, second)` with `first < second`.
 fn condensed_index(members: usize, first: usize, second: usize) -> usize {
     first * members - first * (first + 1) / 2 + (second - first - 1)
+}
+
+/// The pair `(first, second)` at condensed position `index`, the inverse of
+/// [`condensed_index`]; `(members - 1, members)` just past the last pair.
+fn condensed_pair(members: usize, mut index: usize) -> (usize, usize) {
+    let mut first = 0;
+    while first + 1 < members && index >= members - 1 - first {
+        index -= members - 1 - first;
+        first += 1;
+    }
+    (first, first + 1 + index)
 }
 
 /// Joins of the nearest-neighbor chain algorithm (Müllner 2011, sec. 3.2),
@@ -603,6 +711,23 @@ mod tests {
             heights.push((best.2, clusters[best.0].len()));
         }
         heights
+    }
+
+    #[test]
+    fn condensed_pairs_invert_condensed_indices() {
+        for members in 0..9 {
+            let mut index = 0;
+            for first in 0..members {
+                for second in first + 1..members {
+                    assert_eq!(condensed_index(members, first, second), index);
+                    assert_eq!(condensed_pair(members, index), (first, second));
+                    index += 1;
+                }
+            }
+            if members > 0 {
+                assert_eq!(condensed_pair(members, index), (members - 1, members));
+            }
+        }
     }
 
     #[test]
