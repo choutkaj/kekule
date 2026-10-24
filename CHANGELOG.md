@@ -217,6 +217,16 @@ are marked **Breaking:**.
     an index of another or a changed file. Every frame is still verified as it
     is decoded, and a random read must end where the index places the next
     frame, so a stale index is an error, never a wrong frame.
+  - `TrajectoryFrameIndex::times` and `steps` give every frame's time, in the
+    canonical time unit, and step, collected while the index is built, so a
+    host need not read the file again for times that are not evenly spaced.
+    TRR and XTC record both, DCD records steps and, under
+    `DcdTimePolicy::HeaderDelta`, times, and XYZ records neither (`None`). A
+    random read through an imported index fails with `IndexMismatch` for a
+    frame that records another time or step, and a DCD index opens only under
+    the time policy it was built with. The encoding is version 2; indexes of
+    version 1, from earlier development builds, which recorded no times, are
+    refused with `InvalidIndex` and must be built again.
   - An imported index is untrusted input: `from_bytes` checks its frame count
     against `TrajectoryIoLimits` before allocating and rejects malformed,
     corrupted, or other-version encodings with the new
@@ -239,8 +249,9 @@ are marked **Breaking:**.
     regardless of modification time, so a host can tell whether a moved or
     copied file is the one it recorded. `to_bytes` and `from_bytes` give the
     fingerprint a stable, versioned, checksummed encoding that shares the
-    index's version and field layout, and `Display`/`FromStr` write and read
-    it as 112 lowercase hexadecimal digits for project files and cache keys.
+    index's field layout but has its own version, and `Display`/`FromStr`
+    write and read it as 112 lowercase hexadecimal digits for project files
+    and cache keys.
     Decoding either form rejects anything else with `InvalidIndex`, never a
     panic, and the `trajectory_index` fuzz target covers both decoders.
 - Sampling a trajectory into an ensemble of one state, without consuming it.

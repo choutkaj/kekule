@@ -73,7 +73,7 @@ use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_detail,
-    FrameOffsets, IndexBuildControl, TrajectoryIoLimits,
+    FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
 };
 
 const HEADER_BYTES: usize = 84;
@@ -920,43 +920,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     .map(|&index| self.positions[index]),
             );
         }
-        let step = self
-            .header
-            .start_step
-            .checked_add(
-                (self.frame_cursor as u64)
-                    .checked_mul(self.header.step_interval)
-                    .ok_or_else(|| {
-                        frame_error(
-                            TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
-                            &self.options.source_label,
-                            self.frame_cursor,
-                            "DCD frame step multiplication overflows",
-                        )
-                    })?,
-            )
-            .ok_or_else(|| {
-                frame_error(
-                    TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
-                    &self.options.source_label,
-                    self.frame_cursor,
-                    "DCD frame step addition overflows",
-                )
-            })?;
-        let time = if let DcdTimePolicy::HeaderDelta { .. } = self.options.time_policy {
-            let time = (step as f64) * f64::from(self.header.delta);
-            if !time.is_finite() {
-                return Err(frame_error(
-                    TrajectoryIoErrorKind::InvalidFrame,
-                    &self.options.source_label,
-                    self.frame_cursor,
-                    "DCD derived frame time is not finite",
-                ));
-            }
-            Some(time)
-        } else {
-            None
-        };
+        let (step, time) = self.step_and_time(self.frame_cursor)?;
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             resource_error(
                 TrajectoryIoOperation::ReadFrame,
@@ -966,6 +930,63 @@ impl<R: Read + Seek> DcdReader<R> {
             )
         })?;
         Ok(Some(DcdDecodedFrame { cell, step, time }))
+    }
+
+    /// The step of frame `frame` on the `ISTART`/`NSAVC` sequence and, under
+    /// [`DcdTimePolicy::HeaderDelta`], its time in the policy's unit.
+    fn step_and_time(&self, frame: usize) -> Result<(u64, Option<f64>), TrajectoryIoError> {
+        let step = self
+            .header
+            .start_step
+            .checked_add(
+                (frame as u64)
+                    .checked_mul(self.header.step_interval)
+                    .ok_or_else(|| {
+                        frame_error(
+                            TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
+                            &self.options.source_label,
+                            frame,
+                            "DCD frame step multiplication overflows",
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                frame_error(
+                    TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
+                    &self.options.source_label,
+                    frame,
+                    "DCD frame step addition overflows",
+                )
+            })?;
+        let time = if let DcdTimePolicy::HeaderDelta { unit } = self.options.time_policy {
+            let time = (step as f64) * f64::from(self.header.delta);
+            if !Quantity::new(time, unit)
+                .value_in(CANONICAL_TIME_UNIT)
+                .is_ok_and(f64::is_finite)
+            {
+                return Err(frame_error(
+                    TrajectoryIoErrorKind::InvalidFrame,
+                    &self.options.source_label,
+                    frame,
+                    "DCD derived frame time is not finite",
+                ));
+            }
+            Some(time)
+        } else {
+            None
+        };
+        Ok((step, time))
+    }
+
+    /// The step and canonical time of frame `frame`, as an index records them.
+    fn stamp(&self, frame: usize) -> Result<FrameStamp, TrajectoryIoError> {
+        let (step, time) = self.step_and_time(frame)?;
+        let unit = header_delta_unit(self.options.time_policy);
+        Ok(FrameStamp {
+            time: time
+                .and_then(|time| Quantity::new(time, unit).value_in(CANONICAL_TIME_UNIT).ok()),
+            step: Some(step),
+        })
     }
 
     fn publish(
@@ -1051,6 +1072,9 @@ impl<R: Read + Seek> DcdReader<R> {
                     error,
                 )
             })?;
+            let stamp = self
+                .stamp(self.frame_cursor)
+                .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?;
             if self
                 .parse_next(true)
                 .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
@@ -1076,6 +1100,7 @@ impl<R: Read + Seek> DcdReader<R> {
             offsets.push(
                 offset,
                 end,
+                stamp,
                 &self.options.limits,
                 TrajectoryFormat::Dcd,
                 &self.options.source_label,
@@ -1220,6 +1245,15 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
             .with_counts(inner.header.declared_frames as u64, offsets.len() as u64));
         }
         offsets.verify_start(inner.header.data_start, TrajectoryFormat::Dcd, &label)?;
+        for frame in 0..offsets.len() {
+            offsets.verify_stamp(
+                frame,
+                inner.stamp(frame)?,
+                TrajectoryIoOperation::Open,
+                TrajectoryFormat::Dcd,
+                &label,
+            )?;
+        }
         if inner.header.fixed_count > 0 && !offsets.is_empty() {
             let data_start = inner.header.data_start;
             inner

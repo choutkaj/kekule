@@ -20,7 +20,7 @@ use libfuzzer_sys::fuzz_target;
 struct Case {
     path: PathBuf,
     topology: Arc<Topology>,
-    index: Vec<u8>,
+    index: TrajectoryFrameIndex,
     frames: Vec<TrajectoryFrame>,
 }
 
@@ -97,7 +97,7 @@ fn cases() -> &'static [Case] {
                 Case {
                     path,
                     topology,
-                    index: reader.to_frame_index().to_bytes(),
+                    index: reader.to_frame_index(),
                     frames,
                 }
             })
@@ -133,12 +133,14 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Fuzzed, strictly increasing offsets in an otherwise valid index of a
-    // real file: every frame read through it must be a frame of the file.
+    // real file, each with the step and time of the file's frame at that
+    // offset or else of another frame: every frame read through it must be
+    // a frame of the file.
     let Some((&selector, deltas)) = data.split_first() else {
         return;
     };
     let case = &cases()[usize::from(selector) % cases().len()];
-    let size = u64::from_le_bytes(case.index[16..24].try_into().expect("size field"));
+    let size = case.index.fingerprint().byte_count();
     let mut starts = Vec::new();
     let mut next = 0_u64;
     for delta in deltas.chunks_exact(2).take(16) {
@@ -149,10 +151,35 @@ fuzz_target!(|data: &[u8]| {
         starts.push(next);
         next += 1;
     }
-    let mut forged = case.index[..48].to_vec();
+    let offsets = case.index.frame_offsets();
+    let frames = starts
+        .iter()
+        .enumerate()
+        .map(|(forged, start)| {
+            offsets
+                .iter()
+                .position(|offset| offset == start)
+                .unwrap_or(forged % offsets.len())
+        })
+        .collect::<Vec<_>>();
+    let mut forged = case.index.to_bytes()[..48].to_vec();
+    if starts.is_empty() {
+        // An empty index records no steps or times.
+        forged[13] &= 1;
+    }
     forged.extend_from_slice(&(starts.len() as u64).to_le_bytes());
     for start in &starts {
         forged.extend_from_slice(&start.to_le_bytes());
+    }
+    if let Some(steps) = case.index.steps() {
+        for &frame in &frames {
+            forged.extend_from_slice(&steps[frame].to_le_bytes());
+        }
+    }
+    if let Some(times) = case.index.times() {
+        for &frame in &frames {
+            forged.extend_from_slice(&times.value()[frame].to_le_bytes());
+        }
     }
     let checksum = fnv1a(&forged);
     forged.extend_from_slice(&checksum.to_le_bytes());
