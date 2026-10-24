@@ -15,7 +15,7 @@ use super::state::{
 };
 use super::{
     AsModelView, Ensemble, EnsembleSample, Forces, Model, ModelView, Positions, StructureError,
-    StructureKind, Velocities,
+    StructureKind, TrajectorySampler, TrajectorySampling, Velocities,
 };
 
 /// Whether [`Trajectory::validate_monotonic_time`] accepts frames without time.
@@ -34,8 +34,8 @@ pub enum MissingTimePolicy {
 /// Frame order is temporal: frame `i + 1` follows frame `i`. Frames may carry
 /// time, step, velocities, and forces, and selection keeps each frame's stored
 /// time and step. Use [`super::Ensemble`] for a weighted, unordered sample;
-/// [`Self::into_ensemble`] is the explicit, lossy projection from one to the
-/// other.
+/// [`Self::into_ensemble`] and [`Self::to_ensemble`] are the explicit, lossy
+/// projections from one to the other.
 ///
 /// Frames are validated against the shared topology on insertion.
 /// Superposition and RMSD are inherent methods; see [`crate::alignment`].
@@ -285,7 +285,9 @@ impl Trajectory {
     /// no energy: the frames already follow their distribution.
     ///
     /// Equal weights are right for frames sampled from equilibrium at a
-    /// constant interval; reweight explicitly otherwise.
+    /// constant interval; reweight explicitly otherwise. To keep the
+    /// trajectory, or to choose frames, weights, or atoms, use
+    /// [`Self::to_ensemble`].
     pub fn into_ensemble(self) -> Ensemble {
         let samples = self
             .frames
@@ -295,6 +297,41 @@ impl Trajectory {
             })
             .collect();
         Ensemble::from_bound_samples(self.topology, self.properties, samples)
+    }
+
+    /// Copies the frames of `sampling` into an ensemble of one state without
+    /// an energy, sample `i` from frame `sampling.frames()[i]`, with the
+    /// sampling's weights and atoms.
+    ///
+    /// Samples keep each frame's positions, cell, and structure properties
+    /// and drop time, step, velocities, and forces, as
+    /// [`Self::into_ensemble`] does. Only the requested frames are copied, and
+    /// a frame requested twice is projected once. Without an atom subset the
+    /// ensemble shares this topology and keeps the trajectory properties;
+    /// with one it has the subset topology, as [`Self::subset`] publishes it,
+    /// and drops the trajectory properties and per-frame owner properties.
+    ///
+    /// Use a [`TrajectorySampler`] directly for frames that are not loaded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryError::IndexOutOfRange`] for the first requested
+    /// frame outside the trajectory, before copying anything, and
+    /// [`TrajectoryError::Subset`] when the atom subset cannot be published.
+    pub fn to_ensemble(&self, sampling: &TrajectorySampling) -> Result<Ensemble, TrajectoryError> {
+        for &index in sampling.frames() {
+            self.check_index(index)?;
+        }
+        let mut sampler = TrajectorySampler::new(self.shared_topology(), sampling)?;
+        for index in sampler.frames().collect::<Vec<_>>() {
+            let frame = self.get(index).expect("requested frames are in range");
+            sampler.add(index, frame)?;
+        }
+        let mut ensemble = sampler.finish()?;
+        if sampling.atoms().is_none() {
+            *ensemble.properties_mut() = self.properties.clone();
+        }
+        Ok(ensemble)
     }
 
     /// Applies one rigid transform per frame transactionally.
@@ -744,6 +781,25 @@ pub enum TrajectoryError {
         /// The index of the out-of-order frame.
         frame: usize,
     },
+    /// A sampling has a different number of weights than frames.
+    WeightCountMismatch {
+        /// The number of sampled frames.
+        expected: usize,
+        /// The number of weights supplied.
+        actual: usize,
+    },
+    /// A sampling weight is not finite and positive.
+    InvalidWeight {
+        /// The index of the sample with the invalid weight.
+        sample: usize,
+    },
+    /// A frame belongs to a different topology layout.
+    TopologyMismatch,
+    /// A sampler finished before receiving a requested frame.
+    FrameNotSampled {
+        /// The smallest requested frame never added.
+        frame: usize,
+    },
     /// A frame's structural state is invalid; see the source.
     Structure(StructureError),
     /// Projecting the topology onto a selection failed; see the source.
@@ -763,6 +819,20 @@ impl fmt::Display for TrajectoryError {
             Self::MissingTime { frame } => write!(formatter, "frame {frame} has no time"),
             Self::NonMonotonicTime { frame } => {
                 write!(formatter, "time decreases at frame {frame}")
+            }
+            Self::WeightCountMismatch { expected, actual } => write!(
+                formatter,
+                "sampling has {expected} frames, but received {actual} weights"
+            ),
+            Self::InvalidWeight { sample } => write!(
+                formatter,
+                "weight of sample {sample} is not finite and positive"
+            ),
+            Self::TopologyMismatch => {
+                formatter.write_str("frame belongs to a different topology layout")
+            }
+            Self::FrameNotSampled { frame } => {
+                write!(formatter, "requested frame {frame} was never sampled")
             }
             Self::Structure(_) => formatter.write_str("invalid trajectory frame"),
             Self::Subset(_) => formatter.write_str("cannot subset trajectory"),

@@ -20,7 +20,10 @@
 //! [`kekule::structure::Trajectory`]; the reusable, topology-bound
 //! [`FrameBuffer`], filled transactionally from [`FrameData`]; and
 //! [`TrajectoryIoError`], the error of every I/O operation, classified by
-//! [`TrajectoryIoErrorKind`]. A buffer reads frame state through `Deref`
+//! [`TrajectoryIoErrorKind`]. [`read_ensemble`] and [`read_ensemble_seekable`]
+//! sample chosen frames of a reader into an ensemble of one state, as
+//! [`kekule::structure::Trajectory::to_ensemble`] does for a loaded
+//! trajectory. A buffer reads frame state through `Deref`
 //! and lends a [`kekule::structure::ModelView`] through
 //! [`FrameBuffer::as_model_view`], so analyses and prepared potentials operate
 //! on models, ensemble samples, trajectory frames, and buffered frames through
@@ -99,7 +102,8 @@ pub mod io;
 pub mod periodic;
 
 pub use trajectory::{
-    FrameBuffer, FrameData, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryField,
-    TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
-    TrajectoryReader, TrajectoryWriter,
+    read_ensemble, read_ensemble_seekable, EnsembleReadOptions, EnsembleReadProgress, FrameBuffer,
+    FrameData, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,
+    TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
+    TrajectoryWriter,
 };

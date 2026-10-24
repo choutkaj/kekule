@@ -8,9 +8,13 @@
 //! [`TrajectoryIoError`] reports every codec and file failure.
 
 mod buffer;
+mod sample;
 mod stream;
 
 pub use buffer::{FrameBuffer, FrameData};
+pub use sample::{
+    read_ensemble, read_ensemble_seekable, EnsembleReadOptions, EnsembleReadProgress,
+};
 pub use stream::{
     MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
 };
