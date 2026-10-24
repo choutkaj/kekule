@@ -145,6 +145,18 @@ are marked **Breaking:**.
   separately. `WriteOmission` gains `FormalCharges` and `AtomSites`, and
   `WriteReport` gains `is_empty`, `Default`, and `FromIterator`, which merges
   repeated kinds as writers do.
+- Imaging a frame onto a reference structure in `kekule_traj::periodic`:
+  `MoleculeImager::image_onto` moves each whole molecule of a buffered frame
+  by the lattice vector of the frame's cell that brings its center nearest the
+  same molecule in a borrowed reference of the same layout, using the exact
+  nearest-image search for triclinic and partially periodic cells. Frames can
+  be imaged onto references before or after them, in any order, so a window of
+  frames can be brought onto one frame, for example before averaging them for
+  display. `image_onto` is the in-memory form for every frame of a
+  trajectory. The frame's cell defines the images, and the reference's cell is
+  not used; a frame without a cell fails with `MissingCell`. Only positions
+  change, and failures leave the buffer or trajectory unchanged.
+  `PeriodicError` gains `ReferenceTopologyMismatch`.
 - Reusable frame indexes in `kekule-traj`, so a large trajectory is scanned
   once rather than on every open.
   - `IndexedFileTrajectoryReader::to_frame_index` exports the verified frame
