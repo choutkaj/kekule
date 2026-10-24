@@ -1,11 +1,17 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
+use std::ops::Range;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::geometry::Point3;
 use crate::structure::ModelView;
 use crate::topology::{Chain, Hierarchy, Residue, ResidueClass, ResidueId};
 use crate::units::ANGSTROM;
 
+use super::parallel::map_ranges;
 use super::*;
+
+/// Fewest residues or residue pairs a stage gives one thread.
+const MIN_CHUNK: usize = 256;
 
 const MAX_PEPTIDE_BOND_ANGSTROMS: f64 = 2.5;
 const MAX_CA_PAIR_DISTANCE_ANGSTROMS: f64 = 9.0;
@@ -186,18 +192,25 @@ struct BetaCounts {
     ladders: usize,
 }
 
-pub(super) fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspResult, DsspError> {
-    let (mut residues, mut report, chain_segments) = extract_backbones(model, options.limits)?;
+pub(super) fn assign(
+    model: ModelView<'_>,
+    options: DsspOptions,
+    executor: &dyn DsspExecutor,
+) -> Result<DsspResult, DsspError> {
+    let (mut residues, mut report, chain_segments) =
+        extract_backbones(model, options.limits, executor)?;
     if residues.is_empty() {
         return Err(DsspError::NoAnalyzableProteinResidues);
     }
 
-    calculate_geometry(&mut residues, &mut report)?;
-    let candidates = candidate_pairs(&residues, options.limits.max_candidate_pairs)?;
+    let candidates = analyze_backbone(&mut residues, options.limits.max_candidate_pairs, executor)?;
     report.candidate_hydrogen_bond_pairs = candidates.len();
-    calculate_hydrogen_bonds(&mut residues, &candidates)?;
-    let beta_counts =
-        calculate_beta_sheets(&mut residues, &candidates, options.limits.max_ladders)?;
+    let beta_counts = calculate_beta_sheets(
+        &mut residues,
+        &candidates,
+        options.limits.max_ladders,
+        executor,
+    )?;
     report.generated_ladders = beta_counts.ladders;
     calculate_helices_turns_and_bends(&mut residues);
     calculate_polyproline_helices(&mut residues, options.min_polyproline_stretch);
@@ -217,9 +230,13 @@ pub(super) fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspR
             .or_default() += 1;
     }
 
-    let public_residues = residues
+    let keys = residues
         .iter()
-        .map(|residue| public_residue(residue, &residues))
+        .map(|residue| residue.key)
+        .collect::<Vec<_>>();
+    let public_residues = residues
+        .into_iter()
+        .map(|residue| public_residue(residue, &keys))
         .collect::<Vec<_>>();
     let lookup = public_residues
         .iter()
@@ -246,8 +263,8 @@ pub(super) fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspR
 fn extract_backbones(
     model: ModelView<'_>,
     limits: DsspLimits,
+    executor: &dyn DsspExecutor,
 ) -> Result<(Vec<BackboneResidue>, DsspReport, usize), DsspError> {
-    let mut residues = Vec::new();
     let mut report = DsspReport {
         ignored_instances: Vec::new(),
         non_peptide_residues: 0,
@@ -261,12 +278,14 @@ fn extract_backbones(
     let mut fragments = Vec::new();
 
     let hierarchy = model.topology().hierarchy();
-    let represented_instances = hierarchy
+    let mut represented_instances = hierarchy
         .atom_sites()
         .map(|(_, site)| site.atom().instance())
-        .collect::<BTreeSet<_>>();
+        .collect::<Vec<_>>();
+    represented_instances.sort_unstable();
+    represented_instances.dedup();
     for molecule_id in model.topology().instances().map(|molecule| molecule.id()) {
-        if !represented_instances.contains(&molecule_id) {
+        if represented_instances.binary_search(&molecule_id).is_err() {
             report.ignored_instances.push(molecule_id);
         }
     }
@@ -312,169 +331,224 @@ fn extract_backbones(
             .then_with(|| left.label_id.cmp(&right.label_id))
             .then_with(|| left.discovery_order.cmp(&right.discovery_order))
     });
-    for (chain_index, logical) in logical_chains.iter_mut().enumerate() {
-        // Choose one ordering convention for the complete chain. Mixing label
-        // and author numbering in a pairwise comparator can be non-transitive.
-        // Native hierarchies need not carry either source numbering convention.
-        let ordering_residues = logical
-            .residues
+    // Ordering a chain and reading a residue's backbone depend on nothing
+    // else; segments, limits and errors are then decided in DSSP order.
+    let chains = map_ranges(executor, logical_chains.len(), 1, |range| {
+        logical_chains[range]
             .iter()
-            .filter(|entry| {
-                entry
-                    .hierarchy
-                    .residue(entry.residue)
-                    .is_some_and(|residue| {
-                        residue.class() == ResidueClass::AminoAcid
-                            || residue.class() == ResidueClass::Other
-                                && residue.atom_sites().iter().any(|site| {
-                                    entry.hierarchy.atom_site(*site).is_some_and(|site| {
-                                        site.metadata()
-                                            .label_atom_id
-                                            .as_deref()
-                                            .or(site.metadata().auth_atom_id.as_deref())
-                                            .and_then(|name| backbone_index(name.trim()))
-                                            .is_some()
-                                    })
-                                })
-                    })
-            })
-            .collect::<Vec<_>>();
-        let label_numbered = ordering_residues.iter().all(|entry| {
-            entry
-                .hierarchy
-                .residue(entry.residue)
-                .is_some_and(|residue| residue.label_seq_id().is_some())
-        });
-        let author_numbered = ordering_residues.iter().all(|entry| {
-            entry
-                .hierarchy
-                .residue(entry.residue)
-                .is_some_and(|residue| {
-                    residue
-                        .author_seq_id()
-                        .and_then(|value| value.parse::<i64>().ok())
-                        .is_some()
-                })
-        });
-        logical.residues.sort_by(|left, right| {
-            let left_residue = left
-                .hierarchy
-                .residue(left.residue)
-                .expect("validated logical chain residue");
-            let right_residue = right
-                .hierarchy
-                .residue(right.residue)
-                .expect("validated logical chain residue");
-            let sequence_order = if label_numbered {
-                left_residue
-                    .label_seq_id()
-                    .cmp(&right_residue.label_seq_id())
-            } else if author_numbered {
-                let number = |residue: &Residue| {
-                    residue
-                        .author_seq_id()
-                        .and_then(|value| value.parse::<i64>().ok())
-                };
-                number(left_residue).cmp(&number(right_residue))
-            } else {
-                return left.discovery_order.cmp(&right.discovery_order);
-            };
-            sequence_order
-                .then_with(|| {
-                    left_residue
-                        .insertion_code()
-                        .cmp(&right_residue.insertion_code())
-                })
-                .then_with(|| left.discovery_order.cmp(&right.discovery_order))
-        });
+            .map(|logical| order_chain(&logical.residues))
+            .collect::<Vec<_>>()
+    })
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let entries = chains.iter().flatten().collect::<Vec<_>>();
+    let mut backbones = map_ranges(executor, entries.len(), MIN_CHUNK, |range| {
+        entries[range]
+            .iter()
+            .map(|entry| read_backbone(model, entry))
+            .collect::<Vec<_>>()
+    })
+    .into_iter()
+    .flatten();
+    let mut residues = Vec::with_capacity(entries.len().min(limits.max_residues));
+    let mut degenerate = None;
+    for (chain_index, chain) in chains.iter().enumerate() {
         extract_chain(
-            model,
             chain_index,
-            &logical.residues,
+            backbones.by_ref().take(chain.len()),
             &mut residues,
             &mut report,
             &mut chain_segments,
+            &mut degenerate,
             limits,
         )?;
+    }
+    // Hydrogen placement follows extraction in DSSP, so any extraction
+    // failure takes precedence.
+    if let Some(residue) = degenerate {
+        return Err(DsspError::DegenerateBackboneGeometry { residue });
     }
     Ok((residues, report, chain_segments))
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The residues of one logical chain in DSSP order.
+fn order_chain<'a>(residues: &[ChainResidue<'a>]) -> Vec<ChainResidue<'a>> {
+    // Choose one ordering convention for the complete chain. Mixing label
+    // and author numbering in a pairwise comparator can be non-transitive.
+    // Native hierarchies need not carry either source numbering convention.
+    let ordering_residues = residues
+        .iter()
+        .filter(|entry| {
+            entry
+                .hierarchy
+                .residue(entry.residue)
+                .is_some_and(|residue| {
+                    residue.class() == ResidueClass::AminoAcid
+                        || residue.class() == ResidueClass::Other
+                            && residue.atom_sites().iter().any(|site| {
+                                entry.hierarchy.atom_site(*site).is_some_and(|site| {
+                                    site.metadata()
+                                        .label_atom_id
+                                        .as_deref()
+                                        .or(site.metadata().auth_atom_id.as_deref())
+                                        .and_then(|name| backbone_index(name.trim()))
+                                        .is_some()
+                                })
+                            })
+                })
+        })
+        .collect::<Vec<_>>();
+    let label_numbered = ordering_residues.iter().all(|entry| {
+        entry
+            .hierarchy
+            .residue(entry.residue)
+            .is_some_and(|residue| residue.label_seq_id().is_some())
+    });
+    let author_numbered = ordering_residues.iter().all(|entry| {
+        entry
+            .hierarchy
+            .residue(entry.residue)
+            .is_some_and(|residue| {
+                residue
+                    .author_seq_id()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .is_some()
+            })
+    });
+    let mut ordered = residues.to_vec();
+    ordered.sort_by(|left, right| {
+        let left_residue = left
+            .hierarchy
+            .residue(left.residue)
+            .expect("validated logical chain residue");
+        let right_residue = right
+            .hierarchy
+            .residue(right.residue)
+            .expect("validated logical chain residue");
+        let sequence_order = if label_numbered {
+            left_residue
+                .label_seq_id()
+                .cmp(&right_residue.label_seq_id())
+        } else if author_numbered {
+            let number = |residue: &Residue| {
+                residue
+                    .author_seq_id()
+                    .and_then(|value| value.parse::<i64>().ok())
+            };
+            number(left_residue).cmp(&number(right_residue))
+        } else {
+            return left.discovery_order.cmp(&right.discovery_order);
+        };
+        sequence_order
+            .then_with(|| {
+                left_residue
+                    .insertion_code()
+                    .cmp(&right_residue.insertion_code())
+            })
+            .then_with(|| left.discovery_order.cmp(&right.discovery_order))
+    });
+    ordered
+}
+
+/// The backbone atoms of one peptide residue, as its atom sites give them.
+#[derive(Debug)]
+struct ResidueBackbone {
+    key: ResidueId,
+    source: DsspResidueSource,
+    /// `N`, `CA`, `C`, `O`, or the first repeated one.
+    atoms: Result<[Option<Vec3>; 4], DsspBackboneAtom>,
+    any_backbone_atom: bool,
+    amino_acid: bool,
+    is_proline: bool,
+}
+
+/// Reads a residue's backbone atoms; `None` for a residue classified as
+/// neither amino acid nor other.
+fn read_backbone(model: ModelView<'_>, entry: &ChainResidue<'_>) -> Option<ResidueBackbone> {
+    let hierarchy = entry.hierarchy;
+    let residue = hierarchy
+        .residue(entry.residue)
+        .expect("chain residues come from the model hierarchy");
+    if !matches!(
+        residue.class(),
+        ResidueClass::AminoAcid | ResidueClass::Other
+    ) {
+        return None;
+    }
+    let mut backbone = [None; 4];
+    let mut any_backbone_atom = false;
+    let mut repeated = None;
+    for &site_id in &residue.atom_sites {
+        let site = hierarchy
+            .atom_site(site_id)
+            .expect("residue atom sites come from the model hierarchy");
+        let atom_name = site
+            .metadata
+            .label_atom_id
+            .as_deref()
+            .or(site.metadata.auth_atom_id.as_deref())
+            .map(str::trim);
+        let Some(backbone_index) = atom_name.and_then(backbone_index) else {
+            continue;
+        };
+        any_backbone_atom = true;
+        if backbone[backbone_index].is_some() {
+            repeated = Some(DsspBackboneAtom::ALL[backbone_index]);
+            break;
+        }
+        backbone[backbone_index] = Some(Vec3::from(
+            model
+                .position(site.atom)
+                .expect("hierarchy atoms have model positions")
+                .value_in(ANGSTROM)
+                .expect("positions are lengths"),
+        ));
+    }
+    Some(ResidueBackbone {
+        key: entry.residue,
+        source: residue_source(entry.chain, residue),
+        atoms: repeated.map_or(Ok(backbone), Err),
+        any_backbone_atom,
+        amino_acid: residue.class() == ResidueClass::AminoAcid,
+        is_proline: residue.name.eq_ignore_ascii_case("PRO"),
+    })
+}
+
 fn extract_chain(
-    model: ModelView<'_>,
     chain_index: usize,
-    chain_residues: &[ChainResidue<'_>],
+    backbones: impl Iterator<Item = Option<ResidueBackbone>>,
     residues: &mut Vec<BackboneResidue>,
     report: &mut DsspReport,
     chain_segments: &mut usize,
+    degenerate: &mut Option<ResidueId>,
     limits: DsspLimits,
 ) -> Result<(), DsspError> {
     let mut previous = None;
     let mut forced_break = false;
 
-    for chain_residue in chain_residues {
-        let hierarchy = chain_residue.hierarchy;
-        let chain = chain_residue.chain;
-        let residue_id = chain_residue.residue;
-        let residue = hierarchy
-            .residue(residue_id)
-            .expect("chain residues come from the model hierarchy");
-        let key = residue_id;
-        if !matches!(
-            residue.class(),
-            ResidueClass::AminoAcid | ResidueClass::Other
-        ) {
+    for backbone in backbones {
+        let Some(backbone) = backbone else {
             report.non_peptide_residues += 1;
             forced_break = true;
             continue;
-        }
-        let source = residue_source(chain, residue);
-        let mut backbone = [None; 4];
-        let mut seen_backbone = 0;
-
-        for &site_id in &residue.atom_sites {
-            let site = hierarchy
-                .atom_site(site_id)
-                .expect("residue atom sites come from the model hierarchy");
-            let atom_name = site
-                .metadata
-                .label_atom_id
-                .as_deref()
-                .or(site.metadata.auth_atom_id.as_deref())
-                .map(str::trim);
-            let Some(backbone_index) = atom_name.and_then(backbone_index) else {
-                continue;
-            };
-            seen_backbone += 1;
-            if backbone[backbone_index].is_some() {
-                return Err(DsspError::AmbiguousBackboneAtom {
-                    residue: key,
-                    atom: DsspBackboneAtom::ALL[backbone_index],
-                });
-            }
-            let atom = site.atom;
-            backbone[backbone_index] = Some(Vec3::from(
-                model
-                    .position(atom)
-                    .expect("hierarchy atoms have model positions")
-                    .value_in(ANGSTROM)
-                    .expect("positions are lengths"),
-            ));
-        }
-
+        };
+        let key = backbone.key;
+        let atoms = backbone
+            .atoms
+            .map_err(|atom| DsspError::AmbiguousBackboneAtom { residue: key, atom })?;
         let missing = DsspBackboneAtom::ALL
             .into_iter()
             .enumerate()
-            .filter_map(|(index, atom)| backbone[index].is_none().then_some(atom))
+            .filter_map(|(index, atom)| atoms[index].is_none().then_some(atom))
             .collect::<Vec<_>>();
         if !missing.is_empty() {
-            if seen_backbone == 0 && residue.class() != ResidueClass::AminoAcid {
+            if !backbone.any_backbone_atom && !backbone.amino_acid {
                 report.non_peptide_residues += 1;
             } else {
                 report.skipped_residues.push(DsspSkippedResidue {
                     key,
-                    source,
+                    source: backbone.source,
                     reason: DsspSkipReason::MissingBackboneAtoms { missing },
                 });
                 forced_break = true;
@@ -488,10 +562,7 @@ fn extract_chain(
             )));
         }
 
-        let n = backbone[0].expect("checked complete backbone");
-        let ca = backbone[1].expect("checked complete backbone");
-        let c = backbone[2].expect("checked complete backbone");
-        let o = backbone[3].expect("checked complete backbone");
+        let [n, ca, c, o] = atoms.map(|atom| atom.expect("checked complete backbone"));
         if [n, ca, c, o]
             .into_iter()
             .any(|point| !point.is_dssp_representable())
@@ -518,16 +589,33 @@ fn extract_chain(
         if let Some(prior) = prev {
             residues[prior].next = Some(index);
         }
+        // DSSP assigns each non-initial amide hydrogen from the immediately
+        // preceding complete residue in its internal table, even across a
+        // numbered gap or chain boundary. Chain-continuity checks still gate
+        // torsions and local secondary-structure patterns.
+        let h = match residues.last() {
+            Some(preceding) if !backbone.is_proline => {
+                let h = dssp_reconstructed_hydrogen(n, preceding.c, preceding.o);
+                match h {
+                    Some(_) => report.reconstructed_amide_hydrogens += 1,
+                    None => {
+                        degenerate.get_or_insert(key);
+                    }
+                }
+                h
+            }
+            _ => None,
+        };
         residues.push(BackboneResidue {
             key,
-            source,
+            source: backbone.source,
             chain: chain_index,
             n,
             ca,
             c,
             o,
-            h: None,
-            is_proline: residue.name.eq_ignore_ascii_case("PRO"),
+            h,
+            is_proline: backbone.is_proline,
             segment,
             prev,
             next: None,
@@ -571,99 +659,157 @@ fn residue_source(chain: &Chain, residue: &Residue) -> DsspResidueSource {
     }
 }
 
-fn calculate_geometry(
-    residues: &mut [BackboneResidue],
-    report: &mut DsspReport,
-) -> Result<(), DsspError> {
-    for index in 0..residues.len() {
-        // DSSP assigns each non-initial amide hydrogen from the immediately
-        // preceding complete residue in its internal table, even across a
-        // numbered gap or chain boundary. Chain-continuity checks still gate
-        // torsions and local secondary-structure patterns below.
-        if index > 0 && !residues[index].is_proline {
-            let previous = index - 1;
-            let hydrogen = dssp_reconstructed_hydrogen(
-                residues[index].n,
-                residues[previous].c,
-                residues[previous].o,
-            );
-            if hydrogen.is_none() {
-                return Err(DsspError::DegenerateBackboneGeometry {
-                    residue: residues[index].key,
-                });
-            }
-            residues[index].h = hydrogen;
-            report.reconstructed_amide_hydrogens += 1;
-        }
-        if let Some(previous) = residues[index].prev {
-            residues[index].phi = dihedral(
-                residues[previous].c,
-                residues[index].n,
-                residues[index].ca,
-                residues[index].c,
-            );
-            residues[index].tco = cosine_between(
-                residues[index].c.sub(residues[index].o),
-                residues[previous].c.sub(residues[previous].o),
-            )
-            .map(f64::from);
-        }
-        if let Some(next) = residues[index].next {
-            residues[index].psi = dihedral(
-                residues[index].n,
-                residues[index].ca,
-                residues[index].c,
-                residues[next].n,
-            );
-            residues[index].omega = dihedral(
-                residues[index].ca,
-                residues[index].c,
-                residues[next].n,
-                residues[next].ca,
-            );
-        }
-        if let Some(previous) = residues[index].prev {
-            if let Some(next) = residues[index].next {
-                if let Some(next_next) = residues[next].next {
-                    residues[index].alpha = dihedral(
-                        residues[previous].ca,
-                        residues[index].ca,
-                        residues[next].ca,
-                        residues[next_next].ca,
-                    );
-                }
-            }
-        }
-    }
+/// The backbone geometry of one residue.
+#[derive(Debug, Clone, Copy)]
+struct ResidueGeometry {
+    phi: Option<f64>,
+    psi: Option<f64>,
+    omega: Option<f64>,
+    alpha: Option<f64>,
+    kappa: Option<f64>,
+    tco: Option<f64>,
+}
 
-    for index in 0..residues.len() {
-        let Some(previous) = residues[index].prev else {
-            continue;
-        };
-        let Some(previous_previous) = residues[previous].prev else {
-            continue;
-        };
-        let Some(next) = residues[index].next else {
-            continue;
-        };
-        let Some(next_next) = residues[next].next else {
-            continue;
-        };
-        let sequence_is_contiguous = match (
-            residues[previous_previous].source.label_sequence_id,
-            residues[next_next].source.label_sequence_id,
-        ) {
-            (Some(first), Some(last)) => first.checked_add(4) == Some(last),
-            _ => true,
-        };
-        if sequence_is_contiguous {
-            residues[index].kappa = angle_degrees(
-                residues[index].ca.sub(residues[previous_previous].ca),
-                residues[next_next].ca.sub(residues[index].ca),
-            );
-        }
+/// One range of residues' part of [`analyze_backbone`].
+#[derive(Debug)]
+struct RangeAnalysis {
+    geometry: Vec<ResidueGeometry>,
+    /// The candidate pairs whose first residue is in the range.
+    pairs: Vec<(usize, usize)>,
+    /// For each pair, the energies of the bonds from the first residue's
+    /// N-H to the second's C=O and back.
+    energies: Vec<[Option<f64>; 2]>,
+}
+
+/// Computes every residue's backbone geometry, the candidate pairs and
+/// their hydrogen-bond energies, installs the geometry and the bonds, and
+/// returns the candidate pairs in order.
+fn analyze_backbone(
+    residues: &mut [BackboneResidue],
+    max_candidate_pairs: usize,
+    executor: &dyn DsspExecutor,
+) -> Result<Vec<(usize, usize)>, DsspError> {
+    let grid = CellGrid::new(residues);
+    let found = AtomicUsize::new(0);
+    let shared = &*residues;
+    let ranges = map_ranges(executor, shared.len(), MIN_CHUNK, |range| {
+        analyze_range(shared, &grid, range, &found, max_candidate_pairs)
+    });
+    // DSSP finds every candidate before it evaluates any energy, so the
+    // candidate limit takes precedence over an earlier range's energy error.
+    if let Some(Err(limit)) = ranges
+        .iter()
+        .find(|range| matches!(range, Err(DsspError::LimitExceeded(_))))
+    {
+        return Err(limit.clone());
     }
-    Ok(())
+    // Bonds are inserted in candidate order, which decides DSSP's ties.
+    let mut candidates = Vec::with_capacity(found.into_inner());
+    let mut index = 0;
+    for range in ranges {
+        let range = range?;
+        for geometry in range.geometry {
+            let residue = &mut residues[index];
+            residue.phi = geometry.phi;
+            residue.psi = geometry.psi;
+            residue.omega = geometry.omega;
+            residue.alpha = geometry.alpha;
+            residue.kappa = geometry.kappa;
+            residue.tco = geometry.tco;
+            index += 1;
+        }
+        for (&(first, second), [forward, backward]) in range.pairs.iter().zip(range.energies) {
+            if let Some(energy) = forward {
+                insert_hydrogen_bond(residues, first, second, energy);
+            }
+            if let Some(energy) = backward {
+                insert_hydrogen_bond(residues, second, first, energy);
+            }
+        }
+        candidates.extend(range.pairs);
+    }
+    Ok(candidates)
+}
+
+fn analyze_range(
+    residues: &[BackboneResidue],
+    grid: &CellGrid,
+    range: Range<usize>,
+    found: &AtomicUsize,
+    max_candidate_pairs: usize,
+) -> Result<RangeAnalysis, DsspError> {
+    let geometry = range
+        .clone()
+        .map(|index| residue_geometry(residues, index))
+        .collect();
+    let pairs = candidate_pairs(residues, grid, range, found, max_candidate_pairs)?;
+    let energies = pairs
+        .iter()
+        .map(|&(first, second)| {
+            let forward = hydrogen_bond_energy(residues, first, second)?;
+            let backward = if second != first + 1 {
+                hydrogen_bond_energy(residues, second, first)?
+            } else {
+                None
+            };
+            Ok([forward, backward])
+        })
+        .collect::<Result<_, DsspError>>()?;
+    Ok(RangeAnalysis {
+        geometry,
+        pairs,
+        energies,
+    })
+}
+
+fn residue_geometry(residues: &[BackboneResidue], index: usize) -> ResidueGeometry {
+    let residue = &residues[index];
+    let mut geometry = ResidueGeometry {
+        phi: None,
+        psi: None,
+        omega: None,
+        alpha: None,
+        kappa: None,
+        tco: None,
+    };
+    if let Some(previous) = residue.prev.map(|previous| &residues[previous]) {
+        geometry.phi = dihedral(previous.c, residue.n, residue.ca, residue.c);
+        geometry.tco =
+            cosine_between(residue.c.sub(residue.o), previous.c.sub(previous.o)).map(f64::from);
+    }
+    if let Some(next) = residue.next.map(|next| &residues[next]) {
+        geometry.psi = dihedral(residue.n, residue.ca, residue.c, next.n);
+        geometry.omega = dihedral(residue.ca, residue.c, next.n, next.ca);
+    }
+    let (Some(previous), Some(next)) = (residue.prev, residue.next) else {
+        return geometry;
+    };
+    let Some(next_next) = residues[next].next else {
+        return geometry;
+    };
+    geometry.alpha = dihedral(
+        residues[previous].ca,
+        residue.ca,
+        residues[next].ca,
+        residues[next_next].ca,
+    );
+    let Some(previous_previous) = residues[previous].prev else {
+        return geometry;
+    };
+    let sequence_is_contiguous = match (
+        residues[previous_previous].source.label_sequence_id,
+        residues[next_next].source.label_sequence_id,
+    ) {
+        (Some(first), Some(last)) => first.checked_add(4) == Some(last),
+        _ => true,
+    };
+    if sequence_is_contiguous {
+        geometry.kappa = angle_degrees(
+            residue.ca.sub(residues[previous_previous].ca),
+            residues[next_next].ca.sub(residue.ca),
+        );
+    }
+    geometry
 }
 
 fn dihedral(p1: Vec3, p2: Vec3, p3: Vec3, p4: Vec3) -> Option<f64> {
@@ -701,40 +847,156 @@ fn angle_degrees(first: Vec3, second: Vec3) -> Option<f64> {
     })
 }
 
-fn candidate_pairs(
-    residues: &[BackboneResidue],
-    max_candidate_pairs: usize,
-) -> Result<Vec<(usize, usize)>, DsspError> {
-    let mut cells = BTreeMap::<(i64, i64, i64), Vec<usize>>::new();
-    let mut pairs = Vec::new();
-    let maximum_squared = MAX_CA_PAIR_DISTANCE_ANGSTROMS.powi(2);
-    for (current, residue) in residues.iter().enumerate() {
-        let cell = spatial_cell(residue.ca);
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for dz in -1..=1 {
-                    let neighbor = (cell.0 + dx, cell.1 + dy, cell.2 + dz);
-                    let Some(indices) = cells.get(&neighbor) else {
-                        continue;
-                    };
-                    for &prior in indices {
-                        if dssp_distance_squared(residues[prior].ca, residue.ca) <= maximum_squared
-                        {
-                            if pairs.len() >= max_candidate_pairs {
-                                return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
-                                    Resource::CandidatePairs,
-                                    max_candidate_pairs,
-                                )));
-                            }
-                            pairs.push((prior, current));
-                        }
-                    }
-                }
+/// The residues binned by the [`spatial_cell`] of their `CA`.
+#[derive(Debug)]
+enum CellGrid {
+    /// Every cell of the residues' box, padded by one cell on each side, in
+    /// x, y, z order: residue `members[starts[slot]..starts[slot + 1]]`
+    /// lie in cell `slot`.
+    Dense {
+        origin: (i64, i64, i64),
+        dims: (usize, usize, usize),
+        starts: Vec<usize>,
+        members: Vec<usize>,
+    },
+    /// Occupied cells only, for a box with many more cells than residues:
+    /// `cells[k]` holds residue `members[k]`, sorted by cell.
+    Sparse {
+        cells: Vec<(i64, i64, i64)>,
+        members: Vec<usize>,
+    },
+}
+
+impl CellGrid {
+    /// A box is stored densely when it has at most this many cells per
+    /// residue, plus [`Self::DENSE_SPARE_CELLS`].
+    const DENSE_CELLS_PER_RESIDUE: usize = 8;
+    const DENSE_SPARE_CELLS: usize = 4096;
+
+    fn new(residues: &[BackboneResidue]) -> Self {
+        let cells = residues
+            .iter()
+            .map(|residue| spatial_cell(residue.ca))
+            .collect::<Vec<_>>();
+        let low = cells
+            .iter()
+            .fold((i64::MAX, i64::MAX, i64::MAX), |low, cell| {
+                (low.0.min(cell.0), low.1.min(cell.1), low.2.min(cell.2))
+            });
+        let high = cells
+            .iter()
+            .fold((i64::MIN, i64::MIN, i64::MIN), |high, cell| {
+                (high.0.max(cell.0), high.1.max(cell.1), high.2.max(cell.2))
+            });
+        // Representable cells lie well inside i64, so the padded spans fit
+        // in i128; a span that does not fit in usize is never dense.
+        let span = |low: i64, high: i64| usize::try_from(i128::from(high) - i128::from(low) + 3);
+        let budget = residues
+            .len()
+            .saturating_mul(Self::DENSE_CELLS_PER_RESIDUE)
+            .saturating_add(Self::DENSE_SPARE_CELLS);
+        let dense = match (
+            span(low.0, high.0),
+            span(low.1, high.1),
+            span(low.2, high.2),
+        ) {
+            (Ok(x), Ok(y), Ok(z)) => x
+                .checked_mul(y)
+                .and_then(|area| area.checked_mul(z))
+                .filter(|&count| count <= budget)
+                .map(|_| (x, y, z)),
+            _ => None,
+        };
+        let Some(dims) = dense else {
+            let mut sorted = cells.into_iter().zip(0..).collect::<Vec<_>>();
+            sorted.sort_unstable();
+            let (cells, members) = sorted.into_iter().unzip();
+            return Self::Sparse { cells, members };
+        };
+        let origin = (low.0 - 1, low.1 - 1, low.2 - 1);
+        let slot = |(x, y, z): (i64, i64, i64)| {
+            (((x - origin.0) as usize * dims.1) + (y - origin.1) as usize) * dims.2
+                + (z - origin.2) as usize
+        };
+        let mut starts = vec![0; dims.0 * dims.1 * dims.2 + 1];
+        for &cell in &cells {
+            starts[slot(cell) + 1] += 1;
+        }
+        for index in 1..starts.len() {
+            starts[index] += starts[index - 1];
+        }
+        let mut next = starts.clone();
+        let mut members = vec![0; cells.len()];
+        for (index, &cell) in cells.iter().enumerate() {
+            members[next[slot(cell)]] = index;
+            next[slot(cell)] += 1;
+        }
+        Self::Dense {
+            origin,
+            dims,
+            starts,
+            members,
+        }
+    }
+
+    /// The residues in cells `(x, y, z - 1)` through `(x, y, z + 1)`, where
+    /// `(x, y, z)` is within one cell of a residue's cell.
+    fn column(&self, x: i64, y: i64, z: i64) -> &[usize] {
+        match self {
+            Self::Dense {
+                origin,
+                dims,
+                starts,
+                members,
+            } => {
+                let base = (((x - origin.0) as usize * dims.1) + (y - origin.1) as usize) * dims.2;
+                let first = base + (z - 1 - origin.2) as usize;
+                &members[starts[first]..starts[first + 3]]
+            }
+            Self::Sparse { cells, members } => {
+                let start = cells.partition_point(|&cell| cell < (x, y, z - 1));
+                let end = cells.partition_point(|&cell| cell <= (x, y, z + 1));
+                &members[start..end]
             }
         }
-        cells.entry(cell).or_default().push(current);
     }
-    pairs.sort_unstable();
+}
+
+/// The candidate pairs whose first residue is in `range`: residues with
+/// `CA` atoms within 9 Å, in order. `found` counts pairs across ranges.
+fn candidate_pairs(
+    residues: &[BackboneResidue],
+    grid: &CellGrid,
+    range: Range<usize>,
+    found: &AtomicUsize,
+    max_candidate_pairs: usize,
+) -> Result<Vec<(usize, usize)>, DsspError> {
+    let maximum_squared = MAX_CA_PAIR_DISTANCE_ANGSTROMS.powi(2);
+    let mut pairs = Vec::new();
+    let mut partners = Vec::new();
+    for first in range {
+        let (x, y, z) = spatial_cell(residues[first].ca);
+        partners.clear();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                partners.extend(grid.column(x + dx, y + dy, z).iter().filter_map(|&second| {
+                    (second > first
+                        && dssp_distance_squared(residues[first].ca, residues[second].ca)
+                            <= maximum_squared)
+                        .then_some(second)
+                }));
+            }
+        }
+        if found.fetch_add(partners.len(), Ordering::Relaxed) + partners.len() > max_candidate_pairs
+        {
+            return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+                Resource::CandidatePairs,
+                max_candidate_pairs,
+            )));
+        }
+        partners.sort_unstable();
+        pairs.extend(partners.iter().map(|&second| (first, second)));
+    }
     Ok(pairs)
 }
 
@@ -746,29 +1008,18 @@ fn spatial_cell(point: Vec3) -> (i64, i64, i64) {
     )
 }
 
-fn calculate_hydrogen_bonds(
-    residues: &mut [BackboneResidue],
-    candidates: &[(usize, usize)],
-) -> Result<(), DsspError> {
-    for &(first, second) in candidates {
-        calculate_hydrogen_bond(residues, first, second)?;
-        if second != first + 1 {
-            calculate_hydrogen_bond(residues, second, first)?;
-        }
-    }
-    Ok(())
-}
-
-fn calculate_hydrogen_bond(
-    residues: &mut [BackboneResidue],
+/// The DSSP energy of the bond from `donor`'s N-H to `acceptor`'s C=O;
+/// `None` when the donor is a proline or has no amide hydrogen.
+fn hydrogen_bond_energy(
+    residues: &[BackboneResidue],
     donor: usize,
     acceptor: usize,
-) -> Result<(), DsspError> {
+) -> Result<Option<f64>, DsspError> {
     if residues[donor].is_proline {
-        return Ok(());
+        return Ok(None);
     }
     let Some(hydrogen) = residues[donor].h else {
-        return Ok(());
+        return Ok(None);
     };
     let distances = [
         dssp_distance(hydrogen, residues[acceptor].o),
@@ -793,11 +1044,17 @@ fn calculate_hydrogen_bond(
             - DSSP_COUPLING_KCAL_ANGSTROM_PER_MOL / distances[3]
     };
     energy = (energy * 1000.0).round() / 1000.0;
-    energy = energy.max(MIN_HBOND_ENERGY_KCAL_PER_MOL);
+    Ok(Some(energy.max(MIN_HBOND_ENERGY_KCAL_PER_MOL)))
+}
 
+fn insert_hydrogen_bond(
+    residues: &mut [BackboneResidue],
+    donor: usize,
+    acceptor: usize,
+    energy: f64,
+) {
     insert_bond(&mut residues[donor].acceptors, acceptor, energy);
     insert_bond(&mut residues[acceptor].donors, donor, energy);
-    Ok(())
 }
 
 fn insert_bond(slots: &mut [BondSlot; 2], partner: usize, energy: f64) {
@@ -847,83 +1104,82 @@ fn calculate_beta_sheets(
     residues: &mut [BackboneResidue],
     candidates: &[(usize, usize)],
     max_ladders: usize,
+    executor: &dyn DsspExecutor,
 ) -> Result<BetaCounts, DsspError> {
+    let shared = &*residues;
+    let found = map_ranges(executor, candidates.len(), MIN_CHUNK, |range| {
+        candidates[range]
+            .iter()
+            .filter_map(|&(first, second)| {
+                test_bridge(shared, first, second).map(|bridge_type| (first, second, bridge_type))
+            })
+            .collect::<Vec<_>>()
+    });
     let mut bridges = Vec::<Bridge>::new();
+    // A bridge extends the ladder whose last pair is its predecessor. Every
+    // candidate pair joins one ladder, so at most one ladder of each type
+    // ends in a given pair; this index finds it.
+    let mut ends = BTreeMap::<(bool, usize, usize), usize>::new();
     let mut counts = BetaCounts::default();
-    for &(first, second) in candidates {
-        let Some(bridge_type) = test_bridge(residues, first, second) else {
-            continue;
-        };
+    for (first, second, bridge_type) in found.into_iter().flatten() {
         counts.bridges += 1;
         if residues[first].chain == residues[second].chain {
             counts.intra_chain += 1;
         } else {
             counts.inter_chain += 1;
         }
-        let mut extended = false;
-        for bridge in &mut bridges {
-            if bridge.bridge_type != bridge_type
-                || bridge
-                    .i
-                    .last()
-                    .copied()
-                    .and_then(|index| index.checked_add(1))
-                    != Some(first)
-            {
-                continue;
-            }
-            let matches = match bridge_type {
-                BridgeType::Parallel => {
-                    bridge
-                        .j
-                        .back()
-                        .copied()
-                        .and_then(|index| index.checked_add(1))
-                        == Some(second)
-                }
-                BridgeType::Antiparallel => {
-                    bridge
-                        .j
-                        .front()
-                        .copied()
-                        .and_then(|index| index.checked_sub(1))
-                        == Some(second)
-                }
-            };
-            if matches {
+        let parallel = bridge_type == BridgeType::Parallel;
+        let predecessor = first.checked_sub(1).zip(if parallel {
+            second.checked_sub(1)
+        } else {
+            second.checked_add(1)
+        });
+        let extended = predecessor
+            .and_then(|(i, j)| ends.remove(&(parallel, i, j)))
+            .inspect(|&ladder| {
+                let bridge = &mut bridges[ladder];
                 bridge.i.push(first);
-                match bridge_type {
-                    BridgeType::Parallel => bridge.j.push_back(second),
-                    BridgeType::Antiparallel => bridge.j.push_front(second),
+                if parallel {
+                    bridge.j.push_back(second);
+                } else {
+                    bridge.j.push_front(second);
                 }
-                extended = true;
-                break;
-            }
-        }
-        if !extended {
-            if bridges.len() >= max_ladders {
-                return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
-                    Resource::Ladders,
-                    max_ladders,
-                )));
-            }
-            bridges.push(Bridge {
-                bridge_type,
-                i: vec![first],
-                j: VecDeque::from([second]),
-                sheet: 0,
-                ladder: 0,
             });
-        }
+        let ladder = match extended {
+            Some(ladder) => ladder,
+            None => {
+                if bridges.len() >= max_ladders {
+                    return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
+                        Resource::Ladders,
+                        max_ladders,
+                    )));
+                }
+                bridges.push(Bridge {
+                    bridge_type,
+                    i: vec![first],
+                    j: VecDeque::from([second]),
+                    sheet: 0,
+                    ladder: 0,
+                });
+                bridges.len() - 1
+            }
+        };
+        ends.insert((parallel, first, second), ladder);
     }
 
-    bridges.sort_by_key(|bridge| {
-        let residue = &residues[bridge.i[0]];
+    bridges.sort_by(|left, right| {
+        let left_residue = &residues[left.i[0]];
+        let right_residue = &residues[right.i[0]];
         (
-            residue.source.chain_label_id.clone(),
-            residue.key.raw(),
-            bridge.i[0],
+            &left_residue.source.chain_label_id,
+            left_residue.key.raw(),
+            left.i[0],
         )
+            .cmp(&(
+                &right_residue.source.chain_label_id,
+                right_residue.key.raw(),
+                right.i[0],
+            ))
     });
     merge_bulges(residues, &mut bridges);
     if bridges.len() > max_ladders {
@@ -934,98 +1190,138 @@ fn calculate_beta_sheets(
         )));
     }
     counts.ladders = bridges.len();
-    assign_sheets(&mut bridges);
+    assign_sheets(&mut bridges, residues.len());
     assign_beta_results(residues, &bridges);
     Ok(counts)
 }
 
+/// Merges ladders across beta bulges, as DSSP does: each ladder in order
+/// absorbs every later ladder, in order, that continues it across a bulge,
+/// growing as it goes.
 fn merge_bulges(residues: &[BackboneResidue], bridges: &mut Vec<Bridge>) {
-    let mut first = 0;
-    while first < bridges.len() {
-        let mut second = first + 1;
-        while second < bridges.len() {
-            let ibi = bridges[first].i[0];
-            let iei = *bridges[first].i.last().expect("bridge has first strand");
-            let jbi = bridges[first].j[0];
-            let jei = *bridges[first].j.back().expect("bridge has second strand");
-            let ibj = bridges[second].i[0];
-            let iej = *bridges[second].i.last().expect("bridge has first strand");
-            let jbj = bridges[second].j[0];
-            let jej = *bridges[second].j.back().expect("bridge has second strand");
-
-            let incompatible = bridges[first].bridge_type != bridges[second].bridge_type
-                || residues[ibi].segment != residues[iej].segment
-                || residues[jbi.min(jbj)].segment != residues[jei.max(jej)].segment
-                || ibj.checked_sub(iei).is_none_or(|gap| gap >= 6)
-                || (iei >= ibj && ibi <= iej);
-            if incompatible {
-                second += 1;
-                continue;
-            }
-            let first_gap = ibj - iei;
-            let bulge = match bridges[first].bridge_type {
-                BridgeType::Parallel => jbj
-                    .checked_sub(jei)
-                    .is_some_and(|second_gap| (second_gap < 6 && first_gap < 3) || second_gap < 3),
-                BridgeType::Antiparallel => jbi
-                    .checked_sub(jej)
-                    .is_some_and(|second_gap| (second_gap < 6 && first_gap < 3) || second_gap < 3),
+    // A ladder continues another only if its first strand starts at most
+    // five residues after the other's first strand ends, so later ladders
+    // are found by where their first strand starts, which merging never
+    // changes.
+    let mut starts = BTreeMap::<usize, Vec<usize>>::new();
+    for (index, bridge) in bridges.iter().enumerate() {
+        starts.entry(bridge.i[0]).or_default().push(index);
+    }
+    let mut merged = vec![false; bridges.len()];
+    for first in 0..bridges.len() {
+        if merged[first] {
+            continue;
+        }
+        let mut examined = first;
+        loop {
+            let end = *bridges[first].i.last().expect("bridge has first strand");
+            let next = starts
+                .range(end..=end.saturating_add(5))
+                .filter_map(|(_, ladders)| {
+                    let later = ladders.partition_point(|&ladder| ladder <= examined);
+                    ladders[later..]
+                        .iter()
+                        .copied()
+                        .find(|&ladder| !merged[ladder])
+                })
+                .min();
+            let Some(second) = next else {
+                break;
             };
-            if !bulge {
-                second += 1;
+            examined = second;
+            if !bulge_joins(residues, &bridges[first], &bridges[second]) {
                 continue;
             }
-            let other = bridges.remove(second);
-            bridges[first].i.extend(other.i);
+            merged[second] = true;
+            let other_i = std::mem::take(&mut bridges[second].i);
+            let other_j = std::mem::take(&mut bridges[second].j);
+            bridges[first].i.extend(other_i);
             match bridges[first].bridge_type {
-                BridgeType::Parallel => bridges[first].j.extend(other.j),
+                BridgeType::Parallel => bridges[first].j.extend(other_j),
                 BridgeType::Antiparallel => {
-                    for value in other.j.into_iter().rev() {
+                    for value in other_j.into_iter().rev() {
                         bridges[first].j.push_front(value);
                     }
                 }
             }
         }
-        first += 1;
+    }
+    let mut merged = merged.into_iter();
+    bridges.retain(|_| !merged.next().expect("one flag per ladder"));
+}
+
+/// Whether ladder `second` continues ladder `first` across a beta bulge.
+fn bulge_joins(residues: &[BackboneResidue], first: &Bridge, second: &Bridge) -> bool {
+    let ibi = first.i[0];
+    let iei = *first.i.last().expect("bridge has first strand");
+    let jbi = first.j[0];
+    let jei = *first.j.back().expect("bridge has second strand");
+    let ibj = second.i[0];
+    let iej = *second.i.last().expect("bridge has first strand");
+    let jbj = second.j[0];
+    let jej = *second.j.back().expect("bridge has second strand");
+
+    let incompatible = first.bridge_type != second.bridge_type
+        || residues[ibi].segment != residues[iej].segment
+        || residues[jbi.min(jbj)].segment != residues[jei.max(jej)].segment
+        || ibj.checked_sub(iei).is_none_or(|gap| gap >= 6)
+        || (iei >= ibj && ibi <= iej);
+    if incompatible {
+        return false;
+    }
+    let first_gap = ibj - iei;
+    match first.bridge_type {
+        BridgeType::Parallel => jbj
+            .checked_sub(jei)
+            .is_some_and(|second_gap| (second_gap < 6 && first_gap < 3) || second_gap < 3),
+        BridgeType::Antiparallel => jbi
+            .checked_sub(jej)
+            .is_some_and(|second_gap| (second_gap < 6 && first_gap < 3) || second_gap < 3),
     }
 }
 
-fn assign_sheets(bridges: &mut [Bridge]) {
-    let mut remaining = (0..bridges.len()).collect::<BTreeSet<_>>();
-    let mut sheet = 1;
-    let mut ladder = 0;
-    while let Some(first) = remaining.pop_first() {
-        let mut component = BTreeSet::from([first]);
-        loop {
-            let linked = remaining.iter().copied().find(|candidate| {
-                component
-                    .iter()
-                    .any(|existing| bridges_linked(&bridges[*existing], &bridges[*candidate]))
-            });
-            let Some(linked) = linked else {
-                break;
-            };
-            remaining.remove(&linked);
-            component.insert(linked);
+/// Groups ladders that share a residue into sheets. Sheets are numbered in
+/// the order of their first ladder, and ladders in sheet order, each sheet's
+/// ladders in order.
+fn assign_sheets(bridges: &mut [Bridge], residue_count: usize) {
+    fn root(parents: &mut [usize], mut ladder: usize) -> usize {
+        while parents[ladder] != ladder {
+            parents[ladder] = parents[parents[ladder]];
+            ladder = parents[ladder];
         }
-        for index in component {
-            bridges[index].sheet = sheet;
-            bridges[index].ladder = ladder;
-            ladder += 1;
-        }
-        sheet += 1;
+        ladder
     }
-}
-
-fn bridges_linked(first: &Bridge, second: &Bridge) -> bool {
-    first
-        .i
-        .iter()
-        .any(|value| second.i.contains(value) || second.j.contains(value))
-        || first
-            .j
-            .iter()
-            .any(|value| second.i.contains(value) || second.j.contains(value))
+    let mut parents = (0..bridges.len()).collect::<Vec<_>>();
+    let mut owner = vec![None; residue_count];
+    for (ladder, bridge) in bridges.iter().enumerate() {
+        for &residue in bridge.i.iter().chain(&bridge.j) {
+            match owner[residue] {
+                None => owner[residue] = Some(ladder),
+                Some(other) => {
+                    let (left, right) = (root(&mut parents, ladder), root(&mut parents, other));
+                    parents[left.max(right)] = left.min(right);
+                }
+            }
+        }
+    }
+    let mut sheets = Vec::<Vec<usize>>::new();
+    let mut sheet_of = vec![usize::MAX; bridges.len()];
+    for ladder in 0..bridges.len() {
+        let first = root(&mut parents, ladder);
+        if sheet_of[first] == usize::MAX {
+            sheet_of[first] = sheets.len();
+            sheets.push(Vec::new());
+        }
+        sheets[sheet_of[first]].push(ladder);
+    }
+    let mut ladder_number = 0;
+    for (sheet, ladders) in sheets.into_iter().enumerate() {
+        for ladder in ladders {
+            bridges[ladder].sheet = sheet + 1;
+            bridges[ladder].ladder = ladder_number;
+            ladder_number += 1;
+        }
+    }
 }
 
 fn assign_beta_results(residues: &mut [BackboneResidue], bridges: &[Bridge]) {
@@ -1089,14 +1385,17 @@ fn assign_beta_results(residues: &mut [BackboneResidue], bridges: &[Bridge]) {
         }
     }
 
-    let maximum_sheet = residues.iter().filter_map(|residue| residue.sheet).max();
+    // Strands are numbered sheet by sheet, each sheet's in residue order.
+    let mut sheets = vec![Vec::new(); bridges.len() + 1];
+    for (index, residue) in residues.iter().enumerate() {
+        if let Some(sheet) = residue.sheet {
+            sheets[sheet].push(index);
+        }
+    }
     let mut strand = 0;
-    for sheet in 1..=maximum_sheet.unwrap_or_default() {
+    for members in sheets {
         let mut previous: Option<usize> = None;
-        for index in 0..residues.len() {
-            if residues[index].sheet != Some(sheet) {
-                continue;
-            }
+        for index in members {
             if previous.is_none_or(|prior| {
                 prior + 1 != index || residues[prior].segment != residues[index].segment
             }) {
@@ -1240,16 +1539,16 @@ fn calculate_polyproline_helices(residues: &mut [BackboneResidue], stretch: usiz
     }
 }
 
-fn public_residue(residue: &BackboneResidue, all: &[BackboneResidue]) -> DsspResidue {
+fn public_residue(residue: BackboneResidue, keys: &[ResidueId]) -> DsspResidue {
     let convert_bond = |bond: BondSlot| {
         bond.partner.map(|partner| DsspHydrogenBond {
-            partner: all[partner].key,
+            partner: keys[partner],
             energy_kcal_per_mol: bond.energy,
         })
     };
     let convert_beta = |partner: Option<BetaSlot>| {
         partner.map(|partner| DsspBetaPartner {
-            partner: all[partner.partner].key,
+            partner: keys[partner.partner],
             ladder: partner.ladder,
             direction: if partner.parallel {
                 DsspBridgeDirection::Parallel
@@ -1260,7 +1559,7 @@ fn public_residue(residue: &BackboneResidue, all: &[BackboneResidue]) -> DsspRes
     };
     DsspResidue {
         key: residue.key,
-        source: residue.source.clone(),
+        source: residue.source,
         secondary_structure: residue.secondary_structure,
         chain_break: residue.chain_break,
         phi: residue.phi,
@@ -1281,6 +1580,10 @@ fn public_residue(residue: &BackboneResidue, all: &[BackboneResidue]) -> DsspRes
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn serial() -> ScopedThreads {
+        ScopedThreads::new(NonZeroUsize::MIN)
+    }
 
     fn backbone(count: usize) -> Vec<BackboneResidue> {
         let mut residues = (0..count)
@@ -1473,7 +1776,7 @@ mod tests {
         insert_bond(&mut residues[7].acceptors, 3, -1.0);
 
         assert!(matches!(
-            calculate_beta_sheets(&mut residues, &[(2, 5), (4, 7)], 1),
+            calculate_beta_sheets(&mut residues, &[(2, 5), (4, 7)], 1, &serial()),
             Err(DsspError::LimitExceeded(limit))
                 if limit == LimitExceeded::first_beyond(Resource::Ladders, 1)
         ));
@@ -1484,7 +1787,7 @@ mod tests {
         let mut parallel = backbone(8);
         insert_bond(&mut parallel[3].acceptors, 5, -1.0);
         insert_bond(&mut parallel[5].acceptors, 1, -1.0);
-        let counts = calculate_beta_sheets(&mut parallel, &[(2, 5)], 1).expect("bridge");
+        let counts = calculate_beta_sheets(&mut parallel, &[(2, 5)], 1, &serial()).expect("bridge");
         assert_eq!(counts.bridges, 1);
         assert_eq!(
             parallel[2].secondary_structure,
@@ -1496,11 +1799,11 @@ mod tests {
         let mut antiparallel = backbone(8);
         insert_bond(&mut antiparallel[2].acceptors, 5, -1.0);
         insert_bond(&mut antiparallel[5].acceptors, 2, -1.0);
-        calculate_beta_sheets(&mut antiparallel, &[(2, 5)], 1).expect("bridge");
+        calculate_beta_sheets(&mut antiparallel, &[(2, 5)], 1, &serial()).expect("bridge");
         assert!(antiparallel[2].beta_partners[0]
             .is_some_and(|partner| !partner.parallel && partner.partner == 5));
         assert_eq!(
-            calculate_beta_sheets(&mut backbone(8), &[], 0)
+            calculate_beta_sheets(&mut backbone(8), &[], 0, &serial())
                 .expect("no bridge")
                 .ladders,
             0
