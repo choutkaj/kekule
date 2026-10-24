@@ -91,6 +91,67 @@ pub(crate) fn complete_editor_connectivity<'a>(
         .map_err(interpret_error)
 }
 
+/// The linkage between two residues adjacent in a polymer chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PolymerLink {
+    /// The peptide bond from `C` to the next residue's `N`.
+    Peptide,
+    /// The phosphodiester bond from `O3'` (or `O3*`) to the next residue's
+    /// `P`.
+    Nucleotide,
+    /// A peptide bond, or else a phosphodiester bond, by atom names.
+    Either,
+}
+
+impl PolymerLink {
+    /// The linkage of two adjacent residues without a declared polymer type:
+    /// their templates name it. A residue without a polymer template defers
+    /// to its neighbour, and two such residues link by atom names; bonding
+    /// distance decides either way.
+    pub(crate) fn undeclared(left: ComponentLinking, right: ComponentLinking) -> Option<Self> {
+        let polymer = |linking| {
+            matches!(
+                linking,
+                ComponentLinking::Peptide | ComponentLinking::Nucleotide
+            )
+            .then_some(linking)
+        };
+        match (polymer(left), polymer(right)) {
+            (Some(first), Some(second)) if first != second => None,
+            (Some(ComponentLinking::Peptide), _) | (_, Some(ComponentLinking::Peptide)) => {
+                Some(Self::Peptide)
+            }
+            (Some(_), _) | (_, Some(_)) => Some(Self::Nucleotide),
+            (None, None) => Some(Self::Either),
+        }
+    }
+
+    /// The linking atoms of the earlier and the later residue, which `left`
+    /// and `right` look up by atom name.
+    pub(crate) fn atoms<T>(
+        self,
+        left: impl Fn(&str) -> Option<T>,
+        right: impl Fn(&str) -> Option<T>,
+    ) -> Option<(T, T)> {
+        let peptide = || left("C").zip(right("N"));
+        let nucleotide = || left("O3'").or_else(|| left("O3*")).zip(right("P"));
+        match self {
+            Self::Peptide => peptide(),
+            Self::Nucleotide => nucleotide(),
+            Self::Either => peptide().or_else(nucleotide),
+        }
+    }
+}
+
+/// The bond a template gives its two atoms, or `None` for an aromatic or
+/// delocalized bond, whose order localization chooses.
+pub(crate) const fn template_bond_order(bond: &TemplateBond) -> Option<BondOrder> {
+    match SourceBondOrder::of_template(bond) {
+        SourceBondOrder::Localized(order) => Some(order),
+        SourceBondOrder::Aromatic => None,
+    }
+}
+
 /// A bond order as a source states it, before aromatic localization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceBondOrder {
@@ -843,42 +904,18 @@ impl<'r> Resolver<'r, '_> {
                 if right_seq != left_seq.saturating_add(1) {
                     continue;
                 }
-                let peptide = || left.atoms.get("C").zip(right.atoms.get("N"));
-                let nucleotide = || {
-                    left.atoms
-                        .get("O3'")
-                        .or_else(|| left.atoms.get("O3*"))
-                        .zip(right.atoms.get("P"))
-                };
-                let pair = match declared {
-                    Some(kind) if is_polypeptide(kind) => peptide(),
-                    Some(kind) if is_nucleic_acid(kind) => nucleotide(),
+                let link = match declared {
+                    Some(kind) if is_polypeptide(kind) => Some(PolymerLink::Peptide),
+                    Some(kind) if is_nucleic_acid(kind) => Some(PolymerLink::Nucleotide),
                     Some(_) => None,
-                    // Without a declared polymer type, the residues' templates
-                    // name the linkage. A residue without a polymer template
-                    // defers to its neighbour, and two such residues link by
-                    // atom names; bonding distance decides either way.
-                    None => {
-                        let polymer = |linking| {
-                            matches!(
-                                linking,
-                                ComponentLinking::Peptide | ComponentLinking::Nucleotide
-                            )
-                            .then_some(linking)
-                        };
-                        match (
-                            polymer(self.catalog.linking(&left.key.component_id)),
-                            polymer(self.catalog.linking(&right.key.component_id)),
-                        ) {
-                            (Some(first), Some(second)) if first != second => None,
-                            (Some(ComponentLinking::Peptide), _)
-                            | (_, Some(ComponentLinking::Peptide)) => peptide(),
-                            (Some(_), _) | (_, Some(_)) => nucleotide(),
-                            (None, None) => peptide().or_else(nucleotide),
-                        }
-                    }
+                    None => PolymerLink::undeclared(
+                        self.catalog.linking(&left.key.component_id),
+                        self.catalog.linking(&right.key.component_id),
+                    ),
                 };
-                let Some((&left_atom, &right_atom)) = pair else {
+                let Some((&left_atom, &right_atom)) = link.and_then(|link| {
+                    link.atoms(|name| left.atoms.get(name), |name| right.atoms.get(name))
+                }) else {
                     continue;
                 };
                 let (left_site, right_site) = (
@@ -1047,22 +1084,12 @@ impl<'r> Resolver<'r, '_> {
         residue: &ResidueAtoms,
         has_hydrogens: bool,
     ) -> Result<Option<Vec<TemplateCharge>>, FormatError> {
-        let mut charges = Vec::new();
-        for &(name, atom) in named {
-            let Some((index, template_atom)) = candidate.atom(name) else {
-                // Variants only remove hydrogens; a model hydrogen the
-                // variant lacks shows up on its heavy atom below.
-                if is_hydrogen(residue.site(atom).expect("matched site").element) {
-                    continue;
-                }
-                return Ok(None);
-            };
-            let base = template_atom.formal_charge().unwrap_or(0);
-            let element = template_atom.element();
-            let mut delta = 0i8;
-            if has_hydrogens && !is_hydrogen(element) && !is_carbon(element) {
-                let expected =
-                    expected_hydrogens(candidate, index, self.links_outside(atom, residue)?);
+        let differences = hydrogen_differences(
+            candidate,
+            named,
+            has_hydrogens,
+            |atom| is_hydrogen(residue.site(atom).expect("matched site").element),
+            |atom| {
                 let present = self
                     .graph
                     .require_neighbors(atom)
@@ -1073,38 +1100,27 @@ impl<'r> Resolver<'r, '_> {
                             .is_some_and(|neighbor| is_hydrogen(neighbor.element))
                     })
                     .count();
-                if present != expected {
-                    let only_single = candidate
-                        .bonds()
-                        .iter()
-                        .filter(|bond| bond.atoms().contains(&index))
-                        .all(|bond| {
-                            bond.order() == TemplateOrder::Single
-                                && !bond.aromatic()
-                                && !bond.metal_coordination()
-                        });
-                    let difference = present as isize - expected as isize;
-                    // A ring nitrogen takes or loses one proton whatever its
-                    // bond orders, as a protonated cytosine N3 or a
-                    // deprotonated imidazole nitrogen does.
-                    let ring_nitrogen = element.atomic_number() == 7
-                        && difference.abs() == 1
-                        && in_ring(candidate, index);
-                    if !only_single && !ring_nitrogen {
-                        return Ok(None);
-                    }
-                    delta = i8::try_from(difference).map_err(|_| {
-                        chemistry_error("hydrogen count difference exceeds charge range")
-                    })?;
-                }
-            }
-            charges.push(TemplateCharge {
-                atom,
-                value: base.saturating_add(delta),
-                delta,
-            });
-        }
-        Ok(Some(charges))
+                Ok((present, self.links_outside(atom, residue)?))
+            },
+        )?;
+        let Some(differences) = differences else {
+            return Ok(None);
+        };
+        differences
+            .into_iter()
+            .map(|(atom, index, difference)| {
+                let base = candidate.atoms()[index].formal_charge().unwrap_or(0);
+                let delta = i8::try_from(difference).map_err(|_| {
+                    chemistry_error("hydrogen count difference exceeds charge range")
+                })?;
+                Ok(TemplateCharge {
+                    atom,
+                    value: base.saturating_add(delta),
+                    delta,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
     }
 
     /// Whether a residue atom is bonded to an atom of another residue.
@@ -1237,6 +1253,67 @@ fn match_template(
         }
     }
     Ok(Some((matched, strays)))
+}
+
+/// One residue atom, its template atom index, and how many hydrogens it has
+/// beyond the template's.
+pub(crate) type HydrogenDifference<A> = (A, usize, isize);
+
+/// How many hydrogens each named atom of a residue has beyond those
+/// `candidate` gives it: `(atom, template index, difference)`, or `None`
+/// when the model's hydrogens contradict the candidate. `named` pairs
+/// template atom names with residue atoms. Differences are counted only on
+/// heteroatoms of a residue with model hydrogens, and only where they can be
+/// charges: on an atom with only single template bonds, or by one on a ring
+/// nitrogen. `hydrogens` gives an atom's bonded hydrogens and whether it
+/// links to another residue, which removes its leaving hydrogens.
+pub(crate) fn hydrogen_differences<A: Copy, E>(
+    candidate: &Component,
+    named: &[(&str, A)],
+    has_hydrogens: bool,
+    is_hydrogen_atom: impl Fn(A) -> bool,
+    mut hydrogens: impl FnMut(A) -> Result<(usize, bool), E>,
+) -> Result<Option<Vec<HydrogenDifference<A>>>, E> {
+    let mut differences = Vec::new();
+    for &(name, atom) in named {
+        let Some((index, template_atom)) = candidate.atom(name) else {
+            // Variants only remove hydrogens; a model hydrogen the variant
+            // lacks shows up on its heavy atom below.
+            if is_hydrogen_atom(atom) {
+                continue;
+            }
+            return Ok(None);
+        };
+        let element = template_atom.element();
+        let mut difference = 0;
+        if has_hydrogens && !is_hydrogen(element) && !is_carbon(element) {
+            let (present, linked) = hydrogens(atom)?;
+            let expected = expected_hydrogens(candidate, index, linked);
+            if present != expected {
+                let only_single = candidate
+                    .bonds()
+                    .iter()
+                    .filter(|bond| bond.atoms().contains(&index))
+                    .all(|bond| {
+                        bond.order() == TemplateOrder::Single
+                            && !bond.aromatic()
+                            && !bond.metal_coordination()
+                    });
+                difference = present as isize - expected as isize;
+                // A ring nitrogen takes or loses one proton whatever its
+                // bond orders, as a protonated cytosine N3 or a
+                // deprotonated imidazole nitrogen does.
+                let ring_nitrogen = element.atomic_number() == 7
+                    && difference.abs() == 1
+                    && in_ring(candidate, index);
+                if !only_single && !ring_nitrogen {
+                    return Ok(None);
+                }
+            }
+        }
+        differences.push((atom, index, difference));
+    }
+    Ok(Some(differences))
 }
 
 /// A formal charge from a template, after hydrogen differences.
