@@ -108,6 +108,13 @@ impl<'a> FrameData<'a> {
 /// ...); edit it through [`Self::frame_mut`] or publish a complete frame with
 /// [`Self::replace_from_data`]. Velocity and force allocations are reused
 /// across frames.
+///
+/// To keep a decoded frame, for example in a frame cache, take it out with
+/// [`Self::into_trajectory`] rather than copying it: the one-frame
+/// [`Trajectory`] it returns is bound to the buffer's topology, so its
+/// [`Trajectory::get`] views the frame without validating it again. Storage
+/// that is no longer needed becomes a buffer again with [`Self::from_frame`],
+/// so the next frame decodes into it without allocating.
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
     /// Exactly one frame; the collection binds and validates it.
@@ -137,6 +144,38 @@ impl FrameBuffer {
             spare_velocities: None,
             spare_forces: None,
         }
+    }
+
+    /// A buffer holding `frame`, bound to `topology` without copying it.
+    ///
+    /// The frame is validated and its bond property rows bound once, as
+    /// [`Trajectory::push`] does; it is the buffered frame until the next
+    /// read replaces it, reusing its allocations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidStructure`] when the frame's
+    /// atom count or bond property rows do not match `topology`.
+    pub fn from_frame(
+        topology: impl Into<Arc<Topology>>,
+        frame: TrajectoryFrame,
+    ) -> Result<Self, TrajectoryIoError> {
+        Ok(Self {
+            storage: Trajectory::from_items(topology, [frame])?,
+            spare_velocities: None,
+            spare_forces: None,
+        })
+    }
+
+    /// The buffered frame, without copying it, as a one-frame [`Trajectory`]
+    /// bound to the buffer's topology.
+    ///
+    /// The trajectory shares the buffer's topology handle; its frame keeps
+    /// every field of the buffered frame. Spare velocity and force
+    /// allocations are dropped; clear velocities or forces first to drop
+    /// those of the frame as well.
+    pub fn into_trajectory(self) -> Trajectory {
+        self.storage
     }
 
     /// The topology snapshot the buffer is bound to.
