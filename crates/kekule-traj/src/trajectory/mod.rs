@@ -143,7 +143,8 @@ pub enum TrajectoryIoErrorKind {
     /// The caller's [`kekule::diagnostics::Cancellation`] stopped the
     /// operation; [`kekule::diagnostics::Cancelled`] is the source.
     Cancelled,
-    /// An encoded frame index is malformed or of an unsupported version.
+    /// An encoded frame index or file fingerprint is malformed or of an
+    /// unsupported version.
     InvalidIndex,
     /// A frame index does not describe the file: it was built for another
     /// file, the file changed since, or a frame does not lie where the index

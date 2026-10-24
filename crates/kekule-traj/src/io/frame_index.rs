@@ -9,6 +9,8 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -28,13 +30,18 @@ const SAMPLE_HASH_BYTES: u64 = 4 * 1024;
 /// Interior samples of a larger file.
 const SAMPLE_COUNT: u64 = 16;
 
-const MAGIC: [u8; 8] = *b"KEKTRIDX";
+const INDEX_MAGIC: [u8; 8] = *b"KEKTRIDX";
+const FINGERPRINT_MAGIC: [u8; 8] = *b"KEKTRFPR";
+/// The version of both the index and the fingerprint encodings.
 const VERSION: u32 = 1;
 const HEADER_BYTES: usize = 56;
 const CHECKSUM_BYTES: usize = 8;
+const FINGERPRINT_BYTES: usize = 56;
+/// Where the fingerprint fields lie in both encodings.
+const FINGERPRINT_FIELDS: std::ops::Range<usize> = 14..48;
 const FLAG_MIXED_PRECISION: u8 = 1;
 
-/// The identity of a file's content when its frame index was built.
+/// The identity of a trajectory file's content.
 ///
 /// It records the file's size, its modification time where the platform
 /// reports one, and a 64-bit FNV-1a hash of the size followed by sampled
@@ -43,6 +50,55 @@ const FLAG_MIXED_PRECISION: u8 = 1;
 /// replaced, appended, truncated, or rewritten file; it is not a
 /// cryptographic digest, and the per-frame checks of an index-backed reader
 /// remain the guard against frames that are not where the index says.
+///
+/// Every [`TrajectoryFrameIndex`] carries the fingerprint of the file it was
+/// built for. A host can also compute one with [`Self::of_path`] or
+/// [`Self::of_file`], check a file against one with [`Self::matches_path`] or
+/// [`Self::matches_file`], and keep one, for example in a project file or a
+/// cache key, through its stable encoding.
+///
+/// Equality compares all three fields, as opening from an index does, so a
+/// file that is touched, or copied without its modification time, no longer
+/// matches. [`Self::same_content`] ignores the modification time, for a host
+/// asking whether a moved or copied file is the one it recorded.
+///
+/// # Encoding
+///
+/// [`Self::to_bytes`] writes version 1 of a little-endian layout. It is
+/// versioned together with the [`TrajectoryFrameIndex`] encoding, whose bytes
+/// 14 to 47 hold the same fields at the same offsets:
+///
+/// | Bytes | Field |
+/// |---|---|
+/// | 8 | magic `KEKTRFPR` |
+/// | 4 | version, `u32` 1 |
+/// | 2 | reserved, 0 |
+/// | 1 | 1 when the modification time is present, else 0 |
+/// | 1 | reserved, 0 |
+/// | 8 | file size in bytes, `u64` |
+/// | 16 | modification time in nanoseconds from the Unix epoch, `i128`; 0 when absent |
+/// | 8 | content hash, `u64` |
+/// | 8 | FNV-1a 64 checksum of all preceding bytes, `u64` |
+///
+/// [`Display`](fmt::Display) writes these 56 bytes as 112 lowercase
+/// hexadecimal digits, a form that fits a text file, a file name, or a cache
+/// key, and [`FromStr`] reads it back. Both decoders take untrusted input:
+/// anything but a valid version 1 encoding is a
+/// [`TrajectoryIoErrorKind::InvalidIndex`] error, never a panic.
+///
+/// # Examples
+///
+/// ```no_run
+/// use kekule_traj::io::TrajectoryFileFingerprint;
+///
+/// let recorded = TrajectoryFileFingerprint::of_path("run.xtc")?.to_string();
+///
+/// // Later, after the user relinks the trajectory:
+/// let recorded: TrajectoryFileFingerprint = recorded.parse()?;
+/// let relinked = TrajectoryFileFingerprint::of_path("moved/run.xtc")?;
+/// assert!(recorded.same_content(&relinked));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TrajectoryFileFingerprint {
     byte_count: u64,
@@ -52,6 +108,92 @@ pub struct TrajectoryFileFingerprint {
 }
 
 impl TrajectoryFileFingerprint {
+    /// Fingerprints the file at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::Io`] when the file cannot be opened
+    /// or read.
+    pub fn of_path(path: impl AsRef<Path>) -> Result<Self, TrajectoryIoError> {
+        let path = path.as_ref();
+        let label = path.display().to_string();
+        let mut file = File::open(path)
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
+        Self::of_labelled_file(&mut file, &label)
+    }
+
+    /// Fingerprints an open file from its start and leaves it positioned at
+    /// its start.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::Io`] when the file cannot be read or
+    /// repositioned.
+    pub fn of_file(file: &mut File) -> Result<Self, TrajectoryIoError> {
+        Self::fingerprint(file)
+            .map_err(|error| TrajectoryIoError::io(TrajectoryIoOperation::Open, error))
+    }
+
+    /// As [`Self::of_file`], labelling errors with `source_label`.
+    pub(crate) fn of_labelled_file(
+        file: &mut File,
+        source_label: &str,
+    ) -> Result<Self, TrajectoryIoError> {
+        Self::fingerprint(file)
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))
+    }
+
+    fn fingerprint(file: &mut File) -> std::io::Result<Self> {
+        let metadata = file.metadata()?;
+        let byte_count = metadata.len();
+        let modified = metadata.modified().ok().and_then(unix_nanos);
+        let mut hash = Fnv1a::new();
+        hash.write(&byte_count.to_le_bytes());
+        let mut buffer = [0_u8; 8192];
+        for (start, length) in sample_ranges(byte_count) {
+            file.seek(SeekFrom::Start(start))?;
+            let mut remaining = length;
+            while remaining > 0 {
+                let chunk = usize::try_from(remaining.min(buffer.len() as u64))
+                    .expect("a chunk is no larger than the buffer");
+                file.read_exact(&mut buffer[..chunk])?;
+                hash.write(&buffer[..chunk]);
+                remaining -= chunk as u64;
+            }
+        }
+        file.seek(SeekFrom::Start(0))?;
+        Ok(Self {
+            byte_count,
+            modified,
+            content_hash: hash.finish(),
+        })
+    }
+
+    /// Whether the file at `path` has this fingerprint.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::of_path`].
+    pub fn matches_path(&self, path: impl AsRef<Path>) -> Result<bool, TrajectoryIoError> {
+        Ok(Self::of_path(path)? == *self)
+    }
+
+    /// Whether an open file has this fingerprint; the file is left
+    /// positioned at its start.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::of_file`].
+    pub fn matches_file(&self, file: &mut File) -> Result<bool, TrajectoryIoError> {
+        Ok(Self::of_file(file)? == *self)
+    }
+
+    /// Whether both fingerprints have the same size and content hash,
+    /// whatever their modification times.
+    pub const fn same_content(&self, other: &Self) -> bool {
+        self.byte_count == other.byte_count && self.content_hash == other.content_hash
+    }
+
     /// The file's size in bytes.
     pub const fn byte_count(&self) -> u64 {
         self.byte_count
@@ -77,32 +219,102 @@ impl TrajectoryFileFingerprint {
         self.content_hash
     }
 
-    /// Fingerprints `file` and leaves it positioned at its start.
-    pub(crate) fn of_file(file: &mut File, source_label: &str) -> Result<Self, TrajectoryIoError> {
-        let io_error = |error| io_context(TrajectoryIoOperation::Open, None, source_label, error);
-        let metadata = file.metadata().map_err(io_error)?;
-        let byte_count = metadata.len();
-        let modified = metadata.modified().ok().and_then(unix_nanos);
-        let mut hash = Fnv1a::new();
-        hash.write(&byte_count.to_le_bytes());
-        let mut buffer = [0_u8; 8192];
-        for (start, length) in sample_ranges(byte_count) {
-            file.seek(SeekFrom::Start(start)).map_err(io_error)?;
-            let mut remaining = length;
-            while remaining > 0 {
-                let chunk = usize::try_from(remaining.min(buffer.len() as u64))
-                    .expect("a chunk is no larger than the buffer");
-                file.read_exact(&mut buffer[..chunk]).map_err(io_error)?;
-                hash.write(&buffer[..chunk]);
-                remaining -= chunk as u64;
-            }
+    /// Encodes the fingerprint in the versioned layout described on the type.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(FINGERPRINT_BYTES);
+        bytes.extend_from_slice(&FINGERPRINT_MAGIC);
+        bytes.extend_from_slice(&VERSION.to_le_bytes());
+        bytes.extend_from_slice(&[0, 0]);
+        self.write_fields(&mut bytes);
+        push_checksum(&mut bytes);
+        bytes
+    }
+
+    /// Decodes a fingerprint written by [`Self::to_bytes`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidIndex`] for a truncated,
+    /// corrupt, or malformed encoding or an unsupported version.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, TrajectoryIoError> {
+        const WHAT: &str = "file fingerprint";
+        checked_body(bytes, FINGERPRINT_MAGIC, FINGERPRINT_BYTES, WHAT)?;
+        if bytes.len() != FINGERPRINT_BYTES {
+            return Err(invalid_index("file fingerprint has trailing bytes"));
         }
-        file.seek(SeekFrom::Start(0)).map_err(io_error)?;
+        if bytes[12..14] != [0, 0] {
+            return Err(invalid_index("file fingerprint reserved bytes are nonzero"));
+        }
+        Self::read_fields(&bytes[FINGERPRINT_FIELDS], WHAT)
+    }
+
+    /// Writes the fields at [`FINGERPRINT_FIELDS`] of both encodings.
+    fn write_fields(&self, bytes: &mut Vec<u8>) {
+        bytes.push(u8::from(self.modified.is_some()));
+        bytes.push(0);
+        bytes.extend_from_slice(&self.byte_count.to_le_bytes());
+        bytes.extend_from_slice(&self.modified.unwrap_or(0).to_le_bytes());
+        bytes.extend_from_slice(&self.content_hash.to_le_bytes());
+    }
+
+    /// Reads the fields written by [`Self::write_fields`] into an encoded
+    /// `what`.
+    fn read_fields(fields: &[u8], what: &str) -> Result<Self, TrajectoryIoError> {
+        let modified = i128::from_le_bytes(array(&fields[10..26]));
+        let modified = match fields[0] {
+            1 => Some(modified),
+            0 if modified == 0 => None,
+            _ => {
+                return Err(invalid_index(format!(
+                    "{what} modification time is malformed"
+                )))
+            }
+        };
+        if fields[1] != 0 {
+            return Err(invalid_index(format!("{what} reserved byte is nonzero")));
+        }
         Ok(Self {
-            byte_count,
+            byte_count: u64::from_le_bytes(array(&fields[2..10])),
             modified,
-            content_hash: hash.finish(),
+            content_hash: u64::from_le_bytes(array(&fields[26..34])),
         })
+    }
+}
+
+impl fmt::Display for TrajectoryFileFingerprint {
+    /// Writes the encoding of [`Self::to_bytes`] as lowercase hexadecimal.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.to_bytes()
+            .iter()
+            .try_for_each(|byte| write!(formatter, "{byte:02x}"))
+    }
+}
+
+impl FromStr for TrajectoryFileFingerprint {
+    type Err = TrajectoryIoError;
+
+    /// Reads the lowercase hexadecimal form written by
+    /// [`Display`](fmt::Display).
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text.len() != 2 * FINGERPRINT_BYTES {
+            return Err(invalid_index(
+                "file fingerprint text is not 112 hexadecimal digits",
+            ));
+        }
+        let digit = |byte: u8| match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            _ => None,
+        };
+        let bytes = text
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&[high, low]| Some((digit(high)? << 4) | digit(low)?))
+            .collect::<Option<Vec<u8>>>()
+            .ok_or_else(|| invalid_index("file fingerprint text is not lowercase hexadecimal"))?;
+        Self::from_bytes(&bytes)
     }
 }
 
@@ -440,8 +652,10 @@ pub(crate) fn index_mismatch(
 /// | 8 `n` | strictly increasing frame start offsets, `u64`, each below the file size |
 /// | 8 | FNV-1a 64 checksum of all preceding bytes, `u64` |
 ///
-/// The last frame ends at the end of the file. Other versions are rejected
-/// with [`TrajectoryIoErrorKind::InvalidIndex`].
+/// The last frame ends at the end of the file. Bytes 14 to 47 are the
+/// fingerprint fields of the [`TrajectoryFileFingerprint`] encoding, which
+/// shares this version. Other versions are rejected with
+/// [`TrajectoryIoErrorKind::InvalidIndex`].
 ///
 /// [`IndexedFileTrajectoryReader::to_frame_index`]:
 ///     super::IndexedFileTrajectoryReader::to_frame_index
@@ -536,7 +750,7 @@ impl TrajectoryFrameIndex {
         let mut bytes = Vec::with_capacity(
             HEADER_BYTES + CHECKSUM_BYTES + self.offsets.len() * std::mem::size_of::<u64>(),
         );
-        bytes.extend_from_slice(&MAGIC);
+        bytes.extend_from_slice(&INDEX_MAGIC);
         bytes.extend_from_slice(&VERSION.to_le_bytes());
         bytes.push(format_code(self.format));
         bytes.push(if self.precision_mixed {
@@ -544,18 +758,12 @@ impl TrajectoryFrameIndex {
         } else {
             0
         });
-        bytes.push(u8::from(self.fingerprint.modified.is_some()));
-        bytes.push(0);
-        bytes.extend_from_slice(&self.fingerprint.byte_count.to_le_bytes());
-        bytes.extend_from_slice(&self.fingerprint.modified.unwrap_or(0).to_le_bytes());
-        bytes.extend_from_slice(&self.fingerprint.content_hash.to_le_bytes());
+        self.fingerprint.write_fields(&mut bytes);
         bytes.extend_from_slice(&(self.offsets.len() as u64).to_le_bytes());
         for start in self.offsets.starts() {
             bytes.extend_from_slice(&start.to_le_bytes());
         }
-        let mut checksum = Fnv1a::new();
-        checksum.write(&bytes);
-        bytes.extend_from_slice(&checksum.finish().to_le_bytes());
+        push_checksum(&mut bytes);
         bytes
     }
 
@@ -575,24 +783,12 @@ impl TrajectoryFrameIndex {
         bytes: &[u8],
         limits: &TrajectoryIoLimits,
     ) -> Result<Self, TrajectoryIoError> {
-        if bytes.len() < HEADER_BYTES + CHECKSUM_BYTES {
-            return Err(invalid_index("frame index is truncated"));
-        }
-        if bytes[..8] != MAGIC {
-            return Err(invalid_index("frame index has no KEKTRIDX magic"));
-        }
-        let version = u32::from_le_bytes(array(&bytes[8..12]));
-        if version != VERSION {
-            return Err(invalid_index(format!(
-                "frame index version {version} is not supported"
-            )));
-        }
-        let (body, checksum) = bytes.split_at(bytes.len() - CHECKSUM_BYTES);
-        let mut expected = Fnv1a::new();
-        expected.write(body);
-        if expected.finish() != u64::from_le_bytes(array(checksum)) {
-            return Err(invalid_index("frame index checksum does not match"));
-        }
+        let body = checked_body(
+            bytes,
+            INDEX_MAGIC,
+            HEADER_BYTES + CHECKSUM_BYTES,
+            "frame index",
+        )?;
         let format = match bytes[12] {
             1 => TrajectoryFormat::Xyz,
             2 => TrajectoryFormat::Dcd,
@@ -610,20 +806,8 @@ impl TrajectoryFrameIndex {
                 "frame index flags {flags:#04x} are invalid for {format}"
             )));
         }
-        let modified = i128::from_le_bytes(array(&bytes[24..40]));
-        let modified = match bytes[14] {
-            1 => Some(modified),
-            0 if modified == 0 => None,
-            _ => return Err(invalid_index("frame index modification time is malformed")),
-        };
-        if bytes[15] != 0 {
-            return Err(invalid_index("frame index reserved byte is nonzero"));
-        }
-        let fingerprint = TrajectoryFileFingerprint {
-            byte_count: u64::from_le_bytes(array(&bytes[16..24])),
-            modified,
-            content_hash: u64::from_le_bytes(array(&bytes[40..48])),
-        };
+        let fingerprint =
+            TrajectoryFileFingerprint::read_fields(&bytes[FINGERPRINT_FIELDS], "frame index")?;
         let declared = u64::from_le_bytes(array(&bytes[48..56]));
         let capacity = index_hard_capacity(limits);
         let frame_count = usize::try_from(declared)
@@ -695,7 +879,46 @@ fn format_code(format: TrajectoryFormat) -> u8 {
 fn array<const N: usize>(bytes: &[u8]) -> [u8; N] {
     bytes
         .try_into()
-        .expect("encoded index fields have their documented widths")
+        .expect("encoded fields have their documented widths")
+}
+
+/// Appends the FNV-1a 64 checksum of `bytes`.
+fn push_checksum(bytes: &mut Vec<u8>) {
+    let mut checksum = Fnv1a::new();
+    checksum.write(bytes);
+    bytes.extend_from_slice(&checksum.finish().to_le_bytes());
+}
+
+/// Checks the length, magic, version, and checksum of an encoded `what` of
+/// at least `min_len` bytes and returns the bytes before its checksum.
+fn checked_body<'a>(
+    bytes: &'a [u8],
+    magic: [u8; 8],
+    min_len: usize,
+    what: &str,
+) -> Result<&'a [u8], TrajectoryIoError> {
+    if bytes.len() < min_len {
+        return Err(invalid_index(format!("{what} is truncated")));
+    }
+    if bytes[..8] != magic {
+        return Err(invalid_index(format!(
+            "{what} has no {} magic",
+            String::from_utf8_lossy(&magic)
+        )));
+    }
+    let version = u32::from_le_bytes(array(&bytes[8..12]));
+    if version != VERSION {
+        return Err(invalid_index(format!(
+            "{what} version {version} is not supported"
+        )));
+    }
+    let (body, checksum) = bytes.split_at(bytes.len() - CHECKSUM_BYTES);
+    let mut expected = Fnv1a::new();
+    expected.write(body);
+    if expected.finish() != u64::from_le_bytes(array(checksum)) {
+        return Err(invalid_index(format!("{what} checksum does not match")));
+    }
+    Ok(body)
 }
 
 fn invalid_index(detail: impl Into<String>) -> TrajectoryIoError {
@@ -819,6 +1042,89 @@ mod tests {
             kind(&short, &TrajectoryIoLimits::default()),
             TrajectoryIoErrorKind::InvalidIndex
         );
+    }
+
+    #[test]
+    fn fingerprint_encodings_round_trip_and_match_the_index_fields() {
+        let index = index(vec![0, 100], 400);
+        let fingerprint = index.fingerprint();
+        let bytes = fingerprint.to_bytes();
+        assert_eq!(bytes.len(), FINGERPRINT_BYTES);
+        assert_eq!(bytes[..8], FINGERPRINT_MAGIC);
+        assert_eq!(
+            bytes[FINGERPRINT_FIELDS],
+            index.to_bytes()[FINGERPRINT_FIELDS]
+        );
+        assert_eq!(
+            &TrajectoryFileFingerprint::from_bytes(&bytes).unwrap(),
+            fingerprint
+        );
+        let text = fingerprint.to_string();
+        assert_eq!(text.len(), 2 * FINGERPRINT_BYTES);
+        assert_eq!(
+            &text.parse::<TrajectoryFileFingerprint>().unwrap(),
+            fingerprint
+        );
+
+        let absent = TrajectoryFileFingerprint {
+            modified: None,
+            ..fingerprint.clone()
+        };
+        let decoded = TrajectoryFileFingerprint::from_bytes(&absent.to_bytes()).unwrap();
+        assert_eq!(decoded, absent);
+        assert!(decoded.same_content(fingerprint));
+        assert_ne!(&decoded, fingerprint);
+    }
+
+    #[test]
+    fn malformed_fingerprints_are_typed_errors() {
+        let fingerprint = index(vec![0], 400).fingerprint().clone();
+        let bytes = fingerprint.to_bytes();
+        let kind = |bytes: &[u8]| {
+            TrajectoryFileFingerprint::from_bytes(bytes)
+                .unwrap_err()
+                .kind()
+        };
+        for length in 0..bytes.len() {
+            assert_eq!(kind(&bytes[..length]), TrajectoryIoErrorKind::InvalidIndex);
+        }
+        let mut long = bytes.clone();
+        long.extend_from_slice(&[0; 8]);
+        reencode(&mut long);
+        assert_eq!(kind(&long), TrajectoryIoErrorKind::InvalidIndex);
+        let mut corrupt = bytes.clone();
+        corrupt[20] ^= 1;
+        assert_eq!(kind(&corrupt), TrajectoryIoErrorKind::InvalidIndex);
+        assert_eq!(
+            kind(&index(vec![0], 400).to_bytes()),
+            TrajectoryIoErrorKind::InvalidIndex
+        );
+        for (position, value) in [(8, 2), (12, 1), (13, 1), (14, 2), (15, 1)] {
+            let mut field = bytes.clone();
+            field[position] = value;
+            reencode(&mut field);
+            assert_eq!(kind(&field), TrajectoryIoErrorKind::InvalidIndex);
+        }
+
+        let text = fingerprint.to_string();
+        for bad in [
+            String::new(),
+            text[1..].to_owned(),
+            text.to_uppercase(),
+            format!("{}g", &text[1..]),
+            format!("{}é", &text[2..]),
+            format!(
+                "{}{}",
+                &text[..text.len() - 1],
+                if text.ends_with('0') { '1' } else { '0' }
+            ),
+        ] {
+            assert_eq!(
+                bad.parse::<TrajectoryFileFingerprint>().unwrap_err().kind(),
+                TrajectoryIoErrorKind::InvalidIndex,
+                "{bad}"
+            );
+        }
     }
 
     #[test]

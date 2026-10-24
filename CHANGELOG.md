@@ -226,6 +226,16 @@ are marked **Breaking:**.
     `IndexMismatch`.
   - `Cancellation::check` returns `Cancelled` once cancellation is requested,
     for cancellable operations in companion crates.
+  - `TrajectoryFileFingerprint::of_path` and `of_file` fingerprint a file
+    without building an index, `matches_path` and `matches_file` check a file
+    against a fingerprint, and `same_content` compares size and content hash
+    regardless of modification time, so a host can tell whether a moved or
+    copied file is the one it recorded. `to_bytes` and `from_bytes` give the
+    fingerprint a stable, versioned, checksummed encoding that shares the
+    index's version and field layout, and `Display`/`FromStr` write and read
+    it as 112 lowercase hexadecimal digits for project files and cache keys.
+    Decoding either form rejects anything else with `InvalidIndex`, never a
+    panic, and the `trajectory_index` fuzz target covers both decoders.
 - Sampling a trajectory into an ensemble of one state, without consuming it.
   - `TrajectorySampling` chooses the frames, in sample order, so sample `i`
     is frame `frames()[i]`; ranges and strides are
