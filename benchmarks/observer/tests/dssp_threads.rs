@@ -1,6 +1,7 @@
-//! Parallel DSSP acceptance: on every curated benchmark entry, and on the
-//! `pdb-1000` corpus when it is present, assignment on several threads
-//! returns exactly the single-threaded result, or the same error.
+//! Parallel and prepared DSSP acceptance: on every curated benchmark entry,
+//! and on the `pdb-1000` corpus when it is present, assignment on several
+//! threads, and through a [`DsspPlan`] on one or several, returns exactly the
+//! single-threaded result, or the same error.
 //!
 //! `pdb-1000` is read from `benchmarks/corpora/pdb-1000/data`, or from the
 //! directory `KEKULE_PDB_1000` names; it is not part of the repository.
@@ -9,7 +10,7 @@ use std::io::Read;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use kekule::dssp::{self, DsspOptions};
+use kekule::dssp::{self, DsspOptions, DsspPlan};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
 
@@ -25,8 +26,9 @@ fn entries(root: &Path, suffix: &str) -> Vec<PathBuf> {
     files
 }
 
-/// Compares every thread count with one thread; returns whether the entry
-/// was analyzed. Entries Kekule does not interpret are skipped.
+/// Compares every thread count, directly and through a plan, with one
+/// thread; returns whether the entry was analyzed. Entries Kekule does not
+/// interpret are skipped.
 fn check(path: &Path, text: &str) -> bool {
     let Ok(document) = mmcif::parse_str(text, Default::default()) else {
         return false;
@@ -38,6 +40,8 @@ fn check(path: &Path, text: &str) -> bool {
     };
     let model = interpretation.into_model();
     let serial = dssp::assign(&model, DsspOptions::default());
+    let plan = DsspPlan::new(model.shared_topology(), DsspOptions::default());
+    assert_eq!(plan.assign(&model), serial, "{}: plan", path.display());
     for threads in THREADS {
         let options =
             DsspOptions::default().with_threads(NonZeroUsize::new(threads).expect("nonzero"));
@@ -45,6 +49,12 @@ fn check(path: &Path, text: &str) -> bool {
             dssp::assign(&model, options),
             serial,
             "{}: {threads} threads",
+            path.display()
+        );
+        assert_eq!(
+            DsspPlan::new(model.shared_topology(), options).assign(&model),
+            serial,
+            "{}: plan on {threads} threads",
             path.display()
         );
     }

@@ -14,6 +14,10 @@
 //! as the default single thread, including the order of tied hydrogen bonds
 //! and every identifier.
 //!
+//! A [`DsspPlan`] prepares what assignment reads from a topology once, so the
+//! frames of a trajectory, or the samples of an ensemble, are each assigned
+//! from their backbone coordinates alone, with the same results.
+//!
 //! Assignment does not parse structures, choose coordinate models or alternate
 //! locations, repair hierarchy data, or install derived state in the model.
 //! Geometry uses single-precision coordinates and arithmetic, matching DSSP 4;
@@ -63,8 +67,10 @@ use std::fmt;
 use std::num::NonZeroUsize;
 
 use crate::parallel::{Executor, ScopedThreads};
+use std::sync::Arc;
+
 use crate::structure::AsModelView;
-use crate::topology::{MoleculeInstanceId, ResidueId};
+use crate::topology::{MoleculeInstanceId, ResidueId, Topology};
 use crate::units::{Quantity, DEGREE, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE};
 
 mod kernel;
@@ -152,7 +158,124 @@ pub fn assign_with(
     options: DsspOptions,
     executor: &dyn Executor,
 ) -> Result<DsspResult, DsspError> {
-    kernel::assign(model.as_model_view(), options, executor)
+    let model = model.as_model_view();
+    let prepared = kernel::Prepared::new(model.topology(), executor);
+    kernel::assign(&prepared, model, options, executor)
+}
+
+/// DSSP assignment prepared once for every structure of one topology
+/// layout, such as each frame of a trajectory.
+///
+/// Preparing reads everything assignment needs from the topology: which
+/// molecule instances the hierarchy leaves out, the chains and residues in
+/// DSSP order, each residue's backbone atoms, and its source labels. Each
+/// [`Self::assign`] then reads only backbone coordinates, and returns what
+/// [`assign`] returns for the same structure and options, errors included.
+///
+/// The plan binds its topology's layout: it assigns any model, ensemble
+/// sample, or trajectory frame whose topology
+/// [shares that layout](Topology::shares_layout).
+///
+/// ```
+/// use kekule::dssp::{self, DsspOptions, DsspPlan};
+///
+/// let text = std::fs::read_to_string(concat!(
+///     env!("CARGO_MANIFEST_DIR"),
+///     "/tests/fixtures/mmcif/1AKE.cif"
+/// ))?;
+/// let model = kekule::mmcif::parse_str(&text, Default::default())?
+///     .interpret(Default::default())?
+///     .into_model();
+/// let plan = DsspPlan::new(model.shared_topology(), DsspOptions::default());
+/// assert_eq!(plan.assign(&model), dssp::assign(&model, DsspOptions::default()));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone)]
+pub struct DsspPlan {
+    topology: Arc<Topology>,
+    options: DsspOptions,
+    prepared: kernel::Prepared,
+}
+
+impl fmt::Debug for DsspPlan {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DsspPlan")
+            .field("atom_count", &self.topology.atom_count())
+            .field("peptide_residues", &self.prepared.peptide_residues())
+            .field("options", &self.options)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DsspPlan {
+    /// Prepares assignment of `topology`'s structures with `options`, on
+    /// [`ScopedThreads`] of [`DsspOptions::threads`].
+    pub fn new(topology: impl Into<Arc<Topology>>, options: DsspOptions) -> Self {
+        Self::new_with(topology, options, &ScopedThreads::new(options.threads()))
+    }
+
+    /// [`Self::new`], with its work items run by `executor`.
+    ///
+    /// # Panics
+    ///
+    /// As [`assign_with`].
+    pub fn new_with(
+        topology: impl Into<Arc<Topology>>,
+        options: DsspOptions,
+        executor: &dyn Executor,
+    ) -> Self {
+        let topology = topology.into();
+        let prepared = kernel::Prepared::new(&topology, executor);
+        Self {
+            topology,
+            options,
+            prepared,
+        }
+    }
+
+    /// The topology whose layout every assigned structure must share.
+    pub fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    /// The options every assignment uses.
+    pub const fn options(&self) -> DsspOptions {
+        self.options
+    }
+
+    /// Assigns `structure` on [`ScopedThreads`] of [`DsspOptions::threads`],
+    /// as [`assign`] does.
+    ///
+    /// # Errors
+    ///
+    /// [`DsspError::TopologyMismatch`] when `structure`'s topology does not
+    /// share the plan's layout, otherwise the errors of [`assign`].
+    pub fn assign(&self, structure: &(impl AsModelView + ?Sized)) -> Result<DsspResult, DsspError> {
+        self.assign_with(structure, &ScopedThreads::new(self.options.threads()))
+    }
+
+    /// Assigns `structure` with its work items run by `executor`, as
+    /// [`assign_with`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::assign`].
+    ///
+    /// # Panics
+    ///
+    /// As [`assign_with`].
+    pub fn assign_with(
+        &self,
+        structure: &(impl AsModelView + ?Sized),
+        executor: &dyn Executor,
+    ) -> Result<DsspResult, DsspError> {
+        let structure = structure.as_model_view();
+        if !structure.topology().shares_layout(&self.topology) {
+            return Err(DsspError::TopologyMismatch);
+        }
+        kernel::assign(&self.prepared, structure, self.options, executor)
+    }
 }
 
 /// DSSP 4 summary assignment.
@@ -820,9 +943,11 @@ impl DsspOptions {
 
     /// Sets [`Self::threads`].
     ///
-    /// Each stage splits its residues or residue pairs into contiguous
-    /// ranges, one per thread, and combines their results in DSSP order, so
-    /// the result is identical for every thread count. Threads are scoped to
+    /// Each stage splits its atom sites or residues into contiguous ranges,
+    /// one per thread, and combines their results in DSSP order, so the
+    /// result is identical for every thread count. Only the short steps
+    /// between stages run on one thread: placing residues in chain segments
+    /// and assembling beta ladders and sheets. Threads are scoped to
     /// the call; a stage with too little work for two ranges, or whose thread
     /// cannot be spawned, runs on the calling thread. Starting threads costs
     /// a fraction of a millisecond per stage, so a caller that already runs
@@ -891,6 +1016,9 @@ pub enum DsspError {
     NoAnalyzableProteinResidues,
     /// The model exceeds a bound of [`DsspLimits`].
     LimitExceeded(LimitExceeded),
+    /// The structure does not share the layout of the topology a
+    /// [`DsspPlan`] was prepared for.
+    TopologyMismatch,
 }
 
 impl fmt::Display for DsspError {
@@ -921,6 +1049,9 @@ impl fmt::Display for DsspError {
                 f.write_str("model contains no residue with a complete N/CA/C/O backbone")
             }
             Self::LimitExceeded(limit) => write!(f, "DSSP {limit}"),
+            Self::TopologyMismatch => {
+                f.write_str("structure does not share the DSSP plan's topology layout")
+            }
         }
     }
 }
@@ -931,7 +1062,8 @@ impl std::error::Error for DsspError {}
 #[derive(Debug, Clone, PartialEq)]
 pub struct DsspResult {
     residues: Vec<DsspResidue>,
-    lookup: BTreeMap<ResidueId, usize>,
+    /// Each residue's key and position in `residues`, by key.
+    lookup: Vec<(ResidueId, usize)>,
     statistics: DsspStatistics,
     report: DsspReport,
 }
@@ -947,8 +1079,9 @@ impl DsspResult {
     /// (non-peptide, skipped, or not in the model).
     pub fn get(&self, key: ResidueId) -> Option<&DsspResidue> {
         self.lookup
-            .get(&key)
-            .and_then(|index| self.residues.get(*index))
+            .binary_search_by_key(&key, |&(key, _)| key)
+            .ok()
+            .map(|found| &self.residues[self.lookup[found].1])
     }
 
     /// Aggregate counts of the assignment.

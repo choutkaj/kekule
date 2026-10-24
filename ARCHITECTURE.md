@@ -474,6 +474,14 @@ and thread count returns the single-threaded result or error. See [clustering](c
 [hierarchical clustering](crates/kekule/src/clustering/hierarchical.rs), and
 [k-medoids](crates/kekule/src/clustering/medoids.rs).
 
+DSSP assignment reads one structure and returns a snapshot result. A
+`DsspPlan` prepares what it reads from the topology once and binds that
+layout, so the frames of a trajectory reuse it; it returns what `dssp::assign`
+returns for the same structure, errors included. Every stage runs on a
+`parallel::Executor` in contiguous ranges merged in DSSP order, so every
+executor and thread count returns the single-threaded result. See
+[DSSP](crates/kekule/src/dssp/mod.rs).
+
 For format profiles, limits, periodic conventions, statistical definitions, and
 streaming sequence/reset contracts, see
 [trajectory payloads](crates/kekule/src/structure/trajectory.rs),

@@ -512,8 +512,107 @@ fn dssp_threads_report_the_serial_error() {
     }
 }
 
+/// The model with the backbone atom `atom` of analyzed residue `index`
+/// moved by `offset` angstroms along x.
+fn moved(
+    model: &kekule::structure::Model,
+    index: usize,
+    atom: &str,
+    offset: f64,
+) -> kekule::structure::Model {
+    let atom = backbone_atom(model, index, atom);
+    let mut moved = model.clone();
+    let position = moved.position(atom).unwrap().map(|mut point| {
+        point.x += offset / 10.0;
+        point
+    });
+    moved.set_position(atom, position).unwrap();
+    moved
+}
+
 #[test]
-#[ignore = "timing of DSSP on 100k and 1M atoms; run in release with --ignored --nocapture"]
+fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
+    use kekule::dssp::DsspPlan;
+
+    let model = tiled(&adenylate_kinase_model(), 8);
+    let serial = dssp::assign(&model, DsspOptions::default()).unwrap();
+    let mut carbonyl = model.clone();
+    carbonyl
+        .set_position(
+            backbone_atom(&model, 100, "O"),
+            model.position(backbone_atom(&model, 100, "C")).unwrap(),
+        )
+        .unwrap();
+    // Structures of the plan's layout: the model, one whose chain breaks
+    // where it did not, one with a degenerate carbonyl, and one with a
+    // coordinate DSSP cannot index.
+    let frames = [
+        model.clone(),
+        moved(&model, 50, "N", 30.0),
+        carbonyl,
+        moved(&model, 3000, "O", f32::MAX as f64),
+    ];
+    let options = [
+        DsspOptions::default(),
+        DsspOptions::default()
+            .with_min_polyproline_stretch(2)
+            .unwrap(),
+        with_threads(DsspOptions::default(), 3),
+        DsspOptions::default().with_limits(
+            DsspLimits::default()
+                .with_max_candidate_pairs(serial.report().candidate_hydrogen_bond_pairs() / 2),
+        ),
+        DsspOptions::default().with_limits(
+            DsspLimits::default().with_max_residues(serial.statistics().analyzed_residues() / 2),
+        ),
+    ];
+    for options in options {
+        let plan = DsspPlan::new(model.shared_topology(), options);
+        assert_eq!(plan.options(), options);
+        assert!(plan.topology().shares_layout(model.topology()));
+        for (index, frame) in frames.iter().enumerate() {
+            let expected = dssp::assign(frame, options);
+            assert_eq!(plan.assign(frame), expected, "frame {index}, {options:?}");
+            assert_eq!(
+                plan.assign_with(frame, &Reversed(4)),
+                expected,
+                "frame {index}, {options:?}"
+            );
+        }
+    }
+    assert_ne!(dssp::assign(&frames[1], DsspOptions::default()), Ok(serial));
+
+    let reversed = DsspPlan::new_with(
+        model.shared_topology(),
+        DsspOptions::default(),
+        &Reversed(5),
+    );
+    assert_eq!(
+        reversed.assign(&model),
+        dssp::assign(&model, DsspOptions::default())
+    );
+}
+
+#[test]
+fn dssp_plan_rejects_structures_of_another_layout() {
+    use kekule::dssp::DsspPlan;
+
+    let model = adenylate_kinase_model();
+    let plan = DsspPlan::new(model.shared_topology(), DsspOptions::default());
+    // An independently read copy has equal contents but not the same layout.
+    let copy = adenylate_kinase_model();
+    assert!(copy.topology().same_layout(model.topology()));
+    for other in [copy, crambin_model()] {
+        assert_eq!(plan.assign(&other), Err(DsspError::TopologyMismatch));
+    }
+    assert_eq!(
+        DsspError::TopologyMismatch.to_string(),
+        "structure does not share the DSSP plan's topology layout"
+    );
+}
+
+#[test]
+#[ignore = "timing of DSSP and DSSP plans on 100k and 1M atoms; run in release with --ignored --nocapture"]
 fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
     let base = adenylate_kinase_model();
     let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
@@ -527,21 +626,27 @@ fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
         );
         for threads in [1, 2, 4, 6, 8, available] {
             let options = with_threads(DsspOptions::default(), threads);
-            let mut times = (0..runs)
-                .map(|_| {
-                    let start = std::time::Instant::now();
-                    let result = dssp::assign(&model, options).unwrap();
-                    let elapsed = start.elapsed();
-                    assert_eq!(result, serial, "{threads} threads");
-                    elapsed
-                })
-                .collect::<Vec<_>>();
-            times.sort();
-            report += &format!(
-                " {threads}: {:.1?} (median {:.1?})",
-                times[0],
-                times[runs / 2]
-            );
+            let plan = kekule::dssp::DsspPlan::new(model.shared_topology(), options);
+            for (name, assign) in [
+                ("", &(|| dssp::assign(&model, options)) as &dyn Fn() -> _),
+                (" plan", &|| plan.assign(&model)),
+            ] {
+                let mut times = (0..runs)
+                    .map(|_| {
+                        let start = std::time::Instant::now();
+                        let result = assign().unwrap();
+                        let elapsed = start.elapsed();
+                        assert_eq!(result, serial, "{threads} threads{name}");
+                        elapsed
+                    })
+                    .collect::<Vec<_>>();
+                times.sort();
+                report += &format!(
+                    " {threads}{name}: {:.1?} (median {:.1?})",
+                    times[0],
+                    times[runs / 2]
+                );
+            }
         }
         eprintln!("{report}");
     }
