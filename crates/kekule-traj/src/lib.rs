@@ -86,9 +86,10 @@
 //! [`analysis`] adds the streaming [`analysis::FrameSuperposer`]. Weighted
 //! RMSF and contact occupancy are [`kekule::statistics`]; their accumulators
 //! observe streamed frames through `buffer.as_model_view()` with explicit
-//! weights. Molecular reconstruction, imaging, and temporal unwrapping live
-//! in [`periodic`] and are explicit preprocessing steps, independent of
-//! alignment. [`analysis::FrameSuperposer`], [`periodic::MoleculeImager`], and
+//! weights. Molecular reconstruction, imaging around anchors or onto a
+//! reference frame, and temporal unwrapping live in [`periodic`] and are
+//! explicit preprocessing steps, independent of alignment.
+//! [`analysis::FrameSuperposer`], [`periodic::MoleculeImager`], and
 //! [`periodic::TrajectoryUnwrapper`] apply the in-memory operations to
 //! streamed frames.
 #![forbid(unsafe_code)]

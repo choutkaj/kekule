@@ -5,8 +5,10 @@ mod support;
 
 mod dense_vectors;
 mod frame_buffers;
+mod frame_index;
 mod loading;
 mod readers;
+mod reference_imaging;
 mod saving;
 mod streaming;
 mod streaming_transforms;

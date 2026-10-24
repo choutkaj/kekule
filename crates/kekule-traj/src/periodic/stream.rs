@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use kekule::geometry::Point3;
-use kekule::structure::{ModelView, Positions, TrajectoryError, TrajectoryFrameView};
+use kekule::structure::{AsModelView, ModelView, Positions, TrajectoryError, TrajectoryFrameView};
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
 use super::{checked_image, positions, Lattice, MoleculePlan, PeriodicError};
@@ -13,7 +13,8 @@ use crate::FrameBuffer;
 /// The plan binds one topology layout. Operations are independent between frames;
 /// `frame_index` is the caller's zero-based source index for error reporting.
 /// All non-position state is retained. These are the same operations used by
-/// [`super::make_molecules_whole`] and [`super::image_molecules`].
+/// [`super::make_molecules_whole`], [`super::image_molecules`], and
+/// [`super::image_onto`].
 pub struct MoleculeImager {
     topology: Arc<Topology>,
     plan: MoleculePlan,
@@ -74,6 +75,85 @@ impl MoleculeImager {
         let anchors = self.anchor_groups(anchors)?;
         let positions = self.frame_positions(frame_index, frame.as_model_view(), Some(&anchors))?;
         publish_buffer(frame, &positions)
+    }
+
+    /// Moves each molecule of the buffered frame to its periodic image nearest
+    /// the same molecule in `reference`, as [`super::image_onto`] does.
+    ///
+    /// The reference is any borrowed structure of the same layout, such as a
+    /// trajectory frame or another buffer's [`FrameBuffer::frame_view`], from
+    /// before or after this frame: frames can be imaged onto each other in any
+    /// order. To image a window of frames onto frame `i`, image each of them
+    /// onto a view of frame `i`.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    ///
+    /// use kekule::geometry::{PeriodicCell, Point3, Vector3};
+    /// use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+    /// use kekule::units::{Quantity, NANOMETER};
+    /// use kekule::{smiles, topology::Topology};
+    /// use kekule_traj::{periodic::MoleculeImager, FrameBuffer};
+    ///
+    /// let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+    /// let topology = Arc::new(Topology::from_molecule(molecule)?);
+    /// let lengths = Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER);
+    /// let cell = PeriodicCell::orthorhombic(lengths, [true; 3])?;
+    /// // Between two frames, a helium atom crosses the x boundary of a 1 nm cell.
+    /// let frames = [0.95, 0.05].map(|x| {
+    ///     let points = vec![Point3::new(x, 0.5, 0.5)];
+    ///     let positions = Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap();
+    ///     TrajectoryFrame::new(positions).with_cell(cell)
+    /// });
+    /// let trajectory = Trajectory::from_items(Arc::clone(&topology), frames)?;
+    ///
+    /// let imager = MoleculeImager::new(Arc::clone(&topology));
+    /// let mut frame = FrameBuffer::new(topology);
+    /// frame.copy_from(trajectory.get(1).unwrap())?;
+    /// imager.image_onto(1, &mut frame, &trajectory.get(0).unwrap())?;
+    /// let x = frame.positions().get(0).unwrap().value_in(NANOMETER)?.x;
+    /// assert!((x - 1.05).abs() < 1.0e-12);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PeriodicError::TopologyMismatch`] when the frame does not
+    /// share the imager's layout, and otherwise the errors of
+    /// [`super::image_onto`]. On error the buffer is unchanged.
+    pub fn image_onto(
+        &self,
+        frame_index: usize,
+        frame: &mut FrameBuffer,
+        reference: &(impl AsModelView + ?Sized),
+    ) -> Result<(), PeriodicError> {
+        let positions = self.reference_positions(
+            frame_index,
+            frame.as_model_view(),
+            reference.as_model_view(),
+        )?;
+        publish_buffer(frame, &positions)
+    }
+
+    pub(super) fn reference_positions(
+        &self,
+        frame_index: usize,
+        source: ModelView<'_>,
+        reference: ModelView<'_>,
+    ) -> Result<Positions, PeriodicError> {
+        if !self.topology().shares_layout(reference.topology()) {
+            return Err(PeriodicError::ReferenceTopologyMismatch);
+        }
+        if !self.topology().shares_layout(source.topology()) {
+            return Err(PeriodicError::TopologyMismatch { frame: frame_index });
+        }
+        let lattice = Lattice::new(source.cell().copied(), frame_index)?;
+        let source = source.positions().values();
+        let reference = reference.positions().values();
+        let mut points = source.value().to_vec();
+        self.plan
+            .image_onto(&mut points, reference.value(), &lattice)?;
+        positions(points, frame_index)
     }
 
     pub(super) fn anchor_groups(

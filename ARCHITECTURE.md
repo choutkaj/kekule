@@ -407,7 +407,11 @@ prove atom identity. Callers may independently validate semantic atom order.
 Because interpretation keeps source atom-row order and structure writers emit
 dense order, a coordinate file written in a structure file's row order addresses
 the same atoms through that file's topology.
-Streaming buffers bind to one topology layout and publish complete frames
+An indexed reader verifies every frame before random access. One opened from
+an exported frame index instead checks the file's fingerprint, then verifies
+each frame as it decodes it and checks that the frame ends where the index
+places the next; an index never makes a reader return a frame it has not
+verified. Streaming buffers bind to one topology layout and publish complete frames
 transactionally. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
 unsupported fields and collection properties are rejected rather than discarded.
@@ -420,7 +424,9 @@ one of its items or an independent view; streaming superposition applies the
 same kernel to a buffer. Streaming tools take the caller's frame index for
 diagnostics. Superposition rotates cells, velocities, and forces consistently.
 Periodic reconstruction uses asserted bonds and checks ring closure. Imaging
-acts on whole molecules. Unwrapping retains temporal state and requires ordered,
+acts on whole molecules, around anchors or onto the same molecules of a
+borrowed reference; reference imaging is per frame, has no temporal state, and
+works in any frame order, using the frame's own cell. Unwrapping retains temporal state and requires ordered,
 sufficiently close samples; it precedes downsampling. Failed streaming operations
 change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
