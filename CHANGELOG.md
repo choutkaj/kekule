@@ -340,9 +340,30 @@ are marked **Breaking:**.
   release, i5-11400F, shared machine: the matrix takes 9.5 s on one thread,
   2.8 s on four and 2.0 s on eight; leader clustering into 528 clusters
   within 1 Å takes 6.2 s, 1.8 s and 1.2 s.
+- `SelectEvaluateOptions::with_executor` runs a selection's `within` terms on
+  a `parallel::Executor` (SeekDelta K42): ranges of the evaluated atoms are
+  measured as separate work items, and every executor selects the same atoms
+  as the calling thread alone, the default.
 
 ### Changed
 
+- Selection terms over a million atoms run within a frame (SeekDelta K42),
+  with unchanged results. `name` and `label_name` decide each distinct atom
+  name once, against a table of the sites' names that the topology numbers on
+  first use and shares with every snapshot of its layout; residue, chain, and
+  backbone terms set dense atoms through the hierarchy index instead of
+  looking up each site's atom; a host term selecting every atom becomes a
+  full set without reading its indices. `within` grids each distinct
+  reference point once, so copies stacked in one place cost what one copy
+  does; maps every cell of a box up to many times larger than before at under
+  two bits a cell, where it used to fall back to hashing; and measures the
+  candidates of one cell against one list of the points that can reach it.
+  On 1,000,452 atoms of tiled 1AKE (release, i5-11400F, shared machine):
+  `name CA` takes 0.8 ms instead of 67 ms, `chain A` 5 ms instead of 28 ms,
+  a host term naming every atom 1.6 ms instead of 6.6 ms, and
+  `within 5 of resname GLY` (42,606 reference atoms) 65 ms instead of
+  487 ms, 36 ms on 12 threads; with the copies stacked in one place it takes
+  23 ms instead of 4.2 s, 13.5 ms on 12 threads.
 - **Breaking:** The mmCIF writer states as `_struct_conn` rows only the bonds
   its reader cannot derive, as the PDB's own files do (SeekDelta K41). Bonds
   of residues that their bundled component template (or the protonation

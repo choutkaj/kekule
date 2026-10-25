@@ -2,11 +2,12 @@
 
 use std::cmp::Ordering;
 use std::ops::{ControlFlow, Range};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::ast::{
     DistanceUnit, Field, Flag, HostTermKind, Level, Literal, Node, NodeKind, ValueMatch,
 };
+use super::grid::Grid;
 use super::{
     HostRequest, HostRole, HostTerm, HostValue, ReferencePoints, SelectEvaluateError,
     SelectEvaluateOptions, SelectionExpr,
@@ -17,13 +18,21 @@ use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::ModelView;
 use crate::topology::{
     AtomSelection, InstanceAtomId, MoleculeClass, ResidueClass, ResidueView, Topology,
+    TopologyAtomIndex,
 };
 use crate::units::{self, Quantity, Unit, CANONICAL_LENGTH_UNIT};
 
 type Result<T> = std::result::Result<T, SelectEvaluateError>;
 
+/// The fewest atoms worth a work item of their own.
+const ATOMS_PER_WORK_ITEM: usize = 1 << 15;
+
 /// Orders an entity's value against a literal; `None` when unordered.
 type Compare<'c> = &'c dyn Fn(&Literal) -> Option<Ordering>;
+
+/// Marks, through its second argument, the atoms of a range of dense atoms
+/// that a term selects.
+type MarkRange<'m> = dyn Fn(Range<usize>, &mut dyn FnMut(usize)) + Sync + 'm;
 
 /// A set of dense atom indices.
 #[derive(Debug, Clone)]
@@ -88,6 +97,19 @@ impl Bits {
         self.trim();
     }
 
+    /// The bits of a selection; a selection of every atom fills whole
+    /// words without reading its indices.
+    fn of_selection(selection: &AtomSelection) -> Self {
+        let len = selection.topology().atom_count();
+        if selection.len() == len {
+            return Self::full(len);
+        }
+        Self {
+            words: selection.to_mask(),
+            len,
+        }
+    }
+
     fn ones(&self) -> impl Iterator<Item = usize> + '_ {
         self.words.iter().enumerate().flat_map(|(index, &word)| {
             let mut word = word;
@@ -125,8 +147,6 @@ pub(crate) struct Evaluator<'a> {
     topology: &'a Arc<Topology>,
     structure: Option<ModelView<'a>>,
     options: &'a SelectEvaluateOptions<'a>,
-    /// The atom site of each dense atom, computed on first use.
-    sites: Option<Vec<Option<crate::topology::AtomSiteId>>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -141,7 +161,6 @@ impl<'a> Evaluator<'a> {
             topology,
             structure,
             options,
-            sites: None,
         }
     }
 
@@ -188,37 +207,16 @@ impl<'a> Evaluator<'a> {
         self.topology.atom_index(atom).map(|index| index.index())
     }
 
-    fn sites(&mut self) -> &[Option<crate::topology::AtomSiteId>] {
-        if self.sites.is_none() {
-            let topology: &Topology = self.topology;
-            let mut sites = vec![None; topology.atom_count()];
-            for site in topology.atom_sites() {
-                if let Some(index) = topology.atom_index(site.atom().id()) {
-                    sites[index.index()] = Some(site.id());
-                }
-            }
-            self.sites = Some(sites);
-        }
-        self.sites.as_deref().unwrap_or_default()
-    }
-
-    /// The atom name: the author atom ID, else the label atom ID.
-    fn name(&mut self, index: usize, label: bool) -> Option<&'a str> {
-        let site = (*self.sites().get(index)?)?;
+    /// The dense atom of each atom site, by site ID.
+    fn site_atoms(&self) -> &'a [TopologyAtomIndex] {
         let topology: &'a Topology = self.topology;
-        let metadata = topology.atom_site(site)?.metadata();
-        if label {
-            metadata.label_atom_id()
-        } else {
-            metadata.auth_atom_id().or(metadata.label_atom_id())
-        }
+        topology.site_atoms()
     }
 
     fn residue_atoms(&self, residue: ResidueView<'_>, bits: &mut Bits) {
-        for site in residue.atom_sites() {
-            if let Some(index) = self.dense(site.atom().id()) {
-                bits.set(index);
-            }
+        let atoms = self.site_atoms();
+        for site in residue.local().atom_sites() {
+            bits.set(atoms[site.index()].index());
         }
     }
 
@@ -290,13 +288,7 @@ impl<'a> Evaluator<'a> {
             }
             NodeKind::Smarts(pattern) => self.smarts(node, pattern)?,
             NodeKind::Host(kind, text) => match self.host(node, *kind, text, HostRole::Atoms)? {
-                HostValue::Atoms(selection) => {
-                    let mut bits = Bits::empty(len);
-                    for index in selection.indices() {
-                        bits.set(index.index());
-                    }
-                    bits
-                }
+                HostValue::Atoms(selection) => Bits::of_selection(&selection),
                 HostValue::Points(_) => {
                     let (term, span) = self.term(node);
                     return Err(SelectEvaluateError::HostPoints { term, span });
@@ -414,17 +406,72 @@ impl<'a> Evaluator<'a> {
                 )
             }
         };
-        let mut bits = Bits::empty(self.len());
-        super::grid::within(positions, &local, cutoff, |index| bits.set(index));
+        let grid = Grid::new(&local, cutoff, positions.len());
+        let mut bits = self.marked(&|atoms, mark| {
+            grid.mark(atoms.map(|index| (index, positions[index])), mark);
+        });
         if !host.is_empty() {
             // Atoms already near a local reference atom need no second look.
-            let pending = (0..positions.len())
-                .filter(|&index| !bits.get(index))
-                .map(|index| (index, positions[index]))
-                .collect::<Vec<_>>();
-            host.mark_within(pending, cutoff, |index| bits.set(index));
+            let grid = host.grid(cutoff);
+            let near = &bits;
+            let more = self.marked(&|atoms, mark| {
+                let pending = atoms.filter(|&index| !near.get(index));
+                grid.mark(pending.map(|index| (index, positions[index])), mark);
+            });
+            bits.or(&more);
         }
         Ok(bits)
+    }
+
+    /// The atoms `mark` marks, given contiguous ranges of all atoms. The
+    /// ranges run as work items of the executor, when there is one and more
+    /// than [`ATOMS_PER_WORK_ITEM`] atoms; they start at multiples of 64, so
+    /// each marks its own words.
+    fn marked(&self, mark: &MarkRange<'_>) -> Bits {
+        let len = self.len();
+        let mut bits = Bits::empty(len);
+        let items = self.options.executor().map_or(1, |executor| {
+            executor
+                .parallelism()
+                .get()
+                .min(len / ATOMS_PER_WORK_ITEM)
+                .max(1)
+        });
+        let Some(executor) = self.options.executor().filter(|_| items > 1) else {
+            mark(0..len, &mut |index| bits.set(index));
+            return bits;
+        };
+        let start = |item: usize| (item * len / items / 64 * 64).min(len);
+        let marked = (0..items).map(|_| Mutex::new(None)).collect::<Vec<_>>();
+        executor.run(items, &|item| {
+            let (first, end) = (
+                start(item),
+                if item + 1 == items {
+                    len
+                } else {
+                    start(item + 1)
+                },
+            );
+            let mut words = Bits::empty(end - first);
+            mark(first..end, &mut |index| words.set(index - first));
+            let previous = marked[item]
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .replace(words);
+            assert!(
+                previous.is_none(),
+                "selection executor ran work item {item} twice"
+            );
+        });
+        for (item, words) in marked.into_iter().enumerate() {
+            let words = words
+                .into_inner()
+                .unwrap_or_else(PoisonError::into_inner)
+                .unwrap_or_else(|| panic!("selection executor skipped work item {item}"));
+            let first = start(item) / 64;
+            bits.words[first..first + words.words.len()].copy_from_slice(&words.words);
+        }
+        bits
     }
 
     fn expand(&mut self, level: Level, inner: &Bits) -> Bits {
@@ -449,12 +496,11 @@ impl<'a> Evaluator<'a> {
                 let mut residues = vec![false; topology.residues().len()];
                 let mut chains = vec![false; topology.chains().len()];
                 for index in inner.ones() {
-                    if let Some(site) = self.sites().get(index).copied().flatten() {
-                        if let Some(site) = topology.atom_site(site) {
-                            let residue = site.residue();
-                            residues[residue.id().index()] = true;
-                            chains[residue.chain().id().index()] = true;
-                        }
+                    let index = TopologyAtomIndex::new(index as u32);
+                    if let Some(site) = topology.atom_site_at(index) {
+                        let residue = site.residue();
+                        residues[residue.id().index()] = true;
+                        chains[residue.chain().id().index()] = true;
                     }
                 }
                 for residue in topology.residues() {
@@ -559,21 +605,32 @@ impl<'a> Evaluator<'a> {
                 let topology: &'a Topology = self.topology;
                 let mut main_chain = Bits::empty(len);
                 let mut amino_acid = Bits::empty(len);
+                let atoms = self.site_atoms();
+                let names = topology.site_names();
+                // Which distinct names each list holds.
+                let listed = |list: &[&str]| {
+                    names
+                        .table()
+                        .iter()
+                        .map(|name| list.contains(&name.as_deref().unwrap_or_default()))
+                        .collect::<Vec<_>>()
+                };
+                let (protein_main, protein_backbone, nucleic_backbone) = (
+                    listed(&PROTEIN_MAIN_CHAIN),
+                    listed(&PROTEIN_BACKBONE),
+                    listed(&NUCLEIC_BACKBONE),
+                );
                 for residue in topology.residues() {
                     let class = residue.class();
-                    for site in residue.atom_sites() {
-                        let Some(index) = self.dense(site.atom().id()) else {
-                            continue;
-                        };
-                        let metadata = site.metadata();
-                        let name = metadata.auth_atom_id().or(metadata.label_atom_id());
-                        let name = name.unwrap_or_default();
+                    for site in residue.local().atom_sites() {
+                        let index = atoms[site.index()].index();
+                        let name = names.names()[site.index()] as usize;
                         if class == ResidueClass::AminoAcid && protein.get(index) {
                             amino_acid.set(index);
-                            if PROTEIN_MAIN_CHAIN.contains(&name) {
+                            if protein_main[name] {
                                 main_chain.set(index);
                             }
-                            if flag == Flag::Backbone && PROTEIN_BACKBONE.contains(&name) {
+                            if flag == Flag::Backbone && protein_backbone[name] {
                                 bits.set(index);
                             }
                         }
@@ -583,7 +640,7 @@ impl<'a> Evaluator<'a> {
                                 ResidueClass::DnaNucleotide | ResidueClass::RnaNucleotide
                             )
                             && nucleic.get(index)
-                            && NUCLEIC_BACKBONE.contains(&name)
+                            && nucleic_backbone[name]
                         {
                             bits.set(index);
                         }
@@ -681,11 +738,23 @@ impl<'a> Evaluator<'a> {
                 }
             }
             Field::Name | Field::LabelName => {
-                let label = matches!(field, Field::LabelName);
-                for index in 0..len {
-                    let value = self.name(index, label).map(Value::Text);
-                    if decide(&test, value) {
-                        bits.set(index);
+                // The atom name: the author atom ID, else the label atom ID.
+                // Atoms without a site have no name. Each distinct name is
+                // decided once.
+                let names = topology.site_names();
+                let matched = names
+                    .table()
+                    .iter()
+                    .map(|name| decide(&test, name.as_deref().map(Value::Text)))
+                    .collect::<Vec<_>>();
+                let numbers = if matches!(field, Field::LabelName) {
+                    names.labels()
+                } else {
+                    names.names()
+                };
+                for (&number, &index) in numbers.iter().zip(self.site_atoms()) {
+                    if matched[number as usize] {
+                        bits.set(index.index());
                     }
                 }
             }
@@ -997,8 +1066,36 @@ fn compare(value: Value<'_>, literal: &Literal, factor: f64) -> Option<Ordering>
 
 #[cfg(test)]
 mod tests {
-    use super::compare_integer_real;
+    use super::{compare_integer_real, Bits};
+    use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
     use std::cmp::Ordering::{Equal, Greater, Less};
+    use std::sync::Arc;
+
+    #[test]
+    fn host_selections_become_their_bits() {
+        let molecules = crate::smiles::to_molecules(&["C"; 300].join(".")).unwrap();
+        let topology = Arc::new(Topology::from_molecules(molecules).unwrap());
+        let runs: [&[std::ops::Range<usize>]; 6] = [
+            &[],
+            &[0..150, 150..300],
+            &[0..1, 2..3, 299..300],
+            &[0..64, 64..65, 127..129],
+            &[5..6, 63..200, 201..202, 230..299],
+            &[1..64, 64..128, 128..192, 256..257],
+        ];
+        for ranges in runs {
+            let indices = ranges.iter().cloned().flatten().collect::<Vec<_>>();
+            let selection = AtomSelection::from_indices(
+                Arc::clone(&topology),
+                indices
+                    .iter()
+                    .map(|&index| TopologyAtomIndex::new(index as u32)),
+            )
+            .unwrap();
+            let bits = Bits::of_selection(&selection);
+            assert_eq!(bits.ones().collect::<Vec<_>>(), indices, "{ranges:?}");
+        }
+    }
 
     #[test]
     fn integers_order_exactly_against_reals() {

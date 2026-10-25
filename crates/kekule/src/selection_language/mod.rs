@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
 use crate::geometry::Point3;
+use crate::parallel::Executor;
 use crate::properties::PropertyKey;
 use crate::structure::{AsModelView, ModelView, Positions};
 use crate::substructure::{SubstructureMatchError, SubstructureMatchOptions};
@@ -220,6 +221,7 @@ impl SelectParseOptions {
 pub struct SelectEvaluateOptions<'a> {
     resolver: Option<&'a dyn SelectionResolver>,
     smarts: SubstructureMatchOptions,
+    executor: Option<&'a dyn Executor>,
 }
 
 impl fmt::Debug for SelectEvaluateOptions<'_> {
@@ -228,6 +230,10 @@ impl fmt::Debug for SelectEvaluateOptions<'_> {
             .debug_struct("SelectEvaluateOptions")
             .field("resolver", &self.resolver.is_some())
             .field("smarts", &self.smarts)
+            .field(
+                "executor",
+                &self.executor.map(|executor| executor.parallelism()),
+            )
             .finish()
     }
 }
@@ -239,6 +245,7 @@ impl Default for SelectEvaluateOptions<'_> {
             smarts: SubstructureMatchOptions::default()
                 .with_max_matches(DEFAULT_SELECT_MAX_SMARTS_MATCHES)
                 .expect("the default SMARTS match bound is positive"),
+            executor: None,
         }
     }
 }
@@ -267,6 +274,23 @@ impl<'a> SelectEvaluateOptions<'a> {
     #[must_use]
     pub const fn with_smarts(mut self, smarts: SubstructureMatchOptions) -> Self {
         self.smarts = smarts;
+        self
+    }
+
+    /// The executor that runs the work items of `within`, if any; without
+    /// one, evaluation runs on the calling thread.
+    pub fn executor(&self) -> Option<&'a dyn Executor> {
+        self.executor
+    }
+
+    /// Sets [`Self::executor`]: `within` over many atoms measures ranges of
+    /// them as separate work items, on a host's thread pool or on
+    /// [`ScopedThreads`](crate::parallel::ScopedThreads). Every executor
+    /// selects the same atoms. An executor that breaks the
+    /// [contract](Executor#contract) makes evaluation panic.
+    #[must_use]
+    pub fn with_executor(mut self, executor: &'a dyn Executor) -> Self {
+        self.executor = Some(executor);
         self
     }
 }
@@ -395,35 +419,24 @@ impl ReferencePoints {
         self.shared.positions.values().value()
     }
 
-    /// Marks the index of every candidate within `cutoff` (canonical units,
-    /// inclusive) of a point, building the cutoff's grid on first use.
-    pub(crate) fn mark_within(
-        &self,
-        candidates: impl IntoIterator<Item = (usize, Point3)>,
-        cutoff: f64,
-        mark: impl FnMut(usize),
-    ) {
-        if self.is_empty() {
-            return;
-        }
+    /// The grid of the points for `cutoff` (canonical units), built on
+    /// first use.
+    pub(crate) fn grid(&self, cutoff: f64) -> Arc<grid::Grid> {
         let key = cutoff.to_bits();
-        let grid = {
-            // A poisoned lock holds only complete grids.
-            let mut grids = self
-                .shared
-                .grids
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            match grids.iter().find(|(bits, _)| *bits == key) {
-                Some((_, grid)) => Arc::clone(grid),
-                None => {
-                    let grid = Arc::new(grid::Grid::new(self.points(), cutoff));
-                    grids.push((key, Arc::clone(&grid)));
-                    grid
-                }
+        // A poisoned lock holds only complete grids.
+        let mut grids = self
+            .shared
+            .grids
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match grids.iter().find(|(bits, _)| *bits == key) {
+            Some((_, grid)) => Arc::clone(grid),
+            None => {
+                let grid = Arc::new(grid::Grid::new(self.points(), cutoff, 0));
+                grids.push((key, Arc::clone(&grid)));
+                grid
             }
-        };
-        grid.mark(self.points(), candidates, mark);
+        }
     }
 }
 

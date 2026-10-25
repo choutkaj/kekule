@@ -1,5 +1,8 @@
 //! Hierarchy lookups derived once per published topology.
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use super::dense_order::DenseOrder;
 use super::{AtomSiteId, ChainId, Hierarchy, InstanceAtomId, ResidueId, TopologyAtomIndex};
 
@@ -24,6 +27,8 @@ pub(super) struct HierarchyIndex {
     instance_sites: Groups<AtomSiteId>,
     instance_residues: Groups<ResidueId>,
     instance_chains: Groups<ChainId>,
+    /// The sites' atom names, numbered on first use.
+    names: OnceLock<SiteNames>,
 }
 
 impl HierarchyIndex {
@@ -88,7 +93,19 @@ impl HierarchyIndex {
             site_residues,
             atom_sites,
             residue_sites,
+            names: OnceLock::new(),
         }
+    }
+
+    /// The dense atom of each site, by site ID.
+    pub(super) fn site_atoms(&self) -> &[TopologyAtomIndex] {
+        &self.site_atoms
+    }
+
+    /// The atom names of `hierarchy`, the hierarchy this indexes, numbered
+    /// on first use.
+    pub(super) fn names(&self, hierarchy: &Hierarchy) -> &SiteNames {
+        self.names.get_or_init(|| SiteNames::new(hierarchy))
     }
 
     /// The dense atom of a valid site.
@@ -125,6 +142,64 @@ impl HierarchyIndex {
     /// The chains with a site of a valid instance's atoms.
     pub(super) fn instance_chains(&self, instance: usize) -> &[ChainId] {
         self.instance_chains.get(instance)
+    }
+}
+
+/// The atom names of a hierarchy's sites as numbers into a table of the
+/// distinct names, so a test of names decides each distinct name once.
+#[derive(Debug, Clone)]
+pub(crate) struct SiteNames {
+    /// The distinct names; `None` stands for a site without one.
+    table: Vec<Option<Box<str>>>,
+    /// Each site's author atom name, else its label atom name, by site ID.
+    names: Vec<u32>,
+    /// Each site's label atom name, by site ID.
+    labels: Vec<u32>,
+}
+
+impl SiteNames {
+    fn new(hierarchy: &Hierarchy) -> Self {
+        fn number<'h>(
+            numbers: &mut HashMap<Option<&'h str>, u32>,
+            table: &mut Vec<Option<Box<str>>>,
+            name: Option<&'h str>,
+        ) -> u32 {
+            *numbers.entry(name).or_insert_with(|| {
+                table.push(name.map(Box::from));
+                (table.len() - 1) as u32
+            })
+        }
+        let (mut table, mut numbers) = (Vec::new(), HashMap::new());
+        let mut names = Vec::with_capacity(hierarchy.atom_sites().len());
+        let mut labels = Vec::with_capacity(hierarchy.atom_sites().len());
+        for (_, site) in hierarchy.atom_sites() {
+            let label = site.metadata().label_atom_id();
+            let name = site.metadata().auth_atom_id().or(label);
+            names.push(number(&mut numbers, &mut table, name));
+            labels.push(number(&mut numbers, &mut table, label));
+        }
+        Self {
+            table,
+            names,
+            labels,
+        }
+    }
+
+    /// The distinct names.
+    pub(crate) fn table(&self) -> &[Option<Box<str>>] {
+        &self.table
+    }
+
+    /// Each site's author atom name, else its label atom name, as a position
+    /// in [`Self::table`], by site ID.
+    pub(crate) fn names(&self) -> &[u32] {
+        &self.names
+    }
+
+    /// Each site's label atom name as a position in [`Self::table`], by site
+    /// ID.
+    pub(crate) fn labels(&self) -> &[u32] {
+        &self.labels
     }
 }
 
