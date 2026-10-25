@@ -98,7 +98,8 @@
 //! `frame_metadata` or `frame_properties` options omit them; they never
 //! silently discard them, and the writers' reports name what they omit.
 //! XTC and TRR number frames without a time or step only under an explicit
-//! [`FrameTimingPolicy::Number`]. Defaults preserve an existing destination, use TRR f32
+//! [`FrameTimingPolicy::Number`], and DCD numbers frames whose steps are missing or off its
+//! header's sequence only under [`dcd::DcdFrameTimingPolicy::Number`]. Defaults preserve an existing destination, use TRR f32
 //! with its lambda frame property, DCD without cells, and XTC resolution of
 //! 0.001 nm. Use explicit write options when those profiles do not fit the data.
 //!

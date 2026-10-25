@@ -9,7 +9,9 @@
 //! under [`DcdTimePolicy::Absent`], and properties) unless
 //! [`DcdWriteOptions::frame_metadata`] and
 //! [`DcdWriteOptions::frame_properties`] omit it, and reports what it leaves
-//! out in [`DcdWriter::report`].
+//! out in [`DcdWriter::report`]. Under [`DcdFrameTimingPolicy::Number`] it
+//! numbers frames whose steps or times are missing or off the header's
+//! sequence, and reports the steps and times it replaced.
 //!
 //! # Examples
 //!
@@ -69,7 +71,7 @@ use crate::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
-use kekule::diagnostics::{UnrepresentablePolicy, WriteReport};
+use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
@@ -173,6 +175,32 @@ pub enum DcdCellPolicy {
     Write,
 }
 
+/// How a DCD writer, whose frames must follow the header's
+/// `ISTART + n·NSAVC` step sequence, treats a frame whose step is missing
+/// or off that sequence, such as a frame read from XYZ or a stride of
+/// another trajectory.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DcdFrameTimingPolicy {
+    /// Frame `n` of the frames written, counted from 0, must carry step
+    /// `start_step + n × step_interval` of
+    /// [`DcdWriteOptions::with_step_sequence`], and under
+    /// [`DcdTimePolicy::HeaderDelta`] a time of that step × `DELTA`;
+    /// any other frame fails to write.
+    #[default]
+    Require,
+    /// Number the frames on the header's sequence: frame `n` is written at
+    /// step `start_step + n × step_interval` and, under
+    /// [`DcdTimePolicy::HeaderDelta`], at that step × `DELTA`. A frame
+    /// without a step or a time is given them. A frame whose own step or
+    /// time disagrees has it replaced, and [`DcdWriter::report`] counts the
+    /// frames whose steps and times were replaced as
+    /// [`WriteOmission::StructureState`] for [`StructureField::Step`] and
+    /// [`StructureField::Time`]. A frame on the sequence writes as it would
+    /// under [`Self::Require`].
+    Number,
+}
+
 /// DCD reader policy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DcdReadOptions {
@@ -242,6 +270,7 @@ pub struct DcdWriteOptions {
     step_interval: u64,
     delta: f32,
     time_policy: DcdTimePolicy,
+    frame_timing: DcdFrameTimingPolicy,
     frame_metadata: UnrepresentablePolicy,
     frame_properties: UnrepresentablePolicy,
 }
@@ -255,6 +284,7 @@ impl Default for DcdWriteOptions {
             step_interval: 1,
             delta: 1.0,
             time_policy: DcdTimePolicy::Absent,
+            frame_timing: DcdFrameTimingPolicy::Require,
             frame_metadata: UnrepresentablePolicy::Fail,
             frame_properties: UnrepresentablePolicy::Fail,
         }
@@ -281,7 +311,8 @@ impl DcdWriteOptions {
     }
 
     /// Sets the header step sequence: frame `n` must carry step
-    /// `start_step + n * step_interval`. Both must fit an `i32`, and the
+    /// `start_step + n * step_interval`, or is numbered with it under
+    /// [`DcdFrameTimingPolicy::Number`]. Both must fit an `i32`, and the
     /// interval must be positive; [`DcdWriter::new`] checks them.
     #[must_use]
     pub const fn with_step_sequence(mut self, start_step: u64, step_interval: u64) -> Self {
@@ -320,6 +351,13 @@ impl DcdWriteOptions {
         Ok(self)
     }
 
+    /// Sets [`Self::frame_timing`].
+    #[must_use]
+    pub const fn with_frame_timing(mut self, frame_timing: DcdFrameTimingPolicy) -> Self {
+        self.frame_timing = frame_timing;
+        self
+    }
+
     /// Sets [`Self::frame_metadata`].
     #[must_use]
     pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
@@ -338,8 +376,8 @@ impl DcdWriteOptions {
     /// [`DcdTimePolicy::Absent`], which DCD cannot carry: by default a frame
     /// with any of them fails to write; [`UnrepresentablePolicy::Omit`]
     /// writes the frame without them and reports a
-    /// [`WriteOmission::StructureState`](kekule::diagnostics::WriteOmission::StructureState)
-    /// for each kind left out (see [`DcdWriter::report`]).
+    /// [`WriteOmission::StructureState`] for each kind left out (see
+    /// [`DcdWriter::report`]).
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
         self.frame_metadata
     }
@@ -348,6 +386,13 @@ impl DcdWriteOptions {
     /// cannot carry, under the rules of [`Self::frame_metadata`].
     pub const fn frame_properties(&self) -> UnrepresentablePolicy {
         self.frame_properties
+    }
+
+    /// How a frame whose step or time is missing or off the header's
+    /// sequence is written; [`DcdFrameTimingPolicy::Require`], under which
+    /// such a frame fails, by default.
+    pub const fn frame_timing(&self) -> DcdFrameTimingPolicy {
+        self.frame_timing
     }
 
     /// The byte order written; [`DcdEndian::Little`] by default.
@@ -1555,8 +1600,9 @@ impl<W: Write + Seek> DcdWriter<W> {
     }
 
     /// The frame state the frames written so far leave out under
-    /// [`DcdWriteOptions::frame_metadata`] and `frame_properties`, counted over every frame
-    /// written. DCD stores coordinates for a topology its readers receive
+    /// [`DcdWriteOptions::frame_metadata`] and `frame_properties`, and the
+    /// steps and times [`DcdFrameTimingPolicy::Number`] replaced, counted
+    /// over every frame written. DCD stores coordinates for a topology its readers receive
     /// separately, so nothing else is reported.
     pub fn report(&self) -> &WriteReport {
         &self.report
@@ -1753,15 +1799,25 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     .ok_or_else(|| writer_overflow(&self.source_label, "DCD step overflow"))?,
             )
             .ok_or_else(|| writer_overflow(&self.source_label, "DCD step overflow"))?;
-        if frame.step() != Some(expected_step) {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Dcd),
-                &self.source_label,
-                format!("DCD frame step must be exactly {expected_step}"),
-            ));
-        }
+        let numbers = self.options.frame_timing == DcdFrameTimingPolicy::Number;
+        let replaced_step = match frame.step() {
+            Some(step) if step == expected_step => false,
+            None if numbers => false,
+            Some(_) if numbers => true,
+            _ => {
+                return Err(codec_context(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.source_label,
+                    format!(
+                        "DCD frame step must be exactly {expected_step}; \
+                         DcdFrameTimingPolicy::Number numbers frames on the step sequence"
+                    ),
+                ))
+            }
+        };
+        let mut replaced_time = false;
         match (self.options.time_policy, frame.time()) {
             // A time was omitted above or failed there.
             (DcdTimePolicy::Absent, _) => {}
@@ -1783,22 +1839,27 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 if !actual.is_finite()
                     || (actual - expected).abs() > f64::from(f32::EPSILON) * expected.abs()
                 {
-                    return Err(codec_context(
-                        TrajectoryIoErrorKind::InconsistentMetadata,
-                        TrajectoryIoOperation::WriteFrame,
-                        Some(TrajectoryFormat::Dcd),
-                        &self.source_label,
-                        "DCD frame time does not match the explicit DELTA policy",
-                    ));
+                    if !numbers {
+                        return Err(codec_context(
+                            TrajectoryIoErrorKind::InconsistentMetadata,
+                            TrajectoryIoOperation::WriteFrame,
+                            Some(TrajectoryFormat::Dcd),
+                            &self.source_label,
+                            "DCD frame time does not match the explicit DELTA policy",
+                        ));
+                    }
+                    replaced_time = true;
                 }
             }
+            (DcdTimePolicy::HeaderDelta { .. }, None) if numbers => {}
             (DcdTimePolicy::HeaderDelta { .. }, None) => {
                 return Err(codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Dcd),
                     &self.source_label,
-                    "DCD explicit time policy requires frame time",
+                    "DCD explicit time policy requires frame time; \
+                     DcdFrameTimingPolicy::Number times frames without one",
                 ))
             }
         }
@@ -1902,6 +1963,17 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             .checked_add(1)
             .ok_or_else(|| writer_overflow(&self.source_label, "DCD frame count overflows"))?;
         record(&mut self.report, omitted);
+        record(
+            &mut self.report,
+            [
+                (replaced_step, StructureField::Step),
+                (replaced_time, StructureField::Time),
+            ]
+            .map(|(replaced, field)| WriteOmission::StructureState {
+                field,
+                structures: usize::from(replaced),
+            }),
+        );
         Ok(())
     }
 }
