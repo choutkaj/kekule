@@ -1,7 +1,7 @@
 //! Uniform-grid neighbor search for `within`.
 
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -192,24 +192,24 @@ impl Grid {
                 count.checked_mul(usize::try_from(side).ok()?)
             })
             .filter(|&count| count <= limit);
+        // A shared grid's points, as of many structures, often repeat: it
+        // drops repeats before sorting the rest.
+        let mut seen = HashSet::with_hasher(BuildHasherDefault::<CellHasher>::default());
+        let distinct = |point: &&Point3| candidates > 0 || seen.insert(bits(point));
         // Sorting by cell, x-major as slots are, then by exact coordinates
         // makes each cell's points contiguous and repeats adjacent.
         let mut order = references
             .iter()
-            .enumerate()
-            .map(|(index, point)| (grid.cell(point), index as u32))
+            .filter(distinct)
+            .map(|point| (grid.cell(point), bits(point)))
             .collect::<Vec<_>>();
-        order.sort_unstable_by(|(cell, index), (other, next)| {
-            cell.cmp(other).then_with(|| {
-                bits(&references[*index as usize]).cmp(&bits(&references[*next as usize]))
-            })
-        });
-        order.dedup_by(|(cell, index), (other, next)| {
-            cell == other && bits(&references[*index as usize]) == bits(&references[*next as usize])
-        });
+        order.sort_unstable();
+        order.dedup();
         let points = order
             .iter()
-            .map(|&(_, index)| references[index as usize])
+            .map(|&(_, (x, y, z))| {
+                Point3::new(f64::from_bits(x), f64::from_bits(y), f64::from_bits(z))
+            })
             .collect::<Vec<_>>();
         let groups = order.chunk_by(|a, b| a.0 == b.0);
         grid.cells = match count {
