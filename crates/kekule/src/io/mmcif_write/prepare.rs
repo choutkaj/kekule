@@ -1,6 +1,7 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
 use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
+use super::implied::mark_implied;
 use super::one_based_serial;
 use super::{fail, invalid_model, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
 use crate::diagnostics::FormatError;
@@ -37,11 +38,26 @@ pub(super) struct AtomRow {
     pub(super) auth_atom_id: String,
 }
 
+/// One bond of the model, written as a `_struct_conn` row unless the reader
+/// derives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ConnectionRow {
     pub(super) left: InstanceAtomId,
     pub(super) right: InstanceAtomId,
     pub(super) order: BondOrder,
+    /// How the reader derives the bond, or `None` when the block states it.
+    pub(super) implied: Option<Implied>,
+}
+
+/// Evidence from which an mmCIF reader derives a bond the block leaves out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Implied {
+    /// The bundled component template of the bond's residue, which rebuilds
+    /// all of that residue's bonds.
+    Template,
+    /// Polymer linkage between residues adjacent in sequence, within bonding
+    /// distance in the written coordinates.
+    PolymerLink,
 }
 
 #[derive(Debug)]
@@ -58,6 +74,7 @@ pub(super) fn prepare_model(
     model: ModelView<'_>,
     plan: EntityPlan,
     implicit_hydrogens: UnrepresentablePolicy,
+    coordinate_precision: usize,
 ) -> Result<PreparedModel, FormatError> {
     let EntityPlan {
         entities,
@@ -113,9 +130,39 @@ pub(super) fn prepare_model(
     for bond in model.topology().bonds() {
         let order = supported_bond_order(bond.id(), bond.order)?;
         let [left, right] = bond.atoms().map(|atom| atom.id());
-        validate_connection_selector(left, &atoms, &atom_indexes)?;
-        validate_connection_selector(right, &atoms, &atom_indexes)?;
-        connections.push(ConnectionRow { left, right, order });
+        connections.push(ConnectionRow {
+            left,
+            right,
+            order,
+            implied: None,
+        });
+    }
+    let elements = atoms
+        .iter()
+        .map(|row| {
+            model
+                .topology()
+                .atom(row.atom)
+                .map(|atom| atom.atom().element)
+                .ok_or_else(|| invalid_model(format!("invalid topology atom: {}", row.atom)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    mark_implied(
+        &atoms,
+        &elements,
+        &mut connections,
+        &atom_indexes,
+        coordinate_precision,
+    );
+    // A polymer link another ensemble sample stretches beyond bonding
+    // distance is stated after all, so its partners are checked too.
+    let selectors = ConnectionSelectors::new(&atoms);
+    for connection in connections
+        .iter()
+        .filter(|connection| connection.implied != Some(Implied::Template))
+    {
+        selectors.validate(connection.left, &atoms, &atom_indexes)?;
+        selectors.validate(connection.right, &atoms, &atom_indexes)?;
     }
     Ok(PreparedModel {
         entities,
@@ -367,32 +414,59 @@ fn supported_bond_order(bond: InstanceBondId, order: BondOrder) -> Result<BondOr
     }
 }
 
-fn validate_connection_selector(
-    atom: InstanceAtomId,
-    rows: &[AtomRow],
-    indexes: &BTreeMap<InstanceAtomId, usize>,
-) -> Result<(), FormatError> {
-    let row = rows
-        .get(
-            *indexes
-                .get(&atom)
-                .ok_or_else(|| invalid_model(format!("missing atom row for {atom}")))?,
-        )
-        .expect("atom row index is valid");
-    let matches = rows
-        .iter()
-        .filter(|candidate| {
-            candidate.asym_id == row.asym_id
-                && candidate.label_atom_id == row.label_atom_id
-                && row
-                    .label_seq_id
-                    .is_none_or(|sequence| candidate.label_seq_id == Some(sequence))
-        })
-        .count();
-    if matches != 1 {
-        return Err(fail(MmcifWriteIssue::AmbiguousConnectionSelector(atom)));
+/// Rows by label asym and atom name, among which a `_struct_conn` partner
+/// selector must match exactly one: the one with its component, and its
+/// label sequence number, author sequence number, and insertion code where
+/// it states them, as the reader matches partners.
+struct ConnectionSelectors<'a> {
+    by_name: BTreeMap<(&'a str, &'a str), Vec<&'a AtomRow>>,
+}
+
+impl<'a> ConnectionSelectors<'a> {
+    fn new(rows: &'a [AtomRow]) -> Self {
+        let mut by_name = BTreeMap::<_, Vec<_>>::new();
+        for row in rows {
+            by_name
+                .entry((row.asym_id.as_str(), row.label_atom_id.as_str()))
+                .or_default()
+                .push(row);
+        }
+        Self { by_name }
     }
-    Ok(())
+
+    fn validate(
+        &self,
+        atom: InstanceAtomId,
+        rows: &[AtomRow],
+        indexes: &BTreeMap<InstanceAtomId, usize>,
+    ) -> Result<(), FormatError> {
+        let row = &rows[*indexes
+            .get(&atom)
+            .ok_or_else(|| invalid_model(format!("missing atom row for {atom}")))?];
+        let stated = |field: &Option<String>, candidate: &Option<String>| {
+            field.is_none() || field == candidate
+        };
+        let matches = self
+            .by_name
+            .get(&(row.asym_id.as_str(), row.label_atom_id.as_str()))
+            .map_or(0, |candidates| {
+                candidates
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.label_comp_id == row.label_comp_id
+                            && row
+                                .label_seq_id
+                                .is_none_or(|sequence| candidate.label_seq_id == Some(sequence))
+                            && stated(&row.auth_seq_id, &candidate.auth_seq_id)
+                            && stated(&row.insertion_code, &candidate.insertion_code)
+                    })
+                    .count()
+            });
+        if matches != 1 {
+            return Err(fail(MmcifWriteIssue::AmbiguousConnectionSelector(atom)));
+        }
+        Ok(())
+    }
 }
 
 /// mmCIF sequences every polymer residue by `label_seq_id`. Sources that
@@ -494,7 +568,14 @@ pub(super) fn validate_ensemble_sample(
             field: MmcifSampleField::StructuralAsymmetry,
         }));
     }
-    if candidate.connections != model.connections {
+    let bonds = |model: &PreparedModel| {
+        model
+            .connections
+            .iter()
+            .map(|connection| (connection.left, connection.right, connection.order))
+            .collect::<Vec<_>>()
+    };
+    if bonds(candidate) != bonds(model) {
         return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
             sample,
             field: MmcifSampleField::Connectivity,

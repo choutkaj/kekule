@@ -712,6 +712,16 @@ export.
   are not the model's cell are reported as omitted. Canonical classification informs entity
   kinds; hierarchy alone does not establish polymer status or contextual roles.
   Expert overrides and source provenance handle finer format distinctions.
+  The mmCIF writer, like the PDB writer, states only the bonds its reader
+  cannot derive, as the PDB's own files do: a residue whose bundled
+  template, after the protonation variant its hydrogens select, gives
+  exactly its bonds, and peptide and phosphodiester links within bonding
+  distance in the written coordinates, are left out; links between residues,
+  metal coordination, and the bonds of residues without such a template are
+  `_struct_conn` rows. A residue is either derived or stated whole, since a
+  stated internal bond makes the reader take the residue's bonds from the
+  source alone. Bond order within a molecule follows the reader's evidence,
+  which mmCIF does not carry.
   Every entity instance is its own label asym: a chain the source names as
   one asym stays one, while a chain without a source asym that holds a
   polymer, ligands, and water, as a PDB author chain does, is written as

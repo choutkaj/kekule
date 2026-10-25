@@ -161,7 +161,12 @@ pub(super) fn write_block_end(
     model: &PreparedModel,
 ) -> Result<(), FormatError> {
     writer.write_all(b"#\n").map_err(mmcif_io)?;
-    if !model.connections.is_empty() {
+    let mut stated = model
+        .connections
+        .iter()
+        .filter(|connection| connection.implied.is_none())
+        .peekable();
+    if stated.peek().is_some() {
         let indexes = model
             .atoms
             .iter()
@@ -179,10 +184,14 @@ pub(super) fn write_block_end(
             "_struct_conn.ptnr2_label_comp_id",
             "_struct_conn.ptnr2_label_seq_id",
             "_struct_conn.ptnr2_label_atom_id",
+            "_struct_conn.ptnr1_auth_seq_id",
+            "_struct_conn.pdbx_ptnr1_PDB_ins_code",
+            "_struct_conn.ptnr2_auth_seq_id",
+            "_struct_conn.pdbx_ptnr2_PDB_ins_code",
             "_struct_conn.pdbx_value_order",
         ];
         write_loop_header(writer, CONNECTION_TAGS)?;
-        for (serial, connection) in (1u64..).zip(model.connections.iter()) {
+        for (serial, connection) in (1u64..).zip(stated) {
             let left = &model.atoms[indexes[&connection.left]];
             let right = &model.atoms[indexes[&connection.right]];
             write_row(
@@ -198,6 +207,22 @@ pub(super) fn write_block_end(
                     cif_value(&right.label_comp_id, "_struct_conn.ptnr2_label_comp_id")?,
                     optional_display(right.label_seq_id),
                     cif_value(&right.label_atom_id, "_struct_conn.ptnr2_label_atom_id")?,
+                    optional_cif_value(
+                        left.auth_seq_id.as_deref(),
+                        "_struct_conn.ptnr1_auth_seq_id",
+                    )?,
+                    optional_cif_value(
+                        left.insertion_code.as_deref(),
+                        "_struct_conn.pdbx_ptnr1_PDB_ins_code",
+                    )?,
+                    optional_cif_value(
+                        right.auth_seq_id.as_deref(),
+                        "_struct_conn.ptnr2_auth_seq_id",
+                    )?,
+                    optional_cif_value(
+                        right.insertion_code.as_deref(),
+                        "_struct_conn.pdbx_ptnr2_PDB_ins_code",
+                    )?,
                     bond_order_code(connection.order).to_owned(),
                 ],
             )?;

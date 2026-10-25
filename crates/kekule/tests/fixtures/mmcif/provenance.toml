@@ -17,3 +17,23 @@ retrieved = "by 2026-07-25"
 sha256 = "906659138248207f55f5f42a9e755e03f7bdde405263b3b4261049f99010964b"
 preprocessing = "None; original downloaded bytes with CRLF line endings, moved verbatim from benchmarks/corpora/smoke/data/rcsb"
 purpose = "DSSP and mmCIF round-trip regressions; not a scientific benchmark"
+
+[[fixture]]
+path = "1IRO.cif"
+source = "RCSB PDB / wwPDB entry 1IRO"
+url = "https://files.rcsb.org/download/1IRO.cif"
+retrieved = "2026-10-24"
+sha256 = "aa46fd61fc959edf586935538ebe22c0831bf95a75a12fa69ac7213c42b87150"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "mmCIF writer regression for metal coordination links (rubredoxin Fe-Cys4); not a scientific benchmark"
+
+[[fixture]]
+path = "6OIM.cif"
+source = "RCSB PDB / wwPDB entry 6OIM"
+url = "https://files.rcsb.org/download/6OIM.cif"
+retrieved = "2026-10-24"
+sha256 = "0ab0ab91e9dd078b83cf4149118e31b3f3ac7252eb1e47b1ff11e77574d97de9"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "mmCIF writer regression for a covalent ligand link, metal coordination, and large tiled exports (KRas G12C); not a scientific benchmark"

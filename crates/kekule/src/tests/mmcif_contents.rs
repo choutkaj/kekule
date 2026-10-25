@@ -1908,7 +1908,13 @@ hydrog A N 1 W O .
         instance.entity_kinds().contains(&EntityKind::Polymer)
             && instance.entity_kinds().contains(&EntityKind::NonPolymer)
     }));
-    assert_eq!(round_trip.report().applied_connections(), 2);
+    // The glycine's N-CA bond comes from its template; only the link is
+    // stated.
+    assert_eq!(round_trip.report().applied_connections(), 1);
+    assert_eq!(
+        round_trip.model().topology().bond_count(),
+        result.model().topology().bond_count()
+    );
 }
 
 #[test]

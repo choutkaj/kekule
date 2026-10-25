@@ -82,6 +82,7 @@ pub(super) fn resolve_connections(
             )
         })
         .then(|| SiteIndex::new(rows, all_rows, selected_model));
+    let names = (!records.is_empty()).then(|| NameIndex::new(rows));
     let mut connections = Vec::new();
     let mut declared = BTreeSet::new();
     for record in records {
@@ -100,9 +101,14 @@ pub(super) fn resolve_connections(
         };
         let mut resolve = |partner: u8| {
             let resolution = match &bond.partners[usize::from(partner - 1)] {
-                Ok(selector) => {
-                    resolve_partner(selector, rows, all_rows, selected_model, sites.as_ref())
-                }
+                Ok(selector) => resolve_partner(
+                    selector,
+                    rows,
+                    all_rows,
+                    selected_model,
+                    sites.as_ref(),
+                    names.as_ref(),
+                ),
                 Err(reason) => ConnectionPartnerResolution::Unresolved(reason.clone()),
             };
             report_connection_partner_resolution(resolution, bond, partner, report)
@@ -347,12 +353,66 @@ impl<'a> SiteIndex<'a> {
     }
 }
 
+/// Rows of the selected model by asym and atom name, under label and under
+/// author identity, so that a selector naming both does not scan every row.
+struct NameIndex<'a> {
+    label: HashMap<(&'a str, &'a str), Vec<&'a AtomRow>>,
+    author: HashMap<(&'a str, &'a str), Vec<&'a AtomRow>>,
+}
+
+impl<'a> NameIndex<'a> {
+    fn new(rows: &'a [AtomRow]) -> Self {
+        let mut index = Self {
+            label: HashMap::new(),
+            author: HashMap::new(),
+        };
+        for row in rows {
+            if let (Some(asym), Some(atom)) = (&row.label_asym_id, &row.label_atom_name) {
+                index.label.entry((asym, atom)).or_default().push(row);
+            }
+            if let (Some(asym), Some(atom)) = (&row.auth_asym_id, &row.auth_atom_name) {
+                index.author.entry((asym, atom)).or_default().push(row);
+            }
+        }
+        index
+    }
+
+    /// The rows, in source order, that can match a selector stating an asym
+    /// and an atom name, or `None` for a selector that states neither pair.
+    fn candidates<'s>(
+        &'s self,
+        selector: &'s ConnectionPartnerSelector,
+    ) -> Option<&'s [&'a AtomRow]> {
+        fn lookup<'i, 'k, 'a>(
+            index: &'i HashMap<(&'k str, &'k str), Vec<&'a AtomRow>>,
+            asym: Option<&'k str>,
+            atom: Option<&'k str>,
+        ) -> Option<&'i [&'a AtomRow]> {
+            asym.zip(atom)
+                .map(|key| index.get(&key).map_or(&[][..], Vec::as_slice))
+        }
+        lookup(
+            &self.label,
+            selector.label.asym_id.as_deref(),
+            selector.label.atom_id.as_deref(),
+        )
+        .or_else(|| {
+            lookup(
+                &self.author,
+                selector.author.asym_id.as_deref(),
+                selector.author.atom_id.as_deref(),
+            )
+        })
+    }
+}
+
 fn resolve_partner<'a>(
     selector: &ConnectionPartnerSelector,
     selected_rows: &'a [AtomRow],
     all_rows: &[AtomRow],
     selected_model: &str,
     sites: Option<&SiteIndex<'a>>,
+    names: Option<&NameIndex<'a>>,
 ) -> ConnectionPartnerResolution<'a> {
     let candidates = match (selector.site_id.as_deref(), sites) {
         (Some(site), Some(sites)) => sites
@@ -363,10 +423,17 @@ fn resolve_partner<'a>(
             .copied()
             .filter(|candidate| selector.matches(candidate))
             .collect::<Vec<_>>(),
-        _ => selected_rows
-            .iter()
-            .filter(|candidate| selector.matches(candidate))
-            .collect(),
+        _ => match names.and_then(|names| names.candidates(selector)) {
+            Some(rows) => rows
+                .iter()
+                .copied()
+                .filter(|candidate| selector.matches(candidate))
+                .collect(),
+            None => selected_rows
+                .iter()
+                .filter(|candidate| selector.matches(candidate))
+                .collect(),
+        },
     };
     match candidates.as_slice() {
         [candidate] => ConnectionPartnerResolution::Resolved(candidate),

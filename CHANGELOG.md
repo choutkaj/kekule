@@ -343,6 +343,24 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** The mmCIF writer states as `_struct_conn` rows only the bonds
+  its reader cannot derive, as the PDB's own files do (SeekDelta K41). Bonds
+  of residues that their bundled component template (or the protonation
+  variant their hydrogens select) rebuilds exactly, and peptide and
+  phosphodiester links within bonding distance, are left out; links between
+  residues, metal coordination, and every bond of a residue without such a
+  template, such as a ligand or an XYZ structure, are still rows. A
+  100,000-atom export of 66 KRas copies states 3,432 rows instead of one per
+  bond and round-trips in about 4 s in release. Every bond reads back with its
+  order; bonds may come back in another order within a molecule. Rows now
+  also select partners by `ptnr*_auth_seq_id` and
+  `pdbx_ptnr*_PDB_ins_code`, so metal coordination to waters of one asym,
+  which failed with `AmbiguousConnectionSelector`, is written, and the
+  writer checks selectors in linear rather than quadratic time.
+- mmCIF and PDB interpretation resolve connection records through an index
+  of atom sites by asym and atom name instead of scanning every site per
+  record: reading 32,000 `_struct_conn` rows over 40,000 atoms takes 1.6 s
+  instead of 69 s in release.
 - Hierarchy walks cost what they return (SeekDelta K44). Publication indexes
   the hierarchy once, and every snapshot of the layout shares the index:
   each site's dense atom and residue, each dense atom's site, each residue's
