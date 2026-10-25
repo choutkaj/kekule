@@ -787,6 +787,10 @@ read perception, such as prepared substructure targets, bind the exact snapshot.
 Geometric correspondence may explicitly pair selected atoms from two exact
 snapshots, with each side validated and pairs one-to-one. It need not cover equal
 system sizes and does not claim chemical equivalence or rebind either owner.
+Pairing by hierarchy labels reads one namespace, author or label identifiers, as
+the selection language's terms of that namespace do, reports the selected atoms
+it leaves unpaired, and refuses a label naming more than one selected atom on a
+side rather than choosing one.
 See [alignment correspondence](crates/kekule/src/alignment/correspondence.rs) and
 [collection alignment](crates/kekule/src/alignment/collection.rs).
 
