@@ -592,9 +592,10 @@ impl Near for NearLists {
     }
 }
 
-/// The points a shared grid keeps across its near lists, which bounds its
-/// memory; lists gathered after that serve their own measurement alone.
-/// Unit tests reach it often.
+/// The points a shared grid keeps across its near lists, each list counting
+/// one more so that empty lists count too, which bounds its memory; lists
+/// gathered after that serve their own measurement alone. Unit tests reach
+/// it often.
 #[cfg(not(test))]
 const SHARED_NEAR_POINTS: usize = 1 << 20;
 #[cfg(test)]
@@ -611,7 +612,8 @@ struct SharedNear {
 #[derive(Debug, Default)]
 struct KeptNear {
     lists: HashMap<Cell, Arc<[Point3]>, BuildHasherDefault<CellHasher>>,
-    /// The points of `lists`.
+    /// The points of `lists`, each list counting one more, so empty lists
+    /// count too.
     points: usize,
 }
 
@@ -626,13 +628,13 @@ impl SharedNear {
     /// grid keeps enough points.
     fn keep(&self, cell: Cell, list: Arc<[Point3]>) -> Arc<[Point3]> {
         let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
-        let full = kept.points + list.len() > SHARED_NEAR_POINTS;
+        let full = kept.points + list.len() + 1 > SHARED_NEAR_POINTS;
         match kept.lists.entry(cell) {
             Entry::Occupied(earlier) => Arc::clone(earlier.get()),
             Entry::Vacant(_) if full => list,
             Entry::Vacant(entry) => {
                 entry.insert(Arc::clone(&list));
-                kept.points += list.len();
+                kept.points += list.len() + 1;
                 list
             }
         }
@@ -644,8 +646,8 @@ impl SharedNear {
 struct SharedLists<'a> {
     shared: &'a SharedNear,
     kept: HashMap<Cell, Arc<[Point3]>, BuildHasherDefault<CellHasher>>,
-    /// The points of `kept`, which bounds those of lists the grid does not
-    /// keep.
+    /// The points of `kept`, each list counting one more, which bounds those
+    /// of lists the grid does not keep.
     points: usize,
     /// The list being gathered.
     gathering: Vec<Point3>,
@@ -666,7 +668,7 @@ impl<'a> SharedLists<'a> {
             self.kept.clear();
             self.points = 0;
         }
-        self.points += list.len();
+        self.points += list.len() + 1;
         self.kept.insert(cell, Arc::clone(list));
     }
 }
@@ -937,6 +939,35 @@ mod tests {
             assert!(!kept.lists.is_empty() || cutoff == 0.0);
             assert!(kept.points <= super::SHARED_NEAR_POINTS);
         }
+    }
+
+    #[test]
+    fn shared_grids_bound_the_empty_lists_they_keep() {
+        // Two far points make a box of empty cells; each measurement visits
+        // cells no other did, whose lists are empty.
+        let references = [Point3::new(0.0, 0.0, 0.0), Point3::new(40.0, 40.0, 40.0)];
+        let grid = Grid::new(&references, 1.0, 0);
+        for structure in 0..100 {
+            let candidates = (0..20)
+                .map(|index| {
+                    let cell = structure * 20 + index;
+                    Point3::new(
+                        5.5 + f64::from(cell % 30),
+                        5.5 + f64::from(cell / 30 % 30),
+                        5.5 + f64::from(cell / 900),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut marked = Vec::new();
+            grid.mark(candidates.iter().copied().enumerate(), |index| {
+                marked.push(index)
+            });
+            assert!(marked.is_empty());
+        }
+        let kept = grid.shared.as_ref().unwrap().kept.lock().unwrap();
+        assert!(!kept.lists.is_empty());
+        assert!(kept.lists.len() <= super::SHARED_NEAR_POINTS);
+        assert!(kept.points <= super::SHARED_NEAR_POINTS);
     }
 
     #[test]
