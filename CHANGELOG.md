@@ -11,6 +11,18 @@ are marked **Breaking:**.
 
 ### Added
 
+- XYZ documents built from atoms (SeekDelta K54), so a host that holds a
+  molecule as elements and positions, such as one reading the atoms a
+  Gaussian cube file lists beside its grids, has it interpreted as XYZ
+  without writing XYZ text. `XyzAtom::new` takes an element and a position,
+  `XyzFrame::new` a comment and atoms, and `XyzDocument::new` frames;
+  `XyzDocument::interpret` and `interpret_ensemble` then infer bonds from
+  distances and report them as for a parsed file. A built atom's location is
+  its 1-based position in its frame, and a built frame's its 1-based position
+  in its document; parsed atoms and frames keep their lines. Interpretation
+  now rejects a frame without atoms and a coordinate that is not finite with
+  `InvalidValue`, as parsing already rejects them, so it fails a built
+  document as parsing would. Parsing is unchanged.
 - Trajectory writers leave out and report the frame state their format
   cannot carry (SeekDelta K51), as the structure writers do, so a host writes
   a trajectory read from XTC as DCD or XYZ without first copying every frame

@@ -1,4 +1,5 @@
 use kekule::diagnostics::{DiagnosticKind, Format, FormatErrorDetail, UnsupportedContent};
+use kekule::geometry::Point3;
 use kekule::molecule::{BondOrder, Element, ImplicitHydrogens};
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{ANGSTROM, BOHR, KELVIN};
@@ -438,4 +439,123 @@ fn omitting_implicit_hydrogens_still_rejects_other_chemistry() {
         MmcifWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
     let error = mmcif::write([&model], mmcif_options).unwrap_err();
     assert!(error.message().contains("isotope"), "{error}");
+}
+
+fn water_atoms(stretch: f64) -> Vec<xyz::XyzAtom> {
+    vec![
+        xyz::XyzAtom::new(Element::O, Point3::new(0.0, 0.0, 0.0)),
+        xyz::XyzAtom::new(Element::H, Point3::new(stretch, 0.0, 0.0)),
+        xyz::XyzAtom::new(Element::H, Point3::new(-0.240, 0.927, 0.0)),
+    ]
+}
+
+#[test]
+fn documents_built_from_atoms_interpret_as_parsed_files() {
+    let built = xyz::XyzDocument::new(vec![xyz::XyzFrame::new("water", water_atoms(0.957))]);
+    let parsed = xyz::parse_str(WATER, Default::default()).unwrap();
+    assert_eq!(built.frames()[0].atoms()[1].element(), "H");
+    assert_eq!(built.frames()[0].atoms()[1].extra(), None);
+    let from_atoms = built.interpret(Default::default()).unwrap();
+    let from_text = parsed.interpret(Default::default()).unwrap();
+    assert_eq!(from_atoms.report(), from_text.report());
+    assert_eq!(from_atoms.topology().bond_count(), 2);
+    for row in 0..3 {
+        let atoms = from_atoms.topology().atom_at(index(row)).unwrap();
+        let text = from_text.topology().atom_at(index(row)).unwrap();
+        assert_eq!(atoms.element(), text.element());
+    }
+    assert_eq!(
+        from_atoms.model().positions(),
+        from_text.model().positions()
+    );
+
+    let stretched = "3\nstretched\nO 0 0 0\nH 1.0 0 0\nH -0.240 0.927 0\n";
+    let built = xyz::XyzDocument::new(vec![
+        xyz::XyzFrame::new("water", water_atoms(0.957)),
+        xyz::XyzFrame::new("stretched", water_atoms(1.0)),
+    ]);
+    let parsed = xyz::parse_str(&format!("{WATER}{stretched}"), Default::default()).unwrap();
+    let from_atoms = built.interpret_ensemble(Default::default()).unwrap();
+    let from_text = parsed.interpret_ensemble(Default::default()).unwrap();
+    assert_eq!(from_atoms.reports(), from_text.reports());
+    assert_eq!(from_atoms.ensemble().len(), 2);
+    for sample in 0..2 {
+        assert_eq!(
+            from_atoms.ensemble().get(sample).unwrap().positions(),
+            from_text.ensemble().get(sample).unwrap().positions()
+        );
+    }
+}
+
+#[test]
+fn built_atoms_and_frames_are_located_by_position_and_parsed_ones_keep_lines() {
+    let parsed = xyz::parse_str(WATER, Default::default()).unwrap();
+    let parsed_frame = parsed.frames()[0].clone();
+    let lone = xyz::XyzAtom::new(Element::HE, Point3::new(0.0, 0.0, 0.0));
+    assert_eq!(lone.location().line(), 1);
+    let mut atoms = vec![lone];
+    atoms.extend(parsed_frame.atoms().iter().cloned());
+    let mixed = xyz::XyzFrame::new("", atoms);
+    let lines = mixed
+        .atoms()
+        .iter()
+        .map(|atom| atom.location().line())
+        .collect::<Vec<_>>();
+    assert_eq!(lines, [1, 3, 4, 5]);
+    assert_eq!(mixed.location().line(), 1);
+    let document = xyz::XyzDocument::new(vec![
+        parsed_frame,
+        mixed,
+        xyz::XyzFrame::new("", water_atoms(0.957)),
+    ]);
+    let lines = document
+        .frames()
+        .iter()
+        .map(|frame| frame.location().line())
+        .collect::<Vec<_>>();
+    assert_eq!(lines, [1, 2, 3]);
+}
+
+#[test]
+fn built_documents_fail_as_parsing_would_reject_them() {
+    for (position, line) in [
+        (Point3::new(0.0, f64::NAN, 0.0), 3),
+        (Point3::new(f64::INFINITY, 0.0, 0.0), 3),
+        (Point3::new(0.0, 0.0, 2.0e15), 3),
+    ] {
+        let mut atoms = water_atoms(0.957);
+        atoms[2] = xyz::XyzAtom::new(Element::H, position);
+        let error = xyz::XyzDocument::new(vec![xyz::XyzFrame::new("", atoms)])
+            .interpret(Default::default())
+            .unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::InvalidValue, "{position:?}");
+        assert_eq!(error.location().map(|at| at.line()), Some(line));
+        assert!(matches!(
+            error.detail(),
+            Some(FormatErrorDetail::Model { model_id }) if model_id == "0"
+        ));
+    }
+
+    let document = xyz::XyzDocument::new(vec![
+        xyz::XyzFrame::new("", water_atoms(0.957)),
+        xyz::XyzFrame::new("", Vec::new()),
+    ]);
+    let error = document
+        .interpret(XyzInterpretOptions::default().with_frame(XyzFrameSelection::Index(1)))
+        .unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(error.location().map(|at| at.line()), Some(2));
+    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    assert!(matches!(
+        error.detail(),
+        Some(FormatErrorDetail::InconsistentAtomSet { model_id }) if model_id == "1"
+    ));
+
+    let error = xyz::XyzDocument::new(Vec::new())
+        .interpret(Default::default())
+        .unwrap_err();
+    assert!(matches!(
+        error.detail(),
+        Some(FormatErrorDetail::NoCoordinateModels)
+    ));
 }

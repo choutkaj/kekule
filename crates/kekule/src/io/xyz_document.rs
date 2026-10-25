@@ -6,10 +6,16 @@
 //! as extended XYZ writes them. Parsing types the count, element token, and
 //! coordinates and keeps the comment and any further columns verbatim;
 //! interpretation decides what they mean.
+//!
+//! A host that holds atoms as elements and positions, such as one reading a
+//! format that lists a molecule beside other data, builds the same document
+//! with [`XyzAtom::new`], [`XyzFrame::new`], and [`XyzDocument::new`] and
+//! interprets it as it would a parsed file.
 use crate::diagnostics::{
     read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
 };
 use crate::geometry::Point3;
+use crate::molecule::Element;
 
 use super::xyz_interpret::{interpret_xyz, interpret_xyz_ensemble};
 use super::{
@@ -70,9 +76,30 @@ pub struct XyzAtom {
     position: Point3,
     extra: Option<String>,
     line: usize,
+    parsed: bool,
 }
 
 impl XyzAtom {
+    /// An atom of `element` at `position`, in the length unit interpretation
+    /// is given, as a host that holds atoms rather than XYZ text builds it.
+    ///
+    /// Its element token is the element's symbol and it has no further
+    /// columns. Its [location](Self::location) is its 1-based position in
+    /// the frame [`XyzFrame::new`] places it in, as line 1 for the first
+    /// atom, and line 1 until then.
+    ///
+    /// The position is not checked here: interpretation rejects a
+    /// coordinate that is not finite, as parsing does.
+    pub fn new(element: Element, position: Point3) -> Self {
+        Self {
+            element: element.symbol().to_owned(),
+            position,
+            extra: None,
+            line: 1,
+            parsed: false,
+        }
+    }
+
     /// The element token as written: a symbol, matched case-insensitively at
     /// interpretation, or an atomic number.
     pub fn element(&self) -> &str {
@@ -91,7 +118,9 @@ impl XyzAtom {
         self.extra.as_deref()
     }
 
-    /// The source location of the atom line.
+    /// The source location of the atom line: for a parsed atom, its line in
+    /// the input; for an atom from [`Self::new`], its 1-based position in its
+    /// frame.
     pub const fn location(&self) -> SourceLocation {
         SourceLocation::at_line(self.line)
     }
@@ -103,9 +132,37 @@ pub struct XyzFrame {
     comment: String,
     atoms: Vec<XyzAtom>,
     line: usize,
+    parsed: bool,
 }
 
 impl XyzFrame {
+    /// A frame of `atoms` in order with `comment` as its comment line, as a
+    /// host that holds atoms rather than XYZ text builds it.
+    ///
+    /// The comment is kept verbatim, as a parsed one is, even if it is
+    /// empty or spans several lines. Each atom from [`XyzAtom::new`] takes
+    /// its 1-based position in `atoms` as its location; a parsed atom keeps
+    /// its line. The frame's [location](Self::location) is its 1-based
+    /// position in the document [`XyzDocument::new`] places it in, and line 1
+    /// until then.
+    ///
+    /// A frame may be built without atoms, but interpretation rejects it, as
+    /// parsing rejects a count of zero.
+    pub fn new(comment: impl Into<String>, atoms: Vec<XyzAtom>) -> Self {
+        let mut atoms = atoms;
+        for (index, atom) in atoms.iter_mut().enumerate() {
+            if !atom.parsed {
+                atom.line = index + 1;
+            }
+        }
+        Self {
+            comment: comment.into(),
+            atoms,
+            line: 1,
+            parsed: false,
+        }
+    }
+
     /// The comment line verbatim, without its line terminator.
     pub fn comment(&self) -> &str {
         &self.comment
@@ -116,19 +173,57 @@ impl XyzFrame {
         &self.atoms
     }
 
-    /// The source location of the frame's atom-count line.
+    /// The source location of the frame's atom-count line: for a parsed
+    /// frame, its line in the input; for a frame from [`Self::new`], its
+    /// 1-based position in its document.
     pub const fn location(&self) -> SourceLocation {
         SourceLocation::at_line(self.line)
     }
 }
 
-/// A parsed XYZ file: its frames in source order.
+/// A parsed XYZ file, or a document a host built: its frames in source
+/// order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XyzDocument {
     frames: Vec<XyzFrame>,
 }
 
 impl XyzDocument {
+    /// A document of `frames` in order, as a host that holds atoms rather
+    /// than XYZ text builds it, to interpret with [`Self::interpret`] or
+    /// [`Self::interpret_ensemble`] as a parsed file.
+    ///
+    /// Each frame from [`XyzFrame::new`] takes its 1-based position in
+    /// `frames` as its location; a parsed frame keeps its line. A document
+    /// without frames is valid, as empty input is, and interpretation
+    /// rejects it.
+    ///
+    /// ```
+    /// use kekule::geometry::Point3;
+    /// use kekule::molecule::Element;
+    /// use kekule::xyz::{XyzAtom, XyzDocument, XyzFrame};
+    ///
+    /// let atoms = vec![
+    ///     XyzAtom::new(Element::O, Point3::new(0.0, 0.0, 0.0)),
+    ///     XyzAtom::new(Element::H, Point3::new(0.957, 0.0, 0.0)),
+    ///     XyzAtom::new(Element::H, Point3::new(-0.240, 0.927, 0.0)),
+    /// ];
+    /// let document = XyzDocument::new(vec![XyzFrame::new("water", atoms)]);
+    /// let interpretation = document.interpret(Default::default())?;
+    /// assert_eq!(interpretation.report().inferred_bonds().len(), 2);
+    /// assert_eq!(document.frames()[0].atoms()[2].location().line(), 3);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn new(frames: Vec<XyzFrame>) -> Self {
+        let mut frames = frames;
+        for (index, frame) in frames.iter_mut().enumerate() {
+            if !frame.parsed {
+                frame.line = index + 1;
+            }
+        }
+        Self { frames }
+    }
+
     /// The frames in source order.
     pub fn frames(&self) -> &[XyzFrame] {
         &self.frames
@@ -140,8 +235,9 @@ impl XyzDocument {
     /// # Errors
     ///
     /// Returns a [`FormatError`] of format
-    /// [`Format::Xyz`]: `InvalidValue` for an unknown element or a coordinate
-    /// beyond 1e15 Å, `Unsupported`
+    /// [`Format::Xyz`]: `InvalidValue` for an unknown element, a frame
+    /// without atoms, or a coordinate that is not finite or lies beyond
+    /// 1e15 Å, `Unsupported`
     /// for further columns unless `options` reports them, `Inconsistent` when
     /// the frame selection does not match the document, `Limit` when an atom
     /// has more contacts than `options` allows, and `Chemistry` when the
@@ -280,6 +376,7 @@ pub(crate) fn parse_xyz_str(
             comment: comment.to_owned(),
             atoms,
             line: count_line,
+            parsed: true,
         });
     }
     Ok(XyzDocument { frames })
@@ -320,6 +417,7 @@ fn parse_atom(line: usize, text: &str) -> Result<XyzAtom, FormatError> {
         position,
         extra: (!extra.is_empty()).then(|| extra.to_owned()),
         line,
+        parsed: true,
     })
 }
 
