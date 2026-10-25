@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use kekule::geometry::Point3;
 use kekule::parallel::{Executor, ScopedThreads};
 use kekule::statistics::{
-    ContactOccupancyAccumulator, MergeMismatch, RmsfAccumulator, StatisticsError,
+    ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, MergeMismatch, RmsfAccumulator,
+    StatisticsError,
 };
 use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
@@ -578,4 +579,191 @@ fn moments_near_overflow_agree_with_moments_far_from_it() {
             .collect::<Vec<_>>();
         assert_eq!(bits(&unscaled), bits(far.values().value()));
     }
+}
+
+fn groups_of(top: &Arc<Topology>, members: &[&[usize]]) -> Vec<AtomSelection> {
+    let ids = top.atom_ids();
+    members
+        .iter()
+        .map(|members| {
+            AtomSelection::from_atoms(Arc::clone(top), members.iter().map(|&atom| ids[atom]))
+                .unwrap()
+        })
+        .collect()
+}
+
+const GROUPS: [&[usize]; 3] = [&[0, 1, 2], &[3, 4], &[5, 6, 7]];
+const GROUP_PAIRS: [(usize, usize); 3] = [(0, 1), (1, 2), (0, 2)];
+
+#[test]
+fn merged_group_contacts_depend_on_the_split_alone_and_match_serial_observation() {
+    let top = chain_topology();
+    let (frames, weights) = weighted_frames(&top, 0.0);
+    let cutoff = Quantity::new(0.2, NANOMETER);
+    for weights in [vec![1.0; OBSERVATIONS], weights] {
+        let empty = || {
+            GroupContactOccupancyAccumulator::new(
+                &top,
+                groups_of(&top, &GROUPS),
+                GROUP_PAIRS,
+                cutoff,
+            )
+            .unwrap()
+        };
+        let mut serial = empty();
+        for (index, weight) in weights.iter().enumerate() {
+            serial
+                .observe(index, &frames.get(index).unwrap(), *weight)
+                .unwrap();
+        }
+        let serial = serial.finish().unwrap();
+        assert!(serial
+            .contacts()
+            .any(|(_, occupancy)| occupancy > 0.0 && occupancy < 1.0));
+        for ranges in splits() {
+            let results = executors()
+                .iter()
+                .map(|executor| {
+                    merged(
+                        executor,
+                        &ranges,
+                        empty,
+                        |contacts, index| {
+                            contacts
+                                .observe(index, &frames.get(index).unwrap(), weights[index])
+                                .unwrap()
+                        },
+                        |contacts, partial| contacts.merge(partial).unwrap(),
+                    )
+                    .finish()
+                    .unwrap()
+                })
+                .collect::<Vec<_>>();
+            for result in &results {
+                assert_eq!(
+                    bits(result.contact_weights()),
+                    bits(results[0].contact_weights())
+                );
+                assert_eq!(
+                    result.total_weight().to_bits(),
+                    results[0].total_weight().to_bits()
+                );
+            }
+            let result = &results[0];
+            assert_eq!(result.observation_count(), OBSERVATIONS);
+            let exact = weights.iter().all(|weight| *weight == 1.0);
+            for (merged, serial) in result
+                .contact_weights()
+                .iter()
+                .chain([&result.total_weight()])
+                .zip(
+                    serial
+                        .contact_weights()
+                        .iter()
+                        .chain([&serial.total_weight()]),
+                )
+            {
+                if exact {
+                    assert_eq!(merged, serial);
+                } else {
+                    assert!((merged - serial).abs() <= 1e-12 * serial.max(1.0));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn incompatible_or_overflowing_group_merges_fail_with_typed_errors_and_change_nothing() {
+    let top = chain_topology();
+    let rows = [
+        ([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7], 1.0),
+        ([0.1; ATOMS], 2.0),
+    ];
+    let accumulator = |top: &Arc<Topology>,
+                       groups: &[&[usize]],
+                       pairs: &[(usize, usize)],
+                       cutoff: f64,
+                       rows: &[([f64; ATOMS], f64)]| {
+        let mut contacts = GroupContactOccupancyAccumulator::new(
+            top,
+            groups_of(top, groups),
+            pairs.iter().copied(),
+            Quantity::new(cutoff, NANOMETER),
+        )
+        .unwrap();
+        for (index, (x, weight)) in rows.iter().enumerate() {
+            contacts
+                .observe(index, &frame(top, *x).get(0).unwrap(), *weight)
+                .unwrap();
+        }
+        contacts
+    };
+    let state = |contacts: &GroupContactOccupancyAccumulator| {
+        (
+            contacts.observation_count(),
+            contacts.total_weight().to_bits(),
+            bits(contacts.clone().finish().unwrap().contact_weights()),
+        )
+    };
+    let mut contacts = accumulator(&top, &GROUPS, &GROUP_PAIRS, 0.15, &rows);
+    let before = state(&contacts);
+    let other_layout = chain_topology();
+    let reordered_groups: [&[usize]; 3] = [GROUPS[1], GROUPS[0], GROUPS[2]];
+    let other_groups: [&[usize]; 3] = [&[0, 1], GROUPS[1], GROUPS[2]];
+    let reversed = [(1, 0), GROUP_PAIRS[1], GROUP_PAIRS[2]];
+    for (other, mismatch) in [
+        (
+            accumulator(&other_layout, &GROUPS, &GROUP_PAIRS, 0.15, &rows),
+            MergeMismatch::Topology,
+        ),
+        (
+            accumulator(&top, &other_groups, &GROUP_PAIRS, 0.15, &rows),
+            MergeMismatch::Groups,
+        ),
+        (
+            accumulator(&top, &reordered_groups, &GROUP_PAIRS, 0.15, &rows),
+            MergeMismatch::Groups,
+        ),
+        (
+            accumulator(&top, &GROUPS, &reversed, 0.15, &rows),
+            MergeMismatch::Pairs,
+        ),
+        (
+            accumulator(&top, &GROUPS, &GROUP_PAIRS[..2], 0.15, &rows),
+            MergeMismatch::Pairs,
+        ),
+        (
+            accumulator(&top, &GROUPS, &GROUP_PAIRS, 0.25, &rows),
+            MergeMismatch::Cutoff,
+        ),
+    ] {
+        assert_eq!(
+            contacts.merge(&other),
+            Err(StatisticsError::MergeMismatch(mismatch))
+        );
+        assert_eq!(state(&contacts), before);
+    }
+    let heavy = accumulator(&top, &GROUPS, &GROUP_PAIRS, 0.15, &[(rows[0].0, f64::MAX)]);
+    let mut heavy_contacts = heavy.clone();
+    assert_eq!(
+        heavy_contacts.merge(&heavy),
+        Err(StatisticsError::MergeWeightOverflow)
+    );
+    assert_eq!(state(&heavy_contacts), state(&heavy));
+    let mut empty = accumulator(&top, &GROUPS, &GROUP_PAIRS, 0.15, &[]);
+    empty
+        .merge(&accumulator(&top, &GROUPS, &GROUP_PAIRS, 0.15, &[]))
+        .unwrap();
+    assert_eq!(empty.observation_count(), 0);
+    contacts.merge(&empty).unwrap();
+    assert_eq!(state(&contacts), before);
+    contacts
+        .merge(&accumulator(&top, &GROUPS, &GROUP_PAIRS, 0.15, &rows))
+        .unwrap();
+    let contacts = contacts.finish().unwrap();
+    assert_eq!(contacts.observation_count(), 4);
+    // Group 0 (0–0.2) touches group 1 (0.3–0.4) in both rows; group 1 touches
+    // group 2 (0.5–0.7) in both; groups 0 and 2 only in the second row.
+    assert_eq!(contacts.contact_weights(), &[6.0, 6.0, 4.0]);
 }

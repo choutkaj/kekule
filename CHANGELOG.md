@@ -15,16 +15,17 @@ are marked **Breaking:**.
   host observes ranges of structures in parallel instead of one structure
   after another in order. `RmsfAccumulator::merge` combines the weighted
   moments of another accumulator over the same selection with Chan et al.'s
-  pairwise update, and `ContactOccupancyAccumulator::merge` adds the weights
-  of another accumulator of the same pairs and cutoff. Partials merged in
+  pairwise update, and `ContactOccupancyAccumulator::merge` and
+  `GroupContactOccupancyAccumulator::merge` add the weights of another
+  accumulator of the same pairs (and groups) and cutoff. Partials merged in
   range order give, for a given split, the same result on every executor and
   thread count, and the serial result up to rounding: within 10⁻¹⁴ of the
   RMSF, or 10⁻¹¹ with a common translation of 1000 nm, in the tests, and
   exactly for contact weights of one. Merging accumulators of another
-  topology layout, selection, pairs, pair order, or cutoff fails with the
+  topology layout, selection, groups, pairs, pair order, or cutoff fails with the
   new `StatisticsError::MergeMismatch` (`MergeMismatch`), and overflowing
   with `MergeWeightOverflow` or `MergeNumericalFailure`; a failed merge
-  changes nothing. Both accumulators are now `Clone`. An RMSF observation
+  changes nothing. The accumulators are now `Clone`. An RMSF observation
   measures squared lengths instead of `hypot`, updates the moments in place
   when a bound on the coordinates and the total weight proves that nothing
   can overflow, and copies them only otherwise; contacts compare squared
@@ -35,6 +36,50 @@ are marked **Breaking:**.
   and 50,000 contact pairs 0.21–0.26 ms instead of 0.71–0.92 ms. Observing
   96 frames in ranges on four scoped threads reaches 1,700–2,300 RMSF
   frames/s, against 550–740 serially on `main`.
+- Contact occupancy of pairs of atom groups (SeekDelta K46), such as a
+  pocket's residues against a ligand or the residues on both sides of an
+  interface: a pair of groups is in contact in an observation when any atom
+  of one is within the cutoff of any atom of the other, which the atom pairs'
+  occupancies cannot give, since their contacts overlap across observations.
+  `GroupContactOccupancyAccumulator` takes the groups as atom selections and
+  the pairs as indices into them, observes structures with explicit weights
+  as `ContactOccupancyAccumulator` does, and finishes with a
+  `GroupContactOccupancyResult` of contact weights and occupancies in pair
+  order. `Ensemble::group_contact_occupancy` observes each sample with its
+  probability and `Trajectory::group_contact_occupancy` every frame with
+  weight one. A pair of one-atom groups has its atom pair's occupancy. State
+  is one sum per pair plus scratch for the grouped atoms, whatever the number
+  of observations. An observation reads only the grouped atoms, rejects
+  pairs whose bounding boxes lie farther apart than the cutoff, and searches
+  a grid of the larger group, built once per observation, for pairs of large
+  groups. Groups that are empty, pairs naming a group past the last, one
+  group twice, a repeated pair, or groups sharing an atom are refused with
+  the new `StatisticsError::EmptyGroup`, `UnknownGroup`, and
+  `OverlappingGroups`, or `SelfPair` and `DuplicatePair`. In 103,823 lattice
+  atoms at protein density (the new `group_contacts` benchmark, release,
+  i5-11400F, 0.45 nm cutoff), one observation of 100 pocket residues
+  against a 40-atom ligand takes 0.11 ms, against 0.67 ms for their 40,000
+  atom pairs through `ContactOccupancyAccumulator`; 3,975 residue pairs
+  across an interface take 0.60 ms, and its two sides as one pair 0.09 ms.
+- Atom correspondence by hierarchy labels (SeekDelta K47), so two different
+  structures of one molecule (two crystal structures of a protein, or a model
+  and its template) are superposed without the host pairing their atoms.
+  `AtomCorrespondence::from_labels` pairs the atoms of a moving and a
+  reference `AtomSelection`, each on its own topology, whose chain, residue
+  number, insertion code, and atom name are equal, in the moving selection's
+  dense order. `LabelScheme::Author` (the default) reads the identifiers the
+  selection language's `chain`, `resid`, and `name` terms read: author chain,
+  sequence, and atom IDs, each falling back to its label ID, with insertion
+  codes; `LabelScheme::Label` reads mmCIF `label_asym_id`, `label_seq_id`,
+  and `label_atom_id`, as `labelchain`, `labelresid`, and `labelname` do.
+  Residue names are not compared, so a mutated residue pairs its backbone.
+  The `LabelCorrespondence` it returns holds the `AtomCorrespondence`, which
+  fits take as any other (or the `LabelCorrespondence` itself), and the
+  selected atoms of each side left unpaired, unlabeled atoms among them.
+  A label that names more than one selected atom on a side, such as
+  alternate locations kept as atoms or a repeated residue number, is refused
+  with the new `AtomCorrespondenceError::AmbiguousLabels`, which names the
+  side and every such `AmbiguousLabel` with its `AtomLabel` and atoms.
 - Atom selections from and to dense order (SeekDelta K43), so a host that
   holds atom sets as sorted indices or bit masks (a resolver's `selected`,
   `visible`, or secondary-structure terms) makes and reads selections in

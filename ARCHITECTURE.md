@@ -444,7 +444,8 @@ works in any frame order, using the frame's own cell. Unwrapping retains tempora
 sufficiently close samples; it precedes downsampling. Failed streaming operations
 change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
-RMSF and contact occupancy are weighted statistics in `kekule::statistics`.
+RMSF and contact occupancy, of atom pairs or of pairs of atom groups, are
+weighted statistics in `kekule::statistics`.
 Every observation is a borrowed structure together with an explicit, finite,
 positive weight, so no structure is reduced with an implied weight.
 `Ensemble` methods observe each sample with its probability; `Trajectory`
@@ -453,13 +454,14 @@ equilibrium samples, and other frame weights are passed to the accumulators
 explicitly. Streamed frames reach the same accumulators through their buffer's
 `ModelView`; `kekule-traj` adds no statistics of its own. Accumulators consume
 structures sharing the source topology's layout with memory bounded by
-selected atoms or pairs, not observation count. Failed observations leave
+selected atoms, pairs, or groups, not observation count. Failed observations leave
 accumulators unchanged. Accumulators of the same selection, or of the same
-pairs and cutoff, merge: a host observes ranges of structures into partial
-accumulators on any threads and merges them in range order, so a given split
-returns the same result on every executor, equal to serial observation up to
-rounding. Merging refuses mismatched accumulators with a typed error and,
-like observation, changes nothing when it fails. Results retain atom/pair associations; observation
+pairs of atoms or groups and cutoff, merge: a host observes ranges of
+structures into partial accumulators on any threads and merges them in range
+order, so a given split returns the same result on every executor, equal to
+serial observation up to rounding. Merging refuses mismatched accumulators
+with a typed error and, like observation, changes nothing when it fails.
+Results retain atom/pair associations; observation
 indices are diagnostic labels. Preprocessing, including alignment or imaging,
 is explicit. These are separate analysis results, not new topology state or a
 generic reduction framework.
@@ -792,6 +794,10 @@ read perception, such as prepared substructure targets, bind the exact snapshot.
 Geometric correspondence may explicitly pair selected atoms from two exact
 snapshots, with each side validated and pairs one-to-one. It need not cover equal
 system sizes and does not claim chemical equivalence or rebind either owner.
+Pairing by hierarchy labels reads one namespace, author or label identifiers, as
+the selection language's terms of that namespace do, reports the selected atoms
+it leaves unpaired, and refuses a label naming more than one selected atom on a
+side rather than choosing one.
 See [alignment correspondence](crates/kekule/src/alignment/correspondence.rs) and
 [collection alignment](crates/kekule/src/alignment/collection.rs).
 
