@@ -428,7 +428,13 @@ index never makes a reader return a frame it has not verified. Streaming buffers
 transactionally. A buffer hands its frame out as a one-frame trajectory, and
 takes a frame back, by moving it; the frame stays bound and validated. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
-unsupported fields and collection properties are rejected rather than discarded.
+stream writers write the same bytes into a host's `Write + Seek` stream and
+leave placing the file to the host. Frame state a codec cannot carry fails
+unless the caller sets `UnrepresentablePolicy::Omit` for its kind (frame
+metadata, frame properties, or the cell), and the writer reports what it
+left out; collection properties are rejected rather than discarded. A codec
+never invents frame state, except the times and steps XTC and TRR number
+under an explicit `FrameTimingPolicy::Number`.
 
 Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in

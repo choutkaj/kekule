@@ -644,6 +644,12 @@ pub enum StructureField {
     Velocities,
     /// A trajectory frame's forces.
     Forces,
+    /// A trajectory frame's per-atom properties.
+    AtomProperties,
+    /// A trajectory frame's per-bond properties.
+    BondProperties,
+    /// A trajectory frame's own properties.
+    Properties,
 }
 
 impl fmt::Display for StructureField {
@@ -657,6 +663,9 @@ impl fmt::Display for StructureField {
             Self::Step => "trajectory frame step",
             Self::Velocities => "trajectory frame velocities",
             Self::Forces => "trajectory frame forces",
+            Self::AtomProperties => "trajectory frame atom properties",
+            Self::BondProperties => "trajectory frame bond properties",
+            Self::Properties => "trajectory frame properties",
         })
     }
 }

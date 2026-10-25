@@ -4,7 +4,11 @@
 //! or f64 position, box, velocity and force blocks; [`TrrWriter`] writes them
 //! at one explicit [`TrrScalarPrecision`]. Every frame carries a step and a
 //! time; GROMACS nanometre, picosecond and kJ/(mol nm) units are converted at
-//! the codec boundary. The lambda scalar follows a [`TrrLambdaPolicy`].
+//! the codec boundary. The lambda scalar follows a [`TrrLambdaPolicy`]. A
+//! frame without a time or step can be numbered under
+//! [`TrrWriteOptions::frame_timing`]; the properties TRR cannot carry are
+//! rejected unless [`TrrWriteOptions::frame_properties`] omits them, as
+//! [`TrrWriter::report`] then reports.
 //!
 //! # Examples
 //!
@@ -64,6 +68,7 @@ use crate::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
+use kekule::diagnostics::{UnrepresentablePolicy, WriteReport};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{OwnerProperties, PropertyKey, PropertyValue, StructureProperties};
 use kekule::structure::TrajectoryFrameView;
@@ -73,10 +78,11 @@ use kekule::units::{
     NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
 
+use super::frame_state::{record, unrepresentable_frame_state};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_detail,
-    FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
+    FrameOffsets, FrameStamp, FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
 };
 
 const TRR_MAGIC: i32 = 1993;
@@ -173,10 +179,12 @@ impl TrrReadOptions {
 }
 
 /// TRR writer policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrrWriteOptions {
     precision: TrrScalarPrecision,
     lambda_policy: TrrLambdaPolicy,
+    frame_properties: UnrepresentablePolicy,
+    frame_timing: FrameTimingPolicy,
 }
 
 impl Default for TrrWriteOptions {
@@ -184,6 +192,8 @@ impl Default for TrrWriteOptions {
         Self {
             precision: TrrScalarPrecision::Float32,
             lambda_policy: TrrLambdaPolicy::FrameProperty,
+            frame_properties: UnrepresentablePolicy::Fail,
+            frame_timing: FrameTimingPolicy::Require,
         }
     }
 }
@@ -205,6 +215,20 @@ impl TrrWriteOptions {
         self
     }
 
+    /// Sets [`Self::frame_properties`].
+    #[must_use]
+    pub const fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
+        self.frame_properties = frame_properties;
+        self
+    }
+
+    /// Sets [`Self::frame_timing`]; [`TrrWriter::new`] checks its interval.
+    #[must_use]
+    pub const fn with_frame_timing(mut self, frame_timing: FrameTimingPolicy) -> Self {
+        self.frame_timing = frame_timing;
+        self
+    }
+
     /// The scalar width written; [`TrrScalarPrecision::Float32`] by default.
     pub const fn precision(&self) -> TrrScalarPrecision {
         self.precision
@@ -215,6 +239,26 @@ impl TrrWriteOptions {
     /// [`TRR_LAMBDA_PROPERTY`] frame property.
     pub const fn lambda_policy(&self) -> TrrLambdaPolicy {
         self.lambda_policy
+    }
+
+    /// A trajectory frame's atom and bond properties, and its frame
+    /// properties other than the [`TRR_LAMBDA_PROPERTY`] the
+    /// [`TrrLambdaPolicy::FrameProperty`] lambda policy writes, which TRR
+    /// cannot carry: by default a frame with any of them fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
+    /// reports a
+    /// [`WriteOmission::StructureState`](kekule::diagnostics::WriteOmission::StructureState)
+    /// for each kind left out (see [`TrrWriter::report`]). The lambda
+    /// policy's own requirements are never omitted.
+    pub const fn frame_properties(&self) -> UnrepresentablePolicy {
+        self.frame_properties
+    }
+
+    /// The time and step of a frame without them, which TRR records for
+    /// every frame; [`FrameTimingPolicy::Require`], under which such a frame
+    /// fails to write, by default.
+    pub const fn frame_timing(&self) -> FrameTimingPolicy {
+        self.frame_timing
     }
 }
 
@@ -1039,6 +1083,7 @@ pub struct TrrWriter<W> {
     /// or reported as finished.
     partial: bool,
     raw: Vec<u8>,
+    report: WriteReport,
 }
 
 impl<W> fmt::Debug for TrrWriter<W> {
@@ -1061,7 +1106,10 @@ impl<W: Write> TrrWriter<W> {
     /// # Errors
     ///
     /// Returns [`TrajectoryIoErrorKind::LimitExceeded`] when the topology has
-    /// no atoms or more than `i32::MAX / 3`.
+    /// no atoms or more than `i32::MAX / 3`, and
+    /// [`TrajectoryIoErrorKind::InconsistentMetadata`] for a
+    /// [`FrameTimingPolicy::Number`] interval that is not a finite,
+    /// nonnegative time.
     pub fn new(
         writer: W,
         topology: impl Into<Arc<Topology>>,
@@ -1079,6 +1127,9 @@ impl<W: Write> TrrWriter<W> {
                 "TRR atom count must fit the signed 32-bit format",
             ));
         }
+        options
+            .frame_timing
+            .validate(TrajectoryFormat::Trr, &source_label)?;
         Ok(Self {
             writer,
             topology,
@@ -1087,7 +1138,16 @@ impl<W: Write> TrrWriter<W> {
             frame_count: 0,
             partial: false,
             raw: Vec::new(),
+            report: WriteReport::default(),
         })
+    }
+
+    /// The frame state the frames written so far leave out under
+    /// [`TrrWriteOptions::frame_properties`], counted over every frame
+    /// written. TRR stores coordinates for a topology its readers receive
+    /// separately, so nothing else is reported.
+    pub fn report(&self) -> &WriteReport {
+        &self.report
     }
 
     /// The topology every written frame must share.
@@ -1161,33 +1221,48 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        if frame.properties().atoms().has_data() {
-            return Err(writer_field_error(
-                &self.source_label,
-                self.frame_count,
-                TrajectoryField::AtomProperties,
-            ));
-        }
-        if frame.properties().bonds().has_data() {
-            return Err(writer_field_error(
-                &self.source_label,
-                self.frame_count,
-                TrajectoryField::BondProperties,
-            ));
-        }
+        let properties = frame.properties();
+        let omitted = unrepresentable_frame_state(
+            [
+                (
+                    properties.atoms().has_data(),
+                    TrajectoryField::AtomProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    properties.bonds().has_data(),
+                    TrajectoryField::BondProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    self.options.frame_properties == UnrepresentablePolicy::Omit
+                        && has_unwritten_owner_properties(
+                            properties.owner(),
+                            self.options.lambda_policy,
+                        ),
+                    TrajectoryField::Properties,
+                    self.options.frame_properties,
+                ),
+            ],
+            |field| writer_field_error(&self.source_label, self.frame_count, field),
+        )?;
         if self.frame_count == usize::MAX {
             return Err(writer_limit(
                 &self.source_label,
                 "TRR frame count overflows",
             ));
         }
-        let step = frame.step().ok_or_else(|| {
+        let (step, time) =
+            self.options
+                .frame_timing
+                .timing(self.frame_count, frame.step(), frame.time());
+        let step = step.ok_or_else(|| {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Trr),
                 &self.source_label,
-                "TRR requires an explicit frame step",
+                "TRR requires an explicit frame step; FrameTimingPolicy::Number numbers frames without one",
             )
         })?;
         let step = i32::try_from(step).map_err(|_| {
@@ -1199,13 +1274,13 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 "TRR step exceeds signed 32-bit capacity",
             )
         })?;
-        let time = frame.time().ok_or_else(|| {
+        let time = time.ok_or_else(|| {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Trr),
                 &self.source_label,
-                "TRR requires explicit frame time",
+                "TRR requires explicit frame time; FrameTimingPolicy::Number times frames without one",
             )
         })?;
         let time = time.value_in(PICOSECOND).map_err(|error| {
@@ -1218,8 +1293,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             )
         })?;
         let lambda = writer_lambda(
-            frame.properties(),
+            properties,
             self.options.lambda_policy,
+            self.options.frame_properties,
             &self.source_label,
             self.frame_count,
         )?;
@@ -1444,6 +1520,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             .frame_count
             .checked_add(1)
             .ok_or_else(|| writer_limit(&self.source_label, "TRR frame count overflows"))?;
+        record(&mut self.report, omitted);
         Ok(())
     }
 }
@@ -1889,18 +1966,40 @@ fn trr_lambda_key() -> PropertyKey {
     PropertyKey::new(TRR_LAMBDA_PROPERTY).expect("TRR lambda property key is valid")
 }
 
+/// Whether `owner` holds frame properties a frame written under `policy`
+/// leaves out: any under [`TrrLambdaPolicy::RequireZero`], and any but the
+/// lambda under [`TrrLambdaPolicy::FrameProperty`].
+fn has_unwritten_owner_properties(owner: &OwnerProperties, policy: TrrLambdaPolicy) -> bool {
+    match policy {
+        TrrLambdaPolicy::FrameProperty => {
+            owner.len() > usize::from(owner.get(&trr_lambda_key()).is_some())
+        }
+        TrrLambdaPolicy::RequireZero => !owner.is_empty(),
+    }
+}
+
+/// The lambda of a frame with `properties`. Under
+/// [`UnrepresentablePolicy::Omit`] for `frame_properties`, properties
+/// [`has_unwritten_owner_properties`] names are ignored, and atom and bond
+/// properties are left to the caller.
 fn writer_lambda(
     properties: &StructureProperties,
     policy: TrrLambdaPolicy,
+    frame_properties: UnrepresentablePolicy,
     source_label: &str,
     frame: usize,
 ) -> Result<f64, TrajectoryIoError> {
+    let omit = frame_properties == UnrepresentablePolicy::Omit;
     match policy {
         TrrLambdaPolicy::FrameProperty => {
-            if properties.owner().len() != 1
-                || properties.atoms().has_data()
-                || properties.bonds().has_data()
-            {
+            let other = if omit {
+                properties.owner().get(&trr_lambda_key()).is_none()
+            } else {
+                properties.owner().len() != 1
+                    || properties.atoms().has_data()
+                    || properties.bonds().has_data()
+            };
+            if other {
                 return Err(codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
@@ -1925,7 +2024,7 @@ fn writer_lambda(
             }
         }
         TrrLambdaPolicy::RequireZero => {
-            if !properties.is_empty() {
+            if !omit && !properties.is_empty() {
                 return Err(writer_field_error(
                     source_label,
                     frame,

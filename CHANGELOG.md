@@ -11,6 +11,49 @@ are marked **Breaking:**.
 
 ### Added
 
+- Trajectory writers leave out and report the frame state their format
+  cannot carry (SeekDelta K51), as the structure writers do, so a host writes
+  a trajectory read from XTC as DCD or XYZ without first copying every frame
+  without that state. The XYZ, DCD, and XTC write options take a
+  `frame_metadata` policy for frame velocities, forces, times, and steps
+  (XYZ: all four; DCD: velocities, forces, and times under
+  `DcdTimePolicy::Absent`; XTC: velocities and forces), and all four codecs'
+  options a `frame_properties` policy for atom, bond, and frame properties
+  (TRR: all but the lambda its `FrameProperty` lambda policy writes). Both
+  fail by default, as before; under `UnrepresentablePolicy::Omit` the frame
+  is written without that state, and the new `DcdWriter::report`,
+  `TrrWriter::report`, and `XtcWriter::report`, like `XyzWriter::report`,
+  count each kind left out as a `WriteOmission::StructureState` of the new
+  `StructureField::AtomProperties`, `BondProperties`, or `Properties`, or of
+  `Time`, `Step`, `Velocities`, or `Forces`. A frame left without its time
+  writes the same bytes as one that never had it.
+  `TrajectoryWriteOptions::with_frame_metadata` and `with_frame_properties`
+  set the policy of every codec that has it, and `FileTrajectoryWriter::report`
+  and `write_trajectory` now return each codec's report.
+- XTC and TRR frames numbered when they have no time or step (SeekDelta
+  K52), as frames read from DCD or XYZ do not. Under the new
+  `FrameTimingPolicy::Number { interval }`, set through
+  `XtcWriteOptions::with_frame_timing`, `TrrWriteOptions::with_frame_timing`,
+  or `TrajectoryWriteOptions::with_frame_timing`, frame `n` of the frames
+  written gets step `n` when it has none and time `n × interval` when it has
+  none; a frame's own time and step are kept, such as the steps of DCD
+  frames. The default, `FrameTimingPolicy::Require`, fails such frames as
+  before. An interval that is not a finite, nonnegative time fails when the
+  writer is created.
+- Trajectory writers over a host's stream (SeekDelta K53), so that a host
+  places the file itself, for example writing under a temporary name of its
+  own and replacing the destination with retries where
+  `create_trajectory_writer`'s single `std::fs::rename` fails because another
+  program briefly holds the destination on Windows.
+  `create_trajectory_stream_writer` writes the format `TrajectoryWriteOptions`
+  names into any `Write + Seek` stream from its current position, and
+  `TrajectoryStreamWriter::finish` finalizes and flushes it (patching the DCD
+  frame count) and returns it; `write_trajectory_to` writes a loaded
+  trajectory, as `mmcif::write_to` writes structures, and returns the report.
+  A stream writer writes the bytes the path writer publishes and, like it,
+  refuses to continue or finish after a failed frame write. The path writer
+  is unchanged and now writes through it.
+
 - Mergeable RMSF and contact occupancy accumulators (SeekDelta K48), so a
   host observes ranges of structures in parallel instead of one structure
   after another in order. `RmsfAccumulator::merge` combines the weighted
@@ -432,6 +475,12 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** `TrrWriteOptions` is no longer `Eq`, since it holds a
+  `FrameTimingPolicy` with an `f64` interval; it remains `PartialEq`.
+- The DCD writer's refusal of a frame time under `DcdTimePolicy::Absent`
+  names the source and the frame, as its other frame-state refusals do, and
+  the XTC and TRR refusals of a frame without a time or step name
+  `FrameTimingPolicy::Number`.
 - Selection terms over a million atoms run within a frame (SeekDelta K42),
   with unchanged results. `name` and `label_name` decide each distinct atom
   name once, against a table of the sites' names that the topology numbers on

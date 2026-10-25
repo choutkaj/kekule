@@ -4,6 +4,7 @@
 mod support;
 
 mod dcd;
+mod frame_state;
 mod trr;
 mod writers;
 mod xtc;

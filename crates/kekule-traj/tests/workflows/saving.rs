@@ -570,3 +570,174 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
         );
     }
 }
+
+/// Write options under which the frames of the DCD fixture, with steps and
+/// cells but no times, save as `format`: XYZ leaving the step and cell out,
+/// TRR and XTC numbering their times every 2 ps.
+fn converting_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
+    use kekule::diagnostics::UnrepresentablePolicy;
+    use kekule::units::{Quantity, PICOSECOND};
+    use kekule_traj::io::trr::TrrLambdaPolicy;
+    use kekule_traj::io::xyz::XyzWriteOptions;
+    use kekule_traj::io::FrameTimingPolicy;
+
+    TrajectoryWriteOptions::new(format)
+        .with_xyz_options(XyzWriteOptions::default().with_cell(UnrepresentablePolicy::Omit))
+        .with_dcd_options(DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write))
+        .with_trr_options(
+            TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+        )
+        .with_frame_metadata(UnrepresentablePolicy::Omit)
+        .with_frame_timing(FrameTimingPolicy::Number {
+            interval: Quantity::new(2.0, PICOSECOND),
+        })
+}
+
+fn dcd_fixture() -> Trajectory {
+    read_trajectory(
+        fixture("mdanalysis-2.9.0-three-atoms.dcd"),
+        topology(&["C", "H", "O"], &[(0, 1), (0, 2)]),
+        Default::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn frames_without_times_save_as_every_format_by_omitting_or_numbering_state() {
+    use kekule::diagnostics::{StructureField, WriteOmission};
+    use kekule::units::PICOSECOND;
+
+    let directory = Directory::new();
+    let source = dcd_fixture();
+    let frames = source.len();
+    assert!(source.iter().all(|frame| frame.time().is_none()));
+    for format in [
+        TrajectoryFormat::Xyz,
+        TrajectoryFormat::Dcd,
+        TrajectoryFormat::Trr,
+        TrajectoryFormat::Xtc,
+    ] {
+        let path = directory.file(&format!("converted.{}", format.name()));
+        let report = write_trajectory(&path, &source, converting_options(format)).unwrap();
+        let read = read_trajectory(&path, source.shared_topology(), Default::default()).unwrap();
+        assert_eq!(read.len(), frames, "{format}");
+        let steps = |trajectory: &Trajectory| {
+            trajectory
+                .iter()
+                .map(|frame| frame.step())
+                .collect::<Vec<_>>()
+        };
+        let times = read
+            .iter()
+            .map(|frame| frame.time().map(|time| time.value_in(PICOSECOND).unwrap()))
+            .collect::<Vec<_>>();
+        match format {
+            TrajectoryFormat::Xyz => {
+                assert!(report.omissions().contains(&WriteOmission::StructureState {
+                    field: StructureField::Step,
+                    structures: frames,
+                }));
+                assert!(report
+                    .omissions()
+                    .contains(&WriteOmission::Cell { structures: frames }));
+                assert_eq!(steps(&read), vec![None; frames]);
+            }
+            TrajectoryFormat::Dcd => {
+                assert!(report.is_empty());
+                assert_eq!(steps(&read), steps(&source));
+                assert_eq!(times, vec![None; frames]);
+            }
+            _ => {
+                assert!(report.is_empty(), "{format}");
+                assert_eq!(steps(&read), steps(&source), "{format}");
+                let numbered = (0..frames)
+                    .map(|frame| Some(2.0 * frame as f64))
+                    .collect::<Vec<_>>();
+                assert_eq!(times, numbered, "{format}");
+            }
+        }
+    }
+}
+
+#[test]
+fn stream_writers_write_from_the_stream_position_what_path_writers_publish() {
+    use kekule_traj::io::write_trajectory_to;
+
+    let directory = Directory::new();
+    let source = dcd_fixture();
+    for format in [
+        TrajectoryFormat::Xyz,
+        TrajectoryFormat::Dcd,
+        TrajectoryFormat::Trr,
+        TrajectoryFormat::Xtc,
+    ] {
+        let path = directory.file(&format!("published.{}", format.name()));
+        let published = write_trajectory(&path, &source, converting_options(format)).unwrap();
+        let prefix = b"host header";
+        let mut stream = io::Cursor::new(prefix.to_vec());
+        stream.set_position(prefix.len() as u64);
+        let streamed =
+            write_trajectory_to(&mut stream, &source, converting_options(format)).unwrap();
+        assert_eq!(streamed, published, "{format}");
+        assert_eq!(stream.position(), stream.get_ref().len() as u64, "{format}");
+        let bytes = stream.into_inner();
+        assert_eq!(&bytes[..prefix.len()], prefix, "{format}");
+        assert_eq!(bytes[prefix.len()..], fs::read(&path).unwrap(), "{format}");
+    }
+}
+
+#[test]
+fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
+    use kekule_traj::io::create_trajectory_stream_writer;
+
+    let source = dcd_fixture();
+    assert_eq!(
+        create_trajectory_stream_writer(
+            io::Cursor::new(Vec::new()),
+            source.shared_topology(),
+            TrajectoryWriteOptions::default(),
+            "host stream",
+        )
+        .map(|_| ()),
+        Err(TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::UnknownFormat,
+            TrajectoryIoOperation::Open,
+            None,
+        )
+        .with_source_label("host stream")
+        .with_detail("a stream writer needs an explicit format; use TrajectoryWriteOptions::new"))
+    );
+
+    // XYZ under its default options refuses the cell of every DCD frame.
+    let mut writer = create_trajectory_stream_writer(
+        io::Cursor::new(Vec::new()),
+        source.shared_topology(),
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
+        "host stream",
+    )
+    .unwrap();
+    assert_eq!(writer.format(), TrajectoryFormat::Xyz);
+    let error = writer.write_frame(source.get(0).unwrap()).unwrap_err();
+    assert_eq!(error.field(), Some(TrajectoryField::PeriodicCell));
+    let poisoned = codec_error(
+        TrajectoryIoErrorKind::InvalidFrame,
+        TrajectoryIoOperation::WriteFrame,
+        TrajectoryFormat::Xyz,
+        "host stream",
+        None,
+        "trajectory writer is poisoned by an earlier frame-write failure",
+    );
+    assert_eq!(writer.write_frame(source.get(0).unwrap()), Err(poisoned));
+    assert!(writer.writer().get_ref().is_empty());
+    assert_eq!(
+        writer.finish().map(|_| ()),
+        Err(codec_error(
+            TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Xyz,
+            "host stream",
+            None,
+            "cannot finish a trajectory after an earlier frame-write failure",
+        ))
+    );
+}

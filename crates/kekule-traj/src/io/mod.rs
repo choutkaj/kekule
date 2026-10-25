@@ -9,8 +9,10 @@
 //! atomically. Every operation takes its options, which set the codec and
 //! field policies; the defaults detect the format.
 //! Use [`open_trajectory`] for sequential processing with
-//! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access, or
-//! [`create_trajectory_writer`] for atomic path-backed writing. Each operation
+//! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access,
+//! [`create_trajectory_writer`] for atomic path-backed writing, or
+//! [`create_trajectory_stream_writer`] and [`write_trajectory_to`] for writing
+//! into a host's stream, so that the host places the file. Each operation
 //! takes a topology directly or from its trajectory. Path readers expose opening
 //! diagnostics through `open_report()` and verified format metadata through
 //! `metadata()`. The [`xyz`], [`dcd`], [`trr`] and [`xtc`] modules hold the
@@ -51,10 +53,10 @@
 //!
 //! | Format | Reader | Writer |
 //! |---|---|---|
-//! | XYZ | strict constant-count multi-frame element/x/y/z text; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected and omitted topology content is reported |
-//! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, fixed-atom reconstruction, and strict `NSET` | canonical all-atom `CORD` in either byte order with optional unit cells |
-//! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks | one explicit f32 or f64 precision with per-frame optional blocks |
-//! | XTC | GROMACS magic 1995/2023, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates | magic 1995/2023 at explicit lossy precision, bounding scaled coordinates and per-axis spans as GROMACS does |
+//! | XYZ | strict constant-count multi-frame element/x/y/z text; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected unless omitted, and omitted frame state and topology content are reported |
+//! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, fixed-atom reconstruction, and strict `NSET` | canonical all-atom `CORD` in either byte order with optional unit cells; velocities, forces, properties, and times without a `DELTA` policy rejected unless omitted |
+//! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks | one explicit f32 or f64 precision with per-frame optional blocks; properties rejected unless omitted; frames without a time or step rejected unless numbered |
+//! | XTC | GROMACS magic 1995/2023, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates | magic 1995/2023 at explicit lossy precision, bounding scaled coordinates and per-axis spans as GROMACS does; velocities, forces, and properties rejected unless omitted; frames without a time or step rejected unless numbered |
 //!
 //! Readers accept an owned topology or a shared `Arc<Topology>`. File coordinate
 //! index `i` means topology dense atom index `i`. Counts and available metadata
@@ -86,10 +88,17 @@
 //! Path writers stage a temporary sibling. Only consuming
 //! [`FileTrajectoryWriter::finish`] flushes, synchronizes, finalizes format
 //! metadata, and publishes a nonempty trajectory. Any failed frame write or an
-//! empty finish prevents publication.
+//! empty finish prevents publication. Its single rename can fail on Windows
+//! while another program briefly holds the destination; a host that retries
+//! or places files itself writes through a [`TrajectoryStreamWriter`], whose
+//! consuming [`TrajectoryStreamWriter::finish`] finalizes and flushes the
+//! host's stream and returns it.
 //! The saving helpers reject unsupported collection properties before opening a
-//! writer. Format policies also reject unsupported frame fields; they never
-//! silently discard them. Defaults preserve an existing destination, use TRR f32
+//! writer. Format policies also reject unsupported frame fields unless their
+//! `frame_metadata` or `frame_properties` options omit them; they never
+//! silently discard them, and the writers' reports name what they omit.
+//! XTC and TRR number frames without a time or step only under an explicit
+//! [`FrameTimingPolicy::Number`]. Defaults preserve an existing destination, use TRR f32
 //! with its lambda frame property, DCD without cells, and XTC resolution of
 //! 0.001 nm. Use explicit write options when those profiles do not fit the data.
 //!
@@ -105,6 +114,7 @@ mod detect;
 mod file_reader;
 mod file_writer;
 mod frame_index;
+mod frame_state;
 mod limits;
 mod metadata;
 pub mod trr;
@@ -117,10 +127,12 @@ pub use file_reader::{
     IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
-    create_trajectory_writer, write_trajectory, FileTrajectoryWriter, OverwritePolicy,
+    create_trajectory_stream_writer, create_trajectory_writer, write_trajectory,
+    write_trajectory_to, FileTrajectoryWriter, OverwritePolicy, TrajectoryStreamWriter,
     TrajectoryWriteOptions,
 };
 pub use frame_index::{TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryIndexProgress};
+pub use frame_state::FrameTimingPolicy;
 pub use limits::TrajectoryIoLimits;
 pub use metadata::{
     detect_trajectory_format, CoordinateEncoding, FieldAvailability, FileTrajectoryMetadata,

@@ -5,10 +5,10 @@
 //! elements; [`XyzWriter`] writes them deterministically, from trajectory
 //! frames or, one frame per sample, from an ensemble
 //! ([`XyzWriter::write_ensemble`]). XYZ stores positions only: the writer
-//! rejects velocities, forces, time, step and properties instead of dropping
-//! them, rejects cells and ensemble sample state unless its options omit
-//! them, and reports everything it leaves out, such as bonds, charges and
-//! omitted cells, in [`XyzWriter::report`]. To
+//! rejects a frame's velocities, forces, time, step and properties, its
+//! cell, and ensemble sample state unless its options omit them, and
+//! reports everything it leaves out, such as bonds, charges and omitted
+//! cells, in [`XyzWriter::report`]. To
 //! obtain a topology from an XYZ file itself, interpret one of its frames
 //! with `kekule::xyz`, which keeps atom-line order as dense order and infers
 //! bonds from distances. This reader accepts element symbols in their
@@ -68,6 +68,7 @@ use kekule::structure::{Ensemble, ModelView, Positions, TrajectoryFrameView};
 use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
+use super::frame_state::{record, unrepresentable_frame_state};
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
@@ -139,14 +140,16 @@ impl XyzReadOptions {
 
 /// Deterministic strict XYZ writer options.
 ///
-/// The default fails on every cell and ensemble sample state XYZ cannot
-/// carry.
+/// The default fails on every cell, frame state, and ensemble sample state
+/// XYZ cannot carry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XyzWriteOptions {
     length_unit: Unit,
     decimal_places: usize,
     comment: String,
     cell: UnrepresentablePolicy,
+    frame_metadata: UnrepresentablePolicy,
+    frame_properties: UnrepresentablePolicy,
     ensemble_metadata: UnrepresentablePolicy,
 }
 
@@ -157,6 +160,8 @@ impl Default for XyzWriteOptions {
             decimal_places: 8,
             comment: "written by kekule-traj".into(),
             cell: UnrepresentablePolicy::Fail,
+            frame_metadata: UnrepresentablePolicy::Fail,
+            frame_properties: UnrepresentablePolicy::Fail,
             ensemble_metadata: UnrepresentablePolicy::Fail,
         }
     }
@@ -188,6 +193,20 @@ impl XyzWriteOptions {
     #[must_use]
     pub const fn with_cell(mut self, cell: UnrepresentablePolicy) -> Self {
         self.cell = cell;
+        self
+    }
+
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
+        self
+    }
+
+    /// Sets [`Self::frame_properties`].
+    #[must_use]
+    pub const fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
+        self.frame_properties = frame_properties;
         self
     }
 
@@ -223,6 +242,22 @@ impl XyzWriteOptions {
     /// [`WriteOmission::Cell`].
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
+    }
+
+    /// A trajectory frame's velocities, forces, time, and step, which XYZ
+    /// cannot carry: by default a frame with any of them fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes its positions and reports a
+    /// [`WriteOmission::StructureState`] for each kind left out.
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
+    }
+
+    /// A trajectory frame's atom, bond, and frame properties, which XYZ
+    /// cannot carry: by default a frame with any of them fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes its positions and reports a
+    /// [`WriteOmission::StructureState`] for each kind left out.
+    pub const fn frame_properties(&self) -> UnrepresentablePolicy {
+        self.frame_properties
     }
 
     /// Ensemble sample weights, states, state energies, and the temperature,
@@ -1085,7 +1120,9 @@ impl<W: Write> XyzWriter<W> {
     ///
     /// Each frame or ensemble written then adds what it left out, counted
     /// over every frame written: cells omitted under
-    /// [`XyzWriteOptions::cell`], sample state omitted under
+    /// [`XyzWriteOptions::cell`], frame state omitted under
+    /// [`XyzWriteOptions::frame_metadata`] and
+    /// [`XyzWriteOptions::frame_properties`], sample state omitted under
     /// [`XyzWriteOptions::ensemble_metadata`], and samples' occupancies and
     /// B factors. The writer writes the same text whatever it reports.
     pub fn report(&self) -> &WriteReport {
@@ -1163,41 +1200,63 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        let unsupported = [
-            (
-                frame.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail,
-                TrajectoryField::PeriodicCell,
-            ),
-            (frame.velocities().is_some(), TrajectoryField::Velocities),
-            (frame.forces().is_some(), TrajectoryField::Forces),
-            (frame.time().is_some(), TrajectoryField::Time),
-            (frame.step().is_some(), TrajectoryField::Step),
-            (
-                frame.properties().atoms().has_data(),
-                TrajectoryField::AtomProperties,
-            ),
-            (
-                frame.properties().bonds().has_data(),
-                TrajectoryField::BondProperties,
-            ),
-            (
-                !frame.properties().owner().is_empty(),
-                TrajectoryField::Properties,
-            ),
-        ];
-        if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {
+        if frame.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                field,
+                TrajectoryField::PeriodicCell,
             ));
         }
+        let omitted = unrepresentable_frame_state(
+            [
+                (
+                    frame.velocities().is_some(),
+                    TrajectoryField::Velocities,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.forces().is_some(),
+                    TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.time().is_some(),
+                    TrajectoryField::Time,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.step().is_some(),
+                    TrajectoryField::Step,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.properties().atoms().has_data(),
+                    TrajectoryField::AtomProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    frame.properties().bonds().has_data(),
+                    TrajectoryField::BondProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    !frame.properties().owner().is_empty(),
+                    TrajectoryField::Properties,
+                    self.options.frame_properties,
+                ),
+            ],
+            |field| writer_field_error(&self.source_label, self.frame_count, field),
+        )?;
         let factor = self.output_factor()?;
         self.check_positions(frame.positions(), factor)?;
         self.write_positions(frame.positions(), factor)?;
-        self.record([WriteOmission::Cell {
-            structures: usize::from(frame.cell().is_some()),
-        }]);
+        self.record(
+            [WriteOmission::Cell {
+                structures: usize::from(frame.cell().is_some()),
+            }]
+            .into_iter()
+            .chain(omitted),
+        );
         Ok(())
     }
 }
@@ -1336,13 +1395,7 @@ impl<W: Write> XyzWriter<W> {
 
     /// Adds `omissions` to [`Self::report`].
     fn record(&mut self, omissions: impl IntoIterator<Item = WriteOmission>) {
-        self.report = self
-            .report
-            .omissions()
-            .iter()
-            .copied()
-            .chain(omissions)
-            .collect();
+        record(&mut self.report, omissions);
     }
 
     /// The factor from canonical lengths to the output unit.

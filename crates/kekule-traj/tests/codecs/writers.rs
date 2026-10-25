@@ -184,7 +184,7 @@ fn rejected_frame(
             frame_state.set_time(None).unwrap();
             (
                 TrajectoryIoErrorKind::InconsistentMetadata,
-                "TRR requires explicit frame time",
+                "TRR requires explicit frame time; FrameTimingPolicy::Number times frames without one",
                 None,
                 None,
             )

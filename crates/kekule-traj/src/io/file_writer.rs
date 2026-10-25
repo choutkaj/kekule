@@ -1,14 +1,14 @@
 use crate::TrajectoryField;
 use std::fmt;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufWriter};
+use std::io::{self, BufWriter, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
 
-use kekule::diagnostics::WriteReport;
+use kekule::diagnostics::{UnrepresentablePolicy, WriteReport};
 use kekule::topology::Topology;
 
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
 };
 use kekule::structure::{Trajectory, TrajectoryFrameView};
 
-use super::{codec_context, dcd, detect, io_context, trr, xtc, xyz};
+use super::{codec_context, dcd, detect, io_context, trr, xtc, xyz, FrameTimingPolicy};
 
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -37,11 +37,12 @@ pub enum OverwritePolicy {
     Replace,
 }
 
-/// Format-agnostic path-writer configuration.
+/// Format-agnostic writer configuration.
 ///
 /// [`Default`] takes the format from the destination extension (`.xyz`,
 /// `.dcd`, `.trr`, or `.xtc`, case-insensitively); [`Self::new`] names it
-/// explicitly. Both forbid overwriting and use each codec's default options.
+/// explicitly, as a writer over a host's stream requires. Both forbid
+/// overwriting and use each codec's default options.
 #[derive(Debug, Clone)]
 pub struct TrajectoryWriteOptions {
     format: Option<TrajectoryFormat>,
@@ -114,13 +115,57 @@ impl TrajectoryWriteOptions {
         self
     }
 
+    /// Sets the `frame_metadata` policy of the codec options whose formats
+    /// cannot carry some frame velocities, forces, times, or steps, so that
+    /// whichever is written leaves them out, or fails on them:
+    /// [`xyz::XyzWriteOptions::frame_metadata`],
+    /// [`dcd::DcdWriteOptions::frame_metadata`], and
+    /// [`xtc::XtcWriteOptions::frame_metadata`]; TRR carries them all. The
+    /// writer's report names what was left out. A later `with_*_options`
+    /// call replaces the policy this sets for its codec.
+    #[must_use]
+    pub fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.xyz = self.xyz.with_frame_metadata(frame_metadata);
+        self.dcd = self.dcd.with_frame_metadata(frame_metadata);
+        self.xtc = self.xtc.with_frame_metadata(frame_metadata);
+        self
+    }
+
+    /// Sets the `frame_properties` policy of every codec's options, for the
+    /// atom, bond, and frame properties none of the formats carry:
+    /// [`xyz::XyzWriteOptions::frame_properties`],
+    /// [`dcd::DcdWriteOptions::frame_properties`],
+    /// [`trr::TrrWriteOptions::frame_properties`], and
+    /// [`xtc::XtcWriteOptions::frame_properties`]. A later `with_*_options`
+    /// call replaces the policy this sets for its codec.
+    #[must_use]
+    pub fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
+        self.xyz = self.xyz.with_frame_properties(frame_properties);
+        self.dcd = self.dcd.with_frame_properties(frame_properties);
+        self.trr = self.trr.with_frame_properties(frame_properties);
+        self.xtc = self.xtc.with_frame_properties(frame_properties);
+        self
+    }
+
+    /// Sets the `frame_timing` policy of the TRR and XTC options, the
+    /// formats that record a time and a step for every frame:
+    /// [`trr::TrrWriteOptions::frame_timing`] and
+    /// [`xtc::XtcWriteOptions::frame_timing`]. A later `with_*_options` call
+    /// replaces the policy this sets for its codec.
+    #[must_use]
+    pub fn with_frame_timing(mut self, frame_timing: FrameTimingPolicy) -> Self {
+        self.trr = self.trr.with_frame_timing(frame_timing);
+        self.xtc = self.xtc.with_frame_timing(frame_timing);
+        self
+    }
+
     /// The explicit format, or `None` to take it from the destination extension.
     pub const fn format(&self) -> Option<TrajectoryFormat> {
         self.format
     }
 
     /// What to do when the destination exists; [`OverwritePolicy::Forbid`] by
-    /// default.
+    /// default. Writers over a host's stream ignore it.
     pub const fn overwrite_policy(&self) -> OverwritePolicy {
         self.overwrite
     }
@@ -146,14 +191,65 @@ impl TrajectoryWriteOptions {
     }
 }
 
-enum FileWriterInner {
-    Xyz(xyz::XyzWriter<BufWriter<File>>),
-    Dcd(dcd::DcdWriter<BufWriter<File>>),
-    Trr(trr::TrrWriter<BufWriter<File>>),
-    Xtc(xtc::XtcWriter<BufWriter<File>>),
+/// The codec writer of the selected format.
+enum CodecWriter<W> {
+    Xyz(xyz::XyzWriter<W>),
+    Dcd(dcd::DcdWriter<W>),
+    Trr(trr::TrrWriter<W>),
+    Xtc(xtc::XtcWriter<W>),
 }
 
-impl FileWriterInner {
+impl<W: Write + Seek> CodecWriter<W> {
+    fn new(
+        format: TrajectoryFormat,
+        writer: W,
+        topology: Arc<Topology>,
+        options: TrajectoryWriteOptions,
+        label: String,
+    ) -> Result<Self, TrajectoryIoError> {
+        match format {
+            TrajectoryFormat::Xyz => {
+                xyz::XyzWriter::new(writer, topology, options.xyz, label).map(Self::Xyz)
+            }
+            TrajectoryFormat::Dcd => {
+                dcd::DcdWriter::new(writer, topology, options.dcd, label).map(Self::Dcd)
+            }
+            TrajectoryFormat::Trr => {
+                trr::TrrWriter::new(writer, topology, options.trr, label).map(Self::Trr)
+            }
+            TrajectoryFormat::Xtc => {
+                xtc::XtcWriter::new(writer, topology, options.xtc, label).map(Self::Xtc)
+            }
+        }
+    }
+
+    fn report(&self) -> &WriteReport {
+        match self {
+            Self::Xyz(writer) => writer.report(),
+            Self::Dcd(writer) => writer.report(),
+            Self::Trr(writer) => writer.report(),
+            Self::Xtc(writer) => writer.report(),
+        }
+    }
+
+    fn writer(&self) -> &W {
+        match self {
+            Self::Xyz(writer) => writer.writer(),
+            Self::Dcd(writer) => writer.writer(),
+            Self::Trr(writer) => writer.writer(),
+            Self::Xtc(writer) => writer.writer(),
+        }
+    }
+
+    fn finish(self) -> Result<W, TrajectoryIoError> {
+        match self {
+            Self::Xyz(writer) => writer.finish(),
+            Self::Dcd(writer) => writer.finish(),
+            Self::Trr(writer) => writer.finish(),
+            Self::Xtc(writer) => writer.finish(),
+        }
+    }
+
     fn topology(&self) -> &Topology {
         match self {
             Self::Xyz(writer) => writer.topology(),
@@ -180,45 +276,104 @@ impl FileWriterInner {
             Self::Xtc(writer) => writer.write_frame(frame),
         }
     }
+}
 
-    fn flush_and_sync(&mut self, label: &str) -> Result<(), TrajectoryIoError> {
-        let (format, flushed, file) = match self {
-            Self::Xyz(writer) => {
-                writer.validate_finish()?;
-                (
-                    TrajectoryFormat::Xyz,
-                    writer.flush(),
-                    writer.writer().get_ref(),
-                )
-            }
-            Self::Dcd(writer) => {
-                writer.finalize()?;
-                (
-                    TrajectoryFormat::Dcd,
-                    writer.flush(),
-                    writer.writer().get_ref(),
-                )
-            }
-            Self::Trr(writer) => {
-                writer.validate_finish()?;
-                (
-                    TrajectoryFormat::Trr,
-                    writer.flush(),
-                    writer.writer().get_ref(),
-                )
-            }
-            Self::Xtc(writer) => {
-                writer.validate_finish()?;
-                (
-                    TrajectoryFormat::Xtc,
-                    writer.flush(),
-                    writer.writer().get_ref(),
-                )
-            }
-        };
-        flushed
-            .and_then(|()| file.sync_all())
-            .map_err(|error| io_context(TrajectoryIoOperation::Finish, Some(format), label, error))
+/// Strict writer of one format over a host's stream, from
+/// [`create_trajectory_stream_writer`].
+///
+/// The stream holds a complete trajectory only after successful
+/// [`Self::finish`]. A failed frame write poisons the writer, as it does a
+/// [`FileTrajectoryWriter`], so that a host never takes a trajectory missing
+/// a frame for a complete one; the codec writers of the [`xyz`], [`dcd`],
+/// [`trr`], and [`xtc`] modules leave the stream as it was when they reject
+/// a frame and accept the next.
+pub struct TrajectoryStreamWriter<W> {
+    inner: CodecWriter<W>,
+    format: TrajectoryFormat,
+    source_label: String,
+    failed: bool,
+}
+
+impl<W> fmt::Debug for TrajectoryStreamWriter<W> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TrajectoryStreamWriter")
+            .field("format", &self.format)
+            .field("source_label", &self.source_label)
+            .field("failed", &self.failed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<W: Write + Seek> TrajectoryStreamWriter<W> {
+    /// Finalizes format metadata, such as the DCD frame count, flushes, and
+    /// returns the stream, positioned at the end of the trajectory. The
+    /// host synchronizes and places the file itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] after an earlier failed
+    /// frame write, when no frame was written, or when the stream ends in a
+    /// partial frame; the codec's finalization errors; and
+    /// [`TrajectoryIoErrorKind::Io`] when finalizing or flushing fails.
+    pub fn finish(self) -> Result<W, TrajectoryIoError> {
+        if self.failed {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidFrame,
+                TrajectoryIoOperation::Finish,
+                Some(self.format),
+                &self.source_label,
+                "cannot finish a trajectory after an earlier frame-write failure",
+            ));
+        }
+        self.inner.finish()
+    }
+
+    /// The format being written.
+    pub const fn format(&self) -> TrajectoryFormat {
+        self.format
+    }
+
+    /// The stream being written.
+    pub fn writer(&self) -> &W {
+        self.inner.writer()
+    }
+
+    /// The content the frames written so far leave out: for XYZ,
+    /// [`xyz::XyzWriter::report`]; for DCD, TRR, and XTC, the frame state
+    /// their `frame_metadata` options omit ([`dcd::DcdWriter::report`],
+    /// [`trr::TrrWriter::report`], [`xtc::XtcWriter::report`]).
+    pub fn report(&self) -> &WriteReport {
+        self.inner.report()
+    }
+
+    fn poisoned(&self, operation: TrajectoryIoOperation) -> TrajectoryIoError {
+        codec_context(
+            TrajectoryIoErrorKind::InvalidFrame,
+            operation,
+            Some(self.format),
+            &self.source_label,
+            "trajectory writer is poisoned by an earlier frame-write failure",
+        )
+    }
+}
+
+impl<W: Write + Seek> TrajectoryWriter for TrajectoryStreamWriter<W> {
+    fn topology(&self) -> &Topology {
+        self.inner.topology()
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.inner.shared_topology()
+    }
+
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+        if self.failed {
+            return Err(self.poisoned(TrajectoryIoOperation::WriteFrame));
+        }
+        let result = self.inner.write_frame(frame);
+        self.failed = result.is_err();
+        result
     }
 }
 
@@ -226,14 +381,12 @@ impl FileWriterInner {
 ///
 /// A nonempty file is published only by successful [`Self::finish`].
 pub struct FileTrajectoryWriter {
-    inner: Option<FileWriterInner>,
+    inner: Option<TrajectoryStreamWriter<BufWriter<File>>>,
     format: TrajectoryFormat,
     destination: PathBuf,
     temporary: PathBuf,
     overwrite: OverwritePolicy,
-    failed: bool,
     published: bool,
-    report: WriteReport,
 }
 
 impl fmt::Debug for FileTrajectoryWriter {
@@ -243,7 +396,6 @@ impl fmt::Debug for FileTrajectoryWriter {
             .field("format", &self.format)
             .field("destination", &self.destination)
             .field("overwrite", &self.overwrite)
-            .field("failed", &self.failed)
             .field("published", &self.published)
             .finish_non_exhaustive()
     }
@@ -268,19 +420,26 @@ impl FileTrajectoryWriter {
     /// destination created meanwhile.
     pub fn finish(mut self) -> Result<(), TrajectoryIoError> {
         let label = self.destination.display().to_string();
-        if self.failed {
+        if self.stream().failed {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::Finish,
-                Some(self.format()),
+                Some(self.format),
                 &label,
                 "cannot publish a trajectory after an earlier frame-write failure",
             ));
         }
-        if let Some(inner) = &mut self.inner {
-            inner.flush_and_sync(&label)?;
+        if let Some(inner) = self.inner.take() {
+            let file = inner.finish()?;
+            file.get_ref().sync_all().map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::Finish,
+                    Some(self.format),
+                    &label,
+                    error,
+                )
+            })?;
         }
-        self.inner.take();
         let finish_error = |error| {
             io_context(
                 TrajectoryIoOperation::Finish,
@@ -307,56 +466,34 @@ impl FileTrajectoryWriter {
         self.format
     }
 
-    /// The content the frames written so far leave out: for XYZ,
-    /// [`xyz::XyzWriter::report`]. DCD, TRR, and XTC store coordinates for a
-    /// topology their readers receive separately, so their reports are
-    /// empty.
+    /// The content the frames written so far leave out, as
+    /// [`TrajectoryStreamWriter::report`] gives it.
     pub fn report(&self) -> &WriteReport {
-        &self.report
+        self.stream().report()
+    }
+
+    fn stream(&self) -> &TrajectoryStreamWriter<BufWriter<File>> {
+        match &self.inner {
+            Some(inner) => inner,
+            None => unreachable!("finished path writers are consumed"),
+        }
     }
 }
 
 impl TrajectoryWriter for FileTrajectoryWriter {
     fn topology(&self) -> &Topology {
-        match &self.inner {
-            Some(inner) => inner.topology(),
-            None => unreachable!("finished path writers are consumed"),
-        }
+        self.stream().topology()
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        match &self.inner {
-            Some(inner) => inner.shared_topology(),
-            None => unreachable!("finished path writers are consumed"),
-        }
+        self.stream().shared_topology()
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
-        if self.failed {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::InvalidFrame,
-                TrajectoryIoOperation::WriteFrame,
-                Some(self.format),
-                &self.destination.display().to_string(),
-                "trajectory writer is poisoned by an earlier frame-write failure",
-            ));
-        }
-        let result = match &mut self.inner {
+        match &mut self.inner {
             Some(inner) => inner.write_frame(frame),
-            None => Err(codec_context(
-                TrajectoryIoErrorKind::InvalidFrame,
-                TrajectoryIoOperation::WriteFrame,
-                Some(self.format),
-                &self.destination.display().to_string(),
-                "trajectory writer has already finished",
-            )),
-        };
-        match (&result, &self.inner) {
-            (Err(_), _) => self.failed = true,
-            (Ok(()), Some(FileWriterInner::Xyz(writer))) => self.report = writer.report().clone(),
-            _ => {}
+            None => unreachable!("finished path writers are consumed"),
         }
-        result
     }
 }
 
@@ -381,8 +518,8 @@ impl Drop for FileTrajectoryWriter {
 /// succeeds. Empty trajectories are rejected by the writer.
 ///
 /// Returns the [`FileTrajectoryWriter::report`] of the content the file
-/// leaves out, such as the bonds of an XYZ file or the cells its options
-/// omit.
+/// leaves out, such as the bonds of an XYZ file or the cells and frame state
+/// its options omit.
 ///
 /// # Errors
 ///
@@ -421,6 +558,126 @@ pub fn write_trajectory(
     let report = writer.report().clone();
     writer.finish()?;
     Ok(report)
+}
+
+/// Writes a loaded trajectory to a host's stream, as [`write_trajectory`]
+/// writes a file, so that the host places the file itself, for example
+/// under a temporary name of its own that it then moves over the
+/// destination.
+///
+/// `options` must name the format ([`TrajectoryWriteOptions::new`]); its
+/// overwrite policy does not apply. The trajectory is written from the
+/// stream's current position and the stream is left at its end. Wrap an
+/// unbuffered sink such as a `File` in a [`BufWriter`]. Returns the
+/// [`TrajectoryStreamWriter::report`] of the content the stream leaves out.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when `options` names no
+/// format, [`TrajectoryIoErrorKind::UnsupportedField`] for collection
+/// properties or a frame field the format cannot store, and the errors of
+/// [`create_trajectory_stream_writer`], the codec's
+/// [`TrajectoryWriter::write_frame`] and [`TrajectoryStreamWriter::finish`].
+/// Output before a failure has already reached `writer`.
+///
+/// ```
+/// # use std::io::Cursor;
+/// # use std::sync::Arc;
+/// # use kekule::geometry::Point3;
+/// # use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+/// # use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
+/// # use kekule::{smiles, topology::Topology};
+/// use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission};
+/// use kekule_traj::io::{write_trajectory_to, TrajectoryWriteOptions};
+/// use kekule_traj::TrajectoryFormat;
+/// # let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+/// # let topology = Arc::new(Topology::from_molecule(molecule)?);
+/// # let points = vec![Point3::new(1.5, 0.0, 0.0)];
+/// # let mut frame = TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, ANGSTROM))?);
+/// # frame.set_step(Some(0));
+/// # frame.set_time(Some(Quantity::new(0.0, PICOSECOND)))?;
+/// # let trajectory = Trajectory::from_items(topology, [frame])?;
+///
+/// // A frame with a time, as read from XTC, written as DCD without it.
+/// let mut stream = Cursor::new(Vec::new());
+/// let options = TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
+///     .with_frame_metadata(UnrepresentablePolicy::Omit);
+/// let report = write_trajectory_to(&mut stream, &trajectory, options)?;
+/// let omitted = WriteOmission::StructureState { field: StructureField::Time, structures: 1 };
+/// assert_eq!(report.omissions(), [omitted]);
+/// assert!(!stream.into_inner().is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn write_trajectory_to<W: Write + Seek + ?Sized>(
+    writer: &mut W,
+    trajectory: &Trajectory,
+    options: TrajectoryWriteOptions,
+) -> Result<WriteReport, TrajectoryIoError> {
+    if !trajectory.properties().is_empty() {
+        return Err(TrajectoryIoError::unsupported_field(
+            TrajectoryField::CollectionProperties,
+        ));
+    }
+    let mut writer = create_trajectory_stream_writer(
+        writer,
+        trajectory.shared_topology(),
+        options,
+        "trajectory stream",
+    )?;
+    for frame in trajectory {
+        writer.write_frame(frame)?;
+    }
+    let report = writer.report().clone();
+    writer.finish()?;
+    Ok(report)
+}
+
+/// Creates a strict writer of the format `options` names over a host's
+/// stream; `source_label` names the destination in errors.
+///
+/// The writer writes from the stream's current position: the DCD header
+/// there, patched when the writer finishes, and the other formats' frames
+/// as they are written. `options` must name the format
+/// ([`TrajectoryWriteOptions::new`]); its overwrite policy does not apply.
+/// Wrap an unbuffered sink such as a `File` in a [`BufWriter`].
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when `options` names no
+/// format, and the option and stream errors of the selected codec writer's
+/// constructor.
+pub fn create_trajectory_stream_writer<W: Write + Seek>(
+    writer: W,
+    topology: impl Into<Arc<Topology>>,
+    options: TrajectoryWriteOptions,
+    source_label: impl Into<String>,
+) -> Result<TrajectoryStreamWriter<W>, TrajectoryIoError> {
+    let source_label = source_label.into();
+    let format = options.format.ok_or_else(|| {
+        codec_context(
+            TrajectoryIoErrorKind::UnknownFormat,
+            TrajectoryIoOperation::Open,
+            None,
+            &source_label,
+            "a stream writer needs an explicit format; use TrajectoryWriteOptions::new",
+        )
+    })?;
+    stream_writer(format, writer, topology.into(), options, source_label)
+}
+
+fn stream_writer<W: Write + Seek>(
+    format: TrajectoryFormat,
+    writer: W,
+    topology: Arc<Topology>,
+    options: TrajectoryWriteOptions,
+    source_label: String,
+) -> Result<TrajectoryStreamWriter<W>, TrajectoryIoError> {
+    Ok(TrajectoryStreamWriter {
+        inner: CodecWriter::new(format, writer, topology, options, source_label.clone())?,
+        format,
+        source_label,
+        failed: false,
+    })
 }
 
 /// The explicit format, or the one the destination extension names.
@@ -489,44 +746,21 @@ pub fn create_trajectory_writer(
             ));
         }
     }
-    let inner_result = match format {
-        TrajectoryFormat::Xyz => {
-            xyz::XyzWriter::new(BufWriter::new(file), topology, options.xyz, label)
-                .map(FileWriterInner::Xyz)
-        }
-        TrajectoryFormat::Dcd => {
-            dcd::DcdWriter::new(BufWriter::new(file), topology, options.dcd, label)
-                .map(FileWriterInner::Dcd)
-        }
-        TrajectoryFormat::Trr => {
-            trr::TrrWriter::new(BufWriter::new(file), topology, options.trr, label)
-                .map(FileWriterInner::Trr)
-        }
-        TrajectoryFormat::Xtc => {
-            xtc::XtcWriter::new(BufWriter::new(file), topology, options.xtc, label)
-                .map(FileWriterInner::Xtc)
-        }
-    };
-    let inner = match inner_result {
+    let overwrite = options.overwrite;
+    let inner = match stream_writer(format, BufWriter::new(file), topology, options, label) {
         Ok(inner) => inner,
         Err(error) => {
             let _ = std::fs::remove_file(&temporary);
             return Err(error);
         }
     };
-    let report = match &inner {
-        FileWriterInner::Xyz(writer) => writer.report().clone(),
-        _ => WriteReport::default(),
-    };
     Ok(FileTrajectoryWriter {
         inner: Some(inner),
         format,
         destination,
         temporary,
-        overwrite: options.overwrite,
-        failed: false,
+        overwrite,
         published: false,
-        report,
     })
 }
 
