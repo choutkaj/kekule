@@ -432,6 +432,19 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** The mmCIF writer writes chains that share a label, as
+  `ModelEditor::append_model` makes from copies of one model, instead of
+  failing with `duplicate mmCIF structural-instance ID` (SeekDelta K50). So a
+  structure merged from copies, such as 66 copies of a protein or a crystal's
+  symmetry mates, is exported as mmCIF. Every hierarchy chain remains a
+  structural instance of its own: the first chain with a label keeps it as
+  `label_asym_id`, each later one is written as the label with a copy serial
+  (`A-2`, `A-3`, skipping IDs another chain or asym uses), and
+  `auth_asym_id` keeps the author chain name, so the reader gives back the
+  same chains, atoms, bonds, and author names, with the written IDs as their
+  labels. `_struct_conn` rows name each copy's own asyms. The hierarchy and
+  `append_model` keep labels as they are. `MmcifWriteIssue::DuplicateAsymId`,
+  which the writer no longer returns, is removed.
 - `within` over many small structures is fast again (SeekDelta K49), with
   unchanged results. Since K42 each structure gathered the near lists of the
   cells it visited again, from the shared reference points and from its own
