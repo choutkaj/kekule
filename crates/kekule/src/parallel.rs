@@ -139,17 +139,66 @@ pub(crate) fn map_ranges<R: Send>(
     min_chunk: usize,
     work: impl Fn(Range<usize>) -> R + Sync,
 ) -> Vec<R> {
-    let chunks = executor
+    let chunks = chunk_count(executor, len, min_chunk);
+    run_chunks(executor, chunks, |chunk| {
+        work(chunk_range(chunk, chunks, len))
+    })
+}
+
+/// [`map_ranges`] over `0..weights.len()`, with ranges of near-equal total
+/// weight instead of near-equal length, and no least length.
+pub(crate) fn map_weighted_ranges<R: Send>(
+    executor: &dyn Executor,
+    weights: &[usize],
+    work: impl Fn(Range<usize>) -> R + Sync,
+) -> Vec<R> {
+    let chunks = chunk_count(executor, weights.len(), 1);
+    let mut ends = Vec::with_capacity(chunks + 1);
+    ends.push(0);
+    let total = weights.iter().sum::<usize>();
+    let mut sum = 0;
+    for (index, weight) in weights.iter().enumerate() {
+        // Range `chunk` ends once the weight so far reaches its share.
+        while ends.len() < chunks && sum * chunks >= total * ends.len() && sum > 0 {
+            ends.push(index);
+        }
+        sum += weight;
+    }
+    ends.resize(chunks + 1, weights.len());
+    let ranges = ends
+        .windows(2)
+        .map(|end| end[0]..end[1])
+        .collect::<Vec<_>>();
+    run_chunks(executor, ranges.len(), |chunk| work(ranges[chunk].clone()))
+}
+
+/// How many ranges [`map_ranges`] splits `0..len` into.
+fn chunk_count(executor: &dyn Executor, len: usize, min_chunk: usize) -> usize {
+    executor
         .parallelism()
         .get()
         .min(len / min_chunk.max(1))
-        .max(1);
+        .max(1)
+}
+
+/// Range `chunk` of `chunks` near-equal contiguous ranges of `0..len`.
+fn chunk_range(chunk: usize, chunks: usize, len: usize) -> Range<usize> {
+    chunk * len / chunks..(chunk + 1) * len / chunks
+}
+
+/// Runs `work` on each of `chunks` work items and returns the results in
+/// item order; a single item runs on the calling thread.
+fn run_chunks<R: Send>(
+    executor: &dyn Executor,
+    chunks: usize,
+    work: impl Fn(usize) -> R + Sync,
+) -> Vec<R> {
     if chunks == 1 {
-        return vec![work(0..len)];
+        return vec![work(0)];
     }
     let slots = (0..chunks).map(|_| Mutex::new(None)).collect::<Vec<_>>();
     executor.run(chunks, &|chunk| {
-        let result = work(chunk * len / chunks..(chunk + 1) * len / chunks);
+        let result = work(chunk);
         let previous = slots[chunk]
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -183,6 +232,32 @@ mod tests {
                     .all(|range| range.len() >= 4 || ranges.len() == 1));
                 let indices = ranges.into_iter().flatten().collect::<Vec<_>>();
                 assert_eq!(indices, (0..len).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    #[test]
+    fn weighted_ranges_cover_every_index_once_and_share_the_weight() {
+        let skewed = (0..60)
+            .map(|index| if index < 10 { 50 } else { 1 })
+            .collect::<Vec<_>>();
+        for threads in 1..=9 {
+            let executor = ScopedThreads::new(NonZeroUsize::new(threads).unwrap());
+            for weights in [vec![], vec![0; 5], vec![7], vec![1; 100], skewed.clone()] {
+                let ranges = map_weighted_ranges(&executor, &weights, |range| range);
+                assert!(ranges.len() <= threads.max(1));
+                let indices = ranges.iter().cloned().flatten().collect::<Vec<_>>();
+                assert_eq!(indices, (0..weights.len()).collect::<Vec<_>>());
+            }
+            let ranges = map_weighted_ranges(&executor, &skewed, |range| range);
+            let total = skewed.iter().sum::<usize>();
+            let heaviest = skewed.iter().max().unwrap();
+            for range in ranges {
+                let weight = skewed[range].iter().sum::<usize>();
+                assert!(
+                    weight <= total / threads + heaviest,
+                    "{threads} threads: {weight}"
+                );
             }
         }
     }

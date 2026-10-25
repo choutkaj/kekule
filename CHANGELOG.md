@@ -313,15 +313,31 @@ are marked **Breaking:**.
   any order on any threads, passing a work item's panic to the caller. Both
   live in the new `kekule::parallel` module, shared by every parallel
   analysis.
-  Residue reading, backbone geometry, candidate pairs, hydrogen-bond
-  energies, and bridge tests split into contiguous ranges whose results are
-  combined in DSSP order, so every executor and thread count returns
-  exactly the single-threaded result, including tied hydrogen bonds, ladder,
-  sheet and strand numbers, reports, and errors. Tiled 1AKE, release,
-  i5-11400F, system allocator: 100,000 atoms take 14 ms on 6–8 threads
-  against 20 ms on one (38 ms before this release), 1,000,000 atoms 144 ms
-  against 266 ms. Starting scoped threads costs a fraction of a millisecond
-  per stage, which a host pool passed to `assign_with` avoids.
+  Chain ordering with backbone-atom lookup, coordinate reading, backbone
+  geometry with candidate pairs and hydrogen-bond energies, bridge tests,
+  and helix, turn, bend and polyproline classification with publishing
+  split into contiguous ranges whose results are combined in DSSP order,
+  so every executor and thread count returns exactly the single-threaded
+  result, including tied hydrogen bonds, ladder, sheet and strand numbers,
+  reports, and errors (SeekDelta K45). Chain ordering is shared by atom
+  sites rather than by chains, and classification of each range reads a
+  window ten residues beyond it. Tiled 1AKE, release, i5-11400F: 100,000
+  atoms take 8.0 ms on a 6-thread host pool with mimalloc and 11.5 ms on
+  6 scoped threads with the system allocator, against 15 ms and 19 ms on
+  one thread (38 ms before this release); 1,000,000 atoms take 87 ms and
+  123 ms. Starting scoped threads costs a fraction of a millisecond per
+  stage, which a host pool passed to `assign_with` avoids.
+- `dssp::DsspPlan` prepares DSSP assignment once per topology layout, for
+  the frames of a trajectory or the samples of an ensemble (SeekDelta K45).
+  `DsspPlan::new(topology, options)` (or `new_with` on an executor) reads
+  which instances the hierarchy leaves out, the chains and residues in DSSP
+  order, and each residue's backbone atoms; `assign` and `assign_with` then
+  read only backbone coordinates and return what `dssp::assign` returns for
+  the same structure and options, errors included. A structure whose
+  topology does not share the plan's layout fails with the new
+  `DsspError::TopologyMismatch`. On the same tiled 1AKE, a plan assigns
+  100,000 atoms in 6.0 ms on the 6-thread pool (8.3 ms for `dssp::assign`
+  before this change) and 1,000,000 atoms in 69 ms (103 ms).
 - Pairwise fitted RMSD and leader clustering run on several threads, report
   progress, and can be cancelled (SeekDelta K38).
   `Ensemble::pairwise_fitted_rmsd_with` and `Ensemble::cluster_by_radius_with`
@@ -417,11 +433,13 @@ are marked **Breaking:**.
   558 MB, and reweighting 0.02 ms and under 0.1 MB instead of 281 ms and
   558 MB.
 - DSSP assignment is faster on one thread with unchanged results: candidate
-  pairs come from a dense cell grid, ladders extend through an index of
-  ladder ends, bulge merging examines only ladders starting within five
-  residues, and sheets and strands are numbered in linear time. Ladder and
-  sheet assembly no longer grows quadratically with the number of ladders:
-  1,000,000 atoms take 0.27 s instead of 1.4 s.
+  pairs come from a dense cell grid that keeps its `CA` coordinates in cell
+  order, each residue's hydrogen bonds are installed from its own pairs,
+  ladders extend from the bridges of the previous residue, bulge merging
+  examines only ladders starting within five residues, and sheets and
+  strands are numbered in linear time. Ladder and sheet assembly no longer
+  grows quadratically with the number of ladders: 1,000,000 atoms take
+  0.22 s instead of 1.4 s.
 - **Breaking:** RMSF and contact occupancy are weighted statistics in the new
   `kekule::statistics` module (SeekDelta K28), so ensembles can be reduced
   with their weights and trajectory reductions become the equal-weight case.

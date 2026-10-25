@@ -4,13 +4,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::geometry::Point3;
 use crate::structure::ModelView;
-use crate::topology::{Chain, Hierarchy, Residue, ResidueClass, ResidueId};
+use crate::topology::{Chain, ChainId, Hierarchy, Residue, ResidueClass, ResidueId, Topology};
 use crate::units::ANGSTROM;
 
 use super::*;
-use crate::parallel::map_ranges;
+use crate::parallel::{map_ranges, map_weighted_ranges};
 
-/// Fewest residues or residue pairs a stage gives one thread.
+/// Fewest residues a stage gives one thread.
 const MIN_CHUNK: usize = 256;
 
 const MAX_PEPTIDE_BOND_ANGSTROMS: f64 = 2.5;
@@ -117,10 +117,14 @@ struct BetaSlot {
     parallel: bool,
 }
 
+/// One residue of DSSP's residue table: its backbone, its place in the
+/// table, and the geometry and hydrogen bonds that analysis gives it.
 #[derive(Debug, Clone)]
 struct BackboneResidue {
     key: ResidueId,
-    source: DsspResidueSource,
+    /// The hierarchy chain, for the published source labels.
+    source_chain: ChainId,
+    label_sequence_id: Option<i32>,
     chain: usize,
     n: Vec3,
     ca: Vec3,
@@ -132,27 +136,21 @@ struct BackboneResidue {
     prev: Option<usize>,
     next: Option<usize>,
     chain_break: DsspChainBreak,
-    phi: Option<f64>,
-    psi: Option<f64>,
-    omega: Option<f64>,
-    alpha: Option<f64>,
-    kappa: Option<f64>,
-    tco: Option<f64>,
+    geometry: ResidueGeometry,
     acceptors: [BondSlot; 2],
     donors: [BondSlot; 2],
-    beta_partners: [Option<BetaSlot>; 2],
-    sheet: Option<usize>,
-    strand: Option<usize>,
-    helix_positions: [DsspHelixPosition; 4],
-    secondary_structure: DsspSecondaryStructure,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ChainFragment<'a> {
-    hierarchy: &'a Hierarchy,
-    chain: &'a Chain,
-    discovery_order: usize,
+/// A residue's beta-sheet assignment.
+#[derive(Debug, Clone, Copy, Default)]
+struct BetaResidue {
+    partners: [Option<BetaSlot>; 2],
+    sheet: Option<usize>,
+    strand: Option<usize>,
 }
+
+/// A residue's secondary structure and helix positions.
+type Classified = (DsspSecondaryStructure, [DsspHelixPosition; 4]);
 
 #[derive(Debug, Clone, Copy)]
 struct ChainResidue<'a> {
@@ -160,13 +158,17 @@ struct ChainResidue<'a> {
     chain: &'a Chain,
     residue: ResidueId,
     discovery_order: usize,
+    /// Whether the residue is classified as amino acid or other, the
+    /// classes DSSP reads.
+    peptide: bool,
 }
 
 #[derive(Debug)]
 struct LogicalChain<'a> {
-    label_id: String,
-    residues: Vec<ChainResidue<'a>>,
+    chain: &'a Chain,
     discovery_order: usize,
+    /// The discovery order of the chain's first residue.
+    first_residue: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,65 +194,88 @@ struct BetaCounts {
     ladders: usize,
 }
 
+/// Assigns `model`, whose topology `prepared` was prepared from.
 pub(super) fn assign(
+    prepared: &Prepared,
     model: ModelView<'_>,
     options: DsspOptions,
     executor: &dyn Executor,
 ) -> Result<DsspResult, DsspError> {
     let (mut residues, mut report, chain_segments) =
-        extract_backbones(model, options.limits, executor)?;
+        extract_backbones(prepared, model, options.limits, executor)?;
     if residues.is_empty() {
         return Err(DsspError::NoAnalyzableProteinResidues);
     }
 
     let candidates = analyze_backbone(&mut residues, options.limits.max_candidate_pairs, executor)?;
     report.candidate_hydrogen_bond_pairs = candidates.len();
-    let beta_counts = calculate_beta_sheets(
-        &mut residues,
+    let hierarchy = model.topology().hierarchy();
+    let sheets = calculate_beta_sheets(
+        hierarchy,
+        &residues,
         &candidates,
         options.limits.max_ladders,
         executor,
     )?;
-    report.generated_ladders = beta_counts.ladders;
-    calculate_helices_turns_and_bends(&mut residues);
-    calculate_polyproline_helices(&mut residues, options.min_polyproline_stretch);
+    drop(candidates);
+    report.generated_ladders = sheets.counts.ladders;
 
-    let hydrogen_bonds = residues
-        .iter()
-        .flat_map(|residue| residue.donors)
-        .filter(|bond| bond.partner.is_some() && bond.energy < MAX_HBOND_ENERGY_KCAL_PER_MOL)
-        .count();
-    let mut secondary_structure_counts = DsspSecondaryStructure::ALL
-        .into_iter()
-        .map(|structure| (structure, 0))
-        .collect::<BTreeMap<_, _>>();
-    for residue in &residues {
-        *secondary_structure_counts
-            .entry(residue.secondary_structure)
-            .or_default() += 1;
+    // Each range classifies its residues and publishes them.
+    let published = map_ranges(executor, residues.len(), MIN_CHUNK, |range| {
+        let classified = classify_range(
+            &residues,
+            &sheets.structure,
+            options.min_polyproline_stretch,
+            range.clone(),
+        );
+        let mut counts = [0; DsspSecondaryStructure::ALL.len()];
+        let mut hydrogen_bonds = 0;
+        let published = range
+            .zip(classified)
+            .map(|(index, classified)| {
+                hydrogen_bonds += residues[index]
+                    .donors
+                    .iter()
+                    .filter(|bond| {
+                        bond.partner.is_some() && bond.energy < MAX_HBOND_ENERGY_KCAL_PER_MOL
+                    })
+                    .count();
+                // `ALL` lists the assignments in declaration order.
+                counts[classified.0 as usize] += 1;
+                public_residue(
+                    hierarchy,
+                    &residues,
+                    index,
+                    sheets.residues[index],
+                    classified,
+                )
+            })
+            .collect::<Vec<_>>();
+        (published, counts, hydrogen_bonds)
+    });
+    let mut public_residues = Vec::with_capacity(residues.len());
+    let mut counts = [0; DsspSecondaryStructure::ALL.len()];
+    let mut hydrogen_bonds = 0;
+    for (published, range_counts, range_bonds) in published {
+        public_residues.extend(published);
+        for (count, range_count) in counts.iter_mut().zip(range_counts) {
+            *count += range_count;
+        }
+        hydrogen_bonds += range_bonds;
     }
-
-    let keys = residues
-        .iter()
-        .map(|residue| residue.key)
-        .collect::<Vec<_>>();
-    let public_residues = residues
-        .into_iter()
-        .map(|residue| public_residue(residue, &keys))
-        .collect::<Vec<_>>();
-    let lookup = public_residues
-        .iter()
-        .enumerate()
-        .map(|(index, residue)| (residue.key, index))
-        .collect();
+    debug_assert_eq!(prepared.lookup.len(), public_residues.len());
+    let lookup = prepared.lookup.clone();
     let statistics = DsspStatistics {
         analyzed_residues: public_residues.len(),
         chain_segments,
         hydrogen_bonds,
-        beta_bridges: beta_counts.bridges,
-        intra_chain_beta_bridges: beta_counts.intra_chain,
-        inter_chain_beta_bridges: beta_counts.inter_chain,
-        secondary_structure_counts,
+        beta_bridges: sheets.counts.bridges,
+        intra_chain_beta_bridges: sheets.counts.intra_chain,
+        inter_chain_beta_bridges: sheets.counts.inter_chain,
+        secondary_structure_counts: DsspSecondaryStructure::ALL
+            .into_iter()
+            .zip(counts)
+            .collect(),
     };
     Ok(DsspResult {
         residues: public_residues,
@@ -260,124 +285,176 @@ pub(super) fn assign(
     })
 }
 
-fn extract_backbones(
-    model: ModelView<'_>,
-    limits: DsspLimits,
-    executor: &dyn Executor,
-) -> Result<(Vec<BackboneResidue>, DsspReport, usize), DsspError> {
-    let mut report = DsspReport {
-        ignored_instances: Vec::new(),
-        non_peptide_residues: 0,
-        skipped_residues: Vec::new(),
-        detected_gaps: 0,
-        reconstructed_amide_hydrogens: 0,
-        candidate_hydrogen_bond_pairs: 0,
-        generated_ladders: 0,
-    };
-    let mut chain_segments = 0;
-    let mut fragments = Vec::new();
+/// What assignment reads from a topology, prepared once for every structure
+/// of its layout.
+#[derive(Debug, Clone)]
+pub(super) struct Prepared {
+    ignored_instances: Vec<MoleculeInstanceId>,
+    /// Each logical chain's residues in DSSP order, as positions in
+    /// `residues`, or `None` for one classified as neither amino acid nor
+    /// other.
+    chains: Vec<Vec<Option<usize>>>,
+    /// The peptide residues, in DSSP order.
+    residues: Vec<PreparedResidue>,
+    /// The key and table position of each residue with a complete backbone,
+    /// by key: an assignment that succeeds places exactly these.
+    lookup: Vec<(ResidueId, usize)>,
+}
 
-    let hierarchy = model.topology().hierarchy();
-    let mut represented_instances = hierarchy
-        .atom_sites()
-        .map(|(_, site)| site.atom().instance())
-        .collect::<Vec<_>>();
-    represented_instances.sort_unstable();
-    represented_instances.dedup();
-    for molecule_id in model.topology().instances().map(|molecule| molecule.id()) {
-        if represented_instances.binary_search(&molecule_id).is_err() {
-            report.ignored_instances.push(molecule_id);
+/// A peptide residue's backbone atoms and labels.
+#[derive(Debug, Clone)]
+struct PreparedResidue {
+    key: ResidueId,
+    source_chain: ChainId,
+    label_sequence_id: Option<i32>,
+    /// The dense indices of `N`, `CA`, `C`, `O`, or the first repeated
+    /// atom.
+    atoms: Result<[Option<usize>; 4], DsspBackboneAtom>,
+    any_backbone_atom: bool,
+    amino_acid: bool,
+    is_proline: bool,
+}
+
+impl Prepared {
+    /// Reads `topology`'s molecule instances, orders its chains and finds
+    /// each peptide residue's backbone atoms.
+    pub(super) fn new(topology: &Topology, executor: &dyn Executor) -> Self {
+        let hierarchy = topology.hierarchy();
+        let mut represented = vec![false; topology.instance_count()];
+        for (_, site) in hierarchy.atom_sites() {
+            if let Some(flag) = represented.get_mut(site.atom().instance().index()) {
+                *flag = true;
+            }
+        }
+        let ignored_instances = topology
+            .instances()
+            .map(|molecule| molecule.id())
+            .filter(|id| represented.get(id.index()) != Some(&true))
+            .collect();
+
+        // Hierarchy chains are already topology-global and may span molecule
+        // instances, so no fragment reassembly is required here.
+        let mut first_residue = 0;
+        let mut logical_chains = hierarchy
+            .chains()
+            .enumerate()
+            .map(|(discovery_order, (_, chain))| {
+                let logical = LogicalChain {
+                    chain,
+                    discovery_order,
+                    first_residue,
+                };
+                first_residue += chain.residues().len();
+                logical
+            })
+            .collect::<Vec<_>>();
+        // mkdssp builds one global residue table in label-asym order. Stable
+        // shortlex ordering matches generated mmCIF label-asym series (A..Z,
+        // AA..) while preserving discovery order for repeated logical chains.
+        logical_chains.sort_by(|left, right| {
+            let (left_label, right_label) = (left.chain.label_id(), right.chain.label_id());
+            left_label
+                .len()
+                .cmp(&right_label.len())
+                .then_with(|| left_label.cmp(right_label))
+                .then_with(|| left.discovery_order.cmp(&right.discovery_order))
+        });
+        // Ordering a chain and reading a residue's atoms depend on nothing
+        // else. Chains differ widely in size, and solvent residues are cheap,
+        // so each work item takes a share of the atom sites, not of the
+        // chains.
+        let sizes = logical_chains
+            .iter()
+            .map(|logical| {
+                logical
+                    .chain
+                    .residues()
+                    .iter()
+                    .filter_map(|&residue| hierarchy.residue(residue))
+                    .map(|residue| residue.atom_sites().len())
+                    .sum::<usize>()
+                    .max(1)
+            })
+            .collect::<Vec<_>>();
+        let prepared = map_weighted_ranges(executor, &sizes, |range| {
+            logical_chains[range]
+                .iter()
+                .map(|logical| {
+                    let mut residues = Vec::new();
+                    let entries = order_chain(hierarchy, logical)
+                        .iter()
+                        .map(|entry| {
+                            entry.peptide.then(|| {
+                                residues.push(prepare_residue(topology, entry));
+                                residues.len() - 1
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    (entries, residues)
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut chains = Vec::with_capacity(logical_chains.len());
+        let mut residues = Vec::new();
+        for (entries, chain_residues) in prepared.into_iter().flatten() {
+            let offset = residues.len();
+            chains.push(
+                entries
+                    .into_iter()
+                    .map(|entry| entry.map(|index| offset + index))
+                    .collect(),
+            );
+            residues.extend(chain_residues);
+        }
+        let mut lookup = residues
+            .iter()
+            .filter(|residue| {
+                residue
+                    .atoms
+                    .is_ok_and(|atoms| atoms.iter().all(Option::is_some))
+            })
+            .zip(0..)
+            .map(|(residue, index)| (residue.key, index))
+            .collect::<Vec<_>>();
+        lookup.sort_unstable();
+        Self {
+            ignored_instances,
+            chains,
+            residues,
+            lookup,
         }
     }
-    for (_, chain) in hierarchy.chains() {
-        fragments.push(ChainFragment {
-            hierarchy,
-            chain,
-            discovery_order: fragments.len(),
-        });
-    }
 
-    // Hierarchy chains are already topology-global and may span molecule
-    // instances, so no fragment reassembly is required here.
-    let mut logical_chains = Vec::<LogicalChain<'_>>::new();
-    let mut residue_discovery_order = 0usize;
-    for fragment in fragments {
-        logical_chains.push(LogicalChain {
-            label_id: fragment.chain.label_id().to_owned(),
-            residues: Vec::new(),
-            discovery_order: fragment.discovery_order,
-        });
-        let logical = logical_chains
-            .last_mut()
-            .expect("just inserted logical chain");
-        for &residue in fragment.chain.residues() {
-            logical.residues.push(ChainResidue {
-                hierarchy: fragment.hierarchy,
-                chain: fragment.chain,
-                residue,
-                discovery_order: residue_discovery_order,
-            });
-            residue_discovery_order += 1;
-        }
+    /// How many residues assignment reads.
+    pub(super) fn peptide_residues(&self) -> usize {
+        self.residues.len()
     }
-
-    // mkdssp builds one global residue table in label-asym order. Stable
-    // shortlex ordering matches generated mmCIF label-asym series (A..Z,
-    // AA..) while preserving discovery order for repeated logical chains.
-    logical_chains.sort_by(|left, right| {
-        left.label_id
-            .len()
-            .cmp(&right.label_id.len())
-            .then_with(|| left.label_id.cmp(&right.label_id))
-            .then_with(|| left.discovery_order.cmp(&right.discovery_order))
-    });
-    // Ordering a chain and reading a residue's backbone depend on nothing
-    // else; segments, limits and errors are then decided in DSSP order.
-    let chains = map_ranges(executor, logical_chains.len(), 1, |range| {
-        logical_chains[range]
-            .iter()
-            .map(|logical| order_chain(&logical.residues))
-            .collect::<Vec<_>>()
-    })
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    let entries = chains.iter().flatten().collect::<Vec<_>>();
-    let mut backbones = map_ranges(executor, entries.len(), MIN_CHUNK, |range| {
-        entries[range]
-            .iter()
-            .map(|entry| read_backbone(model, entry))
-            .collect::<Vec<_>>()
-    })
-    .into_iter()
-    .flatten();
-    let mut residues = Vec::with_capacity(entries.len().min(limits.max_residues));
-    let mut degenerate = None;
-    for (chain_index, chain) in chains.iter().enumerate() {
-        extract_chain(
-            chain_index,
-            backbones.by_ref().take(chain.len()),
-            &mut residues,
-            &mut report,
-            &mut chain_segments,
-            &mut degenerate,
-            limits,
-        )?;
-    }
-    // Hydrogen placement follows extraction in DSSP, so any extraction
-    // failure takes precedence.
-    if let Some(residue) = degenerate {
-        return Err(DsspError::DegenerateBackboneGeometry { residue });
-    }
-    Ok((residues, report, chain_segments))
 }
 
 /// The residues of one logical chain in DSSP order.
-fn order_chain<'a>(residues: &[ChainResidue<'a>]) -> Vec<ChainResidue<'a>> {
+fn order_chain<'a>(hierarchy: &'a Hierarchy, logical: &LogicalChain<'a>) -> Vec<ChainResidue<'a>> {
+    let mut ordered = logical
+        .chain
+        .residues()
+        .iter()
+        .zip(logical.first_residue..)
+        .map(|(&residue, discovery_order)| ChainResidue {
+            hierarchy,
+            chain: logical.chain,
+            residue,
+            discovery_order,
+            peptide: hierarchy.residue(residue).is_some_and(|residue| {
+                matches!(
+                    residue.class(),
+                    ResidueClass::AminoAcid | ResidueClass::Other
+                )
+            }),
+        })
+        .collect::<Vec<_>>();
     // Choose one ordering convention for the complete chain. Mixing label
     // and author numbering in a pairwise comparator can be non-transitive.
     // Native hierarchies need not carry either source numbering convention.
-    let ordering_residues = residues
+    let ordering_residues = ordered
         .iter()
         .filter(|entry| {
             entry
@@ -416,7 +493,6 @@ fn order_chain<'a>(residues: &[ChainResidue<'a>]) -> Vec<ChainResidue<'a>> {
                     .is_some()
             })
     });
-    let mut ordered = residues.to_vec();
     ordered.sort_by(|left, right| {
         let left_residue = left
             .hierarchy
@@ -451,31 +527,12 @@ fn order_chain<'a>(residues: &[ChainResidue<'a>]) -> Vec<ChainResidue<'a>> {
     ordered
 }
 
-/// The backbone atoms of one peptide residue, as its atom sites give them.
-#[derive(Debug)]
-struct ResidueBackbone {
-    key: ResidueId,
-    source: DsspResidueSource,
-    /// `N`, `CA`, `C`, `O`, or the first repeated one.
-    atoms: Result<[Option<Vec3>; 4], DsspBackboneAtom>,
-    any_backbone_atom: bool,
-    amino_acid: bool,
-    is_proline: bool,
-}
-
-/// Reads a residue's backbone atoms; `None` for a residue classified as
-/// neither amino acid nor other.
-fn read_backbone(model: ModelView<'_>, entry: &ChainResidue<'_>) -> Option<ResidueBackbone> {
+/// Finds a peptide residue's backbone atoms by name.
+fn prepare_residue(topology: &Topology, entry: &ChainResidue<'_>) -> PreparedResidue {
     let hierarchy = entry.hierarchy;
     let residue = hierarchy
         .residue(entry.residue)
         .expect("chain residues come from the model hierarchy");
-    if !matches!(
-        residue.class(),
-        ResidueClass::AminoAcid | ResidueClass::Other
-    ) {
-        return None;
-    }
     let mut backbone = [None; 4];
     let mut any_backbone_atom = false;
     let mut repeated = None;
@@ -497,27 +554,123 @@ fn read_backbone(model: ModelView<'_>, entry: &ChainResidue<'_>) -> Option<Resid
             repeated = Some(DsspBackboneAtom::ALL[backbone_index]);
             break;
         }
-        backbone[backbone_index] = Some(Vec3::from(
-            model
-                .position(site.atom)
-                .expect("hierarchy atoms have model positions")
-                .value_in(ANGSTROM)
-                .expect("positions are lengths"),
-        ));
+        backbone[backbone_index] = Some(
+            topology
+                .atom_index(site.atom)
+                .expect("hierarchy atoms are topology atoms")
+                .index(),
+        );
     }
-    Some(ResidueBackbone {
+    PreparedResidue {
         key: entry.residue,
-        source: residue_source(entry.chain, residue),
+        source_chain: entry.chain.id,
+        label_sequence_id: residue.label_seq_id,
         atoms: repeated.map_or(Ok(backbone), Err),
         any_backbone_atom,
         amino_acid: residue.class() == ResidueClass::AminoAcid,
         is_proline: residue.name.eq_ignore_ascii_case("PRO"),
-    })
+    }
 }
 
-fn extract_chain(
+/// A peptide residue's backbone in one structure.
+#[derive(Debug)]
+struct ResidueBackbone<'p> {
+    prepared: &'p PreparedResidue,
+    /// `N`, `CA`, `C`, `O`, or the first repeated one.
+    atoms: Result<[Option<Vec3>; 4], DsspBackboneAtom>,
+    /// Whether DSSP can index every backbone atom found.
+    representable: bool,
+}
+
+/// Reads a prepared residue's backbone coordinates.
+fn read_backbone<'p>(model: ModelView<'_>, prepared: &'p PreparedResidue) -> ResidueBackbone<'p> {
+    let positions = model.positions();
+    let atoms = prepared.atoms.map(|atoms| {
+        atoms.map(|atom| {
+            atom.map(|atom| {
+                Vec3::from(
+                    positions
+                        .get(atom)
+                        .expect("hierarchy atoms have model positions")
+                        .value_in(ANGSTROM)
+                        .expect("positions are lengths"),
+                )
+            })
+        })
+    });
+    ResidueBackbone {
+        prepared,
+        atoms,
+        representable: atoms.is_ok_and(|atoms| {
+            atoms
+                .iter()
+                .flatten()
+                .all(|point| point.is_dssp_representable())
+        }),
+    }
+}
+
+/// Builds DSSP's residue table of `model` from its prepared topology.
+fn extract_backbones(
+    prepared: &Prepared,
+    model: ModelView<'_>,
+    limits: DsspLimits,
+    executor: &dyn Executor,
+) -> Result<(Vec<BackboneResidue>, DsspReport, usize), DsspError> {
+    let hierarchy = model.topology().hierarchy();
+    let mut report = DsspReport {
+        ignored_instances: prepared.ignored_instances.clone(),
+        non_peptide_residues: 0,
+        skipped_residues: Vec::new(),
+        detected_gaps: 0,
+        reconstructed_amide_hydrogens: 0,
+        candidate_hydrogen_bond_pairs: 0,
+        generated_ladders: 0,
+    };
+    let mut chain_segments = 0;
+
+    // Reading a residue's backbone depends on nothing else; segments,
+    // limits and errors are then decided in DSSP order.
+    let backbones = map_ranges(executor, prepared.residues.len(), MIN_CHUNK, |range| {
+        prepared.residues[range]
+            .iter()
+            .map(|residue| read_backbone(model, residue))
+            .collect::<Vec<_>>()
+    })
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let mut residues = Vec::with_capacity(prepared.lookup.len().min(limits.max_residues));
+    let mut degenerate = None;
+    for (chain_index, chain) in prepared.chains.iter().enumerate() {
+        extract_chain(
+            chain_index,
+            chain
+                .iter()
+                .map(|residue| residue.map(|index| &backbones[index])),
+            hierarchy,
+            &mut residues,
+            &mut report,
+            &mut chain_segments,
+            &mut degenerate,
+            limits,
+        )?;
+    }
+    // Hydrogen placement follows extraction in DSSP, so any extraction
+    // failure takes precedence.
+    if let Some(residue) = degenerate {
+        return Err(DsspError::DegenerateBackboneGeometry { residue });
+    }
+    Ok((residues, report, chain_segments))
+}
+
+/// Appends the complete residues of one chain to the residue table, in DSSP
+/// order, and reports the others.
+#[allow(clippy::too_many_arguments)]
+fn extract_chain<'p>(
     chain_index: usize,
-    backbones: impl Iterator<Item = Option<ResidueBackbone>>,
+    backbones: impl Iterator<Item = Option<&'p ResidueBackbone<'p>>>,
+    hierarchy: &Hierarchy,
     residues: &mut Vec<BackboneResidue>,
     report: &mut DsspReport,
     chain_segments: &mut usize,
@@ -533,7 +686,8 @@ fn extract_chain(
             forced_break = true;
             continue;
         };
-        let key = backbone.key;
+        let prepared = backbone.prepared;
+        let key = prepared.key;
         let atoms = backbone
             .atoms
             .map_err(|atom| DsspError::AmbiguousBackboneAtom { residue: key, atom })?;
@@ -543,12 +697,12 @@ fn extract_chain(
             .filter_map(|(index, atom)| atoms[index].is_none().then_some(atom))
             .collect::<Vec<_>>();
         if !missing.is_empty() {
-            if !backbone.any_backbone_atom && !backbone.amino_acid {
+            if !prepared.any_backbone_atom && !prepared.amino_acid {
                 report.non_peptide_residues += 1;
             } else {
                 report.skipped_residues.push(DsspSkippedResidue {
                     key,
-                    source: backbone.source,
+                    source: source(hierarchy, prepared.source_chain, key),
                     reason: DsspSkipReason::MissingBackboneAtoms { missing },
                 });
                 forced_break = true;
@@ -561,14 +715,11 @@ fn extract_chain(
                 limits.max_residues,
             )));
         }
-
-        let [n, ca, c, o] = atoms.map(|atom| atom.expect("checked complete backbone"));
-        if [n, ca, c, o]
-            .into_iter()
-            .any(|point| !point.is_dssp_representable())
-        {
+        if !backbone.representable {
             return Err(DsspError::CoordinateOutOfRange { residue: key });
         }
+
+        let [n, ca, c, o] = atoms.map(|atom| atom.expect("checked complete backbone"));
         let index = residues.len();
         let continuous = previous.is_some_and(|prior: usize| {
             !forced_break && dssp_distance(residues[prior].c, n) <= MAX_PEPTIDE_BOND_ANGSTROMS
@@ -594,7 +745,7 @@ fn extract_chain(
         // numbered gap or chain boundary. Chain-continuity checks still gate
         // torsions and local secondary-structure patterns.
         let h = match residues.last() {
-            Some(preceding) if !backbone.is_proline => {
+            Some(preceding) if !prepared.is_proline => {
                 let h = dssp_reconstructed_hydrogen(n, preceding.c, preceding.o);
                 match h {
                     Some(_) => report.reconstructed_amide_hydrogens += 1,
@@ -608,31 +759,22 @@ fn extract_chain(
         };
         residues.push(BackboneResidue {
             key,
-            source: backbone.source,
+            source_chain: prepared.source_chain,
+            label_sequence_id: prepared.label_sequence_id,
             chain: chain_index,
             n,
             ca,
             c,
             o,
             h,
-            is_proline: backbone.is_proline,
+            is_proline: prepared.is_proline,
             segment,
             prev,
             next: None,
             chain_break,
-            phi: None,
-            psi: None,
-            omega: None,
-            alpha: None,
-            kappa: None,
-            tco: None,
+            geometry: ResidueGeometry::default(),
             acceptors: [BondSlot::default(); 2],
             donors: [BondSlot::default(); 2],
-            beta_partners: [None; 2],
-            sheet: None,
-            strand: None,
-            helix_positions: [DsspHelixPosition::None; 4],
-            secondary_structure: DsspSecondaryStructure::Loop,
         });
         previous = Some(index);
         forced_break = false;
@@ -648,6 +790,18 @@ fn backbone_index(name: &str) -> Option<usize> {
         .position(|candidate| *candidate == name)
 }
 
+/// The source labels of residue `key` of chain `chain`.
+fn source(hierarchy: &Hierarchy, chain: ChainId, key: ResidueId) -> DsspResidueSource {
+    residue_source(
+        hierarchy
+            .chain(chain)
+            .expect("analyzed residues come from the model hierarchy"),
+        hierarchy
+            .residue(key)
+            .expect("analyzed residues come from the model hierarchy"),
+    )
+}
+
 fn residue_source(chain: &Chain, residue: &Residue) -> DsspResidueSource {
     DsspResidueSource {
         residue_name: residue.name.clone(),
@@ -660,7 +814,7 @@ fn residue_source(chain: &Chain, residue: &Residue) -> DsspResidueSource {
 }
 
 /// The backbone geometry of one residue.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct ResidueGeometry {
     phi: Option<f64>,
     psi: Option<f64>,
@@ -671,24 +825,77 @@ struct ResidueGeometry {
 }
 
 /// One range of residues' part of [`analyze_backbone`].
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct RangeAnalysis {
+    /// The first residue of the range.
+    start: usize,
     geometry: Vec<ResidueGeometry>,
-    /// The candidate pairs whose first residue is in the range.
-    pairs: Vec<(usize, usize)>,
-    /// For each pair, the energies of the bonds from the first residue's
-    /// N-H to the second's C=O and back.
+    /// Residue `start + k`'s candidate partners after it are
+    /// `later[later_starts[k]..later_starts[k + 1]]`, in increasing order.
+    later_starts: Vec<usize>,
+    later: Vec<usize>,
+    /// For each pair with a later partner, the energies of the bonds from
+    /// the first residue's N-H to the second's C=O and back.
     energies: Vec<[Option<f64>; 2]>,
+    /// The same pairs by second residue: those ending in residue
+    /// `start + k` are `earlier[earlier_starts[k]..earlier_starts[k + 1]]`,
+    /// as the first residue and the energies, in increasing order of the
+    /// first.
+    earlier_starts: Vec<usize>,
+    earlier: Vec<(usize, [Option<f64>; 2])>,
+}
+
+/// The candidate pairs: residues whose `CA` atoms lie within 9 Å, with the
+/// energies of the hydrogen bonds between them, by range of residues.
+#[derive(Debug)]
+struct CandidatePairs {
+    ranges: Vec<RangeAnalysis>,
+    pairs: usize,
+}
+
+impl CandidatePairs {
+    /// How many pairs there are.
+    fn len(&self) -> usize {
+        self.pairs
+    }
+
+    /// The range holding `residue`, and the residue's place in it.
+    fn locate(&self, residue: usize) -> (&RangeAnalysis, usize) {
+        let range = &self.ranges[self.ranges.partition_point(|range| range.start <= residue) - 1];
+        (range, residue - range.start)
+    }
+
+    /// The partners after `residue`, in increasing order, with the energies
+    /// of the bonds from its N-H to each partner's C=O and back.
+    fn later(&self, residue: usize) -> (&[usize], &[[Option<f64>; 2]]) {
+        let (range, local) = self.locate(residue);
+        let span = range.later_starts[local]..range.later_starts[local + 1];
+        (&range.later[span.clone()], &range.energies[span])
+    }
+
+    /// The pairs ending in `residue`, by range of their first residue in
+    /// order: each slice holds a range's first residues, in increasing
+    /// order, with the energies of the bonds from the first's N-H to
+    /// `residue`'s C=O and back.
+    fn earlier(&self, residue: usize) -> impl Iterator<Item = &[(usize, [Option<f64>; 2])]> {
+        self.ranges
+            .iter()
+            .take_while(move |range| range.start < residue)
+            .map(move |range| {
+                let local = residue - range.start;
+                &range.earlier[range.earlier_starts[local]..range.earlier_starts[local + 1]]
+            })
+    }
 }
 
 /// Computes every residue's backbone geometry, the candidate pairs and
 /// their hydrogen-bond energies, installs the geometry and the bonds, and
-/// returns the candidate pairs in order.
+/// returns the candidate pairs.
 fn analyze_backbone(
     residues: &mut [BackboneResidue],
     max_candidate_pairs: usize,
     executor: &dyn Executor,
-) -> Result<Vec<(usize, usize)>, DsspError> {
+) -> Result<CandidatePairs, DsspError> {
     let grid = CellGrid::new(residues);
     let found = AtomicUsize::new(0);
     let shared = &*residues;
@@ -703,30 +910,34 @@ fn analyze_backbone(
     {
         return Err(limit.clone());
     }
-    // Bonds are inserted in candidate order, which decides DSSP's ties.
-    let mut candidates = Vec::with_capacity(found.into_inner());
-    let mut index = 0;
-    for range in ranges {
-        let range = range?;
-        for geometry in range.geometry {
-            let residue = &mut residues[index];
-            residue.phi = geometry.phi;
-            residue.psi = geometry.psi;
-            residue.omega = geometry.omega;
-            residue.alpha = geometry.alpha;
-            residue.kappa = geometry.kappa;
-            residue.tco = geometry.tco;
-            index += 1;
-        }
-        for (&(first, second), [forward, backward]) in range.pairs.iter().zip(range.energies) {
+    let candidates = CandidatePairs {
+        ranges: ranges.into_iter().collect::<Result<_, _>>()?,
+        pairs: found.into_inner(),
+    };
+    // DSSP inserts the bonds pair by pair in candidate order, which decides
+    // its ties. A residue's own bonds then come from its pairs with earlier
+    // residues and then from those with later ones, each in increasing
+    // order of the partner, so every residue fills its slots on its own.
+    for (index, residue) in residues.iter_mut().enumerate() {
+        let (part, local) = candidates.locate(index);
+        residue.geometry = part.geometry[local];
+        for &(earlier, [forward, backward]) in candidates.earlier(index).flatten() {
             if let Some(energy) = forward {
-                insert_hydrogen_bond(residues, first, second, energy);
+                insert_bond(&mut residue.donors, earlier, energy);
             }
             if let Some(energy) = backward {
-                insert_hydrogen_bond(residues, second, first, energy);
+                insert_bond(&mut residue.acceptors, earlier, energy);
             }
         }
-        candidates.extend(range.pairs);
+        let (later, energies) = candidates.later(index);
+        for (&later, &[forward, backward]) in later.iter().zip(energies) {
+            if let Some(energy) = forward {
+                insert_bond(&mut residue.acceptors, later, energy);
+            }
+            if let Some(energy) = backward {
+                insert_bond(&mut residue.donors, later, energy);
+            }
+        }
     }
     Ok(candidates)
 }
@@ -738,40 +949,54 @@ fn analyze_range(
     found: &AtomicUsize,
     max_candidate_pairs: usize,
 ) -> Result<RangeAnalysis, DsspError> {
-    let geometry = range
+    let mut analysis = candidate_pairs(residues, grid, range.clone(), found, max_candidate_pairs)?;
+    analysis.geometry = range
         .clone()
         .map(|index| residue_geometry(residues, index))
         .collect();
-    let pairs = candidate_pairs(residues, grid, range, found, max_candidate_pairs)?;
-    let energies = pairs
-        .iter()
-        .map(|&(first, second)| {
+    analysis.energies = Vec::with_capacity(analysis.later.len());
+    for (local, first) in range.enumerate() {
+        let span = analysis.later_starts[local]..analysis.later_starts[local + 1];
+        for &second in &analysis.later[span] {
             let forward = hydrogen_bond_energy(residues, first, second)?;
             let backward = if second != first + 1 {
                 hydrogen_bond_energy(residues, second, first)?
             } else {
                 None
             };
-            Ok([forward, backward])
-        })
-        .collect::<Result<_, DsspError>>()?;
-    Ok(RangeAnalysis {
-        geometry,
-        pairs,
-        energies,
-    })
+            analysis.energies.push([forward, backward]);
+        }
+    }
+    // A counting sort by second residue keeps each one's pairs in order of
+    // the first.
+    let start = analysis.start;
+    let mut starts = vec![0; residues.len() - start + 1];
+    for &second in &analysis.later {
+        starts[second - start + 1] += 1;
+    }
+    for index in 1..starts.len() {
+        starts[index] += starts[index - 1];
+    }
+    let mut next = starts.clone();
+    let mut earlier = vec![(0, [None; 2]); analysis.later.len()];
+    for (local, ends) in analysis.later_starts.windows(2).enumerate() {
+        for (&second, &energies) in analysis.later[ends[0]..ends[1]]
+            .iter()
+            .zip(&analysis.energies[ends[0]..ends[1]])
+        {
+            let slot = &mut next[second - start];
+            earlier[*slot] = (start + local, energies);
+            *slot += 1;
+        }
+    }
+    analysis.earlier_starts = starts;
+    analysis.earlier = earlier;
+    Ok(analysis)
 }
 
 fn residue_geometry(residues: &[BackboneResidue], index: usize) -> ResidueGeometry {
     let residue = &residues[index];
-    let mut geometry = ResidueGeometry {
-        phi: None,
-        psi: None,
-        omega: None,
-        alpha: None,
-        kappa: None,
-        tco: None,
-    };
+    let mut geometry = ResidueGeometry::default();
     if let Some(previous) = residue.prev.map(|previous| &residues[previous]) {
         geometry.phi = dihedral(previous.c, residue.n, residue.ca, residue.c);
         geometry.tco =
@@ -797,8 +1022,8 @@ fn residue_geometry(residues: &[BackboneResidue], index: usize) -> ResidueGeomet
         return geometry;
     };
     let sequence_is_contiguous = match (
-        residues[previous_previous].source.label_sequence_id,
-        residues[next_next].source.label_sequence_id,
+        residues[previous_previous].label_sequence_id,
+        residues[next_next].label_sequence_id,
     ) {
         (Some(first), Some(last)) => first.checked_add(4) == Some(last),
         _ => true,
@@ -847,24 +1072,32 @@ fn angle_degrees(first: Vec3, second: Vec3) -> Option<f64> {
     })
 }
 
-/// The residues binned by the [`spatial_cell`] of their `CA`.
+/// The residues binned by the [`spatial_cell`] of their `CA`, with the
+/// `CA` coordinates stored in cell order so that a column scan reads them
+/// contiguously.
 #[derive(Debug)]
-enum CellGrid {
+struct CellGrid {
+    cells: CellIndex,
+    /// The residues in cell order.
+    members: Vec<usize>,
+    /// The `CA` of each of `members`.
+    points: Vec<Vec3>,
+}
+
+/// Where each cell's residues lie in [`CellGrid::members`].
+#[derive(Debug)]
+enum CellIndex {
     /// Every cell of the residues' box, padded by one cell on each side, in
-    /// x, y, z order: residue `members[starts[slot]..starts[slot + 1]]`
-    /// lie in cell `slot`.
+    /// x, y, z order: members `starts[slot]..starts[slot + 1]` lie in cell
+    /// `slot`.
     Dense {
         origin: (i64, i64, i64),
         dims: (usize, usize, usize),
         starts: Vec<usize>,
-        members: Vec<usize>,
     },
     /// Occupied cells only, for a box with many more cells than residues:
-    /// `cells[k]` holds residue `members[k]`, sorted by cell.
-    Sparse {
-        cells: Vec<(i64, i64, i64)>,
-        members: Vec<usize>,
-    },
+    /// member `k` lies in `cells[k]`, sorted by cell.
+    Sparse { cells: Vec<(i64, i64, i64)> },
 }
 
 impl CellGrid {
@@ -907,82 +1140,98 @@ impl CellGrid {
                 .map(|_| (x, y, z)),
             _ => None,
         };
-        let Some(dims) = dense else {
-            let mut sorted = cells.into_iter().zip(0..).collect::<Vec<_>>();
-            sorted.sort_unstable();
-            let (cells, members) = sorted.into_iter().unzip();
-            return Self::Sparse { cells, members };
+        let (cells, members) = match dense {
+            None => {
+                let mut sorted = cells.into_iter().zip(0..).collect::<Vec<_>>();
+                sorted.sort_unstable();
+                let (cells, members) = sorted.into_iter().unzip();
+                (CellIndex::Sparse { cells }, members)
+            }
+            Some(dims) => {
+                let origin = (low.0 - 1, low.1 - 1, low.2 - 1);
+                let slot = |(x, y, z): (i64, i64, i64)| {
+                    (((x - origin.0) as usize * dims.1) + (y - origin.1) as usize) * dims.2
+                        + (z - origin.2) as usize
+                };
+                let mut starts = vec![0; dims.0 * dims.1 * dims.2 + 1];
+                for &cell in &cells {
+                    starts[slot(cell) + 1] += 1;
+                }
+                for index in 1..starts.len() {
+                    starts[index] += starts[index - 1];
+                }
+                let mut next = starts.clone();
+                let mut members = vec![0; cells.len()];
+                for (index, &cell) in cells.iter().enumerate() {
+                    members[next[slot(cell)]] = index;
+                    next[slot(cell)] += 1;
+                }
+                (
+                    CellIndex::Dense {
+                        origin,
+                        dims,
+                        starts,
+                    },
+                    members,
+                )
+            }
         };
-        let origin = (low.0 - 1, low.1 - 1, low.2 - 1);
-        let slot = |(x, y, z): (i64, i64, i64)| {
-            (((x - origin.0) as usize * dims.1) + (y - origin.1) as usize) * dims.2
-                + (z - origin.2) as usize
-        };
-        let mut starts = vec![0; dims.0 * dims.1 * dims.2 + 1];
-        for &cell in &cells {
-            starts[slot(cell) + 1] += 1;
-        }
-        for index in 1..starts.len() {
-            starts[index] += starts[index - 1];
-        }
-        let mut next = starts.clone();
-        let mut members = vec![0; cells.len()];
-        for (index, &cell) in cells.iter().enumerate() {
-            members[next[slot(cell)]] = index;
-            next[slot(cell)] += 1;
-        }
-        Self::Dense {
-            origin,
-            dims,
-            starts,
+        let points = members.iter().map(|&member| residues[member].ca).collect();
+        Self {
+            cells,
             members,
+            points,
         }
     }
 
     /// The residues in cells `(x, y, z - 1)` through `(x, y, z + 1)`, where
-    /// `(x, y, z)` is within one cell of a residue's cell.
-    fn column(&self, x: i64, y: i64, z: i64) -> &[usize] {
-        match self {
-            Self::Dense {
+    /// `(x, y, z)` is within one cell of a residue's cell, and their `CA`.
+    fn column(&self, x: i64, y: i64, z: i64) -> (&[usize], &[Vec3]) {
+        let span = match &self.cells {
+            CellIndex::Dense {
                 origin,
                 dims,
                 starts,
-                members,
             } => {
                 let base = (((x - origin.0) as usize * dims.1) + (y - origin.1) as usize) * dims.2;
                 let first = base + (z - 1 - origin.2) as usize;
-                &members[starts[first]..starts[first + 3]]
+                starts[first]..starts[first + 3]
             }
-            Self::Sparse { cells, members } => {
-                let start = cells.partition_point(|&cell| cell < (x, y, z - 1));
-                let end = cells.partition_point(|&cell| cell <= (x, y, z + 1));
-                &members[start..end]
+            CellIndex::Sparse { cells } => {
+                cells.partition_point(|&cell| cell < (x, y, z - 1))
+                    ..cells.partition_point(|&cell| cell <= (x, y, z + 1))
             }
-        }
+        };
+        (&self.members[span.clone()], &self.points[span])
     }
 }
 
-/// The candidate pairs whose first residue is in `range`: residues with
-/// `CA` atoms within 9 Å, in order. `found` counts pairs across ranges.
+/// The candidate partners after each residue in `range`: residues with
+/// `CA` atoms within 9 Å, in increasing order. `found` counts the pairs
+/// across ranges.
 fn candidate_pairs(
     residues: &[BackboneResidue],
     grid: &CellGrid,
     range: Range<usize>,
     found: &AtomicUsize,
     max_candidate_pairs: usize,
-) -> Result<Vec<(usize, usize)>, DsspError> {
+) -> Result<RangeAnalysis, DsspError> {
     let maximum_squared = MAX_CA_PAIR_DISTANCE_ANGSTROMS.powi(2);
-    let mut pairs = Vec::new();
+    let mut analysis = RangeAnalysis {
+        start: range.start,
+        later_starts: vec![0],
+        ..RangeAnalysis::default()
+    };
     let mut partners = Vec::new();
     for first in range {
-        let (x, y, z) = spatial_cell(residues[first].ca);
+        let ca = residues[first].ca;
+        let (x, y, z) = spatial_cell(ca);
         partners.clear();
         for dx in -1..=1 {
             for dy in -1..=1 {
-                partners.extend(grid.column(x + dx, y + dy, z).iter().filter_map(|&second| {
-                    (second > first
-                        && dssp_distance_squared(residues[first].ca, residues[second].ca)
-                            <= maximum_squared)
+                let (members, points) = grid.column(x + dx, y + dy, z);
+                partners.extend(members.iter().zip(points).filter_map(|(&second, &point)| {
+                    (second > first && dssp_distance_squared(ca, point) <= maximum_squared)
                         .then_some(second)
                 }));
             }
@@ -995,9 +1244,10 @@ fn candidate_pairs(
             )));
         }
         partners.sort_unstable();
-        pairs.extend(partners.iter().map(|&second| (first, second)));
+        analysis.later.extend_from_slice(&partners);
+        analysis.later_starts.push(analysis.later.len());
     }
-    Ok(pairs)
+    Ok(analysis)
 }
 
 fn spatial_cell(point: Vec3) -> (i64, i64, i64) {
@@ -1047,16 +1297,6 @@ fn hydrogen_bond_energy(
     Ok(Some(energy.max(MIN_HBOND_ENERGY_KCAL_PER_MOL)))
 }
 
-fn insert_hydrogen_bond(
-    residues: &mut [BackboneResidue],
-    donor: usize,
-    acceptor: usize,
-    energy: f64,
-) {
-    insert_bond(&mut residues[donor].acceptors, acceptor, energy);
-    insert_bond(&mut residues[acceptor].donors, donor, energy);
-}
-
 fn insert_bond(slots: &mut [BondSlot; 2], partner: usize, energy: f64) {
     if energy < slots[0].energy {
         slots[1] = slots[0];
@@ -1100,28 +1340,52 @@ fn test_bridge(residues: &[BackboneResidue], first: usize, second: usize) -> Opt
     }
 }
 
+/// The beta-sheet assignment of every residue.
+#[derive(Debug)]
+struct BetaSheets {
+    residues: Vec<BetaResidue>,
+    /// `E`, `B`, or loop.
+    structure: Vec<DsspSecondaryStructure>,
+    counts: BetaCounts,
+}
+
 fn calculate_beta_sheets(
-    residues: &mut [BackboneResidue],
-    candidates: &[(usize, usize)],
+    hierarchy: &Hierarchy,
+    residues: &[BackboneResidue],
+    candidates: &CandidatePairs,
     max_ladders: usize,
     executor: &dyn Executor,
-) -> Result<BetaCounts, DsspError> {
-    let shared = &*residues;
-    let found = map_ranges(executor, candidates.len(), MIN_CHUNK, |range| {
-        candidates[range]
-            .iter()
-            .filter_map(|&(first, second)| {
-                test_bridge(shared, first, second).map(|bridge_type| (first, second, bridge_type))
+) -> Result<BetaSheets, DsspError> {
+    let found = map_ranges(executor, residues.len(), MIN_CHUNK, |range| {
+        range
+            .flat_map(|first| {
+                candidates.later(first).0.iter().filter_map(move |&second| {
+                    test_bridge(residues, first, second)
+                        .map(|bridge_type| (first, second, bridge_type))
+                })
             })
             .collect::<Vec<_>>()
     });
     let mut bridges = Vec::<Bridge>::new();
-    // A bridge extends the ladder whose last pair is its predecessor. Every
-    // candidate pair joins one ladder, so at most one ladder of each type
-    // ends in a given pair; this index finds it.
-    let mut ends = BTreeMap::<(bool, usize, usize), usize>::new();
+    // A bridge extends the ladder whose last pair is its predecessor, one
+    // residue back on its first strand. Bridges come in candidate order, so
+    // the predecessor is a bridge of the previous first residue, and no
+    // other bridge has the same one. `previous` and `current` hold the
+    // second residue, type and ladder of the bridges of residue `row - 1`
+    // and `row`.
+    let (mut previous, mut current) = (Vec::<(usize, BridgeType, usize)>::new(), Vec::new());
+    let mut row = None;
     let mut counts = BetaCounts::default();
     for (first, second, bridge_type) in found.into_iter().flatten() {
+        if row != Some(first) {
+            if row.is_some_and(|row| row + 1 == first) {
+                std::mem::swap(&mut previous, &mut current);
+            } else {
+                previous.clear();
+            }
+            current.clear();
+            row = Some(first);
+        }
         counts.bridges += 1;
         if residues[first].chain == residues[second].chain {
             counts.intra_chain += 1;
@@ -1129,14 +1393,18 @@ fn calculate_beta_sheets(
             counts.inter_chain += 1;
         }
         let parallel = bridge_type == BridgeType::Parallel;
-        let predecessor = first.checked_sub(1).zip(if parallel {
+        let predecessor = if parallel {
             second.checked_sub(1)
         } else {
             second.checked_add(1)
-        });
+        };
         let extended = predecessor
-            .and_then(|(i, j)| ends.remove(&(parallel, i, j)))
-            .inspect(|&ladder| {
+            .and_then(|j| {
+                previous
+                    .iter()
+                    .find(|&&(second, other_type, _)| second == j && other_type == bridge_type)
+            })
+            .map(|&(_, _, ladder)| {
                 let bridge = &mut bridges[ladder];
                 bridge.i.push(first);
                 if parallel {
@@ -1144,6 +1412,7 @@ fn calculate_beta_sheets(
                 } else {
                     bridge.j.push_front(second);
                 }
+                ladder
             });
         let ladder = match extended {
             Some(ladder) => ladder,
@@ -1164,22 +1433,23 @@ fn calculate_beta_sheets(
                 bridges.len() - 1
             }
         };
-        ends.insert((parallel, first, second), ladder);
+        current.push((second, bridge_type, ladder));
     }
 
+    let chain_label = |residue: &BackboneResidue| {
+        hierarchy
+            .chain(residue.source_chain)
+            .expect("analyzed residues come from the model hierarchy")
+            .label_id()
+    };
     bridges.sort_by(|left, right| {
         let left_residue = &residues[left.i[0]];
         let right_residue = &residues[right.i[0]];
-        (
-            &left_residue.source.chain_label_id,
-            left_residue.key.raw(),
-            left.i[0],
-        )
-            .cmp(&(
-                &right_residue.source.chain_label_id,
-                right_residue.key.raw(),
-                right.i[0],
-            ))
+        (chain_label(left_residue), left_residue.key.raw(), left.i[0]).cmp(&(
+            chain_label(right_residue),
+            right_residue.key.raw(),
+            right.i[0],
+        ))
     });
     merge_bulges(residues, &mut bridges);
     if bridges.len() > max_ladders {
@@ -1191,8 +1461,13 @@ fn calculate_beta_sheets(
     }
     counts.ladders = bridges.len();
     assign_sheets(&mut bridges, residues.len());
-    assign_beta_results(residues, &bridges);
-    Ok(counts)
+    let mut sheets = BetaSheets {
+        residues: vec![BetaResidue::default(); residues.len()],
+        structure: vec![DsspSecondaryStructure::Loop; residues.len()],
+        counts,
+    };
+    assign_beta_results(residues, &bridges, &mut sheets);
+    Ok(sheets)
 }
 
 /// Merges ladders across beta bulges, as DSSP does: each ladder in order
@@ -1324,18 +1599,17 @@ fn assign_sheets(bridges: &mut [Bridge], residue_count: usize) {
     }
 }
 
-fn assign_beta_results(residues: &mut [BackboneResidue], bridges: &[Bridge]) {
+fn assign_beta_results(residues: &[BackboneResidue], bridges: &[Bridge], sheets: &mut BetaSheets) {
+    let beta = &mut sheets.residues;
     for bridge in bridges {
         let first_slot = bridge
             .i
             .iter()
-            .any(|index| residues[*index].beta_partners[0].is_some())
-            as usize;
+            .any(|index| beta[*index].partners[0].is_some()) as usize;
         let second_slot = bridge
             .j
             .iter()
-            .any(|index| residues[*index].beta_partners[0].is_some())
-            as usize;
+            .any(|index| beta[*index].partners[0].is_some()) as usize;
         let parallel = bridge.bridge_type == BridgeType::Parallel;
         let first_partners = if parallel {
             bridge.j.iter().copied().collect::<Vec<_>>()
@@ -1348,14 +1622,14 @@ fn assign_beta_results(residues: &mut [BackboneResidue], bridges: &[Bridge]) {
             bridge.i.iter().rev().copied().collect()
         };
         for (&residue, partner) in bridge.i.iter().zip(first_partners) {
-            residues[residue].beta_partners[first_slot] = Some(BetaSlot {
+            beta[residue].partners[first_slot] = Some(BetaSlot {
                 partner,
                 ladder: bridge.ladder,
                 parallel,
             });
         }
         for (&residue, partner) in bridge.j.iter().zip(second_partners) {
-            residues[residue].beta_partners[second_slot] = Some(BetaSlot {
+            beta[residue].partners[second_slot] = Some(BetaSlot {
                 partner,
                 ladder: bridge.ladder,
                 parallel,
@@ -1367,33 +1641,27 @@ fn assign_beta_results(residues: &mut [BackboneResidue], bridges: &[Bridge]) {
         } else {
             DsspSecondaryStructure::BetaBridge
         };
-        let first_start = bridge.i[0];
-        let first_end = *bridge.i.last().expect("bridge strand");
-        for residue in &mut residues[first_start..=first_end] {
-            if residue.secondary_structure != DsspSecondaryStructure::ExtendedStrand {
-                residue.secondary_structure = structure;
+        let first = bridge.i[0]..=*bridge.i.last().expect("bridge strand");
+        let second = bridge.j[0]..=*bridge.j.back().expect("bridge strand");
+        for strand in [first, second] {
+            for index in strand {
+                if sheets.structure[index] != DsspSecondaryStructure::ExtendedStrand {
+                    sheets.structure[index] = structure;
+                }
+                beta[index].sheet = Some(bridge.sheet);
             }
-            residue.sheet = Some(bridge.sheet);
-        }
-        let second_start = bridge.j[0];
-        let second_end = *bridge.j.back().expect("bridge strand");
-        for residue in &mut residues[second_start..=second_end] {
-            if residue.secondary_structure != DsspSecondaryStructure::ExtendedStrand {
-                residue.secondary_structure = structure;
-            }
-            residue.sheet = Some(bridge.sheet);
         }
     }
 
     // Strands are numbered sheet by sheet, each sheet's in residue order.
-    let mut sheets = vec![Vec::new(); bridges.len() + 1];
-    for (index, residue) in residues.iter().enumerate() {
+    let mut members = vec![Vec::new(); bridges.len() + 1];
+    for (index, residue) in beta.iter().enumerate() {
         if let Some(sheet) = residue.sheet {
-            sheets[sheet].push(index);
+            members[sheet].push(index);
         }
     }
     let mut strand = 0;
-    for members in sheets {
+    for members in members {
         let mut previous: Option<usize> = None;
         for index in members {
             if previous.is_none_or(|prior| {
@@ -1401,154 +1669,241 @@ fn assign_beta_results(residues: &mut [BackboneResidue], bridges: &[Bridge]) {
             }) {
                 strand += 1;
             }
-            residues[index].strand = Some(strand);
+            beta[index].strand = Some(strand);
             previous = Some(index);
         }
     }
 }
 
-fn calculate_helices_turns_and_bends(residues: &mut [BackboneResidue]) {
+/// How far, in residues, classification looks around a range: an
+/// assignment depends on residues at most 10 before and 10 after it.
+///
+/// Whether a residue starts a helix depends only on its own turn, which
+/// reaches 5 residues ahead; a helix position also on the turns starting up
+/// to 5 residues before. The alpha-helix pass reads the starts of a residue
+/// and the one before, from up to 3 residues back, so it reaches 4 each way.
+/// The 3-10 pass reads the alpha assignments up to 2 residues each way, and
+/// the pi pass the 3-10 assignments up to 4 each way. Turns, bends and
+/// polyproline helices reach no further.
+const CLASSIFY_HALO: usize = 10;
+
+/// Helices, turns, bends and polyproline helices of the residues in
+/// `range`, over the beta assignment `structure`.
+///
+/// The range is classified on a window reaching [`CLASSIFY_HALO`] residues
+/// beyond it, which gives the range what DSSP gives it over the whole
+/// table.
+fn classify_range(
+    residues: &[BackboneResidue],
+    structure: &[DsspSecondaryStructure],
+    min_polyproline_stretch: usize,
+    range: Range<usize>,
+) -> Vec<Classified> {
+    let window =
+        range.start.saturating_sub(CLASSIFY_HALO)..(range.end + CLASSIFY_HALO).min(residues.len());
+    let mut classified = structure[window.clone()]
+        .iter()
+        .map(|&structure| (structure, [DsspHelixPosition::None; 4]))
+        .collect::<Vec<_>>();
+    calculate_helices_turns_and_bends(residues, window.start, &mut classified);
+    calculate_polyproline_helices(
+        residues,
+        window.start,
+        &mut classified,
+        min_polyproline_stretch,
+    );
+    classified.drain(..range.start - window.start);
+    classified.truncate(range.len());
+    classified
+}
+
+/// The positions `global` of the residue table at which a pass over a
+/// window of the table starting at residue `start` and holding `len`
+/// residues examines a pattern reaching `before` residues back and `reach`
+/// ahead.
+fn window_starts(
+    global: Range<usize>,
+    start: usize,
+    len: usize,
+    before: usize,
+    reach: usize,
+) -> Range<usize> {
+    global.start.max(start + before)..global.end.min((start + len).saturating_sub(reach))
+}
+
+/// DSSP's helix, turn and bend passes over the residues of the table from
+/// `start` on that `window` holds, as they assign them over the whole table
+/// to residues far enough inside the window; see [`CLASSIFY_HALO`].
+fn calculate_helices_turns_and_bends(
+    residues: &[BackboneResidue],
+    start: usize,
+    window: &mut [Classified],
+) {
+    let len = residues.len();
+    let window_len = window.len();
+    let starts = |global: Range<usize>, before, reach| {
+        window_starts(global, start, window_len, before, reach)
+    };
+    let starts_helix = |window: &[Classified], index: usize, helix_index: usize| {
+        is_helix_start(window[index - start].1[helix_index])
+    };
     for helix_index in 0..3 {
         let stride = helix_index + 3;
-        for start in 0..residues.len().saturating_sub(stride) {
-            let end = start + stride;
-            if residues[start].segment != residues[end].segment || !test_bond(residues, end, start)
+        for first in starts(0..len.saturating_sub(stride), 0, stride) {
+            let last = first + stride;
+            if residues[first].segment != residues[last].segment
+                || !test_bond(residues, last, first)
             {
                 continue;
             }
-            residues[end].helix_positions[helix_index] = DsspHelixPosition::End;
-            for residue in residues.iter_mut().take(end).skip(start + 1) {
-                if residue.helix_positions[helix_index] == DsspHelixPosition::None {
-                    residue.helix_positions[helix_index] = DsspHelixPosition::Middle;
+            window[last - start].1[helix_index] = DsspHelixPosition::End;
+            for (_, positions) in &mut window[first + 1 - start..last - start] {
+                if positions[helix_index] == DsspHelixPosition::None {
+                    positions[helix_index] = DsspHelixPosition::Middle;
                 }
             }
-            residues[start].helix_positions[helix_index] =
-                if residues[start].helix_positions[helix_index] == DsspHelixPosition::End {
-                    DsspHelixPosition::StartAndEnd
-                } else {
-                    DsspHelixPosition::Start
-                };
+            let positions = &mut window[first - start].1;
+            positions[helix_index] = if positions[helix_index] == DsspHelixPosition::End {
+                DsspHelixPosition::StartAndEnd
+            } else {
+                DsspHelixPosition::Start
+            };
         }
     }
-    for start in 1..residues.len().saturating_sub(4) {
-        if is_helix_start(&residues[start], 1) && is_helix_start(&residues[start - 1], 1) {
-            for residue in residues.iter_mut().skip(start).take(4) {
-                residue.secondary_structure = DsspSecondaryStructure::AlphaHelix;
+    for first in starts(1..len.saturating_sub(4), 1, 3) {
+        if starts_helix(window, first, 1) && starts_helix(window, first - 1, 1) {
+            for (structure, _) in &mut window[first - start..first + 4 - start] {
+                *structure = DsspSecondaryStructure::AlphaHelix;
             }
         }
     }
-    for start in 1..residues.len().saturating_sub(3) {
-        if is_helix_start(&residues[start], 0) && is_helix_start(&residues[start - 1], 0) {
-            let empty = residues[start..=start + 2].iter().all(|residue| {
+    for first in starts(1..len.saturating_sub(3), 1, 2) {
+        if starts_helix(window, first, 0) && starts_helix(window, first - 1, 0) {
+            let helix = &mut window[first - start..first + 3 - start];
+            let empty = helix.iter().all(|(structure, _)| {
                 matches!(
-                    residue.secondary_structure,
+                    structure,
                     DsspSecondaryStructure::Loop | DsspSecondaryStructure::Helix3_10
                 )
             });
             if empty {
-                for residue in residues.iter_mut().skip(start).take(3) {
-                    residue.secondary_structure = DsspSecondaryStructure::Helix3_10;
+                for (structure, _) in helix {
+                    *structure = DsspSecondaryStructure::Helix3_10;
                 }
             }
         }
     }
-    for start in 1..residues.len().saturating_sub(5) {
-        if is_helix_start(&residues[start], 2) && is_helix_start(&residues[start - 1], 2) {
-            let empty = residues[start..=start + 4].iter().all(|residue| {
+    for first in starts(1..len.saturating_sub(5), 1, 4) {
+        if starts_helix(window, first, 2) && starts_helix(window, first - 1, 2) {
+            let helix = &mut window[first - start..first + 5 - start];
+            let empty = helix.iter().all(|(structure, _)| {
                 matches!(
-                    residue.secondary_structure,
+                    structure,
                     DsspSecondaryStructure::Loop
                         | DsspSecondaryStructure::PiHelix
                         | DsspSecondaryStructure::AlphaHelix
                 )
             });
             if empty {
-                for residue in residues.iter_mut().skip(start).take(5) {
-                    residue.secondary_structure = DsspSecondaryStructure::PiHelix;
+                for (structure, _) in helix {
+                    *structure = DsspSecondaryStructure::PiHelix;
                 }
             }
         }
     }
-    for index in 1..residues.len().saturating_sub(1) {
-        if residues[index].secondary_structure != DsspSecondaryStructure::Loop {
+    for index in starts(1..len.saturating_sub(1), 0, 0) {
+        if window[index - start].0 != DsspSecondaryStructure::Loop {
             continue;
         }
-        let mut turn = false;
-        for helix_index in 0..3 {
-            let stride = helix_index + 3;
-            for offset in 1..stride {
-                if index >= offset && is_helix_start(&residues[index - offset], helix_index) {
-                    turn = true;
-                    break;
-                }
-            }
-            if turn {
-                break;
-            }
-        }
+        let turn = (0..3).any(|helix_index| {
+            (1..helix_index + 3).any(|offset| {
+                index >= start + offset && starts_helix(window, index - offset, helix_index)
+            })
+        });
         if turn {
-            residues[index].secondary_structure = DsspSecondaryStructure::Turn;
-        } else if residues[index].kappa.is_some_and(|kappa| kappa > 70.0) {
-            residues[index].secondary_structure = DsspSecondaryStructure::Bend;
+            window[index - start].0 = DsspSecondaryStructure::Turn;
+        } else if residues[index]
+            .geometry
+            .kappa
+            .is_some_and(|kappa| kappa > 70.0)
+        {
+            window[index - start].0 = DsspSecondaryStructure::Bend;
         }
     }
 }
 
-fn is_helix_start(residue: &BackboneResidue, helix_index: usize) -> bool {
+fn is_helix_start(position: DsspHelixPosition) -> bool {
     matches!(
-        residue.helix_positions[helix_index],
+        position,
         DsspHelixPosition::Start | DsspHelixPosition::StartAndEnd
     )
 }
 
-fn calculate_polyproline_helices(residues: &mut [BackboneResidue], stretch: usize) {
+/// DSSP's polyproline pass over a window, as
+/// [`calculate_helices_turns_and_bends`].
+fn calculate_polyproline_helices(
+    residues: &[BackboneResidue],
+    start: usize,
+    window: &mut [Classified],
+    stretch: usize,
+) {
     const EPSILON: f64 = 29.0;
     const PHI_MIN: f64 = -75.0 - EPSILON;
     const PHI_MAX: f64 = -75.0 + EPSILON;
     const PSI_MIN: f64 = 145.0 - EPSILON;
     const PSI_MAX: f64 = 145.0 + EPSILON;
 
-    for start in 1..residues.len().saturating_sub(stretch) {
-        let qualifies = residues[start..start + stretch].iter().all(|residue| {
+    let global = 1..residues.len().saturating_sub(stretch);
+    for first in window_starts(global, start, window.len(), 0, stretch - 1) {
+        let qualifies = residues[first..first + stretch].iter().all(|residue| {
             residue
+                .geometry
                 .phi
                 .is_some_and(|phi| (PHI_MIN..=PHI_MAX).contains(&phi))
                 && residue
+                    .geometry
                     .psi
                     .is_some_and(|psi| (PSI_MIN..=PSI_MAX).contains(&psi))
         });
         if !qualifies {
             continue;
         }
-        let prior = residues[start].helix_positions[3];
-        residues[start].helix_positions[3] = match (stretch, prior) {
+        let helix = &mut window[first - start..first + stretch - start];
+        let prior = helix[0].1[3];
+        helix[0].1[3] = match (stretch, prior) {
             (2, DsspHelixPosition::End) => DsspHelixPosition::Middle,
             (3, DsspHelixPosition::End) => DsspHelixPosition::StartAndEnd,
             (_, DsspHelixPosition::None) => DsspHelixPosition::Start,
             _ => prior,
         };
-        for residue in residues.iter_mut().skip(start + 1).take(stretch - 2) {
-            residue.helix_positions[3] = DsspHelixPosition::Middle;
+        for (_, positions) in &mut helix[1..stretch - 1] {
+            positions[3] = DsspHelixPosition::Middle;
         }
-        residues[start + stretch - 1].helix_positions[3] = DsspHelixPosition::End;
-        for residue in residues.iter_mut().skip(start).take(stretch) {
-            if residue.secondary_structure == DsspSecondaryStructure::Loop {
-                residue.secondary_structure = DsspSecondaryStructure::PolyprolineIIHelix;
+        helix[stretch - 1].1[3] = DsspHelixPosition::End;
+        for (structure, _) in helix {
+            if *structure == DsspSecondaryStructure::Loop {
+                *structure = DsspSecondaryStructure::PolyprolineIIHelix;
             }
         }
     }
 }
 
-fn public_residue(residue: BackboneResidue, keys: &[ResidueId]) -> DsspResidue {
+fn public_residue(
+    hierarchy: &Hierarchy,
+    residues: &[BackboneResidue],
+    index: usize,
+    beta: BetaResidue,
+    (secondary_structure, helix_positions): Classified,
+) -> DsspResidue {
     let convert_bond = |bond: BondSlot| {
         bond.partner.map(|partner| DsspHydrogenBond {
-            partner: keys[partner],
+            partner: residues[partner].key,
             energy_kcal_per_mol: bond.energy,
         })
     };
     let convert_beta = |partner: Option<BetaSlot>| {
         partner.map(|partner| DsspBetaPartner {
-            partner: keys[partner.partner],
+            partner: residues[partner.partner].key,
             ladder: partner.ladder,
             direction: if partner.parallel {
                 DsspBridgeDirection::Parallel
@@ -1557,23 +1912,24 @@ fn public_residue(residue: BackboneResidue, keys: &[ResidueId]) -> DsspResidue {
             },
         })
     };
+    let residue = &residues[index];
     DsspResidue {
         key: residue.key,
-        source: residue.source,
-        secondary_structure: residue.secondary_structure,
+        source: source(hierarchy, residue.source_chain, residue.key),
+        secondary_structure,
         chain_break: residue.chain_break,
-        phi: residue.phi,
-        psi: residue.psi,
-        omega: residue.omega,
-        alpha: residue.alpha,
-        kappa: residue.kappa,
-        tco: residue.tco,
+        phi: residue.geometry.phi,
+        psi: residue.geometry.psi,
+        omega: residue.geometry.omega,
+        alpha: residue.geometry.alpha,
+        kappa: residue.geometry.kappa,
+        tco: residue.geometry.tco,
         acceptors: residue.acceptors.map(convert_bond),
         donors: residue.donors.map(convert_bond),
-        beta_partners: residue.beta_partners.map(convert_beta),
-        sheet: residue.sheet,
-        strand: residue.strand,
-        helix_positions: residue.helix_positions,
+        beta_partners: beta.partners.map(convert_beta),
+        sheet: beta.sheet,
+        strand: beta.strand,
+        helix_positions,
     }
 }
 
@@ -1586,18 +1942,12 @@ mod tests {
     }
 
     fn backbone(count: usize) -> Vec<BackboneResidue> {
-        let mut residues = (0..count)
+        (0..count)
             .zip(0..=u32::MAX)
             .map(|(index, raw)| BackboneResidue {
-                key: crate::topology::ResidueId::new(raw),
-                source: DsspResidueSource {
-                    residue_name: "ALA".to_owned(),
-                    chain_label_id: "A".to_owned(),
-                    chain_author_id: Some("A".to_owned()),
-                    label_sequence_id: Some(index as i32 + 1),
-                    author_sequence_id: Some((index + 1).to_string()),
-                    insertion_code: None,
-                },
+                key: ResidueId::new(raw),
+                source_chain: ChainId::new(0),
+                label_sequence_id: None,
                 chain: 0,
                 n: Vec3 {
                     x: index as f32,
@@ -1629,35 +1979,49 @@ mod tests {
                 } else {
                     DsspChainBreak::None
                 },
-                phi: None,
-                psi: None,
-                omega: None,
-                alpha: None,
-                kappa: None,
-                tco: None,
+                geometry: ResidueGeometry::default(),
                 acceptors: [BondSlot::default(); 2],
                 donors: [BondSlot::default(); 2],
-                beta_partners: [None; 2],
-                sheet: None,
-                strand: None,
-                helix_positions: [DsspHelixPosition::None; 4],
-                secondary_structure: DsspSecondaryStructure::Loop,
             })
-            .collect::<Vec<_>>();
-        if let Some(last) = residues.last_mut() {
-            last.next = None;
+            .collect()
+    }
+
+    /// Candidate pairs given by their first and second residues, without
+    /// energies.
+    fn candidates(count: usize, pairs: &[(usize, usize)]) -> CandidatePairs {
+        let mut analysis = RangeAnalysis {
+            later_starts: vec![0],
+            ..RangeAnalysis::default()
+        };
+        for residue in 0..count {
+            let later = pairs
+                .iter()
+                .filter(|&&(first, _)| first == residue)
+                .map(|&(_, second)| second);
+            analysis.later.extend(later);
+            analysis.later_starts.push(analysis.later.len());
         }
-        residues
+        analysis.energies = vec![[None; 2]; analysis.later.len()];
+        analysis.earlier_starts = vec![0; count + 1];
+        CandidatePairs {
+            ranges: vec![analysis],
+            pairs: pairs.len(),
+        }
+    }
+
+    fn classify_alone(residues: &[BackboneResidue], stretch: usize) -> Vec<Classified> {
+        let structure = vec![DsspSecondaryStructure::Loop; residues.len()];
+        classify_range(residues, &structure, stretch, 0..residues.len())
     }
 
     fn assert_helix(stride: usize, structure: DsspSecondaryStructure) {
         let mut residues = backbone(stride + 3);
         insert_bond(&mut residues[stride].acceptors, 0, -1.0);
         insert_bond(&mut residues[stride + 1].acceptors, 1, -1.0);
-        calculate_helices_turns_and_bends(&mut residues);
-        assert!(residues[1..=stride]
+        let classified = classify_alone(&residues, 3);
+        assert!(classified[1..=stride]
             .iter()
-            .all(|residue| residue.secondary_structure == structure));
+            .all(|&(assigned, _)| assigned == structure));
     }
 
     #[test]
@@ -1740,31 +2104,94 @@ mod tests {
     fn dssp4_polyproline_window_and_default_stretch_assign_p() {
         let mut residues = backbone(7);
         for residue in &mut residues[1..=3] {
-            residue.phi = Some(-75.0);
-            residue.psi = Some(145.0);
+            residue.geometry.phi = Some(-75.0);
+            residue.geometry.psi = Some(145.0);
         }
-        calculate_polyproline_helices(&mut residues, 3);
-        assert!(residues[1..=3].iter().all(|residue| {
-            residue.secondary_structure == DsspSecondaryStructure::PolyprolineIIHelix
-        }));
-        assert_eq!(residues[1].helix_positions[3], DsspHelixPosition::Start);
-        assert_eq!(residues[2].helix_positions[3], DsspHelixPosition::Middle);
-        assert_eq!(residues[3].helix_positions[3], DsspHelixPosition::End);
+        let classified = classify_alone(&residues, 3);
+        assert!(classified[1..=3]
+            .iter()
+            .all(|&(structure, _)| { structure == DsspSecondaryStructure::PolyprolineIIHelix }));
+        assert_eq!(classified[1].1[3], DsspHelixPosition::Start);
+        assert_eq!(classified[2].1[3], DsspHelixPosition::Middle);
+        assert_eq!(classified[3].1[3], DsspHelixPosition::End);
     }
 
     #[test]
     fn two_residue_polyproline_mode_includes_the_last_complete_window() {
         let mut residues = backbone(7);
         for residue in &mut residues[4..=5] {
-            residue.phi = Some(-75.0);
-            residue.psi = Some(145.0);
+            residue.geometry.phi = Some(-75.0);
+            residue.geometry.psi = Some(145.0);
         }
-        calculate_polyproline_helices(&mut residues, 2);
-        assert!(residues[4..=5].iter().all(|residue| {
-            residue.secondary_structure == DsspSecondaryStructure::PolyprolineIIHelix
-        }));
-        assert_eq!(residues[4].helix_positions[3], DsspHelixPosition::Start);
-        assert_eq!(residues[5].helix_positions[3], DsspHelixPosition::End);
+        let classified = classify_alone(&residues, 2);
+        assert!(classified[4..=5]
+            .iter()
+            .all(|&(structure, _)| { structure == DsspSecondaryStructure::PolyprolineIIHelix }));
+        assert_eq!(classified[4].1[3], DsspHelixPosition::Start);
+        assert_eq!(classified[5].1[3], DsspHelixPosition::End);
+    }
+
+    /// A deterministic pseudo-random sequence.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn below(&mut self, bound: u64) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 33) % bound
+        }
+    }
+
+    /// Every range classified alone matches the whole table; a halo of 9
+    /// residues fails here.
+    #[test]
+    fn classifying_ranges_matches_classifying_the_whole_table() {
+        let count = 240;
+        for seed in 0..64 {
+            let mut random = Lcg(seed);
+            let mut residues = backbone(count);
+            let mut segment = 1;
+            for residue in &mut residues {
+                if random.below(60) == 0 {
+                    segment += 1;
+                }
+                residue.segment = segment;
+                residue.geometry.kappa = Some(random.below(180) as f64);
+                residue.geometry.phi = Some(random.below(100) as f64 - 125.0);
+                residue.geometry.psi = Some(random.below(100) as f64 + 95.0);
+            }
+            // Dense turns of every stride, so helices overlap and compete.
+            let density = 2 + seed % 3;
+            for (donor, residue) in residues.iter_mut().enumerate().skip(3) {
+                for stride in 3..=5 {
+                    if donor >= stride && random.below(density) == 0 {
+                        insert_bond(&mut residue.acceptors, donor - stride, -1.0);
+                    }
+                }
+            }
+            let beta = (0..count)
+                .map(|_| match random.below(16) {
+                    0 => DsspSecondaryStructure::ExtendedStrand,
+                    1 => DsspSecondaryStructure::BetaBridge,
+                    _ => DsspSecondaryStructure::Loop,
+                })
+                .collect::<Vec<_>>();
+            for stretch in [2, 3] {
+                let whole = classify_range(&residues, &beta, stretch, 0..count);
+                for size in [1, 2, 5, 16, 33] {
+                    let pieces = (0..count)
+                        .step_by(size)
+                        .flat_map(|start| {
+                            let range = start..(start + size).min(count);
+                            classify_range(&residues, &beta, stretch, range)
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(pieces, whole, "seed {seed}, stretch {stretch}, size {size}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -1776,7 +2203,7 @@ mod tests {
         insert_bond(&mut residues[7].acceptors, 3, -1.0);
 
         assert!(matches!(
-            calculate_beta_sheets(&mut residues, &[(2, 5), (4, 7)], 1, &serial()),
+            calculate_beta_sheets(&Hierarchy::default(), &residues, &candidates(10, &[(2, 5), (4, 7)]), 1, &serial()),
             Err(DsspError::LimitExceeded(limit))
                 if limit == LimitExceeded::first_beyond(Resource::Ladders, 1)
         ));
@@ -1787,25 +2214,43 @@ mod tests {
         let mut parallel = backbone(8);
         insert_bond(&mut parallel[3].acceptors, 5, -1.0);
         insert_bond(&mut parallel[5].acceptors, 1, -1.0);
-        let counts = calculate_beta_sheets(&mut parallel, &[(2, 5)], 1, &serial()).expect("bridge");
-        assert_eq!(counts.bridges, 1);
-        assert_eq!(
-            parallel[2].secondary_structure,
-            DsspSecondaryStructure::BetaBridge
-        );
-        assert!(parallel[2].beta_partners[0]
+        let sheets = calculate_beta_sheets(
+            &Hierarchy::default(),
+            &parallel,
+            &candidates(8, &[(2, 5)]),
+            1,
+            &serial(),
+        )
+        .expect("bridge");
+        assert_eq!(sheets.counts.bridges, 1);
+        assert_eq!(sheets.structure[2], DsspSecondaryStructure::BetaBridge);
+        assert!(sheets.residues[2].partners[0]
             .is_some_and(|partner| partner.parallel && partner.partner == 5));
 
         let mut antiparallel = backbone(8);
         insert_bond(&mut antiparallel[2].acceptors, 5, -1.0);
         insert_bond(&mut antiparallel[5].acceptors, 2, -1.0);
-        calculate_beta_sheets(&mut antiparallel, &[(2, 5)], 1, &serial()).expect("bridge");
-        assert!(antiparallel[2].beta_partners[0]
+        let sheets = calculate_beta_sheets(
+            &Hierarchy::default(),
+            &antiparallel,
+            &candidates(8, &[(2, 5)]),
+            1,
+            &serial(),
+        )
+        .expect("bridge");
+        assert!(sheets.residues[2].partners[0]
             .is_some_and(|partner| !partner.parallel && partner.partner == 5));
         assert_eq!(
-            calculate_beta_sheets(&mut backbone(8), &[], 0, &serial())
-                .expect("no bridge")
-                .ladders,
+            calculate_beta_sheets(
+                &Hierarchy::default(),
+                &backbone(8),
+                &candidates(8, &[]),
+                0,
+                &serial()
+            )
+            .expect("no bridge")
+            .counts
+            .ladders,
             0
         );
     }
