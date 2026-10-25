@@ -1455,6 +1455,93 @@ fn within_selects_the_same_atoms_on_any_executor() {
     }
 }
 
+/// Copies of one structure in one place, each its own structure, answered as
+/// a host evaluating one selection over all of them does: `#2` names the
+/// second copy's points, and other references read every copy, built once.
+struct StackedCopies<'a> {
+    models: &'a [Model],
+    built: RefCell<BTreeMap<String, ReferencePoints>>,
+}
+
+impl StackedCopies<'_> {
+    fn points(&self, key: String, points: impl FnOnce() -> Vec<Point3>) -> ReferencePoints {
+        self.built
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| {
+                ReferencePoints::new(
+                    Positions::from_vec(Quantity::new(points(), CANONICAL_LENGTH_UNIT)).unwrap(),
+                )
+            })
+            .clone()
+    }
+}
+
+impl SelectionResolver for StackedCopies<'_> {
+    fn resolve(&self, term: &HostTerm<'_>, _: HostRequest<'_>) -> Result<HostValue, HostTermError> {
+        match term.text() {
+            "2" => Ok(HostValue::Points(self.points("#2".into(), || {
+                self.models[1].positions().values().value().to_vec()
+            }))),
+            _ => Err(HostTermError::new(format!("unknown {}", term.text()))),
+        }
+    }
+
+    fn reference_points(
+        &self,
+        reference: &SelectionExpr,
+        _: HostRequest<'_>,
+    ) -> Result<ReferencePoints, HostTermError> {
+        Ok(self.points(reference.to_string(), || {
+            let mut points = Vec::new();
+            for model in self.models {
+                let atoms = reference
+                    .evaluate_structure(model, SelectEvaluateOptions::default())
+                    .unwrap();
+                let positions: &[Point3] = model.positions().values().value();
+                points.extend(atoms.indices().iter().map(|atom| positions[atom.index()]));
+            }
+            points
+        }))
+    }
+}
+
+#[test]
+#[ignore = "timing of `within` from shared references over 66 stacked copies; run in release with --ignored --nocapture"]
+fn shared_references_over_stacked_copies_run_within_a_frame() {
+    // 66 copies of KRas G12C in one place, each its own structure, as a host
+    // holds duplicated objects; the reference points are built for each pass.
+    let base = model("mmcif/6OIM.cif");
+    let models = vec![base; 66];
+    let atoms = models.iter().map(Model::atom_count).sum::<usize>();
+    let mut report = format!("66 stacked copies ({atoms} atoms), best and median of 15:");
+    for text in ["within 5 of protein", "within 5 of #2"] {
+        let expression = select::parse(text, host_options()).unwrap();
+        let mut times = (0..15)
+            .map(|_| {
+                let host = StackedCopies {
+                    models: &models,
+                    built: RefCell::default(),
+                };
+                let options = SelectEvaluateOptions::default().with_resolver(&host);
+                let start = std::time::Instant::now();
+                let selected = models
+                    .iter()
+                    .map(|model| expression.evaluate_structure(model, options).unwrap().len())
+                    .sum::<usize>();
+                (start.elapsed(), selected)
+            })
+            .collect::<Vec<_>>();
+        times.sort();
+        let (best, count) = times[0];
+        report += &format!(
+            "\n  `{text}`: {count} atoms, {best:.1?} ({:.1?})",
+            times[7].0
+        );
+    }
+    eprintln!("{report}");
+}
+
 #[test]
 #[ignore = "timing of selection terms on a million atoms; run in release with --ignored --nocapture"]
 fn selection_terms_on_a_million_atoms_run_within_a_frame() {

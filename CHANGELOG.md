@@ -432,6 +432,23 @@ are marked **Breaking:**.
 
 ### Changed
 
+- `within` over many small structures is fast again (SeekDelta K49), with
+  unchanged results. Since K42 each structure gathered the near lists of the
+  cells it visited again, from the shared reference points and from its own
+  reference atoms alike, and the shared grid sorted every repeated point.
+  The grid of shared `ReferencePoints` now drops repeated points before
+  sorting the rest and keeps the lists it gathers for every structure
+  measured against it, up to 2²⁰ points, read by each measurement without
+  holding its lock. A grid measured once, by at most four candidates per
+  distinct point, gathers no lists: each candidate tries the point that last
+  matched, then searches the cells around its own and stops at the first
+  point within the cutoff, and a cell gathers its list only when a search
+  finds none or it is searched often. On 66 copies of KRas G12C (9UOH) in
+  one place, each its own structure (100,716 atoms, release, i5-11400F,
+  rounds alternating with `main`), `within 5 of #2` takes 2.7–3.0 ms instead
+  of 19–20 ms (11–12 ms before K42), and `within 5 of protein` 14–15 ms
+  instead of 33–40 ms (17 ms before K42). The million-atom figures of K42
+  are unchanged.
 - Selection terms over a million atoms run within a frame (SeekDelta K42),
   with unchanged results. `name` and `label_name` decide each distinct atom
   name once, against a table of the sites' names that the topology numbers on
