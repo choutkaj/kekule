@@ -8,7 +8,9 @@
 //! Weighted RMSF and contact occupancy live in [`kekule::statistics`]. Their
 //! accumulators observe a streamed frame through its buffer's
 //! `as_model_view()` with an explicit weight: one for equally weighted
-//! equilibrium frames, or a reweighting factor.
+//! equilibrium frames, or a reweighting factor. Frames read and fitted in
+//! parallel can be observed in parallel too: observe each range of frames
+//! into its own accumulator and merge the accumulators in range order.
 //!
 //! # Examples
 //!

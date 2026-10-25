@@ -11,6 +11,30 @@ are marked **Breaking:**.
 
 ### Added
 
+- Mergeable RMSF and contact occupancy accumulators (SeekDelta K48), so a
+  host observes ranges of structures in parallel instead of one structure
+  after another in order. `RmsfAccumulator::merge` combines the weighted
+  moments of another accumulator over the same selection with Chan et al.'s
+  pairwise update, and `ContactOccupancyAccumulator::merge` adds the weights
+  of another accumulator of the same pairs and cutoff. Partials merged in
+  range order give, for a given split, the same result on every executor and
+  thread count, and the serial result up to rounding: within 10⁻¹⁴ of the
+  RMSF, or 10⁻¹¹ with a common translation of 1000 nm, in the tests, and
+  exactly for contact weights of one. Merging accumulators of another
+  topology layout, selection, pairs, pair order, or cutoff fails with the
+  new `StatisticsError::MergeMismatch` (`MergeMismatch`), and overflowing
+  with `MergeWeightOverflow` or `MergeNumericalFailure`; a failed merge
+  changes nothing. Both accumulators are now `Clone`. An RMSF observation
+  measures squared lengths instead of `hypot`, updates the moments in place
+  when a bound on the coordinates and the total weight proves that nothing
+  can overflow, and copies them only otherwise; contacts compare squared
+  distances, deciding by the distance itself near the cutoff. On 100,000
+  atoms (the new `statistics_accumulators` benchmark, release, i5-11400F,
+  rounds alternating with `main` while other sessions compiled), an RMSF
+  observation takes 1.0–1.4 ms instead of 1.35–1.8 ms, a merge 0.4–0.6 ms,
+  and 50,000 contact pairs 0.21–0.26 ms instead of 0.71–0.92 ms. Observing
+  96 frames in ranges on four scoped threads reaches 1,700–2,300 RMSF
+  frames/s, against 550–740 serially on `main`.
 - Atom selections from and to dense order (SeekDelta K43), so a host that
   holds atom sets as sorted indices or bit masks (a resolver's `selected`,
   `visible`, or secondary-structure terms) makes and reads selections in
