@@ -611,6 +611,14 @@ impl Frame {
         let scale = Quantity::new(1.0, common.length_unit)
             .value_in(ANGSTROM)
             .expect("validated length unit converts to angstrom");
+        // Parsing rejects a count of zero; a host-built frame may be empty.
+        if frame.atoms().is_empty() {
+            return Err(interpret_error(
+                DiagnosticKind::InvalidValue,
+                "an XYZ frame cannot contain zero atoms",
+            )
+            .at(frame.location()));
+        }
         let mut elements = Vec::with_capacity(frame.atoms().len());
         let mut points = Vec::with_capacity(frame.atoms().len());
         let mut fallback = Vec::new();
@@ -642,6 +650,18 @@ impl Frame {
                 }
             }
             let position = atom.position();
+            // Parsing admits only finite coordinates; a host-built atom may
+            // hold any.
+            if [position.x, position.y, position.z]
+                .into_iter()
+                .any(|value| !value.is_finite())
+            {
+                return Err(interpret_error(
+                    DiagnosticKind::InvalidValue,
+                    "a coordinate is not a finite number",
+                )
+                .at(atom.location()));
+            }
             if [position.x, position.y, position.z]
                 .into_iter()
                 .any(|value| (value * scale).abs() > MAX_COORDINATE_ANGSTROM)

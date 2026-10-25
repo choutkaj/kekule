@@ -640,7 +640,10 @@ dative between a metal and a non-metal, every atom fixes zero implicit
 hydrogens because the file lists all atoms, and nothing assigns bond orders
 or charges. Each frame infers its own bonds, and frames of an ensemble must
 agree on them. The report lists every bond with its distance and cutoff,
-fallback radii, and contacts too close to bond.
+fallback radii, and contacts too close to bond. A host that holds atoms as
+elements and positions builds the same document from them and has it
+interpreted the same way; its atoms and frames are located by their position
+rather than by a line.
 
 Coordination is covalent: metal-ligand links become `Dative` bonds, so a metal
 complex or a metalloprotein site is one connected molecule. Links whose records
