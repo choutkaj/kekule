@@ -52,6 +52,19 @@ are marked **Breaking:**.
   frames. The default, `FrameTimingPolicy::Require`, fails such frames as
   before. An interval that is not a finite, nonnegative time fails when the
   writer is created.
+- DCD frames numbered on the header's step sequence (SeekDelta K55), so a
+  host writes frames read from XYZ, which have no steps, or a stride whose
+  steps are off the sequence, as DCD without first copying them to give them
+  the sequence's steps. Under the new `DcdFrameTimingPolicy::Number`, set
+  through `DcdWriteOptions::with_frame_timing`, frame `n` of the frames
+  written is written at step `start_step + n × step_interval` of
+  `with_step_sequence` and, under `DcdTimePolicy::HeaderDelta`, at that step
+  × `DELTA`. A frame without a step or time is given them; a frame whose own
+  step or time disagrees has it replaced, and `DcdWriter::report` counts the
+  frames whose steps and times were replaced as `WriteOmission::StructureState`
+  of `StructureField::Step` and `Time`. Frames on the sequence write the same
+  bytes and report nothing, as before. The default,
+  `DcdFrameTimingPolicy::Require`, fails such frames as before.
 - Trajectory writers over a host's stream (SeekDelta K53), so that a host
   places the file itself, for example writing under a temporary name of its
   own and replacing the destination with retries where
@@ -493,6 +506,9 @@ are marked **Breaking:**.
   names the source and the frame, as its other frame-state refusals do, and
   the XTC and TRR refusals of a frame without a time or step name
   `FrameTimingPolicy::Number`.
+- The DCD writer's refusals of a frame step off the sequence and of a
+  missing frame time under `DcdTimePolicy::HeaderDelta` name
+  `DcdFrameTimingPolicy::Number`.
 - **Breaking:** The mmCIF writer writes chains that share a label, as
   `ModelEditor::append_model` makes from copies of one model, instead of
   failing with `duplicate mmCIF structural-instance ID` (SeekDelta K50). So a

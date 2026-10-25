@@ -151,7 +151,9 @@ impl TrajectoryWriteOptions {
     /// formats that record a time and a step for every frame:
     /// [`trr::TrrWriteOptions::frame_timing`] and
     /// [`xtc::XtcWriteOptions::frame_timing`]. A later `with_*_options` call
-    /// replaces the policy this sets for its codec.
+    /// replaces the policy this sets for its codec. DCD numbers frames on its
+    /// header's step sequence instead, under its own
+    /// [`dcd::DcdWriteOptions::frame_timing`].
     #[must_use]
     pub fn with_frame_timing(mut self, frame_timing: FrameTimingPolicy) -> Self {
         self.trr = self.trr.with_frame_timing(frame_timing);

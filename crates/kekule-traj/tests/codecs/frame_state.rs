@@ -1,6 +1,7 @@
 //! Frame state a codec cannot carry, omitted and reported under the
-//! `frame_metadata` policies, and frames without a time or step numbered for
-//! XTC and TRR under `FrameTimingPolicy::Number`.
+//! `frame_metadata` policies, frames without a time or step numbered for
+//! XTC and TRR under `FrameTimingPolicy::Number`, and frames numbered on the
+//! DCD step sequence under `DcdFrameTimingPolicy::Number`.
 
 use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
@@ -14,7 +15,9 @@ use kekule::units::{
     Quantity, ANGSTROM, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER,
     PICOSECOND,
 };
-use kekule_traj::io::dcd::{DcdWriteOptions, DcdWriter};
+use kekule_traj::io::dcd::{
+    DcdFrameTimingPolicy, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
+};
 use kekule_traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter, TRR_LAMBDA_PROPERTY,
 };
@@ -501,6 +504,158 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
             "state.xtc",
             None,
             "XTC requires explicit frame step; FrameTimingPolicy::Number numbers frames without one",
+        ))
+    );
+}
+
+#[test]
+fn dcd_numbers_frames_on_the_step_sequence() {
+    let numbered = DcdWriteOptions::default()
+        .with_step_sequence(100, 10)
+        .with_frame_timing(DcdFrameTimingPolicy::Number);
+    let stepped = |steps: [u64; 3]| {
+        trajectory((0..3).map(|index| {
+            let mut frame = bare_frame(index);
+            frame.set_step(Some(steps[index]));
+            frame
+        }))
+    };
+    let on_sequence = stepped([100, 110, 120]);
+    let (expected, report) = dcd(
+        numbered.with_frame_timing(DcdFrameTimingPolicy::Require),
+        &on_sequence,
+    );
+    assert!(report.is_empty());
+
+    // Frames whose own steps are on the sequence write as read.
+    let (bytes, report) = dcd(numbered, &on_sequence);
+    assert_eq!(bytes, expected);
+    assert!(report.is_empty());
+
+    // Frames as read from XYZ, without steps, are given the sequence's.
+    let unstepped = trajectory((0..3).map(bare_frame));
+    let (bytes, report) = dcd(numbered, &unstepped);
+    assert_eq!(bytes, expected);
+    assert!(report.is_empty());
+
+    // A stride of another trajectory, off the sequence but for its first
+    // frame, has the other steps replaced and reported.
+    let (bytes, report) = dcd(numbered, &stepped([100, 120, 140]));
+    assert_eq!(bytes, expected);
+    assert_eq!(report.omissions(), [omitted(StructureField::Step, 2)]);
+    let read = read_all(
+        &mut DcdReader::new(Cursor::new(bytes), topology(), DcdReadOptions::default()).unwrap(),
+    );
+    let steps = read.iter().map(TrajectoryFrame::step).collect::<Vec<_>>();
+    assert_eq!(steps, [Some(100), Some(110), Some(120)]);
+
+    // By default such frames still fail.
+    let options = numbered.with_frame_timing(DcdFrameTimingPolicy::Require);
+    for frame in [
+        unstepped.get(0).unwrap(),
+        stepped([90, 110, 120]).get(0).unwrap(),
+    ] {
+        let mut writer =
+            DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
+        assert_eq!(
+            writer.write_frame(frame),
+            Err(codec_error(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::WriteFrame,
+                TrajectoryFormat::Dcd,
+                "state.dcd",
+                None,
+                "DCD frame step must be exactly 100; \
+                 DcdFrameTimingPolicy::Number numbers frames on the step sequence",
+            ))
+        );
+    }
+}
+
+#[test]
+fn dcd_numbering_times_frames_with_the_header_delta() {
+    let time_policy = DcdTimePolicy::HeaderDelta { unit: PICOSECOND };
+    let options = DcdWriteOptions::default()
+        .with_step_sequence(0, 5)
+        .with_header_delta(Quantity::new(0.5, PICOSECOND), time_policy)
+        .unwrap();
+    let numbered = options.with_frame_timing(DcdFrameTimingPolicy::Number);
+    let timed = |times: [Option<f64>; 3], steps: [Option<u64>; 3]| {
+        trajectory((0..3).map(|index| {
+            let mut frame = bare_frame(index);
+            frame.set_step(steps[index]);
+            frame.set_time(times[index].and_then(time)).unwrap();
+            frame
+        }))
+    };
+    let explicit = timed(
+        [Some(0.0), Some(2.5), Some(5.0)],
+        [Some(0), Some(5), Some(10)],
+    );
+    let (expected, report) = dcd(options, &explicit);
+    assert!(report.is_empty());
+    let (bytes, report) = dcd(numbered, &explicit);
+    assert_eq!(bytes, expected);
+    assert!(report.is_empty());
+
+    // Frames without times or steps are given step × DELTA.
+    let (bytes, report) = dcd(numbered, &timed([None; 3], [None; 3]));
+    assert_eq!(bytes, expected);
+    assert!(report.is_empty());
+
+    // Frames with times of their own, as read from XTC with another
+    // timestep, have their times and steps replaced.
+    let (bytes, report) = dcd(
+        numbered,
+        &timed(
+            [Some(0.0), Some(2.0), Some(4.0)],
+            [Some(0), Some(1), Some(2)],
+        ),
+    );
+    assert_eq!(bytes, expected);
+    let expected_report: WriteReport = [
+        omitted(StructureField::Step, 2),
+        omitted(StructureField::Time, 2),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(report, expected_report);
+    let read = read_all(
+        &mut DcdReader::new(
+            Cursor::new(bytes),
+            topology(),
+            DcdReadOptions::default().with_time_policy(time_policy),
+        )
+        .unwrap(),
+    );
+    let timing = read
+        .iter()
+        .map(|frame| {
+            (
+                frame.step(),
+                frame.time().unwrap().value_in(PICOSECOND).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(timing, [(Some(0), 0.0), (Some(5), 2.5), (Some(10), 5.0)]);
+
+    // By default a frame on the sequence without a time still fails.
+    let mut writer =
+        DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
+    assert_eq!(
+        writer.write_frame(
+            timed([None; 3], [Some(0), Some(5), Some(10)])
+                .get(0)
+                .unwrap()
+        ),
+        Err(codec_error(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            "state.dcd",
+            None,
+            "DCD explicit time policy requires frame time; \
+             DcdFrameTimingPolicy::Number times frames without one",
         ))
     );
 }

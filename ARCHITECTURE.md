@@ -434,7 +434,9 @@ unless the caller sets `UnrepresentablePolicy::Omit` for its kind (frame
 metadata, frame properties, or the cell), and the writer reports what it
 left out; collection properties are rejected rather than discarded. A codec
 never invents frame state, except the times and steps XTC and TRR number
-under an explicit `FrameTimingPolicy::Number`.
+under an explicit `FrameTimingPolicy::Number` and DCD numbers on its header's
+step sequence under an explicit `DcdFrameTimingPolicy::Number`, which reports
+each frame step and time it replaces.
 
 Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in
