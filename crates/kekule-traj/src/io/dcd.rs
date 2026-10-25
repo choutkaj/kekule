@@ -4,7 +4,12 @@
 //! either byte order, with optional unit cells and fixed atoms. [`DcdWriter`]
 //! writes canonical all-atom files. DCD stores f32 coordinates in angstrom and
 //! one step per frame on the `ISTART`/`NSAVC` sequence; time is derived from
-//! the header `DELTA` only under an explicit [`DcdTimePolicy`].
+//! the header `DELTA` only under an explicit [`DcdTimePolicy`]. The writer
+//! rejects frame state DCD cannot carry (velocities, forces, and times
+//! under [`DcdTimePolicy::Absent`], and properties) unless
+//! [`DcdWriteOptions::frame_metadata`] and
+//! [`DcdWriteOptions::frame_properties`] omit it, and reports what it leaves
+//! out in [`DcdWriter::report`].
 //!
 //! # Examples
 //!
@@ -64,11 +69,13 @@ use crate::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
+use kekule::diagnostics::{UnrepresentablePolicy, WriteReport};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
+use super::frame_state::{record, unrepresentable_frame_state};
 use super::limits::{reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
@@ -235,6 +242,8 @@ pub struct DcdWriteOptions {
     step_interval: u64,
     delta: f32,
     time_policy: DcdTimePolicy,
+    frame_metadata: UnrepresentablePolicy,
+    frame_properties: UnrepresentablePolicy,
 }
 
 impl Default for DcdWriteOptions {
@@ -246,6 +255,8 @@ impl Default for DcdWriteOptions {
             step_interval: 1,
             delta: 1.0,
             time_policy: DcdTimePolicy::Absent,
+            frame_metadata: UnrepresentablePolicy::Fail,
+            frame_properties: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -309,6 +320,36 @@ impl DcdWriteOptions {
         Ok(self)
     }
 
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
+        self
+    }
+
+    /// Sets [`Self::frame_properties`].
+    #[must_use]
+    pub const fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
+        self.frame_properties = frame_properties;
+        self
+    }
+
+    /// A trajectory frame's velocities and forces, and its time under
+    /// [`DcdTimePolicy::Absent`], which DCD cannot carry: by default a frame
+    /// with any of them fails to write; [`UnrepresentablePolicy::Omit`]
+    /// writes the frame without them and reports a
+    /// [`WriteOmission::StructureState`](kekule::diagnostics::WriteOmission::StructureState)
+    /// for each kind left out (see [`DcdWriter::report`]).
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
+    }
+
+    /// A trajectory frame's atom, bond, and frame properties, which DCD
+    /// cannot carry, under the rules of [`Self::frame_metadata`].
+    pub const fn frame_properties(&self) -> UnrepresentablePolicy {
+        self.frame_properties
+    }
+
     /// The byte order written; [`DcdEndian::Little`] by default.
     pub const fn endian(&self) -> DcdEndian {
         self.endian
@@ -334,8 +375,8 @@ impl DcdWriteOptions {
         Quantity::new(f64::from(self.delta), header_delta_unit(self.time_policy))
     }
 
-    /// How frame times relate to `DELTA`; [`DcdTimePolicy::Absent`], which
-    /// rejects frames carrying a time, by default.
+    /// How frame times relate to `DELTA`; [`DcdTimePolicy::Absent`] by
+    /// default, under which a frame's time follows [`Self::frame_metadata`].
     pub const fn time_policy(&self) -> DcdTimePolicy {
         self.time_policy
     }
@@ -1393,6 +1434,7 @@ pub struct DcdWriter<W> {
     partial: bool,
     finalized: bool,
     axis: Vec<f32>,
+    report: WriteReport,
 }
 
 impl<W> fmt::Debug for DcdWriter<W> {
@@ -1508,7 +1550,16 @@ impl<W: Write + Seek> DcdWriter<W> {
             partial: false,
             finalized: false,
             axis,
+            report: WriteReport::default(),
         })
+    }
+
+    /// The frame state the frames written so far leave out under
+    /// [`DcdWriteOptions::frame_metadata`] and `frame_properties`, counted over every frame
+    /// written. DCD stores coordinates for a topology its readers receive
+    /// separately, so nothing else is reported.
+    pub fn report(&self) -> &WriteReport {
+        &self.report
     }
 
     /// The topology every written frame must share.
@@ -1652,41 +1703,41 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        if frame.velocities().is_some() {
-            return Err(writer_field_error(
-                &self.source_label,
-                self.frame_count,
-                TrajectoryField::Velocities,
-            ));
-        }
-        if frame.forces().is_some() {
-            return Err(writer_field_error(
-                &self.source_label,
-                self.frame_count,
-                TrajectoryField::Forces,
-            ));
-        }
-        if frame.properties().atoms().has_data() {
-            return Err(writer_field_error(
-                &self.source_label,
-                self.frame_count,
-                TrajectoryField::AtomProperties,
-            ));
-        }
-        if frame.properties().bonds().has_data() {
-            return Err(writer_field_error(
-                &self.source_label,
-                self.frame_count,
-                TrajectoryField::BondProperties,
-            ));
-        }
-        if !frame.properties().owner().is_empty() {
-            return Err(writer_field_error(
-                &self.source_label,
-                self.frame_count,
-                TrajectoryField::Properties,
-            ));
-        }
+        let omitted = unrepresentable_frame_state(
+            [
+                (
+                    frame.velocities().is_some(),
+                    TrajectoryField::Velocities,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.forces().is_some(),
+                    TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.properties().atoms().has_data(),
+                    TrajectoryField::AtomProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    frame.properties().bonds().has_data(),
+                    TrajectoryField::BondProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    !frame.properties().owner().is_empty(),
+                    TrajectoryField::Properties,
+                    self.options.frame_properties,
+                ),
+                (
+                    self.options.time_policy == DcdTimePolicy::Absent && frame.time().is_some(),
+                    TrajectoryField::Time,
+                    self.options.frame_metadata,
+                ),
+            ],
+            |field| writer_field_error(&self.source_label, self.frame_count, field),
+        )?;
         if self.frame_count >= i32::MAX as usize {
             return Err(writer_overflow(
                 &self.source_label,
@@ -1712,10 +1763,8 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             ));
         }
         match (self.options.time_policy, frame.time()) {
-            (DcdTimePolicy::Absent, None) => {}
-            (DcdTimePolicy::Absent, Some(_)) => {
-                return Err(TrajectoryIoError::unsupported_field(TrajectoryField::Time))
-            }
+            // A time was omitted above or failed there.
+            (DcdTimePolicy::Absent, _) => {}
             (DcdTimePolicy::HeaderDelta { unit }, Some(time)) => {
                 let actual = time.value_in(unit).map_err(|error| {
                     codec_context(
@@ -1852,6 +1901,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             .frame_count
             .checked_add(1)
             .ok_or_else(|| writer_overflow(&self.source_label, "DCD frame count overflows"))?;
+        record(&mut self.report, omitted);
         Ok(())
     }
 }
