@@ -1,7 +1,9 @@
 //! Uniform-grid neighbor search for `within`.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::geometry::Point3;
 
@@ -19,7 +21,9 @@ const DENSE_SPARE_CELLS: usize = 1 << 16;
 /// at once.
 ///
 /// The grid keeps a copy of each distinct point, cell by cell: repeated
-/// points, as of copies stacked in one place, are measured once.
+/// points, as of copies stacked in one place, are measured once. A grid
+/// shared by many measurements also keeps the near lists it gathers, so
+/// measurements after the first gather only the cells no earlier one visited.
 #[derive(Debug, Default)]
 pub(crate) struct Grid {
     low: Point3,
@@ -31,6 +35,8 @@ pub(crate) struct Grid {
     /// The distinct points, contiguous within each cell.
     points: Vec<Point3>,
     cells: Cells,
+    /// The near lists kept across measurements, for a shared grid.
+    shared: Option<SharedNear>,
 }
 
 type Cell = (i64, i64, i64);
@@ -155,6 +161,7 @@ impl Grid {
             cutoff,
             points: Vec::new(),
             cells: Cells::default(),
+            shared: (candidates == 0).then(SharedNear::default),
         };
         // Cells count from the low corner, so every point of the box lies
         // between the origin cell and the high corner's cell.
@@ -306,21 +313,33 @@ impl Grid {
     /// Candidates in one cell measure against one list: the points of the
     /// cells around it that can lie within the cutoff of the cell. Atoms in
     /// dense order run through few cells in turn and come back to them, so
-    /// the lists of recent cells are kept. A candidate tries the point that
-    /// last matched first.
+    /// the lists of recent cells are kept, and a shared grid keeps them for
+    /// every measurement. A candidate tries the point that last matched
+    /// first.
     pub(crate) fn mark(
         &self,
         candidates: impl IntoIterator<Item = (usize, Point3)>,
-        mut mark: impl FnMut(usize),
+        mark: impl FnMut(usize),
     ) {
         if self.points.is_empty() {
             return;
         }
+        match &self.shared {
+            Some(shared) => self.mark_with(&mut SharedLists::new(shared), candidates, mark),
+            None => self.mark_with(&mut NearLists::new(), candidates, mark),
+        }
+    }
+
+    fn mark_with(
+        &self,
+        lists: &mut impl Near,
+        candidates: impl IntoIterator<Item = (usize, Point3)>,
+        mut mark: impl FnMut(usize),
+    ) {
         let (low, high) = (self.low, self.high);
         let squared = self.cutoff * self.cutoff;
-        let mut lists = NearLists::new();
         let mut current = None;
-        let mut near = 0..0;
+        let mut near: &[Point3] = &[];
         let mut last = 0;
         for (index, point) in candidates {
             if point.x < low.x
@@ -336,20 +355,19 @@ impl Grid {
             if current != Some(cell) {
                 current = Some(cell);
                 near = lists.near(self, cell);
-                last = near.start;
+                last = 0;
             }
             let within = |other: &Point3| {
                 let (ex, ey, ez) = (point.x - other.x, point.y - other.y, point.z - other.z);
                 ex * ex + ey * ey + ez * ez <= squared
             };
-            let points = &lists.points[near.clone()];
-            let Some(previous) = lists.points.get(last).filter(|_| !points.is_empty()) else {
+            let Some(previous) = near.get(last) else {
                 continue;
             };
             if within(previous) {
                 mark(index);
-            } else if let Some(found) = points.iter().position(within) {
-                last = near.start + found;
+            } else if let Some(found) = near.iter().position(within) {
+                last = found;
                 mark(index);
             }
         }
@@ -388,6 +406,12 @@ impl Grid {
     }
 }
 
+/// The near lists of cells.
+trait Near {
+    /// The near list of `cell` in `grid`.
+    fn near(&mut self, grid: &Grid, cell: Cell) -> &[Point3];
+}
+
 /// The near lists of the cells visited so far.
 struct NearLists {
     /// The range of each visited cell's list in `points`.
@@ -411,20 +435,108 @@ impl NearLists {
         }
     }
 
-    /// The range in [`Self::points`] of the near list of `cell`.
-    fn near(&mut self, grid: &Grid, cell: Cell) -> std::ops::Range<usize> {
-        if let Some(range) = self.kept.get(&cell) {
-            return range.clone();
+}
+
+impl Near for NearLists {
+    fn near(&mut self, grid: &Grid, cell: Cell) -> &[Point3] {
+        let range = match self.kept.get(&cell) {
+            Some(range) => range.clone(),
+            None => {
+                if self.points.len() > NEAR_POINTS {
+                    self.points.clear();
+                    self.kept.clear();
+                }
+                let start = self.points.len();
+                grid.gather(cell, &mut self.points);
+                let range = start..self.points.len();
+                self.kept.insert(cell, range.clone());
+                range
+            }
+        };
+        &self.points[range]
+    }
+}
+
+/// The points a shared grid keeps across its near lists, which bounds its
+/// memory; lists gathered after that serve their own measurement alone.
+/// Unit tests reach it often.
+#[cfg(not(test))]
+const SHARED_NEAR_POINTS: usize = 1 << 20;
+#[cfg(test)]
+const SHARED_NEAR_POINTS: usize = 64;
+
+/// The near lists a shared grid keeps for every measurement, each gathered
+/// by the first measurement that needs it.
+#[derive(Debug, Default)]
+struct SharedNear {
+    /// A poisoned lock holds only complete lists.
+    kept: Mutex<KeptNear>,
+}
+
+#[derive(Debug, Default)]
+struct KeptNear {
+    lists: HashMap<Cell, Arc<[Point3]>, BuildHasherDefault<CellHasher>>,
+    /// The points of `lists`.
+    points: usize,
+}
+
+impl SharedNear {
+    /// The near list of `cell`. The list is gathered outside the lock;
+    /// measurements gathering one at once keep the first.
+    fn near(&self, grid: &Grid, cell: Cell) -> Arc<[Point3]> {
+        let lock = || self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(list) = lock().lists.get(&cell) {
+            return Arc::clone(list);
         }
-        if self.points.len() > NEAR_POINTS {
-            self.points.clear();
+        let mut near = Vec::new();
+        grid.gather(cell, &mut near);
+        let near = Arc::<[Point3]>::from(near);
+        let mut kept = lock();
+        let full = kept.points + near.len() > SHARED_NEAR_POINTS;
+        match kept.lists.entry(cell) {
+            Entry::Occupied(list) => Arc::clone(list.get()),
+            Entry::Vacant(_) if full => near,
+            Entry::Vacant(list) => {
+                list.insert(Arc::clone(&near));
+                kept.points += near.len();
+                near
+            }
+        }
+    }
+}
+
+/// The near lists of the cells one measurement of a shared grid visited so
+/// far, read without the grid's lock.
+struct SharedLists<'a> {
+    shared: &'a SharedNear,
+    kept: HashMap<Cell, Arc<[Point3]>, BuildHasherDefault<CellHasher>>,
+    /// The points of `kept`, which bounds those of lists the grid does not
+    /// keep.
+    points: usize,
+}
+
+impl<'a> SharedLists<'a> {
+    fn new(shared: &'a SharedNear) -> Self {
+        Self {
+            shared,
+            kept: HashMap::default(),
+            points: 0,
+        }
+    }
+}
+
+impl Near for SharedLists<'_> {
+    fn near(&mut self, grid: &Grid, cell: Cell) -> &[Point3] {
+        if self.points > NEAR_POINTS && !self.kept.contains_key(&cell) {
             self.kept.clear();
+            self.points = 0;
         }
-        let start = self.points.len();
-        grid.gather(cell, &mut self.points);
-        let range = start..self.points.len();
-        self.kept.insert(cell, range.clone());
-        range
+        let (shared, points) = (self.shared, &mut self.points);
+        self.kept.entry(cell).or_insert_with(|| {
+            let list = shared.near(grid, cell);
+            *points += list.len();
+            list
+        })
     }
 }
 
@@ -558,6 +670,68 @@ mod tests {
                 marked.push(index)
             });
             assert_eq!(marked, brute(&candidates, references, cutoff), "{cutoff}");
+        }
+    }
+
+    #[test]
+    fn shared_near_lists_serve_every_measurement() {
+        // Many small structures measured against one shared grid, one after
+        // another and at once; under `cfg(test)` the grid keeps few points,
+        // so later lists serve their measurement alone.
+        let references = (0..500)
+            .map(|index| {
+                let index = f64::from(index);
+                Point3::new(
+                    (index * 0.73).sin() * 8.0,
+                    (index * 0.29).cos() * 8.0,
+                    (index * 0.05).sin() * 4.0,
+                )
+            })
+            .collect::<Vec<_>>();
+        let structures = (0..12)
+            .map(|structure| {
+                (0..80)
+                    .map(|index| {
+                        let index = f64::from(index * 13 + structure);
+                        Point3::new(
+                            (index * 0.41).cos() * 10.0,
+                            (index * 0.17).sin() * 10.0,
+                            (index * 0.07).cos() * 6.0,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        for cutoff in [0.0, 0.8, 2.5] {
+            let grid = Grid::new(&references, cutoff, 0);
+            let measure = |candidates: &[Point3]| {
+                let mut marked = Vec::new();
+                grid.mark(candidates.iter().copied().enumerate(), |index| {
+                    marked.push(index)
+                });
+                marked
+            };
+            let expected = structures
+                .iter()
+                .map(|structure| brute(structure, &references, cutoff))
+                .collect::<Vec<_>>();
+            for _ in 0..2 {
+                for (structure, expected) in structures.iter().zip(&expected) {
+                    assert_eq!(&measure(structure), expected, "{cutoff}");
+                }
+            }
+            std::thread::scope(|scope| {
+                let handles = structures
+                    .iter()
+                    .map(|structure| scope.spawn(|| measure(structure)))
+                    .collect::<Vec<_>>();
+                for (handle, expected) in handles.into_iter().zip(&expected) {
+                    assert_eq!(&handle.join().unwrap(), expected, "{cutoff}");
+                }
+            });
+            let kept = grid.shared.as_ref().unwrap().kept.lock().unwrap();
+            assert!(!kept.lists.is_empty() || cutoff == 0.0);
+            assert!(kept.points <= super::SHARED_NEAR_POINTS);
         }
     }
 

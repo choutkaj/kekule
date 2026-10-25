@@ -234,8 +234,6 @@ pub enum MmcifWriteIssue {
     },
     /// Entity semantics name a molecule instance the model does not have.
     UnknownClassifiedMolecule(MoleculeInstanceId),
-    /// Two structural instances share one ID.
-    DuplicateAsymId(String),
     /// A hierarchy atom has no biomolecular atom site.
     MissingAtomSite(InstanceAtomId),
     /// An atom appears in more than one biomolecular atom site.
@@ -450,7 +448,6 @@ impl MmcifWriteIssue {
             | Self::ConflictingAsymEntityIds { .. }
             | Self::ConflictingAsymEntityClassifications { .. }
             | Self::ConflictingSourceEntityClassifications { .. }
-            | Self::DuplicateAsymId(_)
             | Self::MissingAtomSite(_)
             | Self::DuplicateAtomSite(_)
             | Self::InconsistentAtomSite { .. }
@@ -531,9 +528,6 @@ impl fmt::Display for MmcifWriteIssue {
                 f,
                 "mmCIF entity semantics reference unknown {molecule}"
             ),
-            Self::DuplicateAsymId(id) => {
-                write!(f, "duplicate mmCIF structural-instance ID `{id}`")
-            }
             Self::MissingAtomSite(atom) => write!(f, "{atom} has no biomolecular atom site"),
             Self::DuplicateAtomSite(atom) => {
                 write!(f, "{atom} appears in more than one biomolecular atom site")
@@ -696,6 +690,17 @@ impl MmcifEntityClassifications {
 ///
 /// A block is named by [`MmcifWriteOptions::block_name`] unless
 /// [`Self::with_block_name`] names it.
+///
+/// Every hierarchy chain is a structural instance of its own, even when
+/// chains share a label, as the copies
+/// [`ModelEditor::append_model`](crate::structure::ModelEditor::append_model)
+/// appends do. The first chain with a label keeps it as `label_asym_id`; each
+/// later one is written as the label with a copy serial, `A-2`, `A-3`, and so
+/// on, skipping IDs another chain or asym uses, while `auth_asym_id` keeps
+/// the author chain name, which falls back to the label. Reading the block
+/// back gives the same chains, residues, atoms, and bonds, in the same order
+/// and under the same author names, with the written asym IDs as their
+/// labels.
 #[derive(Debug, Clone, Copy)]
 pub struct MmcifBlockSource<'a> {
     content: BlockContent<'a>,

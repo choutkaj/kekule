@@ -750,7 +750,12 @@ export.
   Every entity instance is its own label asym: a chain the source names as
   one asym stays one, while a chain without a source asym that holds a
   polymer, ligands, and water, as a PDB author chain does, is written as
-  several asyms that keep its author chain identifier.
+  several asyms that keep its author chain identifier. Chains that share a
+  label, as appended copies of one model do, are distinct instances: later
+  ones are written under the label with a copy serial (`A-2`) and their
+  author names, and read back with those labels. The hierarchy keeps
+  labels as appended, since a label names a source's instance, not one
+  of the combined model's.
 - PDB writes one entry per call, with `MODEL` records only for an
   ensemble. It writes what its reader reads back and no more: author
   identifiers, a `TER` record after each chain's polymer, and `CONECT` for
