@@ -15,6 +15,11 @@ const DENSE_CELLS_PER_POINT: usize = 256;
 const DENSE_CELLS_PER_CANDIDATE: usize = 16;
 const DENSE_SPARE_CELLS: usize = 1 << 16;
 
+/// A grid measured once searches around candidates, rather than gathering
+/// lists for them, when it has at most this many candidates per distinct
+/// point.
+const SEARCH_CANDIDATES_PER_POINT: usize = 4;
+
 /// Reference points binned into cubic cells of edge `cutoff`, so each
 /// candidate inside the references' cutoff-expanded bounding box examines
 /// only the 27 cells around its own; candidates outside the box are rejected
@@ -37,6 +42,10 @@ pub(crate) struct Grid {
     cells: Cells,
     /// The near lists kept across measurements, for a shared grid.
     shared: Option<SharedNear>,
+    /// Whether a candidate that misses the point last matched searches the
+    /// cells around its own rather than gathering their list: a grid
+    /// measured once by few candidates for its points uses each list little.
+    search: bool,
 }
 
 type Cell = (i64, i64, i64);
@@ -162,6 +171,7 @@ impl Grid {
             points: Vec::new(),
             cells: Cells::default(),
             shared: (candidates == 0).then(SharedNear::default),
+            search: false,
         };
         // Cells count from the low corner, so every point of the box lies
         // between the origin cell and the high corner's cell.
@@ -242,6 +252,8 @@ impl Grid {
                 Cells::Sparse { cells, occupied }
             }
         };
+        grid.search = candidates > 0
+            && candidates <= points.len().saturating_mul(SEARCH_CANDIDATES_PER_POINT);
         grid.points = points;
         grid
     }
@@ -258,8 +270,9 @@ impl Grid {
     }
 
     /// Passes the points of the 27 cells around `cell` to `each`, a slice
-    /// at a time: a dense grid's three cells along z are one slice.
-    fn around(&self, cell: Cell, mut each: impl FnMut(&[Point3])) {
+    /// at a time: a dense grid's three cells along z are one slice. Stops,
+    /// returning true, at the first slice for which `each` returns true.
+    fn around(&self, cell: Cell, mut each: impl FnMut(&[Point3]) -> bool) -> bool {
         let range = |start: u32, end: u32| &self.points[start as usize..end as usize];
         match &self.cells {
             Cells::Dense {
@@ -283,26 +296,30 @@ impl Grid {
                     z.saturating_add(1).min(dims.2 - 1),
                 );
                 if low > high {
-                    return;
+                    return false;
                 }
                 for x in x.saturating_sub(1).max(0)..=x.saturating_add(1).min(dims.0 - 1) {
                     for y in y.saturating_sub(1).max(0)..=y.saturating_add(1).min(dims.1 - 1) {
                         let first = rank(slot(*dims, (x, y, low)));
                         let end = rank(slot(*dims, (x, y, high)) + 1);
-                        if first < end {
-                            each(range(starts[first], starts[end]));
+                        if first < end && each(range(starts[first], starts[end])) {
+                            return true;
                         }
                     }
                 }
+                false
             }
             Cells::Sparse { cells, occupied } => {
                 for cell in around(cell) {
                     if occupied.may_contain(cell) {
                         if let Some(&(start, end)) = cells.get(&cell) {
-                            each(range(start, end));
+                            if each(range(start, end)) {
+                                return true;
+                            }
                         }
                     }
                 }
+                false
             }
         }
     }
@@ -315,7 +332,8 @@ impl Grid {
     /// dense order run through few cells in turn and come back to them, so
     /// the lists of recent cells are kept, and a shared grid keeps them for
     /// every measurement. A candidate tries the point that last matched
-    /// first.
+    /// first, then searches the cells around its own, which gathers their
+    /// list when the search finds no point or the cell is searched often.
     pub(crate) fn mark(
         &self,
         candidates: impl IntoIterator<Item = (usize, Point3)>,
@@ -339,8 +357,9 @@ impl Grid {
         let (low, high) = (self.low, self.high);
         let squared = self.cutoff * self.cutoff;
         let mut current = None;
-        let mut near: &[Point3] = &[];
-        let mut last = 0;
+        let mut near = None;
+        let mut previous: Option<Point3> = None;
+        let mut probes = None;
         for (index, point) in candidates {
             if point.x < low.x
                 || point.y < low.y
@@ -351,31 +370,68 @@ impl Grid {
             {
                 continue;
             }
-            let cell = self.cell(&point);
-            if current != Some(cell) {
-                current = Some(cell);
-                near = lists.near(self, cell);
-                last = 0;
-            }
             let within = |other: &Point3| {
                 let (ex, ey, ez) = (point.x - other.x, point.y - other.y, point.z - other.z);
                 ex * ex + ey * ey + ez * ez <= squared
             };
-            let Some(previous) = near.get(last) else {
-                continue;
-            };
-            if within(previous) {
+            // Consecutive atoms mostly lie near one point.
+            if previous.as_ref().is_some_and(within) {
                 mark(index);
-            } else if let Some(found) = near.iter().position(within) {
-                last = found;
+                continue;
+            }
+            let cell = self.cell(&point);
+            if current != Some(cell) {
+                current = Some(cell);
+                near = lists.kept(cell);
+            }
+            let found = match &near {
+                Some(list) => lists
+                    .points(list)
+                    .iter()
+                    .find(|other| within(other))
+                    .copied(),
+                None if !self.search => {
+                    let list = lists.near(self, cell);
+                    let found = lists
+                        .points(&list)
+                        .iter()
+                        .find(|other| within(other))
+                        .copied();
+                    near = Some(list);
+                    found
+                }
+                // A search of the cells around stops at the first point
+                // within the cutoff; one that finds none has gathered the
+                // cell's list. A cell searched often gathers its list.
+                None => match lists.search(self, cell, within) {
+                    Ok(found) => {
+                        if probes.get_or_insert_with(Probes::new).count(cell) >= PROBES_PER_LIST {
+                            near = Some(lists.near(self, cell));
+                        }
+                        Some(found)
+                    }
+                    Err(list) => {
+                        near = Some(list);
+                        None
+                    }
+                },
+            };
+            if let Some(found) = found {
+                previous = Some(found);
                 mark(index);
             }
         }
     }
 
     /// Appends to `near` the points of the cells around `cell` that can lie
-    /// within the cutoff of a point the grid places in `cell`.
-    fn gather(&self, cell: Cell, near: &mut Vec<Point3>) {
+    /// within the cutoff of a point the grid places in `cell`, stopping at
+    /// the first of them for which `stop` holds and returning it.
+    fn gather(
+        &self,
+        cell: Cell,
+        near: &mut Vec<Point3>,
+        stop: impl Fn(&Point3) -> bool,
+    ) -> Option<Point3> {
         let (low, high) = (self.low, self.high);
         // A point within the cutoff of a candidate lies within this reach of
         // the candidate's cell as computed, whatever the rounding of the
@@ -393,23 +449,90 @@ impl Grid {
         );
         let to = Point3::new(from.x + self.edge, from.y + self.edge, from.z + self.edge);
         let gap = |value: f64, from: f64, to: f64| (from - value).max(value - to).max(0.0);
+        let mut found = None;
         self.around(cell, |members| {
-            near.extend(members.iter().filter(|other| {
+            for other in members {
                 let (x, y, z) = (
                     gap(other.x, from.x, to.x),
                     gap(other.y, from.y, to.y),
                     gap(other.z, from.z, to.z),
                 );
-                x * x + y * y + z * z <= reach
-            }));
+                if x * x + y * y + z * z <= reach {
+                    if stop(other) {
+                        found = Some(*other);
+                        return true;
+                    }
+                    near.push(*other);
+                }
+            }
+            false
         });
+        found
+    }
+}
+
+/// The searches of one cell that find a point, after which it gathers its
+/// list.
+const PROBES_PER_LIST: u8 = 16;
+
+/// Approximate counts of the searches of recent cells, in a table of fixed
+/// size: a cell sharing a slot with another restarts its count.
+struct Probes {
+    slots: Vec<(Cell, u8)>,
+}
+
+impl Probes {
+    const SLOTS: usize = 1 << 10;
+
+    fn new() -> Self {
+        Self {
+            slots: vec![((i64::MIN, i64::MIN, i64::MIN), 0); Self::SLOTS],
+        }
+    }
+
+    /// Counts a search of `cell`, returning the searches counted so far.
+    fn count(&mut self, cell: Cell) -> u8 {
+        let mut hasher = CellHasher::default();
+        hasher.write_i64(cell.0);
+        hasher.write_i64(cell.1);
+        hasher.write_i64(cell.2);
+        let slot = &mut self.slots[hasher.finish() as usize % Self::SLOTS];
+        if slot.0 != cell {
+            *slot = (cell, 0);
+        }
+        slot.1 = slot.1.saturating_add(1);
+        slot.1
     }
 }
 
 /// The near lists of cells.
 trait Near {
-    /// The near list of `cell` in `grid`.
-    fn near(&mut self, grid: &Grid, cell: Cell) -> &[Point3];
+    /// A list, held while it is measured against.
+    type List;
+
+    /// The near list of `cell`, when it was gathered and is still kept.
+    fn kept(&mut self, cell: Cell) -> Option<Self::List>;
+
+    /// The first point of the near list of `cell` in `grid` for which
+    /// `within` holds, gathering the list as far as that point, or the
+    /// whole list, kept, when there is none.
+    fn search(
+        &mut self,
+        grid: &Grid,
+        cell: Cell,
+        within: impl Fn(&Point3) -> bool,
+    ) -> Result<Point3, Self::List>;
+
+    /// The near list of `cell` in `grid`, gathered and kept.
+    fn near(&mut self, grid: &Grid, cell: Cell) -> Self::List {
+        match self.search(grid, cell, |_| false) {
+            Ok(_) => unreachable!("no point stops gathering a whole list"),
+            Err(list) => list,
+        }
+    }
+
+    /// The points of `list`.
+    fn points<'a>(&'a self, list: &'a Self::List) -> &'a [Point3];
 }
 
 /// The near lists of the cells visited so far.
@@ -434,26 +557,38 @@ impl NearLists {
             points: Vec::new(),
         }
     }
-
 }
 
 impl Near for NearLists {
-    fn near(&mut self, grid: &Grid, cell: Cell) -> &[Point3] {
-        let range = match self.kept.get(&cell) {
-            Some(range) => range.clone(),
-            None => {
-                if self.points.len() > NEAR_POINTS {
-                    self.points.clear();
-                    self.kept.clear();
-                }
-                let start = self.points.len();
-                grid.gather(cell, &mut self.points);
-                let range = start..self.points.len();
-                self.kept.insert(cell, range.clone());
-                range
-            }
-        };
-        &self.points[range]
+    /// The range of the list in [`Self::points`].
+    type List = std::ops::Range<usize>;
+
+    fn kept(&mut self, cell: Cell) -> Option<Self::List> {
+        self.kept.get(&cell).cloned()
+    }
+
+    fn search(
+        &mut self,
+        grid: &Grid,
+        cell: Cell,
+        within: impl Fn(&Point3) -> bool,
+    ) -> Result<Point3, Self::List> {
+        if self.points.len() > NEAR_POINTS {
+            self.points.clear();
+            self.kept.clear();
+        }
+        let start = self.points.len();
+        if let Some(found) = grid.gather(cell, &mut self.points, within) {
+            self.points.truncate(start);
+            return Ok(found);
+        }
+        let range = start..self.points.len();
+        self.kept.insert(cell, range.clone());
+        Err(range)
+    }
+
+    fn points<'a>(&'a self, list: &'a Self::List) -> &'a [Point3] {
+        &self.points[list.clone()]
     }
 }
 
@@ -481,25 +616,24 @@ struct KeptNear {
 }
 
 impl SharedNear {
-    /// The near list of `cell`. The list is gathered outside the lock;
-    /// measurements gathering one at once keep the first.
-    fn near(&self, grid: &Grid, cell: Cell) -> Arc<[Point3]> {
-        let lock = || self.kept.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(list) = lock().lists.get(&cell) {
-            return Arc::clone(list);
-        }
-        let mut near = Vec::new();
-        grid.gather(cell, &mut near);
-        let near = Arc::<[Point3]>::from(near);
-        let mut kept = lock();
-        let full = kept.points + near.len() > SHARED_NEAR_POINTS;
+    fn kept(&self, cell: Cell) -> Option<Arc<[Point3]>> {
+        let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.lists.get(&cell).map(Arc::clone)
+    }
+
+    /// Keeps `list`, gathered outside the lock, as the near list of `cell`,
+    /// unless another measurement kept one first, which it returns, or the
+    /// grid keeps enough points.
+    fn keep(&self, cell: Cell, list: Arc<[Point3]>) -> Arc<[Point3]> {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        let full = kept.points + list.len() > SHARED_NEAR_POINTS;
         match kept.lists.entry(cell) {
-            Entry::Occupied(list) => Arc::clone(list.get()),
-            Entry::Vacant(_) if full => near,
-            Entry::Vacant(list) => {
-                list.insert(Arc::clone(&near));
-                kept.points += near.len();
-                near
+            Entry::Occupied(earlier) => Arc::clone(earlier.get()),
+            Entry::Vacant(_) if full => list,
+            Entry::Vacant(entry) => {
+                entry.insert(Arc::clone(&list));
+                kept.points += list.len();
+                list
             }
         }
     }
@@ -513,6 +647,8 @@ struct SharedLists<'a> {
     /// The points of `kept`, which bounds those of lists the grid does not
     /// keep.
     points: usize,
+    /// The list being gathered.
+    gathering: Vec<Point3>,
 }
 
 impl<'a> SharedLists<'a> {
@@ -521,22 +657,49 @@ impl<'a> SharedLists<'a> {
             shared,
             kept: HashMap::default(),
             points: 0,
+            gathering: Vec::new(),
         }
+    }
+
+    fn keep(&mut self, cell: Cell, list: &Arc<[Point3]>) {
+        if self.points > NEAR_POINTS {
+            self.kept.clear();
+            self.points = 0;
+        }
+        self.points += list.len();
+        self.kept.insert(cell, Arc::clone(list));
     }
 }
 
 impl Near for SharedLists<'_> {
-    fn near(&mut self, grid: &Grid, cell: Cell) -> &[Point3] {
-        if self.points > NEAR_POINTS && !self.kept.contains_key(&cell) {
-            self.kept.clear();
-            self.points = 0;
+    type List = Arc<[Point3]>;
+
+    fn kept(&mut self, cell: Cell) -> Option<Self::List> {
+        if let Some(list) = self.kept.get(&cell) {
+            return Some(Arc::clone(list));
         }
-        let (shared, points) = (self.shared, &mut self.points);
-        self.kept.entry(cell).or_insert_with(|| {
-            let list = shared.near(grid, cell);
-            *points += list.len();
-            list
-        })
+        let list = self.shared.kept(cell)?;
+        self.keep(cell, &list);
+        Some(list)
+    }
+
+    fn search(
+        &mut self,
+        grid: &Grid,
+        cell: Cell,
+        within: impl Fn(&Point3) -> bool,
+    ) -> Result<Point3, Self::List> {
+        self.gathering.clear();
+        if let Some(found) = grid.gather(cell, &mut self.gathering, within) {
+            return Ok(found);
+        }
+        let list = self.shared.keep(cell, Arc::from(&self.gathering[..]));
+        self.keep(cell, &list);
+        Err(list)
+    }
+
+    fn points<'a>(&'a self, list: &'a Self::List) -> &'a [Point3] {
+        list
     }
 }
 
@@ -635,6 +798,47 @@ mod tests {
             Grid::new(&references[..17], 0.01, 1_000_000).cells,
             Cells::Dense { .. }
         ));
+    }
+
+    #[test]
+    fn grids_measured_by_few_candidates_search_alike() {
+        // Few candidates per point search around them; repeated candidates
+        // search some cells often enough to gather their lists, and
+        // candidates far from every point gather empty ones.
+        let references = (0..300)
+            .map(|index| {
+                let index = f64::from(index);
+                Point3::new(
+                    (index * 0.53).sin() * 7.0,
+                    (index * 0.19).cos() * 7.0,
+                    index * 0.03,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut candidates = (0..600)
+            .map(|index| {
+                let index = f64::from(index);
+                Point3::new(
+                    (index * 0.31).cos() * 12.0,
+                    (index * 0.23).sin() * 12.0,
+                    (index * 0.07).sin() * 9.0 + 4.0,
+                )
+            })
+            .collect::<Vec<_>>();
+        candidates.extend(candidates[..30].repeat(20));
+        for cutoff in [0.0, 0.3, 1.2, 3.0] {
+            let grid = Grid::new(&references, cutoff, candidates.len());
+            assert!(grid.search, "{cutoff}");
+            let mut marked = Vec::new();
+            grid.mark(candidates.iter().copied().enumerate(), |index| {
+                marked.push(index)
+            });
+            let expected = brute(&candidates, &references, cutoff);
+            assert!(!expected.is_empty() || cutoff == 0.0);
+            assert_eq!(marked, expected, "{cutoff}");
+        }
+        assert!(!Grid::new(&references, 1.2, 0).search);
+        assert!(!Grid::new(&references, 1.2, 1_201).search);
     }
 
     #[test]
