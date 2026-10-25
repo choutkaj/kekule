@@ -4,12 +4,21 @@ use std::sync::Arc;
 
 use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
 
+mod labels;
+
+pub use labels::{AmbiguousLabel, AtomLabel, LabelCorrespondence, LabelScheme};
+
 /// Ordered, one-to-one atom pairs for comparing two topology layouts.
 ///
 /// Pairs associate moving atoms with reference atoms. They may cover a subset
 /// of either system and preserve caller order, including the order of weights.
 /// This describes an explicit geometric correspondence, not chemical equivalence
 /// or a mapping for transferring topology, hierarchy, or annotations.
+///
+/// Pairs come from the caller ([`Self::from_pairs`]), from dense order when
+/// both sides share a layout ([`Self::from_same_layout`]), or from equal
+/// hierarchy labels: chain, residue number, insertion code, and atom name
+/// ([`Self::from_labels`]).
 ///
 /// No coordinates are copied. Reuse this value across models or frames sharing
 /// its two topology allocations. After an operation publishes a new topology
@@ -235,6 +244,15 @@ pub enum AtomCorrespondenceError {
         /// The side with the mismatched topology.
         side: CorrespondenceSide,
     },
+    /// Hierarchy labels name more than one selected atom on a side
+    /// ([`AtomCorrespondence::from_labels`]).
+    AmbiguousLabels {
+        /// The side whose selection repeats the labels.
+        side: CorrespondenceSide,
+        /// Every repeated label of that side, in the dense order of its first
+        /// atom.
+        labels: Vec<AmbiguousLabel>,
+    },
 }
 
 impl fmt::Display for AtomCorrespondenceError {
@@ -262,6 +280,20 @@ impl fmt::Display for AtomCorrespondenceError {
                 formatter,
                 "correspondence belongs to a different {side} topology allocation",
             ),
+            Self::AmbiguousLabels { side, labels } => {
+                write!(
+                    formatter,
+                    "{} {side} label(s) name more than one selected atom",
+                    labels.len(),
+                )?;
+                for label in labels.iter().take(3) {
+                    write!(formatter, "; {label}")?;
+                }
+                if labels.len() > 3 {
+                    write!(formatter, "; and {} more", labels.len() - 3)?;
+                }
+                Ok(())
+            }
         }
     }
 }

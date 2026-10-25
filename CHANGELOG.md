@@ -11,6 +11,25 @@ are marked **Breaking:**.
 
 ### Added
 
+- Atom correspondence by hierarchy labels (SeekDelta K47), so two different
+  structures of one molecule (two crystal structures of a protein, or a model
+  and its template) are superposed without the host pairing their atoms.
+  `AtomCorrespondence::from_labels` pairs the atoms of a moving and a
+  reference `AtomSelection`, each on its own topology, whose chain, residue
+  number, insertion code, and atom name are equal, in the moving selection's
+  dense order. `LabelScheme::Author` (the default) reads the identifiers the
+  selection language's `chain`, `resid`, and `name` terms read: author chain,
+  sequence, and atom IDs, each falling back to its label ID, with insertion
+  codes; `LabelScheme::Label` reads mmCIF `label_asym_id`, `label_seq_id`,
+  and `label_atom_id`, as `labelchain`, `labelresid`, and `labelname` do.
+  Residue names are not compared, so a mutated residue pairs its backbone.
+  The `LabelCorrespondence` it returns holds the `AtomCorrespondence`, which
+  fits take as any other (or the `LabelCorrespondence` itself), and the
+  selected atoms of each side left unpaired, unlabeled atoms among them.
+  A label that names more than one selected atom on a side, such as
+  alternate locations kept as atoms or a repeated residue number, is refused
+  with the new `AtomCorrespondenceError::AmbiguousLabels`, which names the
+  side and every such `AmbiguousLabel` with its `AtomLabel` and atoms.
 - Atom selections from and to dense order (SeekDelta K43), so a host that
   holds atom sets as sorted indices or bit masks (a resolver's `selected`,
   `visible`, or secondary-structure terms) makes and reads selections in

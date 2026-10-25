@@ -2,7 +2,9 @@
 //!
 //! Atoms are paired by [`FitAtoms`]: an [`AtomSelection`] pairs each selected
 //! atom with itself (both sides share one topology layout), an
-//! [`AtomCorrespondence`] pairs atoms of independent topologies, and a
+//! [`AtomCorrespondence`] pairs atoms of independent topologies (given
+//! explicitly, by dense order, or by hierarchy labels with
+//! [`AtomCorrespondence::from_labels`]), and a
 //! [`SymmetricSelection`] pairs a selection under every permutation of
 //! symmetry-equivalent atoms, keeping the smallest RMSD. Every operation
 //! accepts any of them through `impl Into<FitAtoms>`.
@@ -85,9 +87,14 @@ mod collection;
 mod correspondence;
 mod symmetry;
 pub use collection::{AlignedRmsdOptions, Reference, SuperpositionReport};
-pub use correspondence::{AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide};
+pub use correspondence::{
+    AmbiguousLabel, AtomCorrespondence, AtomCorrespondenceError, AtomLabel, CorrespondenceSide,
+    LabelCorrespondence, LabelScheme,
+};
 pub use symmetry::{SymmetricSelection, SymmetryError, SymmetryLimits};
 
+#[cfg(test)]
+mod correspondence_label_tests;
 #[cfg(test)]
 mod correspondence_tests;
 #[cfg(test)]
@@ -131,6 +138,12 @@ impl<'a> From<&'a AtomSelection> for FitAtoms<'a> {
 impl<'a> From<&'a AtomCorrespondence> for FitAtoms<'a> {
     fn from(correspondence: &'a AtomCorrespondence) -> Self {
         Self::Correspondence(correspondence)
+    }
+}
+
+impl<'a> From<&'a LabelCorrespondence> for FitAtoms<'a> {
+    fn from(correspondence: &'a LabelCorrespondence) -> Self {
+        Self::Correspondence(correspondence.correspondence())
     }
 }
 
