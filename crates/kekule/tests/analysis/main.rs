@@ -10,5 +10,6 @@ mod geometry;
 mod measurements;
 mod solvation;
 mod statistics;
+mod statistics_merge;
 #[path = "../support/mod.rs"]
 mod support;

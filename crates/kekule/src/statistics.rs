@@ -10,6 +10,12 @@
 //! memory bounded by the selected atoms, pairs, or groups, not the
 //! observation count.
 //!
+//! Accumulators merge, so a host can observe in parallel: it splits the
+//! observations into ranges, observes each range into its own accumulator,
+//! and merges the partial accumulators in range order. For a given split the
+//! result is the same whichever threads observed the ranges, and it equals
+//! observing everything in one accumulator up to rounding.
+//!
 //! Ensembles and trajectories reduce themselves with the same accumulators.
 //! [`Ensemble::rmsf`], [`Ensemble::contact_occupancy`], and
 //! [`Ensemble::group_contact_occupancy`] observe each sample with its
@@ -125,6 +131,44 @@ pub enum StatisticsError {
         /// The atom whose value overflowed.
         atom: InstanceAtomId,
     },
+    /// Two accumulators measure different things and cannot be merged.
+    MergeMismatch(MergeMismatch),
+    /// The merged total weight would leave the finite numerical range.
+    MergeWeightOverflow,
+    /// A merged value would leave the finite numerical range.
+    MergeNumericalFailure {
+        /// The atom whose value overflowed.
+        atom: InstanceAtomId,
+    },
+}
+
+/// What differs between two accumulators that cannot be merged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MergeMismatch {
+    /// They observe structures of different topology layouts.
+    Topology,
+    /// They select different atoms.
+    Selection,
+    /// They measure different atom groups, or the same groups in another
+    /// order.
+    Groups,
+    /// They measure different atom pairs, or the same pairs in another order.
+    Pairs,
+    /// They count contacts at different cutoffs.
+    Cutoff,
+}
+
+impl fmt::Display for MergeMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Topology => "topology layouts",
+            Self::Selection => "atom selections",
+            Self::Groups => "atom groups",
+            Self::Pairs => "atom pairs",
+            Self::Cutoff => "contact cutoffs",
+        })
+    }
 }
 
 impl fmt::Display for StatisticsError {
@@ -162,6 +206,18 @@ impl fmt::Display for StatisticsError {
                 f,
                 "observation {index} statistic exceeds finite numerical range at {atom}"
             ),
+            Self::MergeMismatch(mismatch) => {
+                write!(f, "cannot merge accumulators with different {mismatch}")
+            }
+            Self::MergeWeightOverflow => {
+                f.write_str("merged total weight exceeds finite numerical range")
+            }
+            Self::MergeNumericalFailure { atom } => {
+                write!(
+                    f,
+                    "merged statistic exceeds finite numerical range at {atom}"
+                )
+            }
         }
     }
 }
@@ -189,10 +245,142 @@ fn next_total(index: usize, total: f64, weight: f64) -> Result<f64, StatisticsEr
     Ok(next)
 }
 
+/// The total weight after merging a total of `other`, which must stay finite.
+fn merged_total(total: f64, other: f64) -> Result<f64, StatisticsError> {
+    let next = total + other;
+    if !next.is_finite() {
+        return Err(StatisticsError::MergeWeightOverflow);
+    }
+    Ok(next)
+}
+
+/// The share `w / (W + w)` of a weight `w` added to a total `W`, and the
+/// factor `W w / (W + w)` of its squared deviation from the previous mean,
+/// written so that neither product overflows.
+fn shares(previous: f64, weight: f64, total: f64) -> (f64, f64) {
+    (weight / total, weight * (previous / total))
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct Moments {
     mean: Vector3,
     squared_deviations: f64,
+}
+
+impl Moments {
+    /// These moments combined with those of other observations, of mean
+    /// `mean` and squared deviations `squared_deviations`, where `share` and
+    /// `spread` are the others' [`shares`]. This is Chan et al.'s pairwise
+    /// update; for one observation, without squared deviations, it is West's
+    /// weighted update.
+    fn combine(self, mean: Vector3, squared_deviations: f64, share: f64, spread: f64) -> Self {
+        let delta = mean - self.mean;
+        Self {
+            mean: self.mean + delta * share,
+            squared_deviations: self.squared_deviations
+                + squared_deviations
+                + squared_increment(delta, spread),
+        }
+    }
+
+    fn is_finite(&self) -> bool {
+        self.mean.is_finite() && self.squared_deviations.is_finite()
+    }
+}
+
+/// `|delta|² spread`, a nonnegative quantity, so that combining moments never
+/// subtracts nearby values.
+fn squared_increment(delta: Vector3, spread: f64) -> f64 {
+    let squared = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+    if squared.is_normal() {
+        squared * spread
+    } else if delta.x == 0.0 && delta.y == 0.0 && delta.z == 0.0 {
+        0.0
+    } else {
+        // The square underflowed or overflowed; scale the length instead.
+        let increment = delta.x.hypot(delta.y).hypot(delta.z) * spread.sqrt();
+        increment * increment
+    }
+}
+
+/// The relative margin around the squared cutoff within which a contact is
+/// decided by the distance rather than its square: far more than the few
+/// rounding errors by which the two can disagree.
+const SQUARED_MARGIN: f64 = 1e-12;
+
+/// Replaces each slot's moments by `combine(slot, moments)`, for a total
+/// weight of `total` once every coordinate observed is at most `extent` in
+/// magnitude, or `None` when a new coordinate is not finite. Returns the first
+/// slot whose result is not finite and changes nothing then.
+///
+/// Means stay within the extent, squared deviations from them are at most
+/// 12 extent², and the squared deviations sum to at most 12 extent² times the
+/// total weight, up to rounding. When that is far from overflowing, no result
+/// can fail, so the moments are updated in place without pending copies.
+fn update_moments(
+    moments: &mut Vec<Moments>,
+    scratch: &mut Vec<Moments>,
+    extent: Option<f64>,
+    total: f64,
+    combine: impl Fn(usize, Moments) -> Moments,
+) -> Result<(), usize> {
+    match extent {
+        Some(extent) if extent * extent * total <= f64::MAX / 48.0 => {
+            for (slot, moments) in moments.iter_mut().enumerate() {
+                *moments = combine(slot, *moments);
+            }
+        }
+        _ => {
+            scratch.resize(moments.len(), Moments::default());
+            if let Some(slot) = combine_into(moments, scratch, combine) {
+                return Err(slot);
+            }
+            std::mem::swap(moments, scratch);
+        }
+    }
+    Ok(())
+}
+
+/// At least the magnitude of every coordinate of `atoms` and at least
+/// `extent`, or `None` when a coordinate is not finite.
+///
+/// Coordinates within `extent` keep it, after one comparison per coordinate
+/// that does not wait on the one before. Otherwise the new extent is twice
+/// the largest magnitude, so that coordinates moving a little further keep it
+/// too.
+fn observed_extent(extent: f64, atoms: &[TopologyAtomIndex], positions: &[Point3]) -> Option<f64> {
+    let within = atoms.iter().fold(true, |within, atom| {
+        let p = positions[atom.index()];
+        within & (p.x.abs() <= extent) & (p.y.abs() <= extent) & (p.z.abs() <= extent)
+    });
+    if within {
+        return Some(extent);
+    }
+    let mut largest = extent;
+    for atom in atoms {
+        let p = positions[atom.index()];
+        if !(p.x.is_finite() && p.y.is_finite() && p.z.is_finite()) {
+            return None;
+        }
+        largest = largest.max(p.x.abs()).max(p.y.abs()).max(p.z.abs());
+    }
+    Some(2.0 * largest)
+}
+
+/// Writes `combine(slot, moments[slot])` to `pending[slot]` for every slot
+/// and returns the first slot whose result is not finite.
+fn combine_into(
+    moments: &[Moments],
+    pending: &mut [Moments],
+    combine: impl Fn(usize, Moments) -> Moments,
+) -> Option<usize> {
+    for (slot, (previous, pending)) in moments.iter().zip(pending.iter_mut()).enumerate() {
+        *pending = combine(slot, *previous);
+        if !pending.is_finite() {
+            return Some(slot);
+        }
+    }
+    None
 }
 
 /// Online, weighted, per-atom RMS fluctuation about each atom's weighted mean
@@ -214,6 +402,40 @@ struct Moments {
 /// State uses O(selected atoms) memory, independent of the observation count.
 /// Each observation is transactional. Observation indices are diagnostic
 /// labels; every successful call counts with its weight.
+///
+/// Accumulators over one selection [merge](Self::merge), so ranges of
+/// observations can be observed in parallel into partial accumulators:
+///
+/// ```
+/// use std::num::NonZeroUsize;
+/// use std::sync::Mutex;
+/// use kekule::parallel::{Executor, ScopedThreads};
+/// use kekule::statistics::{RmsfAccumulator, RmsfResult};
+/// use kekule::structure::Trajectory;
+/// use kekule::topology::AtomSelection;
+/// # fn reduce(trajectory: &Trajectory, atoms: &AtomSelection)
+/// # -> Result<RmsfResult, Box<dyn std::error::Error>> {
+/// // Four ranges of frames, whatever the thread count.
+/// let (frames, ranges) = (trajectory.len(), 4);
+/// let partials = (0..ranges).map(|_| Mutex::new(None)).collect::<Vec<_>>();
+/// let executor = ScopedThreads::new(NonZeroUsize::new(2).unwrap());
+/// executor.run(ranges, &|range| {
+///     let partial = RmsfAccumulator::new(atoms).and_then(|mut rmsf| {
+///         for index in range * frames / ranges..(range + 1) * frames / ranges {
+///             rmsf.observe(index, &trajectory.get(index).unwrap(), 1.0)?;
+///         }
+///         Ok(rmsf)
+///     });
+///     *partials[range].lock().unwrap() = Some(partial);
+/// });
+/// // Merged in range order, the result depends on the split alone.
+/// let mut rmsf = RmsfAccumulator::new(atoms)?;
+/// for partial in partials {
+///     rmsf.merge(&partial.into_inner().unwrap().unwrap()?)?;
+/// }
+/// # Ok(rmsf.finish()?)
+/// # }
+/// ```
 ///
 /// Reweighting trajectory frames, for example by bias factors from enhanced
 /// sampling, observes each frame with its weight:
@@ -240,11 +462,14 @@ struct Moments {
 ///
 /// A streamed `kekule-traj` frame buffer is observed through
 /// `buffer.as_model_view()`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RmsfAccumulator {
     selection: AtomSelection,
     moments: Vec<Moments>,
+    /// Pending moments of an update that might fail, allocated on first use.
     scratch: Vec<Moments>,
+    /// At least the magnitude of every coordinate observed so far.
+    extent: f64,
     total_weight: f64,
     observations: usize,
 }
@@ -265,7 +490,8 @@ impl RmsfAccumulator {
         Ok(Self {
             selection: selection.clone(),
             moments: vec![Moments::default(); len],
-            scratch: vec![Moments::default(); len],
+            scratch: Vec::new(),
+            extent: 0.0,
             total_weight: 0.0,
             observations: 0,
         })
@@ -295,52 +521,108 @@ impl RmsfAccumulator {
             .ensure_compatible(&structure.shared_topology())
             .map_err(|_| StatisticsError::TopologyMismatch { index })?;
         let positions = structure.positions().values();
-        // The new observation's share of the total, and the factor of its
-        // squared deviation from the previous mean, `w W / (W + w)`, written
-        // so that neither product overflows.
-        let share = weight / total;
-        let spread = weight * (self.total_weight / total);
-        for ((atom, previous), pending) in self
-            .selection
-            .indices()
-            .iter()
-            .zip(&self.moments)
-            .zip(&mut self.scratch)
-        {
-            let p = positions.value()[atom.index()];
-            let p = Vector3::new(p.x, p.y, p.z);
-            *pending = if self.observations == 0 {
-                Moments {
-                    mean: p,
-                    squared_deviations: 0.0,
+        let positions = *positions.value();
+        let atoms = self.selection.indices();
+        let (share, spread) = shares(self.total_weight, weight, total);
+        let first = self.observations == 0;
+        let extent = observed_extent(self.extent, atoms, positions);
+        let updated = update_moments(
+            &mut self.moments,
+            &mut self.scratch,
+            extent,
+            total,
+            |slot, previous| {
+                let p = positions[atoms[slot].index()];
+                let p = Vector3::new(p.x, p.y, p.z);
+                if first {
+                    Moments {
+                        mean: p,
+                        squared_deviations: 0.0,
+                    }
+                } else {
+                    previous.combine(p, 0.0, share, spread)
                 }
-            } else {
-                // West's weighted update, with the squared increment written
-                // as a nonnegative quantity to avoid subtracting nearby
-                // moments.
-                let delta = p - previous.mean;
-                let length = delta.x.hypot(delta.y).hypot(delta.z);
-                let increment = length * spread.sqrt();
-                Moments {
-                    mean: previous.mean + delta * share,
-                    squared_deviations: previous.squared_deviations + increment * increment,
-                }
-            };
-            if !pending.mean.is_finite() || !pending.squared_deviations.is_finite() {
-                return Err(StatisticsError::NumericalFailure {
-                    index,
-                    atom: self
-                        .selection
-                        .topology()
-                        .atom_id(*atom)
-                        .expect("validated selection"),
-                });
-            }
+            },
+        );
+        if let Err(slot) = updated {
+            return Err(StatisticsError::NumericalFailure {
+                index,
+                atom: self.atom_id(slot),
+            });
         }
-        std::mem::swap(&mut self.moments, &mut self.scratch);
+        self.extent = extent.unwrap_or(f64::INFINITY);
         self.total_weight = total;
         self.observations += 1;
         Ok(())
+    }
+
+    /// Merges the observations of `other`, an accumulator over the same
+    /// selection, as if they were observed after this accumulator's own;
+    /// failure changes nothing, and `other` is left as it was.
+    ///
+    /// The weighted moments merge with Chan et al.'s pairwise update. The
+    /// result depends on the two accumulators alone, so observations split
+    /// into ranges, observed into one accumulator each and merged in range
+    /// order give the same result whichever threads observed them. It equals
+    /// observing every structure in one accumulator up to rounding. Merging
+    /// an accumulator without observations changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::MergeMismatch`] when `other` selects atoms
+    /// of another topology layout ([`MergeMismatch::Topology`]) or other atoms
+    /// ([`MergeMismatch::Selection`]),
+    /// [`StatisticsError::MergeWeightOverflow`] when the total weight would
+    /// leave the finite range, and [`StatisticsError::MergeNumericalFailure`]
+    /// when a moment would.
+    pub fn merge(&mut self, other: &Self) -> Result<(), StatisticsError> {
+        if !self
+            .selection
+            .topology()
+            .shares_layout(other.selection.topology())
+        {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Topology));
+        }
+        if self.selection != other.selection {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Selection));
+        }
+        let total = merged_total(self.total_weight, other.total_weight)?;
+        if other.observations == 0 {
+            return Ok(());
+        }
+        if self.observations == 0 {
+            self.moments.copy_from_slice(&other.moments);
+            self.extent = other.extent;
+        } else {
+            let (share, spread) = shares(self.total_weight, other.total_weight, total);
+            let extent = self.extent.max(other.extent);
+            let updated = update_moments(
+                &mut self.moments,
+                &mut self.scratch,
+                Some(extent),
+                total,
+                |slot, previous| {
+                    let theirs = other.moments[slot];
+                    previous.combine(theirs.mean, theirs.squared_deviations, share, spread)
+                },
+            );
+            if let Err(slot) = updated {
+                return Err(StatisticsError::MergeNumericalFailure {
+                    atom: self.atom_id(slot),
+                });
+            }
+            self.extent = extent;
+        }
+        self.total_weight = total;
+        self.observations += other.observations;
+        Ok(())
+    }
+
+    fn atom_id(&self, slot: usize) -> InstanceAtomId {
+        self.selection
+            .topology()
+            .atom_id(self.selection.indices()[slot])
+            .expect("validated selection")
     }
 
     /// The number of structures observed so far.
@@ -429,7 +711,10 @@ impl RmsfResult {
 /// the weight in contact is the number of observations in contact. State uses
 /// O(pairs) memory; failed observations preserve every sum. Cutoff
 /// comparisons use canonical floating-point values without a tolerance.
-#[derive(Debug)]
+/// Accumulators of the same pairs and cutoff [merge](Self::merge), so ranges
+/// of observations can be observed in parallel, as shown for
+/// [`RmsfAccumulator`].
+#[derive(Debug, Clone)]
 pub struct ContactOccupancyAccumulator {
     topology: Arc<Topology>,
     pairs: Vec<(InstanceAtomId, InstanceAtomId)>,
@@ -521,16 +806,37 @@ impl ContactOccupancyAccumulator {
             return Err(StatisticsError::TopologyMismatch { index });
         }
         let positions = structure.positions().values();
+        let positions = *positions.value();
+        let cutoff = *self.cutoff.value();
+        // Squared distances decide pairs clearly inside or outside the
+        // cutoff; a pair near it, or whose square is not a normal number, is
+        // decided by the distance itself.
+        let squared_cutoff = cutoff * cutoff;
+        let (inside, outside) = if squared_cutoff.is_normal() {
+            (
+                squared_cutoff * (1.0 - SQUARED_MARGIN),
+                squared_cutoff * (1.0 + SQUARED_MARGIN),
+            )
+        } else {
+            (f64::NAN, f64::NAN)
+        };
         for ((&(a, b), pair), hit) in self.indices.iter().zip(&self.pairs).zip(&mut self.scratch) {
-            let delta = positions.value()[a.index()] - positions.value()[b.index()];
-            let distance = delta.x.hypot(delta.y).hypot(delta.z);
-            if !distance.is_finite() {
-                return Err(StatisticsError::NumericalFailure {
-                    index,
-                    atom: pair.0,
-                });
-            }
-            *hit = distance <= *self.cutoff.value();
+            let delta = positions[a.index()] - positions[b.index()];
+            let squared = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+            *hit = if squared.is_normal() && squared < inside {
+                true
+            } else if squared.is_normal() && squared > outside {
+                false
+            } else {
+                let distance = delta.x.hypot(delta.y).hypot(delta.z);
+                if !distance.is_finite() {
+                    return Err(StatisticsError::NumericalFailure {
+                        index,
+                        atom: pair.0,
+                    });
+                }
+                distance <= cutoff
+            };
         }
         // A pair's weight in contact sums a subsequence of the same weights
         // as the total, so with monotone rounding it never exceeds it.
@@ -552,6 +858,46 @@ impl ContactOccupancyAccumulator {
     /// The total weight observed so far.
     pub fn total_weight(&self) -> f64 {
         self.total_weight
+    }
+
+    /// Merges the observations of `other`, an accumulator of the same pairs
+    /// at the same cutoff, as if they were observed after this accumulator's
+    /// own; failure changes nothing, and `other` is left as it was.
+    ///
+    /// Weights in contact and total weights add, so observations split into
+    /// ranges, observed into one accumulator each and merged in range order
+    /// give the same result whichever threads observed them. It equals
+    /// observing every structure in one accumulator up to rounding, and
+    /// exactly when the weights are integers totalling less than 2⁵³, such as
+    /// weights of one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::MergeMismatch`] when `other` measures atoms
+    /// of another topology layout ([`MergeMismatch::Topology`]), other pairs
+    /// or the same pairs in another order ([`MergeMismatch::Pairs`]), or at
+    /// another cutoff ([`MergeMismatch::Cutoff`]), and
+    /// [`StatisticsError::MergeWeightOverflow`] when the total weight would
+    /// leave the finite range.
+    pub fn merge(&mut self, other: &Self) -> Result<(), StatisticsError> {
+        if !self.topology.shares_layout(&other.topology) {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Topology));
+        }
+        if self.pairs != other.pairs {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Pairs));
+        }
+        if self.cutoff.value() != other.cutoff.value() {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Cutoff));
+        }
+        let total = merged_total(self.total_weight, other.total_weight)?;
+        // Each sum stays at most its total, as for observations, so a finite
+        // total keeps every sum finite.
+        for (sum, theirs) in self.contact_weights.iter_mut().zip(&other.contact_weights) {
+            *sum += theirs;
+        }
+        self.total_weight = total;
+        self.observations += other.observations;
+        Ok(())
     }
 
     /// Finishes with sums in input pair order.
@@ -655,7 +1001,9 @@ const DIRECT_PAIRS: usize = 256;
 /// sums and O(grouped atoms) scratch, independent of the observation count;
 /// failed observations preserve every sum. Distances are compared with the
 /// cutoff as [`ContactOccupancyAccumulator`] compares them, without a
-/// tolerance.
+/// tolerance. Accumulators of the same groups, pairs, and cutoff
+/// [merge](Self::merge), so ranges of observations can be observed in
+/// parallel, as shown for [`RmsfAccumulator`].
 ///
 /// ```
 /// use kekule::geometry::Point3;
@@ -700,7 +1048,7 @@ const DIRECT_PAIRS: usize = 256;
 /// assert!(pairs.contacts().all(|(_, occupancy)| occupancy == 1.0 / 3.0));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GroupContactOccupancyAccumulator {
     topology: Arc<Topology>,
     groups: Vec<AtomSelection>,
@@ -713,7 +1061,7 @@ pub struct GroupContactOccupancyAccumulator {
 }
 
 /// Per-observation working memory, sized by the groups that pairs name.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct GroupScratch {
     /// Whether some pair names each group.
     paired: Vec<bool>,
@@ -734,7 +1082,7 @@ type Cell = (i64, i64, i64);
 /// One group's points binned into cubic cells at least as wide as the cutoff,
 /// sorted by cell, so the points within the cutoff of a point lie in the 27
 /// cells around its own.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct GroupGrid {
     low: Point3,
     scale: f64,
@@ -1055,6 +1403,43 @@ impl GroupContactOccupancyAccumulator {
     /// The total weight observed so far.
     pub fn total_weight(&self) -> f64 {
         self.total_weight
+    }
+
+    /// Merges the observations of `other`, an accumulator of the same groups
+    /// and pairs at the same cutoff, as if they were observed after this
+    /// accumulator's own; failure changes nothing, and `other` is left as it
+    /// was. Weights add as for [`ContactOccupancyAccumulator::merge`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::MergeMismatch`] when `other` measures atoms
+    /// of another topology layout ([`MergeMismatch::Topology`]), other groups
+    /// or the same groups in another order ([`MergeMismatch::Groups`]), other
+    /// pairs or the same pairs in another order or orientation
+    /// ([`MergeMismatch::Pairs`]), or at another cutoff
+    /// ([`MergeMismatch::Cutoff`]), and
+    /// [`StatisticsError::MergeWeightOverflow`] when the total weight would
+    /// leave the finite range.
+    pub fn merge(&mut self, other: &Self) -> Result<(), StatisticsError> {
+        if !self.topology.shares_layout(&other.topology) {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Topology));
+        }
+        if self.groups != other.groups {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Groups));
+        }
+        if self.pairs != other.pairs {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Pairs));
+        }
+        if self.cutoff.value() != other.cutoff.value() {
+            return Err(StatisticsError::MergeMismatch(MergeMismatch::Cutoff));
+        }
+        let total = merged_total(self.total_weight, other.total_weight)?;
+        for (sum, theirs) in self.contact_weights.iter_mut().zip(&other.contact_weights) {
+            *sum += theirs;
+        }
+        self.total_weight = total;
+        self.observations += other.observations;
+        Ok(())
     }
 
     /// Finishes with sums in input pair order.

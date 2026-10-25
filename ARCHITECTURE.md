@@ -455,7 +455,13 @@ explicitly. Streamed frames reach the same accumulators through their buffer's
 `ModelView`; `kekule-traj` adds no statistics of its own. Accumulators consume
 structures sharing the source topology's layout with memory bounded by
 selected atoms, pairs, or groups, not observation count. Failed observations leave
-accumulators unchanged. Results retain atom/pair associations; observation
+accumulators unchanged. Accumulators of the same selection, or of the same
+pairs of atoms or groups and cutoff, merge: a host observes ranges of
+structures into partial accumulators on any threads and merges them in range
+order, so a given split returns the same result on every executor, equal to
+serial observation up to rounding. Merging refuses mismatched accumulators
+with a typed error and, like observation, changes nothing when it fails.
+Results retain atom/pair associations; observation
 indices are diagnostic labels. Preprocessing, including alignment or imaging,
 is explicit. These are separate analysis results, not new topology state or a
 generic reduction framework.
