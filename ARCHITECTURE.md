@@ -444,7 +444,8 @@ works in any frame order, using the frame's own cell. Unwrapping retains tempora
 sufficiently close samples; it precedes downsampling. Failed streaming operations
 change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
-RMSF and contact occupancy are weighted statistics in `kekule::statistics`.
+RMSF and contact occupancy, of atom pairs or of pairs of atom groups, are
+weighted statistics in `kekule::statistics`.
 Every observation is a borrowed structure together with an explicit, finite,
 positive weight, so no structure is reduced with an implied weight.
 `Ensemble` methods observe each sample with its probability; `Trajectory`
@@ -453,7 +454,7 @@ equilibrium samples, and other frame weights are passed to the accumulators
 explicitly. Streamed frames reach the same accumulators through their buffer's
 `ModelView`; `kekule-traj` adds no statistics of its own. Accumulators consume
 structures sharing the source topology's layout with memory bounded by
-selected atoms or pairs, not observation count. Failed observations leave
+selected atoms, pairs, or groups, not observation count. Failed observations leave
 accumulators unchanged. Results retain atom/pair associations; observation
 indices are diagnostic labels. Preprocessing, including alignment or imaging,
 is explicit. These are separate analysis results, not new topology state or a
