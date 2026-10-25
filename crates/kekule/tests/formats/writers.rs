@@ -1504,6 +1504,155 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
     );
 }
 
+/// Chain A, a Gly-Gly polymer, and chain B, a zinc ion coordinated by the
+/// first glycine's oxygen, both in author chain P.
+const COORDINATED_DIPEPTIDE: &str = r#"data_dipeptide
+loop_
+_entity.id
+_entity.type
+1 polymer
+2 non-polymer
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+metalc1 metalc A GLY 1 O B ZN . ZN
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+ATOM 1 N N GLY A 1 1 0.000 0.000 0.000 1 P
+ATOM 2 C CA GLY A 1 1 1.458 0.000 0.000 1 P
+ATOM 3 C C GLY A 1 1 2.009 1.420 0.000 1 P
+ATOM 4 O O GLY A 1 1 1.251 2.390 0.000 1 P
+ATOM 5 N N GLY A 1 2 3.332 1.536 0.000 2 P
+ATOM 6 C CA GLY A 1 2 3.988 2.839 0.000 2 P
+ATOM 7 C C GLY A 1 2 5.504 2.693 0.000 2 P
+ATOM 8 O O GLY A 1 2 6.030 1.580 0.000 2 P
+HETATM 9 Zn ZN ZN B 2 . 0.000 3.800 0.000 101 P
+"#;
+
+#[test]
+fn mmcif_writes_appended_copies_as_chains_of_their_own_that_keep_author_names() {
+    let source = mmcif::parse_str(COORDINATED_DIPEPTIDE, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .model()
+        .clone();
+    // Three bonds in each glycine, the peptide bond, and the coordination.
+    assert_eq!(source.topology().bond_count(), 8);
+    // Three copies, 20 Å apart, as SeekDelta merges copies of one structure
+    // or a crystal's symmetry mates: chains A and B, three times.
+    let mut editor = source.to_editor();
+    for copy in 1..3 {
+        let appended = editor.append_model(&source).unwrap();
+        for &atom in source.topology().atom_ids() {
+            let draft = appended.atom(atom).unwrap();
+            let point = source.position(atom).unwrap().value_in(ANGSTROM).unwrap();
+            editor
+                .set_position(
+                    draft,
+                    Quantity::new(point + Vector3::new(20.0 * copy as f64, 0.0, 0.0), ANGSTROM),
+                )
+                .unwrap();
+        }
+    }
+    let merged = editor.finish().unwrap();
+    let labels = |model: &Model| {
+        model
+            .topology()
+            .chains()
+            .map(|chain| {
+                (
+                    chain.label_id().to_owned(),
+                    chain.author_id().map(str::to_owned),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let author = Some("P".to_owned());
+    assert_eq!(
+        labels(&merged)
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect::<Vec<_>>(),
+        ["A", "B", "A", "B", "A", "B"]
+    );
+
+    let text = mmcif::write([&merged], MmcifWriteOptions::default())
+        .map(|(text, _)| text)
+        .unwrap();
+    let document = mmcif::parse_str(&text, Default::default()).unwrap();
+    let block = &document.blocks()[0];
+    let asyms = block.loop_with_tag("_struct_asym.id").unwrap();
+    assert_eq!(
+        (0..asyms.row_count())
+            .map(|row| asyms
+                .value(row, "_struct_asym.id")
+                .unwrap()
+                .text()
+                .to_owned())
+            .collect::<Vec<_>>(),
+        ["A", "B", "A-2", "B-2", "A-3", "B-3"]
+    );
+    // Each copy's coordination bond names its own copy's asyms.
+    let connections = block.loop_with_tag("_struct_conn.id").unwrap();
+    assert_eq!(
+        (0..connections.row_count())
+            .map(|row| {
+                [
+                    "_struct_conn.ptnr1_label_asym_id",
+                    "_struct_conn.ptnr2_label_asym_id",
+                ]
+                .map(|tag| connections.value(row, tag).unwrap().text().to_owned())
+            })
+            .collect::<Vec<_>>(),
+        [["A", "B"], ["A-2", "B-2"], ["A-3", "B-3"]]
+    );
+
+    // The reader makes the written asyms its chains' labels, under the
+    // author chain names the copies share.
+    let reread = document.interpret(Default::default()).unwrap();
+    let reread = reread.model();
+    assert_eq!(
+        labels(reread),
+        ["A", "B", "A-2", "B-2", "A-3", "B-3"].map(|label| (label.to_owned(), author.clone()))
+    );
+    assert_eq!(reread.atom_count(), merged.atom_count());
+    assert_eq!(
+        reread.topology().bond_count(),
+        merged.topology().bond_count()
+    );
+    assert_eq!(reread.topology().bond_count(), 24);
+    for (written, read) in merged
+        .positions()
+        .values()
+        .value()
+        .iter()
+        .zip(reread.positions().values().value().iter())
+    {
+        assert!((*written - *read).norm() < 1e-3, "{written:?} {read:?}");
+    }
+}
+
 #[test]
 fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId};

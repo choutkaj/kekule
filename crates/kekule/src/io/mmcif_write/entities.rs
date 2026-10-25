@@ -119,21 +119,48 @@ pub(super) fn entity_plan_from_report(
     }
 }
 
-fn hierarchy_asym_ids(model: ModelView<'_>) -> Result<BTreeSet<String>, FormatError> {
-    let mut reserved_asym_ids = BTreeSet::new();
-    for (_, chain) in model.topology().hierarchy().chains() {
-        if chain.label_id().is_empty() {
-            return Err(invalid_model(
-                "topology hierarchy chain label ID is empty".to_owned(),
-            ));
+/// The label asym IDs of a model's hierarchy chains. Chains may share a label,
+/// as copies [`append_model`](crate::structure::ModelEditor::append_model)
+/// appends do, while mmCIF requires every structural instance to have an ID
+/// of its own. The first chain with a label keeps it; each later one is the
+/// label with a copy serial, `A-2`, `A-3`, and so on, that no chain label or
+/// other written asym uses. Author chain identifiers are written as they are.
+struct AsymIds {
+    reserved: BTreeSet<String>,
+    named: BTreeSet<String>,
+}
+
+impl AsymIds {
+    fn new(model: ModelView<'_>) -> Result<Self, FormatError> {
+        let mut reserved = BTreeSet::new();
+        for (_, chain) in model.topology().hierarchy().chains() {
+            if chain.label_id().is_empty() {
+                return Err(invalid_model(
+                    "topology hierarchy chain label ID is empty".to_owned(),
+                ));
+            }
+            reserved.insert(chain.label_id().to_owned());
         }
-        if !reserved_asym_ids.insert(chain.label_id().to_owned()) {
-            return Err(fail(MmcifWriteIssue::DuplicateAsymId(
-                chain.label_id().to_owned(),
-            )));
+        Ok(Self {
+            reserved,
+            named: BTreeSet::new(),
+        })
+    }
+
+    /// The asym ID of the next chain, in hierarchy order, with this label.
+    fn chain(&mut self, label: &str) -> String {
+        if self.named.insert(label.to_owned()) {
+            return label.to_owned();
+        }
+        let mut serial = 2usize;
+        loop {
+            let candidate = format!("{label}-{serial}");
+            serial += 1;
+            if self.reserved.insert(candidate.clone()) {
+                return candidate;
+            }
         }
     }
-    Ok(reserved_asym_ids)
 }
 
 pub(super) fn generic_entity_plan(
@@ -141,7 +168,7 @@ pub(super) fn generic_entity_plan(
     classifications: &BTreeMap<MoleculeInstanceId, MoleculeEntityKind>,
 ) -> Result<EntityPlan, FormatError> {
     let hierarchy = model.topology().hierarchy();
-    let mut reserved_asym_ids = hierarchy_asym_ids(model)?;
+    let mut asym_ids = AsymIds::new(model)?;
     let mut entities = Vec::new();
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
@@ -178,9 +205,8 @@ pub(super) fn generic_entity_plan(
             };
             Ok((kind, None))
         })?;
-        for (asym_id, segment) in
-            segment_asym_ids(chain.label_id(), segments, &mut reserved_asym_ids)
-        {
+        let label = asym_ids.chain(chain.label_id());
+        for (asym_id, segment) in segment_asym_ids(&label, segments, &mut asym_ids.reserved) {
             let entity_id = (entities.len() + 1).to_string();
             entities.push(EntityRow {
                 id: entity_id.clone(),
@@ -222,11 +248,11 @@ pub(super) fn generic_entity_plan(
         let base = format!("M{}", one_based_serial(id.raw()));
         let mut candidate = base.clone();
         let mut suffix = 2usize;
-        while reserved_asym_ids.contains(&candidate) {
+        while asym_ids.reserved.contains(&candidate) {
             candidate = format!("{base}_{suffix}");
             suffix += 1;
         }
-        reserved_asym_ids.insert(candidate.clone());
+        asym_ids.reserved.insert(candidate.clone());
         let kind = entity_kind(molecule, classifications)?;
         let entity_id = (entities.len() + 1).to_string();
         entities.push(EntityRow {
@@ -260,7 +286,7 @@ fn report_entity_plan(
     model: ModelView<'_>,
     report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, FormatError> {
-    let mut reserved_asym_ids = hierarchy_asym_ids(model)?;
+    let mut asym_ids = AsymIds::new(model)?;
     let mut seen_instances = BTreeSet::new();
     let mut provenance = BTreeMap::new();
     let mut reserved_entity_ids = BTreeSet::new();
@@ -346,9 +372,8 @@ fn report_entity_plan(
             };
             Ok((kind, source_entity_ids.into_iter().next()))
         })?;
-        for (asym_id, segment) in
-            segment_asym_ids(chain.label_id(), segments, &mut reserved_asym_ids)
-        {
+        let label = asym_ids.chain(chain.label_id());
+        for (asym_id, segment) in segment_asym_ids(&label, segments, &mut asym_ids.reserved) {
             let entity_id = if let Some(entity_id) = &segment.source_entity_id {
                 entity_id.clone()
             } else {
@@ -499,7 +524,7 @@ fn chain_segments<'h>(
 }
 
 /// Pairs each segment with its label asym ID. The first keeps the chain's
-/// label; the others extend it with a serial no other asym uses.
+/// asym ID; the others extend it with a serial no other asym uses.
 fn segment_asym_ids<'h>(
     label: &str,
     segments: Vec<ChainSegment<'h>>,
