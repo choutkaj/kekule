@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::statistics::{ContactOccupancyAccumulator, RmsfAccumulator, StatisticsError};
+use kekule::statistics::{
+    ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator, StatisticsError,
+};
 use kekule::structure::{
     Ensemble, EnsembleSample, EnsembleState, Positions, Trajectory, TrajectoryFrame,
 };
@@ -454,4 +456,300 @@ fn stored_coordinate_statistics_do_not_implicitly_image_or_align_periodic_frames
     {
         close(*value, 0.5);
     }
+}
+
+/// A chain of `atoms` carbons, whose topology ignores geometry.
+fn carbon_chain(atoms: usize) -> Arc<Topology> {
+    kekule::smiles::to_topology(&"C".repeat(atoms)).unwrap()
+}
+
+fn group(top: &Arc<Topology>, members: impl IntoIterator<Item = usize>) -> AtomSelection {
+    let ids = top.atom_ids();
+    AtomSelection::from_atoms(Arc::clone(top), members.into_iter().map(|atom| ids[atom])).unwrap()
+}
+
+/// Deterministic points scattered through a box of side `side` at `offset`.
+fn scattered(count: usize, seed: u64, side: f64, offset: f64) -> Vec<Point3> {
+    let mut state = seed;
+    let mut next = || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    (0..count)
+        .map(|_| {
+            Point3::new(
+                offset + next() * side,
+                offset + next() * side,
+                offset + next() * side,
+            )
+        })
+        .collect()
+}
+
+/// Whether any atom of `a` is within `cutoff` of any atom of `b`, testing
+/// every atom pair as the atom-pair accumulator does.
+fn brute_group_contact(
+    points: &[Point3],
+    a: &AtomSelection,
+    b: &AtomSelection,
+    cutoff: f64,
+) -> bool {
+    a.indices().iter().any(|i| {
+        b.indices().iter().any(|j| {
+            let delta = points[i.index()] - points[j.index()];
+            delta.x.hypot(delta.y).hypot(delta.z) <= cutoff
+        })
+    })
+}
+
+fn frames_trajectory(top: &Arc<Topology>, frames: &[Vec<Point3>]) -> Trajectory {
+    Trajectory::from_items(
+        top.clone(),
+        frames.iter().map(|points| {
+            TrajectoryFrame::new(Positions::new(Quantity::new(points.clone(), NANOMETER)).unwrap())
+        }),
+    )
+    .unwrap()
+}
+
+#[test]
+fn group_contacts_agree_with_every_atom_pair_for_small_and_large_groups() {
+    let atoms = 120;
+    let top = carbon_chain(atoms);
+    // Small groups are measured pair by pair; pairs with a 40-atom group
+    // search a grid of it.
+    let groups = vec![
+        group(&top, 0..3),
+        group(&top, 3..8),
+        group(&top, 8..48),
+        group(&top, 48..88),
+        group(&top, 88..89),
+        group(&top, 89..120),
+    ];
+    let pairs = vec![(0, 1), (0, 2), (2, 3), (3, 1), (4, 5), (5, 2), (4, 0)];
+    for offset in [0.0, -2.5e6, 7.0e9] {
+        for cutoff in [0.0, 0.05, 0.3, 0.8, 4.0] {
+            let frames = (0..12)
+                .map(|frame| {
+                    let mut points = scattered(atoms, 17 + frame, 3.0, offset);
+                    // Coincident atoms of groups 4 and 5 in some frames.
+                    if frame % 3 == 0 {
+                        points[89] = points[88];
+                    }
+                    points
+                })
+                .collect::<Vec<_>>();
+            let weights = (0..frames.len())
+                .map(|k| 1.0 + k as f64 * 0.5)
+                .collect::<Vec<_>>();
+            let mut accumulator = GroupContactOccupancyAccumulator::new(
+                &top,
+                groups.clone(),
+                pairs.clone(),
+                Quantity::new(cutoff, NANOMETER),
+            )
+            .unwrap();
+            let trajectory = frames_trajectory(&top, &frames);
+            for (index, (frame, weight)) in trajectory.iter().zip(&weights).enumerate() {
+                accumulator.observe(index, &frame, *weight).unwrap();
+            }
+            let result = accumulator.finish().unwrap();
+            for (pair, &(a, b)) in pairs.iter().enumerate() {
+                let expected = frames
+                    .iter()
+                    .zip(&weights)
+                    .filter(|(points, _)| {
+                        brute_group_contact(points, &groups[a], &groups[b], cutoff)
+                    })
+                    .map(|(_, weight)| weight)
+                    .sum::<f64>();
+                assert_eq!(
+                    result.contact_weights()[pair],
+                    expected,
+                    "offset {offset}, cutoff {cutoff}, pair {pair}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn group_contacts_keep_contacts_exactly_at_the_cutoff() {
+    // Two 20-atom groups on a line, searched through a grid, come within the
+    // cutoff only across one gap of exactly the cutoff; one-atom groups give
+    // the atom pair's occupancy, and the first atom is apart from the second
+    // group.
+    let top = carbon_chain(40);
+    let ids = top.atom_ids();
+    for cutoff in [0.1, 0.125, 0.25, 1.0 / 3.0, 2.0] {
+        let mut points = (0..40)
+            .map(|atom| Point3::new(atom as f64 * cutoff * 1.5, 0.3, -0.7))
+            .collect::<Vec<_>>();
+        points[20].x = points[19].x + cutoff;
+        let frame = frames_trajectory(&top, &[points.clone()]);
+        let quantity = Quantity::new(cutoff, NANOMETER);
+        let groups = [
+            group(&top, 0..20),
+            group(&top, 20..40),
+            group(&top, [19]),
+            group(&top, [20]),
+            group(&top, [0]),
+        ];
+        let result = frame
+            .group_contact_occupancy(groups.clone(), [(0, 1), (2, 3), (4, 1)], quantity)
+            .unwrap();
+        let atom_pair = frame
+            .contact_occupancy([(ids[19], ids[20])], quantity)
+            .unwrap();
+        let expected = brute_group_contact(&points, &groups[0], &groups[1], cutoff);
+        assert_eq!(result.contact_weights()[0], f64::from(u8::from(expected)));
+        assert_eq!(result.contact_weights()[1], atom_pair.contact_weights()[0]);
+        assert_eq!(result.contact_weights()[2], 0.0);
+        // The gap is exactly the cutoff where the subtraction is exact.
+        if points[20].x - points[19].x == cutoff {
+            assert!(expected, "cutoff {cutoff}");
+        }
+    }
+}
+
+#[test]
+fn group_contacts_weight_samples_by_probability_and_frames_equally() {
+    let top = linear_carbon_topology();
+    // Atom 0 against atoms 1 and 2: in contact in the first two structures,
+    // through different atoms, and apart in the third.
+    let rows = [[0.0, 0.1, 5.0], [0.0, 5.0, -0.1], [0.0, 5.0, -5.0]];
+    let mut ensemble = Ensemble::new(top.clone());
+    for (row, weight) in rows.iter().zip(WEIGHTS) {
+        ensemble
+            .push_state(
+                EnsembleSample::new(positions(row.map(|x| Point3::new(x, 0.0, 0.0))), weight)
+                    .unwrap(),
+                EnsembleState::new(),
+            )
+            .unwrap();
+    }
+    let groups = [group(&top, [0]), group(&top, [1, 2])];
+    let cutoff = Quantity::new(1.0, NANOMETER);
+    let weighted = ensemble
+        .group_contact_occupancy(groups.clone(), [(1, 0)], cutoff)
+        .unwrap();
+    close(weighted.total_weight(), 1.0);
+    close(weighted.contacts().next().unwrap().1, 0.75);
+    assert_eq!(weighted.pairs(), &[(1, 0)]);
+    assert_eq!(weighted.groups(), &groups);
+    assert_eq!(weighted.observation_count(), 3);
+    assert_eq!(weighted.cutoff(), cutoff);
+    let frames = trajectory(&top, &rows)
+        .group_contact_occupancy(groups, [(0, 1)], cutoff)
+        .unwrap();
+    assert_eq!(frames.contact_weights(), &[2.0]);
+    assert_eq!(frames.total_weight(), 3.0);
+    close(frames.contacts().next().unwrap().1, 2.0 / 3.0);
+}
+
+#[test]
+fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
+    let top = linear_carbon_topology();
+    let cutoff = Quantity::new(1.0, NANOMETER);
+    let groups = || vec![group(&top, [0]), group(&top, [1]), group(&top, [1, 2])];
+    let new = |groups: Vec<AtomSelection>, pairs: Vec<(usize, usize)>| {
+        GroupContactOccupancyAccumulator::new(&top, groups, pairs, cutoff)
+    };
+    assert!(matches!(
+        new(groups(), vec![]),
+        Err(StatisticsError::EmptySelection)
+    ));
+    assert!(matches!(
+        new(vec![group(&top, [0]), group(&top, [])], vec![(0, 1)]),
+        Err(StatisticsError::EmptyGroup { group: 1 })
+    ));
+    assert!(matches!(
+        new(groups(), vec![(0, 1), (0, 3)]),
+        Err(StatisticsError::UnknownGroup { pair: 1 })
+    ));
+    assert!(matches!(
+        new(groups(), vec![(2, 2)]),
+        Err(StatisticsError::SelfPair { pair: 0 })
+    ));
+    assert!(matches!(
+        new(groups(), vec![(0, 1), (1, 0)]),
+        Err(StatisticsError::DuplicatePair { pair: 1 })
+    ));
+    assert!(matches!(
+        new(groups(), vec![(0, 2), (1, 2)]),
+        Err(StatisticsError::OverlappingGroups { pair: 1 })
+    ));
+    assert!(matches!(
+        new(
+            vec![AtomSelection::all(linear_carbon_topology())],
+            vec![(0, 0)]
+        ),
+        Err(StatisticsError::Selection(SelectionError::TopologyMismatch))
+    ));
+    for value in [-1.0, f64::NAN, f64::INFINITY] {
+        assert!(matches!(
+            GroupContactOccupancyAccumulator::new(
+                &top,
+                groups(),
+                [(0, 1)],
+                Quantity::new(value, NANOMETER)
+            ),
+            Err(StatisticsError::InvalidCutoff)
+        ));
+    }
+    assert!(matches!(
+        GroupContactOccupancyAccumulator::new(
+            &top,
+            groups(),
+            [(0, 1)],
+            Quantity::new(1.0, PICOSECOND)
+        ),
+        Err(StatisticsError::Unit(_))
+    ));
+    assert!(matches!(
+        new(groups(), vec![(0, 1)]).unwrap().finish(),
+        Err(StatisticsError::NoObservations)
+    ));
+    assert!(matches!(
+        Trajectory::new(top.clone()).group_contact_occupancy(groups(), [(0, 1)], cutoff),
+        Err(StatisticsError::NoObservations)
+    ));
+
+    // Distances between the groups overflow in the bad structure, as the
+    // atom pair's distance does.
+    let mut contacts = new(groups(), vec![(0, 1)]).unwrap();
+    let good = trajectory(&top, &[[0.0, 0.5, 9.0]]);
+    let bad = trajectory(&top, &[[-1.0e308, 1.0e308, 0.0]]);
+    let unrelated = trajectory(&linear_carbon_topology(), &[[0.0, 0.5, 0.0]]);
+    contacts.observe(0, &good.get(0).unwrap(), 1.0).unwrap();
+    assert_eq!(
+        contacts.observe(1, &unrelated.get(0).unwrap(), 1.0),
+        Err(StatisticsError::TopologyMismatch { index: 1 })
+    );
+    assert_eq!(
+        contacts.observe(1, &bad.get(0).unwrap(), 1.0),
+        Err(StatisticsError::NumericalFailure {
+            index: 1,
+            atom: top.atom_ids()[0]
+        })
+    );
+    let ids = top.atom_ids();
+    assert!(matches!(
+        bad.contact_occupancy([(ids[0], ids[1])], cutoff),
+        Err(StatisticsError::NumericalFailure { index: 0, .. })
+    ));
+    for weight in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(
+            contacts.observe(1, &good.get(0).unwrap(), weight),
+            Err(StatisticsError::InvalidWeight { index: 1 })
+        );
+    }
+    assert_eq!(contacts.observation_count(), 1);
+    assert_eq!(contacts.total_weight(), 1.0);
+    contacts.observe(1, &good.get(0).unwrap(), 2.0).unwrap();
+    let result = contacts.finish().unwrap();
+    assert_eq!(result.contact_weights(), &[3.0]);
+    assert_eq!(result.observation_count(), 2);
 }

@@ -11,6 +11,31 @@ are marked **Breaking:**.
 
 ### Added
 
+- Contact occupancy of pairs of atom groups (SeekDelta K46), such as a
+  pocket's residues against a ligand or the residues on both sides of an
+  interface: a pair of groups is in contact in an observation when any atom
+  of one is within the cutoff of any atom of the other, which the atom pairs'
+  occupancies cannot give, since their contacts overlap across observations.
+  `GroupContactOccupancyAccumulator` takes the groups as atom selections and
+  the pairs as indices into them, observes structures with explicit weights
+  as `ContactOccupancyAccumulator` does, and finishes with a
+  `GroupContactOccupancyResult` of contact weights and occupancies in pair
+  order. `Ensemble::group_contact_occupancy` observes each sample with its
+  probability and `Trajectory::group_contact_occupancy` every frame with
+  weight one. A pair of one-atom groups has its atom pair's occupancy. State
+  is one sum per pair plus scratch for the grouped atoms, whatever the number
+  of observations. An observation reads only the grouped atoms, rejects
+  pairs whose bounding boxes lie farther apart than the cutoff, and searches
+  a grid of the larger group, built once per observation, for pairs of large
+  groups. Groups that are empty, pairs naming a group past the last, one
+  group twice, a repeated pair, or groups sharing an atom are refused with
+  the new `StatisticsError::EmptyGroup`, `UnknownGroup`, and
+  `OverlappingGroups`, or `SelfPair` and `DuplicatePair`. In 103,823 lattice
+  atoms at protein density (the new `group_contacts` benchmark, release,
+  i5-11400F, 0.45 nm cutoff), one observation of 100 pocket residues
+  against a 40-atom ligand takes 0.11 ms, against 0.67 ms for their 40,000 atom pairs
+  through `ContactOccupancyAccumulator`; 3,975 residue pairs across an
+  interface take 0.60 ms, and its two sides as one pair 0.09 ms.
 - Atom selections from and to dense order (SeekDelta K43), so a host that
   holds atom sets as sorted indices or bit masks (a resolver's `selected`,
   `visible`, or secondary-structure terms) makes and reads selections in

@@ -45,3 +45,7 @@ workspace = true
 [[bench]]
 name = "selection_dense"
 harness = false
+
+[[bench]]
+name = "group_contacts"
+harness = false
