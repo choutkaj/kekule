@@ -1,0 +1,753 @@
+//! Builder placement on model drafts: hydrogens with coordinates, ideal
+//! geometry, attaching atoms, and names.
+use kekule::geometry::{Point3, Vector3};
+use kekule::hydrogens::{AddHydrogensOptions, AddHydrogensScope, RetainedHydrogenReason};
+use kekule::molecule::{Atom, BondOrder, Element, ImplicitHydrogens};
+use kekule::properties::{PropertyKey, PropertyValue};
+use kekule::smiles;
+use kekule::structure::placement::{ideal_bond_length, AtomShape, AttachmentSite, PlacementError};
+use kekule::structure::{Model, ModelEditor, Positions};
+use kekule::topology::edit::{EditAtomId, EditResidueId};
+use kekule::units::{Quantity, ANGSTROM, NANOMETER};
+use std::collections::{BTreeMap, BTreeSet};
+
+const TETRAHEDRAL: f64 = 109.471_220_634_490_7;
+
+fn element(symbol: &str) -> Element {
+    Element::from_symbol(symbol).unwrap()
+}
+
+fn point(editor: &ModelEditor, atom: EditAtomId) -> Point3 {
+    editor
+        .position(atom)
+        .unwrap()
+        .into_unit(ANGSTROM)
+        .unwrap()
+        .into_value()
+}
+
+fn distance(editor: &ModelEditor, a: EditAtomId, b: EditAtomId) -> f64 {
+    (point(editor, a) - point(editor, b)).norm()
+}
+
+fn angle(editor: &ModelEditor, a: EditAtomId, center: EditAtomId, b: EditAtomId) -> f64 {
+    let u = point(editor, a) - point(editor, center);
+    let v = point(editor, b) - point(editor, center);
+    (u.dot(v) / (u.norm() * v.norm()))
+        .clamp(-1.0, 1.0)
+        .acos()
+        .to_degrees()
+}
+
+fn ideal(a: Element, b: Element, order: BondOrder) -> f64 {
+    ideal_bond_length(a, b, order)
+        .unwrap()
+        .into_unit(ANGSTROM)
+        .unwrap()
+        .into_value()
+}
+
+fn element_of(editor: &ModelEditor, atom: EditAtomId) -> Element {
+    editor.topology().atom(atom).unwrap().element()
+}
+
+fn neighbors(editor: &ModelEditor, atom: EditAtomId) -> Vec<EditAtomId> {
+    editor.topology().neighbors(atom).unwrap().collect()
+}
+
+fn hydrogen_count(editor: &ModelEditor, atom: EditAtomId) -> usize {
+    neighbors(editor, atom)
+        .into_iter()
+        .filter(|n| element_of(editor, *n).atomic_number() == 1)
+        .count()
+}
+
+fn heavy_atoms(editor: &ModelEditor) -> Vec<EditAtomId> {
+    editor
+        .topology()
+        .atoms()
+        .filter(|(_, atom)| atom.element().atomic_number() != 1)
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Heavy atoms in dense order with their element, charge, and total
+/// hydrogens; bonds between them; and the represented stereo count.
+type Signature = (
+    Vec<(u8, i8, usize)>,
+    BTreeSet<(usize, usize, String)>,
+    usize,
+);
+
+fn signature(model: &Model) -> Signature {
+    let mut model = model.clone();
+    model.perceive().unwrap();
+    let topology = model.topology();
+    let mut rank = BTreeMap::new();
+    let mut atoms = Vec::new();
+    for atom in topology.atoms() {
+        if atom.element().atomic_number() != 1 {
+            rank.insert(atom.index(), rank.len());
+            atoms.push((
+                atom.element().atomic_number(),
+                atom.formal_charge(),
+                atom.explicit_hydrogens() + atom.implicit_hydrogens().unwrap(),
+            ));
+        }
+    }
+    let bonds = topology
+        .bonds()
+        .filter_map(|bond| {
+            let [a, b] = bond.atoms();
+            let (a, b) = (rank.get(&a.index())?, rank.get(&b.index())?);
+            Some((*a.min(b), *a.max(b), format!("{:?}", bond.order)))
+        })
+        .collect();
+    let stereo = topology
+        .definitions()
+        .map(|definition| definition.molecule().stereo_elements().count())
+        .sum();
+    (atoms, bonds, stereo)
+}
+
+fn shape_angles(shape: AtomShape) -> &'static [f64] {
+    match shape {
+        AtomShape::Linear => &[180.0],
+        AtomShape::TrigonalPlanar => &[120.0],
+        AtomShape::Tetrahedral => &[TETRAHEDRAL],
+        AtomShape::TrigonalBipyramidal => &[90.0, 120.0, 180.0],
+        AtomShape::Octahedral => &[90.0, 180.0],
+        _ => &[],
+    }
+}
+
+/// PDB chemical components' ideal coordinates, with their hydrogens.
+fn components() -> Vec<(String, Model)> {
+    let document = kekule::sdf::parse_str(
+        include_str!("../fixtures/placement/ccd-ideal.sdf"),
+        Default::default(),
+    )
+    .unwrap();
+    document
+        .records()
+        .iter()
+        .map(|record| {
+            let interpreted = record.interpret(Default::default()).unwrap();
+            (record.title().to_owned(), interpreted.into_model())
+        })
+        .collect()
+}
+
+#[test]
+fn completed_hydrogens_agree_with_valence_and_collapse_back() {
+    for (name, model) in components() {
+        let original = signature(&model);
+        let mut editor = model.to_editor();
+        let heavy = heavy_atoms(&editor);
+        let expected = heavy
+            .iter()
+            .map(|atom| (*atom, hydrogen_count(&editor, *atom)))
+            .collect::<BTreeMap<_, _>>();
+        let total = expected.values().sum::<usize>();
+
+        let removed = editor.remove_hydrogens(heavy.clone()).unwrap();
+        assert_eq!(removed.removed_count(), total, "{name}");
+        assert!(removed
+            .atoms()
+            .iter()
+            .all(|atom| atom.retained().is_empty()));
+        let stripped = signature(&editor.clone().finish().unwrap());
+
+        let placed = editor
+            .add_hydrogens(heavy.clone(), AddHydrogensOptions::default())
+            .unwrap();
+        assert_eq!(placed.added_count(), total, "{name}");
+        for entry in placed.atoms() {
+            let atom = entry.atom();
+            assert_eq!(entry.hydrogens().len(), expected[&atom], "{name}");
+            let shape = editor.atom_geometry(atom).unwrap().shape().unwrap();
+            for &hydrogen in entry.hydrogens() {
+                let length = ideal(element_of(&editor, atom), element("H"), BondOrder::Single);
+                assert!((distance(&editor, atom, hydrogen) - length).abs() < 1e-9);
+                // Every angle at the atom involving a new hydrogen is near an
+                // ideal angle of its shape; between two new hydrogens or
+                // around a single neighbor it is exact.
+                let exact = neighbors(&editor, atom).len() - entry.hydrogens().len() <= 1;
+                for other in neighbors(&editor, atom) {
+                    if other == hydrogen {
+                        continue;
+                    }
+                    let found = angle(&editor, hydrogen, atom, other);
+                    let tolerance = if exact { 1e-6 } else { 8.0 };
+                    assert!(
+                        shape_angles(shape)
+                            .iter()
+                            .any(|ideal| (found - ideal).abs() < tolerance),
+                        "{name}: {found} on {shape:?}"
+                    );
+                }
+            }
+        }
+        // No new hydrogen clashes with an atom beyond its parent.
+        let new = placed
+            .atoms()
+            .iter()
+            .flat_map(|entry| entry.hydrogens().iter().map(|h| (*h, entry.atom())))
+            .collect::<Vec<_>>();
+        for (hydrogen, parent) in &new {
+            for (other, _) in editor.topology().atoms() {
+                if other != *hydrogen && other != *parent {
+                    assert!(
+                        distance(&editor, *hydrogen, other) > 1.5,
+                        "{name}: clash at {:.2} Å",
+                        distance(&editor, *hydrogen, other)
+                    );
+                }
+            }
+        }
+        let completed = editor.clone().finish().unwrap();
+        assert_eq!(signature(&completed), original, "{name}");
+        let mut perceived = completed.clone();
+        perceived.perceive().unwrap();
+
+        editor.remove_hydrogens(heavy).unwrap();
+        assert_eq!(signature(&editor.finish().unwrap()), stripped, "{name}");
+    }
+}
+
+/// An isolated atom of `symbol` at the origin, completed with hydrogens.
+fn completed(symbol: &str, charge: i8) -> (ModelEditor, EditAtomId, Vec<EditAtomId>) {
+    let mut editor = ModelEditor::new();
+    let atom = editor
+        .place_atom(
+            Atom::new(element(symbol)).with_formal_charge(charge),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    let report = editor
+        .add_hydrogens([atom], AddHydrogensOptions::default())
+        .unwrap();
+    let hydrogens = report.atoms()[0].hydrogens().to_vec();
+    (editor, atom, hydrogens)
+}
+
+#[test]
+fn hydrides_take_ideal_lengths_and_angles() {
+    for (symbol, charge, count, shape) in [
+        ("C", 0, 4, AtomShape::Tetrahedral),
+        ("N", 0, 3, AtomShape::Tetrahedral),
+        ("O", 0, 2, AtomShape::Tetrahedral),
+        ("N", 1, 4, AtomShape::Tetrahedral),
+        ("B", 0, 3, AtomShape::TrigonalPlanar),
+        ("C", 1, 3, AtomShape::TrigonalPlanar),
+        ("S", 0, 2, AtomShape::Tetrahedral),
+        ("P", 0, 3, AtomShape::Tetrahedral),
+        ("F", 0, 1, AtomShape::Tetrahedral),
+    ] {
+        let (editor, atom, hydrogens) = completed(symbol, charge);
+        assert_eq!(hydrogens.len(), count, "{symbol}{charge}");
+        assert_eq!(editor.atom_geometry(atom).unwrap().shape(), Some(shape));
+        let length = ideal(element(symbol), element("H"), BondOrder::Single);
+        for (i, a) in hydrogens.iter().enumerate() {
+            assert!((distance(&editor, atom, *a) - length).abs() < 1e-9);
+            for b in &hydrogens[i + 1..] {
+                let found = angle(&editor, *a, atom, *b);
+                assert!(
+                    shape_angles(shape).iter().any(|i| (found - i).abs() < 1e-6),
+                    "{symbol}: {found}"
+                );
+            }
+        }
+        // C gives methane, in a residue of its own.
+        let model = editor.finish().unwrap();
+        assert_eq!(model.atom_count(), count + 1);
+        let residue = model.topology().residues().next().unwrap();
+        assert_eq!(residue.name(), "UNL");
+    }
+}
+
+/// A chain grown by attaching carbons toward a direction, then completed.
+#[test]
+fn chains_grow_anti_and_multiple_bonds_set_the_shape() {
+    let mut editor = ModelEditor::new();
+    let c1 = editor
+        .place_atom(
+            Atom::new(element("C")),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    let toward = Vector3::new(1.0, 0.0, 0.0);
+    let c2 = editor
+        .attach_atom(
+            c1,
+            Atom::new(element("C")),
+            BondOrder::Single,
+            AttachmentSite::Toward(toward),
+        )
+        .unwrap()
+        .atom();
+    let c3 = editor
+        .attach_atom(
+            c2,
+            Atom::new(element("C")),
+            BondOrder::Single,
+            AttachmentSite::Toward(toward),
+        )
+        .unwrap()
+        .atom();
+    let c4 = editor
+        .attach_atom(
+            c3,
+            Atom::new(element("C")),
+            BondOrder::Single,
+            AttachmentSite::Toward(toward),
+        )
+        .unwrap()
+        .atom();
+    let cc = ideal(element("C"), element("C"), BondOrder::Single);
+    for (a, b) in [(c1, c2), (c2, c3), (c3, c4)] {
+        assert!((distance(&editor, a, b) - cc).abs() < 1e-9);
+    }
+    assert!((angle(&editor, c1, c2, c3) - TETRAHEDRAL).abs() < 1e-6);
+    // The toward direction is nearest one site; the butane backbone is anti.
+    let dihedral = {
+        let [p1, p2, p3, p4] = [c1, c2, c3, c4].map(|a| point(&editor, a));
+        let (b1, b2, b3) = (p2 - p1, p3 - p2, p4 - p3);
+        let (n1, n2) = (b1.cross(b2), b2.cross(b3));
+        let m = n1.cross(b2 / b2.norm());
+        m.dot(n2).atan2(n1.dot(n2)).to_degrees()
+    };
+    assert!((dihedral.abs() - 180.0).abs() < 1e-6, "{dihedral}");
+    editor
+        .add_hydrogens([c1, c2, c3, c4], AddHydrogensOptions::default())
+        .unwrap();
+    assert_eq!(editor.topology().atom_count(), 14);
+
+    // Ethylene: a double bond leaves three trigonal sites in one plane.
+    let mut editor = ModelEditor::new();
+    let a = editor
+        .place_atom(
+            Atom::new(element("C")),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    let b = editor
+        .attach_atom(
+            a,
+            Atom::new(element("C")),
+            BondOrder::Double,
+            AttachmentSite::Toward(toward),
+        )
+        .unwrap()
+        .atom();
+    let report = editor
+        .add_hydrogens([a, b], AddHydrogensOptions::default())
+        .unwrap();
+    assert_eq!(report.added_count(), 4);
+    assert!(
+        (distance(&editor, a, b) - ideal(element("C"), element("C"), BondOrder::Double)).abs()
+            < 1e-9
+    );
+    for entry in report.atoms() {
+        let atom = entry.atom();
+        assert_eq!(
+            editor.atom_geometry(atom).unwrap().shape(),
+            Some(AtomShape::TrigonalPlanar)
+        );
+        for hydrogen in entry.hydrogens() {
+            let other = if atom == a { b } else { a };
+            assert!((angle(&editor, *hydrogen, atom, other) - 120.0).abs() < 1e-6);
+        }
+    }
+    let hydrogens = report
+        .atoms()
+        .iter()
+        .flat_map(|entry| entry.hydrogens().iter().copied())
+        .collect::<Vec<_>>();
+    let normal = (point(&editor, b) - point(&editor, a))
+        .cross(point(&editor, hydrogens[0]) - point(&editor, a));
+    for h in &hydrogens {
+        assert!((point(&editor, *h) - point(&editor, a)).dot(normal).abs() < 1e-9);
+    }
+
+    // Acetylene: linear.
+    let mut editor = ModelEditor::new();
+    let a = editor
+        .place_atom(
+            Atom::new(element("C")),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    let b = editor
+        .attach_atom(
+            a,
+            Atom::new(element("C")),
+            BondOrder::Triple,
+            AttachmentSite::Toward(toward),
+        )
+        .unwrap()
+        .atom();
+    let report = editor
+        .add_hydrogens([a, b], AddHydrogensOptions::default())
+        .unwrap();
+    for entry in report.atoms() {
+        let other = if entry.atom() == a { b } else { a };
+        assert!((angle(&editor, entry.hydrogens()[0], entry.atom(), other) - 180.0).abs() < 1e-6);
+    }
+}
+
+/// Positions of a molecule from SMILES with the center at the origin and the
+/// given neighbor directions, in atom order after the center.
+fn star(smiles_text: &str, directions: &[Vector3]) -> ModelEditor {
+    let topology = smiles::to_topology(smiles_text).unwrap();
+    let mut points = vec![Point3::origin()];
+    for direction in directions {
+        points.push(Point3::origin() + *direction * 0.16);
+    }
+    Model::new(
+        topology,
+        Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
+    )
+    .unwrap()
+    .into_editor()
+}
+
+#[test]
+fn hypervalent_atoms_take_bipyramidal_and_octahedral_sites() {
+    let x = Vector3::new(1.0, 0.0, 0.0);
+    let y = Vector3::new(0.0, 1.0, 0.0);
+    let z = Vector3::new(0.0, 0.0, 1.0);
+    // Five-coordinate sulfur with one implicit hydrogen: octahedral.
+    let mut editor = star("S(F)(F)(F)(F)F", &[x, -x, y, -y, z]);
+    let sulfur = editor.topology().atom_ids().next().unwrap();
+    assert_eq!(
+        editor.atom_geometry(sulfur).unwrap().shape(),
+        Some(AtomShape::Octahedral)
+    );
+    let report = editor
+        .add_hydrogens([sulfur], AddHydrogensOptions::default())
+        .unwrap();
+    let hydrogen = report.atoms()[0].hydrogens()[0];
+    let direction = point(&editor, hydrogen) - point(&editor, sulfur);
+    assert!((direction / direction.norm() - (-z)).norm() < 1e-9);
+
+    // Four-coordinate phosphorus with one implicit hydrogen: the hydrogen
+    // takes the free equatorial site of a trigonal bipyramid.
+    let (sin, cos) = (2.0 * std::f64::consts::FRAC_PI_3).sin_cos();
+    let equatorial = [x, Vector3::new(cos, sin, 0.0)];
+    let mut editor = star("P(F)(F)(F)F", &[z, -z, equatorial[0], equatorial[1]]);
+    let phosphorus = editor.topology().atom_ids().next().unwrap();
+    assert_eq!(
+        editor.atom_geometry(phosphorus).unwrap().shape(),
+        Some(AtomShape::TrigonalBipyramidal)
+    );
+    let report = editor
+        .add_hydrogens([phosphorus], AddHydrogensOptions::default())
+        .unwrap();
+    let hydrogen = report.atoms()[0].hydrogens()[0];
+    let direction = point(&editor, hydrogen) - point(&editor, phosphorus);
+    let expected = Vector3::new(cos, -sin, 0.0);
+    assert!((direction / direction.norm() - expected).norm() < 1e-9);
+}
+
+#[test]
+fn atoms_over_their_valence_are_named() {
+    let mut editor = star(
+        "C(C)(C)(C)(C)C",
+        &[
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(-1.0, 0.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(0.0, 0.0, 1.0),
+        ],
+    );
+    let atoms = editor.topology().atom_ids().collect::<Vec<_>>();
+    let before = editor.topology().atom_count();
+    assert_eq!(
+        editor.add_hydrogens(atoms.clone(), AddHydrogensOptions::default()),
+        Err(PlacementError::InvalidValence { atom: atoms[0] })
+    );
+    assert_eq!(editor.topology().atom_count(), before);
+}
+
+#[test]
+fn attaching_replaces_hydrogens_and_keeps_stereo() {
+    // L-alanine with explicit hydrogens, completed in a draft.
+    let topology = smiles::to_topology("C[C@@H](C(=O)O)N").unwrap();
+    let atoms = topology.atom_count();
+    let ideal_positions = [
+        Point3::new(-0.1, 0.13, 0.0),
+        Point3::origin(),
+        Point3::new(0.145, -0.05, 0.0),
+        Point3::new(0.17, -0.17, 0.0),
+        Point3::new(0.25, 0.04, 0.0),
+        Point3::new(-0.05, -0.08, 0.12),
+    ];
+    assert_eq!(atoms, ideal_positions.len());
+    let mut editor = Model::new(
+        topology,
+        Positions::new(Quantity::new(ideal_positions.to_vec(), NANOMETER)).unwrap(),
+    )
+    .unwrap()
+    .into_editor();
+    let ids = editor.topology().atom_ids().collect::<Vec<_>>();
+    let center = ids[1];
+    let report = editor
+        .add_hydrogens(ids.clone(), AddHydrogensOptions::default())
+        .unwrap();
+    let alpha_hydrogen = report.atoms()[1].hydrogens()[0];
+    let stereo_before = editor.clone().finish().unwrap();
+    // Replace the alpha hydrogen by fluorine; stereo follows it.
+    let attached = editor
+        .attach_atom(
+            center,
+            Atom::new(element("F")),
+            BondOrder::Single,
+            AttachmentSite::Hydrogen(alpha_hydrogen),
+        )
+        .unwrap();
+    assert_eq!(attached.replaced_hydrogen(), Some(alpha_hydrogen));
+    assert!(editor.topology().atom(alpha_hydrogen).is_none());
+    let direction = point(&editor, attached.atom()) - point(&editor, center);
+    assert!((direction.norm() - ideal(element("C"), element("F"), BondOrder::Single)).abs() < 1e-9);
+    let model = editor.finish().unwrap();
+    let count = |model: &Model| {
+        model
+            .topology()
+            .definitions()
+            .map(|definition| definition.molecule().stereo_elements().count())
+            .sum::<usize>()
+    };
+    assert_eq!(count(&stereo_before), 1);
+    assert_eq!(count(&model), 1);
+
+    // A heavy atom is not a replaceable hydrogen.
+    let mut editor = model.into_editor();
+    let ids = editor.topology().atom_ids().collect::<Vec<_>>();
+    assert!(matches!(
+        editor.attach_atom(
+            ids[1],
+            Atom::new(element("C")),
+            BondOrder::Single,
+            AttachmentSite::Hydrogen(ids[0])
+        ),
+        Err(PlacementError::NotReplaceableHydrogen { .. })
+    ));
+    // A saturated carbon has no free position.
+    assert!(matches!(
+        editor.attach_atom(
+            ids[1],
+            Atom::new(element("C")),
+            BondOrder::Single,
+            AttachmentSite::Toward(Vector3::new(1.0, 0.0, 0.0))
+        ),
+        Err(PlacementError::NoFreePosition { .. })
+    ));
+    assert_eq!(
+        editor.attach_atom(
+            ids[0],
+            Atom::new(element("C")),
+            BondOrder::Single,
+            AttachmentSite::Toward(Vector3::zero())
+        ),
+        Err(PlacementError::InvalidDirection)
+    );
+}
+
+#[test]
+fn fixed_counts_are_materialized_and_restored() {
+    let topology = smiles::to_topology("[CH3][NH2]").unwrap();
+    let mut editor = Model::new(
+        topology,
+        Positions::new(Quantity::new(
+            vec![Point3::origin(), Point3::new(0.147, 0.0, 0.0)],
+            NANOMETER,
+        ))
+        .unwrap(),
+    )
+    .unwrap()
+    .into_editor();
+    let ids = editor.topology().atom_ids().collect::<Vec<_>>();
+    let none = editor
+        .add_hydrogens(
+            ids.clone(),
+            AddHydrogensOptions::default().with_scope(AddHydrogensScope::FixedOnly),
+        )
+        .unwrap();
+    assert_eq!(none.added_count(), 5);
+    for id in &ids {
+        assert_eq!(
+            editor.topology().atom(*id).unwrap().hydrogens(),
+            ImplicitHydrogens::Fixed(0)
+        );
+    }
+    // A hydrogen carrying a structure annotation is kept.
+    let annotated = none.atoms()[0].hydrogens()[0];
+    editor
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
+            PropertyKey::new("charge").unwrap(),
+            annotated,
+            Some(PropertyValue::Int(1)),
+        )
+        .unwrap();
+    let removed = editor.remove_hydrogens(ids.clone()).unwrap();
+    assert_eq!(removed.removed_count(), 4);
+    assert_eq!(
+        removed.atoms()[0].retained(),
+        &[(annotated, RetainedHydrogenReason::AtomProperties)]
+    );
+    assert_eq!(removed.atoms()[0].implicit_hydrogens(), 2);
+    assert_eq!(removed.atoms()[1].implicit_hydrogens(), 2);
+    assert_eq!(
+        removed.atoms()[1].declaration(),
+        ImplicitHydrogens::Fixed(2)
+    );
+}
+
+/// Every atom name is unique within its residue.
+fn assert_unique_names(model: &Model) {
+    for residue in model.topology().residues() {
+        let mut seen = BTreeSet::new();
+        for site in residue.atom_sites() {
+            let name = site.metadata().label_atom_id().unwrap().to_owned();
+            assert!(
+                seen.insert(name.clone()),
+                "duplicate {name} in {}",
+                residue.name()
+            );
+        }
+    }
+}
+
+fn adenylate_kinase() -> Model {
+    kekule::mmcif::parse_str(
+        include_str!("../fixtures/mmcif/1AKE.cif"),
+        Default::default(),
+    )
+    .unwrap()
+    .interpret(Default::default())
+    .unwrap()
+    .into_model()
+}
+
+/// The atoms of the first residue named `name`.
+fn residue_atoms(editor: &ModelEditor, name: &str) -> (EditResidueId, Vec<EditAtomId>) {
+    let topology = editor.topology();
+    let residue = topology
+        .residues()
+        .find(|(_, residue)| residue.name() == name)
+        .unwrap()
+        .0;
+    let atoms = topology
+        .atom_sites()
+        .filter(|(_, site)| site.residue() == residue)
+        .map(|(_, site)| site.atom())
+        .collect();
+    (residue, atoms)
+}
+
+#[test]
+fn new_atoms_are_named_uniquely_in_their_residues() {
+    let mut editor = adenylate_kinase().into_editor();
+    let (residue, ligand) = residue_atoms(&editor, "AP5");
+    let report = editor
+        .add_hydrogens(ligand.clone(), AddHydrogensOptions::default())
+        .unwrap();
+    assert!(report.added_count() > 0);
+    let names = report
+        .atoms()
+        .iter()
+        .flat_map(|entry| entry.hydrogens().iter().copied())
+        .map(|hydrogen| {
+            let site = editor
+                .topology()
+                .atom_site_for_atom(hydrogen)
+                .unwrap()
+                .unwrap();
+            let site = editor.topology().atom_site(site).unwrap();
+            assert_eq!(site.residue(), residue);
+            site.metadata().label_atom_id().unwrap().to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names[0], "H1");
+    assert_eq!(
+        editor.next_atom_name(residue, element("H")).unwrap(),
+        format!("H{}", names.len() + 1)
+    );
+
+    // Attach, remove, re-add and rename in one draft.
+    let carbon = ligand
+        .iter()
+        .copied()
+        .find(|atom| {
+            element_of(&editor, *atom).atomic_number() == 6 && hydrogen_count(&editor, *atom) > 0
+        })
+        .unwrap();
+    let hydrogen = neighbors(&editor, carbon)
+        .into_iter()
+        .find(|n| element_of(&editor, *n).atomic_number() == 1)
+        .unwrap();
+    let methyl = editor
+        .attach_atom(
+            carbon,
+            Atom::new(element("C")),
+            BondOrder::Single,
+            AttachmentSite::Hydrogen(hydrogen),
+        )
+        .unwrap()
+        .atom();
+    editor
+        .add_hydrogens([methyl], AddHydrogensOptions::default())
+        .unwrap();
+    editor.remove_hydrogens(ligand.clone()).unwrap();
+    editor
+        .add_hydrogens(ligand.clone(), AddHydrogensOptions::default())
+        .unwrap();
+    let nitrogen = ligand
+        .iter()
+        .copied()
+        .find(|atom| element_of(&editor, *atom).atomic_number() == 6)
+        .unwrap();
+    let renamed = editor.rename_atom(nitrogen).unwrap().unwrap();
+    assert!(renamed.starts_with('C'));
+    let (_, protein) = residue_atoms(&editor, "LYS");
+    editor
+        .add_hydrogens(protein, AddHydrogensOptions::default())
+        .unwrap();
+    let model = editor.finish().unwrap();
+    assert_unique_names(&model);
+}
+
+#[test]
+fn placing_on_a_ligand_scales_with_the_ligand() {
+    let single = adenylate_kinase();
+    let mut large = ModelEditor::new();
+    while large.topology().atom_count() < 100_000 {
+        large.append_model(&single).unwrap();
+    }
+    let large = large.finish().unwrap();
+    assert!(large.atom_count() >= 100_000);
+    let time = |model: &Model| {
+        let mut editor = model.to_editor();
+        let (_, ligand) = residue_atoms(&editor, "AP5");
+        let start = std::time::Instant::now();
+        let report = editor
+            .add_hydrogens(ligand.clone(), AddHydrogensOptions::default())
+            .unwrap();
+        editor.remove_hydrogens(ligand).unwrap();
+        (start.elapsed(), report.added_count())
+    };
+    // Warm both, then compare: work on the ligand does not grow with the
+    // model it sits in.
+    let _ = (time(&single), time(&large));
+    let (small, added_small) = time(&single);
+    let (big, added_big) = time(&large);
+    assert_eq!(added_small, added_big);
+    assert!(
+        big < small * 10 + std::time::Duration::from_millis(20),
+        "{small:?} in one copy, {big:?} in 100k atoms"
+    );
+}

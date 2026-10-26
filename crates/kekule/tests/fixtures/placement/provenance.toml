@@ -1,0 +1,10 @@
+schema_version = 1
+
+[[fixture]]
+path = "ccd-ideal.sdf"
+source = "wwPDB Chemical Component Dictionary ideal coordinates for AIN, ATP, BEN, CEL, CFF, CLR, DIF, EST, GLC, IBP, LDP, MTX, NCT, PNN, SAM, STI, TES, TYL and VIA"
+url = "https://files.rcsb.org/ligands/view/{ID}_ideal.sdf"
+retrieved = "2026-10-26"
+sha256 = "c434c934bbdbb20154b4ae59ed71bb2b8f86735b6fb915a19ed5635e32773b4b"
+preprocessing = "Records concatenated in that order; the uppercase two-letter element symbols CL written by the dictionary's SDF export changed to Cl, which the Molfile reader requires"
+purpose = "Hydrogen completion and collapse on drug-like molecules with their explicit hydrogens; not a scientific benchmark"
