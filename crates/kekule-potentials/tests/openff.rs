@@ -1,5 +1,6 @@
 //! OpenFF potential energies and gradients against an independent SMIRNOFF reference,
-//! layout binding, evaluation of every model view, and minimization.
+//! layout binding, evaluation of every model view, and minimization with and
+//! without fixed atoms.
 #![cfg(feature = "openff")]
 
 use std::sync::Arc;
@@ -7,13 +8,13 @@ use std::sync::Arc;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Ensemble, EnsemblePartition, Model, ModelView, Positions};
 use kekule::structure::{Trajectory, TrajectoryFrame};
-use kekule::topology::{Topology, TopologyBuilder};
+use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
 use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
 use kekule_openff::{ForceField, ParameterizedTopology, VdwMethod};
 use kekule_potentials::openff::{OpenFfPotential, OpenFfPotentialError};
 use kekule_potentials::{
-    minimize, ComponentKind, EvaluationError, InteractionKind, MinimizationStatus, MinimizeOptions,
-    Potential, SingularGeometry,
+    minimize, minimize_scoped, ComponentKind, EvaluationError, InteractionKind, MinimizationScope,
+    MinimizationStatus, MinimizeOptions, Potential, SingularGeometry,
 };
 use kekule_traj::FrameBuffer;
 
@@ -490,6 +491,64 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
     }
     let unrelated = self::model(&self::topology(2));
     assert!(result.to_model(unrelated.as_model_view()).is_err());
+}
+
+#[test]
+fn a_molecule_relaxes_against_a_fixed_neighbour() {
+    let topology = topology(2);
+    let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
+    let model = model(&topology);
+    // The second instance moves; the first stays fixed but still interacts.
+    let moving = AtomSelection::from_predicate(Arc::clone(&topology), |atom| {
+        atom.id().instance().index() == 1
+    });
+    let scope = MinimizationScope::moving(moving.clone());
+    let options = MinimizeOptions::default()
+        .with_gradient_tolerance(Quantity::new(
+            1e-3,
+            kekule::units::KILOJOULE_PER_MOLE_PER_NANOMETER,
+        ))
+        .unwrap()
+        .with_max_iterations(5_000);
+    let result = minimize_scoped(&potential, model.as_model_view(), &scope, &options).unwrap();
+    assert_eq!(result.status(), MinimizationStatus::Converged);
+    assert!(result.max_gradient().into_value() <= 1e-3);
+    let before = model.positions().values().into_value();
+    let after = result.positions().values().into_value();
+    for (index, (a, b)) in before.iter().zip(after).enumerate() {
+        if moving.contains(topology.atom_ids()[index]) {
+            continue;
+        }
+        assert_eq!(
+            [a.x, a.y, a.z].map(f64::to_bits),
+            [b.x, b.y, b.z].map(f64::to_bits)
+        );
+    }
+    // The moving atoms of the final evaluation are stationary; the fixed ones
+    // carry the intermolecular forces.
+    let minimized = result.to_model(model.as_model_view()).unwrap();
+    for atom in topology.atom_ids() {
+        let gradient = result
+            .final_evaluation()
+            .gradient_for(minimized.as_model_view(), *atom)
+            .unwrap()
+            .into_value()
+            .norm();
+        if moving.contains(*atom) {
+            assert!(gradient <= 1e-3);
+        }
+    }
+    assert!(result.final_evaluation().max_gradient_norm().into_value() > 1e-2);
+    // Without its neighbour, the same molecule relaxes elsewhere.
+    let alone = model.subset(&moving).unwrap();
+    let single = OpenFfPotential::new(&parameterize(&alone.shared_topology())).unwrap();
+    let isolated = minimize(&single, alone.as_model_view(), &options).unwrap();
+    let shift = after[7..]
+        .iter()
+        .zip(isolated.positions().values().into_value())
+        .map(|(a, b)| (*a - *b).norm())
+        .fold(0.0, f64::max);
+    assert!(shift > 1e-4, "neighbour changed nothing: {shift}");
 }
 
 #[test]
