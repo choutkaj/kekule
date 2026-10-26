@@ -53,3 +53,7 @@ harness = false
 [[bench]]
 name = "group_contacts"
 harness = false
+
+[[bench]]
+name = "interactions"
+harness = false

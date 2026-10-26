@@ -152,6 +152,7 @@ pub mod diagnostics;
 mod draft;
 pub mod dssp;
 pub mod geometry;
+pub mod interactions;
 mod io;
 pub mod molecule;
 pub mod parallel;

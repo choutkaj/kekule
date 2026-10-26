@@ -11,6 +11,35 @@ are marked **Breaking:**.
 
 ### Added
 
+- Non-covalent interactions (SeekDelta K6), in the new `kekule::interactions`
+  module, for a host that draws and lists the interactions of marked atoms
+  and follows them through trajectory playback. `InteractionFeatures::new`
+  classifies a topology's hydrogen-bond donors (with their explicit
+  hydrogens) and acceptors, charged groups (formal charges, and carboxylates,
+  phosphates, sulfonates, aliphatic amines, amidines, and guanidines charged
+  at pH 7), aromatic rings, C–Cl/Br/I halogen-bond donors, metals and the
+  atoms that can coordinate them, and hydrophobic carbons once, per reusable
+  definition, for every structure sharing the layout.
+  `find_interactions_within` searches two possibly overlapping atom sets of
+  one structure, reporting each interaction once and skipping ends of one
+  molecule fewer than `min_bond_separation` bonds apart;
+  `find_interactions_between` searches two structures, each
+  `InteractionSide` with features of its own topology. Each `Interaction`
+  has its `InteractionKind` (hydrogen bond, salt bridge, parallel and
+  T-shaped π stacking, cation–π, halogen bond, metal coordination,
+  hydrophobic contact), both ends' roles, atoms (a ring's atoms for π
+  interactions, a donor's explicit hydrogen), and drawing points (ring
+  centers and normals, charge centers), and its distance, hydrogen distance,
+  offset, and angles. Hydrogen bonds are measured from explicit hydrogens
+  or, when hydrogens are implicit, from the heavy atoms. `InteractionCriteria`
+  holds every threshold as a `Quantity` with documented literature defaults
+  (Baker & Hubbard, HBPLUS, Kumar & Nussinov, PLIP, Gallivan & Dougherty,
+  Auffinger) and switches each type on or off. The side with fewer atoms
+  lists its features and the other reads only atoms within reach, paired on
+  the uniform grid that group contact occupancy uses, now shared between
+  them. `HydrogenBondOccupancyAccumulator` reduces
+  weighted observations to hydrogen-bond occupancies and merges partial
+  accumulators, as the K28 and K48 statistics accumulators do.
 - XYZ documents built from atoms (SeekDelta K54), so a host that holds a
   molecule as elements and positions, such as one reading the atoms a
   Gaussian cube file lists beside its grids, has it interpreted as XYZ
