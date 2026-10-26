@@ -552,9 +552,11 @@ impl Local {
                         .atom(other)
                         .expect("bonds join live atoms")
                         .element();
+                    // Coordination bonds to metals are interactions in their
+                    // own right, not part of a group's covalent structure.
                     if element == Element::H {
                         explicit.push(other);
-                    } else {
+                    } else if !is_metal(element) || is_metal(atom.element()) {
                         heavy.push((other, bond.order));
                     }
                 }

@@ -303,17 +303,21 @@ impl<'a> Side<'a> {
                     .filter(|candidate| inside(&candidate.point))
                     .collect()
             }
+            // A ring's center is its centroid, tested before its normal is
+            // computed.
             Role::Ring => (0..features.rings.len() as u32)
                 .filter(|&index| self.includes(role, index))
                 .filter_map(|index| {
                     let atoms = features.span(&features.rings[index as usize]);
+                    if !inside(&centroid(atoms.iter().map(|&atom| self.position(atom)))) {
+                        return None;
+                    }
                     ring_geometry(atoms, self.positions).map(|(point, normal)| Candidate {
                         point,
                         feature: index,
                         normal,
                     })
                 })
-                .filter(|candidate| inside(&candidate.point))
                 .collect(),
             Role::Halogen => by_atom(features.halogens.len(), &|index| {
                 features.halogens[index].halogen

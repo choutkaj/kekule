@@ -120,6 +120,15 @@ fn classifies_features() {
     assert!(groups("Nc1ccccc1").is_empty());
     assert!(groups("CC(=O)OC").is_empty());
     assert!(groups("C[N+](=O)[O-]").is_empty());
+    // A metal bonded to a carboxylate's oxygen leaves it a carboxylate.
+    let bound = features("CC(=O)O[Mg+]");
+    assert_eq!(
+        bound
+            .charged_groups()
+            .map(|group| group.kind())
+            .collect::<Vec<_>>(),
+        [K::Carboxylate]
+    );
     // Metals are metals, not charged groups.
     assert!(groups("[Zn+2]").is_empty());
     assert_eq!(features("[Zn+2]").metals().len(), 1);
