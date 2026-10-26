@@ -8,11 +8,12 @@
 //! The first SDF record must contain explicit hydrogens with 3D coordinates.
 //! The ligand is appended to the optional mmCIF environment to form a larger
 //! model. The example then mimics an edit: it displaces the ligand's last three
-//! heavy atoms and their hydrogens, the "new group", by up to 0.3 Å. Clean-up
-//! takes the molecule of the target atoms out of the model, parameterizes it
-//! with OpenFF Rosemary and the bundled Ash charges, minimizes the targets with
-//! the rest of the molecule fixed, and writes the coordinates back. `--whole`
-//! cleans up the whole ligand instead of the group.
+//! heavy atoms (all of them in smaller ligands) and their hydrogens, the "new
+//! group", by up to 0.3 Å. Clean-up takes the molecule of the target atoms out
+//! of the model, parameterizes it with OpenFF Rosemary and the bundled Ash
+//! charges, minimizes the targets with the rest of the molecule fixed, and
+//! writes the coordinates back. `--whole` cleans up the whole ligand instead of
+//! the group.
 
 use std::{collections::BTreeSet, env, error::Error, fs, ops::ControlFlow, time::Instant};
 
@@ -72,7 +73,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 != 1
         })
         .collect();
-    let group: BTreeSet<_> = heavy[heavy.len() - 3..]
+    // Ligands with fewer than three heavy atoms edit all of them.
+    let group: BTreeSet<_> = heavy[heavy.len().saturating_sub(3)..]
         .iter()
         .flat_map(|&id| {
             let atom = system.topology().atom(id).unwrap();
@@ -85,6 +87,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect();
     let targets = if whole {
         ligand_atoms.clone()
+    } else if group.is_empty() {
+        return Err("the ligand has no heavy atoms to edit; pass --whole".into());
     } else {
         AtomSelection::from_atoms(system.shared_topology(), group.iter().copied())?
     };
