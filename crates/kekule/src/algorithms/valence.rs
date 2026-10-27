@@ -144,6 +144,15 @@ pub(crate) fn rdkit_inferred_hydrogen_count(mol: &Molecule, atom_id: AtomId, ato
     rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
 }
 
+/// The issue strict valence perception would report for one atom, if any.
+pub(crate) fn rdkit_valence_issue(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<ValenceIssue> {
+    rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, true).err()
+}
+
 /// Radical-electron count implied by a fixed-H SMILES bracket atom after
 /// localization. Mirrors RDKit's octet/duet and allowed-valence conventions,
 /// without assigning a spin multiplicity or changing a published graph.

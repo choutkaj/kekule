@@ -29,6 +29,10 @@
 //!   ([`StructureKind`]), so sample and frame state is never silently dropped.
 //! - [`measure`]: checked distances, angles, dihedrals, bond dihedrals and
 //!   distance-based selections.
+//! - [`placement`]: builder geometry on a [`ModelEditor`] draft: hydrogens
+//!   completed at ideal positions or collapsed back into counts, an atom's
+//!   ideal shape and free directions, atoms attached to existing ones or
+//!   placed as new molecules, and names for the atoms placement adds.
 //! - Geometry edits: [`DistanceEdit`], [`AngleEdit`] and [`DihedralEdit`] (see
 //!   below), and rigid motions with [`Model::apply_rigid_transform`] and
 //!   [`Model::transform_atoms`].
@@ -110,6 +114,7 @@ mod model;
 mod model_editor;
 mod model_state;
 mod partition;
+pub mod placement;
 mod positions;
 mod sampling;
 mod scalars;

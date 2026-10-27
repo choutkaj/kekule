@@ -616,10 +616,10 @@ fn validate_implicit_stereo_count(
     Ok(())
 }
 
-fn materialize_stereo_hydrogen_carriers(
+pub(crate) fn materialize_stereo_hydrogen_carriers(
     editor: &mut MoleculeEditor,
     added_by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
-) -> Result<(), HydrogenTransformError> {
+) -> Result<(), MoleculeError> {
     let replacements = editor
         .working()
         .stereo_elements()
@@ -671,7 +671,7 @@ fn materialize_stereo_hydrogen_carriers(
     Ok(())
 }
 
-fn removable_hydrogen(
+pub(crate) fn removable_hydrogen(
     molecule: &Molecule,
     hydrogen: AtomId,
     atom: &Atom,
@@ -727,7 +727,7 @@ fn removable_hydrogen(
     Ok(Ok((parent, bond_id)))
 }
 
-fn stereo_hydrogen_is_collapsible(
+pub(crate) fn stereo_hydrogen_is_collapsible(
     molecule: &Molecule,
     hydrogen: AtomId,
     parent: AtomId,
@@ -806,7 +806,7 @@ fn collapses_to_sole_implicit_hydrogen(
         })
 }
 
-fn stereo_hydrogen_bindings(
+pub(crate) fn stereo_hydrogen_bindings(
     molecule: &Molecule,
     removable: &BTreeSet<AtomId>,
 ) -> BTreeMap<AtomId, Vec<StereoElementId>> {
@@ -833,7 +833,7 @@ fn stereo_hydrogen_bindings(
     bindings
 }
 
-fn collapse_stereo_hydrogen_carrier(
+pub(crate) fn collapse_stereo_hydrogen_carrier(
     editor: &mut MoleculeEditor,
     hydrogen: AtomId,
     elements: &[StereoElementId],
@@ -865,7 +865,10 @@ fn collapse_stereo_hydrogen_carrier(
     Ok(())
 }
 
-fn stereo_hydrogen_parents(molecule: &Molecule, removable: &BTreeSet<AtomId>) -> BTreeSet<AtomId> {
+pub(crate) fn stereo_hydrogen_parents(
+    molecule: &Molecule,
+    removable: &BTreeSet<AtomId>,
+) -> BTreeSet<AtomId> {
     let mut parents = BTreeSet::new();
     for (_, element) in molecule.stereo_elements() {
         match &element.kind {
@@ -898,7 +901,7 @@ fn stereo_hydrogen_parents(molecule: &Molecule, removable: &BTreeSet<AtomId>) ->
 /// reproduces its complete implicit count. Every other parent, including fixed
 /// declarations and parents whose count must not move with later edits, receives
 /// that count as a fixed declaration. Either way the total is preserved exactly.
-fn assign_collapsed_hydrogen_counts(
+pub(crate) fn assign_collapsed_hydrogen_counts(
     editor: &mut MoleculeEditor,
     expected_totals: &BTreeMap<AtomId, usize>,
     by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
