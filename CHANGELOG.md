@@ -24,6 +24,23 @@ are marked **Breaking:**.
 - An informational benchmark of a ligand edit in a large model
   (`cargo bench -p kekule --bench model_edit_scale -- <mmCIF> <ligand>`),
   which merges 66 copies of an externally supplied entry such as PDB 9UOH.
+- Minimization with fixed atoms and position restraints (SeekDelta K57), so
+  a host cleans up an edited group while the rest of its molecule keeps its
+  pose. `minimize_scoped` and `minimize_scoped_with_observer` take a
+  `MinimizationScope`: `MinimizationScope::moving` moves the atoms of an
+  `AtomSelection` and fixes the others, which keep their input coordinates
+  bit for bit but still enter every potential evaluation, and
+  `with_position_restraint` adds `k/2 |r - r_ref|^2` on an atom
+  (`PositionRestraint`; an unusable one is
+  `MinimizationError::InvalidRestraint` with a `RestraintProblem`). The step
+  bound and convergence consider moving atoms only:
+  `Minimization::max_gradient` and `MinimizationStep::max_gradient` report the
+  largest norm of the minimized energy's gradient over them, and
+  `restraint_energy` on both reports the restraints' share, which
+  `final_evaluation` and `energy` leave out. `minimize` and
+  `minimize_with_observer` are unchanged. The `clean_up` example cleans up a
+  group of a ligand inside a larger model with OpenFF Rosemary and Ash
+  charges.
 - Builder geometry on model drafts (SeekDelta K3a), so a host that edits a
   `ModelEditor` draft gets coordinates for the atoms it adds as part of that
   edit's one publication. The new `structure::placement` module documents the
