@@ -57,3 +57,7 @@ harness = false
 [[bench]]
 name = "interactions"
 harness = false
+
+[[bench]]
+name = "model_edit_scale"
+harness = false

@@ -6,11 +6,11 @@ use super::*;
 /// which storage slot each one addresses.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum EditRows<'a> {
-    Atoms(&'a BTreeMap<EditAtomId, Location<AtomId>>),
-    Bonds(&'a BTreeMap<EditBondId, Location<BondId>>),
-    Chains(&'a BTreeMap<EditChainId, EditChain>),
-    Residues(&'a BTreeMap<EditResidueId, EditResidue>),
-    AtomSites(&'a BTreeMap<EditAtomSiteId, EditAtomSite>),
+    Atoms(&'a DenseMap<EditAtomId, Location<AtomId>>),
+    Bonds(&'a DenseMap<EditBondId, Location<BondId>>),
+    Chains(&'a DenseMap<EditChainId, EditChain>),
+    Residues(&'a DenseMap<EditResidueId, EditResidue>),
+    AtomSites(&'a DenseMap<EditAtomSiteId, EditAtomSite>),
 }
 
 impl EditRows<'_> {

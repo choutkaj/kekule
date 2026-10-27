@@ -804,12 +804,12 @@ fn source(hierarchy: &Hierarchy, chain: ChainId, key: ResidueId) -> DsspResidueS
 
 fn residue_source(chain: &Chain, residue: &Residue) -> DsspResidueSource {
     DsspResidueSource {
-        residue_name: residue.name.clone(),
+        residue_name: residue.name().to_owned(),
         chain_label_id: chain.label_id.clone(),
         chain_author_id: chain.author_id.clone(),
         label_sequence_id: residue.label_seq_id,
-        author_sequence_id: residue.author_seq_id.clone(),
-        insertion_code: residue.insertion_code.clone(),
+        author_sequence_id: residue.author_seq_id().map(str::to_owned),
+        insertion_code: residue.insertion_code().map(str::to_owned),
     }
 }
 

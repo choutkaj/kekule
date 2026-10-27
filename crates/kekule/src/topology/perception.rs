@@ -4,7 +4,9 @@ use std::sync::Arc;
 use crate::chemistry::{perceive_molecule_cancellable, PerceptionError};
 use crate::diagnostics::Cancellation;
 
-use super::{MoleculeDefinitionId, Topology};
+use crate::molecule::Molecule;
+
+use super::{MoleculeDefinition, MoleculeDefinitionId, Topology};
 
 /// Default perception failed for one reusable molecule definition.
 ///
@@ -40,7 +42,12 @@ impl Topology {
     /// Each reusable definition is perceived once, in definition order, using
     /// [`crate::molecule::Molecule::perceive`]: RDKit-like valence and implicit
     /// hydrogens, the default deterministic ring set, and RDKit-like aromaticity.
-    /// Existing perception is recomputed; dependent CIP state is cleared.
+    /// Existing perception is recomputed and dependent CIP state is cleared,
+    /// except on definitions whose perception this profile installed and
+    /// nothing changed since, such as the definitions a structural edit left
+    /// untouched: perception is deterministic, so they are shared with the
+    /// result as they are. Perceiving after an edit costs the definitions the
+    /// edit changed, whatever the size of the system.
     /// Failure identifies the first failing definition and leaves `self` intact.
     ///
     /// Represented graphs, definition reuse, all semantic IDs, dense ordering,
@@ -93,14 +100,23 @@ impl Topology {
             .definitions
             .iter()
             .map(|definition| {
-                let mut perceived = definition.clone();
-                perceive_molecule_cancellable(&mut perceived.molecule, cancellation).map_err(
-                    |source| TopologyPerceptionError {
+                // Perception is deterministic, so a definition already holding
+                // exactly this profile's result is shared, not perceived again.
+                if definition.default_perception {
+                    return Ok(definition.clone());
+                }
+                let mut molecule = Molecule::clone(&definition.molecule);
+                perceive_molecule_cancellable(&mut molecule, cancellation).map_err(|source| {
+                    TopologyPerceptionError {
                         definition: definition.id,
                         source,
-                    },
-                )?;
-                Ok(perceived)
+                    }
+                })?;
+                Ok(MoleculeDefinition {
+                    molecule: Arc::new(molecule),
+                    default_perception: true,
+                    ..definition.clone()
+                })
             })
             .collect::<Result<_, TopologyPerceptionError>>()?;
 

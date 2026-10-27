@@ -314,7 +314,11 @@ fn copy_filtered_hierarchy(
                 let Some(target_atom) = atom_targets.get(&source_site.atom()).copied() else {
                     continue;
                 };
-                target.add_atom_site(residue, target_atom, source_site.metadata().clone())?;
+                target.add_shared_atom_site(
+                    residue,
+                    target_atom,
+                    Arc::clone(&source_site.metadata),
+                )?;
                 projection.atom_sites.push(source_site.id().index());
             }
         }
