@@ -956,7 +956,7 @@ impl Plan {
             )
         };
         let hierarchy = topology.hierarchy();
-        let Some(site) = hierarchy.atom_site_for_atom(atom_id) else {
+        let Some(site) = topology.atom_site_of(atom_id) else {
             let next = synthetic.len() + 1;
             let number = *synthetic.entry(instance.id()).or_insert(next);
             let water = instance.class() == MoleculeClass::Water;

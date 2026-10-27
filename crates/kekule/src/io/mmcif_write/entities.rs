@@ -431,7 +431,7 @@ fn report_entity_plan(
 struct ChainSegment<'h> {
     kind: AssignedEntityKind,
     source_entity_id: Option<String>,
-    sites: Vec<&'h AtomSite>,
+    sites: Vec<AtomSite<'h>>,
 }
 
 /// Splits a chain into label asyms, one per entity instance, in residue
@@ -445,8 +445,8 @@ fn chain_segments<'h>(
     hierarchy: &'h Hierarchy,
     chain: &'h Chain,
     mut classify: impl FnMut(
-        &'h Residue,
-        &[&'h AtomSite],
+        Residue<'h>,
+        &[AtomSite<'h>],
     ) -> Result<(AssignedEntityKind, Option<String>), FormatError>,
 ) -> Result<Vec<ChainSegment<'h>>, FormatError> {
     let mut segments = Vec::<ChainSegment<'h>>::new();

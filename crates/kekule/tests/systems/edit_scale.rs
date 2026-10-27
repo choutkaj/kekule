@@ -11,7 +11,7 @@ use kekule::topology::{
     AtomSiteMetadata, ChainId, ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex,
     TopologyBuilder,
 };
-use kekule::units::{Quantity, ANGSTROM};
+use kekule::units::{Quantity, ANGSTROM, SQUARE_ANGSTROM};
 
 /// Ethanol, benzene, two waters and a sodium ion, each a residue; the first
 /// three in chain A, the rest in chain B.
@@ -409,4 +409,303 @@ fn untouched_residues_keep_their_source_atoms_in_a_draft() {
     assert_eq!(editor.next_atom_name(handle, carbon).unwrap(), "C3");
     let oxygen = Element::from_symbol("O").unwrap();
     assert_eq!(editor.next_atom_name(handle, oxygen).unwrap(), "O4");
+}
+
+/// A deep description of a model read through its public views, so that a
+/// change anywhere in its shared state shows.
+fn describe(model: &Model) -> String {
+    use std::fmt::Write;
+    let topology = model.topology();
+    let view = model.as_model_view();
+    let mut text = String::new();
+    for atom in topology.atoms() {
+        writeln!(
+            text,
+            "atom {} {:?} {:?} occupancy {:?} b {:?}",
+            atom.id(),
+            atom.atom(),
+            model
+                .position(atom.id())
+                .map(|p| p.value_in(ANGSTROM).unwrap()),
+            view.occupancy(atom.index()),
+            view.b_factor(atom.index())
+                .map(|b| b.value_in(SQUARE_ANGSTROM).unwrap()),
+        )
+        .unwrap();
+    }
+    for bond in topology.bonds() {
+        writeln!(text, "bond {:?} {:?}", bond.id(), bond.bond()).unwrap();
+    }
+    for instance in topology.instances() {
+        writeln!(text, "instance {} {:?}", instance.id(), instance.class()).unwrap();
+    }
+    for chain in topology.chains() {
+        writeln!(text, "chain {:?} {:?}", chain.label_id(), chain.author_id()).unwrap();
+    }
+    for residue in topology.residues() {
+        writeln!(
+            text,
+            "residue {} {:?} {:?} {:?} {:?}",
+            residue.name(),
+            residue.class_assignment(),
+            residue.label_comp_id(),
+            residue.label_seq_id(),
+            residue
+                .atom_sites()
+                .map(|site| site.id())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    }
+    for site in topology.atom_sites() {
+        writeln!(text, "site {} {:?}", site.atom().id(), site.metadata()).unwrap();
+    }
+    text
+}
+
+#[test]
+fn edits_through_shared_state_leave_the_source_model_unchanged() {
+    let source = system();
+    let positions = Positions::new(Quantity::new(
+        (0..source.atom_count())
+            .map(|index| Point3::new(index as f64, 1.0, 2.0))
+            .collect::<Vec<_>>(),
+        ANGSTROM,
+    ))
+    .unwrap();
+    let mut seeded = Model::new(Arc::clone(&source), positions)
+        .unwrap()
+        .to_editor();
+    for atom in source.atom_ids() {
+        let handle = seeded.topology().atom_handle(*atom).unwrap();
+        seeded.set_occupancy(handle, Some(0.5)).unwrap();
+        seeded
+            .set_b_factor(handle, Some(Quantity::new(20.0, SQUARE_ANGSTROM)))
+            .unwrap();
+    }
+    let model = seeded.finish().unwrap();
+    let before = describe(&model);
+    let atom = |editor: &ModelEditor, index: usize| {
+        editor
+            .topology()
+            .atom_handle(model.topology().atom_ids()[index])
+            .unwrap()
+    };
+    type Edit = fn(&mut ModelEditor, &dyn Fn(&ModelEditor, usize) -> EditAtomId);
+    let edits: [(&str, Edit); 12] = [
+        ("delete an atom", |editor, atom| {
+            editor.delete_atom(atom(editor, 2)).unwrap();
+        }),
+        ("attach an atom", |editor, atom| {
+            let anchor = atom(editor, 4);
+            let added = editor
+                .add_atom(
+                    Atom::new(Element::from_symbol("C").unwrap()),
+                    Quantity::new(Point3::new(9.0, 9.0, 9.0), ANGSTROM),
+                )
+                .unwrap();
+            editor.add_bond(anchor, added, BondOrder::Single).unwrap();
+        }),
+        ("change an element", |editor, atom| {
+            let handle = atom(editor, 0);
+            let changed = editor
+                .topology()
+                .atom(handle)
+                .unwrap()
+                .clone()
+                .with_element(Element::from_symbol("N").unwrap());
+            editor.replace_atom(handle, changed).unwrap();
+        }),
+        ("change a charge", |editor, atom| {
+            let handle = atom(editor, 9);
+            let changed = editor
+                .topology()
+                .atom(handle)
+                .unwrap()
+                .clone()
+                .with_formal_charge(-1);
+            editor.replace_atom(handle, changed).unwrap();
+        }),
+        ("move an atom and change its annotations", |editor, atom| {
+            let handle = atom(editor, 5);
+            editor
+                .set_position(handle, Quantity::new(Point3::new(-5.0, 0.0, 0.0), ANGSTROM))
+                .unwrap();
+            editor.set_occupancy(handle, None).unwrap();
+            editor
+                .set_b_factor(handle, Some(Quantity::new(1.0, SQUARE_ANGSTROM)))
+                .unwrap();
+        }),
+        ("merge two molecules", |editor, atom| {
+            let (ethanol, water) = (atom(editor, 2), atom(editor, 9));
+            editor.add_bond(ethanol, water, BondOrder::Single).unwrap();
+        }),
+        ("split a molecule", |editor, _| {
+            let bond = editor
+                .topology()
+                .bond_handle(editor.topology().source_topology().unwrap().bond_ids()[0])
+                .unwrap();
+            editor.delete_bond(bond).unwrap();
+        }),
+        ("rename a residue's component", |editor, _| {
+            let residue = editor.topology().residue_handle(ResidueId::new(1)).unwrap();
+            editor
+                .set_residue_component_ids(residue, Some("TOL".into()), None)
+                .unwrap();
+        }),
+        ("rename an atom site", |editor, atom| {
+            let site = editor
+                .topology()
+                .atom_site_for_atom(atom(editor, 1))
+                .unwrap()
+                .unwrap();
+            let metadata = AtomSiteMetadata::default().with_label_atom_id(Some("Q".into()));
+            editor.set_atom_site_metadata(site, metadata).unwrap();
+        }),
+        ("delete a residue", |editor, _| {
+            let residue = editor.topology().residue_handle(ResidueId::new(2)).unwrap();
+            editor.delete_residue(residue).unwrap();
+        }),
+        ("delete a chain", |editor, _| {
+            let chain = editor.topology().chain_handle(ChainId::new(1)).unwrap();
+            editor.delete_chain(chain).unwrap();
+        }),
+        ("add hierarchy", |editor, atom| {
+            let sodium = atom(editor, 11);
+            let site = editor
+                .topology()
+                .atom_site_for_atom(sodium)
+                .unwrap()
+                .unwrap();
+            editor.delete_atom_site(site).unwrap();
+            let chain = editor.add_chain("C", None).unwrap();
+            let residue = editor
+                .add_residue(chain, "ION", Some(1), None, None)
+                .unwrap();
+            editor
+                .add_atom_site(residue, sodium, AtomSiteMetadata::default())
+                .unwrap();
+        }),
+    ];
+    for (name, edit) in edits {
+        let mut editor = model.to_editor();
+        edit(&mut editor, &atom);
+        assert_eq!(
+            describe(&model),
+            before,
+            "{name}: the draft changed its source"
+        );
+        let published = editor.finish().unwrap();
+        assert_ne!(
+            describe(&published),
+            before,
+            "{name}: the edit changed nothing"
+        );
+        assert_eq!(
+            describe(&model),
+            before,
+            "{name}: publication changed its source"
+        );
+    }
+}
+
+#[test]
+fn chained_edits_keep_every_snapshot_and_their_labels() {
+    use kekule::topology::AtomSiteId;
+    // Each edit starts from the previous publication, as an undo history
+    // does; every snapshot keeps its own site names and residue labels.
+    let sites = system().atom_count();
+    let mut history = vec![Model::new(system(), Positions::zeros(sites)).unwrap()];
+    for round in 0..40 {
+        let mut editor = history.last().unwrap().to_editor();
+        let site = editor
+            .topology()
+            .atom_site_handle(AtomSiteId::new((round % sites) as u32))
+            .unwrap();
+        let residue = editor
+            .topology()
+            .residue_handle(ResidueId::new(round as u32 % 5))
+            .unwrap();
+        let metadata = AtomSiteMetadata::default().with_label_atom_id(Some(format!("R{round}")));
+        editor.set_atom_site_metadata(site, metadata).unwrap();
+        editor
+            .set_residue_component_ids(residue, Some(format!("L{round}")), None)
+            .unwrap();
+        history.push(editor.finish().unwrap());
+    }
+    let site_name = |model: &Model, site: usize| {
+        model
+            .topology()
+            .atom_site(AtomSiteId::new(site as u32))
+            .unwrap()
+            .metadata()
+            .label_atom_id()
+            .map(str::to_owned)
+    };
+    for round in 0..40 {
+        let (before, after) = (&history[round], &history[round + 1]);
+        let site = round % sites;
+        assert_eq!(site_name(after, site), Some(format!("R{round}")));
+        let earlier = (round >= sites).then(|| format!("R{}", round - sites));
+        assert_eq!(
+            site_name(before, site),
+            earlier.or_else(|| site_name(&history[0], site))
+        );
+        let residue = after
+            .topology()
+            .residue(ResidueId::new(round as u32 % 5))
+            .unwrap();
+        assert_eq!(residue.label_comp_id(), Some(format!("L{round}").as_str()));
+    }
+    assert_eq!(site_name(&history[0], 0).as_deref(), Some("X0"));
+}
+
+#[test]
+fn appended_perceived_copies_keep_their_perception_profile() {
+    // A host builds a large model by appending perceived copies and never
+    // perceives the result: perceiving it, or an edit of it, perceives only
+    // what changed.
+    let copy = Model::new(
+        Arc::new(system().perceived().unwrap()),
+        Positions::zeros(12),
+    )
+    .unwrap();
+    let mut merged = ModelEditor::new();
+    for _ in 0..3 {
+        merged.append_model(&copy).unwrap();
+    }
+    // An added molecule has no known perception and is perceived.
+    merged
+        .add_molecule(
+            kekule::smiles::to_molecules("C").unwrap().remove(0),
+            &Positions::zeros(1),
+        )
+        .unwrap();
+    let merged = merged.finish().unwrap();
+    let shared = |before: &Topology, after: &Topology| {
+        before
+            .definitions()
+            .zip(after.definitions())
+            .map(|(a, b)| std::ptr::eq(a.molecule(), b.molecule()))
+            .collect::<Vec<_>>()
+    };
+    let perceived = merged.topology().perceived().unwrap();
+    let mut expected = vec![true; merged.topology().definition_count()];
+    *expected.last_mut().unwrap() = false;
+    assert_eq!(shared(merged.topology(), &perceived), expected);
+
+    let mut editor = merged.to_editor();
+    let ring = editor
+        .topology()
+        .atom_handle(merged.topology().atom_ids()[12 + 3])
+        .unwrap();
+    editor.delete_atom(ring).unwrap();
+    let edited = editor.finish().unwrap();
+    let reperceived = edited.topology().perceived().unwrap();
+    let fresh = shared(edited.topology(), &reperceived)
+        .iter()
+        .filter(|shared| !**shared)
+        .count();
+    // The edited benzene's new definition and the added methane.
+    assert_eq!(fresh, 2);
 }

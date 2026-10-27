@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::structure::DenseArrayError;
 use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, SQUARE_NANOMETER};
@@ -12,7 +14,7 @@ use super::StructureError;
 /// are all missing equals one that was never recorded. Atom indices are checked
 /// against the owner's atom count `len`.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct AtomScalars(Option<Vec<Option<f64>>>);
+pub(crate) struct AtomScalars(Option<Arc<Vec<Option<f64>>>>);
 
 /// The column of an owner that never records one, such as a trajectory frame.
 pub(crate) static ABSENT: AtomScalars = AtomScalars(None);
@@ -30,7 +32,7 @@ impl PartialEq for AtomScalars {
 impl AtomScalars {
     /// Every value in dense atom order, or `None` when none was recorded.
     pub(crate) fn values(&self) -> Option<&[Option<f64>]> {
-        self.0.as_deref()
+        self.0.as_deref().map(Vec::as_slice)
     }
 
     /// One recorded value, or `None` when it is unset or `atom` is out of range.
@@ -69,27 +71,37 @@ impl AtomScalars {
                 return Err(StructureError::Array(DenseArrayError::NonFinite { index }));
             }
         }
-        self.0 = values.filter(|values| values.iter().any(Option::is_some));
+        self.0 = values
+            .filter(|values| values.iter().any(Option::is_some))
+            .map(Arc::new);
         Ok(())
     }
 
+    /// The given rows in order; selecting every row in order shares the
+    /// values instead of copying them.
     pub(crate) fn select(&self, rows: &[usize]) -> Self {
-        Self(
-            self.0
-                .as_ref()
-                .map(|values| rows.iter().map(|row| values[*row]).collect()),
-        )
+        Self(self.0.as_ref().map(|values| {
+            if super::positions::is_identity(rows, values.len()) {
+                Arc::clone(values)
+            } else {
+                Arc::new(rows.iter().map(|row| values[*row]).collect())
+            }
+        }))
     }
 
     pub(crate) fn resize(&mut self, len: usize) {
         if let Some(values) = &mut self.0 {
-            values.resize(len, None);
+            if values.len() != len {
+                Arc::make_mut(values).resize(len, None);
+            }
         }
     }
 
     pub(crate) fn clear(&mut self, row: usize) {
         if let Some(values) = &mut self.0 {
-            values[row] = None;
+            if values[row].is_some() {
+                Arc::make_mut(values)[row] = None;
+            }
         }
     }
 
@@ -116,11 +128,15 @@ impl AtomScalars {
             }));
         }
         match (&mut self.0, value) {
-            (Some(values), value) => values[row] = value,
+            (Some(values), value) => {
+                if values[row] != value {
+                    Arc::make_mut(values)[row] = value;
+                }
+            }
             (None, Some(value)) => {
                 let mut values = vec![None; len];
                 values[row] = Some(value);
-                self.0 = Some(values);
+                self.0 = Some(Arc::new(values));
             }
             (None, None) => {}
         }

@@ -29,8 +29,17 @@ impl TopologyEditor {
         let definitions = source
             .definitions()
             // A fresh allocation per import: added groups reuse a definition
-            // only when they share one, which stays within this import.
-            .map(|definition| (definition.id(), Arc::new(definition.molecule().clone())))
+            // only when they share one, which stays within this import. The
+            // copy keeps the definition's perception, and so its profile.
+            .map(|definition| {
+                (
+                    definition.id(),
+                    (
+                        Arc::new(definition.molecule().clone()),
+                        definition.default_perception,
+                    ),
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         let instance_start = self.properties.molecule_instances().len();
         self.properties
@@ -40,13 +49,11 @@ impl TopologyEditor {
         let bases = (self.properties.atoms().len(), self.properties.bonds().len());
         let handles = GroupIdentity::source_handles(&source);
         for (instance, value) in source.instance_records() {
-            let molecule = &definitions[&value.definition()];
-            let group_index = self.groups.len();
+            let (molecule, default_perception) = &definitions[&value.definition()];
             let identity = GroupIdentity::dense(&source, instance, handles, bases);
             let group = self.register_group(
-                GroupChemistry::Added(Arc::clone(molecule)),
+                GroupChemistry::Added(Arc::clone(molecule), *default_perception),
                 molecule,
-                None,
                 Some(source.definition(value.definition()).unwrap().class()),
                 source
                     .molecule_class_overrides
@@ -54,8 +61,7 @@ impl TopologyEditor {
                 identity,
             );
             let added = self.group_handles(group);
-            self.groups[group_index].as_mut().unwrap().instance_slot =
-                Some(instance_start + instance.index());
+            self.group_mut(group).instance_slot = Some(instance_start + instance.index());
             self.properties
                 .resize_atoms(self.properties.atoms().len() + molecule.atom_count());
             self.properties
@@ -104,22 +110,19 @@ impl TopologyEditor {
         }
         // Insertion invalidates classification while the residue is incomplete.
         for (id, residue) in source.hierarchy().residues() {
-            let target = self
-                .hierarchy
-                .residues
-                .get_mut(&mapping.residues[&id])
-                .unwrap();
+            let target = self.residue_mut(mapping.residues[&id]);
             target.class = Some(residue.class());
             target.class_explicit = source
                 .hierarchy()
                 .residue(id)
-                .is_some_and(|residue| residue.explicit_class.is_some());
+                .is_some_and(|residue| residue.explicit_class().is_some());
         }
         for (instance, value) in source.instance_records() {
             let definition = source.definition(value.definition()).unwrap();
             let local = definition.molecule().atom_ids().next().unwrap();
             let handle = mapping.atoms[&InstanceAtomId::new(instance, local)];
-            let group = self.groups[self.atoms[&handle].group].as_mut().unwrap();
+            let group = self.atom_location(handle)?.group;
+            let group = self.group_mut(group);
             group.class = Some(definition.class());
             group.class_explicit = source
                 .molecule_class_overrides
@@ -129,28 +132,37 @@ impl TopologyEditor {
         let atom_rows = source
             .atom_ids()
             .iter()
-            .map(|id| self.atoms[&mapping.atoms[id]].slot)
-            .collect::<Vec<_>>();
+            .map(|id| self.atom_slot(mapping.atoms[id]))
+            .collect::<Result<Vec<_>, _>>()?;
         let bond_rows = source
             .bond_ids()
             .iter()
-            .map(|id| self.bonds[&mapping.bonds[id]].slot)
-            .collect::<Vec<_>>();
+            .map(|id| self.bond_slot(mapping.bonds[id]))
+            .collect::<Result<Vec<_>, _>>()?;
         let chain_rows = source
             .hierarchy()
             .chains()
-            .map(|(id, _)| self.hierarchy.chains[&mapping.chains[&id]].slot)
-            .collect::<Vec<_>>();
+            .map(|(id, _)| {
+                self.require_chain(mapping.chains[&id])
+                    .map(|chain| chain.slot)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let residue_rows = source
             .hierarchy()
             .residues()
-            .map(|(id, _)| self.hierarchy.residues[&mapping.residues[&id]].slot)
-            .collect::<Vec<_>>();
+            .map(|(id, _)| {
+                self.require_residue(mapping.residues[&id])
+                    .map(|residue| residue.slot)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let site_rows = source
             .hierarchy()
             .atom_sites()
-            .map(|(id, _)| self.hierarchy.sites[&mapping.sites[&id]].slot)
-            .collect::<Vec<_>>();
+            .map(|(id, _)| {
+                self.require_atom_site(mapping.sites[&id])
+                    .map(|site| site.slot)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         self.properties
             .molecule_instances_mut()
             .copy_rows_from(

@@ -823,9 +823,13 @@ impl ModelEditor {
         let used = self
             .topology
             .chains()
-            .flat_map(|(_, chain)| [Some(chain.label_id()), chain.author_id()])
+            .flat_map(|(_, chain)| {
+                [
+                    Some(chain.label_id().to_owned()),
+                    chain.author_id().map(str::to_owned),
+                ]
+            })
             .flatten()
-            .map(str::to_owned)
             .collect::<BTreeSet<_>>();
         (0usize..)
             .map(|mut index| {
