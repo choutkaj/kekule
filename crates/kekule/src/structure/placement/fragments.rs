@@ -30,12 +30,18 @@ pub enum FragmentKind {
 /// heavy atom, the branch beyond it; placing it alone keeps the whole capped
 /// molecule. See [`fragments`] for the library.
 ///
-/// Atoms are in a meaningful order, which placement names follow. A ring's
-/// atoms come first in its conventional numbering (IUPAC locants: pyridine
-/// N1, C2, …, C6; naphthalene C1, …, C4, C4a, C5, …, C8, C8a), so a placed
-/// benzene's carbons are C1 to C6 around the ring and C1 and C4 are para. A
-/// group's attachment atom comes first, then its other heavy atoms. Each
-/// hydrogen follows, in the order of the atoms that carry them.
+/// Atoms are in a meaningful order. A ring's atoms come first in its
+/// conventional numbering, and each ring atom has its IUPAC locant
+/// ([`Self::locant`]: pyridine 1 to 6 from the nitrogen; naphthalene 1, …,
+/// 4, 4a, 5, …, 8, 8a). A group's attachment atom comes first, then its
+/// other heavy atoms. Each hydrogen follows, in the order of the atoms that
+/// carry them.
+///
+/// A fragment placed alone names its ring atoms by locant (pyridine N1, C2,
+/// …, C6; naphthalene C1, …, C4, C4A, C5, …, C8, C8A), so a host reading
+/// "C4" finds ring position 4; other heavy atoms take their element and a
+/// number, and hydrogens are named after the atom carrying them (H2 on C2;
+/// H21 and H22 for two on one atom).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fragment {
     name: &'static str,
@@ -46,6 +52,8 @@ pub struct Fragment {
     positions: Vec<Point3>,
     attachment: AtomId,
     leaving: AtomId,
+    /// The locant of each ring atom of a ring, in molecule atom order.
+    locants: Vec<Option<Box<str>>>,
 }
 
 impl Fragment {
@@ -71,6 +79,13 @@ impl Fragment {
     pub fn position(&self, atom: AtomId) -> Option<Quantity<Point3>> {
         let index = self.molecule.atom_ids().position(|id| id == atom)?;
         Some(Quantity::new(self.positions[index], CANONICAL_LENGTH_UNIT))
+    }
+    /// The IUPAC locant of a ring atom of a ring fragment (`"1"`, `"4a"`), or
+    /// `None` for an atom outside the ring, a group's atom, or an atom the
+    /// molecule does not have.
+    pub fn locant(&self, atom: AtomId) -> Option<&str> {
+        let index = self.molecule.atom_ids().position(|id| id == atom)?;
+        self.locants.get(index)?.as_deref()
     }
     /// The atom that bonds to the atom the fragment is attached to.
     pub const fn attachment_atom(&self) -> AtomId {
@@ -227,6 +242,27 @@ fn load() -> Vec<Fragment> {
                     .expect("one molecule");
                 positions[order] = points[view.index().index()];
             }
+            // Ring records list the locant of each ring atom, which come first.
+            let mut locants = vec![None; positions.len()];
+            let listed = record
+                .data_fields()
+                .iter()
+                .find(|field| field.name() == "locants")
+                .map(|field| {
+                    field
+                        .value()
+                        .split_whitespace()
+                        .map(Box::from)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            for (index, locant) in listed.into_iter().enumerate() {
+                let order = molecule
+                    .atom_ids()
+                    .position(|id| id == atom_at((index + 1).to_string()))
+                    .expect("ring atoms are atoms");
+                locants[order] = Some(locant);
+            }
             Fragment {
                 name: name_of(record.title()),
                 kind: match field("kind").as_str() {
@@ -238,6 +274,7 @@ fn load() -> Vec<Fragment> {
                 positions,
                 attachment,
                 leaving,
+                locants,
             }
         })
         .collect()

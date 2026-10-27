@@ -88,6 +88,22 @@ RING_ORDER = {
 }
 
 
+# The locants of fused ring systems, in RING_ORDER's order; a single ring's
+# atoms are numbered 1 to n.
+FUSED_LOCANTS = {
+    "naphthalene": ["1", "2", "3", "4", "4a", "5", "6", "7", "8", "8a"],
+    "indole": ["1", "2", "3", "3a", "4", "5", "6", "7", "7a"],
+    "quinoline": ["1", "2", "3", "4", "4a", "5", "6", "7", "8", "8a"],
+    "benzimidazole": ["1", "2", "3", "3a", "4", "5", "6", "7", "7a"],
+}
+
+
+def locants(record):
+    """The locant of each ring atom of a ring parent, in RING_ORDER's order."""
+    ring = RING_ORDER[record]
+    return FUSED_LOCANTS.get(record, [str(i) for i in range(1, len(ring) + 1)])
+
+
 def atom_order(record, attachment, elements, bonds):
     """The new order of the record's atoms, as old 1-based numbers: the ring
     in its numbering (or the attachment atom first, then the other heavy
@@ -174,8 +190,10 @@ def main(source, output):
             "> <kind>", kind, "",
             "> <attachment>", str(attachment), "",
             "> <leaving>", str(leaving), "",
-            "$$$$",
         ]
+        if kind == "ring":
+            block += ["> <locants>", " ".join(locants(record)), ""]
+        block += ["$$$$"]
         out.extend(block)
     open(output, "w", encoding="utf-8", newline="\n").write("\n".join(out) + "\n")
 

@@ -49,7 +49,10 @@
 //! residue, as chemical components name theirs (`C21`, `H31`): one more than
 //! the largest number following that symbol in a name of the residue. An
 //! atom without a residue gives its new neighbors none. A new molecule gets a
-//! chain and a residue `UNL` of its own. [`ModelEditor::next_atom_name`] and
+//! chain and a residue `UNL` of its own; a fragment placed alone names its
+//! ring atoms by locant (pyridine `N1`, `C2`, …; naphthalene `C4A`) and its
+//! hydrogens after the atoms carrying them (`H2`; `H21`, `H22`), as
+//! [`Fragment`] describes. [`ModelEditor::next_atom_name`] and
 //! [`ModelEditor::rename_atom`] apply the same rule to existing atoms. Names
 //! are label and author atom names alike, and the host may rename.
 //!
@@ -79,7 +82,7 @@ mod sites;
 
 pub use fragments::{fragment, fragments, Fragment, FragmentKind};
 
-pub(crate) use names::{name_prefix, next_free_number, NameAllocator};
+pub(crate) use names::{fragment_names, name_prefix, next_free_number, NameAllocator};
 pub(crate) use sites::{free_sites, unit, Rotation, SiteQuery};
 
 use super::ModelEditError;

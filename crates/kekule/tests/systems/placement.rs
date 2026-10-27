@@ -1267,3 +1267,114 @@ fn ring_fragments_follow_their_numbering() {
     }
     assert_eq!(bond_distances(&editor, carbons[0], 3)[&carbons[3]], 3);
 }
+
+/// The label atom names of `residue`'s atoms in `editor`, in handle order.
+fn residue_names(editor: &ModelEditor, atoms: impl IntoIterator<Item = EditAtomId>) -> Vec<String> {
+    atoms
+        .into_iter()
+        .map(|atom| {
+            let site = editor.topology().atom_site_for_atom(atom).unwrap().unwrap();
+            editor
+                .topology()
+                .atom_site(site)
+                .unwrap()
+                .metadata()
+                .label_atom_id()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn fragments_placed_alone_are_named_by_locant() {
+    // Every ring atom is named by its locant, so a host reading "C4" finds
+    // ring position 4; hydrogens are named after the atom carrying them.
+    for fragment in fragments()
+        .iter()
+        .filter(|f| f.kind() == FragmentKind::Ring)
+    {
+        let mut editor = ModelEditor::new();
+        let placed = editor
+            .place_fragment(fragment, Quantity::new(Point3::origin(), NANOMETER))
+            .unwrap();
+        let names = residue_names(&editor, placed.atoms().iter().map(|(_, atom)| *atom));
+        for ((local, atom), name) in placed.atoms().iter().zip(&names) {
+            let element = element_of(&editor, *atom);
+            if element.atomic_number() == 1 {
+                let carrier = neighbors(&editor, *atom)[0];
+                let carrier = residue_names(&editor, [carrier]).remove(0);
+                let locant = &carrier[element_of(&editor, neighbors(&editor, *atom)[0])
+                    .symbol()
+                    .len()..];
+                assert!(
+                    name.starts_with(&format!("H{locant}")),
+                    "{name} on {carrier}"
+                );
+            } else {
+                let locant = fragment.locant(*local).unwrap();
+                assert_eq!(
+                    *name,
+                    format!("{}{locant}", element.symbol()).to_ascii_uppercase()
+                );
+            }
+        }
+        let distinct = names.iter().collect::<BTreeSet<_>>();
+        assert_eq!(distinct.len(), names.len(), "{}", fragment.name());
+    }
+    let mut editor = ModelEditor::new();
+    let placed = editor
+        .place_fragment(
+            fragment("pyridine").unwrap(),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    assert_eq!(
+        residue_names(&editor, placed.atoms().iter().map(|(_, atom)| *atom)),
+        ["N1", "C2", "C3", "C4", "C5", "C6", "H2", "H3", "H4", "H5", "H6"]
+    );
+}
+
+#[test]
+fn fragments_attached_into_a_residue_take_free_names() {
+    // A fragment attached into a residue keeps the residue's next free
+    // numbers, since its own locants could collide with names already there.
+    for host in ["pyridine", "naphthalene", "indole", "piperidine"] {
+        let mut editor = ModelEditor::new();
+        let placed = editor
+            .place_fragment(
+                fragment(host).unwrap(),
+                Quantity::new(Point3::origin(), NANOMETER),
+            )
+            .unwrap();
+        let (parent, hydrogen) = placed
+            .atoms()
+            .iter()
+            .map(|(_, atom)| *atom)
+            .filter(|atom| element_of(&editor, *atom).atomic_number() == 6)
+            .find_map(|atom| {
+                let hydrogen = neighbors(&editor, atom)
+                    .into_iter()
+                    .find(|n| element_of(&editor, *n).atomic_number() == 1)?;
+                Some((atom, hydrogen))
+            })
+            .unwrap();
+        let attached = editor
+            .attach_fragment(
+                parent,
+                fragment("pyridine").unwrap(),
+                AttachmentSite::Hydrogen(hydrogen),
+            )
+            .unwrap();
+        let mut atoms = placed
+            .atoms()
+            .iter()
+            .map(|(_, atom)| *atom)
+            .collect::<Vec<_>>();
+        atoms.retain(|atom| editor.topology().atom(*atom).is_some());
+        atoms.extend(attached.atoms().iter().map(|(_, atom)| *atom));
+        let names = residue_names(&editor, atoms);
+        let distinct = names.iter().collect::<BTreeSet<_>>();
+        assert_eq!(distinct.len(), names.len(), "{host}: {names:?}");
+    }
+}

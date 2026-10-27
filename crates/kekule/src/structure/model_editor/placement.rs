@@ -7,10 +7,10 @@ use crate::diagnostics::{LimitExceeded, Resource};
 use crate::geometry::{Point3, Vector3};
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens};
 use crate::structure::placement::{
-    free_sites, ideal_bond_length, name_prefix, next_free_number, perceive_domains, unit,
-    AtomGeometry, AtomShape, AttachedAtom, AttachedFragment, AttachmentSite, DomainInput, Fragment,
-    NameAllocator, PlacedFragment, PlacedHydrogens, PlacedHydrogensReport, PlacementError,
-    RemovedHydrogens, RemovedHydrogensReport, Rotation, SiteQuery,
+    fragment_names, free_sites, ideal_bond_length, name_prefix, next_free_number, perceive_domains,
+    unit, AtomGeometry, AtomShape, AttachedAtom, AttachedFragment, AttachmentSite, DomainInput,
+    Fragment, NameAllocator, PlacedFragment, PlacedHydrogens, PlacedHydrogensReport,
+    PlacementError, RemovedHydrogens, RemovedHydrogensReport, Rotation, SiteQuery,
 };
 use crate::structure::Positions;
 use crate::topology::edit::{EditAtomId, EditResidueId};
@@ -503,8 +503,10 @@ impl ModelEditor {
 
     /// Adds `fragment`'s whole capped molecule as a new molecule, its atoms
     /// centered on `position` (any length unit) in the library's orientation,
-    /// with a chain and a residue `UNL` of its own whose atoms are named by
-    /// element and number in molecule order (`C1`, …, `H1`, …).
+    /// with a chain and a residue `UNL` of its own. Its ring atoms are named
+    /// by element and locant (pyridine `N1`, `C2`, …, `C6`; naphthalene
+    /// `C4A`), other heavy atoms by element and number, and hydrogens after
+    /// the atom carrying them (`H2`; `H21`, `H22`); see [`Fragment`].
     ///
     /// # Errors
     ///
@@ -532,14 +534,19 @@ impl ModelEditor {
         .map_err(super::ModelEditError::from)?;
         let added = self.add_molecule(fragment.molecule().clone(), &positions)?;
         let residue = self.new_residue()?;
-        let mut names = NameAllocator::default();
+        let names = fragment_names(fragment);
         let atoms = added
             .atoms()
             .iter()
             .map(|(local, id)| (*local, *id))
             .collect::<Vec<_>>();
-        for (_, atom) in &atoms {
-            self.name_in(residue, *atom, &mut names)?;
+        for (local, atom) in &atoms {
+            let index = fragment
+                .molecule()
+                .atom_ids()
+                .position(|id| id == *local)
+                .expect("placed atoms are fragment atoms");
+            self.site_in(residue, *atom, names[index].clone())?;
         }
         Ok(PlacedFragment { atoms })
     }
@@ -782,10 +789,21 @@ impl ModelEditor {
         atom: EditAtomId,
         names: &mut NameAllocator,
     ) -> Result<(), PlacementError> {
+        let name = names.allocate(&self.topology, residue, self.element(atom));
+        self.site_in(residue, atom, name)
+    }
+
+    /// Places `atom` in `residue` under `name`, with the residue's chain
+    /// identifiers.
+    fn site_in(
+        &mut self,
+        residue: EditResidueId,
+        atom: EditAtomId,
+        name: String,
+    ) -> Result<(), PlacementError> {
         let chain = self.topology.require_residue(residue)?.chain();
         let label = self.topology.require_chain(chain)?.label_id().to_owned();
         let element = self.element(atom);
-        let name = names.allocate(&self.topology, residue, element);
         self.add_atom_site(
             residue,
             atom,

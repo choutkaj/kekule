@@ -11,6 +11,21 @@ are marked **Breaking:**.
 
 ### Added
 
+- Placed fragments name their ring atoms by locant (SeekDelta K3d), so a
+  host or user reading "C4" finds ring position 4.
+  `ModelEditor::place_fragment` names a ring's atoms by element and IUPAC
+  locant (pyridine N1, C2, …, C6; naphthalene C1, …, C4, C4A, C5, …, C8,
+  C8A; indole N1, C2, C3, C3A, C4, …, C7, C7A), other heavy atoms by element
+  and number, and hydrogens after the atom carrying them, as PDB names them:
+  H2 on C2, and H21 and H22 for two on one atom; where atoms of two elements
+  share a number, a hydrogen on the one that is not carbon names its element
+  too (methylamine's HN11). Benzene is still C1 to C6 and H1 to H6. Before,
+  pyridine came out N1, C1, …, C5, so its C4 was ring position 5, and
+  naphthalene's C5 was C4a. `Fragment::locant` gives each ring atom's
+  locant, which the bundled records now carry (`tools/fragments`).
+  `ModelEditor::attach_fragment` into an existing residue keeps naming new
+  atoms by the residue's next free numbers, since locants could collide
+  with names already there.
 - Fragment atoms follow ring numbering (SeekDelta K3c), so names of placed
   fragments say where atoms sit: a ring's atoms come first in its
   conventional numbering (IUPAC locants, fused rings by their fused-ring
