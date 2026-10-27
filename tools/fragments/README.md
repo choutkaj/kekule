@@ -25,6 +25,9 @@ and adds:
 
 - `kind`: `ring` or `group`;
 - `attachment`: the 1-based atom that bonds when the fragment is attached;
+- `locants` (rings only): the IUPAC locant of each ring atom, in atom
+  order (`1 2 3 4 4a 5 6 7 8 8a` for naphthalene; a single ring is numbered
+  1 to n), which a placed ring's atom names follow;
 - `leaving`: the 1-based atom that attaching removes with its branch. It is a
   heavy atom only for nitro (nitromethane's carbon), methylsulfonyl and
   sulfonamide (a methyl carbon). Otherwise it is the attachment atom's least

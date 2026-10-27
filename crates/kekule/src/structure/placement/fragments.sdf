@@ -39,6 +39,9 @@ ring
 > <leaving>
 7
 
+> <locants>
+1 2 3 4 5 6
+
 $$$$
 pyridine
   -OEChem-10262618113D
@@ -79,6 +82,9 @@ ring
 > <leaving>
 9
 
+> <locants>
+1 2 3 4 5 6
+
 $$$$
 pyrimidine
   -OEChem-10262618113D
@@ -116,6 +122,9 @@ ring
 
 > <leaving>
 7
+
+> <locants>
+1 2 3 4 5 6
 
 $$$$
 pyrazine
@@ -155,6 +164,9 @@ ring
 > <leaving>
 7
 
+> <locants>
+1 2 3 4 5 6
+
 $$$$
 pyrrole
   -OEChem-10262618113D
@@ -193,6 +205,9 @@ ring
 > <leaving>
 6
 
+> <locants>
+1 2 3 4 5
+
 $$$$
 furan
   -OEChem-10262618113D
@@ -228,6 +243,9 @@ ring
 
 > <leaving>
 6
+
+> <locants>
+1 2 3 4 5
 
 $$$$
 thiophene
@@ -265,6 +283,9 @@ ring
 > <leaving>
 6
 
+> <locants>
+1 2 3 4 5
+
 $$$$
 imidazole
   -OEChem-10262618113D
@@ -300,6 +321,9 @@ ring
 
 > <leaving>
 6
+
+> <locants>
+1 2 3 4 5
 
 $$$$
 pyrazole
@@ -337,6 +361,9 @@ ring
 > <leaving>
 6
 
+> <locants>
+1 2 3 4 5
+
 $$$$
 oxazole
   -OEChem-10262618113D
@@ -371,6 +398,9 @@ ring
 > <leaving>
 6
 
+> <locants>
+1 2 3 4 5
+
 $$$$
 thiazole
   -OEChem-10262618113D
@@ -404,6 +434,9 @@ ring
 
 > <leaving>
 6
+
+> <locants>
+1 2 3 4 5
 
 $$$$
 cyclopropane
@@ -440,6 +473,9 @@ ring
 
 > <leaving>
 4
+
+> <locants>
+1 2 3
 
 $$$$
 cyclobutane
@@ -482,6 +518,9 @@ ring
 
 > <leaving>
 5
+
+> <locants>
+1 2 3 4
 
 $$$$
 cyclopentane
@@ -530,6 +569,9 @@ ring
 
 > <leaving>
 6
+
+> <locants>
+1 2 3 4 5
 
 $$$$
 cyclohexane
@@ -585,6 +627,9 @@ ring
 > <leaving>
 8
 
+> <locants>
+1 2 3 4 5 6
+
 $$$$
 piperidine
   -OEChem-10262618113D
@@ -637,6 +682,9 @@ ring
 > <leaving>
 7
 
+> <locants>
+1 2 3 4 5 6
+
 $$$$
 piperazine
   -OEChem-10262618113D
@@ -687,6 +735,9 @@ ring
 > <leaving>
 7
 
+> <locants>
+1 2 3 4 5 6
+
 $$$$
 morpholine
   -OEChem-10262618113D
@@ -735,6 +786,9 @@ ring
 > <leaving>
 11
 
+> <locants>
+1 2 3 4 5 6
+
 $$$$
 tetrahydrofuran
   -OEChem-10262618123D
@@ -778,6 +832,9 @@ ring
 
 > <leaving>
 6
+
+> <locants>
+1 2 3 4 5
 
 $$$$
 naphthalene
@@ -834,6 +891,9 @@ ring
 > <leaving>
 12
 
+> <locants>
+1 2 3 4 4a 5 6 7 8 8a
+
 $$$$
 indole
   -OEChem-10262618123D
@@ -884,6 +944,9 @@ ring
 
 > <leaving>
 12
+
+> <locants>
+1 2 3 3a 4 5 6 7 7a
 
 $$$$
 quinoline
@@ -938,6 +1001,9 @@ ring
 > <leaving>
 13
 
+> <locants>
+1 2 3 4 4a 5 6 7 8 8a
+
 $$$$
 benzimidazole
   -OEChem-10262618123D
@@ -986,6 +1052,9 @@ ring
 
 > <leaving>
 11
+
+> <locants>
+1 2 3 3a 4 5 6 7 7a
 
 $$$$
 methyl
