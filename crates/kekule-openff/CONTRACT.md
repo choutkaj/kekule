@@ -123,6 +123,16 @@ Every failure is a `kekule_openff::Error`. `Error::kind()` returns a stable
 `ErrorKind` for programmatic handling; the display text adds the specific
 detail. Failures inside one molecule of a system name its definition through
 `Error::definition()`, and file failures name the file through `Error::path()`.
+Failures caused by particular atoms name every such atom through
+`Error::atoms()`, as IDs of that definition's molecule or of the molecule passed
+in: all atoms with implicit hydrogens or radicals, all atoms of elements outside
+the charge model's domain, all atoms a forbidden domain pattern matches, every
+atom of the interactions a handler leaves unassigned, and the atoms whose
+element, connectivity, or delocalized bonds NAGL features cannot encode. Other
+failures name no atom. `NaglModel::elements()` and
+`NaglModel::supports_element()` give the charge model's element domain, so a
+host can refuse a molecule before parameterizing it; a force field's rules can
+still leave atoms of those elements unparameterized.
 A wrapped lower-level error (I/O, XML, JSON, or a Kekule perception error) is
 available through `Error::get_ref()` for downcasting; as with `std::io::Error`,
 the wrapper is transparent and its source chain never repeats a message.

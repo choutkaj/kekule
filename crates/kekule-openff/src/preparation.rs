@@ -1,5 +1,6 @@
 //! Compatibility with RDKit's nitrogen/phosphorus cleanup on a private copy.
 //! See THIRD_PARTY.md for the reference revision and BSD attribution.
+use crate::error::atom_list;
 use crate::{Error, ErrorKind, Result};
 use kekule::molecule::{BondOrder, Molecule};
 
@@ -17,19 +18,35 @@ pub(crate) fn explicit(molecule: &Molecule) -> Result<Molecule> {
             "molecule preparation changed atom identities",
         ));
     }
-    for (id, atom) in copy.atoms() {
-        if copy.implicit_hydrogens(id) != Some(0) {
-            return Err(Error::new(
-                ErrorKind::UnsupportedMolecule,
-                format!("{id} has implicit hydrogens; expand hydrogens before parameterization"),
-            ));
-        }
-        if atom.radical().is_some() {
-            return Err(Error::new(
-                ErrorKind::UnsupportedMolecule,
-                "radicals are outside the supported parameterization domain",
-            ));
-        }
+    let implicit: Vec<_> = copy
+        .atom_ids()
+        .filter(|&id| copy.implicit_hydrogens(id) != Some(0))
+        .collect();
+    if !implicit.is_empty() {
+        return Err(Error::new(
+            ErrorKind::UnsupportedMolecule,
+            format!(
+                "{} {} implicit hydrogens; expand hydrogens before parameterization",
+                atom_list(&implicit),
+                if implicit.len() == 1 { "has" } else { "have" },
+            ),
+        )
+        .with_atoms(implicit));
+    }
+    let radicals: Vec<_> = copy
+        .atoms()
+        .filter(|(_, atom)| atom.radical().is_some())
+        .map(|(id, _)| id)
+        .collect();
+    if !radicals.is_empty() {
+        return Err(Error::new(
+            ErrorKind::UnsupportedMolecule,
+            format!(
+                "radicals are outside the supported parameterization domain: {}",
+                atom_list(&radicals)
+            ),
+        )
+        .with_atoms(radicals));
     }
     Ok(copy)
 }

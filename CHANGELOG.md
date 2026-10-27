@@ -24,6 +24,49 @@ are marked **Breaking:**.
   and `UNL` residue. `Fragment::with_attachment` attaches through another
   atom that carries a hydrogen. New atoms join the parent's residue under the
   next free names. Choosing a torsion reads the draft's position rows once.
+- OpenFF failures that name their atoms (SeekDelta K58), so a host reports
+  which atoms a force field or charge model cannot handle without parsing
+  error text. `kekule_openff::Error::atoms` lists every atom a failure
+  concerns, as IDs of the molecule of `Error::definition` or of the molecule
+  passed in: all atoms with implicit hydrogens or radicals, all atoms of
+  elements outside the charge model's domain, all atoms a forbidden domain
+  pattern matches, every atom of the interactions a handler leaves
+  unassigned, the atoms without vdW parameters, and the atoms whose element,
+  connectivity, or delocalized bonds NAGL features cannot encode; it is empty
+  for failures that concern no atom. The detail text names them too, and an
+  unassigned handler now reports how many interactions it left, not only the
+  first. `NaglModel::elements` and `NaglModel::supports_element` give the
+  elements a charge model covers (Ash: H, C, N, O, F, P, S, Cl, Br, I), so a
+  host can refuse a molecule before parameterizing it.
+- Non-covalent interactions (SeekDelta K6), in the new `kekule::interactions`
+  module, for a host that draws and lists the interactions of marked atoms
+  and follows them through trajectory playback. `InteractionFeatures::new`
+  classifies a topology's hydrogen-bond donors (with their explicit
+  hydrogens) and acceptors, charged groups (formal charges, and carboxylates,
+  phosphates, sulfonates, aliphatic amines, amidines, and guanidines charged
+  at pH 7), aromatic rings, C–Cl/Br/I halogen-bond donors, metals and the
+  atoms that can coordinate them, and hydrophobic carbons once, per reusable
+  definition, for every structure sharing the layout.
+  `find_interactions_within` searches two possibly overlapping atom sets of
+  one structure, reporting each interaction once and skipping ends of one
+  molecule fewer than `min_bond_separation` bonds apart;
+  `find_interactions_between` searches two structures, each
+  `InteractionSide` with features of its own topology. Each `Interaction`
+  has its `InteractionKind` (hydrogen bond, salt bridge, parallel and
+  T-shaped π stacking, cation–π, halogen bond, metal coordination,
+  hydrophobic contact), both ends' roles, atoms (a ring's atoms for π
+  interactions, a donor's explicit hydrogen), and drawing points (ring
+  centers and normals, charge centers), and its distance, hydrogen distance,
+  offset, and angles. Hydrogen bonds are measured from explicit hydrogens
+  or, when hydrogens are implicit, from the heavy atoms. `InteractionCriteria`
+  holds every threshold as a `Quantity` with documented literature defaults
+  (Baker & Hubbard, HBPLUS, Kumar & Nussinov, PLIP, Gallivan & Dougherty,
+  Auffinger) and switches each type on or off. The side with fewer atoms
+  lists its features and the other reads only atoms within reach, paired on
+  the uniform grid that group contact occupancy uses, now shared between
+  them. `HydrogenBondOccupancyAccumulator` reduces
+  weighted observations to hydrogen-bond occupancies and merges partial
+  accumulators, as the K28 and K48 statistics accumulators do.
 - Dense edit correspondence (SeekDelta K56), so a host remaps its per-atom
   columns after a structural edit in one pass instead of looking up every
   atom's draft handle. `EditCorrespondence::atoms`, `bonds`, `residues`, and

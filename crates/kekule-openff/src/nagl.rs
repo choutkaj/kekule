@@ -2,9 +2,11 @@ mod bundle;
 mod config;
 mod features;
 mod network;
+use crate::assignment::options;
+use crate::error::atom_list;
 use crate::{explicit, identity, Error, ErrorKind, Result};
 use kekule::{
-    molecule::Molecule,
+    molecule::{Element, Molecule},
     query::QueryGraph,
     smarts,
     substructure::PreparedTarget,
@@ -226,6 +228,27 @@ impl NaglModel {
     pub fn identity(&self) -> &ModelIdentity {
         &self.identity
     }
+
+    /// The elements the model charges, in ascending atomic number: those its
+    /// domain allows that its element features also encode.
+    ///
+    /// A molecule with any other element fails [`Self::assign_charges`] with
+    /// [`ErrorKind::UnsupportedMolecule`], so a host can refuse it before
+    /// parameterizing. The model's forbidden patterns, valence, and
+    /// connectivity limits can still reject molecules of these elements. The
+    /// bundled Ash model covers H, C, N, O, F, P, S, Cl, Br, and I.
+    pub fn elements(&self) -> Vec<Element> {
+        (1..=118)
+            .filter_map(Element::from_atomic_number)
+            .filter(|&element| self.supports_element(element))
+            .collect()
+    }
+
+    /// Whether [`Self::elements`] contains `element`.
+    pub fn supports_element(&self, element: Element) -> bool {
+        (self.elements.is_empty() || self.elements.contains(&element.atomic_number()))
+            && features::encodes_element(&self.features, element)
+    }
     #[cfg(test)]
     pub(crate) fn lookup_entry_count(&self) -> usize {
         self.lookup.len()
@@ -323,26 +346,60 @@ impl NaglModel {
         self.infer_prepared(&explicit(molecule)?)
     }
     fn check_domain(&self, molecule: &Molecule) -> Result<()> {
-        for (_, atom) in molecule.atoms() {
-            if !self.elements.is_empty() && !self.elements.contains(&atom.element().atomic_number())
-            {
-                return Err(Error::new(
-                    ErrorKind::UnsupportedMolecule,
-                    format!("element {} is outside the model domain", atom.element()),
-                ));
-            }
+        let outside: Vec<_> = molecule
+            .atoms()
+            .filter(|(_, atom)| !self.supports_element(atom.element()))
+            .collect();
+        if !outside.is_empty() {
+            let elements = outside
+                .iter()
+                .map(|(_, atom)| atom.element())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .map(|element| element.symbol())
+                .collect::<Vec<_>>();
+            let atoms: Vec<_> = outside.iter().map(|(id, _)| *id).collect();
+            return Err(Error::new(
+                ErrorKind::UnsupportedMolecule,
+                format!(
+                    "{} {} {} outside the model domain: {}",
+                    if elements.len() == 1 {
+                        "element"
+                    } else {
+                        "elements"
+                    },
+                    elements.join(", "),
+                    if elements.len() == 1 { "is" } else { "are" },
+                    atom_list(&atoms)
+                ),
+            )
+            .with_atoms(atoms));
         }
+        let target = PreparedTarget::new(molecule);
         for pattern in &self.forbidden {
-            if PreparedTarget::new(molecule)
+            let Some(first) = target
                 .first(pattern, Default::default())
                 .map_err(Error::chemistry)?
-                .is_some()
-            {
-                return Err(Error::new(
-                    ErrorKind::UnsupportedMolecule,
-                    "molecule matches a forbidden model domain pattern",
-                ));
-            }
+            else {
+                continue;
+            };
+            // Name every matched atom when the search stays within bounds.
+            let atoms: BTreeSet<_> = match target.all(pattern, options(molecule.atom_count())) {
+                Ok(matches) => matches
+                    .iter()
+                    .flat_map(|matched| matched.atoms().iter().copied())
+                    .collect(),
+                Err(_) => first.atoms().iter().copied().collect(),
+            };
+            let atoms: Vec<_> = atoms.into_iter().collect();
+            return Err(Error::new(
+                ErrorKind::UnsupportedMolecule,
+                format!(
+                    "molecule matches a forbidden model domain pattern at {}",
+                    atom_list(&atoms)
+                ),
+            )
+            .with_atoms(atoms));
         }
         Ok(())
     }

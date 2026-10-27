@@ -29,7 +29,9 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod grid;
 mod periodic;
+pub(crate) use grid::PointGrid;
 pub use periodic::{PeriodicGeometry, PeriodicGeometryError, MAX_LATTICE_IMAGES};
 
 use std::fmt;
