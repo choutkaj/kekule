@@ -14,7 +14,11 @@ PubChem data are in the public domain.
 python -I tools/fragments/build_fragments.py <directory of downloaded records> crates/kekule/src/structure/placement/fragments.sdf
 ```
 
-Each record keeps the PubChem atom and bond blocks unchanged. The script
+Each record keeps PubChem's coordinates and bonds, with the atoms reordered:
+a ring's atoms first in its conventional numbering (IUPAC locants; the
+script's `RING_ORDER` lists PubChem's atom numbers in that order), a group's
+attachment atom first and then its other heavy atoms, then each hydrogen in
+the order of the atom that carries it. The script
 replaces the title with the fragment's name and the comment line with the CID
 and parent name, drops PubChem's data fields except `PUBCHEM_COMPOUND_CID`,
 and adds:

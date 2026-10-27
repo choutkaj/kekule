@@ -11,6 +11,12 @@ are marked **Breaking:**.
 
 ### Added
 
+- Fragment atoms follow ring numbering (SeekDelta K3c), so names of placed
+  fragments say where atoms sit: a ring's atoms come first in its
+  conventional numbering (IUPAC locants, fused rings by their fused-ring
+  numbering), a group's attachment atom first, and hydrogens after the atoms
+  that carry them. A placed benzene is named C1 to C6 around the ring, so C1
+  and C4 are para.
 - Builder fragments (SeekDelta K3b). `structure::placement::fragments` is a
   library of 48 named fragments with ideal 3D coordinates (PubChem computed
   conformers of their capped parent compounds): 23 rings from benzene to

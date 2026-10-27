@@ -29,6 +29,13 @@ pub enum FragmentKind {
 /// nitromethane). Attaching it removes the leaving atom and, when that is a
 /// heavy atom, the branch beyond it; placing it alone keeps the whole capped
 /// molecule. See [`fragments`] for the library.
+///
+/// Atoms are in a meaningful order, which placement names follow. A ring's
+/// atoms come first in its conventional numbering (IUPAC locants: pyridine
+/// N1, C2, …, C6; naphthalene C1, …, C4, C4a, C5, …, C8, C8a), so a placed
+/// benzene's carbons are C1 to C6 around the ring and C1 and C4 are para. A
+/// group's attachment atom comes first, then its other heavy atoms. Each
+/// hydrogen follows, in the order of the atoms that carry them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fragment {
     name: &'static str,
