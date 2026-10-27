@@ -140,6 +140,9 @@ CIP assignment is transactional, respects represented stereo, and reports
 unsupported or exhausted ranking rather than treating unfinished work as a tie.
 
 Owning perception runs once per reusable definition and publishes atomically.
+A definition whose installed perception is the default profile's, installed by
+perception and unchanged since, is shared rather than perceived again, so
+perceiving after an edit costs the definitions the edit changed.
 A successful model, ensemble, or trajectory perception operation installs a new
 shared topology snapshot without copying coordinate payloads or static topology
 state. The snapshot keeps the source's layout identity, so existing selections,
@@ -236,7 +239,9 @@ mutation guard's destructor being called.
 `MoleculeEditor` is a draft, not a molecule view. Mutable chemistry access
 invalidates perception immediately; validated no-op replacements retain state.
 System editors clone touched definitions lazily and preserve unaffected
-occurrences. Stable draft handles reject deleted or foreign entities. Joining or
+occurrences; publication shares every untouched definition, with its
+perception, with the source snapshot, whether or not that snapshot is still
+shared, so an edit copies what it changes. Stable draft handles reject deleted or foreign entities. Joining or
 splitting components follows asserted connectivity. Surviving model coordinates
 are preserved; new atoms require supplied coordinates, never invented geometry,
 unless the host asks a placement operation on a `ModelEditor` draft
@@ -251,7 +256,10 @@ structural edits keep surviving atoms in source dense order and append new
 atoms in creation order, while repartitioned molecules receive deterministic new
 definitions and instances. Hierarchy is filtered and
 empty nodes are pruned; its partition is independent of molecule splits/merges.
-Per-entity annotations follow the operation's explicit correspondence. Generic
+Per-entity annotations follow the operation's explicit correspondence. An
+editor's correspondence maps surviving handles to published identities and,
+densely, the source topology's atom and bond indices, residues, and chains to
+the published ones and back, so hosts remap their columns in one pass. Generic
 owner annotations are conservatively cleared when their owner changes, including
 ambiguous instance splits or merges. No-op edits preserve them.
 

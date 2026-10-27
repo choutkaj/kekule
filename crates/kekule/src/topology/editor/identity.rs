@@ -11,12 +11,26 @@ fn fresh() -> u64 {
         .expect("editing handle space exhausted")
 }
 
+/// Reserves `count` consecutive handles and returns the first.
+#[allow(deprecated, reason = "try_update requires Rust 1.95; our MSRV is 1.89")]
+pub(super) fn fresh_block(count: usize) -> u64 {
+    NEXT_HANDLE
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+            id.checked_add(count as u64)
+        })
+        .expect("editing handle space exhausted")
+}
+
 macro_rules! handle {
     ($name:ident, $label:literal) => {
         #[doc = concat!("Opaque ", $label, " identity in a structural editing draft.\n\nHandles are stable through splits and merges; deleted or foreign handles are rejected.")]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(u64);
         impl $name { pub(super) fn new() -> Self { Self(fresh()) } }
+        impl crate::topology::dense_map::DenseKey for $name {
+            fn position(self) -> u64 { self.0 }
+            fn from_position(position: u64) -> Self { Self(position) }
+        }
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, concat!($label, " {}"), self.0) }
         }
