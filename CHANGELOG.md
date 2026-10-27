@@ -617,6 +617,34 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** an edit of a large system costs what it changes (SeekDelta
+  K56b). A topology or model draft started from a snapshot stores nothing
+  per source atom, bond, or hierarchy node: it reads the source until an
+  edit changes, moves, or deletes one, and a model draft shares the source's
+  positions, occupancies, and B factors until it writes them (`Positions`
+  and the per-atom scalar columns are copied on write, so cloning a model
+  copies no coordinates). The source snapshot is never written, so earlier
+  snapshots, as an undo history keeps them, stay intact. Publication carries
+  untouched occurrences, residues, and atom sites over by index, builds the
+  dense orders and the hierarchy in a few passes over plain arrays,
+  classifies only the residues and definitions the edit cleared, and fills
+  the dense correspondence in the same passes; hierarchies store residue
+  labels and site metadata in row tables shared between snapshots. The
+  per-instance lists behind `InstanceView::chains`, `residues`, and
+  `atom_sites` are built on first use. Results are unchanged. One edit of a
+  ligand in a 100,716-atom model (66 merged copies of PDB 9UOH, 6,336
+  definitions), whole cycle of starting the editor, editing, publishing with
+  correspondence, and perceiving: deleting an atom takes 6.8 ms instead of
+  64 ms, attaching one 6.9 ms instead of 58 ms, and changing an atom's
+  element or formal charge 3.4 ms instead of 57 ms; starting the editor takes
+  0.05 ms instead of 23–28 ms (fastest of 15 rounds, three alternations of
+  builds, on a busy x86-64 Windows desktop; with a caching allocator the
+  cycle takes 3.5–4.8 ms, as about half the rest is the system allocator
+  mapping fresh pages for the published arrays). The breaking change:
+  `TopologyEditor::chain`, `residue`, and `atom_site` and the `chains`,
+  `residues`, and `atom_sites` iterators return `EditChain`, `EditResidue`,
+  and `EditAtomSite` by value, since a draft no longer stores the source
+  nodes it has not changed.
 - A structural edit of a large system costs about what it changes (SeekDelta
   K56). Publishing a topology or model draft shares every definition the
   edit left untouched with the source snapshot, with its perception, even
@@ -631,9 +659,7 @@ are marked **Breaking:**.
   copies of PDB 9UOH, 6,336 definitions) now publishes in about 35–55 ms
   instead of 180–235 ms and perceives in under 1 ms instead of 90–125 ms;
   starting the editor takes 20–40 ms instead of 100–140 ms (fastest of 15
-  rounds, alternating builds, on a busy x86-64 Windows desktop). Publication
-  remains linear in the atoms, through the dense orders and hierarchy it
-  rebuilds.
+  rounds, alternating builds, on a busy x86-64 Windows desktop).
 - **Breaking:** `TrrWriteOptions` is no longer `Eq`, since it holds a
   `FrameTimingPolicy` with an `f64` interval; it remains `PartialEq`.
 - The DCD writer's refusal of a frame time under `DcdTimePolicy::Absent`

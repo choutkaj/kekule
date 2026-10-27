@@ -288,11 +288,7 @@ impl TopologyEditor {
         let slot = self.properties.atoms().len();
         self.properties.resize_atoms(slot + 1);
         self.atoms.insert(id, Location { group, local, slot });
-        self.groups[group]
-            .as_mut()
-            .expect("live atoms name live groups")
-            .atoms
-            .insert(local, id);
+        self.group_mut(group).atoms.insert(local, id);
         id
     }
 
@@ -337,10 +333,6 @@ impl TopologyEditor {
         let mut plans = Vec::with_capacity(groups.len());
         for (group, mut entries) in groups {
             let molecule = self.molecule(group);
-            let group_handles = self.groups[group]
-                .as_ref()
-                .expect("live atoms name live groups");
-            let handles = &group_handles.atoms;
             let mut candidates = BTreeSet::new();
             for entry in &mut entries {
                 for hydrogen in molecule.require_neighbors(entry.local)? {
@@ -348,12 +340,14 @@ impl TopologyEditor {
                     if atom.element.atomic_number() != 1 {
                         continue;
                     }
-                    let handle = handles[&hydrogen];
+                    let handle = self.group_atom(group, hydrogen);
                     let outcome = removable_hydrogen(molecule, hydrogen, atom)
                         .expect("neighbors are live")
                         .and_then(|(_, bond)| {
-                            let atom_slot = self.atoms[&handle].slot;
-                            let bond_slot = self.bonds[&group_handles.bonds[&bond]].slot;
+                            let atom_slot = self.atom_slot(handle).expect("live atom");
+                            let bond_slot = self
+                                .bond_slot(self.group_bond(group, bond))
+                                .expect("live bond");
                             let has_data = |table: &crate::properties::RawPropertyTable, slot| {
                                 table.row_has_data(slot).expect("live rows")
                             };
@@ -384,7 +378,7 @@ impl TopologyEditor {
                         kept.push(hydrogen);
                     } else {
                         entry.retained.push((
-                            handles[&hydrogen],
+                            self.group_atom(group, hydrogen),
                             RetainedHydrogenReason::UnsupportedStereoRole,
                         ));
                     }
@@ -415,7 +409,7 @@ impl TopologyEditor {
                 bindings: stereo_hydrogen_bindings(molecule, &removable),
                 handles: removable
                     .iter()
-                    .map(|hydrogen| (*hydrogen, handles[hydrogen]))
+                    .map(|hydrogen| (*hydrogen, self.group_atom(group, *hydrogen)))
                     .collect(),
                 entries,
                 totals,

@@ -1,5 +1,10 @@
+use super::overlay::{Entry, Run};
 use super::*;
-use crate::topology::{ResidueLabels, TopologyAtomIndex, TopologyBondIndex};
+use crate::topology::dense_order::{DenseOrder, ABSENT};
+use crate::topology::hierarchy::{Chain, HierarchyColumns};
+use crate::topology::hierarchy_index::HierarchyIndex;
+use crate::topology::shared_rows::SharedRows;
+use crate::topology::{Hierarchy, MoleculeInstance, TopologyAtomIndex, TopologyBondIndex};
 use crate::DraftError;
 
 /// Internal row projection needed to publish a model's structure arrays.
@@ -8,17 +13,40 @@ pub(crate) struct TopologyPublication {
     pub atom_slots: Vec<usize>,
     pub bond_slots: Vec<usize>,
     /// Chain and residue handles in published ID order.
-    chains: Vec<EditChainId>,
-    residues: Vec<EditResidueId>,
+    pub(super) chains: Vec<EditChainId>,
+    pub(super) residues: Vec<EditResidueId>,
+    /// Source to published dense atoms and bonds and back.
+    pub(super) atoms: DenseCorrespondence<TopologyAtomIndex>,
+    pub(super) bonds: DenseCorrespondence<TopologyBondIndex>,
 }
 
-struct Targets {
-    atoms: DenseMap<EditAtomId, InstanceAtomId>,
-    chains: DenseMap<EditChainId, ChainId>,
-    residues: DenseMap<EditResidueId, ResidueId>,
-    // Published atoms by draft slot.
-    atom_order: Vec<Option<InstanceAtomId>>,
+/// The instances publication stages, with the atoms of the occurrences an
+/// edit touched and the bonds of every instance.
+#[derive(Default)]
+struct StagedInstances {
+    instances: Vec<MoleculeInstance>,
+    /// The source property row of each instance.
+    sources: Vec<Option<usize>>,
+    /// Each touched atom's slot, handle and published ID.
+    touched: Vec<(usize, EditAtomId, InstanceAtomId)>,
+    /// Bonds in published dense order, instance by instance.
+    bonds: Vec<InstanceBondId>,
     bond_slots: Vec<usize>,
+}
+
+impl StagedInstances {
+    fn add(
+        &mut self,
+        definition: MoleculeDefinitionId,
+        source: Option<usize>,
+    ) -> MoleculeInstanceId {
+        let id = MoleculeInstanceId::new(
+            u32::try_from(self.instances.len()).expect("published instances fit their IDs"),
+        );
+        self.instances.push(MoleculeInstance { id, definition });
+        self.sources.push(source);
+        id
+    }
 }
 
 /// One dense index space's correspondence between an editor's source
@@ -94,7 +122,14 @@ macro_rules! dense_lookups {
             pub fn source(&self, published: $index) -> Option<$index> {
                 self.source.get(published.index()).copied().flatten()
             }
+        }
+    )*};
+}
+dense_lookups!(TopologyAtomIndex, TopologyBondIndex, ChainId, ResidueId);
 
+macro_rules! dense_from_sources {
+    ($($index:ty),*) => {$(
+        impl DenseCorrespondence<$index> {
             /// Builds both directions from the source index of each
             /// published index.
             fn from_sources(source_count: usize, source: Vec<Option<$index>>) -> Self {
@@ -109,7 +144,13 @@ macro_rules! dense_lookups {
         }
     )*};
 }
-dense_lookups!(TopologyAtomIndex, TopologyBondIndex, ChainId, ResidueId);
+dense_from_sources!(ChainId, ResidueId);
+
+impl<I> DenseCorrespondence<I> {
+    fn from_maps(published: Vec<Option<I>>, source: Vec<Option<I>>) -> Self {
+        Self { published, source }
+    }
+}
 
 /// Correspondence for one successful editor publication. Deleted or foreign
 /// handles have no target. Dense indices refer to the returned topology only.
@@ -122,8 +163,14 @@ dense_lookups!(TopologyAtomIndex, TopologyBondIndex, ChainId, ResidueId);
 /// source.
 #[derive(Debug, Clone, Default)]
 pub struct EditCorrespondence {
-    atoms: DenseMap<EditAtomId, (InstanceAtomId, TopologyAtomIndex)>,
-    bonds: DenseMap<EditBondId, (InstanceBondId, TopologyBondIndex)>,
+    // Source handles are one block in source dense order, so the dense maps
+    // resolve them; added handles are stored.
+    atom_block: HandleBlock,
+    bond_block: HandleBlock,
+    atom_order: Arc<DenseOrder<InstanceAtomId>>,
+    bond_order: Arc<DenseOrder<InstanceBondId>>,
+    added_atoms: DenseMap<EditAtomId, TopologyAtomIndex>,
+    added_bonds: DenseMap<EditBondId, TopologyBondIndex>,
     dense_atoms: DenseCorrespondence<TopologyAtomIndex>,
     dense_bonds: DenseCorrespondence<TopologyBondIndex>,
     residues: DenseCorrespondence<ResidueId>,
@@ -133,12 +180,20 @@ impl EditCorrespondence {
     /// The published qualified ID and dense index of a draft atom, or `None` when
     /// the handle was deleted or is foreign.
     pub fn atom(&self, id: EditAtomId) -> Option<(InstanceAtomId, TopologyAtomIndex)> {
-        self.atoms.get(&id).copied()
+        let index = match self.atom_block.source(id) {
+            Some(source) => self.dense_atoms.published(TopologyAtomIndex::new(source))?,
+            None => *self.added_atoms.get(&id)?,
+        };
+        Some((self.atom_order.order()[index.index()], index))
     }
     /// The published qualified ID and dense index of a draft bond, or `None` when
     /// the handle was deleted or is foreign.
     pub fn bond(&self, id: EditBondId) -> Option<(InstanceBondId, TopologyBondIndex)> {
-        self.bonds.get(&id).copied()
+        let index = match self.bond_block.source(id) {
+            Some(source) => self.dense_bonds.published(TopologyBondIndex::new(source))?,
+            None => *self.added_bonds.get(&id)?,
+        };
+        Some((self.bond_order.order()[index.index()], index))
     }
     /// Source to published dense atom indices and back.
     pub fn atoms(&self) -> &DenseCorrespondence<TopologyAtomIndex> {
@@ -160,6 +215,24 @@ impl EditCorrespondence {
     }
 }
 
+/// Stores the handle of every published entity without a source: an added
+/// one, whose handle `added` gives by slot in slot order.
+fn record_added<K: DenseKey + Copy, I: Copy>(
+    sources: &[Option<I>],
+    slots: &[usize],
+    added: &[(usize, K)],
+    index: impl Fn(u32) -> I,
+    stored: &mut DenseMap<K, I>,
+) {
+    for (published, _) in sources.iter().enumerate().filter(|(_, s)| s.is_none()) {
+        let slot = slots[published];
+        let position = added
+            .binary_search_by_key(&slot, |&(slot, _)| slot)
+            .expect("published slots are live");
+        stored.insert(added[position].1, index(published as u32));
+    }
+}
+
 impl TopologyEditor {
     /// Publishes a topology with mappings for every surviving editing handle.
     ///
@@ -176,64 +249,61 @@ impl TopologyEditor {
     pub(crate) fn into_mapped_publication(
         self,
     ) -> Result<(TopologyPublication, EditCorrespondence), TopologyEditError> {
-        let mut atom_handles = vec![None; self.atom_slot_count()];
-        for (&id, loc) in &self.atoms {
-            atom_handles[loc.slot] = Some(id);
-        }
-        let mut bond_handles = vec![None; self.bond_slot_count()];
-        for (&id, loc) in &self.bonds {
-            bond_handles[loc.slot] = Some(id);
-        }
-        let blocks = self.source_blocks;
+        let (atom_block, bond_block) = (self.atoms.block(), self.bonds.block());
+        let chain_block = self.hierarchy.chains.block();
+        let residue_block = self.hierarchy.residues.block();
+        // Added atoms and bonds in handle order, which is also slot order.
+        let added_atoms = self
+            .atoms
+            .added()
+            .iter()
+            .map(|(&handle, loc)| (loc.slot, handle))
+            .collect::<Vec<_>>();
+        let added_bonds = self
+            .bonds
+            .added()
+            .iter()
+            .map(|(&handle, loc)| (loc.slot, handle))
+            .collect::<Vec<_>>();
+        let mut published = self.into_publication()?;
+        let topology = &published.topology;
         let mut correspondence = EditCorrespondence {
-            atoms: DenseMap::block_of(&self.atoms),
-            bonds: DenseMap::block_of(&self.bonds),
+            atom_block,
+            bond_block,
+            atom_order: Arc::clone(&topology.atom_order),
+            bond_order: Arc::clone(&topology.bond_order),
+            dense_atoms: std::mem::take(&mut published.atoms),
+            dense_bonds: std::mem::take(&mut published.bonds),
             ..EditCorrespondence::default()
         };
-        let published = self.into_publication()?;
-        let topology = &published.topology;
-        let mut atom_sources = Vec::with_capacity(topology.atom_count());
-        for (index, (&slot, &target)) in published
-            .atom_slots
-            .iter()
-            .zip(topology.atom_ids())
-            .enumerate()
-        {
-            let handle = atom_handles[slot].expect("published slots are live");
-            let index = TopologyAtomIndex::new(index as u32);
-            correspondence.atoms.insert(handle, (target, index));
-            atom_sources.push(blocks.atoms.source(handle).map(TopologyAtomIndex::new));
-        }
-        let mut bond_sources = Vec::with_capacity(topology.bond_count());
-        for (index, (&slot, &target)) in published
-            .bond_slots
-            .iter()
-            .zip(topology.bond_ids())
-            .enumerate()
-        {
-            let handle = bond_handles[slot].expect("published slots are live");
-            let index = TopologyBondIndex::new(index as u32);
-            correspondence.bonds.insert(handle, (target, index));
-            bond_sources.push(blocks.bonds.source(handle).map(TopologyBondIndex::new));
-        }
-        correspondence.dense_atoms =
-            DenseCorrespondence::<TopologyAtomIndex>::from_sources(blocks.atoms.len, atom_sources);
-        correspondence.dense_bonds =
-            DenseCorrespondence::<TopologyBondIndex>::from_sources(blocks.bonds.len, bond_sources);
+        record_added(
+            correspondence.dense_atoms.to_source(),
+            &published.atom_slots,
+            &added_atoms,
+            TopologyAtomIndex::new,
+            &mut correspondence.added_atoms,
+        );
+        record_added(
+            correspondence.dense_bonds.to_source(),
+            &published.bond_slots,
+            &added_bonds,
+            TopologyBondIndex::new,
+            &mut correspondence.added_bonds,
+        );
         correspondence.residues = DenseCorrespondence::<ResidueId>::from_sources(
-            blocks.residues.len,
+            residue_block.len,
             published
                 .residues
                 .iter()
-                .map(|&handle| blocks.residues.source(handle).map(ResidueId::new))
+                .map(|&handle| residue_block.source(handle).map(ResidueId::new))
                 .collect(),
         );
         correspondence.chains = DenseCorrespondence::<ChainId>::from_sources(
-            blocks.chains.len,
+            chain_block.len,
             published
                 .chains
                 .iter()
-                .map(|&handle| blocks.chains.source(handle).map(ChainId::new))
+                .map(|&handle| chain_block.source(handle).map(ChainId::new))
                 .collect(),
         );
         Ok((published, correspondence))
@@ -249,6 +319,11 @@ impl TopologyEditor {
     /// their perception, rather than copied.
     /// Inferred classes are refreshed only when their hierarchy or chemical
     /// evidence changes. Editing handles are draft-only.
+    ///
+    /// Publication costs what the edit touched plus a few passes over plain
+    /// per-atom arrays: occurrences, residues and atom sites no edit touched
+    /// are carried over from the source by index, and only the touched ones
+    /// are classified.
     ///
     /// # Errors
     ///
@@ -281,92 +356,125 @@ impl TopologyEditor {
             .is_some_and(|source| source.properties().owner() == self.properties.owner());
         if self.revision == 0 && owner_unchanged {
             if let Some(source) = self.source.take() {
+                let atom_map = (0..source.atom_count() as u32)
+                    .map(|index| Some(TopologyAtomIndex::new(index)))
+                    .collect::<Vec<_>>();
+                let bond_map = (0..source.bond_count() as u32)
+                    .map(|index| Some(TopologyBondIndex::new(index)))
+                    .collect::<Vec<_>>();
                 return Ok(TopologyPublication {
                     atom_slots: (0..source.atom_count()).collect(),
                     bond_slots: (0..source.bond_count()).collect(),
-                    chains: self.hierarchy.chains.keys().copied().collect(),
-                    residues: self.hierarchy.residues.keys().copied().collect(),
+                    chains: self.hierarchy.chains.keys().collect(),
+                    residues: self.hierarchy.residues.keys().collect(),
+                    atoms: DenseCorrespondence::from_maps(atom_map.clone(), atom_map),
+                    bonds: DenseCorrespondence::from_maps(bond_map.clone(), bond_map),
                     topology: source,
                 });
             }
         }
+        let source = self.source.clone();
+        let source = source.as_deref();
+        let sourced = source.is_some() && !self.cleared;
         let mut builder = TopologyBuilder::new();
-        let mut targets = Targets {
-            atoms: DenseMap::block_of(&self.atoms),
-            chains: DenseMap::block_of(&self.hierarchy.chains),
-            residues: DenseMap::block_of(&self.hierarchy.residues),
-            atom_order: vec![None; self.atom_slot_count()],
-            bond_slots: Vec::with_capacity(self.bonds.len()),
+        let groups = std::mem::take(&mut self.groups);
+        let definition_count = source.map_or(0, Topology::definition_count);
+        let source_definition = |group: usize| {
+            source
+                .and_then(|source| source.instance_record(MoleculeInstanceId::new(group as u32)))
+                .expect("source groups name source instances")
+                .definition()
         };
-        let mut source_definitions = BTreeMap::new();
-        let mut added_definitions = BTreeMap::new();
         // Preserve definition order/reuse for untouched source occurrences.
-        let retained = self
-            .groups
-            .iter()
-            .flatten()
-            .filter_map(|g| match g.chemistry {
-                GroupChemistry::Source(id) => Some(id),
-                _ => None,
-            })
-            .collect::<BTreeSet<_>>();
-        let invalidated = self
-            .groups
-            .iter()
-            .flatten()
-            .filter_map(|group| match group.chemistry {
-                GroupChemistry::Source(id) if group.class.is_none() => Some(id),
-                _ => None,
-            })
-            .collect::<BTreeSet<_>>();
-        let invalidated_added = self
-            .groups
-            .iter()
-            .flatten()
-            .filter_map(|group| match &group.chemistry {
-                GroupChemistry::Added(molecule) if group.class.is_none() => {
-                    Some(Arc::as_ptr(molecule))
-                }
-                _ => None,
-            })
-            .collect::<BTreeSet<_>>();
-        if let Some(source) = self.source.take() {
+        let mut retained = vec![false; definition_count];
+        let mut invalidated = vec![false; definition_count];
+        let mut invalidated_added = BTreeSet::new();
+        for (index, group) in groups.iter().enumerate() {
+            match group {
+                GroupSlot::Source => retained[source_definition(index).index()] = true,
+                GroupSlot::Live(group) => match &group.chemistry {
+                    GroupChemistry::Source(id) => {
+                        retained[id.index()] = true;
+                        invalidated[id.index()] |= group.class.is_none();
+                    }
+                    GroupChemistry::Added(molecule) if group.class.is_none() => {
+                        invalidated_added.insert(Arc::as_ptr(molecule));
+                    }
+                    _ => {}
+                },
+                GroupSlot::Merged => {}
+            }
+        }
+        let mut source_definitions = vec![None; definition_count];
+        if let Some(source) = source {
             // Untouched definitions share the source molecule, whether or not
             // the source snapshot is still shared.
             let overrides = &source.molecule_class_overrides;
-            for definition in &source.definitions {
+            let kept = source
+                .definitions
+                .iter()
+                .filter(|definition| retained[definition.id().index()])
+                .collect::<Vec<_>>();
+            for (target, definition) in kept.iter().enumerate() {
+                source_definitions[definition.id().index()] =
+                    Some(MoleculeDefinitionId::new(target as u32));
+            }
+            builder.extend_shared_definitions(kept.into_iter().map(|definition| {
                 let id = definition.id();
-                if !retained.contains(&id) {
-                    continue;
-                }
-                let class = definition.class();
-                let target = builder.add_shared_definition(
+                let explicit = overrides.contains_key(&id);
+                let class = (!invalidated[id.index()] || explicit)
+                    .then_some((definition.class(), explicit));
+                (
                     Arc::clone(&definition.molecule),
                     definition.default_perception,
-                )?;
-                if !invalidated.contains(&id) || overrides.contains_key(&id) {
-                    builder.preserve_molecule_class(target, class, overrides.contains_key(&id))?;
-                }
-                source_definitions.insert(id, target);
-            }
+                    class,
+                )
+            }))?;
         }
-        let mut instance_sources = Vec::new();
-        for group in std::mem::take(&mut self.groups).into_iter().flatten() {
+        let mut added_definitions = BTreeMap::new();
+        let mut staged = StagedInstances::default();
+        let mut plain = vec![None; source.map_or(0, Topology::instance_count)];
+        for (index, group) in groups.into_iter().enumerate() {
+            let group = match group {
+                GroupSlot::Merged => continue,
+                GroupSlot::Source => {
+                    // An untouched occurrence keeps its local IDs, and its bonds
+                    // their source slots.
+                    let source = source.expect("source groups have a source");
+                    let definition = source_definitions[source_definition(index).index()]
+                        .expect("retained source definition");
+                    let instance = staged.add(definition, Some(index));
+                    plain[index] = Some(instance);
+                    for (local, &dense) in
+                        source.bond_order.instance_lookup(index).iter().enumerate()
+                    {
+                        if dense != ABSENT {
+                            staged
+                                .bonds
+                                .push(InstanceBondId::new(instance, BondId::new(local as u32)));
+                            staged.bond_slots.push(dense as usize);
+                        }
+                    }
+                    continue;
+                }
+                GroupSlot::Live(group) => *group,
+            };
             if group.atoms.is_empty() {
                 continue;
             }
+            let handles = (&group.atoms, &group.bonds);
             match group.chemistry {
                 GroupChemistry::Source(id) => {
-                    let definition = source_definitions[&id];
-                    let instance = builder.add_instance(definition)?;
+                    let definition =
+                        source_definitions[id.index()].expect("retained source definition");
+                    let instance = staged.add(definition, group.instance_slot);
                     let molecule = builder.require_definition(definition)?.molecule();
-                    instance_sources.push(group.instance_slot);
                     self.record_component(
-                        (&group.atoms, &group.bonds),
+                        handles,
                         molecule.atom_ids().map(|a| (a, a)),
-                        molecule.bond_ids(),
+                        molecule.bond_ids().map(|b| (b, b)),
                         instance,
-                        &mut targets,
+                        &mut staged,
                     );
                 }
                 GroupChemistry::Added(owned) => {
@@ -384,36 +492,36 @@ impl TopologyEditor {
                         added_definitions.insert(identity, id);
                         id
                     };
-                    let instance = builder.add_instance(definition)?;
+                    let instance = staged.add(definition, group.instance_slot);
                     let molecule = builder.require_definition(definition)?.molecule();
-                    instance_sources.push(group.instance_slot);
                     self.record_component(
-                        (&group.atoms, &group.bonds),
+                        handles,
                         molecule.atom_ids().map(|a| (a, a)),
-                        molecule.bond_ids(),
+                        molecule.bond_ids().map(|b| (b, b)),
                         instance,
-                        &mut targets,
+                        &mut staged,
                     );
                 }
                 GroupChemistry::Draft(draft) if draft.is_connected() => {
                     // Publication renumbers deleted draft slots densely.
                     let (published, ids) = (*draft).finish_with_correspondence()?;
                     let definition = builder.add_molecule_definition(published)?;
-                    let handles = group.atoms.values().copied().collect();
-                    if let Some(class) = self.component_class(&handles, group.class) {
+                    let atoms = group.atoms.values().copied().collect();
+                    if let Some(class) = self.component_class(&atoms, group.class) {
                         let explicit = group.class_explicit
-                            || self.molecule_classes.keys().any(|id| handles.contains(id));
+                            || self.molecule_classes.keys().any(|id| atoms.contains(id));
                         builder.preserve_molecule_class(definition, class, explicit)?;
                     }
-                    let instance = builder.add_instance(definition)?;
-                    instance_sources
-                        .push((!group.changed).then_some(group.instance_slot).flatten());
+                    let instance = staged.add(
+                        definition,
+                        (!group.changed).then_some(group.instance_slot).flatten(),
+                    );
                     self.record_component(
-                        (&group.atoms, &group.bonds),
+                        handles,
                         ids.atoms().iter().map(|(&draft, &local)| (draft, local)),
-                        ids.bonds().keys().copied(),
+                        ids.bonds().iter().map(|(&draft, &local)| (draft, local)),
                         instance,
-                        &mut targets,
+                        &mut staged,
                     );
                 }
                 GroupChemistry::Draft(draft) => {
@@ -425,121 +533,361 @@ impl TopologyEditor {
                         &mut builder,
                     )?;
                     for component in components {
-                        let handles = component
+                        let atoms = component
                             .source_atoms
                             .iter()
                             .map(|id| group.atoms[id])
                             .collect();
-                        if let Some(class) = self.component_class(&handles, None) {
+                        if let Some(class) = self.component_class(&atoms, None) {
                             builder.set_molecule_class(component.id, class)?;
                         }
-                        let instance = builder.add_instance(component.id)?;
                         // No old occurrence annotation is inherited across a split.
-                        instance_sources.push(None);
+                        let instance = staged.add(component.id, None);
                         self.record_component(
-                            (&group.atoms, &group.bonds),
+                            handles,
                             component
                                 .source_atoms
                                 .into_iter()
                                 .enumerate()
                                 .map(|(i, s)| (s, AtomId::new(i as u32))),
-                            component.source_bonds.into_iter(),
+                            component
+                                .source_bonds
+                                .into_iter()
+                                .enumerate()
+                                .map(|(i, s)| (s, BondId::new(i as u32))),
                             instance,
-                            &mut targets,
+                            &mut staged,
                         );
                     }
                 }
             }
         }
         // Publish atoms in slot order: survivors keep their source dense
-        // order, and added atoms follow in creation order.
-        let atom_slots = (0..targets.atom_order.len())
-            .filter(|&slot| targets.atom_order[slot].is_some())
-            .collect::<Vec<_>>();
-        builder.set_atom_order(targets.atom_order.iter().flatten().copied())?;
-        let mut chain_slots = Vec::with_capacity(self.hierarchy.chains.len());
-        let mut residue_slots = Vec::with_capacity(self.hierarchy.residues.len());
-        let mut site_slots = Vec::with_capacity(self.hierarchy.sites.len());
-        for (&handle, chain) in &self.hierarchy.chains {
-            let id = builder
-                .hierarchy_mut()
-                .add_chain(chain.label.clone(), chain.author.clone())?;
-            targets.chains.insert(handle, id);
-            chain_slots.push(chain.slot);
-        }
-        let mut residue_sites = DenseMap::block_of(&self.hierarchy.residues);
-        for site in self.hierarchy.sites.values() {
-            let count = residue_sites.get(&site.residue).copied().unwrap_or(0);
-            residue_sites.insert(site.residue, count + 1);
-        }
-        for (&handle, residue) in &self.hierarchy.residues {
-            let chain = targets.chains[&residue.chain];
-            let id = builder.hierarchy_mut().add_shared_residue(
-                chain,
-                ResidueLabels {
-                    name: Arc::clone(&residue.name),
-                    label_comp_id: residue.label_comp.clone(),
-                    author_comp_id: residue.author_comp.clone(),
-                    label_seq_id: residue.label_seq,
-                    author_seq_id: residue.author_seq.clone(),
-                    insertion_code: residue.insertion.clone(),
-                },
-                residue_sites.get(&handle).copied().unwrap_or(0),
-            )?;
-            if let Some(class) = residue.class {
-                builder.preserve_residue_class(id, class, residue.class_explicit)?;
+        // order, and added atoms follow in creation order. Touched atoms are
+        // in slot order too.
+        staged.touched.sort_unstable_by_key(|&(slot, _, _)| slot);
+        let atom_count = self.atoms.len();
+        let mut order = Vec::with_capacity(atom_count);
+        let mut atom_slots = Vec::with_capacity(atom_count);
+        let mut atom_published = vec![None; self.atoms.block().len];
+        let mut atom_sources = Vec::with_capacity(atom_count);
+        let mut next = staged.touched.iter().peekable();
+        if let (Some(source), true) = (source, sourced) {
+            for (slot, id) in source.atom_ids().iter().enumerate() {
+                let target = if let Some(instance) = plain[id.instance().index()] {
+                    InstanceAtomId::new(instance, id.atom())
+                } else if let Some(&(_, _, target)) = next.next_if(|touched| touched.0 == slot) {
+                    target
+                } else {
+                    continue;
+                };
+                atom_published[slot] = Some(TopologyAtomIndex::new(order.len() as u32));
+                atom_sources.push(Some(TopologyAtomIndex::new(slot as u32)));
+                order.push(target);
+                atom_slots.push(slot);
             }
-            targets.residues.insert(handle, id);
-            residue_slots.push(residue.slot);
         }
-        for site in self.hierarchy.sites.values() {
-            let atom = targets.atoms[&site.atom];
-            builder.hierarchy_mut().add_shared_atom_site(
-                targets.residues[&site.residue],
-                atom,
-                Arc::clone(&site.metadata),
-            )?;
-            site_slots.push(site.slot);
+        for &(slot, _, target) in next {
+            atom_sources.push(None);
+            order.push(target);
+            atom_slots.push(slot);
         }
+        let slot_counts = |slots: fn(&Molecule) -> usize| {
+            staged
+                .instances
+                .iter()
+                .map(|instance| {
+                    slots(
+                        builder
+                            .definition(instance.definition())
+                            .expect("staged definition")
+                            .molecule(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let atom_order =
+            DenseOrder::from_order(order, slot_counts(|m| m.graph().atom_slot_count()));
+        let bond_order = DenseOrder::from_order(
+            std::mem::take(&mut staged.bonds),
+            slot_counts(|m| m.graph().bond_slot_count()),
+        );
+        let bond_block = self.bonds.block();
+        let mut bond_published = vec![None; bond_block.len];
+        let bond_sources = staged
+            .bond_slots
+            .iter()
+            .enumerate()
+            .map(|(published, &slot)| {
+                (sourced && slot < bond_block.len).then(|| {
+                    bond_published[slot] = Some(TopologyBondIndex::new(published as u32));
+                    TopologyBondIndex::new(slot as u32)
+                })
+            })
+            .collect();
+        let published =
+            self.publish_hierarchy(source, (&atom_published, &atom_slots, atom_order.order()));
+        let index = HierarchyIndex::from_site_atoms(
+            published.site_dense,
+            atom_order.len(),
+            staged.instances.len(),
+        );
         let mut properties = self.properties.project(
-            &instance_sources,
+            &staged.sources,
             &atom_slots,
-            &targets.bond_slots,
-            &chain_slots,
-            &residue_slots,
-            &site_slots,
+            &staged.bond_slots,
+            &published.chain_slots,
+            &published.residue_slots,
+            &published.site_slots,
         )?;
         for (key, value) in self.properties.owner().iter() {
             properties.owner_mut().insert(key.clone(), value.clone())?;
         }
         builder.install_properties(properties);
-        let target = Arc::new(builder.build()?);
+        builder.install_instances(staged.instances, atom_order, bond_order);
+        let target =
+            Arc::new(builder.publish_prepared(published.hierarchy, index, &published.infer)?);
         Ok(TopologyPublication {
             topology: target,
             atom_slots,
-            bond_slots: targets.bond_slots,
-            chains: self.hierarchy.chains.keys().copied().collect(),
-            residues: self.hierarchy.residues.keys().copied().collect(),
+            bond_slots: staged.bond_slots,
+            chains: published.chains,
+            residues: published.residues,
+            atoms: DenseCorrespondence::from_maps(atom_published, atom_sources),
+            bonds: DenseCorrespondence::from_maps(bond_published, bond_sources),
         })
+    }
+
+    /// The published hierarchy: chains, residues and atom sites in handle
+    /// order, each residue's sites in site handle order and each chain's
+    /// residues in residue handle order. Unchanged source nodes carry their
+    /// labels and metadata over by key. `atoms` gives each live source atom's
+    /// published index, each published atom's slot, and the published atoms.
+    fn publish_hierarchy(
+        &self,
+        source: Option<&Topology>,
+        atoms: (&[Option<TopologyAtomIndex>], &[usize], &[InstanceAtomId]),
+    ) -> PublishedHierarchy {
+        let (atom_published, atom_slots, order) = atoms;
+        let hierarchy = &self.hierarchy;
+        let source_hierarchy = source.map(Topology::hierarchy);
+        let mut labels =
+            source_hierarchy.map_or_else(SharedRows::default, |source| source.label_rows().share());
+        let mut metadata = source_hierarchy
+            .map_or_else(SharedRows::default, |source| source.metadata_rows().share());
+        let source_of = || source_hierarchy.expect("source nodes have a source");
+
+        let chain_block = hierarchy.chains.block();
+        let mut chain_ids = vec![u32::MAX; chain_block.len];
+        let mut added_chains = BTreeMap::new();
+        let mut chains = Vec::with_capacity(hierarchy.chains.len());
+        let mut chain_handles = Vec::with_capacity(hierarchy.chains.len());
+        let mut chain_slots = Vec::with_capacity(hierarchy.chains.len());
+        for (handle, entry) in hierarchy.chains.entries() {
+            let id = chains.len() as u32;
+            let (label_id, author_id, slot) = match entry {
+                Entry::Source(index) => {
+                    let chain = source_of()
+                        .chain(ChainId::new(index as u32))
+                        .expect("source chain");
+                    chain_ids[index] = id;
+                    (chain.label_id.clone(), chain.author_id.clone(), index)
+                }
+                Entry::Stored(chain) => {
+                    match chain_block.source(handle) {
+                        Some(index) => chain_ids[index as usize] = id,
+                        None => {
+                            added_chains.insert(handle, id);
+                        }
+                    }
+                    (chain.label.clone(), chain.author.clone(), chain.slot)
+                }
+            };
+            chains.push(Chain {
+                id: ChainId::new(id),
+                label_id,
+                author_id,
+                residues: Vec::new(),
+            });
+            chain_handles.push(handle);
+            chain_slots.push(slot);
+        }
+        let chain_of = |handle: EditChainId| match chain_block.source(handle) {
+            Some(index) => chain_ids[index as usize],
+            None => added_chains[&handle],
+        };
+
+        let residue_block = hierarchy.residues.block();
+        let residue_count = hierarchy.residues.len();
+        let mut residue_ids = vec![u32::MAX; residue_block.len];
+        let mut added_residues = BTreeMap::new();
+        let mut residue_chains = Vec::with_capacity(residue_count);
+        let mut residue_classes = Vec::with_capacity(residue_count);
+        let mut residue_explicit = Vec::with_capacity(residue_count);
+        let mut residue_labels = Vec::with_capacity(residue_count);
+        let mut residue_handles = Vec::with_capacity(residue_count);
+        let mut residue_slots = Vec::with_capacity(residue_count);
+        let mut infer = Vec::new();
+        for (handle, entry) in hierarchy.residues.entries() {
+            let id = residue_chains.len() as u32;
+            let (chain, class, explicit, key, slot) = match entry {
+                Entry::Source(index) => {
+                    let residue = source_of()
+                        .residue(ResidueId::new(index as u32))
+                        .expect("source residue");
+                    residue_ids[index] = id;
+                    (
+                        chain_ids[residue.chain().index()],
+                        Some(residue.class()),
+                        residue.explicit_class(),
+                        residue.label_key(),
+                        index,
+                    )
+                }
+                Entry::Stored(residue) => {
+                    match residue_block.source(handle) {
+                        Some(index) => residue_ids[index as usize] = id,
+                        None => {
+                            added_residues.insert(handle, id);
+                        }
+                    }
+                    (
+                        chain_of(residue.chain),
+                        residue.class,
+                        residue.class.filter(|_| residue.class_explicit),
+                        labels.key(&residue.labels),
+                        residue.slot,
+                    )
+                }
+            };
+            chains[chain as usize].residues.push(ResidueId::new(id));
+            residue_chains.push(ChainId::new(chain));
+            residue_classes.push(class.unwrap_or(ResidueClass::Other));
+            if class.is_none() {
+                infer.push(ResidueId::new(id));
+            }
+            residue_explicit.push(explicit);
+            residue_labels.push(key);
+            residue_handles.push(handle);
+            residue_slots.push(slot);
+        }
+        let residue_of = |handle: EditResidueId| match residue_block.source(handle) {
+            Some(index) => residue_ids[index as usize],
+            None => added_residues[&handle],
+        };
+
+        let site_count = hierarchy.sites.len();
+        let mut site_residues = Vec::with_capacity(site_count);
+        let mut site_atoms = Vec::with_capacity(site_count);
+        let mut site_dense = Vec::with_capacity(site_count);
+        let mut site_metadata = Vec::with_capacity(site_count);
+        let mut site_slots = Vec::with_capacity(site_count);
+        for run in hierarchy.sites.runs() {
+            match run {
+                Run::Source(range) => {
+                    // Unchanged source sites are copied a run at a time.
+                    let source = source.expect("source sites have a source");
+                    let site = source_of();
+                    site_residues.extend(
+                        site.site_residue_ids()[range.clone()]
+                            .iter()
+                            .map(|residue| ResidueId::new(residue_ids[residue.index()])),
+                    );
+                    for atom in &source.site_atoms()[range.clone()] {
+                        let dense = atom_published[atom.index()].expect("site atoms are live");
+                        site_dense.push(dense);
+                        site_atoms.push(order[dense.index()]);
+                    }
+                    site_metadata.extend_from_slice(&site.site_metadata_keys()[range.clone()]);
+                    site_slots.extend(range);
+                }
+                Run::Stored(_, site) => {
+                    // Published atoms are in slot order.
+                    let atom_slot = self.atom_location(site.atom).expect("live site atom").slot;
+                    let dense = atom_slots
+                        .binary_search(&atom_slot)
+                        .expect("site atoms are published");
+                    site_residues.push(ResidueId::new(residue_of(site.residue)));
+                    site_atoms.push(order[dense]);
+                    site_dense.push(TopologyAtomIndex::new(dense as u32));
+                    site_metadata.push(metadata.key(&site.metadata));
+                    site_slots.push(site.slot);
+                }
+            }
+        }
+        // Each residue lists its sites in site order.
+        let mut residue_site_starts = vec![0u32; residue_chains.len() + 1];
+        for residue in &site_residues {
+            residue_site_starts[residue.index() + 1] += 1;
+        }
+        for residue in 0..residue_chains.len() {
+            residue_site_starts[residue + 1] += residue_site_starts[residue];
+        }
+        let mut next = residue_site_starts.clone();
+        let mut residue_site_items = vec![AtomSiteId::new(0); site_residues.len()];
+        for (site, residue) in site_residues.iter().enumerate() {
+            residue_site_items[next[residue.index()] as usize] = AtomSiteId::new(site as u32);
+            next[residue.index()] += 1;
+        }
+        PublishedHierarchy {
+            hierarchy: Hierarchy::from_columns(HierarchyColumns {
+                chains,
+                residue_chains,
+                residue_classes,
+                residue_explicit,
+                residue_labels,
+                labels,
+                residue_site_starts,
+                residue_site_items,
+                site_residues,
+                site_atoms,
+                site_metadata,
+                metadata,
+            }),
+            site_dense,
+            infer,
+            chains: chain_handles,
+            residues: residue_handles,
+            chain_slots,
+            residue_slots,
+            site_slots,
+        }
     }
 
     fn record_component(
         &self,
         handles: (&DenseMap<AtomId, EditAtomId>, &DenseMap<BondId, EditBondId>),
         atoms: impl Iterator<Item = (AtomId, AtomId)>,
-        bonds: impl Iterator<Item = BondId>,
+        bonds: impl Iterator<Item = (BondId, BondId)>,
         instance: MoleculeInstanceId,
-        targets: &mut Targets,
+        staged: &mut StagedInstances,
     ) {
         for (source, local) in atoms {
             let handle = handles.0[&source];
-            let target = InstanceAtomId::new(instance, local);
-            targets.atoms.insert(handle, target);
-            targets.atom_order[self.atoms[&handle].slot] = Some(target);
+            let slot = self.atom_location(handle).expect("live atom").slot;
+            staged
+                .touched
+                .push((slot, handle, InstanceAtomId::new(instance, local)));
         }
-        for source in bonds {
+        for (source, local) in bonds {
             let handle = handles.1[&source];
-            targets.bond_slots.push(self.bonds[&handle].slot);
+            staged.bonds.push(InstanceBondId::new(instance, local));
+            staged
+                .bond_slots
+                .push(self.bond_location(handle).expect("live bond").slot);
         }
     }
+}
+
+/// A published hierarchy with each site's dense atom, the residues to
+/// classify, and the draft handles and slots of its nodes in published order.
+struct PublishedHierarchy {
+    hierarchy: Hierarchy,
+    site_dense: Vec<TopologyAtomIndex>,
+    infer: Vec<ResidueId>,
+    chains: Vec<EditChainId>,
+    residues: Vec<EditResidueId>,
+    chain_slots: Vec<usize>,
+    residue_slots: Vec<usize>,
+    site_slots: Vec<usize>,
 }

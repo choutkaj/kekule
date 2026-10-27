@@ -1,6 +1,7 @@
-//! Informational cost of one structural edit of a ligand in a large model:
-//! deleting one atom of a ligand, or adding one, then publishing the edited
-//! draft and perceiving the result, while an earlier snapshot stays alive.
+//! Informational cost of one edit of a ligand in a large model: deleting one
+//! atom of a ligand, attaching one, or changing one's element or formal
+//! charge, then publishing the edited draft and perceiving the result, while
+//! an earlier snapshot stays alive.
 //!
 //! The model is 66 merged copies of an externally supplied mmCIF entry, each
 //! appended as separate chains and molecules. SeekDelta's request K56 used
@@ -85,12 +86,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("| edit | phase | min ms | median ms |");
     println!("|---|---|---:|---:|");
 
-    let edits: [(&str, Edit); 2] = [
+    let edits: [(&str, Edit); 4] = [
         ("delete one ligand atom", delete_atom),
-        ("add one ligand atom", add_atom),
+        ("attach one ligand atom", add_atom),
+        ("set one ligand atom's element", set_element),
+        ("set one ligand atom's charge", set_charge),
     ];
     for (name, edit) in edits {
-        let mut phases = [const { Vec::new() }; 5];
+        let mut phases = [const { Vec::new() }; 6];
         for _ in 0..ROUNDS {
             let earlier = model.clone();
             let start = Instant::now();
@@ -126,9 +129,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .collect::<Vec<Option<TopologyAtomIndex>>>();
             remapped += start.elapsed();
             black_box((&published, &map, target_index));
+            let cycle = built + edited + finished + perceived;
             for (phase, time) in phases
                 .iter_mut()
-                .zip([built, edited, finished, perceived, remapped])
+                .zip([built, edited, finished, perceived, remapped, cycle])
             {
                 phase.push(time);
             }
@@ -139,6 +143,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "publish (finish_with_correspondence)",
             "perceive",
             "remap through handles",
+            "whole cycle (build, edit, publish, perceive)",
         ]
         .into_iter()
         .zip(&mut phases)
@@ -180,6 +185,35 @@ fn add_atom(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box<dy
         Quantity::new(Point3::new(near.x + 1.5, near.y, near.z), ANGSTROM),
     )?;
     editor.add_bond(handle, added, BondOrder::Single)?;
+    Ok(())
+}
+
+/// Changes `atom`'s element: carbon to nitrogen, anything else to carbon.
+fn set_element(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
+    let handle = editor
+        .topology()
+        .atom_handle(atom)
+        .ok_or("no source atom")?;
+    let current = editor.topology().atom(handle).ok_or("no atom")?.clone();
+    let symbol = if current.element().symbol() == "C" {
+        "N"
+    } else {
+        "C"
+    };
+    let element = Element::from_symbol(symbol).ok_or("no element")?;
+    editor.replace_atom(handle, current.with_element(element))?;
+    Ok(())
+}
+
+/// Raises `atom`'s formal charge by one.
+fn set_charge(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
+    let handle = editor
+        .topology()
+        .atom_handle(atom)
+        .ok_or("no source atom")?;
+    let current = editor.topology().atom(handle).ok_or("no atom")?.clone();
+    let charge = current.formal_charge() + 1;
+    editor.replace_atom(handle, current.with_formal_charge(charge))?;
     Ok(())
 }
 

@@ -12,23 +12,28 @@ const NO_SITE: u32 = u32::MAX;
 /// walks cost what they return.
 ///
 /// Derived at publication from the hierarchy and dense atom order, and shared
-/// by every snapshot of that layout. Residue sites are in residue order;
-/// instance lists are in ascending ID order. Compact copies of the residue
-/// lists keep walks off the larger hierarchy nodes.
+/// by every snapshot of that layout. The per-instance lists are built on first
+/// use, so publishing an edit costs two passes over plain per-site and
+/// per-atom arrays. Instance lists are in ascending ID order.
 #[derive(Debug, Clone)]
 pub(super) struct HierarchyIndex {
     /// The dense atom of each site, by site ID.
     site_atoms: Vec<TopologyAtomIndex>,
-    /// The residue of each site, by site ID.
-    site_residues: Vec<ResidueId>,
     /// The site of each dense atom, or [`NO_SITE`].
     atom_sites: Vec<u32>,
-    residue_sites: Groups<AtomSiteId>,
-    instance_sites: Groups<AtomSiteId>,
-    instance_residues: Groups<ResidueId>,
-    instance_chains: Groups<ChainId>,
+    instance_count: usize,
+    /// The sites, residues and chains of each instance, built on first use.
+    instances: OnceLock<InstanceGroups>,
     /// The sites' atom names, numbered on first use.
     names: OnceLock<SiteNames>,
+}
+
+/// The sites, residues and chains with an atom of each instance.
+#[derive(Debug, Clone)]
+struct InstanceGroups {
+    sites: Groups<AtomSiteId>,
+    residues: Groups<ResidueId>,
+    chains: Groups<ChainId>,
 }
 
 impl HierarchyIndex {
@@ -38,63 +43,83 @@ impl HierarchyIndex {
         atoms: &DenseOrder<InstanceAtomId>,
         instance_count: usize,
     ) -> Self {
-        let mut site_atoms = Vec::with_capacity(hierarchy.atom_sites().len());
-        let mut site_residues = Vec::with_capacity(hierarchy.atom_sites().len());
-        let mut site_instances = Vec::with_capacity(hierarchy.atom_sites().len());
-        let mut atom_sites = vec![NO_SITE; atoms.len()];
-        for (id, site) in hierarchy.atom_sites() {
-            let index = atoms
-                .index(site.atom())
-                .expect("published atom sites name topology atoms");
-            site_atoms.push(TopologyAtomIndex::new(index as u32));
-            site_residues.push(site.residue());
-            site_instances.push(site.atom().instance().index());
-            atom_sites[index] = id.raw();
+        let site_atoms = hierarchy
+            .site_atom_ids()
+            .iter()
+            .map(|&atom| {
+                let index = atoms
+                    .index(atom)
+                    .expect("published atom sites name topology atoms");
+                TopologyAtomIndex::new(index as u32)
+            })
+            .collect();
+        Self::from_site_atoms(site_atoms, atoms.len(), instance_count)
+    }
+
+    /// Indexes a hierarchy from the dense atom of each of its sites.
+    pub(super) fn from_site_atoms(
+        site_atoms: Vec<TopologyAtomIndex>,
+        atom_count: usize,
+        instance_count: usize,
+    ) -> Self {
+        let mut atom_sites = vec![NO_SITE; atom_count];
+        for (site, atom) in site_atoms.iter().enumerate() {
+            atom_sites[atom.index()] = site as u32;
         }
-        let residue_sites = Groups::from_lists(
-            hierarchy
-                .residues()
-                .map(|(_, residue)| residue.atom_sites()),
-        );
-        // A residue or chain reaches the instances of its sites.
-        let site_instances = &site_instances;
-        let residue_instances = |residue: usize| {
-            residue_sites
-                .get(residue)
-                .iter()
-                .map(move |site| site_instances[site.index()])
-        };
         Self {
-            instance_sites: Groups::new(
-                instance_count,
-                site_instances
-                    .iter()
-                    .enumerate()
-                    .map(|(site, &instance)| (instance, AtomSiteId::new(site as u32))),
-            ),
-            instance_residues: Groups::new(
-                instance_count,
-                (0..hierarchy.residues().len()).flat_map(|residue| {
-                    residue_instances(residue)
-                        .map(move |instance| (instance, ResidueId::new(residue as u32)))
-                }),
-            ),
-            instance_chains: Groups::new(
-                instance_count,
-                hierarchy.chains().flat_map(|(id, chain)| {
-                    chain
-                        .residues()
-                        .iter()
-                        .flat_map(|residue| residue_instances(residue.index()))
-                        .map(move |instance| (instance, id))
-                }),
-            ),
             site_atoms,
-            site_residues,
             atom_sites,
-            residue_sites,
+            instance_count,
+            instances: OnceLock::new(),
             names: OnceLock::new(),
         }
+    }
+
+    /// The per-instance lists of `hierarchy`, the hierarchy this indexes.
+    fn instances(&self, hierarchy: &Hierarchy) -> &InstanceGroups {
+        self.instances.get_or_init(|| {
+            let instance_count = self.instance_count;
+            let site_instances = hierarchy
+                .site_atom_ids()
+                .iter()
+                .map(|atom| atom.instance().index())
+                .collect::<Vec<_>>();
+            // A residue or chain reaches the instances of its sites.
+            let site_instances = &site_instances;
+            let residue_instances = |residue: ResidueId| {
+                hierarchy
+                    .residue(residue)
+                    .expect("chains list hierarchy residues")
+                    .atom_sites()
+                    .iter()
+                    .map(move |site| site_instances[site.index()])
+            };
+            InstanceGroups {
+                sites: Groups::new(
+                    instance_count,
+                    site_instances
+                        .iter()
+                        .enumerate()
+                        .map(|(site, &instance)| (instance, AtomSiteId::new(site as u32))),
+                ),
+                residues: Groups::new(
+                    instance_count,
+                    hierarchy.residues().flat_map(|(residue, _)| {
+                        residue_instances(residue).map(move |instance| (instance, residue))
+                    }),
+                ),
+                chains: Groups::new(
+                    instance_count,
+                    hierarchy.chains().flat_map(|(id, chain)| {
+                        chain
+                            .residues()
+                            .iter()
+                            .flat_map(|&residue| residue_instances(residue))
+                            .map(move |instance| (instance, id))
+                    }),
+                ),
+            }
+        })
     }
 
     /// The dense atom of each site, by site ID.
@@ -113,35 +138,26 @@ impl HierarchyIndex {
         self.site_atoms[site.index()]
     }
 
-    /// The residue of a valid site.
-    pub(super) fn site_residue(&self, site: AtomSiteId) -> ResidueId {
-        self.site_residues[site.index()]
-    }
-
-    /// The sites of a valid residue, in residue order.
-    pub(super) fn residue_sites(&self, residue: ResidueId) -> &[AtomSiteId] {
-        self.residue_sites.get(residue.index())
-    }
-
     /// The site of a valid dense atom, or `None` when it has none.
     pub(super) fn atom_site(&self, atom: TopologyAtomIndex) -> Option<AtomSiteId> {
         let site = self.atom_sites[atom.index()];
         (site != NO_SITE).then(|| AtomSiteId::new(site))
     }
 
-    /// The sites of a valid instance's atoms.
-    pub(super) fn instance_sites(&self, instance: usize) -> &[AtomSiteId] {
-        self.instance_sites.get(instance)
+    /// The sites of a valid instance's atoms in `hierarchy`, the hierarchy
+    /// this indexes.
+    pub(super) fn instance_sites(&self, hierarchy: &Hierarchy, instance: usize) -> &[AtomSiteId] {
+        self.instances(hierarchy).sites.get(instance)
     }
 
     /// The residues with a site of a valid instance's atoms.
-    pub(super) fn instance_residues(&self, instance: usize) -> &[ResidueId] {
-        self.instance_residues.get(instance)
+    pub(super) fn instance_residues(&self, hierarchy: &Hierarchy, instance: usize) -> &[ResidueId] {
+        self.instances(hierarchy).residues.get(instance)
     }
 
     /// The chains with a site of a valid instance's atoms.
-    pub(super) fn instance_chains(&self, instance: usize) -> &[ChainId] {
-        self.instance_chains.get(instance)
+    pub(super) fn instance_chains(&self, hierarchy: &Hierarchy, instance: usize) -> &[ChainId] {
+        self.instances(hierarchy).chains.get(instance)
     }
 }
 
@@ -237,21 +253,6 @@ impl<T: Copy + PartialEq> Groups<T> {
         for (group, item) in members {
             items[next[group]] = item;
             next[group] += 1;
-        }
-        Self { starts, items }
-    }
-
-    /// Groups each list in turn, keeping its order.
-    fn from_lists<'a>(lists: impl ExactSizeIterator<Item = &'a [T]>) -> Self
-    where
-        T: 'a,
-    {
-        let mut starts = Vec::with_capacity(lists.len() + 1);
-        starts.push(0);
-        let mut items = Vec::new();
-        for list in lists {
-            items.extend_from_slice(list);
-            starts.push(items.len());
         }
         Self { starts, items }
     }

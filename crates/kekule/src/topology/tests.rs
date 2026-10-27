@@ -692,7 +692,7 @@ fn hierarchy_publication_rejects_each_inconsistent_listing() {
         ),
         (
             "listed residue names another chain",
-            |hierarchy| hierarchy.residues[0].chain = ChainId::new(1),
+            |hierarchy| *hierarchy.residue_chain_mut(ResidueId::new(0)) = ChainId::new(1),
             TopologyHierarchyError::InconsistentChainResidue {
                 chain: a,
                 residue: r0,
@@ -720,7 +720,11 @@ fn hierarchy_publication_rejects_each_inconsistent_listing() {
         ),
         (
             "residue lists a site twice",
-            |hierarchy| hierarchy.residues[0].atom_sites.push(AtomSiteId::new(0)),
+            |hierarchy| {
+                hierarchy
+                    .residue_sites_mut(ResidueId::new(0))
+                    .push(AtomSiteId::new(0))
+            },
             TopologyHierarchyError::InconsistentResidueAtomSite {
                 residue: r0,
                 site: s0,
@@ -728,7 +732,11 @@ fn hierarchy_publication_rejects_each_inconsistent_listing() {
         ),
         (
             "residue lists another residue's site",
-            |hierarchy| hierarchy.residues[0].atom_sites.push(AtomSiteId::new(1)),
+            |hierarchy| {
+                hierarchy
+                    .residue_sites_mut(ResidueId::new(0))
+                    .push(AtomSiteId::new(1))
+            },
             TopologyHierarchyError::InconsistentResidueAtomSite {
                 residue: r0,
                 site: s1,
@@ -736,7 +744,7 @@ fn hierarchy_publication_rejects_each_inconsistent_listing() {
         ),
         (
             "residue omits its site",
-            |hierarchy| hierarchy.residues[1].atom_sites.clear(),
+            |hierarchy| hierarchy.residue_sites_mut(ResidueId::new(1)).clear(),
             TopologyHierarchyError::InconsistentResidueAtomSite {
                 residue: r1,
                 site: s1,
@@ -744,7 +752,11 @@ fn hierarchy_publication_rejects_each_inconsistent_listing() {
         ),
         (
             "residue lists an unknown site",
-            |hierarchy| hierarchy.residues[0].atom_sites.push(AtomSiteId::new(9)),
+            |hierarchy| {
+                hierarchy
+                    .residue_sites_mut(ResidueId::new(0))
+                    .push(AtomSiteId::new(9))
+            },
             TopologyHierarchyError::InvalidResidueAtomSite {
                 residue: r0,
                 site: AtomSiteId::new(9),

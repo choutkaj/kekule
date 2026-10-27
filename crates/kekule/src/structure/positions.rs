@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::Arc;
 
 use crate::geometry::Point3;
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -12,7 +13,14 @@ use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 /// are rejected.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Positions {
-    values: Vec<Point3>,
+    // Shared by clones until one is written, so copying a model or starting
+    // an editor from one copies no coordinates.
+    values: Arc<Vec<Point3>>,
+}
+
+/// Whether `indices` selects every row of `len` in order.
+pub(crate) fn is_identity(indices: &[usize], len: usize) -> bool {
+    indices.len() == len && indices.iter().enumerate().all(|(row, &index)| row == index)
 }
 
 impl Positions {
@@ -32,8 +40,12 @@ impl Positions {
                 return Err(DenseArrayError::NonFinite { index });
             }
         }
+        if values.is_empty() {
+            return Ok(());
+        }
+        let stored = Arc::make_mut(&mut self.values);
         for &(index, point) in values {
-            self.values[index] = point;
+            stored[index] = point;
         }
         Ok(())
     }
@@ -42,13 +54,17 @@ impl Positions {
         &mut self,
         additional: usize,
     ) -> Result<(), std::collections::TryReserveError> {
-        self.values.try_reserve(additional)
+        Arc::make_mut(&mut self.values).try_reserve(additional)
     }
     pub(super) fn resize_canonical(&mut self, len: usize) {
-        self.values.resize(len, Point3::origin());
+        if len != self.values.len() {
+            Arc::make_mut(&mut self.values).resize(len, Point3::origin());
+        }
     }
     pub(crate) fn extend_canonical(&mut self, positions: &Positions) {
-        self.values.extend_from_slice(&positions.values);
+        if !positions.is_empty() {
+            Arc::make_mut(&mut self.values).extend_from_slice(&positions.values);
+        }
     }
 
     /// Copies numerical coordinates into canonical storage.
@@ -75,7 +91,9 @@ impl Positions {
                 Ok(point)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { values })
+        Ok(Self {
+            values: Arc::new(values),
+        })
     }
 
     /// Consumes a coordinate vector, converting and validating it in place.
@@ -93,18 +111,20 @@ impl Positions {
                 return Err(DenseArrayError::NonFinite { index });
             }
         }
-        Ok(Self { values })
+        Ok(Self {
+            values: Arc::new(values),
+        })
     }
 
     /// Transfers the coordinate vector in its canonical length unit.
     pub fn into_values(self) -> Quantity<Vec<Point3>> {
-        Quantity::new(self.values, CANONICAL_LENGTH_UNIT)
+        Quantity::new(Arc::unwrap_or_clone(self.values), CANONICAL_LENGTH_UNIT)
     }
 
     /// Constructs a zero-filled coordinate array with `len` entries.
     pub fn zeros(len: usize) -> Self {
         Self {
-            values: vec![Point3::origin(); len],
+            values: Arc::new(vec![Point3::origin(); len]),
         }
     }
 
@@ -124,20 +144,19 @@ impl Positions {
     }
 
     /// Copies a deterministic dense projection in the requested index order.
+    /// Selecting every row in order shares this array instead.
     pub fn select_indices(&self, indices: &[usize]) -> Result<Self, DenseArrayError> {
-        let values = indices
-            .iter()
-            .map(|index| {
-                self.values
-                    .get(*index)
-                    .copied()
-                    .ok_or(DenseArrayError::IndexOutOfRange {
-                        index: *index,
-                        len: self.values.len(),
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { values })
+        if is_identity(indices, self.len()) {
+            return Ok(self.clone());
+        }
+        let len = self.values.len();
+        if let Some(&index) = indices.iter().find(|&&index| index >= len) {
+            return Err(DenseArrayError::IndexOutOfRange { index, len });
+        }
+        let values = indices.iter().map(|&index| self.values[index]).collect();
+        Ok(Self {
+            values: Arc::new(values),
+        })
     }
 
     /// One position, or `None` when `index` is out of range.
@@ -155,11 +174,10 @@ impl Positions {
             return Err(DenseArrayError::NonFinite { index });
         }
         let len = self.values.len();
-        let destination = self
-            .values
-            .get_mut(index)
-            .ok_or(DenseArrayError::IndexOutOfRange { index, len })?;
-        *destination = point;
+        if index >= len {
+            return Err(DenseArrayError::IndexOutOfRange { index, len });
+        }
+        Arc::make_mut(&mut self.values)[index] = point;
         Ok(())
     }
 
@@ -209,7 +227,8 @@ impl Positions {
     }
 
     pub(crate) fn copy_from_validated(&mut self, source: &[Point3], factor: f64) {
-        for (destination, source) in self.values.iter_mut().zip(source.iter().copied()) {
+        let values = Arc::make_mut(&mut self.values);
+        for (destination, source) in values.iter_mut().zip(source.iter().copied()) {
             *destination = Point3::new(source.x * factor, source.y * factor, source.z * factor);
         }
     }
