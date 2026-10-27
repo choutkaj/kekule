@@ -1056,6 +1056,9 @@ companion crate. Unsupported structure state, such as a periodic cell, is
 rejected rather than ignored. Gradients are exact derivatives and never capped;
 coordinates fail only where a requested energy or gradient is undefined.
 Minimization reads a borrowed view and returns new positions without changing
-chemistry, topology, cell, or properties. See the
+chemistry, topology, cell, or properties. A minimization scope moves a selection
+of atoms; fixed atoms keep their input coordinates bit for bit and still enter
+every evaluation, and optional position restraints add to the minimized energy
+without becoming part of a potential. See the
 [potential contract](crates/kekule-potentials/src/lib.rs) and
 [OpenFF backend](crates/kekule-potentials/src/openff.rs).

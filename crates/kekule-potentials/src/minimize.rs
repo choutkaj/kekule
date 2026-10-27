@@ -3,9 +3,16 @@
 //! [`minimize`] runs limited-memory BFGS (L-BFGS) with a strong-Wolfe line
 //! search on all Cartesian coordinates. It reads a borrowed [`ModelView`], so
 //! models, ensemble samples, and trajectory frames are minimized the same way,
-//! and returns new [`Positions`] without changing its input. No constraints or
-//! fixed atoms are applied. Periodic cells are passed through to the potential
-//! unchanged.
+//! and returns new [`Positions`] without changing its input. Periodic cells are
+//! passed through to the potential unchanged.
+//!
+//! [`minimize_scoped`] moves only the atoms of a [`MinimizationScope`]. The
+//! other atoms keep their input coordinates bit for bit but still enter every
+//! potential evaluation, so they shape the energy and the forces on the moving
+//! atoms. A scope may add harmonic position restraints,
+//! `k/2 |r - r_ref|^2` per restrained atom, to the minimized energy; restraints
+//! use absolute Cartesian coordinates without periodic imaging. Convergence and
+//! the step bound consider moving atoms only.
 //!
 //! Each line search caps the largest atom displacement at
 //! [`MinimizeOptions::max_step`]. A trial whose coordinates are singular for the
@@ -18,12 +25,14 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use kekule::geometry::{Point3, Vector3};
 use kekule::structure::{DenseArrayError, Model, ModelView, Positions, StructureError};
+use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
-    Quantity, UnitError, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
-    KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
+    Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_CONSTANT_UNIT,
+    CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
 };
 
 use crate::potential::{Energy, Evaluation, EvaluationError, Potential};
@@ -155,11 +164,143 @@ impl Default for MinimizeOptions {
     }
 }
 
+/// The atoms a minimization moves and the position restraints it adds.
+///
+/// Atoms outside [`Self::moving_atoms`] are fixed: they keep their input
+/// coordinates exactly and still contribute to the energy and to the forces on
+/// the moving atoms. A scope binds the topology snapshot of its selection and
+/// applies to any view sharing that layout.
+///
+/// ```
+/// use kekule::geometry::Point3;
+/// use kekule::smiles;
+/// use kekule::topology::AtomSelection;
+/// use kekule::units::{Quantity, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER, NANOMETER};
+/// use kekule_potentials::MinimizationScope;
+///
+/// let topology = smiles::to_topology("CCO")?;
+/// let oxygen = topology.atom_ids()[2];
+/// let scope = MinimizationScope::moving(AtomSelection::from_atoms(topology, [oxygen])?)
+///     .with_position_restraint(
+///         oxygen,
+///         Quantity::new(Point3::new(0.1, 0.0, 0.0), NANOMETER),
+///         Quantity::new(1_000.0, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER),
+///     )?;
+/// assert_eq!(scope.moving_atoms().len(), 1);
+/// assert_eq!(scope.position_restraints().len(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct MinimizationScope {
+    moving: AtomSelection,
+    restraints: Vec<PositionRestraint>,
+    /// Dense atom index of each restraint, parallel to `restraints`.
+    restraint_indices: Vec<usize>,
+}
+
+impl MinimizationScope {
+    /// Moves every atom of `topology`, without restraints, as [`minimize`] does.
+    pub fn all(topology: impl Into<Arc<Topology>>) -> Self {
+        Self::moving(AtomSelection::all(topology))
+    }
+
+    /// Moves the selected atoms and fixes every other atom.
+    ///
+    /// An empty selection fixes every atom, so the minimization converges
+    /// without a step.
+    pub fn moving(selection: AtomSelection) -> Self {
+        Self {
+            moving: selection,
+            restraints: Vec::new(),
+            restraint_indices: Vec::new(),
+        }
+    }
+
+    /// Adds a harmonic restraint `k/2 |r - reference|^2` on `atom`.
+    ///
+    /// Restraints on the same atom add up. A restraint on a fixed atom adds a
+    /// constant energy and no force.
+    ///
+    /// # Errors
+    ///
+    /// [`MinimizationError::Unit`] for an incompatible unit, and
+    /// [`MinimizationError::InvalidRestraint`] if `atom` is not in the scope's
+    /// topology, `reference` is not finite, or `force_constant` is not finite
+    /// and non-negative.
+    pub fn with_position_restraint(
+        mut self,
+        atom: InstanceAtomId,
+        reference: Quantity<Point3>,
+        force_constant: Quantity<f64>,
+    ) -> Result<Self, MinimizationError> {
+        let reference = reference.value_in(CANONICAL_LENGTH_UNIT)?;
+        let force_constant = force_constant.value_in(CANONICAL_FORCE_CONSTANT_UNIT)?;
+        let invalid = |problem| MinimizationError::InvalidRestraint { atom, problem };
+        let index = self
+            .moving
+            .topology()
+            .atom_index(atom)
+            .ok_or(invalid(RestraintProblem::UnknownAtom))?;
+        if ![reference.x, reference.y, reference.z]
+            .iter()
+            .all(|v| v.is_finite())
+        {
+            return Err(invalid(RestraintProblem::NonFiniteReference));
+        }
+        if !(force_constant.is_finite() && force_constant >= 0.0) {
+            return Err(invalid(RestraintProblem::ForceConstant));
+        }
+        self.restraints.push(PositionRestraint {
+            atom,
+            reference,
+            force_constant,
+        });
+        self.restraint_indices.push(index.index());
+        Ok(self)
+    }
+
+    /// The atoms that move; every other atom is fixed.
+    pub fn moving_atoms(&self) -> &AtomSelection {
+        &self.moving
+    }
+
+    /// The position restraints in the order added.
+    pub fn position_restraints(&self) -> &[PositionRestraint] {
+        &self.restraints
+    }
+}
+
+/// A harmonic restraint `k/2 |r - reference|^2` holding one atom near a point.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PositionRestraint {
+    atom: InstanceAtomId,
+    reference: Point3,
+    force_constant: f64,
+}
+
+impl PositionRestraint {
+    /// The restrained atom.
+    pub const fn atom(&self) -> InstanceAtomId {
+        self.atom
+    }
+
+    /// The point the atom is held near, in nm.
+    pub const fn reference(&self) -> Quantity<Point3> {
+        Quantity::new(self.reference, CANONICAL_LENGTH_UNIT)
+    }
+
+    /// The force constant `k`, in kJ/(mol nm^2).
+    pub const fn force_constant(&self) -> Quantity<f64> {
+        Quantity::new(self.force_constant, CANONICAL_FORCE_CONSTANT_UNIT)
+    }
+}
+
 /// Terminal state of a minimization that did not fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MinimizationStatus {
-    /// The largest per-atom gradient norm reached the tolerance.
+    /// The largest per-atom gradient norm over the moving atoms reached the
+    /// tolerance.
     Converged,
     /// [`MinimizeOptions::max_iterations`] steps were accepted without
     /// convergence.
@@ -175,6 +316,7 @@ pub enum MinimizationStatus {
 pub struct MinimizationStep<'a> {
     pub(crate) iteration: usize,
     pub(crate) energy: &'a Energy,
+    pub(crate) restraint_energy: f64,
     pub(crate) max_gradient: Quantity<f64>,
     pub(crate) positions: &'a Positions,
 }
@@ -185,13 +327,20 @@ impl<'a> MinimizationStep<'a> {
         self.iteration
     }
 
-    /// Energy at the accepted coordinates.
+    /// Potential energy at the accepted coordinates, without restraints.
     pub const fn energy(&self) -> &'a Energy {
         self.energy
     }
 
-    /// Largest per-atom gradient norm at the accepted coordinates, in
-    /// kJ/(mol nm).
+    /// Position-restraint energy at the accepted coordinates, in kJ/mol; zero
+    /// without restraints. The minimized energy is the potential energy plus
+    /// this.
+    pub const fn restraint_energy(&self) -> Quantity<f64> {
+        Quantity::new(self.restraint_energy, CANONICAL_ENERGY_UNIT)
+    }
+
+    /// Largest per-atom norm, over the moving atoms, of the minimized energy's
+    /// gradient at the accepted coordinates, in kJ/(mol nm).
     pub const fn max_gradient(&self) -> Quantity<f64> {
         self.max_gradient
     }
@@ -208,6 +357,8 @@ pub struct Minimization {
     positions: Positions,
     initial_energy: Energy,
     evaluation: Evaluation,
+    restraint_energy: f64,
+    max_gradient: f64,
     iterations: usize,
     evaluations: usize,
     status: MinimizationStatus,
@@ -224,14 +375,29 @@ impl Minimization {
         self.positions
     }
 
-    /// Energy at the input coordinates.
+    /// Potential energy at the input coordinates.
     pub fn initial_energy(&self) -> &Energy {
         &self.initial_energy
     }
 
-    /// Energy and gradient at the final coordinates.
+    /// Potential energy and gradient at the final coordinates, for every atom
+    /// and without restraints.
     pub fn final_evaluation(&self) -> &Evaluation {
         &self.evaluation
+    }
+
+    /// Position-restraint energy at the final coordinates, in kJ/mol; zero
+    /// without restraints.
+    pub fn restraint_energy(&self) -> Quantity<f64> {
+        Quantity::new(self.restraint_energy, CANONICAL_ENERGY_UNIT)
+    }
+
+    /// Largest per-atom norm, over the moving atoms, of the minimized energy's
+    /// gradient at the final coordinates, in kJ/(mol nm): the convergence
+    /// measure. Without fixed atoms or restraints it equals
+    /// [`Evaluation::max_gradient_norm`] of [`Self::final_evaluation`].
+    pub fn max_gradient(&self) -> Quantity<f64> {
+        Quantity::new(self.max_gradient, CANONICAL_GRADIENT_UNIT)
     }
 
     /// Number of accepted steps.
@@ -305,21 +471,60 @@ pub fn minimize_with_observer<P: Potential + ?Sized>(
     potential: &P,
     model: ModelView<'_>,
     options: &MinimizeOptions,
+    observer: impl FnMut(&MinimizationStep<'_>) -> ControlFlow<()>,
+) -> Result<Minimization, MinimizationError> {
+    let scope = MinimizationScope::all(model.shared_topology());
+    minimize_scoped_with_observer(potential, model, &scope, options, observer)
+}
+
+/// Minimizes the energy of `model` under `potential` plus the scope's position
+/// restraints, moving only the scope's atoms.
+///
+/// Fixed atoms keep their input coordinates bit for bit and still contribute
+/// to every evaluation. A run that stops without converging is still `Ok`;
+/// check [`Minimization::status`].
+///
+/// # Errors
+///
+/// As [`minimize`], and [`MinimizationError::IncompatibleTopology`] if
+/// `scope` does not share the layout of `model`.
+pub fn minimize_scoped<P: Potential + ?Sized>(
+    potential: &P,
+    model: ModelView<'_>,
+    scope: &MinimizationScope,
+    options: &MinimizeOptions,
+) -> Result<Minimization, MinimizationError> {
+    minimize_scoped_with_observer(potential, model, scope, options, |_| {
+        ControlFlow::Continue(())
+    })
+}
+
+/// Minimizes like [`minimize_scoped`], calling `observer` after every accepted
+/// step as [`minimize_with_observer`] does.
+///
+/// # Errors
+///
+/// As [`minimize_scoped`].
+pub fn minimize_scoped_with_observer<P: Potential + ?Sized>(
+    potential: &P,
+    model: ModelView<'_>,
+    scope: &MinimizationScope,
+    options: &MinimizeOptions,
     mut observer: impl FnMut(&MinimizationStep<'_>) -> ControlFlow<()>,
 ) -> Result<Minimization, MinimizationError> {
     let limits = validate(options)?;
+    if !scope.moving.topology().shares_layout(model.topology()) {
+        return Err(MinimizationError::IncompatibleTopology);
+    }
+    let objective = Objective::new(scope, model.positions().values().into_value());
     let initial = potential.evaluate(model)?;
     let mut search = Search {
         potential,
+        objective: &objective,
         trial: model.to_model(),
         evaluations: 1,
     };
-    let mut current = Point {
-        x: flatten_points(model.positions().values().into_value()),
-        gradient: flatten_vectors(initial.gradient().into_value()),
-        positions: model.positions().clone(),
-        evaluation: initial,
-    };
+    let mut current = objective.point(model.positions().clone(), initial)?;
     let initial_energy = current.evaluation.energy().clone();
     let mut history: VecDeque<Pair> = VecDeque::with_capacity(options.memory);
     let mut iterations = 0;
@@ -404,6 +609,7 @@ pub fn minimize_with_observer<P: Potential + ?Sized>(
         let step = MinimizationStep {
             iteration: iterations,
             energy: current.evaluation.energy(),
+            restraint_energy: current.restraint_energy,
             max_gradient: Quantity::new(max_atom_norm(&current.gradient), CANONICAL_GRADIENT_UNIT),
             positions: &current.positions,
         };
@@ -413,6 +619,8 @@ pub fn minimize_with_observer<P: Potential + ?Sized>(
     };
 
     Ok(Minimization {
+        max_gradient: max_atom_norm(&current.gradient),
+        restraint_energy: current.restraint_energy,
         positions: current.positions,
         initial_energy,
         evaluation: current.evaluation,
@@ -454,17 +662,110 @@ fn validate(options: &MinimizeOptions) -> Result<Limits, MinimizationError> {
     })
 }
 
-/// One accepted or trial configuration with flattened canonical coordinates.
+/// The minimized function: the potential plus position restraints, over the
+/// flattened canonical coordinates of the moving atoms only.
+struct Objective {
+    /// Input coordinates; fixed atoms are always copied from here.
+    base: Vec<Point3>,
+    /// Dense indices of the moving atoms, ascending.
+    moving: Vec<usize>,
+    restraints: Vec<ActiveRestraint>,
+}
+
+struct ActiveRestraint {
+    index: usize,
+    /// Position of the atom in `Objective::moving`, or `None` when it is fixed.
+    slot: Option<usize>,
+    reference: Point3,
+    force_constant: f64,
+}
+
+impl Objective {
+    fn new(scope: &MinimizationScope, base: &[Point3]) -> Self {
+        let moving: Vec<usize> = scope.moving.indices().iter().map(|i| i.index()).collect();
+        let restraints = scope
+            .restraints
+            .iter()
+            .zip(&scope.restraint_indices)
+            .map(|(restraint, &index)| ActiveRestraint {
+                index,
+                slot: moving.binary_search(&index).ok(),
+                reference: restraint.reference,
+                force_constant: restraint.force_constant,
+            })
+            .collect();
+        Self {
+            base: base.to_vec(),
+            moving,
+            restraints,
+        }
+    }
+
+    /// Full coordinates with the moving atoms at `x`.
+    fn positions(&self, x: &[f64]) -> Vec<Point3> {
+        let mut points = self.base.clone();
+        for (&index, &[x, y, z]) in self.moving.iter().zip(x.as_chunks::<3>().0) {
+            points[index] = Point3::new(x, y, z);
+        }
+        points
+    }
+
+    /// Builds a point from a potential evaluation at `positions`.
+    fn point(
+        &self,
+        positions: Positions,
+        evaluation: Evaluation,
+    ) -> Result<Point, EvaluationError> {
+        let points = positions.values().into_value();
+        let full = evaluation.gradient().into_value();
+        let mut x = Vec::with_capacity(3 * self.moving.len());
+        let mut gradient = Vec::with_capacity(3 * self.moving.len());
+        for &index in &self.moving {
+            let (p, g) = (points[index], full[index]);
+            x.extend([p.x, p.y, p.z]);
+            gradient.extend([g.x, g.y, g.z]);
+        }
+        let mut restraint_energy = 0.0;
+        for restraint in &self.restraints {
+            let d = points[restraint.index] - restraint.reference;
+            restraint_energy += 0.5 * restraint.force_constant * d.norm_squared();
+            if let Some(slot) = restraint.slot {
+                let g = d * restraint.force_constant;
+                gradient[3 * slot] += g.x;
+                gradient[3 * slot + 1] += g.y;
+                gradient[3 * slot + 2] += g.z;
+            }
+        }
+        let energy = evaluation.energy().total().into_value() + restraint_energy;
+        if !energy.is_finite() {
+            return Err(EvaluationError::NonFiniteEnergy);
+        }
+        Ok(Point {
+            x,
+            gradient,
+            energy,
+            restraint_energy,
+            positions,
+            evaluation,
+        })
+    }
+}
+
+/// One accepted or trial configuration. `x` and `gradient` hold the
+/// flattened canonical coordinates and minimized-energy gradient of the moving
+/// atoms; `positions` and `evaluation` cover every atom.
 struct Point {
     x: Vec<f64>,
     gradient: Vec<f64>,
+    energy: f64,
+    restraint_energy: f64,
     positions: Positions,
     evaluation: Evaluation,
 }
 
 impl Point {
     fn energy(&self) -> f64 {
-        self.evaluation.energy().total().into_value()
+        self.energy
     }
 }
 
@@ -497,6 +798,7 @@ fn two_loop(history: &VecDeque<Pair>, gradient: &[f64]) -> Vec<f64> {
 
 struct Search<'a, P: ?Sized> {
     potential: &'a P,
+    objective: &'a Objective,
     /// Scratch model carrying the topology, cell, and annotations of the input.
     trial: Model,
     evaluations: usize,
@@ -528,26 +830,24 @@ impl<P: Potential + ?Sized> Search<'_, P> {
         if x == from.x {
             return Ok(None);
         }
-        let positions = Positions::from_vec(Quantity::new(to_points(&x), CANONICAL_LENGTH_UNIT))?;
+        let positions = Positions::from_vec(Quantity::new(
+            self.objective.positions(&x),
+            CANONICAL_LENGTH_UNIT,
+        ))?;
         self.trial.set_positions(positions.values())?;
         let view = self.trial.as_model_view();
         self.evaluations += 1;
-        match self.potential.evaluate(view) {
-            Ok(evaluation) => {
-                let gradient = flatten_vectors(evaluation.gradient().into_value());
-                let point = Point {
-                    x,
-                    gradient,
-                    positions,
-                    evaluation,
-                };
-                Ok(Some(Sample {
-                    alpha,
-                    phi: point.energy(),
-                    dphi: dot(&point.gradient, direction),
-                    point: Some(point),
-                }))
-            }
+        match self
+            .potential
+            .evaluate(view)
+            .and_then(|evaluation| self.objective.point(positions, evaluation))
+        {
+            Ok(point) => Ok(Some(Sample {
+                alpha,
+                phi: point.energy(),
+                dphi: dot(&point.gradient, direction),
+                point: Some(point),
+            })),
             Err(error) if error.is_invalid_geometry() => Ok(Some(Sample {
                 alpha,
                 phi: f64::INFINITY,
@@ -653,22 +953,6 @@ fn interpolate(lo: &Sample, hi: &Sample) -> f64 {
     }
 }
 
-fn flatten_points(points: &[Point3]) -> Vec<f64> {
-    points.iter().flat_map(|p| [p.x, p.y, p.z]).collect()
-}
-
-fn flatten_vectors(vectors: &[Vector3]) -> Vec<f64> {
-    vectors.iter().flat_map(|v| [v.x, v.y, v.z]).collect()
-}
-
-fn to_points(x: &[f64]) -> Vec<Point3> {
-    x.as_chunks::<3>()
-        .0
-        .iter()
-        .map(|&[x, y, z]| Point3::new(x, y, z))
-        .collect()
-}
-
 fn max_atom_norm(x: &[f64]) -> f64 {
     x.as_chunks::<3>()
         .0
@@ -716,6 +1000,28 @@ impl fmt::Display for MinimizeOption {
     }
 }
 
+/// Why [`MinimizationScope::with_position_restraint`] rejected a restraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RestraintProblem {
+    /// The atom is not in the scope's topology.
+    UnknownAtom,
+    /// The reference position is not finite.
+    NonFiniteReference,
+    /// The force constant is not finite and non-negative.
+    ForceConstant,
+}
+
+impl fmt::Display for RestraintProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::UnknownAtom => "atom is not in the topology",
+            Self::NonFiniteReference => "reference position must be finite",
+            Self::ForceConstant => "force constant must be finite and non-negative",
+        })
+    }
+}
+
 /// The quantity that stopped being representable during a minimization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -744,12 +1050,20 @@ impl fmt::Display for NumericalFailure {
 pub enum MinimizationError {
     /// An option has an unusable value.
     InvalidOptions(MinimizeOption),
+    /// A position restraint is unusable.
+    InvalidRestraint {
+        /// The restrained atom.
+        atom: InstanceAtomId,
+        /// What is wrong with the restraint.
+        problem: RestraintProblem,
+    },
     /// Finite evaluations cannot produce a representable descent step.
     NumericalFailure(NumericalFailure),
     /// The initial evaluation failed, or a trial failed for a reason other
     /// than singular geometry.
     Evaluation(EvaluationError),
-    /// [`Minimization::to_model`] received a view of a different topology.
+    /// A [`MinimizationScope`] or the view given to [`Minimization::to_model`]
+    /// belongs to a different topology layout.
     IncompatibleTopology,
     /// The minimized structure could not be built; see the source.
     Structure(StructureError),
@@ -764,6 +1078,9 @@ impl fmt::Display for MinimizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidOptions(message) => write!(f, "invalid minimization options: {message}"),
+            Self::InvalidRestraint { atom, problem } => {
+                write!(f, "invalid position restraint on atom {atom}: {problem}")
+            }
             Self::NumericalFailure(message) => {
                 write!(f, "minimization numerical failure: {message}")
             }
@@ -785,9 +1102,10 @@ impl std::error::Error for MinimizationError {
             Self::Structure(error) => Some(error),
             Self::Position(error) => Some(error),
             Self::Unit(error) => Some(error),
-            Self::InvalidOptions(_) | Self::NumericalFailure(_) | Self::IncompatibleTopology => {
-                None
-            }
+            Self::InvalidOptions(_)
+            | Self::InvalidRestraint { .. }
+            | Self::NumericalFailure(_)
+            | Self::IncompatibleTopology => None,
         }
     }
 }
