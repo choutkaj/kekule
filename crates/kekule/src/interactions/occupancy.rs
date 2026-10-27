@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::topology::{Topology, TopologyAtomIndex};
+use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
 
 use super::criteria::HydrogenBond;
 use super::{InteractionError, InteractionKind, InteractionRole, Interactions};
@@ -307,6 +307,19 @@ impl HydrogenBondOccupancy {
     /// The total weight of the observations.
     pub fn total_weight(&self) -> f64 {
         self.total_weight
+    }
+
+    /// The semantic identity of a bond's atom in its side's topology, for
+    /// saving results across topology publications.
+    pub fn atom_id(&self, atom: InteractionAtom) -> InstanceAtomId {
+        let topology = if atom.second {
+            &self.second
+        } else {
+            &self.first
+        };
+        topology
+            .atom_id(atom.atom)
+            .expect("observed atoms belong to their side's topology")
     }
 
     /// Each bond with its occupancy: the fraction of the total weight in

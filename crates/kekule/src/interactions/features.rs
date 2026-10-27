@@ -159,11 +159,13 @@ impl InteractionFeatures {
     /// ```
     /// use kekule::interactions::InteractionFeatures;
     ///
-    /// // Acetic acid and methylamine: a carboxylate and an amine.
+    /// // Acetic acid and methylamine: a carboxylate and an amine. The
+    /// // acid's oxygens accept but, deprotonated at pH 7, do not donate.
     /// let topology = kekule::smiles::to_topology("CC(=O)O.CN")?;
     /// let features = InteractionFeatures::new(topology);
     /// assert_eq!(features.charged_groups().len(), 2);
-    /// assert_eq!(features.donors().len(), 2);
+    /// assert_eq!(features.donors().len(), 1);
+    /// assert_eq!(features.acceptors().len(), 2);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {

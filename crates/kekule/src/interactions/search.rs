@@ -85,6 +85,11 @@ impl<'a> InteractionSide<'a> {
 /// forms hydrogen bonds in both directions is reported once: by its explicit
 /// hydrogen when one qualifies, otherwise with the first end donating.
 ///
+/// Every qualifying pair is reported: hydrophobic contacts are not reduced
+/// to one per atom or residue, as PLIP reduces them, and no criterion has a
+/// lower distance bound, so clashes within a distance count. A host that
+/// shows fewer contacts filters them by their atoms and distances.
+///
 /// # Errors
 ///
 /// [`InteractionError::TopologyMismatch`] when `structure`, `first`, or
@@ -569,22 +574,45 @@ impl<'a> Search<'a> {
                 }
             }
         }
-        large.nearby = Some(
-            (0..large.positions.len() as u32)
-                .map(TopologyAtomIndex::new)
-                .filter(|atom| {
-                    let point = large.positions[atom.index()];
-                    regions.iter().any(|(low, high)| {
-                        point.x >= low.x
-                            && point.y >= low.y
-                            && point.z >= low.z
-                            && point.x <= high.x
-                            && point.y <= high.y
-                            && point.z <= high.z
-                    })
+        let contains = |(low, high): &(Point3, Point3), point: &Point3| {
+            point.x >= low.x
+                && point.y >= low.y
+                && point.z >= low.z
+                && point.x <= high.x
+                && point.y <= high.y
+                && point.z <= high.z
+        };
+        // Most atoms lie outside the regions' joint box and are rejected by
+        // one test.
+        let joint = regions
+            .iter()
+            .copied()
+            .reduce(|(low, high), (other_low, other_high)| {
+                (
+                    Point3::new(
+                        low.x.min(other_low.x),
+                        low.y.min(other_low.y),
+                        low.z.min(other_low.z),
+                    ),
+                    Point3::new(
+                        high.x.max(other_high.x),
+                        high.y.max(other_high.y),
+                        high.z.max(other_high.z),
+                    ),
+                )
+            });
+        large.nearby = Some(match joint {
+            Some(joint) => large
+                .positions
+                .iter()
+                .enumerate()
+                .filter(|(_, point)| {
+                    contains(&joint, point) && regions.iter().any(|region| contains(region, point))
                 })
+                .map(|(index, _)| TopologyAtomIndex::new(index as u32))
                 .collect(),
-        );
+            None => Vec::new(),
+        });
         if c.hydrogen_bond.enabled {
             self.search(Role::Donor, Role::Acceptor, c.hydrogen_bond.distance);
         }

@@ -778,6 +778,7 @@ fn hydrogen_bond_occupancy_accumulates_and_merges() {
     assert_eq!(bonds[0].0.donor().atom(), TopologyAtomIndex::new(0));
     assert!(bonds[0].0.donor().is_first() && bonds[0].0.acceptor().is_first());
     assert_eq!(bonds[0].1, 0.25);
+    assert_eq!(merged.atom_id(bonds[0].0.donor()), topology.atom_ids()[0]);
 
     // Errors change nothing.
     let mut accumulator = HydrogenBondOccupancyAccumulator::new();
@@ -824,4 +825,14 @@ fn hydrogen_bond_occupancy_accumulates_and_merges() {
             .unwrap_err(),
         InteractionError::NoObservations
     );
+}
+
+#[test]
+fn shared_across_threads() {
+    fn shared<T: Send + Sync + Clone + std::fmt::Debug>() {}
+    shared::<InteractionFeatures>();
+    shared::<InteractionCriteria>();
+    shared::<Interactions>();
+    shared::<HydrogenBondOccupancyAccumulator>();
+    shared::<HydrogenBondOccupancy>();
 }
