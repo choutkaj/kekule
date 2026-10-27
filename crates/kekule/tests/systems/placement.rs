@@ -1120,3 +1120,150 @@ fn fragments_on_linear_parents_turn_clear_of_their_surroundings() {
         .fold(f64::INFINITY, f64::min);
     assert!(closest > 2.0, "{closest:.2} A");
 }
+
+#[test]
+fn ring_fragments_follow_their_numbering() {
+    // Heteroatoms at their locants, as 0-based ring positions.
+    let heteroatoms: &[(&str, &[(usize, &str)])] = &[
+        ("pyridine", &[(0, "N")]),
+        ("pyrimidine", &[(0, "N"), (2, "N")]),
+        ("pyrazine", &[(0, "N"), (3, "N")]),
+        ("pyrrole", &[(0, "N")]),
+        ("furan", &[(0, "O")]),
+        ("thiophene", &[(0, "S")]),
+        ("imidazole", &[(0, "N"), (2, "N")]),
+        ("pyrazole", &[(0, "N"), (1, "N")]),
+        ("oxazole", &[(0, "O"), (2, "N")]),
+        ("thiazole", &[(0, "S"), (2, "N")]),
+        ("piperidine", &[(0, "N")]),
+        ("piperazine", &[(0, "N"), (3, "N")]),
+        ("morpholine", &[(0, "O"), (3, "N")]),
+        ("tetrahydrofuran", &[(0, "O")]),
+        ("indole", &[(0, "N")]),
+        ("quinoline", &[(0, "N")]),
+        ("benzimidazole", &[(0, "N"), (2, "N")]),
+    ];
+    // Attachments at their documented locants, as 0-based ring positions.
+    let attachments: &[(&str, usize)] = &[
+        ("pyridine", 3),
+        ("pyrimidine", 1),
+        ("pyrazine", 1),
+        ("pyrrole", 0),
+        ("furan", 1),
+        ("thiophene", 1),
+        ("imidazole", 0),
+        ("pyrazole", 0),
+        ("oxazole", 1),
+        ("thiazole", 1),
+        ("piperidine", 0),
+        ("piperazine", 0),
+        ("morpholine", 3),
+        ("tetrahydrofuran", 1),
+        ("naphthalene", 1),
+        ("indole", 2),
+        ("quinoline", 3),
+        ("benzimidazole", 1),
+    ];
+    for fragment in fragments() {
+        let molecule = fragment.molecule();
+        let order = molecule.atom_ids().collect::<Vec<_>>();
+        let heavy = |atom| molecule.atom(atom).unwrap().element().atomic_number() != 1;
+        let ring = order.iter().take_while(|atom| heavy(**atom)).count();
+        // Hydrogens follow the heavy atoms, in their parents' order.
+        assert!(
+            order[ring..].iter().all(|atom| !heavy(*atom)),
+            "{}",
+            fragment.name()
+        );
+        let parents = order[ring..]
+            .iter()
+            .map(|h| {
+                let parent = molecule.neighbors(*h).unwrap().next().unwrap();
+                order.iter().position(|atom| *atom == parent).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            parents.windows(2).all(|pair| pair[0] <= pair[1]),
+            "{}",
+            fragment.name()
+        );
+        if fragment.kind() == FragmentKind::Group {
+            if fragment.name() != "phenyl" {
+                assert_eq!(order[0], fragment.attachment_atom(), "{}", fragment.name());
+            }
+            continue;
+        }
+        // The ring atoms come first, each bonded to the next and the last to
+        // the first: around the ring, or along the fused-ring numbering.
+        for i in 0..ring {
+            let (a, b) = (order[i], order[(i + 1) % ring]);
+            assert!(
+                molecule.bond_between(a, b).is_some(),
+                "{}: ring positions {} and {} are not bonded",
+                fragment.name(),
+                i + 1,
+                (i + 1) % ring + 1
+            );
+        }
+        let symbol = |index: usize| molecule.atom(order[index]).unwrap().element().symbol();
+        let expected = heteroatoms
+            .iter()
+            .find(|(name, _)| *name == fragment.name())
+            .map_or(&[][..], |(_, atoms)| *atoms);
+        for index in 0..ring {
+            let element = expected
+                .iter()
+                .find(|(position, _)| *position == index)
+                .map_or("C", |(_, symbol)| *symbol);
+            assert_eq!(
+                symbol(index),
+                element,
+                "{} position {}",
+                fragment.name(),
+                index + 1
+            );
+        }
+        let attachment = attachments
+            .iter()
+            .find(|(name, _)| *name == fragment.name())
+            .map_or(0, |(_, position)| *position);
+        assert_eq!(
+            order[attachment],
+            fragment.attachment_atom(),
+            "{}",
+            fragment.name()
+        );
+    }
+
+    // Placed benzene is named around its ring: C1 and C4 are para.
+    let mut editor = ModelEditor::new();
+    let placed = editor
+        .place_fragment(
+            fragment("benzene").unwrap(),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    let name = |atom: EditAtomId| {
+        let site = editor.topology().atom_site_for_atom(atom).unwrap().unwrap();
+        editor
+            .topology()
+            .atom_site(site)
+            .unwrap()
+            .metadata()
+            .label_atom_id()
+            .unwrap()
+            .to_owned()
+    };
+    let carbons = placed
+        .atoms()
+        .iter()
+        .map(|(_, atom)| *atom)
+        .filter(|atom| element_of(&editor, *atom).atomic_number() == 6)
+        .collect::<Vec<_>>();
+    let names = carbons.iter().map(|atom| name(*atom)).collect::<Vec<_>>();
+    assert_eq!(names, ["C1", "C2", "C3", "C4", "C5", "C6"]);
+    for i in 0..6 {
+        assert!(neighbors(&editor, carbons[i]).contains(&carbons[(i + 1) % 6]));
+    }
+    assert_eq!(bond_distances(&editor, carbons[0], 3)[&carbons[3]], 3);
+}

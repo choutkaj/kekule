@@ -58,6 +58,70 @@ FRAGMENTS = [
 ]
 
 
+# Ring atoms of each ring parent, as PubChem atom numbers listed in the
+# ring's conventional numbering (IUPAC locants: pyridine N1, C2 ... C6;
+# naphthalene C1 ... C4, C4a, C5 ... C8, C8a).
+RING_ORDER = {
+    "benzene": [1, 2, 4, 6, 5, 3],
+    "pyridine": [1, 5, 3, 2, 4, 6],
+    "pyrimidine": [1, 6, 2, 5, 3, 4],
+    "pyrazine": [1, 3, 4, 2, 6, 5],
+    "pyrrole": [1, 2, 4, 5, 3],
+    "furan": [1, 4, 2, 3, 5],
+    "thiophene": [1, 4, 2, 3, 5],
+    "imidazole": [1, 4, 2, 5, 3],
+    "pyrazole": [1, 2, 5, 4, 3],
+    "oxazole": [1, 5, 2, 4, 3],
+    "thiazole": [1, 5, 2, 4, 3],
+    "cyclopropane": [1, 2, 3],
+    "cyclobutane": [1, 2, 4, 3],
+    "cyclopentane": [1, 2, 4, 5, 3],
+    "cyclohexane": [1, 2, 4, 6, 5, 3],
+    "piperidine": [1, 5, 3, 2, 4, 6],
+    "piperazine": [1, 4, 3, 2, 5, 6],
+    "morpholine": [1, 5, 3, 2, 4, 6],
+    "tetrahydrofuran": [1, 4, 2, 3, 5],
+    "naphthalene": [3, 7, 8, 4, 2, 6, 10, 9, 5, 1],
+    "indole": [1, 7, 4, 3, 6, 9, 8, 5, 2],
+    "quinoline": [1, 10, 9, 5, 2, 4, 7, 8, 6, 3],
+    "benzimidazole": [1, 8, 2, 4, 6, 9, 7, 5, 3],
+}
+
+
+def atom_order(record, attachment, elements, bonds):
+    """The new order of the record's atoms, as old 1-based numbers: the ring
+    in its numbering (or the attachment atom first, then the other heavy
+    atoms), then each heavy atom's hydrogens in that order."""
+    heavy = [i for i, element in enumerate(elements, 1) if element != "H"]
+    first = RING_ORDER.get(record, [attachment])
+    order = first + [i for i in heavy if i not in first]
+    for atom in list(order):
+        for a, b, _ in bonds:
+            other = b if a == atom else a if b == atom else None
+            if other is not None and elements[other - 1] == "H" and other not in order:
+                order.append(other)
+    order += [i for i in range(1, len(elements) + 1) if i not in order]
+    return order
+
+
+def reordered(lines, n, m, order):
+    """The connection table lines with atoms in `order`."""
+    new = {old: index for index, old in enumerate(order, 1)}
+    atoms = [lines[4 + old - 1] for old in order]
+    bonds = []
+    for line in lines[4 + n:4 + n + m]:
+        a, b = new[int(line[0:3])], new[int(line[3:6])]
+        bonds.append(f"{a:>3}{b:>3}{line[6:]}")
+    properties = []
+    for line in lines[4 + n + m:]:
+        if line.startswith("M  CHG"):
+            fields = line[6:].split()
+            pairs = [(new[int(fields[i])], int(fields[i + 1])) for i in range(1, len(fields), 2)]
+            line = "M  CHG" + f"{len(pairs):>3}" + "".join(f" {a:>3} {c:>3}" for a, c in pairs)
+        properties.append(line)
+    return [lines[3]] + atoms + bonds + properties, new
+
+
 def main(source, output):
     out = []
     for name, record, attachment, leaving, kind in FRAGMENTS:
@@ -98,7 +162,13 @@ def main(source, output):
                 ), 4)
 
             leaving = max(sorted(hydrogens), key=clearance)
-        block = [name, lines[1], f"PubChem CID {cid}, {record.replace('_', ' ')}"] + lines[3:end + 1]
+        bonds = [
+            (int(line[0:3]), int(line[3:6]), int(line[6:9])) for line in lines[4 + n:4 + n + m]
+        ]
+        order = atom_order(record, attachment, elements, bonds)
+        table, new = reordered(lines[:end + 1], n, m, order)
+        attachment, leaving = new[attachment], new[leaving]
+        block = [name, lines[1], f"PubChem CID {cid}, {record.replace('_', ' ')}"] + table
         block += [
             "> <PUBCHEM_COMPOUND_CID>", cid, "",
             "> <kind>", kind, "",
