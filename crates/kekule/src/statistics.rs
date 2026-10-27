@@ -64,7 +64,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::{Point3, Vector3};
+use crate::geometry::{Point3, PointGrid, Vector3};
 use crate::structure::{AsModelView, Ensemble, Trajectory};
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -1072,86 +1072,9 @@ struct GroupScratch {
     /// Each group's bounding box in this observation.
     bounds: Vec<(Point3, Point3)>,
     /// Each group's grid, valid in this observation when `built` says so.
-    grids: Vec<GroupGrid>,
+    grids: Vec<PointGrid<()>>,
     built: Vec<bool>,
     hits: Vec<bool>,
-}
-
-type Cell = (i64, i64, i64);
-
-/// One group's points binned into cubic cells at least as wide as the cutoff,
-/// sorted by cell, so the points within the cutoff of a point lie in the 27
-/// cells around its own.
-#[derive(Debug, Clone, Default)]
-struct GroupGrid {
-    low: Point3,
-    scale: f64,
-    /// The highest cell on each axis.
-    high: Cell,
-    entries: Vec<(Cell, Point3)>,
-}
-
-impl GroupGrid {
-    /// Rebuilds the grid over `points`, whose bounding box is `bounds`.
-    fn build(&mut self, points: &[Point3], (low, high): (Point3, Point3), cutoff: f64) {
-        // Cells slightly wider than the cutoff keep every contact within the
-        // adjacent cells despite rounding, and at least a millionth of the
-        // box, so cell coordinates stay small enough to round alike. Any
-        // positive edge finds coincident points.
-        let extent = (high.x - low.x).max(high.y - low.y).max(high.z - low.z);
-        let edge = (cutoff * (1.0 + 1e-6)).max(extent * 1e-6);
-        let edge = if edge > 0.0 { edge } else { 1.0 };
-        self.low = low;
-        self.scale = edge.recip();
-        let mut entries = std::mem::take(&mut self.entries);
-        entries.clear();
-        entries.extend(points.iter().map(|point| (self.cell(point), *point)));
-        self.entries = entries;
-        self.entries.sort_unstable_by_key(|(cell, _)| *cell);
-        self.high = self.cell(&high);
-    }
-
-    /// The cell of `point`; one monotone computation places every point, so
-    /// points nearer than an edge along an axis lie in adjacent cells.
-    fn cell(&self, point: &Point3) -> Cell {
-        let axis = |value: f64, origin: f64| ((value - origin) * self.scale).floor() as i64;
-        (
-            axis(point.x, self.low.x),
-            axis(point.y, self.low.y),
-            axis(point.z, self.low.z),
-        )
-    }
-
-    /// Whether any of `candidates` is within `cutoff` of a grid point.
-    fn any_within(&self, candidates: &[Point3], cutoff: f64) -> bool {
-        candidates.iter().any(|candidate| {
-            let (x, y, z) = self.cell(candidate);
-            if x < -1
-                || y < -1
-                || z < -1
-                || x > self.high.0.saturating_add(1)
-                || y > self.high.1.saturating_add(1)
-                || z > self.high.2.saturating_add(1)
-            {
-                return false;
-            }
-            // Cells sort x-major, so the three cells along z around each
-            // (x, y) column are one run.
-            (x - 1..=x + 1).any(|x| {
-                (y - 1..=y + 1).any(|y| {
-                    let first = self
-                        .entries
-                        .partition_point(|(cell, _)| *cell < (x, y, z - 1));
-                    let end = self
-                        .entries
-                        .partition_point(|(cell, _)| *cell <= (x, y, z + 1));
-                    self.entries[first..end]
-                        .iter()
-                        .any(|(_, point)| within(candidate, point, cutoff))
-                })
-            })
-        })
-    }
 }
 
 /// The contact test of [`ContactOccupancyAccumulator`].
@@ -1281,7 +1204,7 @@ impl GroupContactOccupancyAccumulator {
             points: Vec::with_capacity(start),
             starts,
             bounds: vec![(Point3::default(), Point3::default()); groups.len()],
-            grids: std::iter::repeat_with(GroupGrid::default)
+            grids: std::iter::repeat_with(PointGrid::default)
                 .take(groups.len())
                 .collect(),
             built: vec![false; groups.len()],
@@ -1375,11 +1298,15 @@ impl GroupContactOccupancyAccumulator {
                     if !scratch.built[large] {
                         let points =
                             &scratch.points[scratch.starts[large]..scratch.starts[large + 1]];
-                        scratch.grids[large].build(points, scratch.bounds[large], cutoff);
+                        scratch.grids[large].build(
+                            points.iter().map(|point| (*point, ())),
+                            scratch.bounds[large],
+                            cutoff,
+                        );
                         scratch.built[large] = true;
                     }
                     let points = &scratch.points[scratch.starts[small]..scratch.starts[small + 1]];
-                    scratch.grids[large].any_within(points, cutoff)
+                    scratch.grids[large].any_within(points, |a, b| within(a, b, cutoff))
                 }
             };
         }
