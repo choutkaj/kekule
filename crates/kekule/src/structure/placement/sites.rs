@@ -287,6 +287,50 @@ fn perpendicular(v: Vector3) -> Vector3 {
     unit(axis - v * axis.dot(v)).expect("an axis least aligned with a unit vector is not parallel")
 }
 
+/// A proper rotation, as the images of the unit axes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Rotation([Vector3; 3]);
+
+impl Rotation {
+    pub(crate) const IDENTITY: Self = Self([
+        Vector3::new(1.0, 0.0, 0.0),
+        Vector3::new(0.0, 1.0, 0.0),
+        Vector3::new(0.0, 0.0, 1.0),
+    ]);
+
+    /// The rotation by `angle` radians about the unit vector `axis`.
+    pub(crate) fn about(axis: Vector3, angle: f64) -> Self {
+        let (sin, cos) = angle.sin_cos();
+        let turn = |v: Vector3| v * cos + axis.cross(v) * sin + axis * (axis.dot(v) * (1.0 - cos));
+        Self([
+            turn(Vector3::new(1.0, 0.0, 0.0)),
+            turn(Vector3::new(0.0, 1.0, 0.0)),
+            turn(Vector3::new(0.0, 0.0, 1.0)),
+        ])
+    }
+
+    /// The smallest rotation taking the unit vector `from` onto the unit
+    /// vector `to`.
+    pub(crate) fn between(from: Vector3, to: Vector3) -> Self {
+        let axis = from.cross(to);
+        let (sin, cos) = (axis.norm(), from.dot(to));
+        match unit(axis) {
+            Some(axis) if sin > 1.0e-9 => Self::about(axis, sin.atan2(cos)),
+            _ if cos > 0.0 => Self::IDENTITY,
+            _ => Self::about(perpendicular(from), std::f64::consts::PI),
+        }
+    }
+
+    pub(crate) fn apply(&self, v: Vector3) -> Vector3 {
+        self.0[0] * v.x + self.0[1] * v.y + self.0[2] * v.z
+    }
+
+    /// This rotation applied after `first`.
+    pub(crate) fn after(&self, first: &Self) -> Self {
+        Self(first.0.map(|axis| self.apply(axis)))
+    }
+}
+
 pub(crate) fn unit(v: Vector3) -> Option<Vector3> {
     let norm = v.norm();
     (norm.is_finite() && norm > DEGENERATE).then(|| v / norm)
@@ -388,6 +432,19 @@ mod tests {
             let to_first = angle(*site, Vector3::new(1.0, 0.0, 0.0));
             assert!((to_first - 90.0).abs() < 1e-6 || (to_first - 180.0).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn rotations_align_and_turn() {
+        let x = Vector3::new(1.0, 0.0, 0.0);
+        let y = Vector3::new(0.0, 1.0, 0.0);
+        let z = Vector3::new(0.0, 0.0, 1.0);
+        assert!((Rotation::about(z, std::f64::consts::FRAC_PI_2).apply(x) - y).norm() < 1e-12);
+        for (from, to) in [(x, y), (x, x), (x, -x), (unit(x + y + z).unwrap(), -z)] {
+            assert!((Rotation::between(from, to).apply(from) - to).norm() < 1e-12);
+        }
+        let composed = Rotation::about(z, 1.0).after(&Rotation::about(z, 0.5));
+        assert!((composed.apply(x) - Rotation::about(z, 1.5).apply(x)).norm() < 1e-12);
     }
 
     #[test]

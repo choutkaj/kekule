@@ -14,6 +14,11 @@
 //!   of an explicit hydrogen or at the free position nearest a direction
 //!   ([`AttachmentSite`]); [`ModelEditor::place_atom`] starts a new molecule
 //!   at a point.
+//! - [`ModelEditor::attach_fragment`] attaches a named [`Fragment`] of the
+//!   library ([`fragments`], [`fragment`]) the same ways, turned to the
+//!   clearest of a few staggered torsions about the new bond, and
+//!   [`ModelEditor::place_fragment`] places one as a new capped molecule at a
+//!   point.
 //! - [`ideal_bond_length`] gives the length placement uses for an element pair
 //!   and bond order.
 //!
@@ -24,8 +29,9 @@
 //! electrons, formal charge, radical electrons, and bond orders leave
 //! ([`AtomShape`]). A neutral three-coordinate nitrogen with single bonds to a
 //! boron, carbon, nitrogen, or oxygen that has a multiple bond (an amide,
-//! aniline, or pyrrole nitrogen) is conjugated and planar. Elements outside the s and p blocks have no lone pairs here, so
-//! their shape follows their neighbors. Up to six domains are supported.
+//! aniline, or pyrrole nitrogen) is conjugated and planar. Elements outside
+//! the s and p blocks have no lone pairs here, so their shape follows their
+//! neighbors. Up to six domains are supported.
 //!
 //! New sites keep the ideal angles of the shape toward the atom's existing
 //! neighbors. With one neighbor, the first new site is anti to that
@@ -66,12 +72,15 @@
 //! assert_eq!(editor.finish()?.atom_count(), 9);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+mod fragments;
 mod lengths;
 mod names;
 mod sites;
 
+pub use fragments::{fragment, fragments, Fragment, FragmentKind};
+
 pub(crate) use names::{name_prefix, next_free_number, NameAllocator};
-pub(crate) use sites::{free_sites, unit, SiteQuery};
+pub(crate) use sites::{free_sites, unit, Rotation, SiteQuery};
 
 use super::ModelEditError;
 use crate::algorithms::{AddedHydrogenOrigin, RetainedHydrogenReason};
@@ -220,6 +229,50 @@ impl AttachedAtom {
     /// [`AttachmentSite::Hydrogen`].
     pub const fn replaced_hydrogen(&self) -> Option<EditAtomId> {
         self.replaced
+    }
+}
+
+/// The atoms [`ModelEditor::attach_fragment`] added.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachedFragment {
+    pub(crate) atoms: Vec<(crate::molecule::AtomId, EditAtomId)>,
+    pub(crate) attachment: EditAtomId,
+    pub(crate) bond: EditBondId,
+    pub(crate) replaced: Option<EditAtomId>,
+}
+
+impl AttachedFragment {
+    /// The new atoms with the fragment molecule's atoms they copy, in
+    /// molecule order; the leaving atom and its branch are absent.
+    pub fn atoms(&self) -> &[(crate::molecule::AtomId, EditAtomId)] {
+        &self.atoms
+    }
+    /// The new atom bonded to the parent.
+    pub const fn attachment(&self) -> EditAtomId {
+        self.attachment
+    }
+    /// The new bond to the parent.
+    pub const fn bond(&self) -> EditBondId {
+        self.bond
+    }
+    /// The explicit hydrogen deleted for it, under
+    /// [`AttachmentSite::Hydrogen`].
+    pub const fn replaced_hydrogen(&self) -> Option<EditAtomId> {
+        self.replaced
+    }
+}
+
+/// The atoms [`ModelEditor::place_fragment`] added.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacedFragment {
+    pub(crate) atoms: Vec<(crate::molecule::AtomId, EditAtomId)>,
+}
+
+impl PlacedFragment {
+    /// The new atoms with the fragment molecule's atoms they copy, in
+    /// molecule order.
+    pub fn atoms(&self) -> &[(crate::molecule::AtomId, EditAtomId)] {
+        &self.atoms
     }
 }
 
@@ -383,6 +436,18 @@ pub enum PlacementError {
     },
     /// More hydrogens would be added than the options allow.
     LimitExceeded(LimitExceeded),
+    /// No library fragment has this name.
+    UnknownFragment {
+        /// The name asked for.
+        name: String,
+    },
+    /// The fragment atom asked to attach through carries no hydrogen.
+    FragmentAtomWithoutHydrogen {
+        /// The fragment.
+        fragment: &'static str,
+        /// The atom of its molecule.
+        atom: crate::molecule::AtomId,
+    },
 }
 
 impl fmt::Display for PlacementError {
@@ -419,6 +484,10 @@ impl fmt::Display for PlacementError {
                 write!(f, "{atom:?} would have {count} implicit hydrogens")
             }
             Self::LimitExceeded(_) => f.write_str("too many hydrogens to add"),
+            Self::UnknownFragment { name } => write!(f, "no fragment named `{name}`"),
+            Self::FragmentAtomWithoutHydrogen { fragment, atom } => {
+                write!(f, "{atom:?} of fragment {fragment} carries no hydrogen")
+            }
         }
     }
 }

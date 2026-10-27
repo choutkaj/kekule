@@ -1,11 +1,13 @@
 //! Builder placement on model drafts: hydrogens with coordinates, ideal
 //! geometry, attaching atoms, and names.
-use kekule::geometry::{Point3, Vector3};
+use kekule::geometry::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::hydrogens::{AddHydrogensOptions, AddHydrogensScope, RetainedHydrogenReason};
 use kekule::molecule::{Atom, BondOrder, Element, ImplicitHydrogens};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::smiles;
-use kekule::structure::placement::{ideal_bond_length, AtomShape, AttachmentSite, PlacementError};
+use kekule::structure::placement::{
+    fragment, fragments, ideal_bond_length, AtomShape, AttachmentSite, FragmentKind, PlacementError,
+};
 use kekule::structure::{Model, ModelEditor, Positions};
 use kekule::topology::edit::{EditAtomId, EditResidueId};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER};
@@ -658,6 +660,24 @@ fn adenylate_kinase() -> Model {
     .into_model()
 }
 
+/// Copies of `single` side by side, 10 nm apart, until 100,000 atoms.
+fn large_model(single: &Model) -> Model {
+    let mut large = ModelEditor::new();
+    let mut offset = 0.0;
+    while large.topology().atom_count() < 100_000 {
+        let mut copy = single.clone();
+        let shift = RigidTransform::new(
+            Matrix3::default(),
+            Quantity::new(Vector3::new(offset, 0.0, 0.0), NANOMETER),
+        )
+        .unwrap();
+        copy.apply_rigid_transform(&shift).unwrap();
+        large.append_model(&copy).unwrap();
+        offset += 10.0;
+    }
+    large.finish().unwrap()
+}
+
 /// The atoms of the first residue named `name`.
 fn residue_atoms(editor: &ModelEditor, name: &str) -> (EditResidueId, Vec<EditAtomId>) {
     let topology = editor.topology();
@@ -749,11 +769,7 @@ fn new_atoms_are_named_uniquely_in_their_residues() {
 #[test]
 fn placing_on_a_ligand_scales_with_the_ligand() {
     let single = adenylate_kinase();
-    let mut large = ModelEditor::new();
-    while large.topology().atom_count() < 100_000 {
-        large.append_model(&single).unwrap();
-    }
-    let large = large.finish().unwrap();
+    let large = large_model(&single);
     assert!(large.atom_count() >= 100_000);
     let time = |model: &Model| {
         let mut editor = model.to_editor();
@@ -765,14 +781,342 @@ fn placing_on_a_ligand_scales_with_the_ligand() {
         editor.remove_hydrogens(ligand).unwrap();
         (start.elapsed(), report.added_count())
     };
-    // Warm both, then compare: work on the ligand does not grow with the
-    // model it sits in.
-    let _ = (time(&single), time(&large));
-    let (small, added_small) = time(&single);
-    let (big, added_big) = time(&large);
+    // Work on the ligand does not grow with the model it sits in.
+    // The best of several runs, so load from other processes does not count.
+    let best = |model: &Model| (0..5).map(|_| time(model)).min().unwrap();
+    let (small, added_small) = best(&single);
+    let (big, added_big) = best(&large);
     assert_eq!(added_small, added_big);
     assert!(
         big < small * 10 + std::time::Duration::from_millis(20),
         "{small:?} in one copy, {big:?} in 100k atoms"
     );
+}
+
+/// Graph distances, in bonds, from `start` within a draft, up to `limit`.
+fn bond_distances(
+    editor: &ModelEditor,
+    start: EditAtomId,
+    limit: usize,
+) -> BTreeMap<EditAtomId, usize> {
+    let mut distances = BTreeMap::from([(start, 0)]);
+    let mut frontier = vec![start];
+    for depth in 1..=limit {
+        let mut next = Vec::new();
+        for atom in frontier {
+            for neighbor in neighbors(editor, atom) {
+                if let std::collections::btree_map::Entry::Vacant(entry) = distances.entry(neighbor)
+                {
+                    entry.insert(depth);
+                    next.push(neighbor);
+                }
+            }
+        }
+        frontier = next;
+    }
+    distances
+}
+
+#[test]
+fn every_fragment_places_alone_with_its_ideal_geometry() {
+    assert_eq!(fragments().len(), 48);
+    for fragment in fragments() {
+        let mut editor = ModelEditor::new();
+        let target = Point3::new(1.0, 2.0, 3.0);
+        let placed = editor
+            .place_fragment(fragment, Quantity::new(target, NANOMETER))
+            .unwrap();
+        let molecule = fragment.molecule();
+        assert_eq!(
+            placed.atoms().len(),
+            molecule.atom_count(),
+            "{}",
+            fragment.name()
+        );
+        let handles = placed.atoms().iter().copied().collect::<BTreeMap<_, _>>();
+        // Bonds keep the library lengths; the atoms are centered on the point.
+        for (_, bond) in molecule.bonds() {
+            let library = (fragment.position(bond.a()).unwrap().into_value()
+                - fragment.position(bond.b()).unwrap().into_value())
+            .norm()
+                * 10.0;
+            let found = distance(&editor, handles[&bond.a()], handles[&bond.b()]);
+            assert!((found - library).abs() < 1e-9, "{}", fragment.name());
+        }
+        let centroid = placed
+            .atoms()
+            .iter()
+            .fold(Vector3::zero(), |sum, (_, atom)| {
+                sum + (point(&editor, *atom) - Point3::origin())
+            })
+            / placed.atoms().len() as f64;
+        assert!((centroid - Vector3::new(10.0, 20.0, 30.0)).norm() < 1e-9);
+        let model = editor.finish().unwrap();
+        let mut perceived = model.clone();
+        perceived.perceive().unwrap();
+        assert_unique_names(&model);
+        assert_eq!(model.topology().residues().next().unwrap().name(), "UNL");
+    }
+    // Cyclohexane is a chair: ring torsions alternate near 55 degrees.
+    let ring = fragment("cyclohexane").unwrap();
+    let carbons = ring
+        .molecule()
+        .atoms()
+        .filter(|(_, atom)| atom.element().atomic_number() == 6)
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+    let mut cycle = vec![carbons[0]];
+    while cycle.len() < 6 {
+        let last = *cycle.last().unwrap();
+        let next = ring
+            .molecule()
+            .neighbors(last)
+            .unwrap()
+            .find(|n| carbons.contains(n) && !cycle.contains(n))
+            .unwrap();
+        cycle.push(next);
+    }
+    let p = |atom| ring.position(atom).unwrap().into_value();
+    let mut signs = Vec::new();
+    for i in 0..6 {
+        let [a, b, c, d] = [0, 1, 2, 3].map(|k| p(cycle[(i + k) % 6]));
+        let (b1, b2, b3) = (b - a, c - b, d - c);
+        let (n1, n2) = (b1.cross(b2), b2.cross(b3));
+        let torsion = n1
+            .cross(b2 / b2.norm())
+            .dot(n2)
+            .atan2(n1.dot(n2))
+            .to_degrees();
+        assert!((torsion.abs() - 55.0).abs() < 8.0, "{torsion}");
+        signs.push(torsion > 0.0);
+    }
+    assert!(signs.windows(2).all(|pair| pair[0] != pair[1]));
+}
+
+#[test]
+fn every_fragment_attaches_to_every_other_without_clashes() {
+    for host in fragments() {
+        for guest in fragments() {
+            let mut editor = ModelEditor::new();
+            let placed = editor
+                .place_fragment(host, Quantity::new(Point3::origin(), NANOMETER))
+                .unwrap();
+            let handles = placed.atoms().iter().copied().collect::<BTreeMap<_, _>>();
+            // The guest takes the place of the host's leaving atom: in place
+            // of a leaving hydrogen, or toward where a leaving branch was.
+            let parent = handles[&host.attachment_atom()];
+            let leaving = handles[&host.leaving_atom()];
+            let site = if element_of(&editor, leaving).atomic_number() == 1 {
+                AttachmentSite::Hydrogen(leaving)
+            } else {
+                let toward = point(&editor, leaving) - point(&editor, parent);
+                let branch = bond_distances(&editor, leaving, 1)
+                    .into_keys()
+                    .filter(|atom| *atom != parent);
+                editor.delete_atoms(branch.collect::<Vec<_>>()).unwrap();
+                AttachmentSite::Toward(toward)
+            };
+            let host_atoms = editor
+                .topology()
+                .atom_ids()
+                .filter(|atom| *atom != leaving)
+                .collect::<Vec<_>>();
+            let attached = editor
+                .attach_fragment(parent, guest, site)
+                .unwrap_or_else(|e| panic!("{} on {}: {e:?}", guest.name(), host.name()));
+            let label = format!("{} on {}", guest.name(), host.name());
+            let length = ideal(
+                element_of(&editor, parent),
+                element_of(&editor, attached.attachment()),
+                guest.attachment_order(),
+            );
+            assert!((distance(&editor, parent, attached.attachment()) - length).abs() < 1e-9);
+            // Atoms more than two bonds apart across the new bond keep clear;
+            // the closest such contacts (hydrogens of rigid rotors, as
+            // tert-butyl peri to quinoline) are about 1.6 A.
+            for (_, guest_atom) in attached.atoms() {
+                let from_guest = bond_distances(&editor, *guest_atom, 2);
+                for host_atom in &host_atoms {
+                    if from_guest.contains_key(host_atom) {
+                        continue;
+                    }
+                    let found = distance(&editor, *guest_atom, *host_atom);
+                    assert!(found > 1.5, "{label}: {found:.2} A");
+                }
+            }
+            let model = editor.finish().unwrap();
+            assert_eq!(model.topology().instance_count(), 1, "{label}");
+            let mut perceived = model.clone();
+            perceived
+                .perceive()
+                .unwrap_or_else(|e| panic!("{label}: {e:?}"));
+            assert_unique_names(&model);
+        }
+    }
+}
+
+#[test]
+fn fragments_attach_toward_directions_and_through_other_atoms() {
+    let mut editor = ModelEditor::new();
+    let carbon = editor
+        .place_atom(
+            Atom::new(element("C")),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    let phenyl = fragment("Phenyl").unwrap();
+    assert_eq!(phenyl.kind(), FragmentKind::Group);
+    let attached = editor
+        .attach_fragment(
+            carbon,
+            phenyl,
+            AttachmentSite::Toward(Vector3::new(0.0, 1.0, 0.0)),
+        )
+        .unwrap();
+    assert_eq!(attached.atoms().len(), 11);
+    assert_eq!(attached.replaced_hydrogen(), None);
+    let direction = point(&editor, attached.attachment()) - point(&editor, carbon);
+    assert!((direction.norm() - ideal(element("C"), element("C"), BondOrder::Single)).abs() < 1e-9);
+    editor
+        .add_hydrogens([carbon], AddHydrogensOptions::default())
+        .unwrap();
+    let mut model = editor.finish().unwrap();
+    model.perceive().unwrap();
+    assert_eq!(model.atom_count(), 15);
+
+    // Pyridine through a carbon next to the nitrogen.
+    let pyridine = fragment("pyridine").unwrap();
+    let nitrogen = pyridine
+        .molecule()
+        .atoms()
+        .find(|(_, atom)| atom.element().atomic_number() == 7)
+        .unwrap()
+        .0;
+    let ortho = pyridine
+        .molecule()
+        .neighbors(nitrogen)
+        .unwrap()
+        .next()
+        .unwrap();
+    let ortho_pyridine = pyridine.with_attachment(ortho).unwrap();
+    assert_eq!(ortho_pyridine.attachment_atom(), ortho);
+    assert!(matches!(
+        pyridine.with_attachment(nitrogen),
+        Err(PlacementError::FragmentAtomWithoutHydrogen { .. })
+    ));
+    assert!(matches!(
+        fragment("adamantane"),
+        Err(PlacementError::UnknownFragment { .. })
+    ));
+}
+
+#[test]
+fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
+    let single = adenylate_kinase();
+    let large = large_model(&single);
+    let phenyl = fragment("phenyl").unwrap();
+    let time = |model: &Model| {
+        let mut editor = model.to_editor();
+        let (_, ligand) = residue_atoms(&editor, "AP5");
+        editor
+            .add_hydrogens(ligand.clone(), AddHydrogensOptions::default())
+            .unwrap();
+        let carbon = ligand
+            .iter()
+            .copied()
+            .find(|atom| {
+                element_of(&editor, *atom).atomic_number() == 6
+                    && hydrogen_count(&editor, *atom) > 0
+            })
+            .unwrap();
+        let hydrogens = neighbors(&editor, carbon)
+            .into_iter()
+            .filter(|n| element_of(&editor, *n).atomic_number() == 1)
+            .collect::<Vec<_>>();
+        // A first attachment deletes a hydrogen; the second, timed one then
+        // runs in a draft with a deleted atom.
+        let other = ligand
+            .iter()
+            .copied()
+            .rev()
+            .find(|atom| {
+                *atom != carbon
+                    && element_of(&editor, *atom).atomic_number() == 6
+                    && hydrogen_count(&editor, *atom) > 0
+            })
+            .unwrap();
+        let other_hydrogen = neighbors(&editor, other)
+            .into_iter()
+            .find(|n| element_of(&editor, *n).atomic_number() == 1)
+            .unwrap();
+        editor
+            .attach_fragment(other, phenyl, AttachmentSite::Hydrogen(other_hydrogen))
+            .unwrap();
+        let start = std::time::Instant::now();
+        editor
+            .attach_fragment(carbon, phenyl, AttachmentSite::Hydrogen(hydrogens[0]))
+            .unwrap();
+        start.elapsed()
+    };
+    // The best of several runs, so load from other processes does not count.
+    let best = |model: &Model| (0..5).map(|_| time(model)).min().unwrap();
+    let (small, big) = (best(&single), best(&large));
+    assert!(
+        big < small * 10 + std::time::Duration::from_millis(20),
+        "{small:?} in one copy, {big:?} in 100k atoms"
+    );
+}
+
+#[test]
+fn fragments_on_linear_parents_turn_clear_of_their_surroundings() {
+    // Phenyl on an acetylene carbon, with an atom an angstrom beside where
+    // the ring's first torsion would put one of its carbons.
+    let mut editor = ModelEditor::new();
+    let placed = editor
+        .place_fragment(
+            fragment("ethynyl").unwrap(),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    let ethynyl = fragment("ethynyl").unwrap();
+    let handles = placed.atoms().iter().copied().collect::<BTreeMap<_, _>>();
+    let parent = handles[&ethynyl.attachment_atom()];
+    let hydrogen = handles[&ethynyl.leaving_atom()];
+    assert_eq!(
+        editor.atom_geometry(parent).unwrap().shape(),
+        Some(AtomShape::Linear)
+    );
+    let phenyl = fragment("phenyl").unwrap();
+    let mut trial = editor.clone();
+    let first = trial
+        .attach_fragment(parent, phenyl, AttachmentSite::Hydrogen(hydrogen))
+        .unwrap();
+    let ring_carbon = first
+        .atoms()
+        .iter()
+        .map(|(_, atom)| *atom)
+        .find(|atom| *atom != first.attachment() && element_of(&trial, *atom).atomic_number() == 6)
+        .unwrap();
+    // One angstrom outward from the ring carbon, away from the bond axis.
+    let (start, end, carbon) = (
+        point(&trial, parent),
+        point(&trial, first.attachment()),
+        point(&trial, ring_carbon),
+    );
+    let axis = (end - start) / (end - start).norm();
+    let foot = start + axis * (carbon - start).dot(axis);
+    let outward = (carbon - foot) / (carbon - foot).norm();
+    let obstacle_point = Quantity::new(carbon + outward, ANGSTROM);
+    let obstacle = editor
+        .place_atom(Atom::new(element("Ar")), obstacle_point)
+        .unwrap();
+    let attached = editor
+        .attach_fragment(parent, phenyl, AttachmentSite::Hydrogen(hydrogen))
+        .unwrap();
+    let closest = attached
+        .atoms()
+        .iter()
+        .map(|(_, atom)| distance(&editor, *atom, obstacle))
+        .fold(f64::INFINITY, f64::min);
+    assert!(closest > 2.0, "{closest:.2} A");
 }

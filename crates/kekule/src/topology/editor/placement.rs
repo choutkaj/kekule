@@ -1,6 +1,7 @@
-//! Hydrogen materialization and collapse inside the draft of the occurrence
-//! that holds the parent, so represented stereo follows the hydrogens and the
-//! work scales with the edited atoms rather than the system.
+//! Placement edits inside the draft of the occurrence that holds the parent:
+//! hydrogen materialization and collapse, attached atoms, and the atoms of an
+//! attached fragment, so represented stereo follows the hydrogens and the work
+//! scales with the edited atoms rather than the system.
 use super::{EditAtomId, EditBondId, Location, TopologyEditError, TopologyEditor};
 use crate::algorithms::{
     assign_collapsed_hydrogen_counts, collapse_stereo_hydrogen_carrier,
@@ -261,13 +262,28 @@ impl TopologyEditor {
         Ok(rdkit_valence_issue(molecule, loc.local, value).is_some())
     }
 
-    fn register_bonded_atom(
+    /// Adds an unbonded atom to the occurrence draft that holds `anchor`, as
+    /// [`Self::add_atom`] would without starting an occurrence of its own; bond
+    /// it with [`Self::add_bond`], which then merges nothing.
+    pub(crate) fn add_atom_beside(
         &mut self,
-        group: usize,
-        local: AtomId,
-        bond: crate::molecule::BondId,
-        parent: EditAtomId,
-    ) -> (EditAtomId, EditBondId) {
+        anchor: EditAtomId,
+        atom: Atom,
+    ) -> Result<EditAtomId, TopologyEditError> {
+        let loc = self.atom_location(anchor)?;
+        let local = self.draft_mut(loc.group).add_atom(atom)?;
+        let id = self.register_atom(loc.group, local);
+        self.mark_group_changed(loc.group);
+        self.changed();
+        Ok(id)
+    }
+
+    /// Whether the atom storage slot `slot` holds a live atom.
+    pub(crate) fn is_live_atom_slot(&self, slot: usize) -> bool {
+        slot < self.atom_slot_count() && !self.dead_atom_slots.contains(&slot)
+    }
+
+    fn register_atom(&mut self, group: usize, local: AtomId) -> EditAtomId {
         let id = EditAtomId::new();
         let slot = self.properties.atoms().len();
         self.properties.resize_atoms(slot + 1);
@@ -277,6 +293,17 @@ impl TopologyEditor {
             .expect("live atoms name live groups")
             .atoms
             .insert(local, id);
+        id
+    }
+
+    fn register_bonded_atom(
+        &mut self,
+        group: usize,
+        local: AtomId,
+        bond: crate::molecule::BondId,
+        parent: EditAtomId,
+    ) -> (EditAtomId, EditBondId) {
+        let id = self.register_atom(group, local);
         (id, self.register_bond(group, bond, parent, id))
     }
 
