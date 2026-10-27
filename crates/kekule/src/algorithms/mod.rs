@@ -21,7 +21,10 @@ pub use cip::{
 };
 pub use conjugation::{perceive_conjugation, ConjugationError};
 pub(crate) use hydrogens::{
-    add_hydrogens_to_molecule, remove_hydrogens_from_molecule, remove_hydrogens_keeping,
+    add_hydrogens_to_molecule, assign_collapsed_hydrogen_counts, collapse_stereo_hydrogen_carrier,
+    materialize_stereo_hydrogen_carriers, removable_hydrogen, remove_hydrogens_from_molecule,
+    remove_hydrogens_keeping, stereo_hydrogen_bindings, stereo_hydrogen_is_collapsible,
+    stereo_hydrogen_parents,
 };
 pub use hydrogens::{
     AddHydrogensOptions, AddHydrogensReport, AddHydrogensScope, AddedHydrogen, AddedHydrogenOrigin,
@@ -56,6 +59,7 @@ pub use substructure::{
 pub(crate) use valence::{
     allowed_valences, explicit_valence, rdkit_bracket_radical_electrons,
     rdkit_charge_adjusted_default_valence, rdkit_default_valence, rdkit_inferred_hydrogen_count,
+    rdkit_valence_issue,
 };
 pub use valence::{
     perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,

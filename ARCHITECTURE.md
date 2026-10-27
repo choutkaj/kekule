@@ -238,8 +238,13 @@ invalidates perception immediately; validated no-op replacements retain state.
 System editors clone touched definitions lazily and preserve unaffected
 occurrences. Stable draft handles reject deleted or foreign entities. Joining or
 splitting components follows asserted connectivity. Surviving model coordinates
-are preserved; new atoms require supplied coordinates, never invented geometry.
-Geometry-only edits retain the exact shared topology.
+are preserved; new atoms require supplied coordinates, never invented geometry,
+unless the host asks a placement operation on a `ModelEditor` draft
+(`structure::placement`) to derive them from ideal local geometry. Placement
+is part of the host's edit and its one publication, never moves an existing
+atom, works inside the edited occurrences so its cost follows the edited
+atoms rather than the system, and relaxes nothing. Geometry-only edits retain
+the exact shared topology.
 
 Append-oriented construction preserves existing IDs and dense order. General
 structural edits keep surviving atoms in source dense order and append new
@@ -888,7 +893,7 @@ The public modules of `kekule`, by domain:
 | Foundations | `units`, `geometry`, `properties`, `diagnostics`, `parallel` |
 | Chemistry | `molecule`, `stereo` (`cip`, `coordinates`, `cleanup`), `perception` (`valence`, `rings`, `aromaticity`, `conjugation`, `resonance`), `hydrogens`, `descriptors` |
 | Queries | `query`, `substructure`, `select` |
-| Systems and structures | `topology` (`edit`), `structure` (`measure`), `solvation` |
+| Systems and structures | `topology` (`edit`), `structure` (`measure`, `placement`), `solvation` |
 | Analysis | `alignment`, `clustering`, `dssp`, `interactions` |
 | Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `xyz`, `macromolecular`, `components`, `native` |
 
