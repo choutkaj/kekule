@@ -555,7 +555,7 @@ impl<W: Write> Encoder<'_, W> {
         for residue in residues() {
             self.u8(residue_class_code(residue.class()))?;
         }
-        self.bits(residues().map(|residue| residue.explicit_class.is_some()))?;
+        self.bits(residues().map(|residue| residue.explicit_class().is_some()))?;
         self.lists(|| residues().map(|residue| residue.atom_sites().iter().map(|id| id.raw())))?;
         let sites = || hierarchy.atom_sites().map(|(_, site)| site);
         self.count(hierarchy.atom_sites().len())?;

@@ -26,7 +26,8 @@ impl QualifiedId for InstanceBondId {
     }
 }
 
-const ABSENT: u32 = u32::MAX;
+/// The lookup entry of a local slot without a live ID.
+pub(super) const ABSENT: u32 = u32::MAX;
 
 /// One dense order over every live local ID of every instance.
 ///
@@ -106,6 +107,40 @@ impl<Id: QualifiedId> DenseOrder<Id> {
             self.lookup[start + id.local()] = self.order.len() as u32;
             self.order.push(id);
         }
+    }
+
+    /// The order `order` over instances whose definitions have the given
+    /// local slot counts, in instance order. Each ID names a distinct slot
+    /// of its instance.
+    pub(super) fn from_order(order: Vec<Id>, slots: impl IntoIterator<Item = usize>) -> Self {
+        let mut starts = Vec::new();
+        let mut total = 0;
+        for count in slots {
+            starts.push(total);
+            total += count;
+        }
+        let mut lookup = vec![ABSENT; total];
+        for (dense, &id) in order.iter().enumerate() {
+            let slot = starts[id.instance().index()] + id.local();
+            debug_assert_eq!(lookup[slot], ABSENT, "each ID is listed once");
+            lookup[slot] = dense as u32;
+        }
+        Self {
+            order,
+            starts,
+            lookup,
+        }
+    }
+
+    /// The dense index of each local slot of a valid instance, or [`ABSENT`].
+    pub(super) fn instance_lookup(&self, instance: usize) -> &[u32] {
+        let start = self.starts[instance];
+        let end = self
+            .starts
+            .get(instance + 1)
+            .copied()
+            .unwrap_or(self.lookup.len());
+        &self.lookup[start..end]
     }
 
     /// Replaces the order with a permutation of the current IDs.

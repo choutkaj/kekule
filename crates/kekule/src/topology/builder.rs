@@ -55,7 +55,8 @@ pub struct TopologyBuilder {
     hierarchy: HierarchyBuilder,
     properties: TopologyProperties,
     molecule_class_overrides: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
-    preserved_molecule_classes: BTreeMap<MoleculeDefinitionId, MoleculeClass>,
+    // The class each definition keeps unless new evidence arrives, by ID.
+    preserved_molecule_classes: Vec<Option<MoleculeClass>>,
     preserved_residue_classes: BTreeMap<ResidueId, ResidueClass>,
     source_hierarchy: Option<Hierarchy>,
     source_instance_count: usize,
@@ -145,6 +146,51 @@ impl TopologyBuilder {
         self.reorder_atoms(order).map(|_| ())
     }
 
+    /// Stages definitions sharing published molecules, each with the class it
+    /// keeps, if any, and whether that class is explicit.
+    pub(super) fn extend_shared_definitions(
+        &mut self,
+        definitions: impl ExactSizeIterator<Item = (Arc<Molecule>, bool, Option<(MoleculeClass, bool)>)>,
+    ) -> Result<(), TopologyBuildError> {
+        self.reserve_definitions(definitions.len())?;
+        self.preserved_molecule_classes.reserve(definitions.len());
+        for (molecule, default_perception, class) in definitions {
+            let id = checked_id::<MoleculeDefinitionId>(
+                self.definitions.len(),
+                TopologyIdKind::MoleculeDefinition,
+            )?;
+            self.definitions.push(MoleculeDefinition {
+                id,
+                molecule,
+                class: MoleculeClass::SmallMolecule,
+                default_perception,
+            });
+            self.preserved_molecule_classes.push(None);
+            match class {
+                Some((class, true)) => {
+                    self.molecule_class_overrides.insert(id, class);
+                }
+                Some((class, false)) => self.preserved_molecule_classes[id.index()] = Some(class),
+                None => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Installs instances of the staged definitions with both dense orders,
+    /// which the caller built consistently with them.
+    pub(super) fn install_instances(
+        &mut self,
+        instances: Vec<MoleculeInstance>,
+        atoms: DenseOrder<InstanceAtomId>,
+        bonds: DenseOrder<InstanceBondId>,
+    ) {
+        debug_assert!(self.instances.is_empty());
+        self.instances = instances;
+        self.atoms = atoms;
+        self.bonds = bonds;
+    }
+
     /// Applies [`Self::set_atom_order`] and returns each new dense index's
     /// former dense index, for callers that permute coupled dense arrays.
     pub(crate) fn reorder_atoms(
@@ -208,18 +254,18 @@ impl TopologyBuilder {
         // Perceived snapshots may still share static state.
         let atoms = Arc::unwrap_or_clone(atoms);
         let bonds = Arc::unwrap_or_clone(bonds);
-        let hierarchy = Arc::unwrap_or_clone(hierarchy);
+        let mut hierarchy = Arc::unwrap_or_clone(hierarchy);
+        hierarchy.index_atoms();
         let properties = Arc::unwrap_or_clone(properties);
         // Explicit classes stay explicit; clearing one returns it to inference
         // rather than to its retained value.
         let preserved_molecule_classes = definitions
             .iter()
-            .filter(|d| !molecule_class_overrides.contains_key(&d.id()))
-            .map(|d| (d.id(), d.class()))
+            .map(|d| (!molecule_class_overrides.contains_key(&d.id())).then(|| d.class()))
             .collect();
         let preserved_residue_classes = hierarchy
             .residues()
-            .filter(|(_, r)| r.explicit_class.is_none())
+            .filter(|(_, r)| r.explicit_class().is_none())
             .map(|(id, r)| (id, r.class()))
             .collect();
         let source_hierarchy = Some(hierarchy.clone());
@@ -336,7 +382,7 @@ impl TopologyBuilder {
     ) -> Result<(), TopologyBuildError> {
         self.require_definition(definition)?;
         self.molecule_class_overrides.remove(&definition);
-        self.preserved_molecule_classes.remove(&definition);
+        self.preserved_molecule_classes[definition.index()] = None;
         Ok(())
     }
 
@@ -352,7 +398,7 @@ impl TopologyBuilder {
         if explicit {
             self.molecule_class_overrides.insert(definition, class);
         } else {
-            self.preserved_molecule_classes.insert(definition, class);
+            self.preserved_molecule_classes[definition.index()] = Some(class);
         }
         Ok(())
     }
@@ -515,23 +561,32 @@ impl TopologyBuilder {
             self.preserved_residue_classes.extend(
                 hierarchy
                     .residues()
-                    .filter_map(|(id, residue)| residue.explicit_class.map(|class| (id, class))),
+                    .filter_map(|(id, residue)| residue.explicit_class().map(|class| (id, class))),
             );
+            let lookup = hierarchy.take_atom_lookup();
             super::classification::finalize(
                 &mut self.definitions,
-                &self.instances,
                 &mut hierarchy,
-                &self.molecule_class_overrides,
-                &self.preserved_molecule_classes,
-                self.source_hierarchy
-                    .as_ref()
-                    .map(|_| self.source_instance_count),
-                &self.preserved_residue_classes,
+                super::classification::Classification {
+                    instances: &self.instances,
+                    site_of: &|atom| lookup.get(&atom).copied(),
+                    molecule_overrides: &self.molecule_class_overrides,
+                    preserved_molecule_classes: &self.preserved_molecule_classes,
+                    appended_instances_start: self
+                        .source_hierarchy
+                        .as_ref()
+                        .map(|_| self.source_instance_count),
+                    residues: super::classification::ResiduePlan::All(
+                        &self.preserved_residue_classes,
+                    ),
+                },
             );
             hierarchy
         } else {
             self.hierarchy.into_storage()
         };
+        let mut hierarchy = hierarchy;
+        hierarchy.freeze();
 
         let dimensions = [
             self.instances.len(),
@@ -547,6 +602,68 @@ impl TopologyBuilder {
             .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
 
         let hierarchy_index = HierarchyIndex::new(&hierarchy, &self.atoms, self.instances.len());
+        Ok(Topology {
+            definitions: self.definitions,
+            instances: self.instances,
+            atom_order: Arc::new(self.atoms),
+            bond_order: Arc::new(self.bonds),
+            hierarchy: Arc::new(hierarchy),
+            hierarchy_index: Arc::new(hierarchy_index),
+            molecule_class_overrides: self.molecule_class_overrides,
+            properties: Arc::new(self.properties),
+            layout: LayoutId::mint(),
+        })
+    }
+
+    /// Publishes the staged definitions, instances and orders with a
+    /// hierarchy the caller built consistently with them, as an editor
+    /// publishing from a source does. Only the listed residues, and the
+    /// definitions without an explicit or preserved class, are classified;
+    /// the checks of [`Self::build`] run in debug builds only.
+    pub(super) fn publish_prepared(
+        mut self,
+        mut hierarchy: Hierarchy,
+        hierarchy_index: HierarchyIndex,
+        infer_residues: &[ResidueId],
+    ) -> Result<Topology, TopologyBuildError> {
+        if self.instances.is_empty() {
+            return Err(TopologyBuildError::NoMoleculeInstances);
+        }
+        debug_assert_eq!(self.atoms.len(), self.staged_atom_count());
+        debug_assert!(validate_hierarchy(&hierarchy, &self.atoms).is_ok());
+        debug_assert_eq!(
+            hierarchy_index.site_atoms(),
+            HierarchyIndex::new(&hierarchy, &self.atoms, self.instances.len()).site_atoms()
+        );
+        let atoms = &self.atoms;
+        let index = &hierarchy_index;
+        super::classification::finalize(
+            &mut self.definitions,
+            &mut hierarchy,
+            super::classification::Classification {
+                instances: &self.instances,
+                site_of: &|atom| {
+                    let dense = atoms.index(atom)?;
+                    index.atom_site(super::TopologyAtomIndex::new(dense as u32))
+                },
+                molecule_overrides: &self.molecule_class_overrides,
+                preserved_molecule_classes: &self.preserved_molecule_classes,
+                appended_instances_start: None,
+                residues: super::classification::ResiduePlan::Only(infer_residues),
+            },
+        );
+        let dimensions = [
+            self.instances.len(),
+            self.atoms.len(),
+            self.bonds.len(),
+            hierarchy.chains().len(),
+            hierarchy.residue_count(),
+            hierarchy.atom_site_count(),
+        ];
+        self.properties.resize_domains(dimensions);
+        self.properties
+            .validate_dimensions(dimensions)
+            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
@@ -629,7 +746,7 @@ impl TopologyBuilder {
                 let same_component = before.name() == after.name()
                     && before.label_comp_id() == after.label_comp_id()
                     && before.author_comp_id() == after.author_comp_id();
-                let atoms = |hierarchy: &Hierarchy, residue: &super::Residue| {
+                let atoms = |hierarchy: &Hierarchy, residue: super::Residue<'_>| {
                     residue
                         .atom_sites()
                         .iter()
@@ -643,7 +760,7 @@ impl TopologyBuilder {
                 };
                 let same_atoms = atoms(source, before) == atoms(staged, after);
                 let same_class = after
-                    .explicit_class
+                    .explicit_class()
                     .is_none_or(|class| class == before.class());
                 (same_component && same_atoms && same_class).then_some(id)
             })
@@ -669,8 +786,7 @@ impl TopologyBuilder {
                 }
             });
             if !unchanged {
-                self.preserved_molecule_classes
-                    .remove(&instance.definition());
+                self.preserved_molecule_classes[instance.definition().index()] = None;
             }
         }
     }
@@ -691,6 +807,7 @@ impl TopologyBuilder {
             class: MoleculeClass::SmallMolecule,
             default_perception,
         });
+        self.preserved_molecule_classes.push(None);
         Ok(id)
     }
 
@@ -718,6 +835,7 @@ impl TopologyBuilder {
             self.definitions.pop();
             return Err(error);
         }
+        self.preserved_molecule_classes.push(None);
         self.instances.push(MoleculeInstance {
             id: instance,
             definition,
@@ -980,26 +1098,14 @@ pub(crate) fn validate_hierarchy(
                 atom: site.atom(),
             });
         }
-        if hierarchy
-            .atom_site_for_atom(site.atom())
-            .is_none_or(|mapped| mapped.id() != site_id)
-        {
-            return Err(TopologyHierarchyError::InconsistentAtomLookup {
-                site: site_id,
-                atom: site.atom(),
-            });
-        }
     }
-    for (atom, site_id) in hierarchy.atom_lookup_entries() {
-        if hierarchy
-            .atom_site(site_id)
-            .is_none_or(|site| site.atom() != atom)
-        {
-            return Err(TopologyHierarchyError::InconsistentAtomLookup {
-                site: site_id,
-                atom,
-            });
-        }
+    // An atom has at most one site.
+    let entries = hierarchy.atom_lookup_entries();
+    if let Some(pair) = entries.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+        return Err(TopologyHierarchyError::InconsistentAtomLookup {
+            site: pair[1].1,
+            atom: pair[1].0,
+        });
     }
     Ok(())
 }

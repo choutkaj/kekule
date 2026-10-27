@@ -93,8 +93,9 @@ pub(super) fn prepare_model(
             .definition();
         omitted_hydrogens += validate_graph_chemistry(molecule, definition, implicit_hydrogens)?;
         if definition.molecule().atom_ids().any(|atom| {
-            hierarchy
-                .atom_site_for_atom(molecule.qualify_atom(atom))
+            model
+                .topology()
+                .atom_site_of(molecule.qualify_atom(atom))
                 .is_some()
         }) {
             collect_macro_rows(
@@ -238,20 +239,21 @@ fn collect_macro_rows(
 ) -> Result<(), FormatError> {
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
-        let site = hierarchy
-            .atom_site_for_atom(qualified)
+        let site = model
+            .topology()
+            .atom_site_of(qualified)
             .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
         let residue = hierarchy
-            .require_residue(site.residue)
+            .require_residue(site.residue())
             .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
         let chain = hierarchy
-            .require_chain(residue.chain)
+            .require_chain(residue.chain())
             .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
         let assignment = assignments
             .get(&qualified)
             .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
         if site
-            .metadata
+            .metadata()
             .label_asym_id
             .as_deref()
             .is_some_and(|value| value != chain.label_id)
@@ -262,7 +264,7 @@ fn collect_macro_rows(
             }));
         }
         if site
-            .metadata
+            .metadata()
             .type_symbol
             .as_deref()
             .is_some_and(|value| !value.eq_ignore_ascii_case(type_symbol(atom)))
@@ -274,10 +276,10 @@ fn collect_macro_rows(
         }
         let group_pdb = assignment.kind.default_group_pdb().to_owned();
         let label_atom_id = site
-            .metadata
+            .metadata()
             .label_atom_id
             .as_ref()
-            .or(site.metadata.auth_atom_id.as_ref())
+            .or(site.metadata().auth_atom_id.as_ref())
             .cloned()
             .unwrap_or_else(|| generated_atom_name(atom.element.symbol(), atom_id));
         let label_comp_id = residue.label_comp_id().unwrap_or(residue.name()).to_owned();
@@ -291,7 +293,7 @@ fn collect_macro_rows(
             label_atom_id: label_atom_id.clone(),
             label_alt_id: None,
             label_comp_id: label_comp_id.clone(),
-            label_seq_id: residue.label_seq_id,
+            label_seq_id: residue.label_seq_id(),
             insertion_code: residue.insertion_code().map(str::to_owned),
             position: model
                 .position(qualified)
@@ -308,18 +310,22 @@ fn collect_macro_rows(
             auth_seq_id: residue
                 .author_seq_id()
                 .map(str::to_owned)
-                .or_else(|| residue.label_seq_id.map(|value| value.to_string())),
+                .or_else(|| residue.label_seq_id().map(|value| value.to_string())),
             auth_comp_id: residue
                 .author_comp_id()
                 .map(str::to_owned)
                 .unwrap_or(label_comp_id),
             auth_asym_id: site
-                .metadata
+                .metadata()
                 .auth_asym_id
                 .clone()
                 .or_else(|| chain.author_id.clone())
                 .unwrap_or_else(|| chain.label_id.clone()),
-            auth_atom_id: site.metadata.auth_atom_id.clone().unwrap_or(label_atom_id),
+            auth_atom_id: site
+                .metadata()
+                .auth_atom_id
+                .clone()
+                .unwrap_or(label_atom_id),
         });
     }
     Ok(())

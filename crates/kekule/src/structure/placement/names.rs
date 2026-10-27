@@ -64,9 +64,9 @@ pub(crate) fn next_free_number(
         .flat_map(|site| {
             let metadata = site.metadata();
             [metadata.label_atom_id(), metadata.auth_atom_id()]
+                .map(|name| name.and_then(|name| numbered(name, prefix)))
         })
         .flatten()
-        .filter_map(|name| numbered(name, prefix))
         .max()
         .map_or(1, |largest| largest.saturating_add(1))
 }

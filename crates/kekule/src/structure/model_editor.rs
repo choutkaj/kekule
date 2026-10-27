@@ -569,8 +569,7 @@ impl ModelEditor {
         edit: impl FnOnce(&mut TopologyEditor) -> Result<T, TopologyEditError>,
     ) -> Result<T, ModelEditError> {
         let revision = self.topology.structural_revision;
-        let atom_count = self.topology.atom_count();
-        let bond_count = self.topology.bond_count();
+        let mark = self.topology.deletion_mark();
         let result = edit(&mut self.topology)?;
         self.slots.resize_slots(
             self.topology.atom_slot_count(),
@@ -579,27 +578,14 @@ impl ModelEditor {
         if self.topology.structural_revision != revision {
             self.slots.properties.owner_mut().clear();
         }
-        if self.topology.atom_count() < atom_count {
-            let live = self.atom_slots();
-            self.slots.clear_dead_atom_rows(&live);
-        }
-        if self.topology.bond_count() < bond_count {
-            let live = self.bond_slots();
-            self.slots.clear_dead_bond_rows(&live);
-        }
+        // Only the rows this edit freed are cleared; earlier ones already were.
+        let (atoms, bonds) = self.topology.deleted_slots_since(mark);
+        self.slots.clear_atom_rows(atoms);
+        self.slots.clear_bond_rows(bonds);
         Ok(result)
     }
     fn atom_slots(&self) -> Vec<usize> {
-        self.topology
-            .atom_ids()
-            .map(|id| self.topology.atom_slot(id).unwrap())
-            .collect()
-    }
-    fn bond_slots(&self) -> Vec<usize> {
-        self.topology
-            .bond_ids()
-            .map(|id| self.topology.bond_slot(id).unwrap())
-            .collect()
+        self.topology.live_atom_slots()
     }
 }
 

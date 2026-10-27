@@ -190,10 +190,13 @@ hierarchy views borrow and filter this single hierarchy. Source labels and autho
 identifiers remain typed metadata, with their namespaces and insertion codes
 preserved. Hierarchy membership never fabricates covalent bonds. Publication
 derives one private hierarchy index beside it, shared by every snapshot of the
-layout: each site's dense atom, each dense atom's site, and each instance's
-sites, residues, and chains, so hierarchy walks cost what they return. The
-index numbers the sites' atom names against a table of the distinct names on
-first use, which name terms of the selection language read.
+layout: each site's dense atom and each dense atom's site, and, built on first
+use, each instance's sites, residues, and chains, so hierarchy walks cost what
+they return. The index numbers the sites' atom names against a table of the
+distinct names on first use, which name terms of the selection language read.
+The hierarchy stores residues and sites by column; residue labels and site
+metadata are keys into immutable row tables shared by every snapshot and draft
+that keeps them, so republishing an edited hierarchy copies integers.
 
 Each reusable definition has one `MoleculeClass` shared by all its instances;
 each residue has one `ResidueClass`. These are intrinsic classifications, not
@@ -241,7 +244,14 @@ invalidates perception immediately; validated no-op replacements retain state.
 System editors clone touched definitions lazily and preserve unaffected
 occurrences; publication shares every untouched definition, with its
 perception, with the source snapshot, whether or not that snapshot is still
-shared, so an edit copies what it changes. Stable draft handles reject deleted or foreign entities. Joining or
+shared, so an edit copies what it changes. A draft started from a snapshot
+stores nothing per source atom, bond, or hierarchy node: it reads the source
+until an edit changes, moves, or deletes one, and a model draft shares the
+source's positions, occupancies, and B factors until one is written. The
+source snapshot is never written, so undo histories keep every snapshot
+intact. Publication carries untouched occurrences, residues, and sites over
+from the source by index, classifies only what the edit cleared, and costs
+the edit plus a few passes over plain per-atom arrays. Stable draft handles reject deleted or foreign entities. Joining or
 splitting components follows asserted connectivity. Surviving model coordinates
 are preserved; new atoms require supplied coordinates, never invented geometry,
 unless the host asks a placement operation on a `ModelEditor` draft

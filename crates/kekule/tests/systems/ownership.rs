@@ -292,7 +292,8 @@ fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
         &owned.shared_topology(),
         &source.shared_topology()
     ));
-    assert_ne!(
+    // Geometry is shared until written, then the copy owns its own.
+    assert_eq!(
         owned.positions().values().value().as_ptr(),
         source.positions().values().value().as_ptr()
     );
@@ -300,6 +301,10 @@ fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
     owned
         .set_position(atom, Quantity::new(Point3::new(9.0, 0.0, 0.0), ANGSTROM))
         .unwrap();
+    assert_ne!(
+        owned.positions().values().value().as_ptr(),
+        source.positions().values().value().as_ptr()
+    );
     assert_eq!(view.position(atom).unwrap(), source.position(atom).unwrap());
     assert_ne!(
         owned.position(atom).unwrap(),

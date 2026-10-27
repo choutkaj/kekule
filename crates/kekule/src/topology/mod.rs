@@ -62,6 +62,7 @@ mod lookup;
 mod perception;
 mod reconstruct;
 mod selection;
+mod shared_rows;
 mod transform;
 
 #[cfg(test)]
@@ -491,7 +492,7 @@ impl<'a> ResidueView<'a> {
     /// This residue's class and whether it was assigned explicitly.
     pub fn class_assignment(self) -> ClassAssignment<ResidueClass> {
         let residue = self.local();
-        ClassAssignment::new(residue.class(), residue.explicit_class.is_some())
+        ClassAssignment::new(residue.class(), residue.explicit_class().is_some())
     }
 
     /// The label component identifier, or `None` when absent.
@@ -522,9 +523,8 @@ impl<'a> ResidueView<'a> {
     /// This residue's atom sites in residue order.
     pub fn atom_sites(self) -> impl ExactSizeIterator<Item = AtomSiteView<'a>> + 'a {
         let topology = self.topology;
-        topology
-            .hierarchy_index
-            .residue_sites(self.id)
+        self.local()
+            .atom_sites()
             .iter()
             .map(move |&site| AtomSiteView::new(topology, site))
     }
@@ -543,7 +543,7 @@ impl<'a> ResidueView<'a> {
             .expect("dense hierarchy rows cover every node")
     }
 
-    pub(crate) fn local(self) -> &'a Residue {
+    pub(crate) fn local(self) -> Residue<'a> {
         self.topology
             .hierarchy
             .residue(self.id)
@@ -590,10 +590,7 @@ impl<'a> AtomSiteView<'a> {
 
     /// The residue containing this site.
     pub fn residue(self) -> ResidueView<'a> {
-        ResidueView::new(
-            self.topology,
-            self.topology.hierarchy_index.site_residue(self.id),
-        )
+        ResidueView::new(self.topology, self.local().residue())
     }
 
     /// Source atom-site labels.
@@ -615,7 +612,7 @@ impl<'a> AtomSiteView<'a> {
             .expect("dense hierarchy rows cover every node")
     }
 
-    pub(crate) fn local(self) -> &'a AtomSite {
+    pub(crate) fn local(self) -> AtomSite<'a> {
         self.topology
             .hierarchy
             .atom_site(self.id)
@@ -784,12 +781,13 @@ impl<'a> InstanceView<'a> {
     /// Complete chains that contain at least one atom of this occurrence, in
     /// hierarchy order. A chain is not clipped and may contain other atoms.
     ///
-    /// Costs what it returns: the chains are indexed at publication.
+    /// Costs what it returns: the chains of every occurrence are indexed on
+    /// first use, once per layout.
     pub fn chains(self) -> impl ExactSizeIterator<Item = ChainView<'a>> + 'a {
         let topology = self.topology;
         topology
             .hierarchy_index
-            .instance_chains(self.id.index())
+            .instance_chains(&topology.hierarchy, self.id.index())
             .iter()
             .map(move |&chain| ChainView::new(topology, chain))
     }
@@ -797,24 +795,26 @@ impl<'a> InstanceView<'a> {
     /// Complete residues that contain at least one atom of this occurrence, in
     /// hierarchy order. A residue is not clipped and may contain other atoms.
     ///
-    /// Costs what it returns: the residues are indexed at publication.
+    /// Costs what it returns: the residues of every occurrence are indexed on
+    /// first use, once per layout.
     pub fn residues(self) -> impl ExactSizeIterator<Item = ResidueView<'a>> + 'a {
         let topology = self.topology;
         topology
             .hierarchy_index
-            .instance_residues(self.id.index())
+            .instance_residues(&topology.hierarchy, self.id.index())
             .iter()
             .map(move |&residue| ResidueView::new(topology, residue))
     }
 
     /// Atom sites of this occurrence's atoms, in hierarchy order.
     ///
-    /// Costs what it returns: the sites are indexed at publication.
+    /// Costs what it returns: the sites of every occurrence are indexed on
+    /// first use, once per layout.
     pub fn atom_sites(self) -> impl ExactSizeIterator<Item = AtomSiteView<'a>> + 'a {
         let topology = self.topology;
         topology
             .hierarchy_index
-            .instance_sites(self.id.index())
+            .instance_sites(&topology.hierarchy, self.id.index())
             .iter()
             .map(move |&site| AtomSiteView::new(topology, site))
     }
@@ -1051,6 +1051,14 @@ impl Topology {
     /// The one authoritative system-level hierarchy storage.
     pub(crate) fn hierarchy(&self) -> &Hierarchy {
         &self.hierarchy
+    }
+
+    /// The site placing a qualified atom, or `None` when it has none or is
+    /// not in this topology. Constant time.
+    pub(crate) fn atom_site_of(&self, atom: InstanceAtomId) -> Option<AtomSite<'_>> {
+        let index = self.atom_index(atom)?;
+        let site = self.hierarchy_index.atom_site(index)?;
+        self.hierarchy.atom_site(site)
     }
 
     /// The dense atom of every hierarchy atom site, by site ID.

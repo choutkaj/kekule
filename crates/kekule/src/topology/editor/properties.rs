@@ -5,23 +5,74 @@ use super::*;
 /// The live rows of one draft property domain: which handles are live and
 /// which storage slot each one addresses.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum EditRows<'a> {
-    Atoms(&'a DenseMap<EditAtomId, Location<AtomId>>),
-    Bonds(&'a DenseMap<EditBondId, Location<BondId>>),
-    Chains(&'a DenseMap<EditChainId, EditChain>),
-    Residues(&'a DenseMap<EditResidueId, EditResidue>),
-    AtomSites(&'a DenseMap<EditAtomSiteId, EditAtomSite>),
+pub(crate) struct EditRows<'a> {
+    source: Option<&'a Topology>,
+    atoms: &'a Overlay<EditAtomId, Location<AtomId>>,
+    bonds: &'a Overlay<EditBondId, Location<BondId>>,
+    hierarchy: &'a EditHierarchy,
+    domain: RowDomain,
 }
 
-impl EditRows<'_> {
+#[derive(Debug, Clone, Copy)]
+enum RowDomain {
+    Atoms,
+    Bonds,
+    Chains,
+    Residues,
+    AtomSites,
+}
+
+/// The rows of one domain of `$editor`, borrowing only the fields they read.
+macro_rules! edit_rows {
+    ($editor:expr, $domain:ident) => {
+        EditRows {
+            source: $editor.source.as_deref(),
+            atoms: &$editor.atoms,
+            bonds: &$editor.bonds,
+            hierarchy: &$editor.hierarchy,
+            domain: RowDomain::$domain,
+        }
+    };
+}
+
+impl<'a> EditRows<'a> {
+    fn source_hierarchy(self) -> SourceHierarchy<'a> {
+        SourceHierarchy::new(self.source, self.atoms.block(), self.hierarchy)
+    }
+
     /// Live slots in handle order, which is publication order.
     fn live_slots(self) -> Vec<usize> {
-        match self {
-            Self::Atoms(rows) => rows.values().map(|row| row.slot).collect(),
-            Self::Bonds(rows) => rows.values().map(|row| row.slot).collect(),
-            Self::Chains(rows) => rows.values().map(|row| row.slot).collect(),
-            Self::Residues(rows) => rows.values().map(|row| row.slot).collect(),
-            Self::AtomSites(rows) => rows.values().map(|row| row.slot).collect(),
+        let source = self.source;
+        let hierarchy = self.source_hierarchy();
+        match self.domain {
+            RowDomain::Atoms => self
+                .atoms
+                .iter(|index| source_atom(source, index))
+                .map(|(_, row)| row.slot)
+                .collect(),
+            RowDomain::Bonds => self
+                .bonds
+                .iter(|index| source_bond(source, index))
+                .map(|(_, row)| row.slot)
+                .collect(),
+            RowDomain::Chains => self
+                .hierarchy
+                .chains
+                .iter(|index| hierarchy.chain(index))
+                .map(|(_, row)| row.slot)
+                .collect(),
+            RowDomain::Residues => self
+                .hierarchy
+                .residues
+                .iter(|index| hierarchy.residue(index))
+                .map(|(_, row)| row.slot)
+                .collect(),
+            RowDomain::AtomSites => self
+                .hierarchy
+                .sites
+                .iter(|index| hierarchy.site(index))
+                .map(|(_, row)| row.slot)
+                .collect(),
         }
     }
 }
@@ -31,28 +82,55 @@ trait EditRow: Copy {
     fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError>;
 }
 
-macro_rules! edit_rows {
-    ($($handle:ty => $variant:ident, $invalid:ident;)*) => {$(
-        impl EditRow for $handle {
-            fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
-                match rows {
-                    EditRows::$variant(rows) => rows
-                        .get(&self)
-                        .map(|row| row.slot)
-                        .ok_or(TopologyEditError::$invalid(self)),
-                    _ => unreachable!("a handle reads only its own domain's rows"),
-                }
-            }
-        }
-    )*};
+impl EditRow for EditAtomId {
+    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
+        rows.atoms
+            .get(&self, |index| source_atom(rows.source, index))
+            .map(|row| row.slot)
+            .ok_or(TopologyEditError::InvalidAtom(self))
+    }
 }
 
-edit_rows! {
-    EditAtomId => Atoms, InvalidAtom;
-    EditBondId => Bonds, InvalidBond;
-    EditChainId => Chains, InvalidChain;
-    EditResidueId => Residues, InvalidResidue;
-    EditAtomSiteId => AtomSites, InvalidAtomSite;
+impl EditRow for EditBondId {
+    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
+        rows.bonds
+            .get(&self, |index| source_bond(rows.source, index))
+            .map(|row| row.slot)
+            .ok_or(TopologyEditError::InvalidBond(self))
+    }
+}
+
+impl EditRow for EditChainId {
+    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
+        let source = rows.source_hierarchy();
+        rows.hierarchy
+            .chains
+            .get(&self, |index| source.chain(index))
+            .map(|row| row.slot)
+            .ok_or(TopologyEditError::InvalidChain(self))
+    }
+}
+
+impl EditRow for EditResidueId {
+    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
+        let source = rows.source_hierarchy();
+        rows.hierarchy
+            .residues
+            .get(&self, |index| source.residue(index))
+            .map(|row| row.slot)
+            .ok_or(TopologyEditError::InvalidResidue(self))
+    }
+}
+
+impl EditRow for EditAtomSiteId {
+    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
+        let source = rows.source_hierarchy();
+        rows.hierarchy
+            .sites
+            .get(&self, |index| source.site(index))
+            .map(|row| row.slot)
+            .ok_or(TopologyEditError::InvalidAtomSite(self))
+    }
 }
 
 /// One property column of the live rows, in handle order.
@@ -300,7 +378,7 @@ impl<'a> EditProperties<'a> {
     pub fn atoms(&self) -> EditPropertyTable<'a, EditAtomId> {
         EditPropertyTable::new(
             self.editor.properties.atoms().raw(),
-            EditRows::Atoms(&self.editor.atoms),
+            edit_rows!(self.editor, Atoms),
         )
     }
 
@@ -308,7 +386,7 @@ impl<'a> EditProperties<'a> {
     pub fn bonds(&self) -> EditPropertyTable<'a, EditBondId> {
         EditPropertyTable::new(
             self.editor.properties.bonds().raw(),
-            EditRows::Bonds(&self.editor.bonds),
+            edit_rows!(self.editor, Bonds),
         )
     }
 
@@ -316,7 +394,7 @@ impl<'a> EditProperties<'a> {
     pub fn chains(&self) -> EditPropertyTable<'a, EditChainId> {
         EditPropertyTable::new(
             self.editor.properties.chains().raw(),
-            EditRows::Chains(&self.editor.hierarchy.chains),
+            edit_rows!(self.editor, Chains),
         )
     }
 
@@ -324,7 +402,7 @@ impl<'a> EditProperties<'a> {
     pub fn residues(&self) -> EditPropertyTable<'a, EditResidueId> {
         EditPropertyTable::new(
             self.editor.properties.residues().raw(),
-            EditRows::Residues(&self.editor.hierarchy.residues),
+            edit_rows!(self.editor, Residues),
         )
     }
 
@@ -332,7 +410,7 @@ impl<'a> EditProperties<'a> {
     pub fn atom_sites(&self) -> EditPropertyTable<'a, EditAtomSiteId> {
         EditPropertyTable::new(
             self.editor.properties.atom_sites().raw(),
-            EditRows::AtomSites(&self.editor.hierarchy.sites),
+            edit_rows!(self.editor, AtomSites),
         )
     }
 }
@@ -378,7 +456,7 @@ impl EditPropertiesMut<'_> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
             editor.properties.atoms_mut(),
-            EditRows::Atoms(&editor.atoms),
+            edit_rows!(editor, Atoms),
             Some(&mut editor.revision),
         )
     }
@@ -388,7 +466,7 @@ impl EditPropertiesMut<'_> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
             editor.properties.bonds_mut(),
-            EditRows::Bonds(&editor.bonds),
+            edit_rows!(editor, Bonds),
             Some(&mut editor.revision),
         )
     }
@@ -398,7 +476,7 @@ impl EditPropertiesMut<'_> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
             editor.properties.chains_mut(),
-            EditRows::Chains(&editor.hierarchy.chains),
+            edit_rows!(editor, Chains),
             Some(&mut editor.revision),
         )
     }
@@ -408,7 +486,7 @@ impl EditPropertiesMut<'_> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
             editor.properties.residues_mut(),
-            EditRows::Residues(&editor.hierarchy.residues),
+            edit_rows!(editor, Residues),
             Some(&mut editor.revision),
         )
     }
@@ -418,7 +496,7 @@ impl EditPropertiesMut<'_> {
         let editor = &mut *self.editor;
         EditPropertyTableMut::new(
             editor.properties.atom_sites_mut(),
-            EditRows::AtomSites(&editor.hierarchy.sites),
+            edit_rows!(editor, AtomSites),
             Some(&mut editor.revision),
         )
     }
@@ -448,8 +526,7 @@ impl EditPropertiesMut<'_> {
                 .atoms()
                 .value_ref(&key, row)
         {
-            editor.groups[loc.group].as_mut().unwrap().chemistry =
-                GroupChemistry::Draft(Box::new(staged));
+            editor.group_mut(loc.group).chemistry = GroupChemistry::Draft(Box::new(staged));
             editor.revision += 1;
         }
         Ok(())
@@ -479,8 +556,7 @@ impl EditPropertiesMut<'_> {
                 .bonds()
                 .value_ref(&key, row)
         {
-            editor.groups[loc.group].as_mut().unwrap().chemistry =
-                GroupChemistry::Draft(Box::new(staged));
+            editor.group_mut(loc.group).chemistry = GroupChemistry::Draft(Box::new(staged));
             editor.revision += 1;
         }
         Ok(())
@@ -502,12 +578,12 @@ impl TopologyEditor {
     /// The live rows of the draft's atoms, for structure tables kept beside
     /// this draft.
     pub(crate) fn atom_rows(&self) -> EditRows<'_> {
-        EditRows::Atoms(&self.atoms)
+        edit_rows!(self, Atoms)
     }
 
     /// The live rows of the draft's bonds.
     pub(crate) fn bond_rows(&self) -> EditRows<'_> {
-        EditRows::Bonds(&self.bonds)
+        edit_rows!(self, Bonds)
     }
 }
 

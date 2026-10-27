@@ -1,10 +1,8 @@
 //! Ordered maps whose keys are mostly dense integers.
 //!
-//! A draft of a large topology holds one entry per source atom, bond and
-//! hierarchy node. Their keys are a contiguous block of handles allocated
-//! together, or small local and source IDs, so vectors index them directly;
-//! keys outside that range fall back to a `BTreeMap`. Iteration is in key
-//! order, as for a `BTreeMap`.
+//! Draft groups map small local IDs, allocated in order, to handles, so
+//! vectors index them directly; keys far outside that range fall back to a
+//! `BTreeMap`. Iteration is in key order, as for a `BTreeMap`.
 
 use std::collections::{btree_map, BTreeMap};
 use std::fmt;
@@ -57,6 +55,7 @@ impl<K: DenseKey, V> DenseMap<K, V> {
 
     /// An empty map reserving vector slots for the `len` consecutive keys
     /// from `base`; it stores other keys sparsely.
+    #[cfg(test)]
     pub(crate) fn block(base: u64, len: usize) -> Self {
         Self {
             base,
@@ -76,14 +75,6 @@ impl<K: DenseKey, V> DenseMap<K, V> {
 
     pub(crate) fn len(&self) -> usize {
         self.dense_len + self.sparse.len()
-    }
-
-    /// An empty map with the same dense block as `other`.
-    pub(crate) fn block_of<W>(other: &DenseMap<K, W>) -> Self {
-        Self {
-            grow: other.grow,
-            ..Self::block(other.base, other.slots.len())
-        }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -161,10 +152,6 @@ impl<K: DenseKey, V> DenseMap<K, V> {
 
     fn end(&self) -> u64 {
         self.base.saturating_add(self.slots.len() as u64)
-    }
-
-    pub(crate) fn keys(&self) -> impl ExactSizeIterator<Item = &K> + DoubleEndedIterator + '_ {
-        self.iter().map(|(key, _)| key)
     }
 
     pub(crate) fn values(&self) -> impl ExactSizeIterator<Item = &V> + DoubleEndedIterator + '_ {
@@ -479,7 +466,7 @@ mod tests {
             .map(|(k, v)| (k.0, v))
             .collect::<Vec<_>>();
         assert_eq!(owned, [(3, 7), (10, 20), (12, 0), (14, 28), (99, 198)]);
-        let mut other = DenseMap::<Key, u64>::block_of(&map);
+        let mut other = DenseMap::<Key, u64>::block(10, 5);
         for (k, &v) in &map {
             other.insert(*k, v);
         }
@@ -497,7 +484,7 @@ mod tests {
         assert!(map.sparse.is_empty());
         map.insert(AtomId::new(10_000), 7);
         assert_eq!(map.sparse.len(), 1);
-        let keys = map.keys().map(|id| id.raw()).collect::<Vec<_>>();
+        let keys = map.iter().map(|(id, _)| id.raw()).collect::<Vec<_>>();
         assert_eq!(keys, [0, 1, 2, 4, 5, 10_000]);
     }
 

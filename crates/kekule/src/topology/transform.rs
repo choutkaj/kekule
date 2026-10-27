@@ -199,7 +199,7 @@ impl Topology {
                 builder.preserve_residue_class(
                     ResidueId::new(target_index as u32),
                     residue.class(),
-                    residue.explicit_class.is_some(),
+                    residue.explicit_class().is_some(),
                 )?;
             }
         }
@@ -317,7 +317,7 @@ fn copy_filtered_hierarchy(
                 target.add_shared_atom_site(
                     residue,
                     target_atom,
-                    Arc::clone(&source_site.metadata),
+                    &source_site.shared_metadata(),
                 )?;
                 projection.atom_sites.push(source_site.id().index());
             }

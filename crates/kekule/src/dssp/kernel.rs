@@ -507,7 +507,7 @@ fn order_chain<'a>(hierarchy: &'a Hierarchy, logical: &LogicalChain<'a>) -> Vec<
                 .label_seq_id()
                 .cmp(&right_residue.label_seq_id())
         } else if author_numbered {
-            let number = |residue: &Residue| {
+            let number = |residue: Residue<'_>| {
                 residue
                     .author_seq_id()
                     .and_then(|value| value.parse::<i64>().ok())
@@ -536,15 +536,15 @@ fn prepare_residue(topology: &Topology, entry: &ChainResidue<'_>) -> PreparedRes
     let mut backbone = [None; 4];
     let mut any_backbone_atom = false;
     let mut repeated = None;
-    for &site_id in &residue.atom_sites {
+    for &site_id in residue.atom_sites() {
         let site = hierarchy
             .atom_site(site_id)
             .expect("residue atom sites come from the model hierarchy");
         let atom_name = site
-            .metadata
+            .metadata()
             .label_atom_id
             .as_deref()
-            .or(site.metadata.auth_atom_id.as_deref())
+            .or(site.metadata().auth_atom_id.as_deref())
             .map(str::trim);
         let Some(backbone_index) = atom_name.and_then(backbone_index) else {
             continue;
@@ -556,7 +556,7 @@ fn prepare_residue(topology: &Topology, entry: &ChainResidue<'_>) -> PreparedRes
         }
         backbone[backbone_index] = Some(
             topology
-                .atom_index(site.atom)
+                .atom_index(site.atom())
                 .expect("hierarchy atoms are topology atoms")
                 .index(),
         );
@@ -564,11 +564,11 @@ fn prepare_residue(topology: &Topology, entry: &ChainResidue<'_>) -> PreparedRes
     PreparedResidue {
         key: entry.residue,
         source_chain: entry.chain.id,
-        label_sequence_id: residue.label_seq_id,
+        label_sequence_id: residue.label_seq_id(),
         atoms: repeated.map_or(Ok(backbone), Err),
         any_backbone_atom,
         amino_acid: residue.class() == ResidueClass::AminoAcid,
-        is_proline: residue.name.eq_ignore_ascii_case("PRO"),
+        is_proline: residue.name().eq_ignore_ascii_case("PRO"),
     }
 }
 
@@ -802,12 +802,12 @@ fn source(hierarchy: &Hierarchy, chain: ChainId, key: ResidueId) -> DsspResidueS
     )
 }
 
-fn residue_source(chain: &Chain, residue: &Residue) -> DsspResidueSource {
+fn residue_source(chain: &Chain, residue: Residue<'_>) -> DsspResidueSource {
     DsspResidueSource {
         residue_name: residue.name().to_owned(),
         chain_label_id: chain.label_id.clone(),
         chain_author_id: chain.author_id.clone(),
-        label_sequence_id: residue.label_seq_id,
+        label_sequence_id: residue.label_seq_id(),
         author_sequence_id: residue.author_seq_id().map(str::to_owned),
         insertion_code: residue.insertion_code().map(str::to_owned),
     }

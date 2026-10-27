@@ -3,33 +3,70 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::molecule::{BondOrder, Molecule};
 
 use super::{
-    Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinition, MoleculeDefinitionId,
+    AtomSiteId, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinition, MoleculeDefinitionId,
     MoleculeInstance, ResidueClass, ResidueId,
 };
 
+/// Which residues publication classifies.
+pub(super) enum ResiduePlan<'a> {
+    /// Every residue: the listed classes are kept, the rest inferred.
+    All(&'a BTreeMap<ResidueId, ResidueClass>),
+    /// Only the listed residues are inferred; the rest keep their classes.
+    Only(&'a [ResidueId]),
+}
+
+/// The classification inputs of one publication besides its definitions.
+pub(super) struct Classification<'a> {
+    pub(super) instances: &'a [MoleculeInstance],
+    /// The site placing an atom, if any.
+    pub(super) site_of: &'a dyn Fn(InstanceAtomId) -> Option<AtomSiteId>,
+    pub(super) molecule_overrides: &'a BTreeMap<MoleculeDefinitionId, MoleculeClass>,
+    /// The class each definition keeps unless new evidence arrives, by ID.
+    pub(super) preserved_molecule_classes: &'a [Option<MoleculeClass>],
+    pub(super) appended_instances_start: Option<usize>,
+    pub(super) residues: ResiduePlan<'a>,
+}
+
 pub(super) fn finalize(
     definitions: &mut [MoleculeDefinition],
-    instances: &[MoleculeInstance],
     hierarchy: &mut Hierarchy,
-    molecule_overrides: &BTreeMap<MoleculeDefinitionId, MoleculeClass>,
-    preserved_molecule_classes: &BTreeMap<MoleculeDefinitionId, MoleculeClass>,
-    appended_instances_start: Option<usize>,
-    residue_overrides: &BTreeMap<ResidueId, ResidueClass>,
+    inputs: Classification<'_>,
 ) {
-    for index in 0..hierarchy.residues.len() {
-        let residue_id = hierarchy.residues[index].id();
-        let class = residue_overrides
-            .get(&residue_id)
-            .copied()
-            .unwrap_or_else(|| {
-                infer_residue_class(
-                    &hierarchy.residues[index],
-                    hierarchy,
-                    definitions,
-                    instances,
-                )
-            });
-        hierarchy.residues[index].class = class;
+    let Classification {
+        instances,
+        site_of,
+        molecule_overrides,
+        preserved_molecule_classes,
+        appended_instances_start,
+        residues,
+    } = inputs;
+    let infer = |residue: ResidueId, hierarchy: &Hierarchy| {
+        infer_residue_class(
+            hierarchy
+                .residue(residue)
+                .expect("classified residues exist"),
+            hierarchy,
+            definitions,
+            instances,
+        )
+    };
+    match residues {
+        ResiduePlan::All(overrides) => {
+            for index in 0..hierarchy.residue_count() {
+                let residue = ResidueId::new(index as u32);
+                let class = overrides
+                    .get(&residue)
+                    .copied()
+                    .unwrap_or_else(|| infer(residue, hierarchy));
+                hierarchy.set_residue_class(residue, class);
+            }
+        }
+        ResiduePlan::Only(residues) => {
+            for &residue in residues {
+                let class = infer(residue, hierarchy);
+                hierarchy.set_residue_class(residue, class);
+            }
+        }
     }
 
     // Only definitions that may be inferred need evidence: explicit classes
@@ -38,17 +75,23 @@ pub(super) fn finalize(
     // cost nothing.
     let inferable =
         |definition: MoleculeDefinitionId| !molecule_overrides.contains_key(&definition);
+    let preserved = |definition: MoleculeDefinitionId| {
+        preserved_molecule_classes
+            .get(definition.index())
+            .copied()
+            .flatten()
+    };
     let mut has_new_evidence = vec![false; definitions.len()];
     if let Some(start) = appended_instances_start {
         for instance in instances.iter().skip(start) {
             let definition = instance.definition();
             if inferable(definition)
-                && preserved_molecule_classes.contains_key(&definition)
+                && preserved(definition).is_some()
                 && !has_new_evidence[definition.index()]
             {
                 let molecule = definitions[definition.index()].molecule();
                 has_new_evidence[definition.index()] =
-                    infer_instance_class(instance, molecule, hierarchy).is_some();
+                    infer_instance_class(instance, molecule, hierarchy, site_of).is_some();
             }
         }
     }
@@ -56,31 +99,29 @@ pub(super) fn finalize(
     for instance in instances {
         let definition = instance.definition();
         if !inferable(definition)
-            || (preserved_molecule_classes.contains_key(&definition)
-                && !has_new_evidence[definition.index()])
+            || (preserved(definition).is_some() && !has_new_evidence[definition.index()])
         {
             continue;
         }
         let molecule = definitions[definition.index()].molecule();
-        if let Some(class) = infer_instance_class(instance, molecule, hierarchy) {
+        if let Some(class) = infer_instance_class(instance, molecule, hierarchy, site_of) {
             evidence[definition.index()].insert(class);
         }
     }
 
     for definition in definitions {
+        let id = definition.id();
         definition.class = molecule_overrides
-            .get(&definition.id())
+            .get(&id)
+            .copied()
             .or_else(|| {
                 // A resumed builder's new informative occurrence can change or
                 // conflict with the evidence for a reused definition. Explicit
                 // assignments still win; ordinary appends preserve cached classes.
-                preserved_molecule_classes
-                    .get(&definition.id())
-                    .filter(|_| !has_new_evidence[definition.id().index()])
+                preserved(id).filter(|_| !has_new_evidence[id.index()])
             })
-            .copied()
             .unwrap_or_else(|| {
-                let classes = &evidence[definition.id().index()];
+                let classes = &evidence[id.index()];
                 match classes.len() {
                     0 => MoleculeClass::SmallMolecule,
                     1 => *classes.iter().next().expect("one class is present"),
@@ -91,7 +132,7 @@ pub(super) fn finalize(
 }
 
 fn infer_residue_class(
-    residue: &super::Residue,
+    residue: super::Residue<'_>,
     hierarchy: &Hierarchy,
     definitions: &[MoleculeDefinition],
     instances: &[MoleculeInstance],
@@ -151,14 +192,12 @@ fn infer_instance_class(
     instance: &MoleculeInstance,
     molecule: &Molecule,
     hierarchy: &Hierarchy,
+    site_of: &dyn Fn(InstanceAtomId) -> Option<AtomSiteId>,
 ) -> Option<MoleculeClass> {
-    let residue_of = |atom: InstanceAtomId| {
-        hierarchy
-            .atom_site_for_atom(atom)
-            .map(|site| site.residue())
-    };
+    let site = |atom: InstanceAtomId| site_of(atom).and_then(|site| hierarchy.atom_site(site));
+    let residue_of = |atom: InstanceAtomId| site(atom).map(|site| site.residue());
     let name_of = |atom: InstanceAtomId| {
-        let site = hierarchy.atom_site_for_atom(atom)?;
+        let site = site(atom)?;
         let name = site
             .metadata()
             .label_atom_id
@@ -166,7 +205,12 @@ fn infer_instance_class(
             .or(site.metadata().auth_atom_id.as_deref())?;
         Some(normalize_atom_name(name))
     };
-    let class_of = |residue: ResidueId| hierarchy.residues[residue.index()].class();
+    let class_of = |residue: ResidueId| {
+        hierarchy
+            .residue(residue)
+            .expect("sites name residues")
+            .class()
+    };
     let qualified_atoms = molecule
         .atom_ids()
         .map(|atom| InstanceAtomId::new(instance.id(), atom))
