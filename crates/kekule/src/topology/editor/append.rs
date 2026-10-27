@@ -28,6 +28,8 @@ impl TopologyEditor {
         };
         let definitions = source
             .definitions()
+            // A fresh allocation per import: added groups reuse a definition
+            // only when they share one, which stays within this import.
             .map(|definition| (definition.id(), Arc::new(definition.molecule().clone())))
             .collect::<BTreeMap<_, _>>();
         let instance_start = self.properties.molecule_instances().len();
@@ -36,13 +38,12 @@ impl TopologyEditor {
             .resize_missing(instance_start + source.instance_count());
         // Imported atoms keep the source dense order after existing rows.
         let bases = (self.properties.atoms().len(), self.properties.bonds().len());
-        let (atom_handles, bond_handles) = GroupIdentity::source_handles(&source);
+        let handles = GroupIdentity::source_handles(&source);
         for (instance, value) in source.instance_records() {
             let molecule = &definitions[&value.definition()];
             let group_index = self.groups.len();
-            let identity =
-                GroupIdentity::dense(&source, instance, (&atom_handles, &bond_handles), bases);
-            let added = self.register_group(
+            let identity = GroupIdentity::dense(&source, instance, handles, bases);
+            let group = self.register_group(
                 GroupChemistry::Added(Arc::clone(molecule)),
                 molecule,
                 None,
@@ -52,6 +53,7 @@ impl TopologyEditor {
                     .contains_key(&value.definition()),
                 identity,
             );
+            let added = self.group_handles(group);
             self.groups[group_index].as_mut().unwrap().instance_slot =
                 Some(instance_start + instance.index());
             self.properties

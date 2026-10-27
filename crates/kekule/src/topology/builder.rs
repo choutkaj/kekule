@@ -384,7 +384,17 @@ impl TopologyBuilder {
         &mut self,
         molecule: Molecule,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
-        self.commit_definition(molecule)
+        self.commit_definition(Arc::new(molecule), false)
+    }
+
+    /// Stages a definition sharing a published molecule, which keeps its
+    /// perception provenance.
+    pub(super) fn add_shared_definition(
+        &mut self,
+        molecule: Arc<Molecule>,
+        default_perception: bool,
+    ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
+        self.commit_definition(molecule, default_perception)
     }
 
     /// Adds one occurrence of a staged definition, appending its atoms to the
@@ -667,7 +677,8 @@ impl TopologyBuilder {
 
     fn commit_definition(
         &mut self,
-        molecule: Molecule,
+        molecule: Arc<Molecule>,
+        default_perception: bool,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
         self.reserve_definitions(1)?;
         let id = checked_id::<MoleculeDefinitionId>(
@@ -678,6 +689,7 @@ impl TopologyBuilder {
             id,
             molecule,
             class: MoleculeClass::SmallMolecule,
+            default_perception,
         });
         Ok(id)
     }
@@ -698,8 +710,9 @@ impl TopologyBuilder {
         )?;
         self.definitions.push(MoleculeDefinition {
             id: definition,
-            molecule,
+            molecule: Arc::new(molecule),
             class: MoleculeClass::SmallMolecule,
+            default_perception: false,
         });
         if let Err(error) = self.extend_orders(instance, definition) {
             self.definitions.pop();
