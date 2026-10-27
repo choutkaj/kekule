@@ -36,3 +36,7 @@ kekule-traj.workspace = true
 [[example]]
 name = "openff_workflow"
 required-features = ["openff"]
+
+[[example]]
+name = "clean_up"
+required-features = ["openff"]

@@ -15,7 +15,9 @@
 //!   `openff` feature provides `openff::OpenFfPotential`, which evaluates a
 //!   `kekule_openff::ParameterizedTopology`. Classical backends share private
 //!   functional-form kernels that follow the singular-geometry policy below.
-//! - [`minimize()`] optimizes coordinates under any potential.
+//! - [`minimize()`] optimizes coordinates under any potential, and
+//!   [`minimize_scoped`] moves only selected atoms, optionally with position
+//!   restraints, while the others stay fixed.
 //!
 //! Preparation is explicit: nothing here parameterizes, perceives, adds
 //! hydrogens, or otherwise changes chemistry. All values use Kekule's canonical
@@ -72,8 +74,9 @@ mod potential;
 pub mod openff;
 
 pub use minimize::{
-    minimize, minimize_with_observer, Minimization, MinimizationError, MinimizationStatus,
-    MinimizationStep, MinimizeOption, MinimizeOptions, NumericalFailure,
+    minimize, minimize_scoped, minimize_scoped_with_observer, minimize_with_observer, Minimization,
+    MinimizationError, MinimizationScope, MinimizationStatus, MinimizationStep, MinimizeOption,
+    MinimizeOptions, NumericalFailure, PositionRestraint, RestraintProblem,
 };
 pub use potential::{
     ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, InteractionKind,
