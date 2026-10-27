@@ -11,6 +11,20 @@ are marked **Breaking:**.
 
 ### Added
 
+- OpenFF failures that name their atoms (SeekDelta K58), so a host reports
+  which atoms a force field or charge model cannot handle without parsing
+  error text. `kekule_openff::Error::atoms` lists every atom a failure
+  concerns, as IDs of the molecule of `Error::definition` or of the molecule
+  passed in: all atoms with implicit hydrogens or radicals, all atoms of
+  elements outside the charge model's domain, all atoms a forbidden domain
+  pattern matches, every atom of the interactions a handler leaves
+  unassigned, the atoms without vdW parameters, and the atoms whose element,
+  connectivity, or delocalized bonds NAGL features cannot encode; it is empty
+  for failures that concern no atom. The detail text names them too, and an
+  unassigned handler now reports how many interactions it left, not only the
+  first. `NaglModel::elements` and `NaglModel::supports_element` give the
+  elements a charge model covers (Ash: H, C, N, O, F, P, S, Cl, Br, I), so a
+  host can refuse a molecule before parameterizing it.
 - Non-covalent interactions (SeekDelta K6), in the new `kekule::interactions`
   module, for a host that draws and lists the interactions of marked atoms
   and follows them through trajectory playback. `InteractionFeatures::new`

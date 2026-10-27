@@ -1,4 +1,5 @@
 use crate::{
+    error::atom_list,
     explicit,
     offxml::{ForceField, Rule},
     parameters::*,
@@ -180,8 +181,12 @@ impl ForceField {
                 if m.bond_between(atoms[1], atoms[i]).is_none() {
                     return Err(Error::new(
                         ErrorKind::ForceField,
-                        "improper parameter has invalid connectivity",
-                    ));
+                        format!(
+                            "improper parameter has invalid connectivity of {}",
+                            atom_list(atoms)
+                        ),
+                    )
+                    .with_atoms(*atoms));
                 }
             }
         }
@@ -189,8 +194,12 @@ impl ForceField {
             if !bonds.contains(pair) && self.constraints[rule].parameter.1.is_none() {
                 return Err(Error::new(
                     ErrorKind::ForceField,
-                    "a nonbonded constraint requires an explicit distance",
-                ));
+                    format!(
+                        "a nonbonded constraint of {} requires an explicit distance",
+                        atom_list(pair)
+                    ),
+                )
+                .with_atoms(*pair));
             }
         }
         Ok(assigned)
@@ -498,17 +507,32 @@ impl ForceField {
                 }
             }
         }
-        result.vdw = atom_vdw
-            .into_iter()
-            .map(|parameter| {
-                parameter.ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::Unparameterized,
-                        "topology atom has no vdW parameter",
-                    )
-                })
-            })
-            .collect::<Result<_>>()?;
+        if let Some(dense) = atom_vdw.iter().position(Option::is_none) {
+            // Name every such atom of the first affected definition.
+            let instance = topology.atom_ids()[dense].instance();
+            let definition = topology
+                .instance(instance)
+                .expect("topology atoms belong to its instances")
+                .definition_id();
+            let atoms: Vec<_> = topology
+                .atom_ids()
+                .iter()
+                .zip(&atom_vdw)
+                .filter(|(id, parameter)| id.instance() == instance && parameter.is_none())
+                .map(|(id, _)| id.atom())
+                .collect();
+            return Err(Error::new(
+                ErrorKind::Unparameterized,
+                format!(
+                    "{} {} no vdW parameter",
+                    atom_list(&atoms),
+                    if atoms.len() == 1 { "has" } else { "have" }
+                ),
+            )
+            .in_definition(definition)
+            .with_atoms(atoms));
+        }
+        result.vdw = atom_vdw.into_iter().flatten().collect();
         result.charges = Quantity::new(atom_charges, result.charges.unit());
         Ok(result)
     }
@@ -563,26 +587,42 @@ fn shared<P: Clone>(rules: &[Rule<P>]) -> Vec<Arc<P>> {
         .collect()
 }
 
+/// Fails naming every atom of the handler's unassigned interactions, or of
+/// the matches with invalid connectivity.
 fn complete<const N: usize>(
     handler: &str,
     expected: &BTreeSet<[AtomId; N]>,
     actual: &BTreeMap<[AtomId; N], usize>,
 ) -> Result<()> {
-    for atoms in expected {
-        if !actual.contains_key(atoms) {
-            return Err(Error::new(
-                ErrorKind::Unparameterized,
-                format!("unassigned {handler} interaction {atoms:?}"),
-            ));
-        }
+    let missing: Vec<_> = expected
+        .iter()
+        .filter(|atoms| !actual.contains_key(*atoms))
+        .collect();
+    if let Some(first) = missing.first() {
+        let error = Error::new(
+            ErrorKind::Unparameterized,
+            format!(
+                "{} unassigned {handler} interaction{}, the first of {}",
+                missing.len(),
+                if missing.len() == 1 { "" } else { "s" },
+                atom_list(&first[..])
+            ),
+        );
+        return Err(error.with_atoms(missing.into_iter().flatten().copied()));
     }
-    for atoms in actual.keys() {
-        if !expected.contains(atoms) {
-            return Err(Error::new(
-                ErrorKind::ForceField,
-                format!("{handler} pattern matches invalid connectivity {atoms:?}"),
-            ));
-        }
+    let invalid: Vec<_> = actual
+        .keys()
+        .filter(|atoms| !expected.contains(*atoms))
+        .collect();
+    if let Some(first) = invalid.first() {
+        let error = Error::new(
+            ErrorKind::ForceField,
+            format!(
+                "{handler} pattern matches invalid connectivity of {}",
+                atom_list(&first[..])
+            ),
+        );
+        return Err(error.with_atoms(invalid.into_iter().flatten().copied()));
     }
     Ok(())
 }
