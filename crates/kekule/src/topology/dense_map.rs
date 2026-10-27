@@ -300,7 +300,7 @@ dense_id!(
 );
 
 /// An instance-qualified source ID with a dense local part.
-pub(crate) trait Qualified: Copy {
+pub(crate) trait Qualified: Copy + Ord {
     type Local: DenseKey;
     fn split(self) -> (usize, Self::Local);
     fn join(instance: usize, local: Self::Local) -> Self;
@@ -334,15 +334,22 @@ impl Qualified for crate::topology::InstanceBondId {
 
 /// A map keyed by instance-qualified source IDs: one dense local map per
 /// instance, iterated in instance and then local order.
+///
+/// Like [`DenseMap`], it grows its instance vector only over short gaps, so
+/// an untrusted instance ID far past the others is stored sparsely rather
+/// than allocating every instance before it.
 #[derive(Clone)]
 pub(crate) struct QualifiedMap<K: Qualified, V> {
     instances: Vec<DenseMap<K::Local, V>>,
+    // Keys of instances at or past `instances.len()`.
+    sparse: BTreeMap<K, V>,
 }
 
 impl<K: Qualified, V> Default for QualifiedMap<K, V> {
     fn default() -> Self {
         Self {
             instances: Vec::new(),
+            sparse: BTreeMap::new(),
         }
     }
 }
@@ -356,7 +363,10 @@ impl<K: Qualified + fmt::Debug, V: fmt::Debug> fmt::Debug for QualifiedMap<K, V>
 impl<K: Qualified, V> QualifiedMap<K, V> {
     pub(crate) fn get(&self, key: &K) -> Option<&V> {
         let (instance, local) = key.split();
-        self.instances.get(instance)?.get(&local)
+        match self.instances.get(instance) {
+            Some(map) => map.get(&local),
+            None => self.sparse.get(key),
+        }
     }
 
     pub(crate) fn contains_key(&self, key: &K) -> bool {
@@ -365,25 +375,40 @@ impl<K: Qualified, V> QualifiedMap<K, V> {
 
     pub(crate) fn insert(&mut self, key: K, value: V) -> Option<V> {
         let (instance, local) = key.split();
-        if self.instances.len() <= instance {
+        let len = self.instances.len();
+        // The sparse map must hold nothing the grown vector would cover.
+        if instance >= len && self.sparse.is_empty() && instance <= 2 * len + 64 {
             self.instances.resize_with(instance + 1, DenseMap::new);
         }
-        self.instances[instance].insert(local, value)
+        match self.instances.get_mut(instance) {
+            Some(map) => map.insert(local, value),
+            None => self.sparse.insert(key, value),
+        }
     }
 
     /// The entries of one instance in local order.
     pub(crate) fn instance(&self, instance: usize) -> impl Iterator<Item = (K, &V)> + '_ {
-        self.instances
+        let dense = self
+            .instances
             .get(instance)
             .into_iter()
             .flat_map(move |map| {
                 map.iter()
                     .map(move |(&local, value)| (K::join(instance, local), value))
-            })
+            });
+        let sparse = self
+            .sparse
+            .iter()
+            .filter(move |(key, _)| key.split().0 == instance)
+            .map(|(&key, value)| (key, value));
+        dense.chain(sparse)
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (K, &V)> + '_ {
-        (0..self.instances.len()).flat_map(|instance| self.instance(instance))
+        // Sparse keys all follow the dense instances.
+        (0..self.instances.len())
+            .flat_map(|instance| self.instance(instance))
+            .chain(self.sparse.iter().map(|(&key, value)| (key, value)))
     }
 }
 
@@ -491,5 +516,23 @@ mod tests {
         assert_eq!(map.instance(1).count(), 0);
         assert_eq!(map.get(&id(2, 1)), Some(&'c'));
         assert_eq!(map.get(&id(5, 0)), None);
+    }
+
+    #[test]
+    fn qualified_maps_store_far_instances_sparsely() {
+        use crate::topology::{InstanceAtomId, MoleculeInstanceId};
+        let id = |instance, atom| {
+            InstanceAtomId::new(MoleculeInstanceId::new(instance), AtomId::new(atom))
+        };
+        let mut map = QualifiedMap::default();
+        map.insert(id(0, 0), 'a');
+        map.insert(id(u32::MAX, 0), 'z');
+        map.insert(id(1, u32::MAX), 'y');
+        assert!(map.instances.len() < 100);
+        assert_eq!(map.get(&id(u32::MAX, 0)), Some(&'z'));
+        assert_eq!(map.get(&id(1, u32::MAX)), Some(&'y'));
+        let keys = map.iter().map(|(id, _)| id).collect::<Vec<_>>();
+        assert_eq!(keys, [id(0, 0), id(1, u32::MAX), id(u32::MAX, 0)]);
+        assert_eq!(map.instance(u32::MAX as usize).count(), 1);
     }
 }
