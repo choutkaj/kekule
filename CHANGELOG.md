@@ -28,6 +28,31 @@ are marked **Breaking:**.
   `minimize_with_observer` are unchanged. The `clean_up` example cleans up a
   group of a ligand inside a larger model with OpenFF Rosemary and Ash
   charges.
+- Builder geometry on model drafts (SeekDelta K3a), so a host that edits a
+  `ModelEditor` draft gets coordinates for the atoms it adds as part of that
+  edit's one publication. The new `structure::placement` module documents the
+  rules. `ModelEditor::add_hydrogens` makes the implicit hydrogens of chosen
+  atoms explicit at ideal positions, from fixed counts or the valence model's
+  inference on the draft's current graph, without perception, and
+  `ModelEditor::remove_hydrogens` collapses their explicit hydrogens back
+  into counts as `Molecule::remove_hydrogens` does; both report per atom what
+  they added or removed (`PlacedHydrogensReport`, `RemovedHydrogensReport`),
+  keep represented stereo, and fail with `PlacementError::InvalidValence`
+  naming an atom over its valence. `ModelEditor::atom_geometry` perceives an
+  atom's `AtomShape` (terminal, linear, trigonal planar, tetrahedral,
+  trigonal bipyramidal, octahedral) from its element, charge, radical
+  electrons, bond orders, neighbors, and implicit hydrogens, and
+  `ModelEditor::free_directions` gives where its next substituents go,
+  staggered and anti against a single neighbor's substituents.
+  `ModelEditor::attach_atom` bonds a new atom in place of an explicit
+  hydrogen or at the free position nearest a direction (`AttachmentSite`),
+  and `ModelEditor::place_atom` starts a new molecule at a point with a chain
+  and `UNL` residue of its own. `ideal_bond_length` gives lengths by element
+  pair and bond order. New atoms join the residue of the atom they bond to,
+  named by element and the next free number (`C21`, `H31`), and
+  `ModelEditor::next_atom_name` and `ModelEditor::rename_atom` apply the rule
+  to existing atoms. Placement works inside the edited occurrences, so its
+  cost follows the edited atoms rather than the model.
 - XYZ documents built from atoms (SeekDelta K54), so a host that holds a
   molecule as elements and positions, such as one reading the atoms a
   Gaussian cube file lists beside its grids, has it interpreted as XYZ

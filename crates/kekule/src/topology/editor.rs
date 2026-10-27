@@ -2,6 +2,7 @@
 mod append;
 mod error;
 mod hierarchy;
+mod hydrogens;
 mod identity;
 mod properties;
 mod publication;
@@ -24,6 +25,7 @@ pub(crate) use append::AppendMapping;
 pub use error::TopologyEditError;
 use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
+pub(crate) use hydrogens::DraftHydrogenError;
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
 pub use properties::{EditProperties, EditPropertiesMut, EditPropertyTable, EditPropertyTableMut};
 use std::collections::{BTreeMap, BTreeSet};

@@ -77,7 +77,7 @@ use crate::properties::{
 };
 pub use builder::{TopologyBuildError, TopologyBuilder, TopologyIdKind};
 use dense_order::DenseOrder;
-pub(crate) use editor::AppendMapping;
+pub(crate) use editor::{AppendMapping, DraftHydrogenError};
 pub use entity_views::{AtomView, BondView};
 pub(crate) use hierarchy::{
     AtomSite, Chain, Hierarchy, RawAtomSite, RawChain, RawHierarchyError, RawResidue, Residue,

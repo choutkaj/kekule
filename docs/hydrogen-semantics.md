@@ -65,6 +65,12 @@ and complete implicit count. Removal retains hydrogens with individual
 information that cannot be represented by a count, including isotope labels,
 maps, charges, properties, and unsupported stereo roles.
 
+`ModelEditor::add_hydrogens` and `ModelEditor::remove_hydrogens` apply the
+same conversions to chosen atoms of a model draft, placing new hydrogens at
+ideal positions; inferred counts come from the valence model on the draft's
+current graph, so they need no perception. See
+[placement](../crates/kekule/src/structure/placement.rs).
+
 Conversions change representation, not protonation. They invalidate perception
 after graph edits; recompute it before reading inferred counts. Conversion does
 not promise to reconstruct the original SMILES spelling.
