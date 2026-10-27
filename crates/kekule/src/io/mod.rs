@@ -22,6 +22,7 @@ mod staged_coordinates;
 mod structure_connectivity;
 mod structure_documents;
 mod structure_interpret;
+pub(crate) use structure_interpret::is_metal;
 mod v2000;
 mod v3000;
 pub(crate) mod write_error;

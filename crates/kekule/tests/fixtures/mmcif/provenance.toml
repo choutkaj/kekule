@@ -37,3 +37,53 @@ sha256 = "0ab0ab91e9dd078b83cf4149118e31b3f3ac7252eb1e47b1ff11e77574d97de9"
 license = "CC0 1.0 (wwPDB archive data)"
 preprocessing = "None; original downloaded bytes"
 purpose = "mmCIF writer regression for a covalent ligand link, metal coordination, and large tiled exports (KRas G12C); not a scientific benchmark"
+
+[[fixture]]
+path = "9UOH.cif"
+source = "RCSB PDB / wwPDB entry 9UOH"
+url = "https://files.rcsb.org/download/9UOH.cif"
+retrieved = "2026-10-26"
+sha256 = "0956aba81b95abbe13a9ec6c9ebaa7f93355d9b6e4a9ddca743bdea2f5291f0f"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Non-covalent interaction regressions (KRas G12C with the inhibitor ASP2453: hydrogen bonds, T-shaped stacking, a salt bridge) and the interaction benchmark; not a scientific benchmark"
+
+[[fixture]]
+path = "3PTB.cif"
+source = "RCSB PDB / wwPDB entry 3PTB"
+url = "https://files.rcsb.org/download/3PTB.cif"
+retrieved = "2026-10-26"
+sha256 = "d2744dbacfb97ec9b4ff7f5cf4b204418bccf92e46b63130bfebb3916260232f"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Non-covalent interaction regression (trypsin and benzamidine: amidinium-Asp189 salt bridge, calcium coordination); not a scientific benchmark"
+
+[[fixture]]
+path = "1ACJ.cif"
+source = "RCSB PDB / wwPDB entry 1ACJ"
+url = "https://files.rcsb.org/download/1ACJ.cif"
+retrieved = "2026-10-26"
+sha256 = "60b1f66233ace47d00d35f162f3bd420f36fd9fd49c6d26911cefc20ae3a9081"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Non-covalent interaction regression (acetylcholinesterase and tacrine: parallel stacking on Trp84 and Phe330); not a scientific benchmark"
+
+[[fixture]]
+path = "1ACL.cif"
+source = "RCSB PDB / wwPDB entry 1ACL"
+url = "https://files.rcsb.org/download/1ACL.cif"
+retrieved = "2026-10-26"
+sha256 = "8c05d6bbb49aea9e5685c121c1cc07352b0ebbc8e785e0473a6bb7acc90dbaa7"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Non-covalent interaction regression (acetylcholinesterase and decamethonium: cation-pi with Trp84 and Trp279); not a scientific benchmark"
+
+[[fixture]]
+path = "2ITO.cif"
+source = "RCSB PDB / wwPDB entry 2ITO"
+url = "https://files.rcsb.org/download/2ITO.cif"
+retrieved = "2026-10-26"
+sha256 = "e2da911de9b99923fcbb362fa9123d0264855f60be63c069e18fb7cd914af472"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Non-covalent interaction regression (EGFR and gefitinib: chlorine halogen bond to Leu788, hinge hydrogen bond to Met793); not a scientific benchmark"

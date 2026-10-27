@@ -7,6 +7,7 @@ mod clustering;
 mod clustering_runs;
 mod dssp;
 mod geometry;
+mod interactions;
 mod measurements;
 mod solvation;
 mod statistics;

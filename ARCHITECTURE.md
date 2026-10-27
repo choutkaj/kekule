@@ -514,6 +514,25 @@ returns for the same structure, errors included. Every stage runs on a
 executor and thread count returns the single-threaded result. See
 [DSSP](crates/kekule/src/dssp/mod.rs).
 
+Non-covalent interactions split by what they depend on. `InteractionFeatures`
+classifies one topology's donors, acceptors, charged groups, aromatic rings,
+halogen-bond donors, metals, metal ligands, and hydrophobic atoms once, per
+reusable definition, and is reused for every structure sharing that layout. It
+reads installed perception, or perceives a private copy of a definition without
+it, and never changes the topology; it is a separate derived result, not
+perception state. A search reads one structure, or two, each side with features
+of its own topology, and returns a snapshot of interactions addressed by dense
+indices of each side's topology. Criteria are a plain options value in
+`Quantity` units with literature defaults. Within one structure, bond separation
+excludes ends of one molecule; across structures no bond joins the sides, so
+the two searches agree on the parts of a structure no bond joins. The side with
+fewer atoms lists its features; the other reads only atoms within reach of
+them, and pairs are found on the uniform point grid that group contact
+occupancy also uses. Hydrogen-bond occupancy is a weighted, mergeable
+accumulator of found interactions, with the transactional observation and
+merge rules of the weighted statistics. See
+[interactions](crates/kekule/src/interactions/mod.rs).
+
 For format profiles, limits, periodic conventions, statistical definitions, and
 streaming sequence/reset contracts, see
 [trajectory payloads](crates/kekule/src/structure/trajectory.rs),
@@ -883,7 +902,7 @@ The public modules of `kekule`, by domain:
 | Chemistry | `molecule`, `stereo` (`cip`, `coordinates`, `cleanup`), `perception` (`valence`, `rings`, `aromaticity`, `conjugation`, `resonance`), `hydrogens`, `descriptors` |
 | Queries | `query`, `substructure`, `select` |
 | Systems and structures | `topology` (`edit`), `structure` (`measure`, `placement`), `solvation` |
-| Analysis | `alignment`, `clustering`, `dssp` |
+| Analysis | `alignment`, `clustering`, `dssp`, `interactions` |
 | Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `xyz`, `macromolecular`, `components`, `native` |
 
 A type lives in the module of the domain that owns it:
