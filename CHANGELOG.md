@@ -524,10 +524,12 @@ are marked **Breaking:**.
   vectors rather than ordered maps, snapshots share atom-site and residue
   labels, and publication reclassifies only the definitions whose evidence
   changed. Deleting one atom of a ligand in a 100,716-atom model (66 merged
-  copies of PDB 9UOH, 6,336 definitions) now publishes in PUBLISH_AFTER ms
-  instead of PUBLISH_BEFORE ms and perceives in PERCEIVE_AFTER ms instead of
-  PERCEIVE_BEFORE ms; starting the editor takes BUILD_AFTER ms instead of
-  BUILD_BEFORE ms.
+  copies of PDB 9UOH, 6,336 definitions) now publishes in about 35–55 ms
+  instead of 180–235 ms and perceives in under 1 ms instead of 90–125 ms;
+  starting the editor takes 20–40 ms instead of 100–140 ms (fastest of 15
+  rounds, alternating builds, on a busy x86-64 Windows desktop). Publication
+  remains linear in the atoms, through the dense orders and hierarchy it
+  rebuilds.
 - **Breaking:** `TrrWriteOptions` is no longer `Eq`, since it holds a
   `FrameTimingPolicy` with an `f64` interval; it remains `PartialEq`.
 - The DCD writer's refusal of a frame time under `DcdTimePolicy::Absent`
