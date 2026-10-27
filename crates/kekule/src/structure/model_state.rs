@@ -114,6 +114,23 @@ impl ModelState {
         }
     }
 
+    /// Clears annotations of the given dead editor atom slots, at a cost
+    /// proportional to their number.
+    pub(crate) fn clear_atom_rows(&mut self, slots: &[usize]) {
+        for &slot in slots {
+            self.occupancies.clear(slot);
+            self.b_factors.clear(slot);
+            self.properties.atoms_raw_mut().clear_index(slot);
+        }
+    }
+
+    /// Clears annotations of the given dead editor bond slots.
+    pub(crate) fn clear_bond_rows(&mut self, slots: &[usize]) {
+        for &slot in slots {
+            self.properties.bonds_raw_mut().clear_index(slot);
+        }
+    }
+
     /// Copies positions, occupancies, and B-factors of every source atom into
     /// the given destination rows. Property rows are copied by the caller.
     pub(crate) fn copy_atom_state_from(&mut self, source: ModelView<'_>, rows: &[usize]) {

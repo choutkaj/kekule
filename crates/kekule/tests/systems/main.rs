@@ -10,6 +10,7 @@ mod hierarchy;
 mod model_append;
 mod ownership;
 mod perception;
+mod placement;
 mod properties;
 mod scientific_selection;
 mod select_language;

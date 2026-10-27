@@ -375,3 +375,38 @@ fn perception_after_an_edit_perceives_only_the_edited_definitions() {
     toluene.perceive().unwrap();
     assert_eq!(benzene(&reperceived).perception(), toluene.perception());
 }
+
+#[test]
+fn untouched_residues_keep_their_source_atoms_in_a_draft() {
+    // Ethanol named C1, C2, O3 in one residue: placement names the next
+    // carbon after its source atoms before any edit touches the residue.
+    let mut builder = TopologyBuilder::new();
+    let instance = builder
+        .add_molecule(kekule::smiles::to_molecules("CCO").unwrap().remove(0))
+        .unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+    let residue = builder
+        .hierarchy_mut()
+        .add_residue(chain, "EOH", Some(1), None, None)
+        .unwrap();
+    let atoms = builder.atom_ids().to_vec();
+    for (atom, name) in atoms
+        .iter()
+        .filter(|atom| atom.instance() == instance)
+        .zip(["C1", "C2", "O3"])
+    {
+        let metadata = AtomSiteMetadata::default().with_label_atom_id(Some(name.to_owned()));
+        builder
+            .hierarchy_mut()
+            .add_atom_site(residue, *atom, metadata)
+            .unwrap();
+    }
+    let topology = Arc::new(builder.build().unwrap());
+    let model = Model::new(Arc::clone(&topology), Positions::zeros(3)).unwrap();
+    let editor = model.into_editor();
+    let handle = editor.topology().residue_handle(residue).unwrap();
+    let carbon = Element::from_symbol("C").unwrap();
+    assert_eq!(editor.next_atom_name(handle, carbon).unwrap(), "C3");
+    let oxygen = Element::from_symbol("O").unwrap();
+    assert_eq!(editor.next_atom_name(handle, oxygen).unwrap(), "O4");
+}

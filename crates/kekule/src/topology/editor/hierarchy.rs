@@ -536,7 +536,7 @@ impl TopologyEditor {
             .expect("materialized residue atoms")
     }
     /// The atoms of one live residue in handle order.
-    fn residue_atom_list(&self, residue: EditResidueId) -> Vec<EditAtomId> {
+    pub(super) fn residue_atom_list(&self, residue: EditResidueId) -> Vec<EditAtomId> {
         match self.hierarchy.residue_atoms.get(&residue) {
             Some(atoms) => atoms.iter().copied().collect(),
             None => {
