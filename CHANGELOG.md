@@ -24,6 +24,19 @@ are marked **Breaking:**.
   and `UNL` residue. `Fragment::with_attachment` attaches through another
   atom that carries a hydrogen. New atoms join the parent's residue under the
   next free names. Choosing a torsion reads the draft's position rows once.
+- Dense edit correspondence (SeekDelta K56), so a host remaps its per-atom
+  columns after a structural edit in one pass instead of looking up every
+  atom's draft handle. `EditCorrespondence::atoms`, `bonds`, `residues`, and
+  `chains` return a `DenseCorrespondence` of the editor's source topology and
+  the published one: `to_published` has one entry per source index, the
+  published index or `None` for a deleted entity, and `to_source` one entry
+  per published index, the source index or `None` for an added one;
+  `published` and `source` look up one index. The source is the topology the
+  editor started from; entities added or appended since have no source.
+  The handle lookups `EditCorrespondence::atom` and `bond` are unchanged.
+- An informational benchmark of a ligand edit in a large model
+  (`cargo bench -p kekule --bench model_edit_scale -- <mmCIF> <ligand>`),
+  which merges 66 copies of an externally supplied entry such as PDB 9UOH.
 - Minimization with fixed atoms and position restraints (SeekDelta K57), so
   a host cleans up an edited group while the rest of its molecule keeps its
   pose. `minimize_scoped` and `minimize_scoped_with_observer` take a
@@ -555,6 +568,23 @@ are marked **Breaking:**.
 
 ### Changed
 
+- A structural edit of a large system costs about what it changes (SeekDelta
+  K56). Publishing a topology or model draft shares every definition the
+  edit left untouched with the source snapshot, with its perception, even
+  while the source is still shared, as by an undo history; before, it cloned
+  them. Perceiving the result (`Topology::perceived` and model, ensemble, and
+  trajectory perception) perceives only the definitions whose perception the
+  edit cleared and shares the others, with the same result as perceiving
+  every definition. Editors index source atoms, bonds, and hierarchy nodes in
+  vectors rather than ordered maps, snapshots share atom-site and residue
+  labels, and publication reclassifies only the definitions whose evidence
+  changed. Deleting one atom of a ligand in a 100,716-atom model (66 merged
+  copies of PDB 9UOH, 6,336 definitions) now publishes in about 35–55 ms
+  instead of 180–235 ms and perceives in under 1 ms instead of 90–125 ms;
+  starting the editor takes 20–40 ms instead of 100–140 ms (fastest of 15
+  rounds, alternating builds, on a busy x86-64 Windows desktop). Publication
+  remains linear in the atoms, through the dense orders and hierarchy it
+  rebuilds.
 - **Breaking:** `TrrWriteOptions` is no longer `Eq`, since it holds a
   `FrameTimingPolicy` with an `f64` interval; it remains `PartialEq`.
 - The DCD writer's refusal of a frame time under `DcdTimePolicy::Absent`

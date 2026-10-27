@@ -16,22 +16,6 @@ pub(super) fn finalize(
     appended_instances_start: Option<usize>,
     residue_overrides: &BTreeMap<ResidueId, ResidueClass>,
 ) {
-    let atom_residues = hierarchy
-        .atom_sites()
-        .map(|(_, site)| (site.atom(), site.residue()))
-        .collect::<BTreeMap<_, _>>();
-    let atom_names = hierarchy
-        .atom_sites()
-        .filter_map(|(_, site)| {
-            let name = site
-                .metadata()
-                .label_atom_id
-                .as_deref()
-                .or(site.metadata().auth_atom_id.as_deref())?;
-            Some((site.atom(), normalize_atom_name(name)))
-        })
-        .collect::<BTreeMap<_, _>>();
-
     for index in 0..hierarchy.residues.len() {
         let residue_id = hierarchy.residues[index].id();
         let class = residue_overrides
@@ -48,25 +32,38 @@ pub(super) fn finalize(
         hierarchy.residues[index].class = class;
     }
 
-    let residue_classes = hierarchy
-        .residues()
-        .map(|(id, residue)| (id, residue.class()))
-        .collect::<BTreeMap<_, _>>();
-    let mut evidence = vec![BTreeSet::new(); definitions.len()];
+    // Only definitions that may be inferred need evidence: explicit classes
+    // win, and a preserved class is reconsidered only when an appended
+    // occurrence brings evidence. Unchanged definitions of a large system
+    // cost nothing.
+    let inferable =
+        |definition: MoleculeDefinitionId| !molecule_overrides.contains_key(&definition);
     let mut has_new_evidence = vec![false; definitions.len()];
-    for (index, instance) in instances.iter().enumerate() {
-        let molecule = definitions[instance.definition().index()].molecule();
-        if let Some(class) = infer_instance_class(
-            instance,
-            molecule,
-            &atom_residues,
-            &atom_names,
-            &residue_classes,
-        ) {
-            evidence[instance.definition().index()].insert(class);
-            if appended_instances_start.is_some_and(|start| index >= start) {
-                has_new_evidence[instance.definition().index()] = true;
+    if let Some(start) = appended_instances_start {
+        for instance in instances.iter().skip(start) {
+            let definition = instance.definition();
+            if inferable(definition)
+                && preserved_molecule_classes.contains_key(&definition)
+                && !has_new_evidence[definition.index()]
+            {
+                let molecule = definitions[definition.index()].molecule();
+                has_new_evidence[definition.index()] =
+                    infer_instance_class(instance, molecule, hierarchy).is_some();
             }
+        }
+    }
+    let mut evidence = vec![BTreeSet::new(); definitions.len()];
+    for instance in instances {
+        let definition = instance.definition();
+        if !inferable(definition)
+            || (preserved_molecule_classes.contains_key(&definition)
+                && !has_new_evidence[definition.index()])
+        {
+            continue;
+        }
+        let molecule = definitions[definition.index()].molecule();
+        if let Some(class) = infer_instance_class(instance, molecule, hierarchy) {
+            evidence[definition.index()].insert(class);
         }
     }
 
@@ -153,24 +150,35 @@ fn topology_atom<'a>(
 fn infer_instance_class(
     instance: &MoleculeInstance,
     molecule: &Molecule,
-    atom_residues: &BTreeMap<InstanceAtomId, ResidueId>,
-    atom_names: &BTreeMap<InstanceAtomId, String>,
-    residue_classes: &BTreeMap<ResidueId, ResidueClass>,
+    hierarchy: &Hierarchy,
 ) -> Option<MoleculeClass> {
+    let residue_of = |atom: InstanceAtomId| {
+        hierarchy
+            .atom_site_for_atom(atom)
+            .map(|site| site.residue())
+    };
+    let name_of = |atom: InstanceAtomId| {
+        let site = hierarchy.atom_site_for_atom(atom)?;
+        let name = site
+            .metadata()
+            .label_atom_id
+            .as_deref()
+            .or(site.metadata().auth_atom_id.as_deref())?;
+        Some(normalize_atom_name(name))
+    };
+    let class_of = |residue: ResidueId| hierarchy.residues[residue.index()].class();
     let qualified_atoms = molecule
         .atom_ids()
         .map(|atom| InstanceAtomId::new(instance.id(), atom))
         .collect::<Vec<_>>();
     let touched_residues = qualified_atoms
         .iter()
-        .filter_map(|atom| atom_residues.get(atom).copied())
+        .filter_map(|&atom| residue_of(atom))
         .collect::<BTreeSet<_>>();
 
     if !touched_residues.is_empty()
-        && qualified_atoms.iter().all(|atom| {
-            atom_residues
-                .get(atom)
-                .is_some_and(|residue| residue_classes.get(residue) == Some(&ResidueClass::Water))
+        && qualified_atoms.iter().all(|&atom| {
+            residue_of(atom).is_some_and(|residue| class_of(residue) == ResidueClass::Water)
         })
     {
         return Some(MoleculeClass::Water);
@@ -187,10 +195,8 @@ fn infer_instance_class(
         return Some(MoleculeClass::Ion);
     }
     if !touched_residues.is_empty()
-        && qualified_atoms.iter().all(|atom| {
-            atom_residues
-                .get(atom)
-                .is_some_and(|residue| residue_classes.get(residue) == Some(&ResidueClass::Ion))
+        && qualified_atoms.iter().all(|&atom| {
+            residue_of(atom).is_some_and(|residue| class_of(residue) == ResidueClass::Ion)
         })
     {
         return Some(MoleculeClass::Ion);
@@ -204,16 +210,15 @@ fn infer_instance_class(
         }
         let left = InstanceAtomId::new(instance.id(), bond.a());
         let right = InstanceAtomId::new(instance.id(), bond.b());
-        let (Some(&left_residue), Some(&right_residue)) =
-            (atom_residues.get(&left), atom_residues.get(&right))
+        let (Some(left_residue), Some(right_residue)) = (residue_of(left), residue_of(right))
         else {
             continue;
         };
         if left_residue == right_residue {
             continue;
         }
-        let left_name = atom_names.get(&left).map(String::as_str);
-        let right_name = atom_names.get(&right).map(String::as_str);
+        let (left_name, right_name) = (name_of(left), name_of(right));
+        let (left_name, right_name) = (left_name.as_deref(), right_name.as_deref());
         if matches!(
             (left_name, right_name),
             (Some("C"), Some("N")) | (Some("N"), Some("C"))
@@ -228,9 +233,8 @@ fn infer_instance_class(
         }
     }
 
-    let protein =
-        component_has_at_least(&peptide_edges, residue_classes, ResidueClass::AminoAcid, 2);
-    let (dna, rna, nucleic_conflict) = nucleic_evidence(&nucleotide_edges, residue_classes);
+    let protein = component_has_at_least(&peptide_edges, &class_of, ResidueClass::AminoAcid, 2);
+    let (dna, rna, nucleic_conflict) = nucleic_evidence(&nucleotide_edges, &class_of);
     if nucleic_conflict || (protein && (dna || rna)) {
         return Some(MoleculeClass::Other);
     }
@@ -248,7 +252,7 @@ fn infer_instance_class(
     }
     if touched_residues
         .iter()
-        .any(|residue| residue_classes.get(residue) == Some(&ResidueClass::Carbohydrate))
+        .any(|&residue| class_of(residue) == ResidueClass::Carbohydrate)
     {
         return Some(MoleculeClass::Carbohydrate);
     }
@@ -283,14 +287,14 @@ fn is_explicit_water_atoms(atoms: &[&crate::molecule::Atom]) -> bool {
 
 fn component_has_at_least(
     edges: &[(ResidueId, ResidueId)],
-    classes: &BTreeMap<ResidueId, ResidueClass>,
+    class_of: &impl Fn(ResidueId) -> ResidueClass,
     class: ResidueClass,
     minimum: usize,
 ) -> bool {
     residue_components(edges).into_iter().any(|component| {
         component
             .iter()
-            .filter(|residue| classes.get(residue) == Some(&class))
+            .filter(|&&residue| class_of(residue) == class)
             .count()
             >= minimum
     })
@@ -298,7 +302,7 @@ fn component_has_at_least(
 
 fn nucleic_evidence(
     edges: &[(ResidueId, ResidueId)],
-    classes: &BTreeMap<ResidueId, ResidueClass>,
+    class_of: &impl Fn(ResidueId) -> ResidueClass,
 ) -> (bool, bool, bool) {
     let mut dna = false;
     let mut rna = false;
@@ -306,11 +310,11 @@ fn nucleic_evidence(
     for component in residue_components(edges) {
         let dna_count = component
             .iter()
-            .filter(|residue| classes.get(residue) == Some(&ResidueClass::DnaNucleotide))
+            .filter(|&&residue| class_of(residue) == ResidueClass::DnaNucleotide)
             .count();
         let rna_count = component
             .iter()
-            .filter(|residue| classes.get(residue) == Some(&ResidueClass::RnaNucleotide))
+            .filter(|&&residue| class_of(residue) == ResidueClass::RnaNucleotide)
             .count();
         if dna_count > 0 && rna_count > 0 && dna_count + rna_count >= 2 {
             conflict = true;

@@ -1,5 +1,7 @@
-use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
+
+use super::dense_map::QualifiedMap;
 
 use super::{InstanceAtomId, ResidueClass};
 
@@ -44,7 +46,7 @@ pub(crate) struct Hierarchy {
     chains: Vec<Chain>,
     pub(crate) residues: Vec<Residue>,
     atom_sites: Vec<AtomSite>,
-    atom_lookup: BTreeMap<InstanceAtomId, AtomSiteId>,
+    atom_lookup: QualifiedMap<InstanceAtomId, AtomSiteId>,
 }
 
 impl Hierarchy {
@@ -82,25 +84,55 @@ impl Hierarchy {
         author_seq_id: Option<String>,
         insertion_code: Option<String>,
     ) -> std::result::Result<ResidueId, HierarchyError> {
+        let name = Arc::<str>::from(name.into());
+        self.add_shared_residue(
+            chain,
+            ResidueLabels {
+                name: Arc::clone(&name),
+                label_comp_id: Some(name),
+                author_comp_id: None,
+                label_seq_id,
+                author_seq_id: author_seq_id.map(Arc::from),
+                insertion_code: insertion_code.map(Arc::from),
+            },
+            0,
+        )
+    }
+
+    /// Adds one residue whose labels are shared with another snapshot, with
+    /// room for `sites` atom sites.
+    pub(crate) fn add_shared_residue(
+        &mut self,
+        chain: ChainId,
+        labels: ResidueLabels,
+        sites: usize,
+    ) -> std::result::Result<ResidueId, HierarchyError> {
         self.require_chain(chain)?;
-        let name = name.into();
         let id = checked_hierarchy_id(
             self.residues.len(),
             HierarchyIdKind::Residue,
             ResidueId::new,
         )?;
+        let ResidueLabels {
+            name,
+            label_comp_id,
+            author_comp_id,
+            label_seq_id,
+            author_seq_id,
+            insertion_code,
+        } = labels;
         self.residues.push(Residue {
             id,
             chain,
             class: ResidueClass::Other,
             explicit_class: None,
-            name: name.clone(),
-            label_comp_id: Some(name),
-            author_comp_id: None,
+            name,
+            label_comp_id,
+            author_comp_id,
             label_seq_id,
             author_seq_id,
             insertion_code,
-            atom_sites: Vec::new(),
+            atom_sites: Vec::with_capacity(sites),
         });
         self.chains[chain.index()].residues.push(id);
         Ok(id)
@@ -112,6 +144,16 @@ impl Hierarchy {
         residue: ResidueId,
         atom: InstanceAtomId,
         metadata: AtomSiteMetadata,
+    ) -> std::result::Result<AtomSiteId, HierarchyError> {
+        self.add_shared_atom_site(residue, atom, Arc::new(metadata))
+    }
+
+    /// [`Self::add_atom_site`] with metadata shared with another snapshot.
+    pub(crate) fn add_shared_atom_site(
+        &mut self,
+        residue: ResidueId,
+        atom: InstanceAtomId,
+        metadata: Arc<AtomSiteMetadata>,
     ) -> std::result::Result<AtomSiteId, HierarchyError> {
         self.require_residue(residue)?;
         if self.atom_lookup.contains_key(&atom) {
@@ -198,12 +240,12 @@ impl Hierarchy {
                     chain: chain.ok_or(RawHierarchyError::ResidueUnlisted(id))?,
                     class: residue.class,
                     explicit_class: residue.explicit.then_some(residue.class),
-                    name: residue.name,
-                    label_comp_id: residue.label_comp_id,
-                    author_comp_id: residue.author_comp_id,
+                    name: residue.name.into(),
+                    label_comp_id: residue.label_comp_id.map(Arc::from),
+                    author_comp_id: residue.author_comp_id.map(Arc::from),
                     label_seq_id: residue.label_seq_id,
-                    author_seq_id: residue.author_seq_id,
-                    insertion_code: residue.insertion_code,
+                    author_seq_id: residue.author_seq_id.map(Arc::from),
+                    insertion_code: residue.insertion_code.map(Arc::from),
                     atom_sites: residue.atom_sites,
                 })
             })
@@ -218,7 +260,7 @@ impl Hierarchy {
                 id,
                 residue,
                 atom: site.atom,
-                metadata: site.metadata,
+                metadata: Arc::new(site.metadata),
             });
         }
         // Sorted entries build the lookup in bulk rather than one insertion
@@ -290,7 +332,7 @@ impl Hierarchy {
     pub(crate) fn atom_lookup_entries(
         &self,
     ) -> impl Iterator<Item = (InstanceAtomId, AtomSiteId)> + '_ {
-        self.atom_lookup.iter().map(|(atom, site)| (*atom, *site))
+        self.atom_lookup.iter().map(|(atom, site)| (atom, *site))
     }
 
     /// Restores distinct label and author component identifiers on one residue.
@@ -301,8 +343,8 @@ impl Hierarchy {
         author_comp_id: Option<String>,
     ) -> std::result::Result<(), HierarchyError> {
         let residue = self.residue_mut(residue)?;
-        residue.label_comp_id = label_comp_id;
-        residue.author_comp_id = author_comp_id;
+        residue.label_comp_id = label_comp_id.map(Arc::from);
+        residue.author_comp_id = author_comp_id.map(Arc::from);
         Ok(())
     }
 
@@ -453,6 +495,27 @@ impl HierarchyBuilder {
         self.hierarchy.add_atom_site(residue, atom, metadata)
     }
 
+    /// Adds one residue whose labels are shared with another snapshot, with
+    /// room for `sites` atom sites.
+    pub(crate) fn add_shared_residue(
+        &mut self,
+        chain: ChainId,
+        labels: ResidueLabels,
+        sites: usize,
+    ) -> Result<ResidueId, HierarchyError> {
+        self.hierarchy.add_shared_residue(chain, labels, sites)
+    }
+
+    /// [`Self::add_atom_site`] with metadata shared with another snapshot.
+    pub(crate) fn add_shared_atom_site(
+        &mut self,
+        residue: ResidueId,
+        atom: InstanceAtomId,
+        metadata: Arc<AtomSiteMetadata>,
+    ) -> Result<AtomSiteId, HierarchyError> {
+        self.hierarchy.add_shared_atom_site(residue, atom, metadata)
+    }
+
     /// Sets distinct label and author component identifiers on one residue.
     pub fn set_residue_component_ids(
         &mut self,
@@ -571,6 +634,17 @@ impl Chain {
     }
 }
 
+/// The source labels of one residue, shared between snapshots.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResidueLabels {
+    pub(crate) name: Arc<str>,
+    pub(crate) label_comp_id: Option<Arc<str>>,
+    pub(crate) author_comp_id: Option<Arc<str>>,
+    pub(crate) label_seq_id: Option<i32>,
+    pub(crate) author_seq_id: Option<Arc<str>>,
+    pub(crate) insertion_code: Option<Arc<str>>,
+}
+
 /// One hierarchy residue: its chain, class, source identifiers, and atom sites.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Residue {
@@ -579,12 +653,13 @@ pub(crate) struct Residue {
     pub(crate) class: ResidueClass,
     /// The explicitly assigned class, which publication keeps.
     pub(crate) explicit_class: Option<ResidueClass>,
-    pub(crate) name: String,
-    pub(crate) label_comp_id: Option<String>,
-    pub(crate) author_comp_id: Option<String>,
+    // Labels are shared by the snapshots and drafts that keep them.
+    pub(crate) name: Arc<str>,
+    pub(crate) label_comp_id: Option<Arc<str>>,
+    pub(crate) author_comp_id: Option<Arc<str>>,
     pub(crate) label_seq_id: Option<i32>,
-    pub(crate) author_seq_id: Option<String>,
-    pub(crate) insertion_code: Option<String>,
+    pub(crate) author_seq_id: Option<Arc<str>>,
+    pub(crate) insertion_code: Option<Arc<str>>,
     pub(crate) atom_sites: Vec<AtomSiteId>,
 }
 
@@ -636,7 +711,8 @@ pub(crate) struct AtomSite {
     pub(crate) id: AtomSiteId,
     pub(crate) residue: ResidueId,
     pub(crate) atom: InstanceAtomId,
-    pub(crate) metadata: AtomSiteMetadata,
+    // Shared by the snapshots and drafts that keep the site unchanged.
+    pub(crate) metadata: Arc<AtomSiteMetadata>,
 }
 
 impl AtomSite {

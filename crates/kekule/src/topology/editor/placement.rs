@@ -506,6 +506,9 @@ impl TopologyEditor {
         &self,
         residue: super::EditResidueId,
     ) -> Option<impl Iterator<Item = EditAtomId> + '_> {
-        Some(self.hierarchy.residue_atoms.get(&residue)?.iter().copied())
+        self.hierarchy
+            .residues
+            .contains_key(&residue)
+            .then(|| self.residue_atom_list(residue).into_iter())
     }
 }

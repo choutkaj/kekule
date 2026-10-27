@@ -6,8 +6,9 @@ mod identity;
 mod placement;
 mod properties;
 mod publication;
-pub use publication::EditCorrespondence;
+pub use publication::{DenseCorrespondence, EditCorrespondence};
 
+use super::dense_map::{DenseKey, DenseMap, QualifiedMap};
 use super::{
     AtomSiteId, AtomSiteMetadata, ChainId, HierarchyError, InstanceAtomId, InstanceBondId,
     MoleculeClass, MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId, Topology,
@@ -41,8 +42,8 @@ enum GroupChemistry {
 #[derive(Debug, Clone)]
 struct Group {
     chemistry: GroupChemistry,
-    atoms: BTreeMap<AtomId, EditAtomId>,
-    bonds: BTreeMap<BondId, EditBondId>,
+    atoms: DenseMap<AtomId, EditAtomId>,
+    bonds: DenseMap<BondId, EditBondId>,
     instance_slot: Option<usize>,
     changed: bool,
     class: Option<MoleculeClass>,
@@ -81,12 +82,13 @@ impl GroupIdentity {
         }
     }
 
-    /// One instance of a dense source layout, with handles preallocated in
-    /// source dense order and slots offset by the given bases.
+    /// One instance of a dense source layout, with handles allocated in
+    /// source dense order from the given first handles and slots offset by the
+    /// given bases.
     fn dense(
         source: &Topology,
         instance: MoleculeInstanceId,
-        handles: (&[EditAtomId], &[EditBondId]),
+        handles: (u64, u64),
         bases: (usize, usize),
     ) -> Self {
         let molecule = source
@@ -98,14 +100,20 @@ impl GroupIdentity {
                 .atom_index(InstanceAtomId::new(instance, local))
                 .expect("source instance atom has a dense index")
                 .index();
-            (handles.0[dense], bases.0 + dense)
+            (
+                EditAtomId::from_position(handles.0 + dense as u64),
+                bases.0 + dense,
+            )
         };
         let bond = |local| {
             let dense = source
                 .bond_index(InstanceBondId::new(instance, local))
                 .expect("source instance bond has a dense index")
                 .index();
-            (handles.1[dense], bases.1 + dense)
+            (
+                EditBondId::from_position(handles.1 + dense as u64),
+                bases.1 + dense,
+            )
         };
         Self {
             atoms: molecule.atom_ids().map(atom).collect(),
@@ -113,15 +121,12 @@ impl GroupIdentity {
         }
     }
 
-    /// Preallocates one handle per dense source atom and bond, in dense order.
-    fn source_handles(source: &Topology) -> (Vec<EditAtomId>, Vec<EditBondId>) {
+    /// Reserves one consecutive handle per dense source atom and bond, in
+    /// dense order, and returns the first of each.
+    fn source_handles(source: &Topology) -> (u64, u64) {
         (
-            (0..source.atom_count())
-                .map(|_| EditAtomId::new())
-                .collect(),
-            (0..source.bond_count())
-                .map(|_| EditBondId::new())
-                .collect(),
+            identity::fresh_block(source.atom_count()),
+            identity::fresh_block(source.bond_count()),
         )
     }
 }
@@ -162,15 +167,40 @@ impl GroupIdentity {
 pub struct TopologyEditor {
     source: Option<Arc<Topology>>,
     groups: Vec<Option<Group>>,
-    atoms: BTreeMap<EditAtomId, Location<AtomId>>,
-    bonds: BTreeMap<EditBondId, Location<BondId>>,
-    source_atoms: BTreeMap<InstanceAtomId, EditAtomId>,
-    source_bonds: BTreeMap<InstanceBondId, EditBondId>,
+    atoms: DenseMap<EditAtomId, Location<AtomId>>,
+    bonds: DenseMap<EditBondId, Location<BondId>>,
+    source_atoms: QualifiedMap<InstanceAtomId, EditAtomId>,
+    source_bonds: QualifiedMap<InstanceBondId, EditBondId>,
     molecule_classes: BTreeMap<EditAtomId, MoleculeClass>,
     hierarchy: EditHierarchy,
     properties: TopologyProperties,
     revision: u64,
     pub(crate) structural_revision: u64,
+    // The handles of source entities: consecutive blocks in source order.
+    source_blocks: SourceBlocks,
+}
+
+/// One block of consecutive handles, one per source entity in source order.
+#[derive(Debug, Clone, Copy, Default)]
+struct HandleBlock {
+    base: u64,
+    len: usize,
+}
+
+impl HandleBlock {
+    /// The source index of a handle in this block.
+    fn source(self, handle: impl DenseKey) -> Option<u32> {
+        let offset = handle.position().checked_sub(self.base)?;
+        (offset < self.len as u64).then_some(offset as u32)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SourceBlocks {
+    atoms: HandleBlock,
+    bonds: HandleBlock,
+    chains: HandleBlock,
+    residues: HandleBlock,
 }
 
 impl Topology {
@@ -223,15 +253,25 @@ impl TopologyEditor {
             ..Self::default()
         };
         // Source slots are source dense indices, so an unedited draft
-        // republishes the source order exactly.
-        let (atom_handles, bond_handles) = GroupIdentity::source_handles(&source);
+        // republishes the source order exactly. Source handles are one block
+        // in dense order, so vectors index them.
+        let handles = GroupIdentity::source_handles(&source);
+        editor.atoms = DenseMap::block(handles.0, source.atom_count());
+        editor.bonds = DenseMap::block(handles.1, source.bond_count());
+        editor.source_blocks.atoms = HandleBlock {
+            base: handles.0,
+            len: source.atom_count(),
+        };
+        editor.source_blocks.bonds = HandleBlock {
+            base: handles.1,
+            len: source.bond_count(),
+        };
         for (instance, value) in source.instance_records() {
             let molecule = source
                 .definition(value.definition())
                 .expect("published definition")
                 .molecule();
-            let identity =
-                GroupIdentity::dense(&source, instance, (&atom_handles, &bond_handles), (0, 0));
+            let identity = GroupIdentity::dense(&source, instance, handles, (0, 0));
             editor.register_group(
                 GroupChemistry::Source(value.definition()),
                 molecule,
@@ -419,8 +459,8 @@ impl TopologyEditor {
         self.atoms.insert(id, Location { group, local, slot });
         self.groups.push(Some(Group {
             chemistry: GroupChemistry::Draft(Box::new(draft)),
-            atoms: BTreeMap::from([(local, id)]),
-            bonds: BTreeMap::new(),
+            atoms: DenseMap::from_iter([(local, id)]),
+            bonds: DenseMap::new(),
             instance_slot: None,
             changed: true,
             class: None,
@@ -445,7 +485,7 @@ impl TopologyEditor {
             self.properties.atoms().len(),
             self.properties.bonds().len(),
         );
-        let result = self.register_group(
+        let group = self.register_group(
             GroupChemistry::Added(Arc::clone(&owned)),
             &owned,
             None,
@@ -453,6 +493,7 @@ impl TopologyEditor {
             false,
             identity,
         );
+        let result = self.group_handles(group);
         self.properties.resize_atoms(
             self.atoms
                 .values()
@@ -594,8 +635,8 @@ impl TopologyEditor {
         }
         let ids = self
             .source_atoms
-            .iter()
-            .filter(|(id, handle)| id.instance() == source && self.atoms.contains_key(handle))
+            .instance(source.index())
+            .filter(|(_, handle)| self.atoms.contains_key(handle))
             .map(|(_, &h)| h)
             .collect::<Vec<_>>();
         self.delete_atoms(ids)
@@ -1014,12 +1055,13 @@ impl TopologyEditor {
         class: Option<MoleculeClass>,
         class_explicit: bool,
         identity: GroupIdentity,
-    ) -> EditMolecule {
+    ) -> usize {
         let group = self.groups.len();
-        let mut result = EditMolecule::default();
+        let mut atoms = DenseMap::new();
+        let mut bonds = DenseMap::new();
         for (local, (id, slot)) in molecule.atom_ids().zip(identity.atoms) {
             self.atoms.insert(id, Location { group, local, slot });
-            result.atoms.insert(local, id);
+            atoms.insert(local, id);
             if let Some(source) = source {
                 self.source_atoms
                     .insert(InstanceAtomId::new(source, local), id);
@@ -1027,7 +1069,7 @@ impl TopologyEditor {
         }
         for (local, (id, slot)) in molecule.bond_ids().zip(identity.bonds) {
             self.bonds.insert(id, Location { group, local, slot });
-            result.bonds.insert(local, id);
+            bonds.insert(local, id);
             if let Some(source) = source {
                 self.source_bonds
                     .insert(InstanceBondId::new(source, local), id);
@@ -1035,14 +1077,30 @@ impl TopologyEditor {
         }
         self.groups.push(Some(Group {
             chemistry,
-            atoms: result.atoms.clone(),
-            bonds: result.bonds.clone(),
+            atoms,
+            bonds,
             instance_slot: source.map(MoleculeInstanceId::index),
             changed: false,
             class,
             class_explicit,
         }));
-        result
+        group
+    }
+    /// The handles of one group's atoms and bonds by local ID.
+    fn group_handles(&self, group: usize) -> EditMolecule {
+        let group = self.groups[group].as_ref().expect("live group");
+        EditMolecule {
+            atoms: group
+                .atoms
+                .iter()
+                .map(|(&local, &id)| (local, id))
+                .collect(),
+            bonds: group
+                .bonds
+                .iter()
+                .map(|(&local, &id)| (local, id))
+                .collect(),
+        }
     }
     fn register_bond(
         &mut self,
