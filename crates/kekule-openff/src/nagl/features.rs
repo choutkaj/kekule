@@ -1,10 +1,11 @@
 //! Configurable atom features using the versioned NAGL normalization/resonance profile.
 use super::config::Feature;
+use crate::error::atom_list;
 use crate::{Error, ErrorKind, Result};
 
 use kekule::{
     diagnostics::{LimitExceeded, Resource},
-    molecule::{AtomId, BondOrder, Molecule},
+    molecule::{AtomId, BondOrder, Element, Molecule},
     perception::rings::RingBasisModel,
     query::QueryGraph,
     smarts,
@@ -302,6 +303,28 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
         elements.push(atom.element().atomic_number());
         charges.push(atom.formal_charge());
     }
+    let delocalized: Vec<_> = molecule
+        .bonds()
+        .filter(|(_, b)| {
+            !matches!(
+                b.order,
+                BondOrder::Single | BondOrder::Double | BondOrder::Triple
+            )
+        })
+        .flat_map(|(_, b)| [b.a(), b.b()])
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if !delocalized.is_empty() {
+        return Err(Error::new(
+            ErrorKind::UnsupportedMolecule,
+            format!(
+                "NAGL features require localized single, double, or triple bonds;                  bonds of {} are not",
+                atom_list(&delocalized)
+            ),
+        )
+        .with_atoms(delocalized));
+    }
     let mut neighbors = vec![vec![]; ids.len()];
     let mut orders = Vec::new();
     for (_, b) in molecule.bonds() {
@@ -448,6 +471,77 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
     Ok(average)
 }
 
+/// Whether every element feature of `specifications` has a category for
+/// `element`.
+pub(super) fn encodes_element(specifications: &[Feature], element: Element) -> bool {
+    specifications.iter().all(|feature| match feature {
+        Feature::Element { categories } => categories
+            .iter()
+            .any(|symbol| Element::from_symbol(symbol) == Some(element)),
+        _ => true,
+    })
+}
+
+/// Fails naming every atom whose element or connectivity has no feature
+/// category.
+fn check_categories(molecule: &Molecule, specifications: &[Feature]) -> Result<()> {
+    let elements: Vec<_> = molecule
+        .atoms()
+        .filter(|(_, atom)| !encodes_element(specifications, atom.element()))
+        .collect();
+    if !elements.is_empty() {
+        let symbols = elements
+            .iter()
+            .map(|(_, atom)| atom.element())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(Element::symbol)
+            .collect::<Vec<_>>();
+        let atoms: Vec<_> = elements.iter().map(|(id, _)| *id).collect();
+        return Err(Error::new(
+            ErrorKind::UnsupportedMolecule,
+            format!(
+                "{} {} absent from NAGL feature categories: {}",
+                if symbols.len() == 1 {
+                    "element"
+                } else {
+                    "elements"
+                },
+                symbols.join(", "),
+                atom_list(&atoms)
+            ),
+        )
+        .with_atoms(atoms));
+    }
+    for feature in specifications {
+        let Feature::Connectivity { categories } = feature else {
+            continue;
+        };
+        let degree = |id| {
+            molecule
+                .neighbors(id)
+                .expect("atom IDs come from this molecule")
+                .count()
+        };
+        let atoms: Vec<_> = molecule
+            .atom_ids()
+            .filter(|&id| !categories.contains(&degree(id)))
+            .collect();
+        if let Some(&first) = atoms.first() {
+            return Err(Error::new(
+                ErrorKind::UnsupportedMolecule,
+                format!(
+                    "connectivity {} absent from NAGL feature categories: {}",
+                    degree(first),
+                    atom_list(&atoms)
+                ),
+            )
+            .with_atoms(atoms));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn features(
     molecule: &Molecule,
     specifications: &[Feature],
@@ -461,6 +555,7 @@ pub(super) fn features(
     }) {
         return Err(invariant("NAGL requires the selected SSSR ring basis"));
     }
+    check_categories(molecule, specifications)?;
     let averages = if specifications
         .iter()
         .any(|f| matches!(f, Feature::AverageFormalCharge))

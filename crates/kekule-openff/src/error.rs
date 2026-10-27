@@ -6,6 +6,7 @@ use std::{
 };
 
 use kekule::diagnostics::LimitExceeded;
+use kekule::molecule::AtomId;
 use kekule::topology::MoleculeDefinitionId;
 
 /// The category of a parameterization failure, for programmatic handling.
@@ -68,8 +69,9 @@ impl fmt::Display for ErrorKind {
 ///
 /// [`Self::kind`] classifies the failure; the display text adds the specific
 /// detail and context. Failures inside one molecule of a system name its
-/// definition through [`Self::definition`], and file failures name the file
-/// through [`Self::path`]. A failure caused by a lower-level error, such as a
+/// definition through [`Self::definition`], failures caused by particular
+/// atoms name all of them through [`Self::atoms`], and file failures name the
+/// file through [`Self::path`]. A failure caused by a lower-level error, such as a
 /// Kekule perception or I/O error, returns it from
 /// [`source`](std::error::Error::source) and does not repeat its message.
 #[derive(Debug, Clone)]
@@ -78,6 +80,7 @@ pub struct Error {
     detail: String,
     path: Option<PathBuf>,
     definition: Option<MoleculeDefinitionId>,
+    atoms: Vec<AtomId>,
     limit: Option<LimitExceeded>,
     source: Option<Arc<dyn std::error::Error + Send + Sync>>,
 }
@@ -89,6 +92,7 @@ impl Error {
             detail: detail.to_string(),
             path: None,
             definition: None,
+            atoms: Vec::new(),
             limit: None,
             source: None,
         }
@@ -146,6 +150,14 @@ impl Error {
         self
     }
 
+    /// Adds the atoms this failure concerns, sorted and without repeats.
+    pub(crate) fn with_atoms(mut self, atoms: impl IntoIterator<Item = AtomId>) -> Self {
+        self.atoms.extend(atoms);
+        self.atoms.sort_unstable();
+        self.atoms.dedup();
+        self
+    }
+
     /// The failure category.
     pub fn kind(&self) -> ErrorKind {
         self.kind
@@ -166,6 +178,21 @@ impl Error {
     /// molecule of a system.
     pub fn definition(&self) -> Option<MoleculeDefinitionId> {
         self.definition
+    }
+
+    /// Every atom the failure concerns, in ascending order: for example all
+    /// atoms of elements outside a charge model's domain, every atom of the
+    /// interactions a force field leaves unassigned, or the atoms with implicit
+    /// hydrogens. Empty for failures that concern no particular atom, such as
+    /// file, force-field, model, or composition failures.
+    ///
+    /// The IDs belong to the molecule of [`Self::definition`] when a system's
+    /// definition failed, so atom `atom` of instance `instance` is
+    /// `InstanceAtomId::new(instance, atom)`, and otherwise to the molecule
+    /// passed in, for example to [`crate::ForceField::parameterize_molecule`] or
+    /// [`crate::NaglModel::assign_charges`].
+    pub fn atoms(&self) -> &[AtomId] {
+        &self.atoms
     }
 
     /// The exceeded bound, for [`ErrorKind::ResourceLimit`] failures whose
@@ -199,6 +226,19 @@ impl std::error::Error for Error {
         self.source
             .as_deref()
             .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
+
+/// Names atoms in a failure's detail, such as `atoms 3, 5`.
+pub(crate) fn atom_list(atoms: &[AtomId]) -> String {
+    let ids = atoms
+        .iter()
+        .map(|atom| atom.index().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    match atoms.len() {
+        1 => format!("atom {ids}"),
+        _ => format!("atoms {ids}"),
     }
 }
 

@@ -1023,7 +1023,8 @@ in the separate `kekule-openff-ash` crate, a default feature, so the preset work
 without external files while the main crate stays within the crates.io package
 size limit. Parameterization has no molecule size limit: its work grows linearly
 with the molecule, and bounded searches only stop pathological patterns. Every
-failure is one typed error with a stable kind and the failing molecule definition.
+failure is one typed error with a stable kind, the failing molecule definition,
+and every atom it concerns.
 
 `kekule-potentials` owns energy evaluation and geometry optimization; the
 foundational crate owns no potential. A prepared `Potential` binds one topology
