@@ -1,9 +1,5 @@
 //! One error type with a stable kind, readable detail, and source chain.
-use std::{
-    fmt,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt, path::Path, sync::Arc};
 
 use kekule::diagnostics::LimitExceeded;
 use kekule::molecule::AtomId;
@@ -78,9 +74,9 @@ impl fmt::Display for ErrorKind {
 pub struct Error {
     kind: ErrorKind,
     detail: String,
-    path: Option<PathBuf>,
+    path: Option<Box<Path>>,
     definition: Option<MoleculeDefinitionId>,
-    atoms: Vec<AtomId>,
+    atoms: Box<[AtomId]>,
     limit: Option<LimitExceeded>,
     source: Option<Arc<dyn std::error::Error + Send + Sync>>,
 }
@@ -92,7 +88,7 @@ impl Error {
             detail: detail.to_string(),
             path: None,
             definition: None,
-            atoms: Vec::new(),
+            atoms: Box::default(),
             limit: None,
             source: None,
         }
@@ -140,7 +136,7 @@ impl Error {
 
     /// Adds the file this failure concerns, keeping a more specific path.
     pub(crate) fn at_path(mut self, path: &Path) -> Self {
-        self.path.get_or_insert_with(|| path.to_owned());
+        self.path.get_or_insert_with(|| path.into());
         self
     }
 
@@ -152,9 +148,11 @@ impl Error {
 
     /// Adds the atoms this failure concerns, sorted and without repeats.
     pub(crate) fn with_atoms(mut self, atoms: impl IntoIterator<Item = AtomId>) -> Self {
-        self.atoms.extend(atoms);
-        self.atoms.sort_unstable();
-        self.atoms.dedup();
+        let mut all = std::mem::take(&mut self.atoms).into_vec();
+        all.extend(atoms);
+        all.sort_unstable();
+        all.dedup();
+        self.atoms = all.into_boxed_slice();
         self
     }
 

@@ -1,11 +1,9 @@
 //! Failures name every atom they concern, and the charge model's element
 //! domain is readable before parameterizing.
 
-use kekule::molecule::{AtomId, Element, Molecule};
+use kekule::molecule::{AtomId, Molecule};
 use kekule::smiles;
-use kekule::topology::TopologyBuilder;
-use kekule_openff::{ChargeMethod, ErrorKind, ForceField, NaglModel};
-use std::sync::Arc;
+use kekule_openff::{ChargeMethod, ErrorKind, ForceField};
 
 // Only water's bond and angle have parameters, so other molecules are left
 // unassigned.
@@ -26,8 +24,11 @@ fn ids(indices: &[u32]) -> Vec<AtomId> {
 }
 
 #[test]
+#[cfg(feature = "ash")]
 fn elements_outside_the_charge_model_name_every_such_atom() {
-    let ash = NaglModel::ash().unwrap();
+    use kekule::molecule::Element;
+
+    let ash = kekule_openff::NaglModel::ash().unwrap();
     let magnesium = Element::from_symbol("Mg").unwrap();
     // H0 Mg1 O2 Mg3 H4
     let error = ash
@@ -54,7 +55,11 @@ fn elements_outside_the_charge_model_name_every_such_atom() {
 }
 
 #[test]
+#[cfg(feature = "ash")]
 fn system_failures_name_atoms_of_the_failing_definition() {
+    use kekule::topology::TopologyBuilder;
+    use std::sync::Arc;
+
     let mut builder = TopologyBuilder::new();
     let water = builder
         .add_molecule_definition(molecule("[H]O[H]"))
@@ -65,7 +70,7 @@ fn system_failures_name_atoms_of_the_failing_definition() {
     builder.add_instance(water).unwrap();
     builder.add_instance(magnesium).unwrap();
     let topology = Arc::new(builder.build().unwrap());
-    let ash = NaglModel::ash().unwrap();
+    let ash = kekule_openff::NaglModel::ash().unwrap();
     let error = ForceField::rosemary()
         .unwrap()
         .parameterize(topology, &ash)

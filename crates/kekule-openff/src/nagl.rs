@@ -235,15 +235,8 @@ impl NaglModel {
     /// A molecule with any other element fails [`Self::assign_charges`] with
     /// [`ErrorKind::UnsupportedMolecule`], so a host can refuse it before
     /// parameterizing. The model's forbidden patterns, valence, and
-    /// connectivity limits can still reject molecules of these elements.
-    ///
-    /// ```
-    /// use kekule::molecule::Element;
-    /// let ash = kekule_openff::NaglModel::ash()?;
-    /// assert!(ash.supports_element(Element::C));
-    /// assert!(!ash.elements().contains(&Element::from_symbol("Mg").unwrap()));
-    /// # Ok::<(), kekule_openff::Error>(())
-    /// ```
+    /// connectivity limits can still reject molecules of these elements. The
+    /// bundled Ash model covers H, C, N, O, F, P, S, Cl, Br, and I.
     pub fn elements(&self) -> Vec<Element> {
         (1..=118)
             .filter_map(Element::from_atomic_number)
