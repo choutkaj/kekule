@@ -11,6 +11,19 @@ are marked **Breaking:**.
 
 ### Added
 
+- Builder fragments (SeekDelta K3b). `structure::placement::fragments` is a
+  library of 48 named fragments with ideal 3D coordinates (PubChem computed
+  conformers of their capped parent compounds): 23 rings from benzene to
+  benzimidazole and 25 groups from methyl to thiol, each with an attachment
+  atom and a leaving atom (`Fragment`, `FragmentKind`, `fragment` by name).
+  `ModelEditor::attach_fragment` bonds one to an atom in place of an explicit
+  hydrogen or at the free position nearest a direction, at the ideal length,
+  turned to the clearest of a few staggered torsions about the new bond (and
+  of 15° steps when none clears 2 Å), and `ModelEditor::place_fragment`
+  places one as a new capped molecule centered on a point, with its own chain
+  and `UNL` residue. `Fragment::with_attachment` attaches through another
+  atom that carries a hydrogen. New atoms join the parent's residue under the
+  next free names. Choosing a torsion reads the draft's position rows once.
 - Builder geometry on model drafts (SeekDelta K3a), so a host that edits a
   `ModelEditor` draft gets coordinates for the atoms it adds as part of that
   edit's one publication. The new `structure::placement` module documents the
