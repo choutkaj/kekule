@@ -300,7 +300,8 @@ impl RemovedHydrogens {
 }
 
 /// What [`ModelEditor::remove_hydrogens`] collapsed: one entry per distinct
-/// atom asked for, in request order.
+/// atom asked for, in request order, except hydrogens asked for that were
+/// collapsed into another atom asked for, which its entry lists as removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemovedHydrogensReport {
     pub(crate) atoms: Vec<RemovedHydrogens>,

@@ -282,7 +282,8 @@ impl TopologyEditor {
 
     /// Collapses the ordinary explicit hydrogens bonded to each parent into its
     /// implicit count, as [`Molecule::remove_hydrogens`] does, and returns one
-    /// entry per parent in input order. `annotated` tells, from a hydrogen's
+    /// entry per parent in input order, leaving out selected hydrogens that
+    /// the collapse deletes. `annotated` tells, from a hydrogen's
     /// atom slot and its bond's slot, whether the caller holds annotations
     /// on either that the topology does not see; such hydrogens are kept.
     /// Nothing changes on error.
@@ -422,7 +423,13 @@ impl TopologyEditor {
             .into_iter()
             .map(|adjustment| (adjustment.parent, adjustment))
             .collect::<BTreeMap<_, _>>();
+            // A selected hydrogen collapsed into its selected parent is
+            // reported under that parent only.
+            let deleted = plan.handles.values().copied().collect::<BTreeSet<_>>();
             for entry in plan.entries {
+                if deleted.contains(&entry.parent) {
+                    continue;
+                }
                 let molecule = self.molecule(group);
                 let value = molecule.atom(entry.local).expect("live parent");
                 let (hydrogens, implicit_hydrogens) = match adjustments.get(&entry.local) {

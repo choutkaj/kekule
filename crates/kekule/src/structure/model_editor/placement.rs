@@ -105,6 +105,7 @@ impl ModelEditor {
         atoms: impl IntoIterator<Item = EditAtomId>,
         options: AddHydrogensOptions,
     ) -> Result<PlacedHydrogensReport, PlacementError> {
+        let revision = self.topology.structural_revision;
         let hydrogen = Element::from_atomic_number(1).expect("hydrogen is an element");
         let mut seen = BTreeSet::new();
         let mut plans = Vec::new();
@@ -154,7 +155,7 @@ impl ModelEditor {
             let added = self
                 .topology
                 .materialize_hydrogens(atom, points.len(), origin)?;
-            self.sync_slots();
+            self.sync_slots(revision);
             let hydrogens = added
                 .iter()
                 .map(|(hydrogen, _)| *hydrogen)
@@ -179,7 +180,10 @@ impl ModelEditor {
     /// charges, topology or structure atom properties, stereo roles that
     /// cannot become implicit) are kept and reported. The atom keeps inference
     /// when it reproduces the complete count and is fixed otherwise; no
-    /// perception is needed.
+    /// perception is needed. Collapse changes representation, not
+    /// protonation: an atom over its valence keeps its total as a fixed
+    /// count, and changing that count is a separate edit (delete the
+    /// hydrogens and set the count, for example to inferred).
     ///
     /// # Errors
     ///
@@ -189,6 +193,7 @@ impl ModelEditor {
         &mut self,
         atoms: impl IntoIterator<Item = EditAtomId>,
     ) -> Result<RemovedHydrogensReport, PlacementError> {
+        let revision = self.topology.structural_revision;
         let atoms = atoms.into_iter().collect::<Vec<_>>();
         let slots = &self.slots;
         let collapsed = self
@@ -212,7 +217,7 @@ impl ModelEditor {
                     PlacementError::HydrogenCountOverflow { atom, count }
                 }
             })?;
-        self.sync_slots();
+        self.sync_slots(revision);
         self.slots.clear_atom_rows(&collapsed.dead_atom_slots);
         self.slots.clear_bond_rows(&collapsed.dead_bond_slots);
         Ok(RemovedHydrogensReport {
@@ -256,6 +261,7 @@ impl ModelEditor {
         order: BondOrder,
         site: AttachmentSite,
     ) -> Result<AttachedAtom, PlacementError> {
+        let revision = self.topology.structural_revision;
         let parent_atom = self.topology.require_atom(parent)?.clone();
         let length = bond_length(parent_atom.element, atom.element, order)?;
         let center = self.point(parent);
@@ -290,7 +296,7 @@ impl ModelEditor {
         let attached = self
             .topology
             .attach_in_occurrence(parent, atom, order, replaced)?;
-        self.sync_slots();
+        self.sync_slots(revision);
         if let Some((atom_slot, bond_slots)) = &attached.dead {
             self.slots.clear_atom_rows(&[*atom_slot]);
             self.slots.clear_bond_rows(bond_slots);
@@ -563,14 +569,17 @@ impl ModelEditor {
             .expect("placed positions are finite");
     }
 
-    /// Grows structure rows to the topology's slots and clears structure
-    /// owner annotations after a structural change.
-    fn sync_slots(&mut self) {
+    /// Grows structure rows to the topology's slots and, when the topology
+    /// changed structurally since `revision`, clears structure owner
+    /// annotations, as [`Self::structural`] does.
+    fn sync_slots(&mut self, revision: u64) {
         self.slots.resize_slots(
             self.topology.atom_slot_count(),
             self.topology.bond_slot_count(),
         );
-        self.slots.properties.owner_mut().clear();
+        if self.topology.structural_revision != revision {
+            self.slots.properties.owner_mut().clear();
+        }
     }
 }
 

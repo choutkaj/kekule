@@ -232,6 +232,31 @@ fn completed(symbol: &str, charge: i8) -> (ModelEditor, EditAtomId, Vec<EditAtom
 }
 
 #[test]
+fn selections_with_hydrogens_and_no_changes_are_safe() {
+    let (mut editor, carbon, hydrogens) = completed("C", 0);
+    let energy = PropertyKey::new("energy").unwrap();
+    editor
+        .properties_mut()
+        .owner_mut()
+        .insert(energy.clone(), PropertyValue::Int(7))
+        .unwrap();
+    // Completing a complete atom, or removing nothing, keeps annotations.
+    let none = editor
+        .add_hydrogens([carbon], AddHydrogensOptions::default())
+        .unwrap();
+    assert_eq!(none.added_count(), 0);
+    assert_eq!(editor.remove_hydrogens([]).unwrap().removed_count(), 0);
+    assert!(editor.properties().owner().get(&energy).is_some());
+    // Selecting every atom reports the hydrogens under their parent only.
+    let all = editor.topology().atom_ids().collect::<Vec<_>>();
+    let report = editor.remove_hydrogens(all).unwrap();
+    assert_eq!(report.atoms().len(), 1);
+    assert_eq!(report.atoms()[0].atom(), carbon);
+    assert_eq!(report.atoms()[0].removed(), hydrogens.as_slice());
+    assert!(editor.properties().owner().get(&energy).is_none());
+}
+
+#[test]
 fn hydrides_take_ideal_lengths_and_angles() {
     for (symbol, charge, count, shape) in [
         ("C", 0, 4, AtomShape::Tetrahedral),
