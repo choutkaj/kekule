@@ -39,7 +39,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 enum GroupChemistry {
     Source(MoleculeDefinitionId),
-    Added(Arc<Molecule>),
+    /// An added molecule, and whether it holds exactly the default
+    /// perception, as a definition imported from a perceived snapshot does.
+    Added(Arc<Molecule>, bool),
     Draft(Box<MoleculeEditor>),
 }
 /// One staging group: an untouched source occurrence read from the source,
@@ -469,7 +471,7 @@ impl TopologyEditor {
         let (atom_start, bond_start) = (self.atom_slot_count(), self.bond_slot_count());
         let identity = GroupIdentity::appended(&owned, atom_start, bond_start);
         let group = self.register_group(
-            GroupChemistry::Added(Arc::clone(&owned)),
+            GroupChemistry::Added(Arc::clone(&owned), false),
             &owned,
             None,
             false,
@@ -1093,7 +1095,7 @@ impl TopologyEditor {
                 .definition_molecule(MoleculeInstanceId::new(group as u32)),
             GroupSlot::Live(stored) => match &stored.chemistry {
                 GroupChemistry::Source(id) => self.source_ref().definition(*id).unwrap().molecule(),
-                GroupChemistry::Added(molecule) => molecule,
+                GroupChemistry::Added(molecule, _) => molecule,
                 GroupChemistry::Draft(editor) => editor.working(),
             },
             GroupSlot::Merged => unreachable!("merged groups have no molecule"),

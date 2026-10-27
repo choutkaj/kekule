@@ -29,8 +29,17 @@ impl TopologyEditor {
         let definitions = source
             .definitions()
             // A fresh allocation per import: added groups reuse a definition
-            // only when they share one, which stays within this import.
-            .map(|definition| (definition.id(), Arc::new(definition.molecule().clone())))
+            // only when they share one, which stays within this import. The
+            // copy keeps the definition's perception, and so its profile.
+            .map(|definition| {
+                (
+                    definition.id(),
+                    (
+                        Arc::new(definition.molecule().clone()),
+                        definition.default_perception,
+                    ),
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         let instance_start = self.properties.molecule_instances().len();
         self.properties
@@ -40,10 +49,10 @@ impl TopologyEditor {
         let bases = (self.properties.atoms().len(), self.properties.bonds().len());
         let handles = GroupIdentity::source_handles(&source);
         for (instance, value) in source.instance_records() {
-            let molecule = &definitions[&value.definition()];
+            let (molecule, default_perception) = &definitions[&value.definition()];
             let identity = GroupIdentity::dense(&source, instance, handles, bases);
             let group = self.register_group(
-                GroupChemistry::Added(Arc::clone(molecule)),
+                GroupChemistry::Added(Arc::clone(molecule), *default_perception),
                 molecule,
                 Some(source.definition(value.definition()).unwrap().class()),
                 source

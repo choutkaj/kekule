@@ -397,7 +397,7 @@ impl TopologyEditor {
                         retained[id.index()] = true;
                         invalidated[id.index()] |= group.class.is_none();
                     }
-                    GroupChemistry::Added(molecule) if group.class.is_none() => {
+                    GroupChemistry::Added(molecule, _) if group.class.is_none() => {
                         invalidated_added.insert(Arc::as_ptr(molecule));
                     }
                     _ => {}
@@ -477,13 +477,14 @@ impl TopologyEditor {
                         &mut staged,
                     );
                 }
-                GroupChemistry::Added(owned) => {
+                GroupChemistry::Added(owned, default_perception) => {
                     // Only explicit shared definitions are reused, never chemical guesses.
                     let identity = Arc::as_ptr(&owned);
                     let definition = if let Some(&id) = added_definitions.get(&identity) {
                         id
                     } else {
-                        let id = builder.add_shared_definition(owned, false)?;
+                        // A copy of perceived chemistry keeps its profile.
+                        let id = builder.add_shared_definition(owned, default_perception)?;
                         if let Some(class) = group.class {
                             if !invalidated_added.contains(&identity) || group.class_explicit {
                                 builder.preserve_molecule_class(id, class, group.class_explicit)?;

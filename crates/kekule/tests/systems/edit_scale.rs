@@ -659,3 +659,53 @@ fn chained_edits_keep_every_snapshot_and_their_labels() {
     }
     assert_eq!(site_name(&history[0], 0).as_deref(), Some("X0"));
 }
+
+#[test]
+fn appended_perceived_copies_keep_their_perception_profile() {
+    // A host builds a large model by appending perceived copies and never
+    // perceives the result: perceiving it, or an edit of it, perceives only
+    // what changed.
+    let copy = Model::new(
+        Arc::new(system().perceived().unwrap()),
+        Positions::zeros(12),
+    )
+    .unwrap();
+    let mut merged = ModelEditor::new();
+    for _ in 0..3 {
+        merged.append_model(&copy).unwrap();
+    }
+    // An added molecule has no known perception and is perceived.
+    merged
+        .add_molecule(
+            kekule::smiles::to_molecules("C").unwrap().remove(0),
+            &Positions::zeros(1),
+        )
+        .unwrap();
+    let merged = merged.finish().unwrap();
+    let shared = |before: &Topology, after: &Topology| {
+        before
+            .definitions()
+            .zip(after.definitions())
+            .map(|(a, b)| std::ptr::eq(a.molecule(), b.molecule()))
+            .collect::<Vec<_>>()
+    };
+    let perceived = merged.topology().perceived().unwrap();
+    let mut expected = vec![true; merged.topology().definition_count()];
+    *expected.last_mut().unwrap() = false;
+    assert_eq!(shared(merged.topology(), &perceived), expected);
+
+    let mut editor = merged.to_editor();
+    let ring = editor
+        .topology()
+        .atom_handle(merged.topology().atom_ids()[12 + 3])
+        .unwrap();
+    editor.delete_atom(ring).unwrap();
+    let edited = editor.finish().unwrap();
+    let reperceived = edited.topology().perceived().unwrap();
+    let fresh = shared(edited.topology(), &reperceived)
+        .iter()
+        .filter(|shared| !**shared)
+        .count();
+    // The edited benzene's new definition and the added methane.
+    assert_eq!(fresh, 2);
+}

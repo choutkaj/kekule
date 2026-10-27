@@ -631,9 +631,14 @@ are marked **Breaking:**.
   the dense correspondence in the same passes; hierarchies store residue
   labels and site metadata in row tables shared between snapshots. The
   per-instance lists behind `InstanceView::chains`, `residues`, and
-  `atom_sites` are built on first use. Results are unchanged. One edit of a
-  ligand in a 100,716-atom model (66 merged copies of PDB 9UOH, 6,336
-  definitions), whole cycle of starting the editor, editing, publishing with
+  `atom_sites` are built on first use. Results are unchanged. Definitions
+  appended from a perceived model (`ModelEditor::append_model`) keep the
+  record that their perception is the default profile's, as definitions
+  shared from the source do, so a model merged from perceived copies and
+  never perceived again perceives only what an edit changed, not every
+  definition (63–83 ms before on the model below, 0.5 ms now). One edit of a
+  ligand in a 100,716-atom model (66 perceived copies of PDB 9UOH appended,
+  6,336 definitions), whole cycle of starting the editor, editing, publishing with
   correspondence, and perceiving: deleting an atom takes 6.8 ms instead of
   64 ms, attaching one 6.9 ms instead of 58 ms, and changing an atom's
   element or formal charge 3.4 ms instead of 57 ms; starting the editor takes

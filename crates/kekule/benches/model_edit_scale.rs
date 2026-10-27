@@ -4,7 +4,8 @@
 //! an earlier snapshot stays alive.
 //!
 //! The model is 66 merged copies of an externally supplied mmCIF entry, each
-//! appended as separate chains and molecules. SeekDelta's request K56 used
+//! perceived and appended as separate chains and molecules; the merged model
+//! is not perceived again. SeekDelta's request K56 used
 //! PDB 9UOH (KRas G12C with GDP, Mg2+ and an inhibitor, 1,526 atoms), which
 //! makes 100,716 atoms:
 //!
@@ -48,15 +49,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| "A1L9E".to_owned());
 
     let text = std::fs::read_to_string(&path)?;
-    let copy = mmcif::parse_str(&text, Default::default())?
+    let mut copy = mmcif::parse_str(&text, Default::default())?
         .interpret(Default::default())?
         .into_model();
+    // As a host merges structures: perceived copies appended, the result not
+    // perceived again.
+    copy.perceive()?;
     let mut editor = ModelEditor::new();
     for _ in 0..COPIES {
         editor.append_model(&copy)?;
     }
-    let mut model = editor.finish()?;
-    model.perceive()?;
+    let model = editor.finish()?;
     let topology = model.topology();
 
     // An atom of the ligand in the middle copy, bonded to exactly one other
