@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use crate::geometry::{PeriodicCell, Point3};
 use crate::properties::StructureProperties;
 use crate::topology::TopologyAtomIndex;
@@ -100,8 +98,8 @@ impl ModelState {
 
     /// Clears annotations of editor atom slots that are no longer live.
     pub(crate) fn clear_dead_atom_rows(&mut self, live: &[usize]) {
-        let live = live.iter().copied().collect::<BTreeSet<_>>();
-        for slot in (0..self.positions.len()).filter(|slot| !live.contains(slot)) {
+        let live = live_mask(live, self.positions.len());
+        for slot in (0..self.positions.len()).filter(|&slot| !live[slot]) {
             self.occupancies.clear(slot);
             self.b_factors.clear(slot);
             self.properties.atoms_raw_mut().clear_index(slot);
@@ -110,8 +108,8 @@ impl ModelState {
 
     /// Clears annotations of editor bond slots that are no longer live.
     pub(crate) fn clear_dead_bond_rows(&mut self, live: &[usize]) {
-        let live = live.iter().copied().collect::<BTreeSet<_>>();
-        for slot in (0..self.properties.bonds().len()).filter(|slot| !live.contains(slot)) {
+        let live = live_mask(live, self.properties.bonds().len());
+        for slot in (0..self.properties.bonds().len()).filter(|&slot| !live[slot]) {
             self.properties.bonds_raw_mut().clear_index(slot);
         }
     }
@@ -159,4 +157,13 @@ impl ModelState {
             properties: self.properties.project(atoms, bonds)?,
         })
     }
+}
+
+/// Whether each of `len` slots is listed in `live`.
+fn live_mask(live: &[usize], len: usize) -> Vec<bool> {
+    let mut mask = vec![false; len];
+    for &slot in live {
+        mask[slot] = true;
+    }
+    mask
 }

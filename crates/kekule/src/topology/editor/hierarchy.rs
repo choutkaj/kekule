@@ -21,12 +21,13 @@ impl EditChain {
 #[derive(Debug, Clone)]
 pub struct EditResidue {
     pub(super) chain: EditChainId,
-    pub(super) name: String,
-    pub(super) label_comp: Option<String>,
-    pub(super) author_comp: Option<String>,
+    // Labels are shared with the source and published snapshots.
+    pub(super) name: Arc<str>,
+    pub(super) label_comp: Option<Arc<str>>,
+    pub(super) author_comp: Option<Arc<str>>,
     pub(super) label_seq: Option<i32>,
-    pub(super) author_seq: Option<String>,
-    pub(super) insertion: Option<String>,
+    pub(super) author_seq: Option<Arc<str>>,
+    pub(super) insertion: Option<Arc<str>>,
     pub(super) class: Option<ResidueClass>,
     pub(super) class_explicit: bool,
     pub(super) slot: usize,
@@ -71,7 +72,7 @@ impl EditResidue {
 pub struct EditAtomSite {
     pub(super) residue: EditResidueId,
     pub(super) atom: EditAtomId,
-    pub(super) metadata: AtomSiteMetadata,
+    pub(super) metadata: Arc<AtomSiteMetadata>,
     pub(super) slot: usize,
 }
 impl EditAtomSite {
@@ -91,14 +92,16 @@ impl EditAtomSite {
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct EditHierarchy {
-    pub(super) chains: BTreeMap<EditChainId, EditChain>,
-    pub(super) residues: BTreeMap<EditResidueId, EditResidue>,
-    pub(super) sites: BTreeMap<EditAtomSiteId, EditAtomSite>,
-    pub(super) atom_sites: BTreeMap<EditAtomId, EditAtomSiteId>,
-    pub(super) residue_atoms: BTreeMap<EditResidueId, BTreeSet<EditAtomId>>,
-    pub(super) source_chains: BTreeMap<ChainId, EditChainId>,
-    pub(super) source_residues: BTreeMap<ResidueId, EditResidueId>,
-    pub(super) source_sites: BTreeMap<AtomSiteId, EditAtomSiteId>,
+    pub(super) chains: DenseMap<EditChainId, EditChain>,
+    pub(super) residues: DenseMap<EditResidueId, EditResidue>,
+    pub(super) sites: DenseMap<EditAtomSiteId, EditAtomSite>,
+    pub(super) atom_sites: DenseMap<EditAtomId, EditAtomSiteId>,
+    // The atoms of residues whose membership changed; other source residues
+    // keep their source atoms, read through `residue_atom_list`.
+    pub(super) residue_atoms: DenseMap<EditResidueId, BTreeSet<EditAtomId>>,
+    pub(super) source_chains: DenseMap<ChainId, EditChainId>,
+    pub(super) source_residues: DenseMap<ResidueId, EditResidueId>,
+    pub(super) source_sites: DenseMap<AtomSiteId, EditAtomSiteId>,
 }
 
 impl TopologyEditor {
@@ -231,18 +234,18 @@ impl TopologyEditor {
     ) -> Result<EditResidueId, TopologyEditError> {
         self.require_chain(chain)?;
         let id = EditResidueId::new();
-        let name = name.into();
+        let name = Arc::<str>::from(name.into());
         let slot = self.properties.residues().len();
         self.hierarchy.residues.insert(
             id,
             EditResidue {
                 chain,
-                label_comp: Some(name.clone()),
+                label_comp: Some(Arc::clone(&name)),
                 name,
                 author_comp: None,
                 label_seq,
-                author_seq,
-                insertion,
+                author_seq: author_seq.map(Arc::from),
+                insertion: insertion.map(Arc::from),
                 class: None,
                 class_explicit: false,
                 slot,
@@ -279,16 +282,12 @@ impl TopologyEditor {
             EditAtomSite {
                 residue,
                 atom,
-                metadata,
+                metadata: Arc::new(metadata),
                 slot,
             },
         );
         self.hierarchy.atom_sites.insert(atom, id);
-        self.hierarchy
-            .residue_atoms
-            .get_mut(&residue)
-            .unwrap()
-            .insert(atom);
+        self.residue_atoms_mut(residue).insert(atom);
         self.invalidate_molecule_class_for_atom(atom);
         self.invalidate_residue_class(residue, true);
         self.properties.atom_sites_mut().resize_missing(slot + 1);
@@ -331,11 +330,13 @@ impl TopologyEditor {
     ) -> Result<(), TopologyEditError> {
         self.require_residue(id)?;
         let residue = self.hierarchy.residues.get_mut(&id).unwrap();
-        if residue.label_comp == label && residue.author_comp == author {
+        if residue.label_comp.as_deref() == label.as_deref()
+            && residue.author_comp.as_deref() == author.as_deref()
+        {
             return Ok(());
         }
-        residue.label_comp = label;
-        residue.author_comp = author;
+        residue.label_comp = label.map(Arc::from);
+        residue.author_comp = author.map(Arc::from);
         self.invalidate_residue_class(id, false);
         self.changed();
         Ok(())
@@ -388,13 +389,13 @@ impl TopologyEditor {
         id: EditAtomSiteId,
         metadata: AtomSiteMetadata,
     ) -> Result<(), TopologyEditError> {
-        if self.require_atom_site(id)?.metadata == metadata {
+        if *self.require_atom_site(id)?.metadata == metadata {
             return Ok(());
         }
         let previous = &self.require_atom_site(id)?.metadata;
         let names_changed = previous.label_atom_id != metadata.label_atom_id
             || previous.auth_atom_id != metadata.auth_atom_id;
-        self.hierarchy.sites.get_mut(&id).unwrap().metadata = metadata;
+        self.hierarchy.sites.get_mut(&id).unwrap().metadata = Arc::new(metadata);
         if names_changed {
             self.invalidate_molecule_class_for_atom(self.hierarchy.sites[&id].atom);
         }
@@ -419,16 +420,8 @@ impl TopologyEditor {
         }
         self.hierarchy.sites.get_mut(&id).unwrap().residue = residue;
         let atom = self.hierarchy.sites[&id].atom;
-        self.hierarchy
-            .residue_atoms
-            .get_mut(&previous)
-            .unwrap()
-            .remove(&atom);
-        self.hierarchy
-            .residue_atoms
-            .get_mut(&residue)
-            .unwrap()
-            .insert(atom);
+        self.residue_atoms_mut(previous).remove(&atom);
+        self.residue_atoms_mut(residue).insert(atom);
         self.invalidate_molecule_class_for_atom(atom);
         self.invalidate_residue_class(residue, true);
         self.invalidate_residue_class(previous, true);
@@ -444,11 +437,7 @@ impl TopologyEditor {
         self.require_atom_site(id)?;
         let site = self.hierarchy.sites.remove(&id).unwrap();
         self.hierarchy.atom_sites.remove(&site.atom);
-        self.hierarchy
-            .residue_atoms
-            .get_mut(&site.residue)
-            .unwrap()
-            .remove(&site.atom);
+        self.residue_atoms_mut(site.residue).remove(&site.atom);
         self.properties.atom_sites_mut().clear_index(site.slot);
         self.invalidate_residue_class(site.residue, true);
         self.invalidate_molecule_class_for_atom(site.atom);
@@ -520,10 +509,7 @@ impl TopologyEditor {
     }
 
     fn invalidate_molecule_classes_for_residue(&mut self, residue: EditResidueId) {
-        let atoms = self.hierarchy.residue_atoms[&residue]
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
+        let atoms = self.residue_atom_list(residue);
         for atom in atoms {
             self.invalidate_molecule_class_for_atom(atom);
         }
@@ -537,13 +523,58 @@ impl TopologyEditor {
             }
         }
     }
+    /// The atoms of one live residue, copied from the source on first use so
+    /// that a membership change starts from the current atoms.
+    fn residue_atoms_mut(&mut self, residue: EditResidueId) -> &mut BTreeSet<EditAtomId> {
+        if !self.hierarchy.residue_atoms.contains_key(&residue) {
+            let atoms = self.source_residue_atoms(residue).collect();
+            self.hierarchy.residue_atoms.insert(residue, atoms);
+        }
+        self.hierarchy
+            .residue_atoms
+            .get_mut(&residue)
+            .expect("materialized residue atoms")
+    }
+    /// The atoms of one live residue in handle order.
+    fn residue_atom_list(&self, residue: EditResidueId) -> Vec<EditAtomId> {
+        match self.hierarchy.residue_atoms.get(&residue) {
+            Some(atoms) => atoms.iter().copied().collect(),
+            None => {
+                let mut atoms = self.source_residue_atoms(residue).collect::<Vec<_>>();
+                atoms.sort_unstable();
+                atoms
+            }
+        }
+    }
+    /// The source atoms of a source residue whose membership is unchanged.
+    fn source_residue_atoms(
+        &self,
+        residue: EditResidueId,
+    ) -> impl Iterator<Item = EditAtomId> + '_ {
+        let source = self
+            .source
+            .as_deref()
+            .zip(self.source_blocks.residues.source(residue));
+        source.into_iter().flat_map(move |(source, id)| {
+            let hierarchy = source.hierarchy();
+            hierarchy
+                .residue(ResidueId::new(id))
+                .expect("source residue")
+                .atom_sites()
+                .iter()
+                .map(move |&site| {
+                    let atom = hierarchy.atom_site(site).expect("source site").atom();
+                    self.source_atoms[&atom]
+                })
+        })
+    }
     pub(super) fn remove_site_for_atom(&mut self, atom: EditAtomId) {
         if let Some(site) = self.hierarchy.atom_sites.get(&atom).copied() {
             self.delete_atom_site(site).expect("live hierarchy site");
         }
     }
     fn prune_empty_residue(&mut self, residue: EditResidueId) {
-        if !self.hierarchy.residue_atoms[&residue].is_empty() {
+        if !self.residue_atom_list(residue).is_empty() {
             return;
         }
         self.hierarchy.residue_atoms.remove(&residue);
@@ -560,60 +591,81 @@ impl TopologyEditor {
         }
     }
     pub(super) fn import_hierarchy(&mut self, source: &Topology) {
-        for (source_id, chain) in source.hierarchy().chains() {
-            let id = EditChainId::new();
-            self.hierarchy.chains.insert(
+        // A fresh draft takes one handle block per node kind, in source ID
+        // order, so vectors index the imported nodes.
+        let hierarchy = source.hierarchy();
+        let (chains, residues, sites) = (
+            hierarchy.chains().len(),
+            hierarchy.residues().len(),
+            hierarchy.atom_sites().len(),
+        );
+        let bases = (
+            identity::fresh_block(chains),
+            identity::fresh_block(residues),
+            identity::fresh_block(sites),
+        );
+        self.source_blocks.chains = HandleBlock {
+            base: bases.0,
+            len: chains,
+        };
+        self.source_blocks.residues = HandleBlock {
+            base: bases.1,
+            len: residues,
+        };
+        let edit = &mut self.hierarchy;
+        edit.chains = DenseMap::block(bases.0, chains);
+        edit.residues = DenseMap::block(bases.1, residues);
+        edit.residue_atoms = DenseMap::block(bases.1, residues);
+        edit.sites = DenseMap::block(bases.2, sites);
+        edit.atom_sites = DenseMap::block_of(&self.atoms);
+        let chain = |id: ChainId| EditChainId::from_position(bases.0 + id.index() as u64);
+        let residue = |id: ResidueId| EditResidueId::from_position(bases.1 + id.index() as u64);
+        for (source_id, value) in hierarchy.chains() {
+            let id = chain(source_id);
+            edit.chains.insert(
                 id,
                 EditChain {
-                    label: chain.label_id().to_owned(),
-                    author: chain.author_id().map(str::to_owned),
+                    label: value.label_id().to_owned(),
+                    author: value.author_id().map(str::to_owned),
                     slot: source_id.index(),
                 },
             );
-            self.hierarchy.source_chains.insert(source_id, id);
+            edit.source_chains.insert(source_id, id);
         }
-        for (source_id, residue) in source.hierarchy().residues() {
-            let id = EditResidueId::new();
-            self.hierarchy.residues.insert(
+        for (source_id, value) in hierarchy.residues() {
+            let id = residue(source_id);
+            edit.residues.insert(
                 id,
                 EditResidue {
-                    chain: self.hierarchy.source_chains[&residue.chain()],
-                    name: residue.name().to_owned(),
-                    label_comp: residue.label_comp_id().map(str::to_owned),
-                    author_comp: residue.author_comp_id().map(str::to_owned),
-                    label_seq: residue.label_seq_id(),
-                    author_seq: residue.author_seq_id().map(str::to_owned),
-                    insertion: residue.insertion_code().map(str::to_owned),
-                    class: Some(residue.class()),
-                    class_explicit: source
-                        .hierarchy()
-                        .residue(source_id)
-                        .is_some_and(|residue| residue.explicit_class.is_some()),
+                    chain: chain(value.chain()),
+                    name: Arc::clone(&value.name),
+                    label_comp: value.label_comp_id.clone(),
+                    author_comp: value.author_comp_id.clone(),
+                    label_seq: value.label_seq_id(),
+                    author_seq: value.author_seq_id.clone(),
+                    insertion: value.insertion_code.clone(),
+                    class: Some(value.class()),
+                    class_explicit: value.explicit_class.is_some(),
                     slot: source_id.index(),
                 },
             );
-            self.hierarchy.source_residues.insert(source_id, id);
-            self.hierarchy.residue_atoms.insert(id, BTreeSet::new());
+            edit.source_residues.insert(source_id, id);
         }
-        for (source_id, site) in source.hierarchy().atom_sites() {
-            let id = EditAtomSiteId::new();
+        for (source_id, site) in hierarchy.atom_sites() {
+            let id = EditAtomSiteId::from_position(bases.2 + source_id.index() as u64);
             let atom = self.source_atoms[&site.atom()];
-            self.hierarchy.sites.insert(
+            let residue = residue(site.residue());
+            edit.sites.insert(
                 id,
                 EditAtomSite {
-                    residue: self.hierarchy.source_residues[&site.residue()],
+                    residue,
                     atom,
-                    metadata: site.metadata().clone(),
+                    metadata: Arc::clone(&site.metadata),
                     slot: source_id.index(),
                 },
             );
-            self.hierarchy.source_sites.insert(source_id, id);
-            self.hierarchy.atom_sites.insert(atom, id);
-            self.hierarchy
-                .residue_atoms
-                .get_mut(&self.hierarchy.source_residues[&site.residue()])
-                .unwrap()
-                .insert(atom);
+            edit.source_sites.insert(source_id, id);
+            edit.atom_sites.insert(atom, id);
         }
     }
 }

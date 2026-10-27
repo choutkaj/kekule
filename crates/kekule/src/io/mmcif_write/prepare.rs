@@ -280,10 +280,7 @@ fn collect_macro_rows(
             .or(site.metadata.auth_atom_id.as_ref())
             .cloned()
             .unwrap_or_else(|| generated_atom_name(atom.element.symbol(), atom_id));
-        let label_comp_id = residue
-            .label_comp_id
-            .clone()
-            .unwrap_or_else(|| residue.name.clone());
+        let label_comp_id = residue.label_comp_id().unwrap_or(residue.name()).to_owned();
         rows.push(AtomRow {
             atom: qualified,
             residue: Some(site.residue()),
@@ -295,7 +292,7 @@ fn collect_macro_rows(
             label_alt_id: None,
             label_comp_id: label_comp_id.clone(),
             label_seq_id: residue.label_seq_id,
-            insertion_code: residue.insertion_code.clone(),
+            insertion_code: residue.insertion_code().map(str::to_owned),
             position: model
                 .position(qualified)
                 .ok_or_else(|| invalid_model("inconsistent source model"))?
@@ -309,10 +306,13 @@ fn collect_macro_rows(
                 .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: residue
-                .author_seq_id
-                .clone()
+                .author_seq_id()
+                .map(str::to_owned)
                 .or_else(|| residue.label_seq_id.map(|value| value.to_string())),
-            auth_comp_id: residue.author_comp_id.clone().unwrap_or(label_comp_id),
+            auth_comp_id: residue
+                .author_comp_id()
+                .map(str::to_owned)
+                .unwrap_or(label_comp_id),
             auth_asym_id: site
                 .metadata
                 .auth_asym_id

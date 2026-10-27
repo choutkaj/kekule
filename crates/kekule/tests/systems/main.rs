@@ -4,6 +4,7 @@ mod atom_order;
 mod classification;
 mod classification_edits;
 mod dense_storage;
+mod edit_scale;
 mod editors;
 mod hierarchy;
 mod model_append;

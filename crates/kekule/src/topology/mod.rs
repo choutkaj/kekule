@@ -52,6 +52,7 @@
 mod builder;
 mod classification;
 mod components;
+mod dense_map;
 mod dense_order;
 mod editor;
 mod entity_views;
@@ -81,6 +82,7 @@ pub(crate) use editor::AppendMapping;
 pub use entity_views::{AtomView, BondView};
 pub(crate) use hierarchy::{
     AtomSite, Chain, Hierarchy, RawAtomSite, RawChain, RawHierarchyError, RawResidue, Residue,
+    ResidueLabels,
 };
 pub use hierarchy::{
     AtomSiteId, AtomSiteMetadata, ChainId, HierarchyBuilder, HierarchyError, HierarchyIdKind,
@@ -126,9 +128,10 @@ pub use transform::{TopologySubset, TopologySubsetCorrespondence, TopologySubset
 /// ```
 pub mod edit {
     pub use super::editor::{
-        EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
-        EditCorrespondence, EditMolecule, EditProperties, EditPropertiesMut, EditPropertyTable,
-        EditPropertyTableMut, EditResidue, EditResidueId, TopologyEditError, TopologyEditor,
+        DenseCorrespondence, EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId,
+        EditChain, EditChainId, EditCorrespondence, EditMolecule, EditProperties,
+        EditPropertiesMut, EditPropertyTable, EditPropertyTableMut, EditResidue, EditResidueId,
+        TopologyEditError, TopologyEditor,
     };
 }
 
@@ -621,11 +624,25 @@ impl<'a> AtomSiteView<'a> {
 }
 
 /// One reusable coordinate-free molecule definition.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Snapshots share an unchanged definition's molecule instead of copying it:
+/// publishing an edit copies only the definitions it changes, and perception
+/// shares the definitions it does not perceive again.
+#[derive(Debug, Clone)]
 pub struct MoleculeDefinition {
     id: MoleculeDefinitionId,
-    molecule: Molecule,
+    molecule: Arc<Molecule>,
     class: MoleculeClass,
+    // Whether the installed perception is exactly what `Topology::perceived`
+    // installs on this graph, so perceiving again would change nothing.
+    // Published molecules never change, so the flag cannot go stale.
+    default_perception: bool,
+}
+
+impl PartialEq for MoleculeDefinition {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.class == other.class && self.molecule == other.molecule
+    }
 }
 
 impl MoleculeDefinition {
