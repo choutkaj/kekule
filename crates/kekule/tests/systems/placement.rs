@@ -1029,13 +1029,32 @@ fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
                     && hydrogen_count(&editor, *atom) > 0
             })
             .unwrap();
-        let hydrogen = neighbors(&editor, carbon)
+        let hydrogens = neighbors(&editor, carbon)
+            .into_iter()
+            .filter(|n| element_of(&editor, *n).atomic_number() == 1)
+            .collect::<Vec<_>>();
+        // A first attachment deletes a hydrogen; the second, timed one then
+        // runs in a draft with a deleted atom.
+        let other = ligand
+            .iter()
+            .copied()
+            .rev()
+            .find(|atom| {
+                *atom != carbon
+                    && element_of(&editor, *atom).atomic_number() == 6
+                    && hydrogen_count(&editor, *atom) > 0
+            })
+            .unwrap();
+        let other_hydrogen = neighbors(&editor, other)
             .into_iter()
             .find(|n| element_of(&editor, *n).atomic_number() == 1)
             .unwrap();
+        editor
+            .attach_fragment(other, phenyl, AttachmentSite::Hydrogen(other_hydrogen))
+            .unwrap();
         let start = std::time::Instant::now();
         editor
-            .attach_fragment(carbon, phenyl, AttachmentSite::Hydrogen(hydrogen))
+            .attach_fragment(carbon, phenyl, AttachmentSite::Hydrogen(hydrogens[0]))
             .unwrap();
         start.elapsed()
     };
@@ -1046,4 +1065,58 @@ fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
         big < small * 10 + std::time::Duration::from_millis(20),
         "{small:?} in one copy, {big:?} in 100k atoms"
     );
+}
+
+#[test]
+fn fragments_on_linear_parents_turn_clear_of_their_surroundings() {
+    // Phenyl on an acetylene carbon, with an atom an angstrom beside where
+    // the ring's first torsion would put one of its carbons.
+    let mut editor = ModelEditor::new();
+    let placed = editor
+        .place_fragment(
+            fragment("ethynyl").unwrap(),
+            Quantity::new(Point3::origin(), NANOMETER),
+        )
+        .unwrap();
+    let ethynyl = fragment("ethynyl").unwrap();
+    let handles = placed.atoms().iter().copied().collect::<BTreeMap<_, _>>();
+    let parent = handles[&ethynyl.attachment_atom()];
+    let hydrogen = handles[&ethynyl.leaving_atom()];
+    assert_eq!(
+        editor.atom_geometry(parent).unwrap().shape(),
+        Some(AtomShape::Linear)
+    );
+    let phenyl = fragment("phenyl").unwrap();
+    let mut trial = editor.clone();
+    let first = trial
+        .attach_fragment(parent, phenyl, AttachmentSite::Hydrogen(hydrogen))
+        .unwrap();
+    let ring_carbon = first
+        .atoms()
+        .iter()
+        .map(|(_, atom)| *atom)
+        .find(|atom| *atom != first.attachment() && element_of(&trial, *atom).atomic_number() == 6)
+        .unwrap();
+    // One angstrom outward from the ring carbon, away from the bond axis.
+    let (start, end, carbon) = (
+        point(&trial, parent),
+        point(&trial, first.attachment()),
+        point(&trial, ring_carbon),
+    );
+    let axis = (end - start) / (end - start).norm();
+    let foot = start + axis * (carbon - start).dot(axis);
+    let outward = (carbon - foot) / (carbon - foot).norm();
+    let obstacle_point = Quantity::new(carbon + outward, ANGSTROM);
+    let obstacle = editor
+        .place_atom(Atom::new(element("Ar")), obstacle_point)
+        .unwrap();
+    let attached = editor
+        .attach_fragment(parent, phenyl, AttachmentSite::Hydrogen(hydrogen))
+        .unwrap();
+    let closest = attached
+        .atoms()
+        .iter()
+        .map(|(_, atom)| distance(&editor, *atom, obstacle))
+        .fold(f64::INFINITY, f64::min);
+    assert!(closest > 2.0, "{closest:.2} A");
 }

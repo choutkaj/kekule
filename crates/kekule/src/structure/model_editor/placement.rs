@@ -356,12 +356,13 @@ impl ModelEditor {
     /// of the atoms around it: three 120° steps between tetrahedral ends,
     /// four 90° steps between trigonal ends (coplanar and perpendicular), and
     /// six 60° steps between a trigonal and a tetrahedral end (a substituent
-    /// in the plane, or two straddling it), starting with the fragment's main
+    /// in the plane, or two straddling it) and on a linear parent, none on a
+    /// linear fragment, starting with the fragment's main
     /// substituent anti to the parent's. When none keeps every atom 2 Å from
     /// the atoms around it, the clearest of 15° steps is taken instead. Sites, stereo, fixed counts, and names follow
     /// [`Self::attach_atom`]; every atom of the fragment joins the parent's
-    /// residue. Choosing the torsion reads the draft's position rows once,
-    /// and the liveness of nearby rows only after deletions in the draft.
+    /// residue. Choosing the torsion reads the draft's position rows once and
+    /// checks the liveness of nearby rows only.
     ///
     /// # Errors
     ///
@@ -407,8 +408,12 @@ impl ModelEditor {
         let parent_shape = self.atom_geometry(parent)?.shape();
         let fragment_shape = fragment_attachment_shape(molecule, attachment);
         let steps: &[f64] = match (parent_shape, fragment_shape) {
-            (Some(AtomShape::Linear | AtomShape::Terminal), _)
-            | (_, Some(AtomShape::Linear | AtomShape::Terminal)) => &[0.0],
+            // A linear fragment turns into itself; a linear parent has no
+            // substituents to stagger against, so the fragment turns freely.
+            (_, Some(AtomShape::Linear | AtomShape::Terminal)) => &[0.0],
+            (Some(AtomShape::Linear | AtomShape::Terminal), _) => {
+                &[0.0, 60.0, 120.0, 180.0, 240.0, 300.0]
+            }
             (Some(AtomShape::TrigonalPlanar), Some(AtomShape::TrigonalPlanar)) => {
                 &[0.0, 90.0, 180.0, 270.0]
             }
@@ -540,8 +545,9 @@ impl ModelEditor {
     }
 
     /// The positions of live draft atoms within `reach` of `center`, except
-    /// `excluded`. Reads the position rows once; liveness is checked only
-    /// for nearby rows of a draft that has deleted atoms.
+    /// `excluded`. Reads the position rows once, without allocating per row;
+    /// liveness is checked only for nearby rows, against the draft's deleted
+    /// slots.
     fn environment(
         &self,
         center: Point3,
@@ -554,28 +560,16 @@ impl ModelEditor {
             .filter_map(|atom| self.topology.atom_slot(*atom).ok())
             .collect::<Vec<_>>();
         let rows = self.slots.positions.values();
-        let nearby = rows
-            .value()
+        rows.value()
             .iter()
             .enumerate()
             .take(self.topology.atom_slot_count())
             .filter(|(slot, point)| {
-                !excluded.contains(slot) && (**point - center).norm_squared() <= reach * reach
+                (**point - center).norm_squared() <= reach * reach
+                    && !excluded.contains(slot)
+                    && self.topology.is_live_atom_slot(*slot)
             })
-            .map(|(slot, point)| (slot, *point))
-            .collect::<Vec<_>>();
-        if self.topology.atom_count() == self.topology.atom_slot_count() || nearby.is_empty() {
-            return nearby.into_iter().map(|(_, point)| point).collect();
-        }
-        let live = self
-            .topology
-            .atom_slots()
-            .map(|(_, slot)| slot)
-            .collect::<BTreeSet<_>>();
-        nearby
-            .into_iter()
-            .filter(|(slot, _)| live.contains(slot))
-            .map(|(_, point)| point)
+            .map(|(_, point)| *point)
             .collect()
     }
 

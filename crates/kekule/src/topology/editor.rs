@@ -176,6 +176,9 @@ pub struct TopologyEditor {
     properties: TopologyProperties,
     revision: u64,
     pub(crate) structural_revision: u64,
+    // Storage slots of atoms deleted from this draft, so a slot's liveness is
+    // known without walking every live atom.
+    dead_atom_slots: BTreeSet<usize>,
     // The handles of source entities: consecutive blocks in source order.
     source_blocks: SourceBlocks,
 }
@@ -241,6 +244,7 @@ impl TopologyEditor {
         self.hierarchy.atom_sites.clear();
         self.hierarchy.residue_atoms.clear();
         self.properties = TopologyProperties::default();
+        self.dead_atom_slots.clear();
         self.changed();
     }
 
@@ -558,6 +562,7 @@ impl TopologyEditor {
             self.properties.bonds_mut().clear_index(bond_loc.slot);
         }
         self.atoms.remove(&id);
+        self.dead_atom_slots.insert(loc.slot);
         self.groups[loc.group]
             .as_mut()
             .unwrap()

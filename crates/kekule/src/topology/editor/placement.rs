@@ -278,9 +278,9 @@ impl TopologyEditor {
         Ok(id)
     }
 
-    /// Live atoms with their storage slots, in handle order.
-    pub(crate) fn atom_slots(&self) -> impl Iterator<Item = (EditAtomId, usize)> + '_ {
-        self.atoms.iter().map(|(id, loc)| (*id, loc.slot))
+    /// Whether the atom storage slot `slot` holds a live atom.
+    pub(crate) fn is_live_atom_slot(&self, slot: usize) -> bool {
+        slot < self.atom_slot_count() && !self.dead_atom_slots.contains(&slot)
     }
 
     fn register_atom(&mut self, group: usize, local: AtomId) -> EditAtomId {
