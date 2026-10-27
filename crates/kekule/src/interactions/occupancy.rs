@@ -57,6 +57,8 @@ struct Scope {
     second: Arc<Topology>,
     within: bool,
     criteria: HydrogenBond,
+    /// Within one structure, the bond separation that excludes pairs.
+    min_bond_separation: usize,
 }
 
 impl Scope {
@@ -66,6 +68,7 @@ impl Scope {
             second: Arc::clone(&interactions.second),
             within: interactions.within,
             criteria: interactions.hydrogen_bond.canonical().ok()?,
+            min_bond_separation: interactions.min_bond_separation,
         })
     }
 
@@ -74,6 +77,7 @@ impl Scope {
             && self.first.shares_layout(&other.first)
             && self.second.shares_layout(&other.second)
             && self.criteria == other.criteria
+            && (!self.within || self.min_bond_separation == other.min_bond_separation)
     }
 }
 
@@ -85,7 +89,8 @@ impl Scope {
 /// weight. Every observation must come from the same kind of search
 /// ([`super::find_interactions_within`] or
 /// [`super::find_interactions_between`]) over the same topology layouts with
-/// the same hydrogen-bond criteria. Bonds are keyed by their donor and
+/// the same hydrogen-bond criteria and, within one structure, the same
+/// [`super::InteractionCriteria::min_bond_separation`]. Bonds are keyed by their donor and
 /// acceptor heavy atoms ([`HydrogenBondKey`]) and counted once per
 /// observation. State grows with the distinct bonds observed, not with the
 /// observation count.

@@ -371,6 +371,7 @@ pub struct Interactions {
     second: Arc<Topology>,
     within: bool,
     hydrogen_bond: HydrogenBondCriteria,
+    min_bond_separation: usize,
     interactions: Vec<Interaction>,
 }
 

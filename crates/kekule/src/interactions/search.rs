@@ -698,6 +698,7 @@ impl<'a> Search<'a> {
             second: self.second_topology,
             within: self.within,
             hydrogen_bond: criteria.hydrogen_bond(),
+            min_bond_separation: criteria.min_bond_separation(),
             interactions: kept,
         }
     }

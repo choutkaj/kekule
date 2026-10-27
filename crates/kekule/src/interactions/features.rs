@@ -7,7 +7,10 @@ use std::sync::Arc;
 use crate::chemistry::perceive_molecule;
 use crate::geometry::{Point3, Vector3};
 use crate::io::is_metal;
-use crate::molecule::{AtomId, BondOrder, Element, Molecule};
+use crate::molecule::{
+    AromaticityModel, AtomId, BondOrder, Element, Molecule, RingBasisModel, ValenceModel,
+    ValenceValidation,
+};
 use crate::structure::AsModelView;
 use crate::topology::{InstanceAtomId, MoleculeDefinitionId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -29,13 +32,15 @@ pub enum ChargeSign {
 #[non_exhaustive]
 pub enum ChargedGroupKind {
     /// A carboxylic acid or carboxylate: a carbon bonded to two terminal
-    /// oxygens and at most one other heavy atom, a carbon. Negative.
+    /// oxygens, one of them by a double bond or negatively charged, and at
+    /// most one other heavy atom, a carbon. Negative.
     Carboxylate,
     /// A phosphate, phosphonate, or phosphoric ester with at least two
-    /// terminal oxygens on one phosphorus. Negative.
+    /// terminal oxygens on one phosphorus, one of them by a double bond or
+    /// negatively charged. Negative.
     Phosphate,
     /// A sulfate or sulfonate: at least three terminal oxygens on one
-    /// sulfur. Negative.
+    /// sulfur, one of them by a double bond or negatively charged. Negative.
     Sulfonate,
     /// An aliphatic amine or ammonium: a nitrogen outside aromatic rings
     /// whose bonds are all single and whose heavy neighbors are all carbons
@@ -90,7 +95,9 @@ pub(super) struct HalogenRecord {
 ///
 /// Classification reads elements, formal charges, bonds, hydrogen counts,
 /// and aromaticity. A definition with installed valence, ring-set, and
-/// aromaticity perception uses it; any other is perceived on a private copy
+/// aromaticity perception of the default profile (RDKit-like valence with
+/// strict validation, the RDKit-like ring set and aromaticity) uses it; any
+/// other, such as one with MDL aromaticity, is perceived on a private copy
 /// with the default profile, and the topology is left unchanged. A
 /// definition whose perception fails keeps its represented state: it has no
 /// aromatic rings, and inferred hydrogen counts fall back to standard
@@ -186,11 +193,18 @@ impl InteractionFeatures {
         for definition in topology.definitions() {
             let molecule = definition.molecule();
             let perception = molecule.perception();
-            let installed = perception.valence().is_some()
-                && perception.aromaticity().is_some()
+            // Installed perception is reused only when it is what the
+            // default profile would perceive.
+            let installed = perception.valence().is_some_and(|valence| {
+                valence.model() == ValenceModel::RdkitLike
+                    && valence.validation() == ValenceValidation::Strict
+            }) && perception
+                .aromaticity()
+                .is_some_and(|aromaticity| aromaticity.model() == AromaticityModel::RdkitLike)
                 && perception
                     .rings()
-                    .is_some_and(|rings| rings.ring_set().is_some());
+                    .and_then(|rings| rings.basis())
+                    .is_some_and(|basis| basis.model() == RingBasisModel::FiguerasSssrLike);
             let copy;
             let (molecule, perceived) = if installed {
                 (molecule, true)
@@ -752,7 +766,12 @@ fn charged_groups(sites: &[Site]) -> Vec<(ChargeSign, ChargedGroupKind, Vec<Atom
     for (index, atom) in sites.iter().enumerate() {
         let id = AtomId::new(index as u32);
         let oxygens = terminal_oxygens(atom);
+        // An acid has an oxo or deprotonated oxygen, unlike a geminal diol.
+        let acid = atom.heavy.iter().any(|(other, order)| {
+            oxygens.contains(other) && (*order == BondOrder::Double || site(*other).charge < 0)
+        });
         let kind = match atom.element {
+            _ if !acid => None,
             Element::C
                 if oxygens.len() == 2
                     && atom.heavy.len() <= 3

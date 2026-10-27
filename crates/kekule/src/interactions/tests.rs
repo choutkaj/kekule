@@ -115,7 +115,11 @@ fn classifies_features() {
     assert_eq!(groups("CC(=N)N"), [(Positive, K::Amidine, 2)]);
     assert_eq!(groups("CNC(=N)N"), [(Positive, K::Guanidine, 3)]);
     assert_eq!(groups("C[S+](C)C"), [(Positive, K::FormalCharge, 1)]);
-    // Amides, anilines, esters, and nitro groups carry no charge.
+    // Amides, anilines, esters, nitro groups, geminal diols, and
+    // phosphorous-acid-like hydroxyls carry no charge.
+    assert!(groups("CC(O)O").is_empty());
+    assert!(groups("CP(O)O").is_empty());
+    assert_eq!(features("CC(O)O").donors().len(), 2);
     assert!(groups("CC(=O)NC").is_empty());
     assert!(groups("Nc1ccccc1").is_empty());
     assert!(groups("CC(=O)OC").is_empty());
@@ -813,6 +817,19 @@ fn hydrogen_bond_occupancy_accumulates_and_merges() {
         fresh.observe(1, &other, 1.0),
         Err(InteractionError::ObservationMismatch { index: 1 })
     );
+    // Another bond separation is another search within one structure.
+    let separated = find_interactions_within(
+        &features,
+        &model,
+        &all,
+        &all,
+        &InteractionCriteria::default().with_min_bond_separation(6),
+    )
+    .unwrap();
+    assert_eq!(
+        fresh.observe(2, &separated, 1.0),
+        Err(InteractionError::ObservationMismatch { index: 2 })
+    );
     let mut mismatched = HydrogenBondOccupancyAccumulator::new();
     mismatched.observe(0, &other, 1.0).unwrap();
     assert_eq!(
@@ -835,4 +852,31 @@ fn shared_across_threads() {
     shared::<Interactions>();
     shared::<HydrogenBondOccupancyAccumulator>();
     shared::<HydrogenBondOccupancy>();
+}
+
+#[test]
+fn reperceives_other_installed_models() {
+    // Furan is aromatic under the default RDKit-like model but not under
+    // MDL's: installed MDL aromaticity is not reused.
+    let mut furan = crate::smiles::to_molecules("c1ccoc1")
+        .unwrap()
+        .pop()
+        .unwrap();
+    crate::chemistry::perceive_molecule(&mut furan).unwrap();
+    crate::algorithms::perceive_aromaticity_in_place(
+        &mut furan,
+        crate::molecule::AromaticityModel::Mdl,
+    )
+    .unwrap();
+    assert!(furan
+        .perception()
+        .aromaticity()
+        .unwrap()
+        .atoms()
+        .next()
+        .is_none());
+    let topology = Topology::from_molecule(furan).unwrap();
+    let features = InteractionFeatures::new(topology);
+    assert_eq!(features.aromatic_rings().len(), 1);
+    assert!(features.unperceived_definitions().is_empty());
 }
