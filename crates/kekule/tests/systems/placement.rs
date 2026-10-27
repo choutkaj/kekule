@@ -1,6 +1,6 @@
 //! Builder placement on model drafts: hydrogens with coordinates, ideal
 //! geometry, attaching atoms, and names.
-use kekule::geometry::{Point3, Vector3};
+use kekule::geometry::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::hydrogens::{AddHydrogensOptions, AddHydrogensScope, RetainedHydrogenReason};
 use kekule::molecule::{Atom, BondOrder, Element, ImplicitHydrogens};
 use kekule::properties::{PropertyKey, PropertyValue};
@@ -660,6 +660,24 @@ fn adenylate_kinase() -> Model {
     .into_model()
 }
 
+/// Copies of `single` side by side, 10 nm apart, until 100,000 atoms.
+fn large_model(single: &Model) -> Model {
+    let mut large = ModelEditor::new();
+    let mut offset = 0.0;
+    while large.topology().atom_count() < 100_000 {
+        let mut copy = single.clone();
+        let shift = RigidTransform::new(
+            Matrix3::default(),
+            Quantity::new(Vector3::new(offset, 0.0, 0.0), NANOMETER),
+        )
+        .unwrap();
+        copy.apply_rigid_transform(&shift).unwrap();
+        large.append_model(&copy).unwrap();
+        offset += 10.0;
+    }
+    large.finish().unwrap()
+}
+
 /// The atoms of the first residue named `name`.
 fn residue_atoms(editor: &ModelEditor, name: &str) -> (EditResidueId, Vec<EditAtomId>) {
     let topology = editor.topology();
@@ -751,11 +769,7 @@ fn new_atoms_are_named_uniquely_in_their_residues() {
 #[test]
 fn placing_on_a_ligand_scales_with_the_ligand() {
     let single = adenylate_kinase();
-    let mut large = ModelEditor::new();
-    while large.topology().atom_count() < 100_000 {
-        large.append_model(&single).unwrap();
-    }
-    let large = large.finish().unwrap();
+    let large = large_model(&single);
     assert!(large.atom_count() >= 100_000);
     let time = |model: &Model| {
         let mut editor = model.to_editor();
@@ -767,11 +781,11 @@ fn placing_on_a_ligand_scales_with_the_ligand() {
         editor.remove_hydrogens(ligand).unwrap();
         (start.elapsed(), report.added_count())
     };
-    // Warm both, then compare: work on the ligand does not grow with the
-    // model it sits in.
-    let _ = (time(&single), time(&large));
-    let (small, added_small) = time(&single);
-    let (big, added_big) = time(&large);
+    // Work on the ligand does not grow with the model it sits in.
+    // The best of several runs, so load from other processes does not count.
+    let best = |model: &Model| (0..5).map(|_| time(model)).min().unwrap();
+    let (small, added_small) = best(&single);
+    let (big, added_big) = best(&large);
     assert_eq!(added_small, added_big);
     assert!(
         big < small * 10 + std::time::Duration::from_millis(20),
@@ -999,11 +1013,7 @@ fn fragments_attach_toward_directions_and_through_other_atoms() {
 #[test]
 fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
     let single = adenylate_kinase();
-    let mut large = ModelEditor::new();
-    while large.topology().atom_count() < 100_000 {
-        large.append_model(&single).unwrap();
-    }
-    let large = large.finish().unwrap();
+    let large = large_model(&single);
     let phenyl = fragment("phenyl").unwrap();
     let time = |model: &Model| {
         let mut editor = model.to_editor();
@@ -1029,8 +1039,9 @@ fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
             .unwrap();
         start.elapsed()
     };
-    let _ = (time(&single), time(&large));
-    let (small, big) = (time(&single), time(&large));
+    // The best of several runs, so load from other processes does not count.
+    let best = |model: &Model| (0..5).map(|_| time(model)).min().unwrap();
+    let (small, big) = (best(&single), best(&large));
     assert!(
         big < small * 10 + std::time::Duration::from_millis(20),
         "{small:?} in one copy, {big:?} in 100k atoms"
