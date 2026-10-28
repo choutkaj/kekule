@@ -103,7 +103,7 @@ of a MOL/SDF synthetic hierarchy, matches on its label identifier. The
 | `smarts` | Atoms of any match of a SMARTS query (perception required) | `smarts "[OX2H]"` |
 | `hydrogen` | Hydrogen atoms of any isotope | `hydrogen` |
 | `heavy` | Non-hydrogen atoms | `heavy` |
-| `polar_hydrogen` | Hydrogens bonded to N or O | `polar_hydrogen` |
+| `polar_hydrogen` | Hydrogens bonded to N, O, or S | `polar_hydrogen` |
 | `protein` | Atoms of protein molecules | `protein` |
 | `nucleic` | Atoms of DNA and RNA molecules | `nucleic` |
 | `water`, `ion`, `ligand` | Atoms of water, ion, and small-molecule molecules | `ligand` |

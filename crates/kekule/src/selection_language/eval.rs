@@ -565,7 +565,7 @@ impl<'a> Evaluator<'a> {
                     let polar = molecule.neighbors(id.atom()).is_some_and(|mut neighbors| {
                         neighbors.any(|neighbor| {
                             molecule.atom(neighbor).is_some_and(|atom| {
-                                matches!(atom.element(), Element::N | Element::O)
+                                matches!(atom.element(), Element::N | Element::O | Element::S)
                             })
                         })
                     });

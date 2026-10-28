@@ -632,6 +632,10 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** the selection language's `polar_hydrogen` term selects
+  hydrogens bonded to N, O, or S (SeekDelta K59), so a thiol hydrogen such
+  as cysteine's HG is now selected. Before, it took only hydrogens bonded to
+  N or O; selections using the term now also return S–H hydrogens.
 - **Breaking:** an edit of a large system costs what it changes (SeekDelta
   K56b). A topology or model draft started from a snapshot stores nothing
   per source atom, bond, or hierarchy node: it reads the source until an
