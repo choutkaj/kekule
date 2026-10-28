@@ -531,6 +531,24 @@ fn hydrogen_terms_distinguish_polar_hydrogens() {
 }
 
 #[test]
+fn polar_hydrogen_takes_thiol_hydrogens() {
+    let molecule = smiles::to_molecules("[H]SC([H])([H])[H]")
+        .unwrap()
+        .remove(0);
+    let topology = Arc::new(Topology::from_molecule(molecule).unwrap());
+    let select = |text: &str| {
+        parse(text)
+            .evaluate(topology.clone(), SelectEvaluateOptions::default())
+            .unwrap()
+            .len()
+    };
+    assert_eq!(select("hydrogen"), 4);
+    assert_eq!(select("polar_hydrogen"), 1);
+    assert_eq!(select("polar_hydrogen and bonded to element S"), 1);
+    assert_eq!(select("polar_hydrogen and bonded to element C"), 0);
+}
+
+#[test]
 fn properties_compare_in_their_units_and_scopes() {
     let mut topology = smiles::to_topology("CCO").unwrap();
     let key = |name: &str| PropertyKey::new(name).unwrap();
