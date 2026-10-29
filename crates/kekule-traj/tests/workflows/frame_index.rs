@@ -285,21 +285,113 @@ fn an_index_never_opens_a_changed_or_different_file() {
         .unwrap();
     mismatch(&xtc, &xtc_topology);
 
-    // Restoring the bytes and the time makes the index valid again.
+    // Restoring the bytes makes the index valid again, whatever the
+    // modification time: an index matches content.
     fs::write(&xtc, &original).unwrap();
-    File::options()
-        .write(true)
-        .open(&xtc)
-        .unwrap()
-        .set_modified(modified)
-        .unwrap();
     reopen(&xtc, &xtc_topology, &bytes).unwrap();
 
-    // An appended frame changes the size.
-    let mut file = OpenOptions::new().append(true).open(&xtc).unwrap();
-    file.write_all(&original[..original.len() / 2]).unwrap();
-    drop(file);
+    // A file shorter than the indexed bytes is not the indexed file.
+    fs::write(&xtc, &original[..original.len() - 1]).unwrap();
     mismatch(&xtc, &xtc_topology);
+}
+
+#[test]
+fn an_index_opens_the_file_grown_by_appending_and_indexes_only_the_new_frames() {
+    let directory = Directory::new();
+    for (name, topology) in fixtures() {
+        let path = directory.fixture(name);
+        let original = fs::read(&path).unwrap();
+        let index = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
+            .unwrap()
+            .to_frame_index();
+        let starts = index.frame_offsets().to_vec();
+        // Append a copy of the first frame, as a writer would, and count it
+        // in a DCD header, whose count the fingerprint leaves out.
+        let first = usize::try_from(starts[0]).unwrap()..usize::try_from(starts[1]).unwrap();
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(&original[first.clone()]).unwrap();
+        drop(file);
+        if name.ends_with(".dcd") {
+            let mut grown = fs::read(&path).unwrap();
+            let count = u32::from_le_bytes(grown[8..12].try_into().unwrap()) + 1;
+            grown[8..12].copy_from_slice(&count.to_le_bytes());
+            fs::write(&path, &grown).unwrap();
+        }
+        // What a full scan of the grown file finds.
+        let expected = frames(
+            &mut open_indexed_trajectory(&path, Arc::clone(&topology), Default::default()).unwrap(),
+        );
+        assert_eq!(expected.len(), starts.len() + 1, "{name}");
+
+        let steps = Arc::new(Mutex::new(Vec::<TrajectoryIndexProgress>::new()));
+        let recorded = Arc::clone(&steps);
+        let options = TrajectoryOpenOptions::default()
+            .with_index_progress(move |step| recorded.lock().unwrap().push(step));
+        let result = open_indexed_trajectory_from_index(
+            &path,
+            Arc::clone(&topology),
+            index.clone(),
+            options,
+        );
+        let mut reopened = result.unwrap();
+        // Only the appended frame was scanned.
+        let steps = steps.lock().unwrap().clone();
+        assert_eq!(
+            steps
+                .iter()
+                .map(|step| step.frame_count())
+                .collect::<Vec<_>>(),
+            [starts.len(), starts.len() + 1],
+            "{name}"
+        );
+        assert_eq!(frames(&mut reopened), expected, "{name}");
+        assert_eq!(reopened.pending_byte_count(), 0);
+        assert!(reopened.open_report().notes()[0].contains("1 appended frames"));
+        let extended = reopened.to_frame_index();
+        assert_eq!(&extended.frame_offsets()[..starts.len()], &starts[..]);
+        assert_eq!(
+            extended.fingerprint(),
+            &TrajectoryFileFingerprint::of_path(&path).unwrap()
+        );
+        assert!(index.fingerprint().is_prefix_of_path(&path).unwrap());
+        assert!(!extended.fingerprint().same_content(index.fingerprint()));
+
+        // A strict reader refuses a partial frame after the indexed ones;
+        // a growing one leaves it pending.
+        let partial = &original[first.start..first.end - 1];
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(partial).unwrap();
+        drop(file);
+        let strict = open_indexed_trajectory_from_index(
+            &path,
+            Arc::clone(&topology),
+            extended.clone(),
+            Default::default(),
+        );
+        match name.rsplit('.').next() {
+            // XYZ accepts a last line without its line break.
+            Some("xyz") => {}
+            // Bytes follow the frames the header counts.
+            Some("dcd") => assert_eq!(
+                strict.unwrap_err().kind(),
+                TrajectoryIoErrorKind::IndexMismatch
+            ),
+            _ => assert_eq!(
+                strict.unwrap_err().kind(),
+                TrajectoryIoErrorKind::TruncatedRecord,
+                "{name}"
+            ),
+        }
+        let growing = open_indexed_trajectory_from_index(
+            &path,
+            Arc::clone(&topology),
+            extended,
+            TrajectoryOpenOptions::default().with_growing(true),
+        )
+        .unwrap();
+        assert_eq!(growing.frame_count(), Some(expected.len()), "{name}");
+        assert_eq!(growing.pending_byte_count(), partial.len() as u64, "{name}");
+    }
 }
 
 #[test]
@@ -673,7 +765,7 @@ fn trr_indexes_keep_mixed_precision_and_verify_it_per_frame() {
 }
 
 #[test]
-fn a_file_that_grows_while_indexed_is_rejected() {
+fn a_file_that_grows_while_indexed_keeps_the_frames_appended_meanwhile() {
     let directory = Directory::new();
     let path = directory.fixture("mdanalysis-2.9.0-twelve-atoms.xtc");
     let topology = linear_carbon_topology(12);
@@ -689,6 +781,31 @@ fn a_file_that_grows_while_indexed_is_rejected() {
             file.seek(SeekFrom::End(0)).unwrap();
             file.write_all(&original[..usize::try_from(step.byte_count()).unwrap()])
                 .unwrap();
+        }
+    });
+    let mut reader = open_indexed_trajectory(&path, topology, options).unwrap();
+    let frames = frames(&mut reader);
+    assert_eq!(frames.first(), frames.last());
+    let index = reader.to_frame_index();
+    assert_eq!(
+        index.fingerprint(),
+        &TrajectoryFileFingerprint::of_path(&path).unwrap()
+    );
+}
+
+#[test]
+fn a_file_whose_bytes_change_while_indexed_is_rejected() {
+    let directory = Directory::new();
+    let path = directory.fixture("mdanalysis-2.9.0-twelve-atoms.xtc");
+    let topology = linear_carbon_topology(12);
+    let target = path.clone();
+    let once = Arc::new(AtomicUsize::new(0));
+    let options = TrajectoryOpenOptions::default().with_index_progress(move |step| {
+        if step.frame_count() == 1 && once.fetch_add(1, Ordering::Relaxed) == 0 {
+            // Rewrite a byte the scan has already verified.
+            let mut file = OpenOptions::new().write(true).open(&target).unwrap();
+            file.seek(SeekFrom::Start(step.byte_count() - 1)).unwrap();
+            file.write_all(&[0x5a]).unwrap();
         }
     });
     let error = open_indexed_trajectory(&path, topology, options).unwrap_err();

@@ -11,6 +11,35 @@ are marked **Breaking:**.
 
 ### Added
 
+- Reading trajectory files that are still being written (SeekDelta K13), so
+  a host shows the trajectory of a running simulation as it grows.
+  `IndexedFileTrajectoryReader::refresh` indexes the frames appended since
+  the reader opened or last refreshed, verifying each as opening does but
+  without scanning the indexed frames again, and returns how many there
+  are; sequential reads continue into them. It reads the file the path
+  names when it runs, checking first that the file still begins with the
+  indexed bytes, and fails with `IndexMismatch`, changing nothing, when
+  they changed; a file moved to the path that begins with them is read on. `TrajectoryOpenOptions::with_growing`
+  opens a file a writer is appending to: a final frame the writer has not
+  finished is not yet an error but pending
+  (`IndexedFileTrajectoryReader::pending_byte_count`) until a refresh finds
+  it complete, DCD frames are counted in the file rather than checked
+  against the header's `NSET`, and an XYZ line counts once its line break
+  is written. Corrupt data is an error wherever it lies. A growing file that
+  does not yet hold a complete frame, or for DCD a complete header, fails
+  with the new `TrajectoryIoErrorKind::Incomplete`, to be opened again
+  later. This covers XTC, TRR, DCD, and XYZ.
+  `TrajectoryFileFingerprint::is_prefix_of_path` and `is_prefix_of_file`
+  tell whether a file begins with the content a fingerprint describes: a
+  file that only grew by appending is the same file with more bytes, and
+  one whose existing bytes changed is not. `TrajectoryWriter::flush` makes
+  every frame written so far reach the destination whole: codec writers
+  append each frame after the previous one and never rewrite one, so after
+  a flush the stream holds a complete trajectory, and `DcdWriter` then
+  writes the header's `NSET` for the frames written, after them, so that a
+  strict reader opens the file at every flush. A simulation viewed while it
+  runs writes through `create_trajectory_stream_writer` over its
+  destination file and flushes after each frame.
 - Placed fragments name their ring atoms by locant (SeekDelta K3d), so a
   host or user reading "C4" finds ring position 4.
   `ModelEditor::place_fragment` names a ring's atoms by element and IUPAC
@@ -632,6 +661,24 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** trajectory frame indexes and fingerprints follow files that
+  grow by appending (SeekDelta K13). A `TrajectoryFrameIndex` is bound to
+  the fingerprint of the bytes it covers, the file up to the end of its last
+  frame, and `open_indexed_trajectory_from_index` opens a file that begins
+  with those bytes, comparing content and no longer the modification time,
+  and verifies and indexes the frames appended after them, with the index
+  progress and cancellation of the options; before, any change of size,
+  content, or modification time was `IndexMismatch`. Building an index
+  keeps frames appended during the scan rather than failing, and still
+  fails when bytes present at opening change. A DCD index of fewer frames
+  than the header's `NSET` opens when the frames after it make up the count.
+  A `TrajectoryFileFingerprint` hashes the frame-count fields `NSET` and
+  `NSTEP` of a DCD header as zeros, since DCD writers rewrite them as they
+  append, so fingerprints of DCD files recorded by earlier versions no
+  longer match. Sequential reads through an indexed reader end after its
+  last indexed frame. `TrajectoryWriter` gains `flush`, which replaces the
+  codec writers' own `flush` methods that returned `std::io::Result`; the
+  DCD writer's also writes the header's frame count.
 - **Breaking:** the selection language's `polar_hydrogen` term selects
   hydrogens bonded to N, O, or S (SeekDelta K59), so a thiol hydrogen such
   as cysteine's HG is now selected. Before, it took only hydrogens bonded to

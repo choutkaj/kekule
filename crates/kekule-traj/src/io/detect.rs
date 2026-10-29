@@ -12,12 +12,16 @@ pub(crate) struct DetectionResult {
     pub(crate) evidence: Vec<FormatDetectionEvidence>,
 }
 
+/// Selects the format of the stream at `path`. A `growing` file too short to
+/// show the signature its extension names is incomplete rather than of an
+/// unknown format.
 pub(crate) fn select_format<R: Read + Seek>(
     reader: &mut R,
     path: &Path,
     hint: TrajectoryFormatHint,
     limits: &TrajectoryIoLimits,
     source_label: &str,
+    growing: bool,
 ) -> Result<DetectionResult, TrajectoryIoError> {
     let start = reader
         .stream_position()
@@ -101,6 +105,13 @@ pub(crate) fn select_format<R: Read + Seek>(
                     FormatDetectionEvidence::MissingExtension,
                 ],
             }),
+            (None, Some(extension)) if growing && prefix.len() < max => Err(codec_context(
+                TrajectoryIoErrorKind::Incomplete,
+                TrajectoryIoOperation::Detect,
+                Some(extension),
+                source_label,
+                "the file does not yet hold its format's signature",
+            )),
             (None, Some(extension)) => Err(codec_context(
                 TrajectoryIoErrorKind::UnknownFormat,
                 TrajectoryIoOperation::Detect,
