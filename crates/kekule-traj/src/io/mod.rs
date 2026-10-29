@@ -80,10 +80,44 @@
 //! The path-backed scan reports [`TrajectoryIndexProgress`] and stops on a
 //! cancellation set in [`TrajectoryOpenOptions`]. Its offsets export as a
 //! portable, versioned [`TrajectoryFrameIndex`] bound to a
-//! [`TrajectoryFileFingerprint`] of the file, and
+//! [`TrajectoryFileFingerprint`] of the bytes it covers, and
 //! [`open_indexed_trajectory_from_index`] reopens the file from it without
-//! scanning. Such a reader still verifies every frame it decodes and checks
-//! that each random read ends where the index places the next frame.
+//! scanning those bytes again. Such a reader still verifies every frame it
+//! decodes and checks that each random read ends where the index places the
+//! next frame.
+//!
+//! # Growing files
+//!
+//! A trajectory that a running simulation keeps writing is read while it
+//! grows. A file that only grew by appending is the same file with more
+//! frames: its fingerprint's content is a prefix of it
+//! ([`TrajectoryFileFingerprint::is_prefix_of_path`]), whereas a file whose
+//! existing bytes changed is not; the frame-count fields of a DCD header,
+//! which writers rewrite as they append, are not content.
+//! [`IndexedFileTrajectoryReader::refresh`] indexes the frames appended since
+//! the reader opened, verifying each, without scanning the indexed frames
+//! again, and an index exported earlier opens the grown file the same way.
+//! Opened with [`TrajectoryOpenOptions::with_growing`], an indexed reader
+//! takes a final frame the writer has not finished as pending
+//! ([`IndexedFileTrajectoryReader::pending_byte_count`]) rather than as
+//! corruption, counts DCD frames in the file rather than by the header's
+//! `NSET`, and still rejects corrupt data wherever it lies; a file that does
+//! not yet hold a complete frame, or for DCD a complete header, fails to
+//! open as [`TrajectoryIoErrorKind::Incomplete`], to be opened again later.
+//!
+//! Codec writers append each frame after the previous one and never rewrite
+//! a frame; DCD writes its header first and later rewrites only its frame
+//! count. After [`TrajectoryWriter::flush`] the stream holds a complete
+//! trajectory of the frames written so far, a DCD header counting them, so
+//! a reader in another process sees whole frames and at most one partial
+//! frame after them. A simulation whose trajectory is viewed while it runs
+//! writes through a [`TrajectoryStreamWriter`] over the destination file and
+//! flushes after each frame.
+//!
+//! [`TrajectoryWriter::flush`]: crate::TrajectoryWriter::flush
+//! [`TrajectoryIoErrorKind::Incomplete`]: crate::TrajectoryIoErrorKind::Incomplete
+//!
+//! # Writing files
 //!
 //! Path writers stage a temporary sibling. Only consuming
 //! [`FileTrajectoryWriter::finish`] flushes, synchronizes, finalizes format

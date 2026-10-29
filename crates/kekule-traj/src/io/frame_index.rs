@@ -1,14 +1,16 @@
 //! Portable verified frame indexes, file fingerprints, and index-build control.
 //!
 //! An indexed reader's frame offsets are exported as a [`TrajectoryFrameIndex`]
-//! bound to a [`TrajectoryFileFingerprint`] of the file. Opening from an index
-//! checks the fingerprint, the format, and the first frame's position; every
-//! random read then verifies its frame as usual and checks that it ends exactly
-//! where the index places the next frame, or the file's end.
+//! bound to a [`TrajectoryFileFingerprint`] of the bytes it covers, the file
+//! up to the end of its last frame. Opening from an index checks that the
+//! file begins with those bytes, the format, and the first frame's position;
+//! every random read then verifies its frame as usual and checks that it ends
+//! exactly where the index places the next frame, or the indexed bytes' end.
 
 use std::fmt;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -43,6 +45,10 @@ const FINGERPRINT_FIELDS: std::ops::Range<usize> = 14..48;
 const FLAG_MIXED_PRECISION: u8 = 1;
 const FLAG_STEPS: u8 = 1 << 1;
 const FLAG_TIMES: u8 = 1 << 2;
+/// The bytes of a DCD header that writers rewrite as they append frames:
+/// `NSET`, the frame count, and `NSTEP`, the last step, of the header record
+/// at the start of the file.
+const DCD_COUNT_FIELDS: [Range<u64>; 2] = [8..12, 20..24];
 
 /// The identity of a trajectory file's content.
 ///
@@ -54,16 +60,27 @@ const FLAG_TIMES: u8 = 1 << 2;
 /// cryptographic digest, and the per-frame checks of an index-backed reader
 /// remain the guard against frames that are not where the index says.
 ///
-/// Every [`TrajectoryFrameIndex`] carries the fingerprint of the file it was
-/// built for. A host can also compute one with [`Self::of_path`] or
+/// A file that only grew by appending is the same file with more bytes:
+/// [`Self::is_prefix_of_path`] and [`Self::is_prefix_of_file`] check whether
+/// a file still begins with the content a fingerprint describes, as a
+/// trajectory that a running simulation keeps writing does. A file whose
+/// existing bytes changed does not. The frame-count fields `NSET` and
+/// `NSTEP` of a DCD header, which DCD writers rewrite as they append frames,
+/// are hashed as zeros, so they are not part of the content: a DCD whose
+/// header counts more frames still begins with the content of its earlier
+/// fingerprint.
+///
+/// Every [`TrajectoryFrameIndex`] carries the fingerprint of the bytes it
+/// covers. A host can also compute one with [`Self::of_path`] or
 /// [`Self::of_file`], check a file against one with [`Self::matches_path`] or
 /// [`Self::matches_file`], and keep one, for example in a project file or a
 /// cache key, through its stable encoding.
 ///
-/// Equality compares all three fields, as opening from an index does, so a
-/// file that is touched, or copied without its modification time, no longer
-/// matches. [`Self::same_content`] ignores the modification time, for a host
-/// asking whether a moved or copied file is the one it recorded.
+/// Equality compares all three fields, so a file that is touched, or copied
+/// without its modification time, no longer matches. [`Self::same_content`]
+/// ignores the modification time, for a host asking whether a moved or copied
+/// file is the one it recorded, and opening from an index compares content
+/// alone, as [`Self::is_prefix_of_file`] does.
 ///
 /// # Encoding
 ///
@@ -147,21 +164,45 @@ impl TrajectoryFileFingerprint {
     }
 
     fn fingerprint(file: &mut File) -> std::io::Result<Self> {
-        let metadata = file.metadata()?;
-        let byte_count = metadata.len();
-        let modified = metadata.modified().ok().and_then(unix_nanos);
+        let byte_count = file.metadata()?.len();
+        Self::fingerprint_prefix(file, byte_count)
+    }
+
+    /// The fingerprint of the first `byte_count` bytes of `file`, as if the
+    /// file ended there, with the file's modification time; the file is
+    /// left positioned at its start. A file shorter than `byte_count` is an
+    /// [`ErrorKind::UnexpectedEof`] error.
+    fn fingerprint_prefix(file: &mut File, byte_count: u64) -> std::io::Result<Self> {
+        let modified = file.metadata()?.modified().ok().and_then(unix_nanos);
+        let masked = byte_count >= 8 && {
+            let mut signature = [0_u8; 8];
+            file.seek(SeekFrom::Start(0))?;
+            file.read_exact(&mut signature)?;
+            is_dcd_signature(&signature)
+        };
         let mut hash = Fnv1a::new();
         hash.write(&byte_count.to_le_bytes());
         let mut buffer = [0_u8; 8192];
         for (start, length) in sample_ranges(byte_count) {
             file.seek(SeekFrom::Start(start))?;
-            let mut remaining = length;
-            while remaining > 0 {
-                let chunk = usize::try_from(remaining.min(buffer.len() as u64))
+            let mut offset = start;
+            let end = start + length;
+            while offset < end {
+                let chunk = usize::try_from((end - offset).min(buffer.len() as u64))
                     .expect("a chunk is no larger than the buffer");
-                file.read_exact(&mut buffer[..chunk])?;
-                hash.write(&buffer[..chunk]);
-                remaining -= chunk as u64;
+                let bytes = &mut buffer[..chunk];
+                file.read_exact(bytes)?;
+                if masked {
+                    for field in &DCD_COUNT_FIELDS {
+                        let from = field.start.max(offset);
+                        let to = field.end.min(offset + chunk as u64);
+                        if from < to {
+                            bytes[(from - offset) as usize..(to - offset) as usize].fill(0);
+                        }
+                    }
+                }
+                hash.write(bytes);
+                offset += chunk as u64;
             }
         }
         file.seek(SeekFrom::Start(0))?;
@@ -170,6 +211,83 @@ impl TrajectoryFileFingerprint {
             modified,
             content_hash: hash.finish(),
         })
+    }
+
+    /// The fingerprint of the first `byte_count` bytes of `file`, labelling
+    /// errors with `source_label`; see [`Self::fingerprint_prefix`].
+    pub(crate) fn of_labelled_file_prefix(
+        file: &mut File,
+        byte_count: u64,
+        source_label: &str,
+    ) -> Result<Self, TrajectoryIoError> {
+        Self::fingerprint_prefix(file, byte_count)
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))
+    }
+
+    /// Whether the file at `path` begins with the content this fingerprint
+    /// describes: it is that file, or that file grown by appending. A file
+    /// whose first [`Self::byte_count`] bytes changed, other than the frame
+    /// counts of a DCD header, or that is shorter, does not. The
+    /// modification time is not compared.
+    ///
+    /// ```no_run
+    /// use kekule_traj::io::TrajectoryFileFingerprint;
+    ///
+    /// let recorded = TrajectoryFileFingerprint::of_path("run.xtc")?;
+    /// // Later, while the simulation keeps appending frames:
+    /// assert!(recorded.is_prefix_of_path("run.xtc")?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::Io`] when the file cannot be opened
+    /// or read.
+    pub fn is_prefix_of_path(&self, path: impl AsRef<Path>) -> Result<bool, TrajectoryIoError> {
+        let path = path.as_ref();
+        let label = path.display().to_string();
+        let mut file = File::open(path)
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
+        self.is_prefix_of_labelled_file(&mut file, &label)
+    }
+
+    /// Whether an open file begins with the content this fingerprint
+    /// describes, as [`Self::is_prefix_of_path`] checks; the file is left
+    /// positioned at its start.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::Io`] when the file cannot be read or
+    /// repositioned.
+    pub fn is_prefix_of_file(&self, file: &mut File) -> Result<bool, TrajectoryIoError> {
+        self.is_prefix(file)
+            .map_err(|error| TrajectoryIoError::io(TrajectoryIoOperation::Open, error))
+    }
+
+    /// As [`Self::is_prefix_of_file`], labelling errors with `source_label`.
+    pub(crate) fn is_prefix_of_labelled_file(
+        &self,
+        file: &mut File,
+        source_label: &str,
+    ) -> Result<bool, TrajectoryIoError> {
+        self.is_prefix(file)
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))
+    }
+
+    fn is_prefix(&self, file: &mut File) -> std::io::Result<bool> {
+        if file.metadata()?.len() < self.byte_count {
+            file.seek(SeekFrom::Start(0))?;
+            return Ok(false);
+        }
+        match Self::fingerprint_prefix(file, self.byte_count) {
+            Ok(prefix) => Ok(prefix.same_content(self)),
+            // The file was truncated while it was read.
+            Err(error) if error.kind() == ErrorKind::UnexpectedEof => {
+                file.seek(SeekFrom::Start(0))?;
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Whether the file at `path` has this fingerprint.
@@ -334,6 +452,13 @@ fn unix_nanos(time: SystemTime) -> Option<i128> {
             .ok()
             .map(|nanos| -nanos),
     }
+}
+
+/// Whether a file starts with a DCD header record: an 84-byte record marker
+/// in either byte order followed by `CORD`.
+fn is_dcd_signature(start: &[u8; 8]) -> bool {
+    let marker = &start[..4];
+    &start[4..] == b"CORD" && (marker == 84u32.to_le_bytes() || marker == 84u32.to_be_bytes())
 }
 
 /// The `(start, length)` byte ranges a fingerprint hashes, in order.
@@ -549,6 +674,29 @@ impl FrameOffsets {
         self.steps.as_deref()
     }
 
+    /// The length and end of the index, for [`Self::restore`].
+    pub(crate) const fn mark(&self) -> (usize, u64) {
+        (self.starts.len(), self.end)
+    }
+
+    /// Drops the frames indexed after `mark` was taken, so a failed
+    /// extension leaves the index as it was.
+    pub(crate) fn restore(&mut self, (len, end): (usize, u64)) {
+        self.starts.truncate(len);
+        if let Some(times) = &mut self.times {
+            times.truncate(len);
+        }
+        if let Some(steps) = &mut self.steps {
+            steps.truncate(len);
+        }
+        if len == 0 {
+            // Frame 0 decides again which stamps are indexed.
+            self.times = None;
+            self.steps = None;
+        }
+        self.end = end;
+    }
+
     /// Appends a verified frame occupying `start..end` and recording `stamp`
     /// within the limits. Frame 0 decides whether times and steps are
     /// indexed, and every later frame must record the same ones.
@@ -758,11 +906,17 @@ pub(crate) fn index_mismatch(
 ///
 /// It holds the format, the byte offset of every frame, the frame count, each
 /// frame's time and step where the format records them, and the
-/// [`TrajectoryFileFingerprint`] of the file it was built for. Export one
-/// from a fully verified reader with
-/// [`IndexedFileTrajectoryReader::to_frame_index`], store it with
-/// [`Self::to_bytes`], and later open the same file without scanning it
-/// again with [`open_indexed_trajectory_from_index`].
+/// [`TrajectoryFileFingerprint`] of the bytes it covers: the file from its
+/// start to the end of its last indexed frame. Export one from a fully
+/// verified reader with [`IndexedFileTrajectoryReader::to_frame_index`],
+/// store it with [`Self::to_bytes`], and later open the same file without
+/// scanning it again with [`open_indexed_trajectory_from_index`].
+///
+/// A file that only grew by appending since, as a running simulation's
+/// trajectory does, still begins with the covered bytes, so the index opens
+/// it: the reader indexes the appended frames alone, without scanning the
+/// covered ones again (see [`open_indexed_trajectory_from_index`]). A file
+/// whose covered bytes changed does not open.
 ///
 /// An imported index is untrusted input. [`Self::from_bytes`] bounds its
 /// allocation by the [`TrajectoryIoLimits`] and rejects malformed or
@@ -789,17 +943,17 @@ pub(crate) fn index_mismatch(
 /// | 1 | flags: bit 0 set when TRR frames mix f32 and f64 scalars, bit 1 when steps follow the offsets, bit 2 when times follow them; other bits 0 |
 /// | 1 | 1 when the modification time is present, else 0 |
 /// | 1 | reserved, 0 |
-/// | 8 | file size in bytes, `u64` |
+/// | 8 | size of the covered bytes, `u64` |
 /// | 16 | modification time in nanoseconds from the Unix epoch, `i128`; 0 when absent |
 /// | 8 | content hash, `u64` |
 /// | 8 | frame count `n`, `u64` |
-/// | 8 `n` | strictly increasing frame start offsets, `u64`, each below the file size |
+/// | 8 `n` | strictly increasing frame start offsets, `u64`, each below the covered size |
 /// | 8 `n` | with flag bit 1, frame steps, `u64` |
 /// | 8 `n` | with flag bit 2, frame times in picoseconds, finite `f64` |
 /// | 8 | FNV-1a 64 checksum of all preceding bytes, `u64` |
 ///
-/// The last frame ends at the end of the file. Bytes 14 to 47 are the
-/// fingerprint fields of the [`TrajectoryFileFingerprint`] encoding. Steps and
+/// The last frame ends at the end of the covered bytes. Bytes 14 to 47 are
+/// the fingerprint fields of the [`TrajectoryFileFingerprint`] encoding. Steps and
 /// times are present exactly when [`Self::steps`] and [`Self::times`] are:
 /// never for XYZ or an empty index; steps always, and times under
 /// [`DcdTimePolicy::HeaderDelta`], for DCD; and both for TRR and XTC. Other
@@ -917,7 +1071,12 @@ impl TrajectoryFrameIndex {
         self.offsets.steps()
     }
 
-    /// The fingerprint of the file the index was built for.
+    /// The fingerprint of the bytes the index covers: the file from its
+    /// start to the end of its last indexed frame, with the file's
+    /// modification time when they were indexed. It equals
+    /// [`TrajectoryFileFingerprint::of_path`] of the file when the index
+    /// covers the whole file; a file still being written may hold more
+    /// bytes after them.
     pub const fn fingerprint(&self) -> &TrajectoryFileFingerprint {
         &self.fingerprint
     }

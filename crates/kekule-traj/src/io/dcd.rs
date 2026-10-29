@@ -445,6 +445,8 @@ pub(crate) struct DcdHeader {
     atom_count: usize,
     has_cell: bool,
     charmm_version: i32,
+    /// Where the header record starts.
+    header_start: u64,
     data_start: u64,
 }
 
@@ -488,6 +490,9 @@ pub struct DcdReader<R> {
     positions: Vec<Point3>,
     record: Vec<u8>,
     frame_cursor: usize,
+    /// Whether frames are counted in the stream rather than checked against
+    /// the header's `NSET`, as in a file still being written.
+    growing: bool,
 }
 
 impl<R> fmt::Debug for DcdReader<R> {
@@ -787,6 +792,7 @@ impl<R: Read + Seek> DcdReader<R> {
             atom_count,
             has_cell,
             charmm_version,
+            header_start: start,
             data_start,
         };
         Ok(Self {
@@ -800,6 +806,7 @@ impl<R: Read + Seek> DcdReader<R> {
             positions,
             record,
             frame_cursor: 0,
+            growing: false,
         })
     }
 
@@ -841,7 +848,17 @@ impl<R: Read + Seek> DcdReader<R> {
                 error,
             )
         })?;
-        if self.frame_cursor >= self.header.declared_frames {
+        if self.growing {
+            // Frames are counted in the stream; NSET may lag behind them.
+            if probe_seekable_eof(
+                &mut self.reader,
+                TrajectoryIoOperation::ReadFrame,
+                TrajectoryFormat::Dcd,
+                &self.options.source_label,
+            )? {
+                return Ok(None);
+            }
+        } else if self.frame_cursor >= self.header.declared_frames {
             if probe_seekable_eof(
                 &mut self.reader,
                 TrajectoryIoOperation::ReadFrame,
@@ -1095,124 +1112,73 @@ impl<R: Read + Seek> DcdReader<R> {
 
     /// Indexes a freshly opened reader, whose next frame is frame 0.
     fn index_frames(
-        mut self,
+        self,
+        growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<IndexedDcdReader<R>, TrajectoryIoError> {
-        let mut offsets = FrameOffsets::empty(self.header.data_start);
-        control.checkpoint(
-            0,
-            self.header.data_start,
-            TrajectoryFormat::Dcd,
+        let mut indexed = IndexedDcdReader {
+            offsets: FrameOffsets::empty(self.header.data_start),
+            inner: self,
+            pending_bytes: 0,
+        };
+        indexed.extend(growing, control)?;
+        Ok(indexed)
+    }
+
+    fn position(&mut self, operation: TrajectoryIoOperation) -> Result<u64, TrajectoryIoError> {
+        self.reader.stream_position().map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.options.source_label,
+                error,
+            )
+        })
+    }
+
+    fn seek_to(
+        &mut self,
+        offset: SeekFrom,
+        operation: TrajectoryIoOperation,
+    ) -> Result<u64, TrajectoryIoError> {
+        self.reader.seek(offset).map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.options.source_label,
+                error,
+            )
+        })
+    }
+
+    /// Reads the header's `NSET` again, which a writer appending frames may
+    /// have updated, and returns it; the stream position is kept.
+    fn reread_declared_frames(&mut self) -> Result<usize, TrajectoryIoError> {
+        let position = self.position(TrajectoryIoOperation::ReadHeader)?;
+        let count_offset = self.header.header_start.checked_add(8).ok_or_else(|| {
+            header_error(&self.options.source_label, "DCD header offset overflows")
+        })?;
+        self.seek_to(
+            SeekFrom::Start(count_offset),
+            TrajectoryIoOperation::ReadHeader,
+        )?;
+        let mut count = [0_u8; 4];
+        let read = read_exact_required(
+            &mut self.reader,
+            &mut count,
+            TrajectoryIoOperation::ReadHeader,
+            &self.options.source_label,
+            None,
+            "truncated DCD NSET",
+        );
+        self.seek_to(SeekFrom::Start(position), TrajectoryIoOperation::ReadHeader)?;
+        read?;
+        let declared = nonnegative_u64(
+            self.header.endian.i32(count),
+            "NSET",
             &self.options.source_label,
         )?;
-        loop {
-            if offsets.len() == self.header.declared_frames {
-                if probe_seekable_eof(
-                    &mut self.reader,
-                    TrajectoryIoOperation::Index,
-                    TrajectoryFormat::Dcd,
-                    &self.options.source_label,
-                )? {
-                    break;
-                }
-                return Err(TrajectoryIoError::codec(
-                    TrajectoryIoErrorKind::InconsistentMetadata,
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Dcd),
-                )
-                .with_source_label(&self.options.source_label)
-                .with_counts(
-                    self.header.declared_frames as u64,
-                    (offsets.len() as u64).saturating_add(1),
-                )
-                .with_detail("DCD contains frames beyond its declared NSET count"));
-            }
-            if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
-                if probe_seekable_eof(
-                    &mut self.reader,
-                    TrajectoryIoOperation::Index,
-                    TrajectoryFormat::Dcd,
-                    &self.options.source_label,
-                )? {
-                    return Err(TrajectoryIoError::codec(
-                        TrajectoryIoErrorKind::InconsistentMetadata,
-                        TrajectoryIoOperation::Index,
-                        Some(TrajectoryFormat::Dcd),
-                    )
-                    .with_source_label(&self.options.source_label)
-                    .with_counts(self.header.declared_frames as u64, offsets.len() as u64)
-                    .with_detail("DCD ended before its declared NSET count"));
-                }
-                return Err(resource_error(
-                    TrajectoryIoOperation::Index,
-                    &self.options.source_label,
-                    Some(offsets.len()),
-                    format!("DCD index {limit} exceeds the configured limit"),
-                ));
-            }
-            let offset = self.reader.stream_position().map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Dcd),
-                    &self.options.source_label,
-                    error,
-                )
-            })?;
-            let stamp = self
-                .stamp(self.frame_cursor)
-                .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?;
-            if self
-                .parse_next(true)
-                .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
-                .is_none()
-            {
-                return Err(TrajectoryIoError::codec(
-                    TrajectoryIoErrorKind::InconsistentMetadata,
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Dcd),
-                )
-                .with_source_label(&self.options.source_label)
-                .with_counts(self.header.declared_frames as u64, offsets.len() as u64)
-                .with_detail("DCD ended before its declared NSET count"));
-            }
-            let end = self.reader.stream_position().map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Dcd),
-                    &self.options.source_label,
-                    error,
-                )
-            })?;
-            offsets.push(
-                offset,
-                end,
-                stamp,
-                &self.options.limits,
-                TrajectoryFormat::Dcd,
-                &self.options.source_label,
-            )?;
-            control.checkpoint(
-                offsets.len(),
-                end,
-                TrajectoryFormat::Dcd,
-                &self.options.source_label,
-            )?;
-        }
-        self.reader
-            .seek(SeekFrom::Start(self.header.data_start))
-            .map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Dcd),
-                    &self.options.source_label,
-                    error,
-                )
-            })?;
-        self.frame_cursor = 0;
-        Ok(IndexedDcdReader {
-            inner: self,
-            offsets,
-        })
+        Ok(declared as usize)
     }
 }
 
@@ -1257,6 +1223,8 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
 pub struct IndexedDcdReader<R> {
     inner: DcdReader<R>,
     offsets: FrameOffsets,
+    /// Bytes after the last indexed frame when the index last grew.
+    pending_bytes: u64,
 }
 
 impl<R> fmt::Debug for IndexedDcdReader<R> {
@@ -1295,38 +1263,47 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
             reader,
             topology.into(),
             options,
+            false,
             &IndexBuildControl::default(),
         )
     }
 
-    /// Indexes the stream like [`Self::new`], reporting to `control`.
+    /// Indexes the stream like [`Self::new`], reporting to `control`. A
+    /// `growing` stream may end in a partial frame, and its frames are
+    /// counted in the stream rather than checked against `NSET` (see
+    /// [`Self::extend`]).
     pub(crate) fn build(
         reader: R,
         topology: Arc<Topology>,
         options: DcdReadOptions,
+        growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<Self, TrajectoryIoError> {
-        DcdReader::new(reader, topology, options)?.index_frames(control)
+        DcdReader::new(reader, topology, options)?.index_frames(growing, control)
     }
 
     /// Opens the stream with previously verified `offsets` instead of
-    /// scanning it; random reads verify each frame against them. The offsets
-    /// must count the header's `NSET` frames. With fixed atoms, frame 0 is
-    /// decoded and verified here for their reference coordinates.
+    /// scanning it; random reads verify each frame against them. Unless the
+    /// stream is `growing`, the offsets must count at most the header's
+    /// `NSET` frames, and [`Self::extend`] then requires the rest. With
+    /// fixed atoms, frame 0 is decoded and verified here for their reference
+    /// coordinates.
     pub(crate) fn from_offsets(
         reader: R,
         topology: Arc<Topology>,
         options: DcdReadOptions,
         offsets: FrameOffsets,
+        growing: bool,
     ) -> Result<Self, TrajectoryIoError> {
         let mut inner = DcdReader::new(reader, topology, options)?;
+        inner.growing = growing;
         let label = inner.options.source_label.clone();
-        if offsets.len() != inner.header.declared_frames {
+        if !growing && offsets.len() > inner.header.declared_frames {
             return Err(index_mismatch(
                 TrajectoryIoOperation::Open,
                 TrajectoryFormat::Dcd,
                 &label,
-                "DCD index frame count differs from the header NSET count",
+                "DCD index counts more frames than the header's NSET",
             )
             .with_counts(inner.header.declared_frames as u64, offsets.len() as u64));
         }
@@ -1360,11 +1337,180 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 })?;
             inner.frame_cursor = 0;
         }
-        Ok(Self { inner, offsets })
+        Ok(Self {
+            inner,
+            offsets,
+            pending_bytes: 0,
+        })
     }
 
     pub(crate) fn offsets(&self) -> &FrameOffsets {
         &self.offsets
+    }
+
+    /// Bytes after the last indexed frame when the index last grew.
+    pub(crate) const fn pending_bytes(&self) -> u64 {
+        self.pending_bytes
+    }
+
+    /// Drops the frames indexed after `mark`, with the declared frame count
+    /// and pending bytes the reader had then; see [`FrameOffsets::mark`].
+    pub(crate) fn restore_index(
+        &mut self,
+        mark: (usize, u64),
+        declared_frames: usize,
+        pending_bytes: u64,
+    ) {
+        self.offsets.restore(mark);
+        self.inner.header.declared_frames = declared_frames;
+        self.pending_bytes = pending_bytes;
+    }
+
+    /// Verifies and indexes every complete frame after the last indexed one,
+    /// up to the end of the stream, and returns the bytes left after them.
+    ///
+    /// The header's `NSET` is read again first, since a writer appending
+    /// frames updates it. A growing stream (see [`Self::build`]) may end in
+    /// a frame still being written: the scan stops before a frame the stream
+    /// ends inside, which is not yet an error, and `NSET` is not checked.
+    /// Otherwise such a frame is an error, as is any frame that is invalid
+    /// with all its bytes present, and the stream must hold exactly `NSET`
+    /// frames. Failure leaves the index as it was; the sequential cursor is
+    /// kept either way.
+    pub(crate) fn extend(
+        &mut self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        self.inner.growing = growing;
+        let mark = self.offsets.mark();
+        let declared = self.inner.header.declared_frames;
+        let saved_offset = self.inner.position(TrajectoryIoOperation::Index)?;
+        let saved_cursor = self.inner.frame_cursor;
+        let scanned = self
+            .inner
+            .reread_declared_frames()
+            .and_then(|declared| {
+                self.inner.header.declared_frames = declared;
+                self.inner.seek_to(
+                    SeekFrom::Start(self.offsets.end()),
+                    TrajectoryIoOperation::Index,
+                )
+            })
+            .and_then(|_| {
+                self.inner.frame_cursor = self.offsets.len();
+                self.scan(control)
+            });
+        let restored = self
+            .inner
+            .seek_to(SeekFrom::Start(saved_offset), TrajectoryIoOperation::Index);
+        self.inner.frame_cursor = saved_cursor;
+        match scanned.and_then(|pending| restored.map(|_| pending)) {
+            Ok(pending) => {
+                self.pending_bytes = pending;
+                Ok(pending)
+            }
+            Err(error) => {
+                self.offsets.restore(mark);
+                self.inner.header.declared_frames = declared;
+                Err(error)
+            }
+        }
+    }
+
+    /// Indexes frames from the current position; see [`Self::extend`].
+    fn scan(&mut self, control: &IndexBuildControl<'_>) -> Result<u64, TrajectoryIoError> {
+        let label = self.inner.options.source_label.clone();
+        let growing = self.inner.growing;
+        let declared = self.inner.header.declared_frames;
+        control.checkpoint(
+            self.offsets.len(),
+            self.offsets.end(),
+            TrajectoryFormat::Dcd,
+            &label,
+        )?;
+        let ended_early = |indexed: usize| {
+            TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::Index,
+                Some(TrajectoryFormat::Dcd),
+            )
+            .with_source_label(&label)
+            .with_counts(declared as u64, indexed as u64)
+            .with_detail("DCD ended before its declared NSET count")
+        };
+        loop {
+            if !growing && self.offsets.len() >= declared {
+                if probe_seekable_eof(
+                    &mut self.inner.reader,
+                    TrajectoryIoOperation::Index,
+                    TrajectoryFormat::Dcd,
+                    &label,
+                )? {
+                    return Ok(0);
+                }
+                return Err(TrajectoryIoError::codec(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Dcd),
+                )
+                .with_source_label(&label)
+                .with_counts(
+                    declared as u64,
+                    (self.offsets.len() as u64).saturating_add(1),
+                )
+                .with_detail("DCD contains frames beyond its declared NSET count"));
+            }
+            if let Some(limit) =
+                projected_index_limit(self.offsets.len(), &self.inner.options.limits)
+            {
+                if probe_seekable_eof(
+                    &mut self.inner.reader,
+                    TrajectoryIoOperation::Index,
+                    TrajectoryFormat::Dcd,
+                    &label,
+                )? {
+                    if growing {
+                        return Ok(0);
+                    }
+                    return Err(ended_early(self.offsets.len()));
+                }
+                return Err(resource_error(
+                    TrajectoryIoOperation::Index,
+                    &label,
+                    Some(self.offsets.len()),
+                    format!("DCD index {limit} exceeds the configured limit"),
+                ));
+            }
+            let offset = self.inner.position(TrajectoryIoOperation::Index)?;
+            let frame = self.inner.frame_cursor;
+            let stamp = self
+                .inner
+                .stamp(frame)
+                .map_err(|error| frame_offset_context(error, frame, offset))?;
+            match self.inner.parse_next(true) {
+                Ok(Some(_)) => {}
+                Ok(None) if growing => return Ok(0),
+                Ok(None) => return Err(ended_early(self.offsets.len())),
+                Err(error) if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord => {
+                    let file_end = self
+                        .inner
+                        .seek_to(SeekFrom::End(0), TrajectoryIoOperation::Index)?;
+                    return Ok(file_end.saturating_sub(offset));
+                }
+                Err(error) => return Err(frame_offset_context(error, frame, offset)),
+            }
+            let end = self.inner.position(TrajectoryIoOperation::Index)?;
+            self.offsets.push(
+                offset,
+                end,
+                stamp,
+                &self.inner.options.limits,
+                TrajectoryFormat::Dcd,
+                &label,
+            )?;
+            control.checkpoint(self.offsets.len(), end, TrajectoryFormat::Dcd, &label)?;
+        }
     }
 
     /// The topology every frame belongs to.
@@ -1386,7 +1532,14 @@ impl<R: Read + Seek> TrajectoryReader for IndexedDcdReader<R> {
         self.inner.shared_topology()
     }
 
+    /// Reads the indexed frames in order and ends after the last of them,
+    /// even when the stream holds more.
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
+        if self.topology().shares_layout(destination.topology())
+            && self.inner.frame_cursor >= self.offsets.len()
+        {
+            return Ok(false);
+        }
         self.inner.read_next(destination)
     }
 }
@@ -1618,13 +1771,62 @@ impl<W: Write + Seek> DcdWriter<W> {
         &self.writer
     }
 
-    /// Flushes the underlying stream.
-    ///
-    /// # Errors
-    ///
-    /// Returns the stream's flush error.
-    pub fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.flush()
+    /// Writes the frame count to the header's `NSET`, after every frame
+    /// written so far has reached the stream, and leaves the stream at its
+    /// end.
+    fn write_frame_count(
+        &mut self,
+        operation: TrajectoryIoOperation,
+    ) -> Result<(), TrajectoryIoError> {
+        if self.frame_count > i32::MAX as usize {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                "DCD frame count exceeds i32 header capacity",
+            ));
+        }
+        let io = |error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                error,
+            )
+        };
+        let end = self.writer.stream_position().map_err(io)?;
+        let count_offset = self.header_start.checked_add(8).ok_or_else(|| {
+            codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                "DCD header count offset overflows",
+            )
+        })?;
+        let count = self
+            .options
+            .endian
+            .encode_i32(i32::try_from(self.frame_count).expect("checked frame count"));
+        // Frames reach the stream before the count that includes them, so a
+        // reader never sees the header count a frame that is not there.
+        self.partial = true;
+        self.writer
+            .flush()
+            .and_then(|()| self.writer.seek(SeekFrom::Start(count_offset)))
+            .and_then(|_| self.writer.write_all(&count))
+            .and_then(|()| self.writer.seek(SeekFrom::Start(end)))
+            .map_err(|error| {
+                io_context(
+                    operation,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.source_label,
+                    error,
+                )
+            })?;
+        self.partial = false;
+        Ok(())
     }
 
     /// Patches the header frame count, leaving the stream at its end; later
@@ -1648,53 +1850,7 @@ impl<W: Write + Seek> DcdWriter<W> {
             &self.source_label,
         )?;
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Dcd, &self.source_label)?;
-        if self.frame_count > i32::MAX as usize {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::LimitExceeded,
-                TrajectoryIoOperation::Finish,
-                Some(TrajectoryFormat::Dcd),
-                &self.source_label,
-                "DCD frame count exceeds i32 header capacity",
-            ));
-        }
-        let end = self.writer.stream_position().map_err(|error| {
-            io_context(
-                TrajectoryIoOperation::Finish,
-                Some(TrajectoryFormat::Dcd),
-                &self.source_label,
-                error,
-            )
-        })?;
-        let count_offset = self.header_start.checked_add(8).ok_or_else(|| {
-            codec_context(
-                TrajectoryIoErrorKind::LimitExceeded,
-                TrajectoryIoOperation::Finish,
-                Some(TrajectoryFormat::Dcd),
-                &self.source_label,
-                "DCD header count offset overflows",
-            )
-        })?;
-        self.partial = true;
-        self.writer
-            .seek(SeekFrom::Start(count_offset))
-            .and_then(|_| {
-                self.writer.write_all(
-                    &self
-                        .options
-                        .endian
-                        .encode_i32(i32::try_from(self.frame_count).expect("checked frame count")),
-                )
-            })
-            .and_then(|_| self.writer.seek(SeekFrom::Start(end)).map(|_| ()))
-            .map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::Finish,
-                    Some(TrajectoryFormat::Dcd),
-                    &self.source_label,
-                    error,
-                )
-            })?;
-        self.partial = false;
+        self.write_frame_count(TrajectoryIoOperation::Finish)?;
         self.finalized = true;
         Ok(())
     }
@@ -1726,6 +1882,29 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
 
     fn shared_topology(&self) -> Arc<Topology> {
         Arc::clone(&self.topology)
+    }
+
+    /// Writes the header's `NSET` for the frames written so far, after
+    /// them, and flushes the stream, which then holds a complete DCD of
+    /// those frames.
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            &self.source_label,
+        )?;
+        if !self.finalized {
+            self.write_frame_count(TrajectoryIoOperation::WriteFrame)?;
+        }
+        self.writer.flush().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                error,
+            )
+        })
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {

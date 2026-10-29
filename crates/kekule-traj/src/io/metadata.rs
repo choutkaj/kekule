@@ -290,6 +290,18 @@ impl FileTrajectoryMetadata {
         }
     }
 
+    /// Records the frame counts of a refreshed indexed reader.
+    pub(super) fn update_frame_counts(
+        &mut self,
+        indexed_frame_count: usize,
+        declared_frame_count: Option<usize>,
+    ) {
+        self.indexed_frame_count = Some(indexed_frame_count);
+        if self.declared_frame_count.is_some() {
+            self.declared_frame_count = declared_frame_count;
+        }
+    }
+
     pub(super) fn update_trr_precision(
         &mut self,
         header: &trr::TrrFrameHeader,
@@ -452,7 +464,7 @@ pub fn detect_trajectory_format<R: io::Read + io::Seek>(
 ) -> Result<TrajectoryFormatDetection, TrajectoryIoError> {
     let source_name = source_name.as_ref();
     let source_label = source_name.display().to_string();
-    let result = detect::select_format(reader, source_name, hint, limits, &source_label)?;
+    let result = detect::select_format(reader, source_name, hint, limits, &source_label, false)?;
     Ok(TrajectoryFormatDetection {
         format: result.format,
         evidence: result.evidence,
@@ -499,6 +511,7 @@ pub struct TrajectoryOpenOptions {
     pub(super) xtc: xtc::XtcReadOptions,
     pub(super) index_cancellation: Option<Cancellation>,
     pub(super) index_progress: Option<IndexProgressCallback>,
+    pub(super) growing: bool,
 }
 
 impl Default for TrajectoryOpenOptions {
@@ -512,6 +525,7 @@ impl Default for TrajectoryOpenOptions {
             xtc: xtc::XtcReadOptions::default(),
             index_cancellation: None,
             index_progress: None,
+            growing: false,
         }
     }
 }
@@ -592,6 +606,39 @@ impl TrajectoryOpenOptions {
     /// [`TrajectoryIoErrorKind::Cancelled`]: crate::TrajectoryIoErrorKind::Cancelled
     pub const fn index_cancellation(&self) -> Option<&Cancellation> {
         self.index_cancellation.as_ref()
+    }
+
+    /// Sets [`Self::growing`].
+    #[must_use]
+    pub const fn with_growing(mut self, growing: bool) -> Self {
+        self.growing = growing;
+        self
+    }
+
+    /// Whether the file may still be growing: a writer, such as a running
+    /// simulation in another process, is appending frames to it. False by
+    /// default.
+    ///
+    /// Indexed readers of a growing file take a partially written final
+    /// frame as not yet written rather than as corruption: they index the
+    /// complete frames before it and report the bytes after them as
+    /// [`pending`](super::IndexedFileTrajectoryReader::pending_byte_count),
+    /// and [`refresh`](super::IndexedFileTrajectoryReader::refresh) indexes
+    /// it once it is complete. Corrupt data is still an error wherever it
+    /// lies. DCD readers count the frames in the file rather than check
+    /// them against the header's `NSET`, which writers update only as they
+    /// flush or when they finish. XYZ lines count only once their line
+    /// break is written, so a growing XYZ file's last line must end in one.
+    /// A file that holds no complete frame yet, or for DCD no complete
+    /// header, fails to open with [`TrajectoryIoErrorKind::Incomplete`].
+    ///
+    /// Without it, a partial final frame is an error, as for a complete
+    /// file. Sequential readers and [`read_trajectory`](super::read_trajectory)
+    /// ignore it.
+    ///
+    /// [`TrajectoryIoErrorKind::Incomplete`]: crate::TrajectoryIoErrorKind::Incomplete
+    pub const fn growing(&self) -> bool {
+        self.growing
     }
 
     /// How the format is selected; [`TrajectoryFormatHint::Auto`] by default.

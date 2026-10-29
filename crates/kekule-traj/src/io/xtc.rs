@@ -417,9 +417,11 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 ))
             }
         }
+        // The magic is checked as soon as it is read, so a frame that a
+        // stream ends inside is rejected when what it holds is already wrong.
         read_exact(
             &mut self.reader,
-            &mut header[1..],
+            &mut header[1..4],
             source_label,
             Some(frame_index),
             "truncated XTC frame header",
@@ -429,6 +431,13 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             2023 => XtcMagic::Xtc2023,
             _ => return Err(header_error(source_label, "XTC magic is not 1995 or 2023")),
         };
+        read_exact(
+            &mut self.reader,
+            &mut header[4..],
+            source_label,
+            Some(frame_index),
+            "truncated XTC frame header",
+        )?;
         let atom_count_raw = i32::from_be_bytes(header[4..8].try_into().expect("natoms"));
         let atom_count = nonnegative_xdr_count(
             atom_count_raw,
@@ -1038,107 +1047,43 @@ impl<R: Read + Seek> XtcReader<R> {
 
     /// Indexes a freshly opened reader, whose next frame is frame 0.
     fn index_frames(
-        mut self,
+        self,
+        growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<IndexedXtcReader<R>, TrajectoryIoError> {
-        let mut offsets = FrameOffsets::empty(self.stream_start);
-        control.checkpoint(
-            0,
-            self.stream_start,
-            TrajectoryFormat::Xtc,
-            &self.options.source_label,
-        )?;
-        loop {
-            if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
-                let clean_eof = if self.pending_info.is_some() {
-                    false
-                } else {
-                    probe_seekable_eof(
-                        &mut self.adapter.reader,
-                        TrajectoryIoOperation::Index,
-                        TrajectoryFormat::Xtc,
-                        &self.options.source_label,
-                    )?
-                };
-                if clean_eof {
-                    break;
-                }
-                return Err(resource_error(
-                    &self.options.source_label,
-                    Some(offsets.len()),
-                    format!("XTC index {limit} exceeds the configured limit"),
-                ));
-            }
-            let offset = self.pending_info.as_ref().map_or_else(
-                || {
-                    self.adapter.reader.stream_position().map_err(|error| {
-                        io_context(
-                            TrajectoryIoOperation::Index,
-                            Some(TrajectoryFormat::Xtc),
-                            &self.options.source_label,
-                            error,
-                        )
-                    })
-                },
-                |info| Ok(info.start),
-            )?;
-            let Some(info) = self
-                .parse_next()
-                .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
-            else {
-                break;
-            };
-            let end = self.adapter.reader.stream_position().map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Xtc),
-                    &self.options.source_label,
-                    error,
-                )
-            })?;
-            offsets.push(
-                offset,
-                end,
-                info.stamp(),
-                &self.options.limits,
-                TrajectoryFormat::Xtc,
-                &self.options.source_label,
-            )?;
-            control.checkpoint(
-                offsets.len(),
-                end,
-                TrajectoryFormat::Xtc,
-                &self.options.source_label,
-            )?;
-        }
-        self.rewind()?;
-        Ok(IndexedXtcReader {
+        let mut indexed = IndexedXtcReader {
+            offsets: FrameOffsets::empty(self.stream_start),
             inner: self,
-            offsets,
+            pending_bytes: 0,
+        };
+        indexed.extend(growing, control)?;
+        Ok(indexed)
+    }
+
+    fn position(&mut self, operation: TrajectoryIoOperation) -> Result<u64, TrajectoryIoError> {
+        self.adapter.reader.stream_position().map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Xtc),
+                &self.options.source_label,
+                error,
+            )
         })
     }
 
-    fn rewind(&mut self) -> Result<(), TrajectoryIoError> {
-        self.adapter
-            .reader
-            .seek(SeekFrom::Start(self.stream_start))
-            .map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Xtc),
-                    &self.options.source_label,
-                    error,
-                )
-            })?;
-        self.frame_cursor = 0;
-        self.pending_info = self.adapter.preflight(
-            &self.topology,
-            &self.options,
-            0,
-            false,
-            self.positions.capacity(),
-        )?;
-        Ok(())
+    fn seek_to(
+        &mut self,
+        offset: SeekFrom,
+        operation: TrajectoryIoOperation,
+    ) -> Result<u64, TrajectoryIoError> {
+        self.adapter.reader.seek(offset).map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Xtc),
+                &self.options.source_label,
+                error,
+            )
+        })
     }
 }
 
@@ -1189,6 +1134,8 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
 pub struct IndexedXtcReader<R> {
     inner: XtcReader<R>,
     offsets: FrameOffsets,
+    /// Bytes after the last indexed frame when the index last grew.
+    pending_bytes: u64,
 }
 
 impl<R> fmt::Debug for IndexedXtcReader<R> {
@@ -1225,18 +1172,21 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
             reader,
             topology.into(),
             options,
+            false,
             &IndexBuildControl::default(),
         )
     }
 
-    /// Indexes the stream like [`Self::new`], reporting to `control`.
+    /// Indexes the stream like [`Self::new`], reporting to `control`; a
+    /// `growing` stream may end in a partial frame (see [`Self::extend`]).
     pub(crate) fn build(
         reader: R,
         topology: Arc<Topology>,
         options: XtcReadOptions,
+        growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<Self, TrajectoryIoError> {
-        XtcReader::new(reader, topology, options)?.index_frames(control)
+        XtcReader::new(reader, topology, options)?.index_frames(growing, control)
     }
 
     /// Opens the stream with previously verified `offsets` instead of
@@ -1253,11 +1203,134 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
             TrajectoryFormat::Xtc,
             &inner.options.source_label,
         )?;
-        Ok(Self { inner, offsets })
+        Ok(Self {
+            inner,
+            offsets,
+            pending_bytes: 0,
+        })
     }
 
     pub(crate) fn offsets(&self) -> &FrameOffsets {
         &self.offsets
+    }
+
+    /// Bytes after the last indexed frame when the index last grew.
+    pub(crate) const fn pending_bytes(&self) -> u64 {
+        self.pending_bytes
+    }
+
+    /// Drops the frames indexed after `mark`; see [`FrameOffsets::mark`].
+    pub(crate) fn restore_index(&mut self, mark: (usize, u64), pending_bytes: u64) {
+        self.offsets.restore(mark);
+        self.pending_bytes = pending_bytes;
+    }
+
+    /// Verifies and indexes every complete frame after the last indexed one,
+    /// up to the end of the stream, and returns the bytes left after them.
+    ///
+    /// A `growing` stream may end in a frame still being written: the scan
+    /// stops before a frame the stream ends inside, which is not yet an
+    /// error. Otherwise such a frame is an error, as is any frame that is
+    /// invalid with all its bytes present. Failure leaves the index as it
+    /// was; the sequential cursor is kept either way.
+    pub(crate) fn extend(
+        &mut self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        let mark = self.offsets.mark();
+        let saved_offset = self.inner.position(TrajectoryIoOperation::Index)?;
+        let saved_cursor = self.inner.frame_cursor;
+        let saved_pending = self.inner.pending_info.clone();
+        let end = self.offsets.end();
+        // A freshly opened reader has already checked frame 0 there.
+        if saved_pending.as_ref().is_none_or(|info| info.start != end) {
+            self.inner.pending_info = None;
+            self.inner.adapter.decoded_start = None;
+            self.inner
+                .seek_to(SeekFrom::Start(end), TrajectoryIoOperation::Index)?;
+        }
+        self.inner.frame_cursor = self.offsets.len();
+        let scanned = self.scan(growing, control);
+        let restored = self
+            .inner
+            .seek_to(SeekFrom::Start(saved_offset), TrajectoryIoOperation::Index);
+        self.inner.frame_cursor = saved_cursor;
+        self.inner.pending_info = saved_pending;
+        self.inner.adapter.decoded_start = None;
+        match scanned.and_then(|pending| restored.map(|_| pending)) {
+            Ok(pending) => {
+                self.pending_bytes = pending;
+                Ok(pending)
+            }
+            Err(error) => {
+                self.offsets.restore(mark);
+                Err(error)
+            }
+        }
+    }
+
+    /// Indexes frames from the current position; see [`Self::extend`].
+    fn scan(
+        &mut self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        let label = self.inner.options.source_label.clone();
+        control.checkpoint(
+            self.offsets.len(),
+            self.offsets.end(),
+            TrajectoryFormat::Xtc,
+            &label,
+        )?;
+        loop {
+            if let Some(limit) =
+                projected_index_limit(self.offsets.len(), &self.inner.options.limits)
+            {
+                let clean_eof = self.inner.pending_info.is_none()
+                    && probe_seekable_eof(
+                        &mut self.inner.adapter.reader,
+                        TrajectoryIoOperation::Index,
+                        TrajectoryFormat::Xtc,
+                        &label,
+                    )?;
+                if clean_eof {
+                    return Ok(0);
+                }
+                return Err(resource_error(
+                    &label,
+                    Some(self.offsets.len()),
+                    format!("XTC index {limit} exceeds the configured limit"),
+                ));
+            }
+            let offset = match &self.inner.pending_info {
+                Some(info) => info.start,
+                None => self.inner.position(TrajectoryIoOperation::Index)?,
+            };
+            let info = match self.inner.parse_next() {
+                Ok(Some(info)) => info,
+                Ok(None) => return Ok(0),
+                Err(error) if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord => {
+                    let file_end = self
+                        .inner
+                        .seek_to(SeekFrom::End(0), TrajectoryIoOperation::Index)?;
+                    return Ok(file_end.saturating_sub(offset));
+                }
+                Err(error) => {
+                    return Err(frame_offset_context(error, self.inner.frame_cursor, offset))
+                }
+            };
+            let end = self.inner.position(TrajectoryIoOperation::Index)?;
+            self.offsets.push(
+                offset,
+                end,
+                info.stamp(),
+                &self.inner.options.limits,
+                TrajectoryFormat::Xtc,
+                &label,
+            )?;
+            control.checkpoint(self.offsets.len(), end, TrajectoryFormat::Xtc, &label)?;
+        }
     }
 
     /// The topology every frame belongs to.
@@ -1279,7 +1352,14 @@ impl<R: Read + Seek> TrajectoryReader for IndexedXtcReader<R> {
         self.inner.shared_topology()
     }
 
+    /// Reads the indexed frames in order and ends after the last of them,
+    /// even when the stream holds more.
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
+        if self.topology().shares_layout(destination.topology())
+            && self.inner.frame_cursor >= self.offsets.len()
+        {
+            return Ok(false);
+        }
         self.inner.read_next(destination)
     }
 }
@@ -1480,15 +1560,6 @@ impl<W: Write> XtcWriter<W> {
     /// The underlying stream.
     pub fn writer(&self) -> &W {
         &self.writer
-    }
-
-    /// Flushes the underlying stream.
-    ///
-    /// # Errors
-    ///
-    /// Returns the stream's flush error.
-    pub fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.flush()
     }
 
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
@@ -1802,6 +1873,24 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             .ok_or_else(|| resource_error(&self.source_label, None, "XTC frame count overflows"))?;
         record(&mut self.report, omitted);
         Ok(())
+    }
+
+    /// Flushes the stream, which then ends after the last whole frame.
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xtc,
+            &self.source_label,
+        )?;
+        self.writer.flush().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xtc),
+                &self.source_label,
+                error,
+            )
+        })
     }
 }
 

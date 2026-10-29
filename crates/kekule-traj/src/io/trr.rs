@@ -700,108 +700,44 @@ impl<R: Read + Seek> TrrReader<R> {
 
     /// Indexes a freshly opened reader, whose next frame is frame 0.
     fn index_frames(
-        mut self,
+        self,
+        growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<IndexedTrrReader<R>, TrajectoryIoError> {
-        let mut offsets = FrameOffsets::empty(self.stream_start);
-        control.checkpoint(
-            0,
-            self.stream_start,
-            TrajectoryFormat::Trr,
-            &self.options.source_label,
-        )?;
-        loop {
-            if let Some(limit) = projected_index_limit(offsets.len(), &self.options.limits) {
-                let clean_eof = if self.pending_header.is_some() {
-                    false
-                } else {
-                    probe_seekable_eof(
-                        &mut self.reader,
-                        TrajectoryIoOperation::Index,
-                        TrajectoryFormat::Trr,
-                        &self.options.source_label,
-                    )?
-                };
-                if clean_eof {
-                    break;
-                }
-                return Err(resource_error(
-                    &self.options.source_label,
-                    Some(offsets.len()),
-                    format!("TRR index {limit} exceeds the configured limit"),
-                ));
-            }
-            let offset = if self.pending_header.is_some() {
-                self.current_header_offset
-            } else {
-                self.reader.stream_position().map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Index,
-                        Some(TrajectoryFormat::Trr),
-                        &self.options.source_label,
-                        error,
-                    )
-                })?
-            };
-            let Some(decoded) = self
-                .parse_next()
-                .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
-            else {
-                break;
-            };
-            let end = self.reader.stream_position().map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Trr),
-                    &self.options.source_label,
-                    error,
-                )
-            })?;
-            offsets.push(
-                offset,
-                end,
-                decoded.header.stamp(),
-                &self.options.limits,
-                TrajectoryFormat::Trr,
-                &self.options.source_label,
-            )?;
-            control.checkpoint(
-                offsets.len(),
-                end,
-                TrajectoryFormat::Trr,
-                &self.options.source_label,
-            )?;
-        }
-        self.rewind()?;
-        Ok(IndexedTrrReader {
-            precision_mixed: self.precision_mixed,
+        let mut indexed = IndexedTrrReader {
+            offsets: FrameOffsets::empty(self.stream_start),
+            precision_mixed: false,
             inner: self,
-            offsets,
+            pending_bytes: 0,
+        };
+        indexed.extend(growing, control)?;
+        Ok(indexed)
+    }
+
+    fn position(&mut self, operation: TrajectoryIoOperation) -> Result<u64, TrajectoryIoError> {
+        self.reader.stream_position().map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Trr),
+                &self.options.source_label,
+                error,
+            )
         })
     }
 
-    fn rewind(&mut self) -> Result<(), TrajectoryIoError> {
-        self.reader
-            .seek(SeekFrom::Start(self.stream_start))
-            .map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Trr),
-                    &self.options.source_label,
-                    error,
-                )
-            })?;
-        self.current_header_offset = self.stream_start;
-        let atom_count = self.topology.as_ref().atom_count();
-        self.pending_header = read_header(
-            &mut self.reader,
-            &self.options.limits,
-            &self.options.source_label,
-            Some(atom_count),
-            false,
-        )?;
-        self.frame_cursor = 0;
-        Ok(())
+    fn seek_to(
+        &mut self,
+        offset: SeekFrom,
+        operation: TrajectoryIoOperation,
+    ) -> Result<u64, TrajectoryIoError> {
+        self.reader.seek(offset).map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Trr),
+                &self.options.source_label,
+                error,
+            )
+        })
     }
 }
 
@@ -857,8 +793,10 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
 pub struct IndexedTrrReader<R> {
     inner: TrrReader<R>,
     offsets: FrameOffsets,
-    /// Whether frames of the whole file mix scalar widths.
+    /// Whether the indexed frames mix scalar widths.
     precision_mixed: bool,
+    /// Bytes after the last indexed frame when the index last grew.
+    pending_bytes: u64,
 }
 
 impl<R> fmt::Debug for IndexedTrrReader<R> {
@@ -895,18 +833,21 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             reader,
             topology.into(),
             options,
+            false,
             &IndexBuildControl::default(),
         )
     }
 
-    /// Indexes the stream like [`Self::new`], reporting to `control`.
+    /// Indexes the stream like [`Self::new`], reporting to `control`; a
+    /// `growing` stream may end in a partial frame (see [`Self::extend`]).
     pub(crate) fn build(
         reader: R,
         topology: Arc<Topology>,
         options: TrrReadOptions,
+        growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<Self, TrajectoryIoError> {
-        TrrReader::new(reader, topology, options)?.index_frames(control)
+        TrrReader::new(reader, topology, options)?.index_frames(growing, control)
     }
 
     /// Opens the stream with previously verified `offsets` instead of
@@ -930,11 +871,145 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             inner,
             offsets,
             precision_mixed,
+            pending_bytes: 0,
         })
     }
 
     pub(crate) fn offsets(&self) -> &FrameOffsets {
         &self.offsets
+    }
+
+    /// Bytes after the last indexed frame when the index last grew.
+    pub(crate) const fn pending_bytes(&self) -> u64 {
+        self.pending_bytes
+    }
+
+    /// Drops the frames indexed after `mark`, with the mixed-precision flag
+    /// and pending bytes the index had then; see [`FrameOffsets::mark`].
+    pub(crate) fn restore_index(
+        &mut self,
+        mark: (usize, u64),
+        precision_mixed: bool,
+        pending_bytes: u64,
+    ) {
+        self.offsets.restore(mark);
+        self.precision_mixed = precision_mixed;
+        self.pending_bytes = pending_bytes;
+    }
+
+    /// Verifies and indexes every complete frame after the last indexed one,
+    /// up to the end of the stream, and returns the bytes left after them.
+    ///
+    /// A `growing` stream may end in a frame still being written: the scan
+    /// stops before a frame the stream ends inside, which is not yet an
+    /// error. Otherwise such a frame is an error, as is any frame that is
+    /// invalid with all its bytes present. Failure leaves the index as it
+    /// was; the sequential cursor is kept either way.
+    pub(crate) fn extend(
+        &mut self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        let mark = self.offsets.mark();
+        let saved_offset = self.inner.position(TrajectoryIoOperation::Index)?;
+        let saved_cursor = self.inner.frame_cursor;
+        let saved_pending = self.inner.pending_header.clone();
+        let saved_header_offset = self.inner.current_header_offset;
+        let saved_precision_mixed = self.inner.precision_mixed;
+        let end = self.offsets.end();
+        // A freshly opened reader has already read frame 0's header there.
+        if saved_pending.is_none() || saved_header_offset != end {
+            self.inner.pending_header = None;
+            self.inner
+                .seek_to(SeekFrom::Start(end), TrajectoryIoOperation::Index)?;
+        }
+        self.inner.current_header_offset = end;
+        self.inner.frame_cursor = self.offsets.len();
+        self.inner.precision_mixed = self.precision_mixed;
+        let scanned = self.scan(growing, control);
+        let scanned_mixed = self.inner.precision_mixed;
+        let restored = self
+            .inner
+            .seek_to(SeekFrom::Start(saved_offset), TrajectoryIoOperation::Index);
+        self.inner.frame_cursor = saved_cursor;
+        self.inner.pending_header = saved_pending;
+        self.inner.current_header_offset = saved_header_offset;
+        self.inner.precision_mixed = saved_precision_mixed;
+        match scanned.and_then(|pending| restored.map(|_| pending)) {
+            Ok(pending) => {
+                self.precision_mixed = scanned_mixed;
+                self.pending_bytes = pending;
+                Ok(pending)
+            }
+            Err(error) => {
+                self.offsets.restore(mark);
+                Err(error)
+            }
+        }
+    }
+
+    /// Indexes frames from the current position; see [`Self::extend`].
+    fn scan(
+        &mut self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        let label = self.inner.options.source_label.clone();
+        control.checkpoint(
+            self.offsets.len(),
+            self.offsets.end(),
+            TrajectoryFormat::Trr,
+            &label,
+        )?;
+        loop {
+            if let Some(limit) =
+                projected_index_limit(self.offsets.len(), &self.inner.options.limits)
+            {
+                let clean_eof = self.inner.pending_header.is_none()
+                    && probe_seekable_eof(
+                        &mut self.inner.reader,
+                        TrajectoryIoOperation::Index,
+                        TrajectoryFormat::Trr,
+                        &label,
+                    )?;
+                if clean_eof {
+                    return Ok(0);
+                }
+                return Err(resource_error(
+                    &label,
+                    Some(self.offsets.len()),
+                    format!("TRR index {limit} exceeds the configured limit"),
+                ));
+            }
+            let offset = if self.inner.pending_header.is_some() {
+                self.inner.current_header_offset
+            } else {
+                self.inner.position(TrajectoryIoOperation::Index)?
+            };
+            let decoded = match self.inner.parse_next() {
+                Ok(Some(decoded)) => decoded,
+                Ok(None) => return Ok(0),
+                Err(error) if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord => {
+                    let file_end = self
+                        .inner
+                        .seek_to(SeekFrom::End(0), TrajectoryIoOperation::Index)?;
+                    return Ok(file_end.saturating_sub(offset));
+                }
+                Err(error) => {
+                    return Err(frame_offset_context(error, self.inner.frame_cursor, offset))
+                }
+            };
+            let end = self.inner.position(TrajectoryIoOperation::Index)?;
+            self.offsets.push(
+                offset,
+                end,
+                decoded.header.stamp(),
+                &self.inner.options.limits,
+                TrajectoryFormat::Trr,
+                &label,
+            )?;
+            control.checkpoint(self.offsets.len(), end, TrajectoryFormat::Trr, &label)?;
+        }
     }
 
     /// The topology every frame belongs to.
@@ -960,7 +1035,14 @@ impl<R: Read + Seek> TrajectoryReader for IndexedTrrReader<R> {
         self.inner.shared_topology()
     }
 
+    /// Reads the indexed frames in order and ends after the last of them,
+    /// even when the stream holds more.
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
+        if self.topology().shares_layout(destination.topology())
+            && self.inner.frame_cursor >= self.offsets.len()
+        {
+            return Ok(false);
+        }
         self.inner.read_next(destination)
     }
 }
@@ -1158,15 +1240,6 @@ impl<W: Write> TrrWriter<W> {
     /// The underlying stream.
     pub fn writer(&self) -> &W {
         &self.writer
-    }
-
-    /// Flushes the underlying stream.
-    ///
-    /// # Errors
-    ///
-    /// Returns the stream's flush error.
-    pub fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.flush()
     }
 
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
@@ -1522,6 +1595,24 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             .ok_or_else(|| writer_limit(&self.source_label, "TRR frame count overflows"))?;
         record(&mut self.report, omitted);
         Ok(())
+    }
+
+    /// Flushes the stream, which then ends after the last whole frame.
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Trr,
+            &self.source_label,
+        )?;
+        self.writer.flush().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Trr),
+                &self.source_label,
+                error,
+            )
+        })
     }
 }
 
