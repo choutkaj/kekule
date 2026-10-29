@@ -3,8 +3,7 @@ use super::*;
 use crate::{
     geometry::{PeriodicCell, PeriodicGeometry, Vector3},
     molecule::{
-        Atom, AtomId, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
-        VanDerWaalsRadiusSource,
+        Atom, AtomId, BondOrder, Element, Molecule, MoleculeEditor, VanDerWaalsRadiusSource,
     },
     structure::{ModelBuilder, Positions},
     topology::{AtomSiteMetadata, ChainId, MoleculeClass, MoleculeDefinitionId, ResidueClass},
@@ -226,9 +225,21 @@ pub(super) fn solvate(
             )?;
         }
     }
-    for (symbol, charge, indices) in [
-        (options.positive_ion.symbol(), 1, &selected[..positive]),
-        (options.negative_ion.symbol(), -1, &selected[positive..]),
+    // Ions are the Chemical Component Dictionary's residues, as PDB and
+    // mmCIF readers check them.
+    for (symbol, (component, name), charge, indices) in [
+        (
+            options.positive_ion.symbol(),
+            options.positive_ion.component(),
+            1,
+            &selected[..positive],
+        ),
+        (
+            options.negative_ion.symbol(),
+            options.negative_ion.component(),
+            -1,
+            &selected[positive..],
+        ),
     ] {
         if indices.is_empty() {
             continue;
@@ -246,8 +257,8 @@ pub(super) fn solvate(
                 &atom_ids,
                 &[point],
                 chain,
-                &symbol.to_ascii_uppercase(),
-                &[symbol],
+                component,
+                &[name],
                 index,
                 ResidueClass::Ion,
             )?;
@@ -335,23 +346,27 @@ fn pack(
     Ok(waters)
 }
 
+/// A water with its hydrogens, or a monatomic ion, perceived. Valence gives
+/// none of its atoms an implicit hydrogen, as PDB and mmCIF readers infer
+/// the counts, so the counts are inferred rather than fixed and a solvated
+/// model writes to those formats as they read it back.
 fn definition(symbol: &str, charge: i8, water: bool) -> Molecule {
     let mut editor = MoleculeEditor::new();
     let mut atom = Atom::new(Element::from_symbol(symbol).expect("built-in element"));
     atom.formal_charge = charge;
-    atom.hydrogens = ImplicitHydrogens::Fixed(0);
     let center = editor.add_atom(atom).expect("small built-in graph");
     if water {
         for _ in 0..2 {
-            let mut hydrogen = Atom::new(Element::from_symbol("H").expect("hydrogen"));
-            hydrogen.hydrogens = ImplicitHydrogens::Fixed(0);
+            let hydrogen = Atom::new(Element::from_symbol("H").expect("hydrogen"));
             let h = editor.add_atom(hydrogen).expect("small built-in graph");
             editor
                 .add_bond(center, h, BondOrder::Single)
                 .expect("built-in water bond");
         }
     }
-    editor.finish().expect("connected built-in species")
+    let mut molecule = editor.finish().expect("connected built-in species");
+    molecule.perceive().expect("built-in species perceive");
+    molecule
 }
 fn new_chain(builder: &mut ModelBuilder, prefix: &str) -> Result<ChainId, SolvationError> {
     let mut suffix = 1_u64;

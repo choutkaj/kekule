@@ -7,13 +7,16 @@ use kekule::diagnostics::{
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::molecule::{AtomId, BondOrder};
-use kekule::pdb::{self, PdbAtomField, PdbCellReason, PdbWriteIssue, PdbWriteOptions};
+use kekule::pdb::{
+    self, PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbWriteIssue, PdbWriteOptions,
+};
+use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
     Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Model, ModelBuilder, Positions,
     Series, SeriesAxis, SeriesItem,
 };
 use kekule::topology::{InstanceAtomId, Topology};
-use kekule::units::{Quantity, ANGSTROM, DEGREE};
+use kekule::units::{Quantity, ANGSTROM, DEGREE, MOLAR, NANOMETER};
 use kekule::{mmcif, smiles};
 
 const CRAMBIN: &str = include_str!("../fixtures/pdb/1CRN.pdb");
@@ -101,6 +104,173 @@ fn deposited_entries_round_trip_through_the_writer() {
             .count(),
         6
     );
+}
+
+/// An entry's text with its chains named by segment, as CHARMM and NAMD
+/// name them: chain `A` blank in the chain column and `PROA` in columns
+/// 73-76.
+fn named_by_segment(text: &str) -> String {
+    let mut segmented = String::new();
+    for line in text.lines() {
+        let mut bytes = line.as_bytes().to_vec();
+        if line.starts_with("ATOM") || line.starts_with("HETATM") {
+            let chain = bytes[21];
+            bytes[21] = b' ';
+            bytes[72..76].copy_from_slice(&[b'P', b'R', b'O', chain]);
+        } else if line.starts_with("TER") {
+            bytes[21] = b' ';
+        }
+        segmented.push_str(std::str::from_utf8(&bytes).unwrap());
+        segmented.push('\n');
+    }
+    segmented
+}
+
+#[test]
+fn chains_named_by_segment_round_trip_under_the_segment_policy() {
+    let model = interpret(ADENYLATE_KINASE);
+    let (named, _) = pdb::write(&model, Default::default()).unwrap();
+    let segmented = named_by_segment(&named);
+    let reread = interpret(&segmented);
+    let chains = reread
+        .topology()
+        .chains()
+        .map(|chain| chain.author_id().unwrap_or(chain.label_id()).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(chains, ["PROA", "PROB"].map(str::to_owned).into());
+
+    // The chains fail by default, and are written back as segments.
+    let error = pdb::write(&reread, Default::default()).unwrap_err();
+    assert!(matches!(
+        issue(&error),
+        PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "PROA"
+    ));
+    assert!(error.message().contains("PdbChainIdPolicy::SegmentId"));
+    let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
+    let (written, report) = pdb::write(&reread, options).unwrap();
+    assert_eq!(written, segmented);
+    assert_eq!(report.omissions(), [WriteOmission::ChainIds { chains: 2 }]);
+    // Each chain's polymer still ends in its own TER record.
+    let ters = |text: &str| text.lines().filter(|line| line.starts_with("TER")).count();
+    assert_eq!(ters(&written), 2);
+    assert_eq!(ters(&written), ters(&named));
+    // One-character chains are written as before under the policy.
+    assert_eq!(
+        pdb::write(&model, options).unwrap(),
+        (named, Default::default())
+    );
+}
+
+/// Methane solvated in a 1.5 nm padded cube of water at 0.15 M salt.
+fn solvated() -> Model {
+    let mut model = Model::from_molecule(
+        smiles::to_molecules("C").unwrap().remove(0),
+        &Positions::zeros(1),
+    )
+    .unwrap();
+    solvation::add_periodic_box(
+        &mut model,
+        &PeriodicBoxOptions::Padding {
+            padding: Quantity::new(1.5, NANOMETER),
+            shape: BoxShape::Cube,
+        },
+    )
+    .unwrap();
+    solvation::solvate(
+        &mut model,
+        &SolventOptions::default().with_ionic_strength(Quantity::new(0.15, MOLAR)),
+    )
+    .unwrap();
+    model
+}
+
+#[test]
+fn solvated_systems_export_their_solvent_chains_through_every_writer() {
+    let model = solvated();
+    let solvent = model
+        .topology()
+        .chains()
+        .map(|chain| chain.label_id().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(solvent, ["SOL1", "ION1", "ION2"]);
+    // Solvent counts no implicit hydrogen, as PDB and mmCIF readers infer.
+    for instance in model.topology().instances().skip(1) {
+        let molecule = instance.definition().molecule();
+        for (atom, _) in molecule.atoms() {
+            assert_eq!(molecule.implicit_hydrogens(atom), Some(0));
+        }
+    }
+    // By default PDB refuses the chain identifiers, and nothing else.
+    let error = pdb::write(&model, Default::default()).unwrap_err();
+    assert!(matches!(
+        issue(&error),
+        PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "SOL1"
+    ));
+
+    // PDB writes the solvent chains as segments, which read back as chains.
+    let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
+    let (text, report) = pdb::write(&model, options).unwrap();
+    assert!(report.omissions().contains(&WriteOmission::ChainIds {
+        chains: solvent.len()
+    }));
+    for line in text.lines().filter(|line| line.starts_with("HETATM")) {
+        if &line[17..20] == "HOH" {
+            assert_eq!((&line[21..22], &line[72..76]), (" ", "SOL1"), "{line}");
+        }
+    }
+    let reread = interpret(&text);
+    assert_eq!(
+        reread.topology().atom_count(),
+        model.topology().atom_count()
+    );
+    let chains = reread
+        .topology()
+        .chains()
+        .map(|chain| chain.author_id().unwrap_or(chain.label_id()).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        solvent.iter().all(|chain| chains.contains(chain)),
+        "{chains:?}"
+    );
+    assert_eq!(pdb::write(&reread, options).unwrap().0, text);
+
+    // mmCIF names the chains as they are.
+    let (cif, _) =
+        mmcif::write([mmcif::MmcifBlockSource::model(&model)], Default::default()).unwrap();
+    let reread = mmcif::parse_str(&cif, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_model();
+    assert_eq!(
+        reread.topology().atom_count(),
+        model.topology().atom_count()
+    );
+    let chains = reread
+        .topology()
+        .chains()
+        .map(|chain| chain.author_id().unwrap_or(chain.label_id()).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        solvent.iter().all(|chain| chains.contains(chain)),
+        "{chains:?}"
+    );
+}
+
+#[test]
+fn chain_ids_longer_than_a_segment_fail_under_the_segment_policy() {
+    let mut editor = solvated().to_editor();
+    let (solvent, _) = editor.topology().chains().next().unwrap();
+    editor
+        .set_chain_identifiers(solvent, "SOLVENT", None)
+        .unwrap();
+    let renamed = editor.finish().unwrap();
+    let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
+    let error = pdb::write(&renamed, options).unwrap_err();
+    assert!(matches!(
+        issue(&error),
+        PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "SOLVENT"
+    ));
 }
 
 #[test]

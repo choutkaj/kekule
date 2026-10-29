@@ -4,7 +4,10 @@
 //! ensemble sample or series item (none for a single structure), `ATOM` and `HETATM`
 //! records in dense atom order with a `TER` record after each chain's
 //! polymer, `CONECT` records for the bonds a reader cannot derive from the
-//! Chemical Component Dictionary, and `END`.
+//! Chemical Component Dictionary, and `END`. A chain identifier longer than
+//! the one-character chain column, such as the `SOL1` and `ION1` chains
+//! [`crate::solvation::solvate`] adds, is written as a segment identifier
+//! under [`PdbChainIdPolicy::SegmentId`].
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Write;
@@ -36,11 +39,31 @@ const MIN_RESIDUE_NUMBER: i64 = -999;
 /// The largest residue sequence number four hybrid-36 columns hold.
 const MAX_RESIDUE_NUMBER: i64 = 2_436_111;
 
+/// How the PDB writer writes a chain identifier longer than PDB's
+/// one-character chain column.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum PdbChainIdPolicy {
+    /// Fail with [`PdbWriteIssue::ChainIdTooLong`].
+    #[default]
+    Fail,
+    /// Write an identifier of up to four printable ASCII characters, such as
+    /// a chain [`crate::solvation::solvate`] adds, in the segment identifier
+    /// columns 73-76 and leave the chain column blank, as CHARMM and NAMD
+    /// name segments. Kekule's PDB reader, like CHARMM and VMD, reads the
+    /// segment of an atom with a blank chain column as its chain, so the
+    /// chain keeps its identifier; readers that take chains from the chain
+    /// column alone see a blank chain. [`WriteOmission::ChainIds`] counts the
+    /// chains written so; a longer identifier still fails.
+    SegmentId,
+}
+
 /// Options of the PDB writer.
 ///
 /// The default fails on every state PDB cannot carry. Identifiers that do
-/// not fit their columns always fail: omitting or shortening them would
-/// change which atoms a reader identifies.
+/// not fit their columns fail, as omitting or shortening them would change
+/// which atoms a reader identifies, except chain identifiers that
+/// [`PdbChainIdPolicy::SegmentId`] writes as segment identifiers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PdbWriteOptions {
     ensemble_metadata: UnrepresentablePolicy,
@@ -49,6 +72,7 @@ pub struct PdbWriteOptions {
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
     chemistry: UnrepresentablePolicy,
+    chain_ids: PdbChainIdPolicy,
 }
 
 impl PdbWriteOptions {
@@ -164,6 +188,20 @@ impl PdbWriteOptions {
         self.chemistry = chemistry;
         self
     }
+
+    /// Chain identifiers longer than PDB's one-character chain column: by
+    /// default they fail; [`PdbChainIdPolicy::SegmentId`] writes those of up
+    /// to four characters as segment identifiers.
+    pub const fn chain_ids(&self) -> PdbChainIdPolicy {
+        self.chain_ids
+    }
+
+    /// Sets [`Self::chain_ids`].
+    #[must_use]
+    pub const fn with_chain_ids(mut self, chain_ids: PdbChainIdPolicy) -> Self {
+        self.chain_ids = chain_ids;
+        self
+    }
 }
 
 /// Atom state named by [`PdbWriteIssue::UnsupportedAtomField`].
@@ -231,7 +269,9 @@ impl fmt::Display for PdbCellReason {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PdbWriteIssue {
-    /// The chain identifier is longer than PDB's one column.
+    /// The chain identifier is longer than PDB's one column, and under
+    /// [`PdbChainIdPolicy::SegmentId`] than the four segment identifier
+    /// columns or not printable ASCII.
     ChainIdTooLong {
         /// An atom of the chain.
         atom: InstanceAtomId,
@@ -395,7 +435,7 @@ impl fmt::Display for PdbWriteIssue {
         match self {
             Self::ChainIdTooLong { atom, chain_id } => write!(
                 f,
-                "chain `{chain_id}` of {atom} is longer than PDB's one-character chain identifier"
+                "chain `{chain_id}` of {atom} is longer than PDB's one-character chain identifier; PdbChainIdPolicy::SegmentId writes up to four characters as a segment identifier"
             ),
             Self::ResidueNameTooLong { atom, name } => write!(
                 f,
@@ -687,6 +727,9 @@ struct AtomRecord {
     name: String,
     residue_name: String,
     chain: char,
+    /// Columns 73-76: a chain identifier the chain column cannot hold, or
+    /// empty.
+    segment: String,
     sequence: String,
     insertion_code: char,
     element: String,
@@ -807,6 +850,7 @@ impl Plan {
         let mut records = Vec::with_capacity(topology.atom_count());
         let mut residues = Vec::with_capacity(topology.atom_count());
         let mut names = BTreeSet::new();
+        let mut segments = BTreeSet::new();
         for &atom_id in topology.atom_ids() {
             let view = topology
                 .atom(atom_id)
@@ -866,12 +910,25 @@ impl Plan {
                 structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
                     .unwrap_or_else(|| atom.element.symbol());
             let identity = Self::identity(topology, atom_id, &mut synthetic);
-            let chain = single_character(&identity.chain_id).ok_or_else(|| {
-                fail(PdbWriteIssue::ChainIdTooLong {
-                    atom: atom_id,
-                    chain_id: identity.chain_id.clone(),
-                })
-            })?;
+            let (chain, segment) = match single_character(&identity.chain_id) {
+                Some(chain) => (chain, String::new()),
+                None if options.chain_ids == PdbChainIdPolicy::SegmentId
+                    && identity.chain_id.len() <= 4
+                    && identity
+                        .chain_id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_graphic()) =>
+                {
+                    segments.insert(identity.chain_id.clone());
+                    (' ', identity.chain_id.clone())
+                }
+                None => {
+                    return Err(fail(PdbWriteIssue::ChainIdTooLong {
+                        atom: atom_id,
+                        chain_id: identity.chain_id,
+                    }))
+                }
+            };
             if identity.residue_name.chars().count() > 3 {
                 return Err(fail(PdbWriteIssue::ResidueNameTooLong {
                     atom: atom_id,
@@ -926,6 +983,7 @@ impl Plan {
                 name: aligned_name(&name, element),
                 residue_name: identity.residue_name,
                 chain,
+                segment,
                 sequence: hybrid36(number, 4).expect("validated residue number range"),
                 insertion_code,
                 element: element.to_ascii_uppercase(),
@@ -955,10 +1013,11 @@ impl Plan {
         let mut last_polymer_atom = BTreeMap::new();
         for (index, (residue, record)) in residues.iter().zip(&records).enumerate() {
             if residue.polymer {
-                last_polymer_atom.insert(record.chain, index);
+                last_polymer_atom.insert((record.chain, record.segment.as_str()), index);
             }
         }
-        for &index in last_polymer_atom.values() {
+        let last_polymer_atom = last_polymer_atom.into_values().collect::<Vec<_>>();
+        for &index in &last_polymer_atom {
             records[index].ter = true;
         }
         let serials = records.len() + last_polymer_atom.len();
@@ -976,6 +1035,9 @@ impl Plan {
 
         let conflicting = check_dictionary_bonds(topology, &records, &residues, strict)?;
         let (conect, unstated) = Self::conect(topology, &records, &residues, strict)?;
+        omissions.record(WriteOmission::ChainIds {
+            chains: segments.len(),
+        });
         omissions.record(WriteOmission::ImplicitHydrogens {
             atoms: omitted_hydrogens,
         });
@@ -1142,7 +1204,7 @@ impl Plan {
         };
         for (record, values) in self.records.iter().zip(values) {
             let line = format!(
-                "{:<6}{:>5} {} {:>3} {}{:>4}{}   {:>8.3}{:>8.3}{:>8.3}{}{}          {:>2}{:<2}",
+                "{:<6}{:>5} {} {:>3} {}{:>4}{}   {:>8.3}{:>8.3}{:>8.3}{}{}      {:<4}{:>2}{:<2}",
                 if record.hetatm { "HETATM" } else { "ATOM" },
                 hybrid36(record.serial, 5).expect("validated serial range"),
                 record.name,
@@ -1155,6 +1217,7 @@ impl Plan {
                 values.position.z,
                 optional(values.occupancy),
                 optional(values.b_factor),
+                record.segment,
                 record.element,
                 record.charge,
             );

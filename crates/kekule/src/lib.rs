@@ -1180,9 +1180,9 @@ pub mod mmcif {
 pub mod pdb {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
-        PdbAtom, PdbAtomField, PdbAtomKind, PdbCellReason, PdbConect, PdbCryst1, PdbDocument,
-        PdbLink, PdbModel, PdbParseOptions, PdbPartner, PdbRecord, PdbSource, PdbSsbond, PdbTer,
-        PdbWriteIssue, PdbWriteOptions,
+        PdbAtom, PdbAtomField, PdbAtomKind, PdbCellReason, PdbChainIdPolicy, PdbConect, PdbCryst1,
+        PdbDocument, PdbLink, PdbModel, PdbParseOptions, PdbPartner, PdbRecord, PdbSource,
+        PdbSsbond, PdbTer, PdbWriteIssue, PdbWriteOptions,
     };
 
     /// Parses a PDB entry into typed records without assigning molecular

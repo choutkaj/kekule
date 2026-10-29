@@ -61,7 +61,9 @@ pub use pdb_document::{
     PdbPartner, PdbRecord, PdbSsbond, PdbTer,
 };
 pub(crate) use pdb_write::{write_pdb, write_pdb_to};
-pub use pdb_write::{PdbAtomField, PdbCellReason, PdbSource, PdbWriteIssue, PdbWriteOptions};
+pub use pdb_write::{
+    PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteIssue, PdbWriteOptions,
+};
 pub(crate) use sdf_document::{parse_sdf_document, parse_sdf_reader};
 pub use sdf_document::{
     SdfDataField, SdfDocument, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
