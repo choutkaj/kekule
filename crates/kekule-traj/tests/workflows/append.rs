@@ -5,10 +5,10 @@
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use kekule::diagnostics::UnrepresentablePolicy;
+use kekule::diagnostics::{Cancellation, UnrepresentablePolicy};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
 use kekule::topology::Topology;
@@ -19,8 +19,8 @@ use kekule_traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcWriteOptions};
 use kekule_traj::io::xyz::XyzWriteOptions;
 use kekule_traj::io::{
     append_trajectory, create_trajectory_stream_writer, open_indexed_trajectory, KeepFrames,
-    TrajectoryAppendReport, TrajectoryFileFingerprint, TrajectoryOpenOptions,
-    TrajectoryWriteOptions,
+    TrajectoryAppendOptions, TrajectoryAppendReport, TrajectoryFileFingerprint,
+    TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule_traj::{
     SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryReader,
@@ -338,6 +338,39 @@ fn a_non_periodic_xtc_run_continues_under_the_writer_cell_policy() {
 }
 
 #[test]
+fn the_scan_of_the_file_to_continue_can_be_cancelled_and_reports_progress() {
+    let format = TrajectoryFormat::Trr;
+    let directory = Directory::new();
+    let path = directory.file(format);
+    let straight = straight_through(format, &path, 4);
+    // A cancelled scan returns before the file changes.
+    let cancel = Arc::new(AtomicBool::new(true));
+    let cancelled = TrajectoryAppendOptions::new(options(format))
+        .with_cancellation(Cancellation::from_flag(Arc::clone(&cancel)));
+    assert_refused(
+        &path,
+        KeepFrames::First(2),
+        cancelled.clone(),
+        TrajectoryIoErrorKind::Cancelled,
+        "cancelled",
+    );
+    // Progress reaches every frame of the file, kept or not.
+    cancel.store(false, Ordering::Relaxed);
+    let frames = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&frames);
+    let followed = cancelled.with_progress(move |step| {
+        seen.store(step.frame_count(), Ordering::Relaxed);
+    });
+    let (mut writer, report) =
+        append_trajectory(&path, topology(), KeepFrames::First(2), followed).unwrap();
+    assert_eq!(frames.load(Ordering::Relaxed), 4);
+    assert_eq!(report.dropped_frames(), 2);
+    write_frames(&mut writer, (2..4).map(frame));
+    drop(writer.finish().unwrap());
+    assert!(fs::read(&path).unwrap() == straight);
+}
+
+#[test]
 fn a_reader_following_the_file_sees_the_cut_and_then_the_appended_frames() {
     let growing = || TrajectoryOpenOptions::default().with_growing(true);
     for format in FORMATS {
@@ -390,7 +423,7 @@ fn a_reader_following_the_file_sees_the_cut_and_then_the_appended_frames() {
 fn assert_refused(
     path: &Path,
     keep: KeepFrames,
-    options: TrajectoryWriteOptions,
+    options: impl Into<TrajectoryAppendOptions>,
     kind: TrajectoryIoErrorKind,
     context: &str,
 ) {

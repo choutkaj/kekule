@@ -6,6 +6,7 @@ use std::io::{BufWriter, Cursor, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 
+use kekule::diagnostics::Cancellation;
 use kekule::topology::Topology;
 
 use crate::{
@@ -14,10 +15,12 @@ use crate::{
 };
 
 use super::file_writer::{resolve_format, resumed_stream_writer};
+use super::frame_index::IndexProgressCallback;
 use super::xtc::XtcReadOptions;
 use super::{
     codec_context, index_mismatch, io_context, open_indexed_trajectory, TrajectoryFileFingerprint,
-    TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryStreamWriter, TrajectoryWriteOptions,
+    TrajectoryFormatHint, TrajectoryIndexProgress, TrajectoryOpenOptions, TrajectoryStreamWriter,
+    TrajectoryWriteOptions,
 };
 
 /// Which frames of a trajectory file [`append_trajectory`] keeps; it removes
@@ -34,6 +37,71 @@ pub enum KeepFrames {
     /// record a step keep frames by step: XTC, TRR, and DCD, whose frames
     /// follow its header's step sequence.
     ThroughStep(u64),
+}
+
+/// How [`append_trajectory`] continues a file: with the write options the
+/// file was written with, and with an optional cancellation and progress
+/// callback for the scan of the frames it holds, which reads the whole file.
+///
+/// Converts from [`TrajectoryWriteOptions`], for a scan that runs to the
+/// end of the file.
+#[derive(Debug, Clone)]
+pub struct TrajectoryAppendOptions {
+    write: TrajectoryWriteOptions,
+    cancellation: Option<Cancellation>,
+    progress: Option<IndexProgressCallback>,
+}
+
+impl TrajectoryAppendOptions {
+    /// Appends under `write`, the options the file was written with.
+    pub const fn new(write: TrajectoryWriteOptions) -> Self {
+        Self {
+            write,
+            cancellation: None,
+            progress: None,
+        }
+    }
+
+    /// Sets [`Self::cancellation`].
+    #[must_use]
+    pub fn with_cancellation(mut self, cancellation: Cancellation) -> Self {
+        self.cancellation = Some(cancellation);
+        self
+    }
+
+    /// Sets the callback that [`append_trajectory`] calls with a
+    /// [`TrajectoryIndexProgress`] before the first frame and after every
+    /// frame it verifies while it scans the file, on the calling thread, as
+    /// [`TrajectoryOpenOptions::with_index_progress`] does for opening. It
+    /// should be cheap. Clones of these options share the callback. None by
+    /// default.
+    #[must_use]
+    pub fn with_progress(
+        mut self,
+        progress: impl Fn(TrajectoryIndexProgress) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress = Some(IndexProgressCallback::new(progress));
+        self
+    }
+
+    /// The options of the writer that wrote the file and continues it.
+    pub const fn write_options(&self) -> &TrajectoryWriteOptions {
+        &self.write
+    }
+
+    /// The cancellation that [`append_trajectory`] polls before the first
+    /// frame and after every frame it verifies; once requested, it fails
+    /// with [`TrajectoryIoErrorKind::Cancelled`] before changing the file.
+    /// None by default.
+    pub const fn cancellation(&self) -> Option<&Cancellation> {
+        self.cancellation.as_ref()
+    }
+}
+
+impl From<TrajectoryWriteOptions> for TrajectoryAppendOptions {
+    fn from(write: TrajectoryWriteOptions) -> Self {
+        Self::new(write)
+    }
 }
 
 /// What [`append_trajectory`] kept of a trajectory file, and what it
@@ -92,27 +160,31 @@ struct Kept {
 /// A run checkpointed at step N and restarted from there passes
 /// [`KeepFrames::ThroughStep`]`(N)`, or [`KeepFrames::First`] with its frame
 /// count for XYZ, and writes the frames after the checkpoint as it computes
-/// them; with the `options` the file was written with, the file then holds,
-/// byte for byte, what one uninterrupted run would have written.
+/// them; with the write options the file was written with, the file then
+/// holds, byte for byte, what one uninterrupted run would have written.
+/// `options` are those write options ([`TrajectoryWriteOptions`] converts),
+/// or [`TrajectoryAppendOptions`] that add a cancellation and a progress
+/// callback to the scan of the frames the file holds, which reads the whole
+/// file.
 ///
 /// The frames are verified as [`open_indexed_trajectory`] verifies those of a
 /// file still being written ([`TrajectoryOpenOptions::with_growing`]): a
 /// final frame its writer did not finish is no error and goes with the
 /// frames removed, a file without a complete frame, or for DCD a complete
 /// header, is started again, and corrupt data anywhere is an error. XTC
-/// frames are read under the cell policy of `options`, so the zero boxes
-/// of frames without a cell continue under
-/// [`super::xtc::XtcCellPolicy::ZeroMatrixAsAbsent`] alone. Where the
-/// file records its writer's settings they must be those of `options`: the
+/// frames are read under the cell policy of the write options, so the zero
+/// boxes of frames without a cell continue under
+/// [`super::xtc::XtcCellPolicy::ZeroMatrixAsAbsent`] alone. Where the file
+/// records its writer's settings they must be those of the write options: the
 /// DCD header (endianness, step sequence, `DELTA`, unit-cell flag, title),
 /// and the magic and precision of the first XTC frame or the scalar width of
 /// the TRR frames. The returned writer numbers its frames after the kept
 /// ones, as the writer that wrote them would have
 /// ([`super::FrameTimingPolicy::Number`],
 /// [`super::dcd::DcdFrameTimingPolicy`]), and its
-/// [`TrajectoryStreamWriter::report`] covers the frames it appends. `options`
-/// takes the format, or the file extension does; its overwrite policy does
-/// not apply.
+/// [`TrajectoryStreamWriter::report`] covers the frames it appends. The write
+/// options take the format, or the file extension does; their overwrite
+/// policy does not apply.
 ///
 /// The file is cut after the kept frames before the writer is returned, and
 /// a DCD header then counts them, so the file holds a complete trajectory of
@@ -132,13 +204,14 @@ struct Kept {
 ///
 /// # Errors
 ///
-/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when neither `options`
-/// nor the extension names a format;
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when neither the write
+/// options nor the extension names a format;
+/// [`TrajectoryIoErrorKind::Cancelled`] when the cancellation stops the scan;
 /// [`TrajectoryIoErrorKind::UnsupportedVariant`] for
 /// [`KeepFrames::ThroughStep`] on XYZ;
 /// [`TrajectoryIoErrorKind::InconsistentMetadata`] when the file holds fewer
 /// complete frames than [`KeepFrames::First`] asks for, or records other
-/// writer settings than `options`; the decoding error of the first corrupt
+/// writer settings than the write options; the decoding error of the first corrupt
 /// frame and the errors of [`open_indexed_trajectory`], as for a file that
 /// does not fit the topology; [`TrajectoryIoErrorKind::IndexMismatch`] when
 /// the file changes before it is cut; the option errors of the codec
@@ -179,7 +252,7 @@ pub fn append_trajectory(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     keep: KeepFrames,
-    options: TrajectoryWriteOptions,
+    options: impl Into<TrajectoryAppendOptions>,
 ) -> Result<
     (
         TrajectoryStreamWriter<BufWriter<File>>,
@@ -190,6 +263,11 @@ pub fn append_trajectory(
     let path = path.as_ref();
     let topology = topology.into();
     let label = path.display().to_string();
+    let TrajectoryAppendOptions {
+        write: options,
+        cancellation,
+        progress,
+    } = options.into();
     let format = resolve_format(path, options.format())?;
     if matches!(keep, KeepFrames::ThroughStep(_)) && format == TrajectoryFormat::Xyz {
         return Err(codec_context(
@@ -200,7 +278,27 @@ pub fn append_trajectory(
             "XYZ frames record no step; keep frames by count with KeepFrames::First",
         ));
     }
-    let kept = kept_frames(path, Arc::clone(&topology), format, keep, &options, &label)?;
+    // The scan reads frames as the writer writes them: an XTC zero box is no
+    // cell exactly when the writer writes one for a frame without a cell.
+    // The other readers accept every frame their writers write.
+    let xtc = XtcReadOptions::default().with_cell_policy(options.xtc_options().cell_policy());
+    let mut scan = TrajectoryOpenOptions::default()
+        .with_format_hint(TrajectoryFormatHint::Explicit(format))
+        .with_xtc_options(xtc)
+        .with_growing(true);
+    if let Some(cancellation) = cancellation {
+        scan = scan.with_index_cancellation(cancellation);
+    }
+    scan.index_progress = progress;
+    let kept = kept_frames(
+        path,
+        Arc::clone(&topology),
+        format,
+        keep,
+        &options,
+        scan,
+        &label,
+    )?;
     // The writer's own option errors come before the file changes.
     resumed_stream_writer(
         format,
@@ -251,25 +349,18 @@ pub fn append_trajectory(
     Ok((writer, report))
 }
 
-/// Scans the file and chooses the frames to keep, checking that `options`
-/// continue them.
+/// Scans the file under `scan` and chooses the frames to keep, checking that
+/// `options` continue them.
 fn kept_frames(
     path: &Path,
     topology: Arc<Topology>,
     format: TrajectoryFormat,
     keep: KeepFrames,
     options: &TrajectoryWriteOptions,
+    scan: TrajectoryOpenOptions,
     label: &str,
 ) -> Result<Kept, TrajectoryIoError> {
-    // The scan reads frames as the writer writes them: an XTC zero box is no
-    // cell exactly when the writer writes one for a frame without a cell.
-    // The other readers accept every frame their writers write.
-    let xtc = XtcReadOptions::default().with_cell_policy(options.xtc_options().cell_policy());
-    let open = TrajectoryOpenOptions::default()
-        .with_format_hint(TrajectoryFormatHint::Explicit(format))
-        .with_xtc_options(xtc)
-        .with_growing(true);
-    let mut reader = match open_indexed_trajectory(path, topology, open) {
+    let mut reader = match open_indexed_trajectory(path, topology, scan) {
         Ok(reader) => reader,
         // Nothing complete to keep: the file starts again.
         Err(error) if error.kind() == TrajectoryIoErrorKind::Incomplete => {

@@ -19,7 +19,9 @@ are marked **Breaking:**.
   the checkpoint's), cuts the file after them, and returns the
   `TrajectoryStreamWriter` that appends after them, with a
   `TrajectoryAppendReport` of the frames kept and of the frames and bytes
-  removed. The writer settings the file records (the DCD header, the XTC
+  removed; `TrajectoryAppendOptions` add a cancellation and a progress
+  callback to the scan of the file, and plain write options convert. The
+  writer settings the file records (the DCD header, the XTC
   magic and precision, the TRR scalar width) must be those of the write
   options, so that the continued file is, byte for byte, the one an
   uninterrupted run writes. A process that dies at any point leaves a file

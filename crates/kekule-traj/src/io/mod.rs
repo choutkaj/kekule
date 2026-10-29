@@ -125,7 +125,9 @@
 //! of a growing file does, keeps those [`KeepFrames`] selects, such as the
 //! frames a checkpoint at some step covers, cuts the file after them, and
 //! returns a [`TrajectoryStreamWriter`] that appends after them, with a
-//! [`TrajectoryAppendReport`] of the frames and bytes it removed. Given the
+//! [`TrajectoryAppendReport`] of the frames and bytes it removed; its scan of
+//! the file can be cancelled and report progress
+//! ([`TrajectoryAppendOptions`]). Given the
 //! write options the file was written with, which it checks where the file
 //! records them, the continued file is, byte for byte, the file one
 //! uninterrupted run writes. A process that dies at any point leaves a file
@@ -176,7 +178,7 @@ mod util;
 pub mod xtc;
 pub mod xyz;
 
-pub use append::{append_trajectory, KeepFrames, TrajectoryAppendReport};
+pub use append::{append_trajectory, KeepFrames, TrajectoryAppendOptions, TrajectoryAppendReport};
 pub use file_reader::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory, read_trajectory,
     IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
