@@ -12,8 +12,8 @@ use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{
-    Ensemble, EnsemblePartition, Forces, Model, ModelView, Positions, Trajectory, TrajectoryFrame,
-    Velocities,
+    Ensemble, EnsemblePartition, Forces, Model, ModelView, Positions, Series, SeriesAxis,
+    SeriesItem, Trajectory, TrajectoryFrame, Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{
@@ -973,6 +973,145 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
         "SDF write error in record 2: SDF cannot represent the trajectory frame time; \
          choose to omit it explicitly"
     );
+}
+
+/// A three-step optimization history and a two-point distance scan of one
+/// methane carbon.
+fn methane_series() -> (Series, Series) {
+    let topology = model("C", &[[0.0; 3]]).shared_topology();
+    let mut history = Series::new(Arc::clone(&topology), SeriesAxis::Step);
+    for step in [0, 4, 9] {
+        history
+            .push(SeriesItem::at_step(Positions::zeros(1), step))
+            .unwrap();
+    }
+    let mut scan = Series::new(topology, SeriesAxis::Coordinate(ANGSTROM));
+    for distance in [1.25, 1.5] {
+        let place = Quantity::new(distance, ANGSTROM);
+        scan.push(SeriesItem::at_coordinate(Positions::zeros(1), place).unwrap())
+            .unwrap();
+    }
+    (history, scan)
+}
+
+#[test]
+fn sdf_series_items_carry_their_step_or_coordinate_through_data_fields() {
+    let (history, scan) = methane_series();
+    let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
+    let text = sdf::write(&history, SdfWriteOptions::default()).unwrap();
+    assert_eq!(
+        data_fields(&interpret_records(&text)),
+        [
+            vec![field(sdf::STEP_FIELD, "0")],
+            vec![field(sdf::STEP_FIELD, "4")],
+            vec![field(sdf::STEP_FIELD, "9")],
+        ]
+    );
+    let text = sdf::write(&scan, SdfWriteOptions::default()).unwrap();
+    assert_eq!(
+        data_fields(&interpret_records(&text)),
+        [
+            vec![
+                field(sdf::COORDINATE_FIELD, "1.25"),
+                field(sdf::COORDINATE_UNIT_FIELD, "A"),
+            ],
+            vec![
+                field(sdf::COORDINATE_FIELD, "1.5"),
+                field(sdf::COORDINATE_UNIT_FIELD, "A"),
+            ],
+        ]
+    );
+
+    // A caller's fields come first, such as an item's energy, but cannot
+    // give an item another place.
+    let energy = [SdfDataField::new("energy", "-3.5")];
+    let item = sdf::SdfRecordSource::from(history.get(1).unwrap()).with_data_fields(&energy);
+    let text = sdf::write([item], SdfWriteOptions::default()).unwrap();
+    assert_eq!(
+        data_fields(&interpret_records(&text)),
+        [vec![field("energy", "-3.5"), field(sdf::STEP_FIELD, "4")]]
+    );
+    for name in [
+        sdf::STEP_FIELD,
+        sdf::COORDINATE_FIELD,
+        sdf::COORDINATE_UNIT_FIELD,
+    ] {
+        let fields = [SdfDataField::new(name, "1")];
+        let item = sdf::SdfRecordSource::from(history.get(0).unwrap()).with_data_fields(&fields);
+        let (kind, detail, _) =
+            described(sdf::write([item], SdfWriteOptions::default()).unwrap_err());
+        assert_eq!(
+            (kind, detail),
+            (
+                DiagnosticKind::Inconsistent,
+                Some(FormatErrorDetail::DataField {
+                    name: name.to_owned()
+                })
+            )
+        );
+    }
+}
+
+#[test]
+fn single_structure_writers_fail_on_a_series_item_place_unless_told_to_omit_it() {
+    let (history, scan) = methane_series();
+    let omit = UnrepresentablePolicy::Omit;
+    for (series, field) in [
+        (&history, StructureField::ItemStep),
+        (&scan, StructureField::ItemCoordinate),
+    ] {
+        let item = series.get(1).unwrap();
+        let view = item.as_model_view();
+        let plain = item.to_model();
+        let state = Some(FormatErrorDetail::UnrepresentableState(field));
+
+        let error = molfile::write(
+            molfile::MolfileSource::model(&view),
+            MolfileWriteOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            (error.kind(), error.detail().cloned()),
+            (DiagnosticKind::Unsupported, state.clone())
+        );
+        // Omitting the place writes exactly the bare model.
+        assert_eq!(
+            molfile::write(
+                molfile::MolfileSource::model(&view),
+                MolfileWriteOptions::default().with_series_metadata(omit),
+            )
+            .unwrap(),
+            molfile::write(&plain, MolfileWriteOptions::default()).unwrap()
+        );
+
+        let error = mmcif::write(
+            [mmcif::MmcifBlockSource::model(&view)],
+            MmcifWriteOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            (error.kind(), error.detail().cloned()),
+            (DiagnosticKind::Unsupported, state)
+        );
+        let (text, report) = mmcif::write(
+            [mmcif::MmcifBlockSource::model(&view)],
+            MmcifWriteOptions::default().with_series_metadata(omit),
+        )
+        .unwrap();
+        assert_eq!(
+            report.omissions(),
+            [WriteOmission::StructureState {
+                field,
+                structures: 1
+            }]
+        );
+        let (bare, _) = mmcif::write(
+            [mmcif::MmcifBlockSource::model(&plain)],
+            MmcifWriteOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(text, bare);
+    }
 }
 
 /// One methane carbon in a 2 x 3 x 4 nm box periodic along `periodic`.

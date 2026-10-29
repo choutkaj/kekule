@@ -11,6 +11,34 @@ are marked **Breaking:**.
 
 ### Added
 
+- Ordered series of structures (SeekDelta K7), for optimization histories,
+  relaxed scans, and reaction paths. `kekule::structure::Series` holds
+  `SeriesItem`s of one shared topology in the order a computation produced
+  them, each with positions, an optional periodic cell, structure
+  properties, and its place on the series' `SeriesAxis`: a step
+  (`SeriesAxis::Step`, `SeriesItem::at_step`) or a value of one coordinate
+  (`SeriesAxis::Coordinate(unit)`, `SeriesItem::at_coordinate`), stored in
+  the axis unit and finite; values need not increase, as a scan swept back
+  and forth shows. An item's scalar results, such as its energy or gradient
+  norm, are owner properties of its structure properties. As for
+  trajectories and ensembles, items borrow as `ModelView`s, whose new
+  `StructureKind::Item` carries the step or coordinate, copy out as models
+  (`SeriesItemView::to_model`), and a series is built from models of one
+  layout (`Series::from_models`, on steps 0, 1, …); series select, subset,
+  perceive, transform, superpose, and measure RMSD item by item. The native
+  format stores a series as kind 6 within version 2 (`NativeKind::Series`,
+  `NativeObject::into_series`), so earlier files read as before. PDB writes
+  a series as one `MODEL` per item (`PdbSource::series`) and XYZ as one
+  frame per item (`XyzWriter::write_series`); both fail on the items' steps
+  or coordinates unless `with_series_metadata` omits them with a report, as
+  Molfile and mmCIF do for a lone item, and the XYZ writer treats item
+  properties and cells as it treats a frame's. SDF writes an item's step as
+  the `kekule.step` data field, or its coordinate as `kekule.coordinate`
+  with its unit as `kekule.coordinate.unit` (`sdf::STEP_FIELD`,
+  `sdf::COORDINATE_FIELD`, `sdf::COORDINATE_UNIT_FIELD`). New
+  `StructureField::ItemStep` and `ItemCoordinate`, `TrajectoryField::ItemStep`
+  and `ItemCoordinate`, `PdbWriteIssue::UnrepresentableSeriesItem` and
+  `EmptySeries`, `SeriesError`, and `StructureError::NonFiniteCoordinate`.
 - Placed fragments name their ring atoms by locant (SeekDelta K3d), so a
   host or user reading "C4" finds ring position 4.
   `ModelEditor::place_fragment` names a ring's atoms by element and IUPAC
@@ -632,6 +660,9 @@ are marked **Breaking:**.
 
 ### Changed
 
+- `StructureField::AtomProperties`, `BondProperties`, and `Properties`
+  display as per-atom, per-bond, and structure properties rather than a
+  trajectory frame's, since series items report them too.
 - **Breaking:** the selection language's `polar_hydrogen` term selects
   hydrogens bonded to N, O, or S (SeekDelta K59), so a thiol hydrogen such
   as cysteine's HG is now selected. Before, it took only hydrogens bonded to

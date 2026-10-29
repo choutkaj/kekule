@@ -10,3 +10,4 @@ mod writers;
 mod xtc;
 mod xyz;
 mod xyz_ensembles;
+mod xyz_series;

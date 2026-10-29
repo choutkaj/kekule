@@ -10,9 +10,10 @@ use kekule::molecule::{AtomId, BondOrder};
 use kekule::pdb::{self, PdbAtomField, PdbCellReason, PdbWriteIssue, PdbWriteOptions};
 use kekule::structure::{
     Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Model, ModelBuilder, Positions,
+    Series, SeriesAxis, SeriesItem,
 };
 use kekule::topology::{InstanceAtomId, Topology};
-use kekule::units::{Quantity, ANGSTROM};
+use kekule::units::{Quantity, ANGSTROM, DEGREE};
 use kekule::{mmcif, smiles};
 
 const CRAMBIN: &str = include_str!("../fixtures/pdb/1CRN.pdb");
@@ -377,6 +378,85 @@ fn ensembles_write_models_and_sample_state_fails_unless_omitted() {
             structures: 1
         }]
     );
+}
+
+#[test]
+fn series_write_models_and_their_places_fail_unless_omitted() {
+    let topology = smiles::to_topology("C").unwrap();
+    let positions = |x: f64| {
+        Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap()
+    };
+    let mut scan = Series::new(Arc::clone(&topology), SeriesAxis::Coordinate(DEGREE));
+    for (index, angle) in [0.0, 120.0, 240.0].into_iter().enumerate() {
+        let place = Quantity::new(angle, DEGREE);
+        scan.push(SeriesItem::at_coordinate(positions(index as f64), place).unwrap())
+            .unwrap();
+    }
+    let error = pdb::write(&scan, Default::default()).unwrap_err();
+    assert!(matches!(
+        issue(&error),
+        PdbWriteIssue::UnrepresentableSeriesItem {
+            item: 1,
+            field: StructureField::ItemCoordinate
+        }
+    ));
+    let options = PdbWriteOptions::default().with_series_metadata(UnrepresentablePolicy::Omit);
+    let (written, report) = pdb::write(&scan, options).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::StructureState {
+            field: StructureField::ItemCoordinate,
+            structures: 3
+        }]
+    );
+    assert_eq!(written.matches("MODEL ").count(), 3);
+    assert_eq!(written.matches("ENDMDL").count(), 3);
+    // The models read back as an ensemble of the items' positions.
+    let reread = pdb::parse_str(&written, Default::default())
+        .unwrap()
+        .interpret_ensemble(Default::default())
+        .unwrap();
+    let ensemble = reread.ensemble();
+    assert_eq!(ensemble.len(), 3);
+    for (sample, item) in ensemble.iter().zip(&scan) {
+        assert_eq!(sample.positions(), item.positions());
+    }
+
+    // A step history fails on its steps, and a lone item on its own.
+    let mut history = Series::new(topology, SeriesAxis::Step);
+    history
+        .push(SeriesItem::at_step(positions(0.0), 3))
+        .unwrap();
+    let error = pdb::write(&history, Default::default()).unwrap_err();
+    assert!(matches!(
+        issue(&error),
+        PdbWriteIssue::UnrepresentableSeriesItem {
+            item: 1,
+            field: StructureField::ItemStep
+        }
+    ));
+    let lone = history.get(0).unwrap();
+    let error = pdb::write(pdb::PdbSource::structure(&lone), Default::default()).unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::UnrepresentableState(
+            StructureField::ItemStep
+        ))
+    );
+    let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::StructureState {
+            field: StructureField::ItemStep,
+            structures: 1
+        }]
+    );
+
+    // An empty series is no entry.
+    let empty = Series::new(smiles::to_topology("C").unwrap(), SeriesAxis::Step);
+    let error = pdb::write(&empty, options).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert!(matches!(issue(&error), PdbWriteIssue::EmptySeries));
 }
 
 #[test]

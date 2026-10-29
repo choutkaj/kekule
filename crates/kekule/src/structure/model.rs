@@ -478,9 +478,10 @@ pub enum StructureKind<'a> {
 /// input contract of coordinate-dependent kernels.
 ///
 /// Models, ensemble samples, trajectory frames, series items, and frame
-/// buffers all borrow as a view, and [`Self::kind`] says which one it is. Accessors return
-/// borrows with the view's full lifetime. A view of a trajectory frame has no
-/// occupancies or B-factors. Views preserve exact topology identity.
+/// buffers all borrow as a view, and [`Self::kind`] says which one it is.
+/// Accessors return borrows with the view's full lifetime. A view of a
+/// trajectory frame or series item has no occupancies or B-factors. Views
+/// preserve exact topology identity.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,

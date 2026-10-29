@@ -168,10 +168,7 @@ fn items_must_lie_on_the_series_axis_and_fit_its_topology() {
             SeriesItem::at_coordinate(positions(0.0), Quantity::new(1.0, ANGSTROM)).unwrap(),
         ],
     );
-    assert!(matches!(
-        from_items,
-        Err(SeriesError::AxisMismatch { .. })
-    ));
+    assert!(matches!(from_items, Err(SeriesError::AxisMismatch { .. })));
 }
 
 #[test]
@@ -199,7 +196,10 @@ fn item_views_borrow_as_models_with_their_place() {
     assert_eq!(AsModelView::as_model_view(&item).atom_count(), 3);
     assert_eq!(view.cell(), Some(&cell));
     assert!(view.occupancies().is_none() && view.b_factors().is_none());
-    assert!(Arc::ptr_eq(&view.shared_topology(), &scan.shared_topology()));
+    assert!(Arc::ptr_eq(
+        &view.shared_topology(),
+        &scan.shared_topology()
+    ));
     // An item materialized as a model keeps its structure, not its place.
     let model = item.to_model();
     assert_eq!(model.as_model_view().kind(), StructureKind::Model);
@@ -213,8 +213,8 @@ fn series_from_models_number_them_and_require_one_layout() {
     let topology = chain(3);
     let models = (0..3)
         .map(|index| {
-            let mut model = Model::new(Arc::clone(&topology), positions(0.01 * index as f64))
-                .unwrap();
+            let mut model =
+                Model::new(Arc::clone(&topology), positions(0.01 * index as f64)).unwrap();
             model.set_occupancies(Some(vec![Some(1.0); 3])).unwrap();
             model
                 .set_b_factors(Some(Quantity::new(vec![Some(0.1); 3], SQUARE_NANOMETER)))
@@ -270,7 +270,10 @@ fn items_are_edited_on_the_axis_and_selected_with_their_places() {
     assert_eq!(replaced.step(), Some(6));
     assert_eq!(
         series
-            .replace(0, SeriesItem::at_coordinate(positions(0.0), Quantity::new(1.0, ANGSTROM)).unwrap())
+            .replace(
+                0,
+                SeriesItem::at_coordinate(positions(0.0), Quantity::new(1.0, ANGSTROM)).unwrap()
+            )
             .unwrap_err(),
         SeriesError::AxisMismatch {
             axis: SeriesAxis::Step
@@ -291,7 +294,9 @@ fn items_are_edited_on_the_axis_and_selected_with_their_places() {
     // Replacing every position keeps the rest.
     let replacement = (0..3).map(|_| positions(0.3)).collect::<Vec<_>>();
     series.replace_positions(replacement).unwrap();
-    assert!(series.iter().all(|item| item.positions() == &positions(0.3)));
+    assert!(series
+        .iter()
+        .all(|item| item.positions() == &positions(0.3)));
     assert_eq!(
         series.replace_positions([positions(0.0)]).unwrap_err(),
         SeriesError::ItemCountMismatch {
@@ -311,9 +316,12 @@ fn items_are_edited_on_the_axis_and_selected_with_their_places() {
         item.set_coordinate(Quantity::new(1.0, ANGSTROM)),
         Err(SeriesError::Unit(_))
     ));
-    assert_eq!(item.set_step(1).unwrap_err(), SeriesError::AxisMismatch {
-        axis: SeriesAxis::Coordinate(DEGREE)
-    });
+    assert_eq!(
+        item.set_step(1).unwrap_err(),
+        SeriesError::AxisMismatch {
+            axis: SeriesAxis::Coordinate(DEGREE)
+        }
+    );
     let coordinate = scan.get(0).unwrap().coordinate().unwrap();
     assert_eq!(coordinate.unit(), DEGREE);
     assert!((coordinate.value() - 180.0).abs() < 1e-12);
@@ -324,7 +332,10 @@ fn subsets_keep_places_and_drop_values_of_the_whole_structure() {
     let mut series = history();
     series
         .properties_mut()
-        .insert(PropertyKey::new("method").unwrap(), PropertyValue::String("GFN2-xTB".into()))
+        .insert(
+            PropertyKey::new("method").unwrap(),
+            PropertyValue::String("GFN2-xTB".into()),
+        )
         .unwrap();
     let topology = series.shared_topology();
     let atoms = AtomSelection::from_atoms(
@@ -380,4 +391,28 @@ fn series_superpose_and_measure_rmsd_item_by_item() {
     {
         assert!((direct - fitted).abs() < 1e-9);
     }
+}
+
+#[test]
+fn axes_and_errors_describe_themselves() {
+    assert_eq!(SeriesAxis::Step.to_string(), "steps");
+    assert_eq!(
+        SeriesAxis::Coordinate(DEGREE).to_string(),
+        "a coordinate in deg"
+    );
+    let mismatch = SeriesError::AxisMismatch {
+        axis: SeriesAxis::Coordinate(ANGSTROM),
+    };
+    assert_eq!(
+        mismatch.to_string(),
+        "item does not lie on a series axis of a coordinate in A"
+    );
+    let mut scan = Series::new(chain(3), SeriesAxis::Coordinate(ANGSTROM));
+    let angle = SeriesItem::at_coordinate(positions(0.0), Quantity::new(1.0, RADIAN)).unwrap();
+    let error = scan.push(angle).unwrap_err();
+    assert!(std::error::Error::source(&error).is_some());
+    assert_eq!(
+        StructureError::NonFiniteCoordinate.to_string(),
+        "series item coordinate must be finite"
+    );
 }
