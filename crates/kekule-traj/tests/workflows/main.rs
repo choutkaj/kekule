@@ -3,6 +3,7 @@
 #[path = "../support/mod.rs"]
 mod support;
 
+mod append;
 mod dense_vectors;
 mod frame_buffers;
 mod frame_index;

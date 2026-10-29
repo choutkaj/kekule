@@ -118,6 +118,23 @@
 //! [`TrajectoryWriter::flush`]: crate::TrajectoryWriter::flush
 //! [`TrajectoryIoErrorKind::Incomplete`]: crate::TrajectoryIoErrorKind::Incomplete
 //!
+//! # Continuing a file after a restart
+//!
+//! A run restarted from a checkpoint continues its trajectory file with
+//! [`append_trajectory`]. It verifies the frames the file holds as a reader
+//! of a growing file does, keeps those [`KeepFrames`] selects, such as the
+//! frames a checkpoint at some step covers, cuts the file after them, and
+//! returns a [`TrajectoryStreamWriter`] that appends after them, with a
+//! [`TrajectoryAppendReport`] of the frames and bytes it removed. Given the
+//! write options the file was written with, which it checks where the file
+//! records them, the continued file is, byte for byte, the file one
+//! uninterrupted run writes. A process that dies at any point leaves a file
+//! that a later call continues, and a reader following the file sees the
+//! cut of frames it indexed as [`TrajectoryIoErrorKind::IndexMismatch`],
+//! opens the file again, and refreshes to pick up the appended frames.
+//!
+//! [`TrajectoryIoErrorKind::IndexMismatch`]: crate::TrajectoryIoErrorKind::IndexMismatch
+//!
 //! # Writing files
 //!
 //! Path writers stage a temporary sibling. Only consuming
@@ -145,6 +162,7 @@
 //! seeking. Amber NetCDF, PDB, GRO/G96, Amber ASCII, LAMMPS dump, reactive
 //! trajectories, and compressed wrappers are outside this initial profile and
 //! return structured unsupported-format or unsupported-variant errors.
+mod append;
 pub mod dcd;
 mod detect;
 mod file_reader;
@@ -158,6 +176,7 @@ mod util;
 pub mod xtc;
 pub mod xyz;
 
+pub use append::{append_trajectory, KeepFrames, TrajectoryAppendReport};
 pub use file_reader::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory, read_trajectory,
     IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,

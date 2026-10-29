@@ -513,6 +513,31 @@ fn refresh_reads_a_file_moved_into_the_path_when_it_holds_the_indexed_bytes() {
 }
 
 #[test]
+fn a_dcd_record_marker_of_another_size_is_corrupt_where_the_file_ends() {
+    let format = TrajectoryFormat::Dcd;
+    let bytes = encoded(format, &trajectory(0..3));
+    let (_, starts) = frame_bounds(format, &bytes);
+    let second = usize::try_from(starts[1]).unwrap();
+    let directory = Directory::new();
+    let path = directory.file(format);
+    // The second frame's first record marker, intact, is a frame still
+    // being written.
+    fs::write(&path, &bytes[..second + 4]).unwrap();
+    let mut reader = open_indexed_trajectory(&path, topology(), growing()).unwrap();
+    assert_eq!(reader.frame_count(), Some(1));
+    assert_eq!(reader.pending_byte_count(), 4);
+    // Claiming more bytes than a unit-cell record holds, it is corrupt,
+    // though the file ends before them.
+    let mut corrupt = bytes[..second + 4].to_vec();
+    corrupt[second + 2] ^= 0x40;
+    fs::write(&path, &corrupt).unwrap();
+    let error = reader.refresh().unwrap_err();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
+    let error = open_indexed_trajectory(&path, topology(), growing()).unwrap_err();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
+}
+
+#[test]
 fn files_without_a_complete_frame_or_header_are_incomplete() {
     for format in FORMATS {
         let directory = Directory::new();

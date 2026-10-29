@@ -786,6 +786,39 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
     }
 }
 
+/// Fails unless a writer with `options` writes frames of the scalar width of
+/// the TRR frames whose first is `first`, which must not mix widths
+/// (`mixed`).
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the frames
+/// mix widths or have another width than `options`.
+pub(crate) fn check_append_frames(
+    first: &TrrFrameHeader,
+    mixed: bool,
+    options: &TrrWriteOptions,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
+    let detail = if mixed {
+        "the file's TRR frames mix scalar widths, which one writer cannot continue".to_owned()
+    } else if first.precision != options.precision {
+        format!(
+            "the file's TRR frames are {:?}, the write options {:?}; append with the options the file was written with",
+            first.precision, options.precision
+        )
+    } else {
+        return Ok(());
+    };
+    Err(codec_context(
+        TrajectoryIoErrorKind::InconsistentMetadata,
+        TrajectoryIoOperation::Open,
+        Some(TrajectoryFormat::Trr),
+        source_label,
+        detail,
+    ))
+}
+
 /// Fully verified indexed TRR reader.
 ///
 /// Sequential and random reads share one set of decode scratch arrays. Random
@@ -1245,6 +1278,13 @@ impl<W: Write> TrrWriter<W> {
     /// The underlying stream.
     pub fn writer(&self) -> &W {
         &self.writer
+    }
+
+    /// Takes the stream as holding `frame_count` frames already, which the
+    /// next frame follows, as when appending to a file.
+    pub(crate) const fn resumed(mut self, frame_count: usize) -> Self {
+        self.frame_count = frame_count;
+        self
     }
 
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {

@@ -695,6 +695,50 @@ pub fn create_trajectory_stream_writer<W: Write + Seek>(
     stream_writer(format, writer, topology.into(), options, source_label)
 }
 
+/// A writer of `format` that appends to `writer`, positioned after the
+/// `frame_count` frames it holds, which a writer with `options` wrote. A DCD
+/// stream continues its header at the stream's start when it has one
+/// (`header`), and is given one otherwise.
+pub(super) fn resumed_stream_writer<W: Write + Seek>(
+    format: TrajectoryFormat,
+    writer: W,
+    topology: Arc<Topology>,
+    options: TrajectoryWriteOptions,
+    source_label: String,
+    frame_count: usize,
+    header: bool,
+) -> Result<TrajectoryStreamWriter<W>, TrajectoryIoError> {
+    let label = source_label.clone();
+    let inner = match format {
+        TrajectoryFormat::Xyz => CodecWriter::Xyz(
+            xyz::XyzWriter::new(writer, topology, options.xyz, label)?.resumed(frame_count),
+        ),
+        TrajectoryFormat::Dcd if header => CodecWriter::Dcd(dcd::DcdWriter::resume(
+            writer,
+            topology,
+            options.dcd,
+            label,
+            0,
+            frame_count,
+        )?),
+        TrajectoryFormat::Dcd => {
+            CodecWriter::Dcd(dcd::DcdWriter::new(writer, topology, options.dcd, label)?)
+        }
+        TrajectoryFormat::Trr => CodecWriter::Trr(
+            trr::TrrWriter::new(writer, topology, options.trr, label)?.resumed(frame_count),
+        ),
+        TrajectoryFormat::Xtc => CodecWriter::Xtc(
+            xtc::XtcWriter::new(writer, topology, options.xtc, label)?.resumed(frame_count),
+        ),
+    };
+    Ok(TrajectoryStreamWriter {
+        inner,
+        format,
+        source_label,
+        failed: false,
+    })
+}
+
 fn stream_writer<W: Write + Seek>(
     format: TrajectoryFormat,
     writer: W,
@@ -711,7 +755,7 @@ fn stream_writer<W: Write + Seek>(
 }
 
 /// The explicit format, or the one the destination extension names.
-fn resolve_format(
+pub(super) fn resolve_format(
     path: &Path,
     format: Option<TrajectoryFormat>,
 ) -> Result<TrajectoryFormat, TrajectoryIoError> {

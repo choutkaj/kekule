@@ -18,7 +18,7 @@ use super::limits::index_hard_capacity;
 use super::{
     dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata, FrameOffsets,
     IndexBuildControl, TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryOpenOptions,
-    TrajectoryOpenReport,
+    TrajectoryOpenReport, TrajectoryWriteOptions,
 };
 
 enum SequentialReaderInner {
@@ -403,6 +403,45 @@ impl IndexedFileTrajectoryReader {
                 self.inner.restore(snapshot);
                 *self.inner.stream_mut() = previous;
                 Err(error)
+            }
+        }
+    }
+
+    /// Fails unless a writer with `options` continues the indexed frames as
+    /// the file's writer would have: under the same DCD header, or with the
+    /// magic and precision of the first XTC frame or the scalar width of the
+    /// TRR frames. XYZ records none of its writer's settings.
+    pub(crate) fn check_append(
+        &mut self,
+        options: &TrajectoryWriteOptions,
+    ) -> Result<(), TrajectoryIoError> {
+        let label = self.path.display().to_string();
+        match &self.inner {
+            IndexedReaderInner::Xyz(_) => Ok(()),
+            IndexedReaderInner::Xtc(reader) => {
+                xtc::check_append_frames(reader.first_info(), options.xtc_options(), &label)
+            }
+            IndexedReaderInner::Trr(reader) => trr::check_append_frames(
+                reader.first_header(),
+                reader.precision_mixed(),
+                options.trr_options(),
+                &label,
+            ),
+            IndexedReaderInner::Dcd(_) => {
+                let atoms = self.metadata.atom_count();
+                let dcd = *options.dcd_options();
+                self.inner
+                    .check_file(TrajectoryFormat::Dcd, &label, |file| {
+                        file.seek(SeekFrom::Start(0)).map_err(|error| {
+                            io_context(
+                                TrajectoryIoOperation::Open,
+                                Some(TrajectoryFormat::Dcd),
+                                &label,
+                                error,
+                            )
+                        })?;
+                        dcd::check_append_header(file, dcd, atoms, &label)
+                    })
             }
         }
     }
