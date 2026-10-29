@@ -104,6 +104,16 @@ fn trajectory(steps: std::ops::Range<u64>) -> Trajectory {
     Trajectory::from_items(topology(), steps.map(frame)).unwrap()
 }
 
+/// Frame `step` with every atom at one point, which XTC and XYZ write in
+/// fewer bytes than [`frame`].
+fn squeezed(step: u64) -> TrajectoryFrame {
+    let mut squeezed = frame(step);
+    squeezed
+        .set_positions(Quantity::new([Point3::new(0.1, 0.1, 0.1); 12], NANOMETER))
+        .unwrap();
+    squeezed
+}
+
 /// Write options keeping what each format holds of [`frame`].
 fn options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
     TrajectoryWriteOptions::new(format)
@@ -422,6 +432,83 @@ fn refresh_refuses_a_file_whose_indexed_bytes_changed() {
         // The grown file is.
         fs::write(&path, &bytes).unwrap();
         assert_eq!(reader.refresh().unwrap(), 2, "{format}");
+    }
+}
+
+#[test]
+fn a_pending_frame_is_read_again_though_the_file_kept_its_length() {
+    // The bytes a frame was pending in may hold a whole frame by the next
+    // refresh without the file growing, as when the scan that found the
+    // frame partial measured the file after the writer completed it.
+    for format in [TrajectoryFormat::Xtc, TrajectoryFormat::Xyz] {
+        let bytes = encoded(format, &trajectory(0..3));
+        let shorter = encoded(
+            format,
+            &Trajectory::from_items(topology(), [frame(0), frame(1), squeezed(2)]).unwrap(),
+        );
+        let (_, starts) = frame_bounds(format, &bytes);
+        let third = usize::try_from(starts[2]).unwrap();
+        assert_eq!(bytes[..third], shorter[..third], "{format}");
+        assert!(shorter.len() < bytes.len(), "{format}");
+        let directory = Directory::new();
+        let path = directory.file(format);
+        fs::write(&path, &bytes[..shorter.len()]).unwrap();
+        let mut reader = open_indexed_trajectory(&path, topology(), growing()).unwrap();
+        assert_eq!(reader.frame_count(), Some(2), "{format}");
+        assert_eq!(
+            reader.pending_byte_count(),
+            (shorter.len() - third) as u64,
+            "{format}"
+        );
+        fs::write(&path, &shorter).unwrap();
+        assert_eq!(reader.refresh().unwrap(), 1, "{format}");
+        assert_eq!(reader.pending_byte_count(), 0, "{format}");
+        assert_eq!(frames(&mut reader), scanned(&path), "{format}");
+    }
+}
+
+#[test]
+fn refresh_reads_a_file_moved_into_the_path_when_it_holds_the_indexed_bytes() {
+    for format in FORMATS {
+        let directory = Directory::new();
+        let path = directory.file(format);
+        let moved = directory.0.join("moved");
+        fs::write(&path, encoded(format, &trajectory(0..2))).unwrap();
+        let mut reader = open_indexed_trajectory(&path, topology(), growing()).unwrap();
+        assert_eq!(reader.frame_count(), Some(2), "{format}");
+
+        // A longer copy of the trajectory replaces the file.
+        fs::write(&moved, encoded(format, &trajectory(0..5))).unwrap();
+        fs::rename(&moved, &path).unwrap();
+        assert_eq!(reader.refresh().unwrap(), 3, "{format}");
+        let read = frames(&mut reader);
+        assert_eq!(read, scanned(&path), "{format}");
+        assert!(
+            reader
+                .to_frame_index()
+                .fingerprint()
+                .same_content(&TrajectoryFileFingerprint::of_path(&path).unwrap()),
+            "{format}"
+        );
+
+        // Another trajectory does not, and the reader keeps reading the
+        // file it had.
+        let index = reader.to_frame_index();
+        let other = Trajectory::from_items(
+            topology(),
+            [squeezed(0)].into_iter().chain((1..6).map(frame)),
+        )
+        .unwrap();
+        fs::write(&moved, encoded(format, &other)).unwrap();
+        fs::rename(&moved, &path).unwrap();
+        let error = reader.refresh().unwrap_err();
+        assert_eq!(
+            error.kind(),
+            TrajectoryIoErrorKind::IndexMismatch,
+            "{format}"
+        );
+        assert_eq!(reader.to_frame_index(), index, "{format}");
+        assert_eq!(frames(&mut reader), read, "{format}");
     }
 }
 

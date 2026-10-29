@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -183,6 +183,51 @@ impl IndexedReaderInner {
             Self::Xtc(reader) => reader.extend(growing, control),
         }
     }
+
+    /// The stream every read goes through.
+    fn stream_mut(&mut self) -> &mut BufReader<File> {
+        match self {
+            Self::Xyz(reader) => reader.stream_mut(),
+            Self::Dcd(reader) => reader.stream_mut(),
+            Self::Trr(reader) => reader.stream_mut(),
+            Self::Xtc(reader) => reader.stream_mut(),
+        }
+    }
+
+    /// Runs `check` on the file the reader reads, then puts the stream back
+    /// where the reader left it.
+    fn check_file<T>(
+        &mut self,
+        format: TrajectoryFormat,
+        label: &str,
+        check: impl FnOnce(&mut File) -> Result<T, TrajectoryIoError>,
+    ) -> Result<T, TrajectoryIoError> {
+        let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
+        let stream = self.stream_mut();
+        let position = stream.stream_position().map_err(io)?;
+        let checked = check(stream.get_mut());
+        // Seeking also drops the buffer, which the check left behind.
+        let restored = stream.seek(SeekFrom::Start(position));
+        let value = checked?;
+        restored.map_err(io)?;
+        Ok(value)
+    }
+
+    /// Reads on from `file`, which must begin with the indexed bytes, where
+    /// the reader left its stream, and returns the stream it replaces.
+    fn rebind(
+        &mut self,
+        file: File,
+        format: TrajectoryFormat,
+        label: &str,
+    ) -> Result<BufReader<File>, TrajectoryIoError> {
+        let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
+        let stream = self.stream_mut();
+        let position = stream.stream_position().map_err(io)?;
+        let mut replacement = BufReader::new(file);
+        replacement.seek(SeekFrom::Start(position)).map_err(io)?;
+        Ok(std::mem::replace(stream, replacement))
+    }
 }
 
 /// Format-agnostic path-backed indexed reader retaining one file handle.
@@ -243,9 +288,9 @@ impl IndexedFileTrajectoryReader {
     /// The bytes the file held after the last indexed frame when the reader
     /// last opened or [refreshed](Self::refresh): a frame still being
     /// written, or more that arrived during the scan. Zero when the indexed
-    /// frames reached the end of the file. Only a reader opened with
-    /// [`TrajectoryOpenOptions::with_growing`] leaves a partial frame
-    /// pending; for others it is an error.
+    /// frames reached the end of the file. Every refresh reads them again.
+    /// Only a reader opened with [`TrajectoryOpenOptions::with_growing`]
+    /// leaves a partial frame pending; for others it is an error.
     pub fn pending_byte_count(&self) -> u64 {
         self.inner.pending_bytes()
     }
@@ -267,6 +312,11 @@ impl IndexedFileTrajectoryReader {
     /// where they stopped and continue into the new frames, and
     /// [`Self::to_frame_index`] then exports them too.
     ///
+    /// A refresh reads the file the path names when it runs: a file moved
+    /// to the path in place of the one read so far is read from then on
+    /// when it begins with the indexed bytes, as a copy of the file grown
+    /// further does.
+    ///
     /// # Errors
     ///
     /// Returns [`TrajectoryIoErrorKind::IndexMismatch`] when the indexed bytes
@@ -274,8 +324,8 @@ impl IndexedFileTrajectoryReader {
     /// of the first invalid new frame,
     /// [`TrajectoryIoErrorKind::LimitExceeded`] when the index outgrows the
     /// limits, and [`TrajectoryIoErrorKind::Io`] when the file cannot be
-    /// read. Failure changes nothing: the reader keeps its frames and can be
-    /// refreshed again.
+    /// read. Failure changes nothing: the reader keeps its frames and the
+    /// file it read them from, and can be refreshed again.
     ///
     /// ```no_run
     /// use kekule::{smiles, topology::Topology};
@@ -324,29 +374,24 @@ impl IndexedFileTrajectoryReader {
         {
             return Err(changed());
         }
-        let length = file
-            .metadata()
-            .map_err(|error| io_context(TrajectoryIoOperation::Index, Some(format), &label, error))?
-            .len();
-        let indexed = self.inner.offsets().end();
-        if self.growing && length == indexed + self.inner.pending_bytes() {
-            // Nothing arrived; a pending frame is as incomplete as before.
-            return Ok(0);
-        }
+        // The scan, the checks, and the fingerprint all read the file
+        // checked here, which may not be the one read so far.
+        let previous = self.inner.rebind(file, format, &label)?;
         let before = self.inner.offsets().len();
         let snapshot = self.inner.snapshot();
-        self.inner
-            .extend(self.growing, &IndexBuildControl::default())?;
-        let end = self.inner.offsets().end();
+        let indexed = &self.fingerprint;
         let checked = self
-            .fingerprint
-            .is_prefix_of_labelled_file(&mut file, &label)
-            .and_then(|unchanged| {
-                if unchanged {
-                    TrajectoryFileFingerprint::of_labelled_file_prefix(&mut file, end, &label)
-                } else {
-                    Err(changed())
-                }
+            .inner
+            .extend(self.growing, &IndexBuildControl::default())
+            .and_then(|_| {
+                let end = self.inner.offsets().end();
+                self.inner.check_file(format, &label, |file| {
+                    if indexed.is_prefix_of_labelled_file(file, &label)? {
+                        TrajectoryFileFingerprint::of_labelled_file_prefix(file, end, &label)
+                    } else {
+                        Err(changed())
+                    }
+                })
             });
         match checked {
             Ok(fingerprint) => {
@@ -356,6 +401,7 @@ impl IndexedFileTrajectoryReader {
             }
             Err(error) => {
                 self.inner.restore(snapshot);
+                *self.inner.stream_mut() = previous;
                 Err(error)
             }
         }
@@ -824,7 +870,7 @@ fn open_indexed(
             error
         }
     };
-    let (inner, metadata, note) = match format {
+    let (mut inner, metadata, note) = match format {
         TrajectoryFormat::Xyz => {
             let xyz_options = options
                 .xyz
@@ -977,22 +1023,23 @@ fn open_indexed(
         // Nothing was scanned, so nothing scanned can have changed.
         opened
     } else {
-        let mut file = File::open(path)
-            .map_err(|error| io_context(TrajectoryIoOperation::Index, None, &label, error))?;
-        if !opened.is_prefix_of_labelled_file(&mut file, &label)? {
-            return Err(index_mismatch(
-                TrajectoryIoOperation::Index,
-                format,
-                &label,
-                "the file changed while it was indexed",
-            ));
-        }
+        // In the file that was scanned, whatever the path names now.
         let end = inner.offsets().end();
-        if end == opened.byte_count() {
-            opened
-        } else {
-            TrajectoryFileFingerprint::of_labelled_file_prefix(&mut file, end, &label)?
-        }
+        inner.check_file(format, &label, |file| {
+            if !opened.is_prefix_of_labelled_file(file, &label)? {
+                return Err(index_mismatch(
+                    TrajectoryIoOperation::Index,
+                    format,
+                    &label,
+                    "the file changed while it was indexed",
+                ));
+            }
+            if end == opened.byte_count() {
+                Ok(opened)
+            } else {
+                TrajectoryFileFingerprint::of_labelled_file_prefix(file, end, &label)
+            }
+        })?
     };
     let note = match imported_count {
         Some(imported) if imported == count => {

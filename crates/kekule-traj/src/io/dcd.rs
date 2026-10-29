@@ -1348,6 +1348,11 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         &self.offsets
     }
 
+    /// The stream every read goes through.
+    pub(crate) fn stream_mut(&mut self) -> &mut R {
+        &mut self.inner.reader
+    }
+
     /// Bytes after the last indexed frame when the index last grew.
     pub(crate) const fn pending_bytes(&self) -> u64 {
         self.pending_bytes

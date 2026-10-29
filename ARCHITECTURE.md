@@ -453,8 +453,11 @@ the same file with more frames, and one whose existing bytes changed is not
 (a DCD header's frame counts, which writers rewrite as they append, are not
 content): refreshing a reader, or opening the grown file from an index,
 verifies and indexes the appended frames without scanning the indexed ones
-again. A reader of a growing file takes a final frame its writer has not
-finished as pending rather than as corruption and still rejects corrupt
+again. A refresh reads whatever file the path names when it runs, checking,
+scanning, and fingerprinting that one file, so the index and its
+fingerprint always describe the same bytes. A reader of a growing file
+takes a final frame its writer has not finished as pending rather than as
+corruption, reads it again at every refresh, and still rejects corrupt
 data; sequential reads through an indexed reader end with its indexed
 frames. Streaming buffers bind to one topology layout and publish complete frames
 transactionally. A buffer hands its frame out as a one-frame trajectory, and

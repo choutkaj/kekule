@@ -16,9 +16,10 @@ are marked **Breaking:**.
   `IndexedFileTrajectoryReader::refresh` indexes the frames appended since
   the reader opened or last refreshed, verifying each as opening does but
   without scanning the indexed frames again, and returns how many there
-  are; sequential reads continue into them. It first checks that the file
-  still begins with the indexed bytes, and fails with `IndexMismatch`,
-  changing nothing, when they changed. `TrajectoryOpenOptions::with_growing`
+  are; sequential reads continue into them. It reads the file the path
+  names when it runs, checking first that the file still begins with the
+  indexed bytes, and fails with `IndexMismatch`, changing nothing, when
+  they changed; a file moved to the path that begins with them is read on. `TrajectoryOpenOptions::with_growing`
   opens a file a writer is appending to: a final frame the writer has not
   finished is not yet an error but pending
   (`IndexedFileTrajectoryReader::pending_byte_count`) until a refresh finds

@@ -97,6 +97,7 @@
 //! [`IndexedFileTrajectoryReader::refresh`] indexes the frames appended since
 //! the reader opened, verifying each, without scanning the indexed frames
 //! again, and an index exported earlier opens the grown file the same way.
+//! A refresh reads the file the path names when it runs.
 //! Opened with [`TrajectoryOpenOptions::with_growing`], an indexed reader
 //! takes a final frame the writer has not finished as pending
 //! ([`IndexedFileTrajectoryReader::pending_byte_count`]) rather than as
