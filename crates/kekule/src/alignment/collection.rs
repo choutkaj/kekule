@@ -1,8 +1,8 @@
-//! Superposition and RMSD over every sample of an [`Ensemble`] or frame of a
-//! [`Trajectory`].
+//! Superposition and RMSD over every sample of an [`Ensemble`], frame of a
+//! [`Trajectory`], or item of a [`Series`].
 
 use crate::geometry::RigidTransform;
-use crate::structure::{AsModelView, Ensemble, ModelView, Trajectory};
+use crate::structure::{AsModelView, Ensemble, ModelView, Series, Trajectory};
 use crate::topology::{AtomSelection, Topology};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -487,6 +487,111 @@ impl Trajectory {
         options: AlignedRmsdOptions<'_>,
     ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
         let items = self.iter().map(|f| f.as_model_view()).collect::<Vec<_>>();
+        item_aligned_rmsd(
+            self.topology(),
+            &items,
+            reference.into(),
+            fit.into(),
+            measurement.into(),
+            options,
+        )
+    }
+}
+
+impl Series {
+    /// Fits every item onto `reference` and applies each transform in place.
+    ///
+    /// `reference` is an index into this series or any borrowed view
+    /// (`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an
+    /// [`AtomSelection`](crate::topology::AtomSelection) or
+    /// [`SymmetricSelection`](super::SymmetricSelection) of this layout, or an
+    /// [`AtomCorrespondence`](super::AtomCorrespondence) to an independent
+    /// reference. Positions move and cells rotate; all other state, the
+    /// items' steps and coordinates among it, is kept. The fit is
+    /// transactional: on failure nothing changes. Coordinates are fitted as
+    /// stored; no imaging or unwrapping is performed. Clone first to keep the
+    /// original. `options` selects the fit weights, in pair order, and the
+    /// periodic policy.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`fit`](super::fit) for the pairing and weights.
+    /// [`AlignmentError::Transform`] when a fitted transform cannot be
+    /// applied to an item.
+    pub fn superpose<'a>(
+        &mut self,
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: AlignmentOptions<'_>,
+    ) -> Result<SuperpositionReport, AlignmentError> {
+        let report = {
+            let items = self.iter().map(|i| i.as_model_view()).collect::<Vec<_>>();
+            fit_items(
+                self.topology(),
+                &items,
+                reference.into(),
+                atoms.into(),
+                options,
+            )?
+        };
+        self.transform_items(&transforms(&report))
+            .map_err(AlignmentError::Transform)?;
+        Ok(report)
+    }
+
+    /// Direct RMSD from every item to `reference`, measured as stored.
+    ///
+    /// Never fits or changes the series. Values are in
+    /// [`CANONICAL_LENGTH_UNIT`], one per item in series order, to plot
+    /// against the items' steps or coordinates. `options` selects the pair
+    /// weights and the periodic policy.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`rmsd`](super::rmsd) for the pairing and weights.
+    pub fn rmsd<'a>(
+        &self,
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: AlignmentOptions<'_>,
+    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+        let items = self.iter().map(|i| i.as_model_view()).collect::<Vec<_>>();
+        item_rmsd(
+            self.topology(),
+            &items,
+            reference.into(),
+            atoms.into(),
+            options,
+        )
+    }
+
+    /// Fits every item on `fit` pairs and measures RMSD over `measurement`
+    /// pairs, without changing the series or copying coordinates.
+    ///
+    /// For example, fit the atoms a scan holds fixed and measure the ones it
+    /// moves. `options` holds the fit options and the measurement weights.
+    /// Values are in [`CANONICAL_LENGTH_UNIT`], one per item in order.
+    ///
+    /// # Errors
+    ///
+    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
+    /// the collection, [`AlignmentError::Item`] wrapping the failure of the
+    /// first failing item, and otherwise the errors of
+    /// [`aligned_rmsd`](super::aligned_rmsd) for the pairing and weights.
+    pub fn aligned_rmsd<'a>(
+        &self,
+        reference: impl Into<Reference<'a>>,
+        fit: impl Into<FitAtoms<'a>>,
+        measurement: impl Into<FitAtoms<'a>>,
+        options: AlignedRmsdOptions<'_>,
+    ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+        let items = self.iter().map(|i| i.as_model_view()).collect::<Vec<_>>();
         item_aligned_rmsd(
             self.topology(),
             &items,

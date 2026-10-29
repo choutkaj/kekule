@@ -6,7 +6,9 @@ use crate::io::structure_interpret::{
     EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
     StructureInterpretationReport,
 };
-use crate::io::write_error::{check_structure_state, record_multi_model_ensemble, Omissions};
+use crate::io::write_error::{
+    check_structure_state, record_multi_model_ensemble, Omissions, StatePolicies,
+};
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::molecule::BondOrder;
 use crate::structure::{AsModelView, Ensemble, Model, ModelView};
@@ -39,6 +41,7 @@ pub struct MmcifWriteOptions {
     coordinate_precision: usize,
     ensemble_metadata: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
+    series_metadata: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
 }
@@ -121,6 +124,28 @@ impl MmcifWriteOptions {
         self
     }
 
+    /// A series item's step or coordinate, which mmCIF cannot carry: by
+    /// default a model block of a series item fails to write.
+    pub const fn series_metadata(&self) -> UnrepresentablePolicy {
+        self.series_metadata
+    }
+
+    /// Sets [`Self::series_metadata`].
+    #[must_use]
+    pub fn with_series_metadata(mut self, series_metadata: UnrepresentablePolicy) -> Self {
+        self.series_metadata = series_metadata;
+        self
+    }
+
+    /// The policies for sample, frame, and series item state of a block.
+    fn state_policies(&self) -> StatePolicies {
+        StatePolicies {
+            sample: Some(self.ensemble_metadata),
+            frame: self.frame_metadata,
+            item: Some(self.series_metadata),
+        }
+    }
+
     /// A periodic cell mmCIF cannot carry: one not periodic along all three
     /// axes, not in the standard crystallographic orientation, or differing
     /// between ensemble samples. By default such a cell fails to write;
@@ -161,6 +186,7 @@ impl Default for MmcifWriteOptions {
             coordinate_precision: 3,
             ensemble_metadata: UnrepresentablePolicy::Fail,
             frame_metadata: UnrepresentablePolicy::Fail,
+            series_metadata: UnrepresentablePolicy::Fail,
             cell: UnrepresentablePolicy::Fail,
             implicit_hydrogens: UnrepresentablePolicy::Fail,
         }
@@ -890,12 +916,7 @@ fn write_model_block_to(
     options: &MmcifWriteOptions,
     omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
-    check_structure_state(
-        Format::Mmcif,
-        view.kind(),
-        Some(options.ensemble_metadata),
-        options.frame_metadata,
-    )?;
+    check_structure_state(Format::Mmcif, view.kind(), options.state_policies())?;
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {
@@ -929,11 +950,7 @@ fn write_model_block_to(
     )?;
     render_model_to(writer, &prepared, cell, options)?;
     // Nothing is reported for a block that did not reach the sink.
-    omissions.record_structure_state(
-        view.kind(),
-        Some(options.ensemble_metadata),
-        options.frame_metadata,
-    );
+    omissions.record_structure_state(view.kind(), options.state_policies());
     if cell.is_none() && view.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }

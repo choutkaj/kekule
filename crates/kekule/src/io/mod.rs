@@ -70,7 +70,8 @@ pub use sdf_document::{
 pub(crate) use sdf_ensemble::sdf_ensemble;
 pub(crate) use sdf_write::{write_sdf, write_sdf_to};
 pub use sdf_write::{
-    SdfRecordSource, SdfWriteOptions, SDF_ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD, SDF_STATE_FIELD,
+    SdfRecordSource, SdfWriteOptions, SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD,
+    SDF_ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD, SDF_STATE_FIELD, SDF_STEP_FIELD,
     SDF_TEMPERATURE_FIELD, SDF_WEIGHT_FIELD,
 };
 pub(crate) use smiles::{

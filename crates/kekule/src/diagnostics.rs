@@ -622,7 +622,7 @@ pub enum FormatErrorDetail {
     },
 }
 
-/// Ensemble sample or trajectory frame state named by
+/// Ensemble sample, trajectory frame, or series item state named by
 /// [`FormatErrorDetail::UnrepresentableState`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -644,12 +644,16 @@ pub enum StructureField {
     Velocities,
     /// A trajectory frame's forces.
     Forces,
-    /// A trajectory frame's per-atom properties.
+    /// A trajectory frame's or series item's per-atom properties.
     AtomProperties,
-    /// A trajectory frame's per-bond properties.
+    /// A trajectory frame's or series item's per-bond properties.
     BondProperties,
-    /// A trajectory frame's own properties.
+    /// A trajectory frame's or series item's own properties.
     Properties,
+    /// A series item's step on its series' axis.
+    ItemStep,
+    /// A series item's coordinate on its series' axis.
+    ItemCoordinate,
 }
 
 impl fmt::Display for StructureField {
@@ -663,9 +667,11 @@ impl fmt::Display for StructureField {
             Self::Step => "trajectory frame step",
             Self::Velocities => "trajectory frame velocities",
             Self::Forces => "trajectory frame forces",
-            Self::AtomProperties => "trajectory frame atom properties",
-            Self::BondProperties => "trajectory frame bond properties",
-            Self::Properties => "trajectory frame properties",
+            Self::AtomProperties => "per-atom structure properties",
+            Self::BondProperties => "per-bond structure properties",
+            Self::Properties => "structure properties",
+            Self::ItemStep => "series item step",
+            Self::ItemCoordinate => "series item coordinate",
         })
     }
 }

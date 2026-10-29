@@ -14,9 +14,10 @@
 //! - [`rmsd`] measures coordinates exactly as stored, without fitting.
 //! - [`aligned_rmsd`] fits on one set of pairs and measures another.
 //! - `superpose`, `rmsd`, and `aligned_rmsd` on
-//!   [`Ensemble`](crate::structure::Ensemble::superpose) and
-//!   [`Trajectory`](crate::structure::Trajectory::superpose) apply the same
-//!   kernels to every member or frame against a [`Reference`]: an item of the
+//!   [`Ensemble`](crate::structure::Ensemble::superpose),
+//!   [`Trajectory`](crate::structure::Trajectory::superpose), and
+//!   [`Series`](crate::structure::Series::superpose) apply the same kernels
+//!   to every sample, frame, or item against a [`Reference`]: an item of the
 //!   collection or any external view.
 //!
 //! Each takes its options, [`AlignmentOptions`] or [`AlignedRmsdOptions`], as

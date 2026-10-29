@@ -1,5 +1,5 @@
 //! Validation and accessors shared by the flat structure owners: models,
-//! ensemble samples, trajectory frames, and model drafts.
+//! ensemble samples, trajectory frames, series items, and model drafts.
 //!
 //! Each owner stores its own `positions`, `cell`, and `properties` fields, and
 //! models and ensemble samples also `occupancies` and `b_factors`. The macros
@@ -304,6 +304,8 @@ pub enum StructureError {
     NonFiniteTime,
     /// An ensemble state energy is not finite.
     NonFiniteEnergy,
+    /// A series item coordinate is not finite.
+    NonFiniteCoordinate,
     /// An ensemble weight is not finite and positive.
     InvalidWeight,
     /// The payload exceeds addressable capacity.
@@ -326,6 +328,9 @@ impl fmt::Display for StructureError {
             ),
             Self::NonFiniteTime => formatter.write_str("frame time must be finite"),
             Self::NonFiniteEnergy => formatter.write_str("ensemble state energy must be finite"),
+            Self::NonFiniteCoordinate => {
+                formatter.write_str("series item coordinate must be finite")
+            }
             Self::InvalidWeight => {
                 formatter.write_str("ensemble weight must be finite and positive")
             }

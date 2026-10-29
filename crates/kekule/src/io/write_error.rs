@@ -2,7 +2,7 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
 };
-use crate::structure::{Ensemble, StructureKind};
+use crate::structure::{Ensemble, Series, SeriesAxis, StructureKind};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -164,13 +164,34 @@ pub enum WriteOmission {
         /// The structures written without their B factors.
         structures: usize,
     },
-    /// Ensemble sample or trajectory frame state the format cannot carry.
+    /// Ensemble sample, trajectory frame, or series item state the format
+    /// cannot carry.
     StructureState {
         /// The state left out.
         field: StructureField,
-        /// The samples or frames whose state was left out.
+        /// The samples, frames, or items whose state was left out.
         structures: usize,
     },
+}
+
+/// What a structure writer does with the state of an ensemble sample,
+/// trajectory frame, or series item that its format cannot carry.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StatePolicies {
+    /// `None` for a format that writes sample state itself.
+    pub(crate) sample: Option<UnrepresentablePolicy>,
+    pub(crate) frame: UnrepresentablePolicy,
+    /// `None` for a format that writes an item's step or coordinate itself.
+    pub(crate) item: Option<UnrepresentablePolicy>,
+}
+
+/// The item state a series' items have that a format without series
+/// cannot carry: their steps or their coordinates.
+const fn item_field(axis: SeriesAxis) -> StructureField {
+    match axis {
+        SeriesAxis::Step => StructureField::ItemStep,
+        SeriesAxis::Coordinate(_) => StructureField::ItemCoordinate,
+    }
 }
 
 /// Collects a writer's omissions, merging repeated kinds by summing counts.
@@ -226,13 +247,12 @@ impl Omissions {
         }
     }
 
-    /// Records the sample or frame state `kind` has that the policies omit;
-    /// call it after [`check_structure_state`] has passed.
+    /// Records the sample, frame, or item state `kind` has that the policies
+    /// omit; call it after [`check_structure_state`] has passed.
     pub(crate) fn record_structure_state(
         &mut self,
         kind: StructureKind<'_>,
-        sample: Option<UnrepresentablePolicy>,
-        frame: UnrepresentablePolicy,
+        policies: StatePolicies,
     ) {
         let mut fields = Vec::new();
         match kind {
@@ -240,7 +260,7 @@ impl Omissions {
                 energy,
                 temperature,
                 ..
-            } if sample == Some(UnrepresentablePolicy::Omit) => {
+            } if policies.sample == Some(UnrepresentablePolicy::Omit) => {
                 // A lone record cannot carry a weight relative to other
                 // samples, so its weight is always left out.
                 fields.push(StructureField::Weight);
@@ -257,7 +277,7 @@ impl Omissions {
                 velocities,
                 forces,
                 ..
-            } if frame == UnrepresentablePolicy::Omit => {
+            } if policies.frame == UnrepresentablePolicy::Omit => {
                 for (present, field) in [
                     (time.is_some(), StructureField::Time),
                     (step.is_some(), StructureField::Step),
@@ -268,6 +288,15 @@ impl Omissions {
                         fields.push(field);
                     }
                 }
+            }
+            StructureKind::Item { step, .. }
+                if policies.item == Some(UnrepresentablePolicy::Omit) =>
+            {
+                fields.push(if step.is_some() {
+                    StructureField::ItemStep
+                } else {
+                    StructureField::ItemCoordinate
+                });
             }
             _ => {}
         }
@@ -284,22 +313,29 @@ impl Omissions {
     }
 }
 
-/// Fails for ensemble sample or trajectory frame state that `format` cannot
-/// carry, unless the caller chose to omit it. `sample` is `None` for a format
-/// that writes sample state itself.
+/// Fails for ensemble sample, trajectory frame, or series item state that
+/// `format` cannot carry, unless the caller chose to omit it.
 pub(crate) fn check_structure_state(
     format: Format,
     kind: StructureKind<'_>,
-    sample: Option<UnrepresentablePolicy>,
-    frame: UnrepresentablePolicy,
+    policies: StatePolicies,
 ) -> Result<(), FormatError> {
     let field = match kind {
-        StructureKind::Sample { energy, .. } if sample == Some(UnrepresentablePolicy::Fail) => {
+        StructureKind::Sample { energy, .. }
+            if policies.sample == Some(UnrepresentablePolicy::Fail) =>
+        {
             // A lone record cannot carry a weight relative to other samples.
             Some(if energy.is_some() {
                 StructureField::Energy
             } else {
                 StructureField::Weight
+            })
+        }
+        StructureKind::Item { step, .. } if policies.item == Some(UnrepresentablePolicy::Fail) => {
+            Some(if step.is_some() {
+                StructureField::ItemStep
+            } else {
+                StructureField::ItemCoordinate
             })
         }
         StructureKind::Frame {
@@ -308,7 +344,7 @@ pub(crate) fn check_structure_state(
             velocities,
             forces,
             ..
-        } if frame == UnrepresentablePolicy::Fail => {
+        } if policies.frame == UnrepresentablePolicy::Fail => {
             if time.is_some() {
                 Some(StructureField::Time)
             } else if step.is_some() {
@@ -393,6 +429,28 @@ pub(crate) fn record_multi_model_ensemble(
     ] {
         omissions.record(WriteOmission::StructureState { field, structures });
     }
+    Ok(())
+}
+
+/// Records or rejects the steps or coordinates of the items of `series`,
+/// which a multi-model format without series cannot carry.
+///
+/// With [`UnrepresentablePolicy::Fail`], returns the 1-based number of the
+/// first item, every item having one, and the field. With
+/// [`UnrepresentablePolicy::Omit`], records the omission for every item.
+pub(crate) fn record_multi_model_series(
+    series: &Series,
+    policy: UnrepresentablePolicy,
+    omissions: &mut Omissions,
+) -> Result<(), (usize, StructureField)> {
+    let field = item_field(series.axis());
+    if policy == UnrepresentablePolicy::Fail && !series.is_empty() {
+        return Err((1, field));
+    }
+    omissions.record(WriteOmission::StructureState {
+        field,
+        structures: series.len(),
+    });
     Ok(())
 }
 

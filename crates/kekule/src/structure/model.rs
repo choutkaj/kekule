@@ -390,7 +390,7 @@ pub(crate) mod sealed {
 }
 
 /// Anything that can be borrowed as a [`ModelView`] without copying: models,
-/// views, ensemble samples and trajectory frames.
+/// views, ensemble samples, trajectory frames, and series items.
 ///
 /// Each implementor also has an inherent `as_model_view` method, so the trait
 /// only needs importing for generic code. This trait is sealed; other
@@ -422,8 +422,8 @@ impl<'a> From<&'a Model> for ModelView<'a> {
     }
 }
 
-/// What a [`ModelView`] borrows: a model, an ensemble sample, or a trajectory
-/// frame, with the state only that kind of structure owns.
+/// What a [`ModelView`] borrows: a model, an ensemble sample, a trajectory
+/// frame, or a series item, with the state only that kind of structure owns.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
 /// it so that sample and frame state is written, rejected, or deliberately
@@ -461,13 +461,24 @@ pub enum StructureKind<'a> {
         /// The frame's forces, when recorded.
         forces: Option<&'a Forces>,
     },
+    /// A [`SeriesItem`](super::SeriesItem), with its place on its series'
+    /// axis: exactly one of a step and a coordinate.
+    #[non_exhaustive]
+    Item {
+        /// The item's step, on a [`SeriesAxis::Step`](super::SeriesAxis::Step)
+        /// series.
+        step: Option<u64>,
+        /// The item's coordinate in the axis unit, on a
+        /// [`SeriesAxis::Coordinate`](super::SeriesAxis::Coordinate) series.
+        coordinate: Option<Quantity<f64>>,
+    },
 }
 
 /// A borrowed topology plus the structure state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
-/// Models, ensemble samples, trajectory frames, and frame buffers all borrow
-/// as a view, and [`Self::kind`] says which one it is. Accessors return
+/// Models, ensemble samples, trajectory frames, series items, and frame
+/// buffers all borrow as a view, and [`Self::kind`] says which one it is. Accessors return
 /// borrows with the view's full lifetime. A view of a trajectory frame has no
 /// occupancies or B-factors. Views preserve exact topology identity.
 #[derive(Debug, Clone, Copy)]

@@ -4,7 +4,7 @@ use std::io::Write;
 use crate::molecule::Molecule;
 use crate::structure::{AsModelView, Model, ModelView};
 
-use super::write_error::{check_structure_state, MOLFILE_WRITE};
+use super::write_error::{check_structure_state, StatePolicies, MOLFILE_WRITE};
 use super::{MolfileVersion, UnrepresentablePolicy};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
 
@@ -37,6 +37,7 @@ pub struct MolfileWriteOptions {
     cell: UnrepresentablePolicy,
     ensemble_metadata: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
+    series_metadata: UnrepresentablePolicy,
 }
 
 impl MolfileWriteOptions {
@@ -92,6 +93,19 @@ impl MolfileWriteOptions {
     #[must_use]
     pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
         self.frame_metadata = frame_metadata;
+        self
+    }
+
+    /// A series item's step or coordinate, which a Molfile cannot carry: by
+    /// default writing a view of a series item fails.
+    pub const fn series_metadata(&self) -> UnrepresentablePolicy {
+        self.series_metadata
+    }
+
+    /// Sets [`Self::series_metadata`].
+    #[must_use]
+    pub const fn with_series_metadata(mut self, series_metadata: UnrepresentablePolicy) -> Self {
+        self.series_metadata = series_metadata;
         self
     }
 }
@@ -186,8 +200,11 @@ pub(crate) fn write_molfile<'a>(
             check_structure_state(
                 Format::Molfile,
                 model.kind(),
-                Some(options.ensemble_metadata),
-                options.frame_metadata,
+                StatePolicies {
+                    sample: Some(options.ensemble_metadata),
+                    frame: options.frame_metadata,
+                    item: Some(options.series_metadata),
+                },
             )?;
             render_model(model, source.title, options.version)
         }

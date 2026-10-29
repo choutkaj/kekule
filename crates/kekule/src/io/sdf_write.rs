@@ -2,13 +2,14 @@
 use std::io::Write;
 
 use crate::structure::{
-    AsModelView, EnsembleSampleView, Model, ModelView, StructureKind, TrajectoryFrameView,
+    AsModelView, EnsembleSampleView, Model, ModelView, SeriesItemView, StructureKind,
+    TrajectoryFrameView,
 };
 use crate::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
-use super::write_error::check_structure_state;
+use super::write_error::{check_structure_state, StatePolicies};
 use super::{MolfileWriteVersion, UnrepresentablePolicy};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 
@@ -51,7 +52,8 @@ impl SdfWriteOptions {
     /// A trajectory frame's time, step, velocities, and forces, which an SDF
     /// record cannot carry: by default writing a frame with any of them
     /// fails. An ensemble sample's weight, state, state energy, and
-    /// temperature are always written as data fields.
+    /// temperature, and a series item's step or coordinate, are always
+    /// written as data fields.
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
         self.frame_metadata
     }
@@ -79,6 +81,16 @@ pub const SDF_ENERGY_FIELD: &str = "kekule.energy.kJ_per_mol";
 /// written to, in kelvin, on every record of the ensemble.
 pub const SDF_TEMPERATURE_FIELD: &str = "kekule.temperature.K";
 
+/// The data field a series item's step is written to.
+pub const SDF_STEP_FIELD: &str = "kekule.step";
+/// The data field a series item's coordinate is written to, in the unit of
+/// its series' axis, which [`SDF_COORDINATE_UNIT_FIELD`] names.
+pub const SDF_COORDINATE_FIELD: &str = "kekule.coordinate";
+/// The data field naming the unit of [`SDF_COORDINATE_FIELD`], as the
+/// unit displays itself: its symbol, such as `A` or `deg`, `1` for a
+/// dimensionless coordinate, or its scale and dimension.
+pub const SDF_COORDINATE_UNIT_FIELD: &str = "kekule.coordinate.unit";
+
 /// The data fields an ensemble sample's own metadata uses.
 const SAMPLE_FIELDS: [&str; 5] = [
     SDF_WEIGHT_FIELD,
@@ -88,17 +100,28 @@ const SAMPLE_FIELDS: [&str; 5] = [
     SDF_TEMPERATURE_FIELD,
 ];
 
+/// The data fields a series item's own metadata uses.
+const ITEM_FIELDS: [&str; 3] = [
+    SDF_STEP_FIELD,
+    SDF_COORDINATE_FIELD,
+    SDF_COORDINATE_UNIT_FIELD,
+];
+
 /// One SDF record: a model view with an optional title and data fields.
 ///
-/// Convert from `&Model`, a borrowed ensemble sample or trajectory frame, or
-/// `&SdfRecordInterpretation` (which keeps its title and data fields). An
-/// ensemble sample's weight, its state, and the ensemble's temperature follow
-/// its data fields as [`SDF_WEIGHT_FIELD`], [`SDF_STATE_FIELD`], and
-/// [`SDF_TEMPERATURE_FIELD`]; a representative's record is marked with
-/// [`SDF_REPRESENTATIVE_FIELD`] and carries its state's energy as
-/// [`SDF_ENERGY_FIELD`], whichever way its view is passed. State and
-/// ensemble properties are not written. A trajectory frame's time, step,
-/// velocities, and forces fail to write unless
+/// Convert from `&Model`, a borrowed ensemble sample, trajectory frame, or
+/// series item, or `&SdfRecordInterpretation` (which keeps its title and
+/// data fields). An ensemble sample's weight, its state, and the ensemble's
+/// temperature follow its data fields as [`SDF_WEIGHT_FIELD`],
+/// [`SDF_STATE_FIELD`], and [`SDF_TEMPERATURE_FIELD`]; a representative's
+/// record is marked with [`SDF_REPRESENTATIVE_FIELD`] and carries its
+/// state's energy as [`SDF_ENERGY_FIELD`], whichever way its view is passed.
+/// A series item's step follows its data fields as [`SDF_STEP_FIELD`], or
+/// its coordinate as [`SDF_COORDINATE_FIELD`] with
+/// [`SDF_COORDINATE_UNIT_FIELD`]. State, ensemble, series, and structure
+/// properties are not written; add the values a record should carry, such
+/// as a series item's energy, as data fields. A trajectory frame's time,
+/// step, velocities, and forces fail to write unless
 /// [`SdfWriteOptions::frame_metadata`] omits them.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
@@ -159,6 +182,12 @@ impl<'a> From<TrajectoryFrameView<'a>> for SdfRecordSource<'a> {
     }
 }
 
+impl<'a> From<SeriesItemView<'a>> for SdfRecordSource<'a> {
+    fn from(item: SeriesItemView<'a>) -> Self {
+        Self::view(item.as_model_view())
+    }
+}
+
 impl<'a> From<&'a SdfRecordInterpretation> for SdfRecordSource<'a> {
     fn from(record: &'a SdfRecordInterpretation) -> Self {
         Self::model(record.model())
@@ -177,8 +206,9 @@ pub(crate) fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
     Ok(String::from_utf8(output).expect("SDF writer emits UTF-8"))
 }
 
-/// Writes independent records in input order. An ensemble or trajectory
-/// writes one record per sample or frame (`sdf::write(&ensemble, options)`).
+/// Writes independent records in input order. An ensemble, trajectory, or
+/// series writes one record per sample, frame, or item
+/// (`sdf::write(&ensemble, options)`).
 pub(crate) fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     writer: &mut impl Write,
     records: impl IntoIterator<Item = R>,
@@ -199,11 +229,18 @@ fn write_record(
     check_structure_state(
         Format::Sdf,
         record.model.kind(),
-        None,
-        options.frame_metadata,
+        StatePolicies {
+            sample: None,
+            frame: options.frame_metadata,
+            item: None,
+        },
     )?;
-    let sample = matches!(record.model.kind(), StructureKind::Sample { .. });
-    let sample_fields = match record.model.kind() {
+    let reserved: &[&str] = match record.model.kind() {
+        StructureKind::Sample { .. } => &SAMPLE_FIELDS,
+        StructureKind::Item { .. } => &ITEM_FIELDS,
+        _ => &[],
+    };
+    let own_fields = match record.model.kind() {
         StructureKind::Sample {
             weight,
             state,
@@ -212,17 +249,21 @@ fn write_record(
             temperature,
             ..
         } => sample_fields(weight, state, representative, energy, temperature),
+        StructureKind::Item {
+            step, coordinate, ..
+        } => item_fields(step, coordinate),
         _ => Vec::new(),
     };
     for field in record.data_fields {
         validate_data_field(field)?;
-        // Every sample owns these names, whether or not it writes them, so
-        // a caller's field never adds a second representative or energy.
-        if sample && SAMPLE_FIELDS.contains(&field.name()) {
+        // Every sample or item owns these names, whether or not it writes
+        // them, so a caller's field never adds a second representative,
+        // energy, or place.
+        if reserved.contains(&field.name()) {
             return Err(FormatError::write(
                 Format::Sdf,
                 DiagnosticKind::Inconsistent,
-                "this field carries the ensemble sample's own metadata",
+                "this field carries the ensemble sample's or series item's own metadata",
             )
             .with_detail(FormatErrorDetail::DataField {
                 name: field.name().to_owned(),
@@ -234,10 +275,24 @@ fn write_record(
     let ctab = render_model(record.model, record.title, options.version).map_err(molfile)?;
     let sink = |error| FormatError::sink(Format::Sdf, error);
     writer.write_all(ctab.as_bytes()).map_err(sink)?;
-    for field in record.data_fields.iter().chain(&sample_fields) {
+    for field in record.data_fields.iter().chain(&own_fields) {
         writeln!(writer, ">  <{}>\n{}\n", field.name(), field.value()).map_err(sink)?;
     }
     writer.write_all(b"$$$$\n").map_err(sink)
+}
+
+/// A series item's step, or its coordinate and the coordinate's unit, as
+/// data fields, the number in the shortest decimal text that reads back to
+/// the same value.
+fn item_fields(step: Option<u64>, coordinate: Option<Quantity<f64>>) -> Vec<SdfDataField> {
+    match (step, coordinate) {
+        (Some(step), _) => vec![SdfDataField::new(SDF_STEP_FIELD, step.to_string())],
+        (None, Some(coordinate)) => vec![
+            SdfDataField::new(SDF_COORDINATE_FIELD, coordinate.value().to_string()),
+            SdfDataField::new(SDF_COORDINATE_UNIT_FIELD, coordinate.unit().to_string()),
+        ],
+        (None, None) => Vec::new(),
+    }
 }
 
 /// An ensemble sample's weight and state, its state's energy on a

@@ -35,8 +35,8 @@ use crate::properties::{
     RawPropertyTable, StructureProperties, TopologyProperties,
 };
 use crate::structure::{
-    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Forces, Model, Positions,
-    Trajectory, TrajectoryFrame, Velocities,
+    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Forces, Model, Positions, Series,
+    SeriesAxis, SeriesItem, Trajectory, TrajectoryFrame, Velocities,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
@@ -73,6 +73,7 @@ pub(crate) fn read_native(
         NativeKind::Model => NativeObject::Model(decoder.model()?),
         NativeKind::Ensemble => NativeObject::Ensemble(decoder.ensemble()?),
         NativeKind::Trajectory => NativeObject::Trajectory(decoder.trajectory()?),
+        NativeKind::Series => NativeObject::Series(decoder.series()?),
     };
     decoder.trailer()?;
     Ok(object)
@@ -1311,6 +1312,47 @@ impl<R: Read> Decoder<'_, R> {
                 .map_err(|error| self.structure_error(error))?;
         }
         Ok(trajectory)
+    }
+
+    fn series(&mut self) -> Result<Series> {
+        let topology = Arc::new(self.topology()?);
+        let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
+        let owner = self.owner()?;
+        let axis = match self.u8()? {
+            0 => SeriesAxis::Step,
+            1 => SeriesAxis::Coordinate(self.unit()?),
+            other => return Err(self.invalid(format!("unknown series axis {other}"))),
+        };
+        let count = self.count(self.options.max_items(), Resource::Records)?;
+        let mut items = Vec::with_capacity(count.min(CHUNK_BYTES));
+        let mut properties = Vec::with_capacity(count.min(CHUNK_BYTES));
+        for _ in 0..count {
+            let positions = self.positions(atoms)?;
+            let cell = self.cell()?;
+            properties.push(self.structure_properties(atoms, bonds)?);
+            let item = match axis {
+                SeriesAxis::Coordinate(unit) => {
+                    SeriesItem::at_coordinate(positions, Quantity::new(self.f64()?, unit))
+                        .map_err(|error| self.structure_error(error))?
+                }
+                SeriesAxis::Step => SeriesItem::at_step(positions, self.u64()?),
+            };
+            items.push(match cell {
+                Some(cell) => item.with_cell(cell),
+                None => item,
+            });
+        }
+        let mut series = Series::from_items(topology, axis, items)
+            .map_err(|error| self.structure_error(error))?;
+        *series.properties_mut() = owner;
+        for (index, properties) in properties.into_iter().enumerate() {
+            series
+                .get_mut(index)
+                .expect("every decoded item was added")
+                .set_properties(properties)
+                .map_err(|error| self.structure_error(error))?;
+        }
+        Ok(series)
     }
 }
 
