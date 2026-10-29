@@ -1,5 +1,5 @@
 //! Kekule's native binary serialization: exact, versioned persistence of one
-//! molecule, topology, model, ensemble, or trajectory.
+//! molecule, topology, model, ensemble, trajectory, or series.
 //!
 //! The byte layout is specified in `docs/native-format.md`; the encoder and
 //! decoder here implement that specification and nothing else.
@@ -12,7 +12,7 @@ use std::fmt;
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::molecule::Molecule;
-use crate::structure::{Ensemble, Model, Trajectory};
+use crate::structure::{Ensemble, Model, Series, Trajectory};
 use crate::topology::Topology;
 
 pub(crate) use decode::read_native;
@@ -56,6 +56,8 @@ pub enum NativeKind {
     Ensemble,
     /// A [`Trajectory`].
     Trajectory,
+    /// A [`Series`].
+    Series,
 }
 
 impl NativeKind {
@@ -66,6 +68,7 @@ impl NativeKind {
             Self::Model => 3,
             Self::Ensemble => 4,
             Self::Trajectory => 5,
+            Self::Series => 6,
         }
     }
 
@@ -76,6 +79,7 @@ impl NativeKind {
             3 => Self::Model,
             4 => Self::Ensemble,
             5 => Self::Trajectory,
+            6 => Self::Series,
             _ => return None,
         })
     }
@@ -89,6 +93,7 @@ impl fmt::Display for NativeKind {
             Self::Model => "model",
             Self::Ensemble => "ensemble",
             Self::Trajectory => "trajectory",
+            Self::Series => "series",
         })
     }
 }
@@ -96,7 +101,7 @@ impl fmt::Display for NativeKind {
 /// The object a native writer encodes, borrowed from its owner.
 ///
 /// Converts from a borrowed [`Molecule`], [`Topology`], [`Model`],
-/// [`Ensemble`], or [`Trajectory`].
+/// [`Ensemble`], [`Trajectory`], or [`Series`].
 #[derive(Debug, Clone, Copy)]
 pub struct NativeSource<'a> {
     pub(super) content: NativeContent<'a>,
@@ -109,6 +114,7 @@ pub(super) enum NativeContent<'a> {
     Model(&'a Model),
     Ensemble(&'a Ensemble),
     Trajectory(&'a Trajectory),
+    Series(&'a Series),
 }
 
 impl NativeSource<'_> {
@@ -120,6 +126,7 @@ impl NativeSource<'_> {
             NativeContent::Model(_) => NativeKind::Model,
             NativeContent::Ensemble(_) => NativeKind::Ensemble,
             NativeContent::Trajectory(_) => NativeKind::Trajectory,
+            NativeContent::Series(_) => NativeKind::Series,
         }
     }
 }
@@ -136,7 +143,7 @@ macro_rules! native_source_from {
     )*};
 }
 
-native_source_from!(Molecule, Topology, Model, Ensemble, Trajectory);
+native_source_from!(Molecule, Topology, Model, Ensemble, Trajectory, Series);
 
 /// One object decoded from native input.
 ///
@@ -155,6 +162,8 @@ pub enum NativeObject {
     Ensemble(Ensemble),
     /// A trajectory with its topology.
     Trajectory(Trajectory),
+    /// A series with its topology.
+    Series(Series),
 }
 
 macro_rules! native_projection {
@@ -184,6 +193,7 @@ impl NativeObject {
             Self::Model(_) => NativeKind::Model,
             Self::Ensemble(_) => NativeKind::Ensemble,
             Self::Trajectory(_) => NativeKind::Trajectory,
+            Self::Series(_) => NativeKind::Series,
         }
     }
 
@@ -229,6 +239,11 @@ impl NativeObject {
         /// The decoded trajectory.
         into_trajectory,
         Trajectory
+    );
+    native_projection!(
+        /// The decoded series.
+        into_series,
+        Series
     );
 }
 
@@ -356,10 +371,11 @@ impl NativeReadOptions {
         with_max_bonds
     );
     native_limit!(
-        /// Maximum ensemble samples or states or trajectory frames, and maximum entries
-        /// of any other stored list that atoms or bonds do not bound: property
-        /// columns and owner values, hierarchy chains and residues, and the
-        /// residues listed by all chains together.
+        /// Maximum ensemble samples or states, trajectory frames, or series
+        /// items, and maximum entries of any other stored list that atoms or
+        /// bonds do not bound: property columns and owner values, hierarchy
+        /// chains and residues, and the residues listed by all chains
+        /// together.
         max_items,
         with_max_items
     );

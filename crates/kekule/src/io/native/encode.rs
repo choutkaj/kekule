@@ -21,7 +21,7 @@ use crate::perception::{
 use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue, StructureProperties,
 };
-use crate::structure::{Ensemble, Model, Trajectory};
+use crate::structure::{Ensemble, Model, Series, SeriesAxis, Trajectory};
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
 
@@ -50,6 +50,7 @@ pub(crate) fn write_native_to<'a>(
         NativeContent::Model(model) => encoder.model(model)?,
         NativeContent::Ensemble(ensemble) => encoder.ensemble(ensemble)?,
         NativeContent::Trajectory(trajectory) => encoder.trajectory(trajectory)?,
+        NativeContent::Series(series) => encoder.series(series)?,
     }
     encoder.finish()
 }
@@ -694,6 +695,31 @@ impl<W: Write> Encoder<'_, W> {
                     self.u8(1)?;
                     self.u64(step)?;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn series(&mut self, series: &Series) -> Result {
+        self.topology(series.topology())?;
+        self.owner(series.properties())?;
+        match series.axis() {
+            SeriesAxis::Step => self.u8(0)?,
+            SeriesAxis::Coordinate(unit) => {
+                self.u8(1)?;
+                self.unit(unit)?;
+            }
+        }
+        self.count(series.len())?;
+        for item in series.iter() {
+            let item = item.payload();
+            self.points(item.positions().values().value())?;
+            self.cell(item.cell())?;
+            self.structure_properties(item.properties())?;
+            match (item.step(), item.coordinate()) {
+                (Some(step), _) => self.u64(step)?,
+                (None, Some(coordinate)) => self.f64(*coordinate.value())?,
+                (None, None) => unreachable!("every series item has a step or a coordinate"),
             }
         }
         Ok(())

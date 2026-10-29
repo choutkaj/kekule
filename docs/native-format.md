@@ -1,7 +1,8 @@
 # Native serialization format
 
 Kekule's native format is the exact persistence of one canonical owner:
-a `Molecule`, `Topology`, `Model`, `Ensemble`, or in-memory `Trajectory`.
+a `Molecule`, `Topology`, `Model`, `Ensemble`, in-memory `Trajectory`, or
+`Series`.
 Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
 [Identity and reconstruction](../ARCHITECTURE.md#identity-and-reconstruction).
@@ -19,7 +20,8 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   order, positions, cells, occupancies, B factors, ensemble sample weights,
   states (each sample's state and each state's representative), state energies
   and owner properties, and temperature, frame time, step, velocities, and
-  forces, and collection owner properties. Floating-point values are stored as their IEEE-754 bits, so
+  forces, series axes and item steps and coordinates, and collection owner
+  properties. Floating-point values are stored as their IEEE-754 bits, so
   coordinates come back bitwise identical (`-0.0` stays `-0.0`).
 - **Identity.** Semantic IDs round-trip exactly. A decoded topology is a new
   publication and therefore gets a fresh layout identity; selections bound to
@@ -59,7 +61,10 @@ silently ignored.
 
 Version 2 stores an ensemble as samples grouped into states, with energies on
 states and an optional temperature; version 1 stored ensemble members with
-their own weights and energies.
+their own weights and energies. Series, kind 6, joined version 2 without
+changing the layout of any other kind, so every earlier version 2 file still
+reads the same; readers that predate them reject a series as an unknown
+kind.
 
 ## Layout
 
@@ -84,7 +89,7 @@ IEEE-754 bit pattern. There is no padding or alignment.
 file      := header payload trailer
 header    := magic[8] version:u32 kind:u8 flags:u8 reserved:u16
 magic     := 0x89 'K' 'E' 'K' 0x0D 0x0A 0x1A 0x0A
-kind      := 1 molecule | 2 topology | 3 model | 4 ensemble | 5 trajectory
+kind      := 1 molecule | 2 topology | 3 model | 4 ensemble | 5 trajectory | 6 series
 flags     := bit 0: perception stored; all other bits zero
 reserved  := 0
 trailer   := end:u32 = 0x444E_454B ("KEND") crc:u32
@@ -243,11 +248,15 @@ ensemble    := topology owner temperature:opt f64
                sample_count:count sample[sample_count]
                state_count:count state[state_count]
 trajectory  := topology owner frame_count:count frame[frame_count]
+series      := topology owner axis item_count:count item[item_count]
 structure   := positions cell:opt cell occupancies b_factors structure_properties
 sample      := structure weight:f64 state:u32
 state       := representative:u32 energy:opt f64 owner
 frame       := positions cell:opt cell structure_properties
                velocities:opt vectors forces:opt vectors time:opt f64 step:opt u64
+axis        := 0 (steps) | 1 unit (a coordinate in that unit)
+item        := positions cell:opt cell structure_properties place
+place       := step:u64 (steps) | coordinate:f64 (a coordinate)
 positions   := (x:f64 y:f64 z:f64)[atom_count]
 vectors     := (x:f64 y:f64 z:f64)[atom_count]
 cell        := (x:f64 y:f64 z:f64)[3] periodic_axes:u8
@@ -268,11 +277,16 @@ its state; each state stores the index of its representative sample. The
 reader validates the partition: every state index names a stored state, and
 every representative is a sample of its own state, so no state is empty.
 
+A series stores its items in series order, each with its place on the
+axis: a step for an axis of steps, or a coordinate, in the axis unit, for a
+coordinate axis. The axis unit is stored as property units are, and every
+coordinate must be finite.
+
 ## Limits
 
 `NativeReadOptions` bounds the input bytes; the atoms and bonds of one
 molecule or topology (including the instance expansion of a topology), which
-also bound atom sites and residue site lists; the samples, states, or frames of one
+also bound atom sites and residue site lists; the samples, states, frames, or items of one
 collection, hierarchy chains and residues, property columns and owner
 values; and the byte length of one string. The defaults are exported as
 `DEFAULT_NATIVE_MAX_*` constants. Exceeding a limit is a `FormatError` of

@@ -16,6 +16,7 @@ Rustdoc beside their implementations. The links below point to those sources;
 | `Model` | One shared `Topology` and one structure of it: dense positions, optional cell, occupancies, B factors, and `StructureProperties`, addressed by dense topology index | A second chemical or hierarchy model; temporal state |
 | `Ensemble` | One shared topology, collection owner properties, an optional temperature, `EnsembleSample` payloads in a stable order (positions, optional cell, occupancies, B factors, properties, and a finite positive relative weight), their grouping into states as one `EnsemblePartition`, and one `EnsembleState` per state (an optional energy and owner properties) | An owned `Model` or topology in each sample; an energy on a sample; a stored population; temporal meaning |
 | `Trajectory` | One shared topology, collection owner properties, and time-ordered `TrajectoryFrame` payloads (positions, optional cell, properties, and optional velocities, forces, time, and step) | Implicit topology changes between frames; statistical weights; crystallographic site parameters |
+| `Series` | One shared topology, collection owner properties, a `SeriesAxis` (steps, or one coordinate in a unit), and `SeriesItem` payloads in series order (positions, optional cell, properties, and a step or a finite coordinate in the axis unit) | Time; statistical weights; crystallographic site parameters; an owned `Model` in each item |
 
 `Ensemble` and `Trajectory` are distinct scientific concepts and distinct
 types. An ensemble is a distribution of conformations on two levels. A sample
@@ -47,16 +48,32 @@ collection storage or generic collection type. Weight- or time-dependent
 behavior belongs to one type only; do not add a public abstraction that erases
 the difference.
 
+A `Series` is the third collection, an ordered sequence that is neither a
+distribution nor a path in time: the steps of a geometry optimization, the
+points of a relaxed scan, or the images of a reaction path. Its order is the
+order a computation produced, and every item lies on the series' axis, at a
+step or at a value of one coordinate whose unit the axis names (stored in
+that unit; values need not increase, as a scan swept back and forth shows).
+An item's scalar results, such as its energy or gradient norm, are owner
+properties of its structure properties, keyed and united as the host
+chooses. A series has no time and no weights, so it converts to neither a
+trajectory nor an ensemble; `Series::from_models` builds one from models of
+one layout, and `SeriesItemView::to_model` copies an item out. Like the other
+two, it owns its topology, collection properties, and items, implements its
+own operations, and shares only private per-item helpers and the `ModelView`
+kernels.
+
 Structures are flat. A structure is one set of coordinates and per-atom state
-of a topology: a `Model`, an `EnsembleSample`, or a `TrajectoryFrame`. Each
-owns exactly the fields that are meaningful for it; there is no shared payload
-type. Positions, cell, and structure properties are common to all three.
-Occupancies and B factors are crystallographic per-atom fields of a model or
-ensemble sample and never belong to a trajectory frame. Velocities,
-forces, time, and step belong only to frames, and a weight only to an
+of a topology: a `Model`, an `EnsembleSample`, a `TrajectoryFrame`, or a
+`SeriesItem`. Each owns exactly the fields that are meaningful for it; there
+is no shared payload type. Positions, cell, and structure properties are
+common to all four. Occupancies and B factors are crystallographic per-atom
+fields of a model or ensemble sample and never belong to a trajectory frame
+or series item. Velocities, forces, time, and step belong only to frames, a
+place on a series axis only to a series item, and a weight only to an
 ensemble sample; an energy belongs to an ensemble state, not to any
-structure. Coordinate kernels share code through the borrowed
-`ModelView`, not through a common owned payload.
+structure, except as a series item's own property. Coordinate kernels share
+code through the borrowed `ModelView`, not through a common owned payload.
 
 Both live in `kekule::structure`. `kekule-traj` owns file codecs, streaming
 reader and writer contracts, the reusable `FrameBuffer`, periodic
@@ -328,8 +345,8 @@ repeated entity.
 | --- | --- | --- |
 | Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
-| Structure (model, ensemble sample, trajectory frame) | `StructureProperties` | Dense atoms and bonds |
-| Ensemble or trajectory collection | `OwnerProperties` | Owner values only |
+| Structure (model, ensemble sample, trajectory frame, series item) | `StructureProperties` | Dense atoms and bonds |
+| Ensemble, trajectory, or series collection | `OwnerProperties` | Owner values only |
 | Ensemble state | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
@@ -370,8 +387,9 @@ values. Exact units, tolerances, and conversion policies belong with
 
 ## Geometry and structure ownership
 
-A model, ensemble, or trajectory owns its shared topology once. Samples and frames
-store flat payloads, not nested models; a detached payload has
+A model, ensemble, trajectory, or series owns its shared topology once.
+Samples, frames, and items store flat payloads, not nested models; a
+detached payload has
 atom rows only and acquires bond rows when its collection binds it. An
 ensemble sample's structure is shared storage, copied on write per sample,
 and its weight is its own, so copies of an ensemble that differ only in
@@ -381,8 +399,8 @@ buffer's `as_model_view`), lets coordinate algorithms and writers share
 kernels across models, samples, frames, and buffers. A view's `kind()`
 says which structure it borrows and carries that structure's own state (a
 sample's weight and state with its state's energy and the ensemble's
-temperature, a frame's time, step, velocities, and forces), so
-writers and reductions never lose it silently. Owned
+temperature, a frame's time, step, velocities, and forces, an item's step
+or coordinate), so writers and reductions never lose it silently. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
 equal layouts (`same_layout`), keeping the first model's topology, and a
@@ -631,7 +649,9 @@ the shared write report. It writes an ensemble as one frame per sample and
 treats sample state as the PDB and mmCIF ensemble writers do, through the
 same rules (`diagnostics::check_multi_model_ensemble`): an XYZ file reads
 back as one state of equally weighted samples, so anything more fails or is
-omitted with a report.
+omitted with a report. It writes a series as one frame per item, whose step
+or coordinate fails or is omitted with a report as in PDB, and whose
+properties and cell follow the frame policies.
 
 | Format scope | Interpretation and projection |
 | --- | --- |
@@ -784,10 +804,13 @@ export.
   its state's energy on the representative's record, and the ensemble's
   temperature travel as data fields, and only the explicit `sdf::ensemble`
   assembles records into an ensemble, one state per record unless the records
-  name their states. State and ensemble properties are not written. A Molfile,
-  an SDF record, and an mmCIF block cannot carry a frame's time, step,
-  velocities, or forces. A Molfile cannot carry a sample's weight or its
-  state's energy. mmCIF distinguishes independent model blocks from one
+  name their states. State and ensemble properties are not written. A series
+  item's step, or its coordinate and the coordinate's unit, travel as SDF
+  data fields; a Molfile, an mmCIF block, and a PDB entry cannot carry them,
+  and PDB writes a series as one `MODEL` per item once they are omitted. A
+  Molfile, an SDF record, and an mmCIF block cannot carry a frame's time,
+  step, velocities, or forces. A Molfile cannot carry a sample's weight or
+  its state's energy. mmCIF distinguishes independent model blocks from one
   ensemble's multi-model block, which, like a PDB entry, reads back as one
   state of equal weights without an energy or temperature, so writing unequal
   weights, several states, any energy, a temperature, or one sample as a model
@@ -891,7 +914,8 @@ native persistence and must not weaken these boundaries. See
 [reconstruction regressions](crates/kekule/tests/molecule/identity.rs).
 
 Exact persistence is the `native` format module, the one owner of Kekule's
-binary encoding. It stores each owner's authoritative state, including
+binary encoding of molecules, topologies, models, ensembles, trajectories,
+and series. It stores each owner's authoritative state, including
 explicit or inferred class assignments and adjacency order, and reconstructs
 it only through those owners' validating paths: molecule publication,
 topology publication with stored classes restored instead of inferred, and

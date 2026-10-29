@@ -15,6 +15,7 @@ mod properties;
 mod scientific_selection;
 mod select_language;
 mod selection;
+mod series;
 #[path = "../support/mod.rs"]
 mod support;
 mod topology;

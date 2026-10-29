@@ -13,14 +13,15 @@ use kekule::native::{
 };
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Forces, Model, Positions,
-    Trajectory, TrajectoryFrame, Velocities,
+    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Forces, Model, Positions, Series,
+    SeriesAxis, SeriesItem, Trajectory, TrajectoryFrame, Velocities,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology, TopologyBuilder,
 };
 use kekule::units::{
-    Quantity, ANGSTROM, DALTON, ELEMENTARY_CHARGE, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
+    Quantity, ANGSTROM, DALTON, DEGREE, ELEMENTARY_CHARGE, KILOJOULE_PER_MOLE, NANOMETER,
+    PICOSECOND,
 };
 use kekule::{mmcif, smiles};
 
@@ -43,6 +44,7 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
         NativeObject::Model(value) => native::write(value, NativeWriteOptions::default()),
         NativeObject::Ensemble(value) => native::write(value, NativeWriteOptions::default()),
         NativeObject::Trajectory(value) => native::write(value, NativeWriteOptions::default()),
+        NativeObject::Series(value) => native::write(value, NativeWriteOptions::default()),
         _ => unreachable!("every kind is listed"),
     }
     .unwrap();
@@ -537,6 +539,104 @@ fn trajectories_keep_time_step_velocities_and_forces() {
     assert_same_topology(decoded.topology(), trajectory.topology());
     for (left, right) in decoded.iter().zip(trajectory.iter()) {
         assert_eq!(left.payload(), right.payload());
+    }
+}
+
+fn assert_same_series(decoded: &Series, source: &Series) {
+    assert_same_topology(decoded.topology(), source.topology());
+    assert_eq!(decoded.properties(), source.properties());
+    assert_eq!(decoded.axis(), source.axis());
+    assert_eq!(decoded.len(), source.len());
+    for (left, right) in decoded.iter().zip(source.iter()) {
+        assert_eq!(left.payload(), right.payload());
+        assert_eq!(
+            bits(left.positions().values().value()),
+            bits(right.positions().values().value())
+        );
+        assert_eq!(
+            left.coordinate()
+                .map(|coordinate| coordinate.value().to_bits()),
+            right
+                .coordinate()
+                .map(|coordinate| coordinate.value().to_bits())
+        );
+    }
+}
+
+#[test]
+fn series_keep_their_axis_places_cells_and_values() {
+    // An optimization history: steps, energies, a cell, and atom values.
+    let mut history = Series::new(water_topology(), SeriesAxis::Step);
+    for (index, step) in [0, 7, u64::MAX].into_iter().enumerate() {
+        let mut item = SeriesItem::at_step(positions(index as f64), step);
+        if index == 1 {
+            item = item.with_cell(cell());
+        }
+        item.properties_mut()
+            .owner_mut()
+            .insert(
+                key("energy"),
+                PropertyValue::real(-1.5 - index as f64, KILOJOULE_PER_MOLE).unwrap(),
+            )
+            .unwrap();
+        history.push(item).unwrap();
+    }
+    history
+        .properties_mut()
+        .insert(key("converged"), PropertyValue::Bool(true))
+        .unwrap();
+    history
+        .get_mut(2)
+        .unwrap()
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
+            key("flag"),
+            kekule::topology::TopologyAtomIndex::new(1),
+            Some(PropertyValue::Bool(true)),
+        )
+        .unwrap();
+    let decoded = round_trip(&history).into_series().unwrap();
+    assert_same_series(&decoded, &history);
+    assert_eq!(decoded.get(2).unwrap().step(), Some(u64::MAX));
+
+    // A relaxed scan in degrees, swept back, with a negative zero.
+    let mut scan = Series::new(water_topology(), SeriesAxis::Coordinate(DEGREE));
+    for (index, angle) in [-0.0, 1e-300, 180.0, -90.5].into_iter().enumerate() {
+        let item = SeriesItem::at_coordinate(positions(index as f64), Quantity::new(angle, DEGREE))
+            .unwrap();
+        scan.push(item).unwrap();
+    }
+    let decoded = round_trip(&scan).into_series().unwrap();
+    assert_same_series(&decoded, &scan);
+    let first = decoded.get(0).unwrap().coordinate().unwrap();
+    assert_eq!(first.value().to_bits(), (-0.0_f64).to_bits());
+    assert_eq!(first.unit(), DEGREE);
+
+    // An empty series keeps its axis.
+    let empty = Series::new(water_topology(), SeriesAxis::Coordinate(ANGSTROM));
+    let decoded = round_trip(&empty).into_series().unwrap();
+    assert!(decoded.is_empty());
+    assert_eq!(decoded.axis(), SeriesAxis::Coordinate(ANGSTROM));
+
+    // A series is no other kind; its item count is bounded; every
+    // truncation fails cleanly.
+    let bytes = native::write(&scan, NativeWriteOptions::default()).unwrap();
+    let decoded = native::read(bytes.as_slice(), NativeReadOptions::default()).unwrap();
+    assert_eq!(decoded.kind(), NativeKind::Series);
+    let error = decoded.into_trajectory().unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::NativeKind {
+            expected: NativeKind::Trajectory,
+            found: NativeKind::Series,
+        })
+    );
+    let limited = NativeReadOptions::default().with_max_items(3).unwrap();
+    let error = native::read(bytes.as_slice(), limited).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    for len in 0..bytes.len() {
+        assert!(native::read(&bytes[..len], NativeReadOptions::default()).is_err());
     }
 }
 

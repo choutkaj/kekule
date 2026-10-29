@@ -19,6 +19,10 @@
 //!   positions and optional cell, velocities, forces, time, and step. File
 //!   codecs and streaming analysis for trajectories live in the `kekule-traj`
 //!   companion crate.
+//! - [`structure::Series`] stores [`structure::SeriesItem`]s of one shared
+//!   topology in an order that is neither temporal nor weighted, such as the
+//!   steps of a geometry optimization or the points of a relaxed scan, each
+//!   at a step or a coordinate value of its [`structure::SeriesAxis`].
 //!
 //! A disconnected salt, solvent box, or protein-ligand complex is therefore a
 //! [`topology::Topology`] containing several connected molecules, not one
@@ -805,8 +809,10 @@ pub mod sdf {
     pub use crate::io::{
         SdfDataField, SdfDocument, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
         SdfRecordInterpretationReport, SdfRecordSource, SdfRecords, SdfWriteOptions,
-        SDF_ENERGY_FIELD as ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD as REPRESENTATIVE_FIELD,
-        SDF_STATE_FIELD as STATE_FIELD, SDF_TEMPERATURE_FIELD as TEMPERATURE_FIELD,
+        SDF_COORDINATE_FIELD as COORDINATE_FIELD,
+        SDF_COORDINATE_UNIT_FIELD as COORDINATE_UNIT_FIELD, SDF_ENERGY_FIELD as ENERGY_FIELD,
+        SDF_REPRESENTATIVE_FIELD as REPRESENTATIVE_FIELD, SDF_STATE_FIELD as STATE_FIELD,
+        SDF_STEP_FIELD as STEP_FIELD, SDF_TEMPERATURE_FIELD as TEMPERATURE_FIELD,
         SDF_WEIGHT_FIELD as WEIGHT_FIELD,
     };
 
@@ -1399,8 +1405,9 @@ pub mod xyz {
 /// Scientific formats exchange chemistry with other tools; they are not exact
 /// persistence. The native format stores one [`Molecule`](crate::molecule::Molecule),
 /// [`Topology`](crate::topology::Topology), [`Model`](crate::structure::Model),
-/// [`Ensemble`](crate::structure::Ensemble), or in-memory
-/// [`Trajectory`](crate::structure::Trajectory) losslessly: represented
+/// [`Ensemble`](crate::structure::Ensemble), in-memory
+/// [`Trajectory`](crate::structure::Trajectory), or
+/// [`Series`](crate::structure::Series) losslessly: represented
 /// chemistry, definitions and instances, semantic IDs, dense order,
 /// hierarchy, classifications with their explicit or inferred assignment,
 /// properties at every scope with units, coordinates as exact bits, and every

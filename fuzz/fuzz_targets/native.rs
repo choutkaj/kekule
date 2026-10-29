@@ -10,6 +10,7 @@ fn encode(object: &NativeObject) -> Vec<u8> {
         NativeObject::Model(value) => native::write(value, options),
         NativeObject::Ensemble(value) => native::write(value, options),
         NativeObject::Trajectory(value) => native::write(value, options),
+        NativeObject::Series(value) => native::write(value, options),
         _ => return Vec::new(),
     }
     .expect("a decoded object encodes")

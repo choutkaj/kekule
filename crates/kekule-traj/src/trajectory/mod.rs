@@ -189,7 +189,7 @@ impl fmt::Display for TrajectoryIoErrorKind {
     }
 }
 
-/// Frame or ensemble state a trajectory format cannot store.
+/// Frame, ensemble, or series state a trajectory format cannot store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TrajectoryField {
@@ -221,6 +221,10 @@ pub enum TrajectoryField {
     Temperature,
     /// Properties of an ensemble state.
     StateProperties,
+    /// A series item's step on its series' axis.
+    ItemStep,
+    /// A series item's coordinate on its series' axis.
+    ItemCoordinate,
 }
 
 impl fmt::Display for TrajectoryField {
@@ -240,6 +244,8 @@ impl fmt::Display for TrajectoryField {
             Self::State => "ensemble state",
             Self::Temperature => "ensemble temperature",
             Self::StateProperties => "ensemble state properties",
+            Self::ItemStep => "series item step",
+            Self::ItemCoordinate => "series item coordinate",
         })
     }
 }

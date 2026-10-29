@@ -107,6 +107,8 @@ fn structure_field(field: TrajectoryField) -> StructureField {
         TrajectoryField::AtomProperties => StructureField::AtomProperties,
         TrajectoryField::BondProperties => StructureField::BondProperties,
         TrajectoryField::Properties => StructureField::Properties,
+        TrajectoryField::ItemStep => StructureField::ItemStep,
+        TrajectoryField::ItemCoordinate => StructureField::ItemCoordinate,
         other => unreachable!("{other} is not frame state a policy omits"),
     }
 }

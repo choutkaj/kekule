@@ -1,7 +1,7 @@
-//! PDB writing of models, ensembles, and collection items.
+//! PDB writing of models, ensembles, series, and collection items.
 //!
 //! A written entry holds an optional `CRYST1` record, one `MODEL` per
-//! ensemble sample (none for a single structure), `ATOM` and `HETATM`
+//! ensemble sample or series item (none for a single structure), `ATOM` and `HETATM`
 //! records in dense atom order with a `TER` record after each chain's
 //! polymer, `CONECT` records for the bonds a reader cannot derive from the
 //! Chemical Component Dictionary, and `END`.
@@ -14,12 +14,15 @@ use crate::geometry::{PeriodicCell, Point3};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::is_metal;
-use crate::io::write_error::{check_structure_state, record_multi_model_ensemble, Omissions};
+use crate::io::write_error::{
+    check_structure_state, record_multi_model_ensemble, record_multi_model_series, Omissions,
+    StatePolicies,
+};
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::molecule::{BondOrder, ImplicitHydrogens};
-use crate::structure::{AsModelView, Ensemble, Model, ModelView};
+use crate::structure::{AsModelView, Ensemble, Model, ModelView, Series};
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId,
     Topology, TopologyAtomIndex,
@@ -42,6 +45,7 @@ const MAX_RESIDUE_NUMBER: i64 = 2_436_111;
 pub struct PdbWriteOptions {
     ensemble_metadata: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
+    series_metadata: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
     chemistry: UnrepresentablePolicy,
@@ -78,6 +82,32 @@ impl PdbWriteOptions {
     pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
         self.frame_metadata = frame_metadata;
         self
+    }
+
+    /// Series item steps and coordinates, which PDB cannot carry: by default
+    /// a series, whose every item has one, fails to write, and so does a
+    /// single series item. [`UnrepresentablePolicy::Omit`] writes the
+    /// models without them and reports a
+    /// [`WriteOmission::StructureState`] for every item.
+    pub const fn series_metadata(&self) -> UnrepresentablePolicy {
+        self.series_metadata
+    }
+
+    /// Sets [`Self::series_metadata`].
+    #[must_use]
+    pub const fn with_series_metadata(mut self, series_metadata: UnrepresentablePolicy) -> Self {
+        self.series_metadata = series_metadata;
+        self
+    }
+
+    /// The policies for the sample, frame, and series item state of one
+    /// structure.
+    const fn state_policies(&self) -> StatePolicies {
+        StatePolicies {
+            sample: Some(self.ensemble_metadata),
+            frame: self.frame_metadata,
+            item: Some(self.series_metadata),
+        }
     }
 
     /// A periodic cell `CRYST1` cannot carry as the model's cell: one not
@@ -336,15 +366,25 @@ pub enum PdbWriteIssue {
     },
     /// The ensemble has no samples.
     EmptyEnsemble,
+    /// The 1-based series item `item` has a step or coordinate PDB cannot
+    /// carry, with [`PdbWriteOptions::series_metadata`] set to fail.
+    UnrepresentableSeriesItem {
+        /// The 1-based item number.
+        item: usize,
+        /// [`StructureField::ItemStep`] or [`StructureField::ItemCoordinate`].
+        field: StructureField,
+    },
+    /// The series has no items.
+    EmptySeries,
 }
 
 impl PdbWriteIssue {
     /// The diagnostic kind of a write error with this detail:
-    /// [`DiagnosticKind::Inconsistent`] for an empty ensemble and
+    /// [`DiagnosticKind::Inconsistent`] for an empty ensemble or series and
     /// [`DiagnosticKind::Unsupported`] otherwise.
     pub const fn kind(&self) -> DiagnosticKind {
         match self {
-            Self::EmptyEnsemble => DiagnosticKind::Inconsistent,
+            Self::EmptyEnsemble | Self::EmptySeries => DiagnosticKind::Inconsistent,
             _ => DiagnosticKind::Unsupported,
         }
     }
@@ -422,6 +462,10 @@ impl fmt::Display for PdbWriteIssue {
                 atoms[0], atoms[1]
             ),
             Self::EmptyEnsemble => f.write_str("cannot write an empty ensemble as PDB"),
+            Self::UnrepresentableSeriesItem { item, field } => {
+                write!(f, "PDB cannot represent the {field} of series item {item}")
+            }
+            Self::EmptySeries => f.write_str("cannot write an empty series as PDB"),
         }
     }
 }
@@ -431,11 +475,12 @@ fn fail(issue: PdbWriteIssue) -> FormatError {
         .with_detail(FormatErrorDetail::PdbWrite(issue))
 }
 
-/// One PDB entry to write: a structure or an ensemble.
+/// One PDB entry to write: a structure, an ensemble, or a series.
 ///
-/// Convert from `&Model` or `&Ensemble`; [`Self::structure`] accepts any
-/// borrowed model view, such as an ensemble sample or a trajectory frame,
-/// whose own state fails to write unless the write options omit it.
+/// Convert from `&Model`, `&Ensemble`, or `&Series`; [`Self::structure`]
+/// accepts any borrowed model view, such as an ensemble sample, a trajectory
+/// frame, or a series item, whose own state fails to write unless the write
+/// options omit it.
 #[derive(Debug, Clone, Copy)]
 pub struct PdbSource<'a> {
     content: Content<'a>,
@@ -445,6 +490,7 @@ pub struct PdbSource<'a> {
 enum Content<'a> {
     Structure(ModelView<'a>),
     Ensemble(&'a Ensemble),
+    Series(&'a Series),
 }
 
 impl<'a> PdbSource<'a> {
@@ -461,6 +507,15 @@ impl<'a> PdbSource<'a> {
             content: Content::Ensemble(ensemble),
         }
     }
+
+    /// A series, one `MODEL` per item in series order. The items' steps or
+    /// coordinates follow [`PdbWriteOptions::series_metadata`]; series and
+    /// item properties are not written, as no structure's are.
+    pub fn series(series: &'a Series) -> Self {
+        Self {
+            content: Content::Series(series),
+        }
+    }
 }
 
 impl<'a> From<&'a Model> for PdbSource<'a> {
@@ -472,6 +527,12 @@ impl<'a> From<&'a Model> for PdbSource<'a> {
 impl<'a> From<&'a Ensemble> for PdbSource<'a> {
     fn from(ensemble: &'a Ensemble) -> Self {
         Self::ensemble(ensemble)
+    }
+}
+
+impl<'a> From<&'a Series> for PdbSource<'a> {
+    fn from(series: &'a Series) -> Self {
+        Self::series(series)
     }
 }
 
@@ -497,17 +558,8 @@ pub(crate) fn write_pdb_to<'a>(
     let mut omissions = Omissions::default();
     let (views, models) = match source.into().content {
         Content::Structure(view) => {
-            check_structure_state(
-                Format::Pdb,
-                view.kind(),
-                Some(options.ensemble_metadata),
-                options.frame_metadata,
-            )?;
-            omissions.record_structure_state(
-                view.kind(),
-                Some(options.ensemble_metadata),
-                options.frame_metadata,
-            );
+            check_structure_state(Format::Pdb, view.kind(), options.state_policies())?;
+            omissions.record_structure_state(view.kind(), options.state_policies());
             (vec![view], false)
         }
         Content::Ensemble(ensemble) => {
@@ -522,6 +574,16 @@ pub(crate) fn write_pdb_to<'a>(
                 .iter()
                 .map(|sample| sample.as_model_view())
                 .collect();
+            (views, true)
+        }
+        Content::Series(series) => {
+            if series.is_empty() {
+                return Err(fail(PdbWriteIssue::EmptySeries));
+            }
+            record_multi_model_series(series, options.series_metadata, &mut omissions).map_err(
+                |(item, field)| fail(PdbWriteIssue::UnrepresentableSeriesItem { item, field }),
+            )?;
+            let views = series.iter().map(|item| item.as_model_view()).collect();
             (views, true)
         }
     };

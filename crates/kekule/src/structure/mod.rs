@@ -20,11 +20,14 @@
 //!   velocities and forces. File codecs and streaming live in `kekule-traj`.
 //!   [`Trajectory::to_ensemble`] samples chosen frames into an ensemble of
 //!   one state ([`TrajectorySampling`]); [`TrajectorySampler`] does so for
-//!   frames that arrive one at a time.
+//!   frames that arrive one at a time. [`Series`] is an ordered sequence of
+//!   [`SeriesItem`]s that is neither temporal nor weighted, such as the
+//!   steps of a geometry optimization or the points of a relaxed scan, each
+//!   at a step or a coordinate value of its [`SeriesAxis`].
 //! - Borrowed access: [`ModelView`] is the common input of coordinate-dependent
-//!   kernels. Models, ensemble samples ([`EnsembleSampleView`]) and trajectory
-//!   frames ([`TrajectoryFrameView`]) all borrow as one without copying
-//!   ([`AsModelView`]); [`ModelAtomView`] pairs one topology atom with its
+//!   kernels. Models, ensemble samples ([`EnsembleSampleView`]), trajectory
+//!   frames ([`TrajectoryFrameView`]), and series items ([`SeriesItemView`])
+//!   all borrow as one without copying ([`AsModelView`]); [`ModelAtomView`] pairs one topology atom with its
 //!   structure state. [`ModelView::kind`] says which structure a view borrows
 //!   ([`StructureKind`]), so sample and frame state is never silently dropped.
 //! - [`measure`]: checked distances, angles, dihedrals, bond dihedrals and
@@ -41,7 +44,7 @@
 //! indexes), translate IDs to dense indexes, and check every array's length.
 //! Each owner has its own error type ([`ModelError`], [`ModelBuildError`],
 //! [`ModelEditError`], [`EnsembleError`], [`TrajectoryError`],
-//! [`GeometryEditError`]); [`StructureError`] and [`DenseArrayError`] report
+//! [`SeriesError`], [`GeometryEditError`]); [`StructureError`] and [`DenseArrayError`] report
 //! invalid structure state shared by all of them.
 //!
 //! ```
@@ -118,6 +121,7 @@ pub mod placement;
 mod positions;
 mod sampling;
 mod scalars;
+mod series;
 mod state;
 mod trajectory;
 
@@ -138,6 +142,9 @@ pub use model_editor::{
 pub use partition::{EnsemblePartition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
 pub use sampling::{TrajectorySampler, TrajectorySampling};
+pub use series::{
+    Series, SeriesAxis, SeriesError, SeriesItem, SeriesItemMut, SeriesItemView, SeriesIter,
+};
 pub use state::StructureError;
 pub use trajectory::{
     MissingTimePolicy, Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut,
