@@ -164,6 +164,14 @@ pub enum WriteOmission {
         /// The structures written without their B factors.
         structures: usize,
     },
+    /// Chain identifiers the format's chain field cannot hold, of this many
+    /// chains, written in another field that readers taking chains from the
+    /// chain field alone do not see: PDB segment identifiers
+    /// ([`crate::pdb::PdbChainIdPolicy::SegmentId`]).
+    ChainIds {
+        /// The chains written so.
+        chains: usize,
+    },
     /// Ensemble sample, trajectory frame, or series item state the format
     /// cannot carry.
     StructureState {
@@ -213,6 +221,7 @@ impl Omissions {
             O::Stereo { molecules } => molecules,
             O::Bonds { bonds } => bonds,
             O::DictionaryBonds { residues } => residues,
+            O::ChainIds { chains } => chains,
             O::Cell { structures }
             | O::Occupancies { structures }
             | O::BFactors { structures }
@@ -240,6 +249,7 @@ impl Omissions {
             O::Stereo { molecules } => *molecules += added,
             O::Bonds { bonds } => *bonds += added,
             O::DictionaryBonds { residues } => *residues += added,
+            O::ChainIds { chains } => *chains += added,
             O::Cell { structures }
             | O::Occupancies { structures }
             | O::BFactors { structures }
