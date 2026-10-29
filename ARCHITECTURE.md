@@ -855,9 +855,16 @@ export.
   lists, so a covered residue whose bonds differ from every variant of its
   template is unrepresentable, as are bonds `CONECT` cannot state.
   Identifiers that do not fit their columns, and residues whose atoms are
-  not consecutive in dense order, always fail. Hybrid-36 extends serial and
-  residue numbers. A cell is written as `CRYST1` under the rule its reader
-  applies.
+  not consecutive in dense order, fail, except a chain identifier of up to
+  four characters, such as a chain solvation adds, which an explicit policy
+  writes in the segment identifier columns with a blank chain column, as
+  CHARMM and NAMD name segments; the PDB reader takes such a segment for the
+  chain, so the identifier survives. Hybrid-36 extends serial and residue
+  numbers. A cell is written as `CRYST1` under the rule its reader applies.
+  Solvation names its waters and ions as the Chemical Component Dictionary
+  does, which PDB and mmCIF readers check, and leaves their (zero)
+  implicit-hydrogen counts to valence inference, as those readers do, so a
+  solvated system writes to both formats and reads back as written.
 
 Exact capability and numerical policies live with
 [SMILES writing](crates/kekule/src/io/smiles/write.rs),

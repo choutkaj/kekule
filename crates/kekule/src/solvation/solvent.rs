@@ -47,6 +47,18 @@ impl PositiveIon {
             Self::Cesium => "Cs",
         }
     }
+
+    /// The ion's Chemical Component Dictionary identifier, which is also
+    /// the name of its one atom.
+    pub(crate) fn component(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Lithium => ("LI", "LI"),
+            Self::Sodium => ("NA", "NA"),
+            Self::Potassium => ("K", "K"),
+            Self::Rubidium => ("RB", "RB"),
+            Self::Cesium => ("CS", "CS"),
+        }
+    }
 }
 /// Monovalent anions supported by the solvent builder.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -69,6 +81,17 @@ impl NegativeIon {
             Self::Chloride => "Cl",
             Self::Bromide => "Br",
             Self::Iodide => "I",
+        }
+    }
+
+    /// The ion's Chemical Component Dictionary identifier and the name of
+    /// its one atom.
+    pub(crate) fn component(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Fluoride => ("F", "F"),
+            Self::Chloride => ("CL", "CL"),
+            Self::Bromide => ("BR", "BR"),
+            Self::Iodide => ("IOD", "I"),
         }
     }
 }
