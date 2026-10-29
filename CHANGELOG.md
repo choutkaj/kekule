@@ -11,6 +11,16 @@ are marked **Breaking:**.
 
 ### Added
 
+- PDB export of chain identifiers longer than PDB's chain column (SeekDelta
+  K61), such as the `SOL1` and `ION1` chains solvation adds.
+  `PdbWriteOptions::with_chain_ids(PdbChainIdPolicy::SegmentId)` writes an
+  identifier of up to four printable characters in the segment identifier
+  columns 73-76 and leaves the chain column blank, as CHARMM and NAMD name
+  segments; kekule's PDB reader, like CHARMM and VMD, reads such a segment
+  back as the chain, and the write report counts the chains as the new
+  `WriteOmission::ChainIds`. Each such chain's polymer still ends in its own
+  `TER` record. By default these identifiers still fail, and
+  `PdbWriteIssue::ChainIdTooLong` names the policy.
 - Ordered series of structures (SeekDelta K7), for optimization histories,
   relaxed scans, and reaction paths. `kekule::structure::Series` holds
   `SeriesItem`s of one shared topology in the order a computation produced
@@ -689,6 +699,15 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** a solvated system writes to PDB and mmCIF and reads back as
+  written (SeekDelta K61). Solvation's waters and ions leave their
+  implicit-hydrogen counts, still zero, to valence inference, with
+  perception installed, as PDB and mmCIF readers give them, rather than
+  fixing them, which those writers refuse unless told to omit them. An ion's
+  residue and atom are named by its Chemical Component Dictionary entry
+  (`NA`, `CL`, `K`, `LI`, `RB`, `CS`, `F`, `BR`, and `IOD` with atom `I`),
+  which the readers check, rather than by its element symbol (`Na`, and
+  residue `I` for iodide).
 - `StructureField::AtomProperties`, `BondProperties`, and `Properties`
   display as per-atom, per-bond, and structure properties rather than a
   trajectory frame's, since series items report them too.
