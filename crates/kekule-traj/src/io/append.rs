@@ -286,7 +286,7 @@ pub fn append_trajectory(
         .with_format_hint(TrajectoryFormatHint::Explicit(format))
         .with_xtc_options(xtc)
         .with_growing(true);
-    if let Some(cancellation) = cancellation {
+    if let Some(cancellation) = cancellation.clone() {
         scan = scan.with_index_cancellation(cancellation);
     }
     scan.index_progress = progress;
@@ -324,6 +324,20 @@ pub fn append_trajectory(
                 "the file changed before it was cut",
             ));
         }
+    }
+    // A file without anything complete is started again before the scan
+    // polls the cancellation, which is therefore polled once more here,
+    // before the file changes.
+    if let Some(cancellation) = &cancellation {
+        cancellation.check().map_err(|cancelled| {
+            TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::Cancelled,
+                TrajectoryIoOperation::Open,
+                Some(format),
+            )
+            .with_source_label(&label)
+            .with_source(cancelled)
+        })?;
     }
     let length = file.metadata().map_err(io)?.len();
     file.set_len(kept.end).map_err(io)?;

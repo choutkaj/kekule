@@ -343,7 +343,8 @@ fn the_scan_of_the_file_to_continue_can_be_cancelled_and_reports_progress() {
     let directory = Directory::new();
     let path = directory.file(format);
     let straight = straight_through(format, &path, 4);
-    // A cancelled scan returns before the file changes.
+    // A cancelled scan returns before the file changes, as it does for a
+    // file without a complete frame or DCD header to keep.
     let cancel = Arc::new(AtomicBool::new(true));
     let cancelled = TrajectoryAppendOptions::new(options(format))
         .with_cancellation(Cancellation::from_flag(Arc::clone(&cancel)));
@@ -354,6 +355,20 @@ fn the_scan_of_the_file_to_continue_can_be_cancelled_and_reports_progress() {
         TrajectoryIoErrorKind::Cancelled,
         "cancelled",
     );
+    for unfinished in [TrajectoryFormat::Dcd, TrajectoryFormat::Xtc] {
+        let other = directory.file(unfinished);
+        let bytes = straight_through(unfinished, &other, 1);
+        fs::write(&other, &bytes[..40]).unwrap();
+        let options = TrajectoryAppendOptions::new(options(unfinished))
+            .with_cancellation(Cancellation::from_flag(Arc::clone(&cancel)));
+        assert_refused(
+            &other,
+            KeepFrames::First(0),
+            options,
+            TrajectoryIoErrorKind::Cancelled,
+            &format!("cancelled unfinished {unfinished}"),
+        );
+    }
     // Progress reaches every frame of the file, kept or not.
     cancel.store(false, Ordering::Relaxed);
     let frames = Arc::new(AtomicUsize::new(0));
