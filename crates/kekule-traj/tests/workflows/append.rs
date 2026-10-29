@@ -10,9 +10,10 @@ use std::sync::{Arc, OnceLock};
 
 use kekule::diagnostics::{Cancellation, UnrepresentablePolicy};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
+use kekule::units::{Quantity, DIMENSIONLESS, NANOMETER, PER_NANOMETER, PICOSECOND};
 use kekule_traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule_traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions};
 use kekule_traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcWriteOptions};
@@ -479,6 +480,36 @@ fn appending_with_settings_other_than_the_file_records_is_refused() {
         .with_precision(TrrScalarPrecision::Float64);
     let other = options(TrajectoryFormat::Trr).with_trr_options(double);
     assert_refused(&path, keep, other, mismatch, "TRR precision");
+    // Lambdas the writer would not have written.
+    let lambdas = TrajectoryWriteOptions::new(TrajectoryFormat::Trr);
+    let lambda = |index: u64| {
+        let mut frame = frame(index);
+        frame
+            .properties_mut()
+            .owner_mut()
+            .insert(
+                PropertyKey::new("gromacs.trr.lambda").unwrap(),
+                PropertyValue::real(0.25, DIMENSIONLESS).unwrap(),
+            )
+            .unwrap();
+        frame
+    };
+    let file = File::create(&path).unwrap();
+    let mut writer =
+        create_trajectory_stream_writer(BufWriter::new(file), topology(), lambdas.clone(), "run")
+            .unwrap();
+    write_frames(&mut writer, (0..3).map(lambda));
+    drop(writer.finish().unwrap());
+    assert_refused(
+        &path,
+        keep,
+        options(TrajectoryFormat::Trr),
+        mismatch,
+        "TRR lambda",
+    );
+    let (writer, report) = append_trajectory(&path, topology(), keep, lambdas).unwrap();
+    assert_eq!(report.dropped_frames(), 1);
+    drop(writer);
 
     let path = directory.file(TrajectoryFormat::Dcd);
     straight_through(TrajectoryFormat::Dcd, &path, 3);

@@ -16,6 +16,7 @@ use crate::{
 
 use super::file_writer::{resolve_format, resumed_stream_writer};
 use super::frame_index::IndexProgressCallback;
+use super::trr::TrrReadOptions;
 use super::xtc::XtcReadOptions;
 use super::{
     codec_context, index_mismatch, io_context, open_indexed_trajectory, TrajectoryFileFingerprint,
@@ -174,7 +175,9 @@ struct Kept {
 /// header, is started again, and corrupt data anywhere is an error. XTC
 /// frames are read under the cell policy of the write options, so the zero
 /// boxes of frames without a cell continue under
-/// [`super::xtc::XtcCellPolicy::ZeroMatrixAsAbsent`] alone. Where the file
+/// [`super::xtc::XtcCellPolicy::ZeroMatrixAsAbsent`] alone, and TRR frames
+/// under their lambda policy, so nonzero lambdas do not continue under
+/// [`super::trr::TrrLambdaPolicy::RequireZero`]. Where the file
 /// records its writer's settings they must be those of the write options: the
 /// DCD header (endianness, step sequence, `DELTA`, unit-cell flag, title),
 /// and the magic and precision of the first XTC frame or the scalar width of
@@ -279,12 +282,15 @@ pub fn append_trajectory(
         ));
     }
     // The scan reads frames as the writer writes them: an XTC zero box is no
-    // cell exactly when the writer writes one for a frame without a cell.
-    // The other readers accept every frame their writers write.
+    // cell exactly when the writer writes one for a frame without a cell,
+    // and a TRR lambda must be zero when the writer writes zero. The other
+    // readers accept every frame their writers write.
     let xtc = XtcReadOptions::default().with_cell_policy(options.xtc_options().cell_policy());
+    let trr = TrrReadOptions::default().with_lambda_policy(options.trr_options().lambda_policy());
     let mut scan = TrajectoryOpenOptions::default()
         .with_format_hint(TrajectoryFormatHint::Explicit(format))
         .with_xtc_options(xtc)
+        .with_trr_options(trr)
         .with_growing(true);
     if let Some(cancellation) = cancellation.clone() {
         scan = scan.with_index_cancellation(cancellation);
