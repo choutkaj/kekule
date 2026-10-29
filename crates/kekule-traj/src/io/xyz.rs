@@ -1268,6 +1268,13 @@ impl<W: Write> XyzWriter<W> {
         &self.writer
     }
 
+    /// Takes the stream as holding `frame_count` frames already, which the
+    /// next frame follows, as when appending to a file.
+    pub(crate) const fn resumed(mut self, frame_count: usize) -> Self {
+        self.frame_count = frame_count;
+        self
+    }
+
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
         require_no_partial_frame(
             self.partial,

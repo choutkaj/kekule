@@ -11,6 +11,24 @@ are marked **Breaking:**.
 
 ### Added
 
+- Continuing a trajectory file after a restart (SeekDelta K60), as a
+  simulation restarted from a checkpoint does.
+  `kekule_traj::io::append_trajectory` verifies and indexes the frames a
+  file holds as a reader of a growing file does, keeps those `KeepFrames`
+  selects (the first `n`, or the frames before the first whose step exceeds
+  the checkpoint's), cuts the file after them, and returns the
+  `TrajectoryStreamWriter` that appends after them, with a
+  `TrajectoryAppendReport` of the frames kept and of the frames and bytes
+  removed; `TrajectoryAppendOptions` add a cancellation and a progress
+  callback to the scan of the file, and plain write options convert. The
+  writer settings the file records (the DCD header, the XTC
+  magic and precision, the TRR scalar width) must be those of the write
+  options, so that the continued file is, byte for byte, the one an
+  uninterrupted run writes. A process that dies at any point leaves a file
+  that a later call continues, and a reader following the file sees the cut
+  of frames it indexed as `IndexMismatch`, opens the file again, and picks
+  up the appended frames. XTC, TRR, DCD, and XYZ (by frame count, as XYZ
+  frames record no step).
 - PDB export of chain identifiers longer than PDB's chain column (SeekDelta
   K61), such as the `SOL1` and `ION1` chains solvation adds.
   `PdbWriteOptions::with_chain_ids(PdbChainIdPolicy::SegmentId)` writes an
@@ -1009,6 +1027,13 @@ are marked **Breaking:**.
   `CONECT`. Coordination is a `Dative` bond, so heme Fe–N and iron–sulfur Fe–S
   bonds are now dative from mmCIF, as they already were from PDB. A stated
   flag still decides.
+
+### Fixed
+
+- A DCD unit-cell or coordinate record whose marker gives another size than
+  the frame layout fixes is corrupt. Before, a reader of a growing file took
+  one claiming more bytes than the file held for a frame still being
+  written, and waited for it.
 
 ## [0.4.0] - 2026-10-17
 

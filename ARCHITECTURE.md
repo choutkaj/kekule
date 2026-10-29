@@ -477,7 +477,12 @@ fingerprint always describe the same bytes. A reader of a growing file
 takes a final frame its writer has not finished as pending rather than as
 corruption, reads it again at every refresh, and still rejects corrupt
 data; sequential reads through an indexed reader end with its indexed
-frames. Streaming buffers bind to one topology layout and publish complete frames
+frames. A run restarted from a checkpoint continues its file through
+`append_trajectory`, which keeps the frames the checkpoint covers, cuts the
+file after them, and appends under the writer settings the file records, so
+the continued file equals one written straight through; a reader following
+the file sees the cut as an index mismatch and opens the file again.
+Streaming buffers bind to one topology layout and publish complete frames
 transactionally. A buffer hands its frame out as a one-frame trajectory, and
 takes a frame back, by moving it; the frame stays bound and validated. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;

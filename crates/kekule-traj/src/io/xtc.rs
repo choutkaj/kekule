@@ -1126,6 +1126,43 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
     }
 }
 
+/// Fails unless a writer with `options` writes frames as the XTC frames whose
+/// first `first` describes were written: with the same magic and, for
+/// compressed frames, the same precision.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] naming the setting
+/// that differs.
+pub(crate) fn check_append_frames(
+    first: &XtcFrameInfo,
+    options: &XtcWriteOptions,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
+    let differs = |detail: String| {
+        codec_context(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::Open,
+            Some(TrajectoryFormat::Xtc),
+            source_label,
+            format!("{detail}; append with the options the file was written with"),
+        )
+    };
+    if first.magic != options.magic {
+        return Err(differs(format!(
+            "the file's XTC frames use magic {:?}, the write options {:?}",
+            first.magic, options.magic
+        )));
+    }
+    match first.precision {
+        Some(precision) if precision != options.precision => Err(differs(format!(
+            "the file's XTC frames have precision {precision} per nm, the write options {} per nm",
+            options.precision
+        ))),
+        _ => Ok(()),
+    }
+}
+
 /// Fully decoded-and-verified indexed XTC reader.
 ///
 /// Random and sequential reads share decode scratch. A random read restores
@@ -1565,6 +1602,13 @@ impl<W: Write> XtcWriter<W> {
     /// The underlying stream.
     pub fn writer(&self) -> &W {
         &self.writer
+    }
+
+    /// Takes the stream as holding `frame_count` frames already, which the
+    /// next frame follows, as when appending to a file.
+    pub(crate) const fn resumed(mut self, frame_count: usize) -> Self {
+        self.frame_count = frame_count;
+        self
     }
 
     pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
