@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fs::File;
-use std::io::BufReader;
-use std::path::Path;
+use std::io::{BufReader, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kekule::topology::Topology;
@@ -101,6 +101,15 @@ enum IndexedReaderInner {
     Xtc(xtc::IndexedXtcReader<BufReader<File>>),
 }
 
+/// What an index extension may have to undo.
+#[derive(Debug, Clone, Copy)]
+struct IndexSnapshot {
+    mark: (usize, u64),
+    pending_bytes: u64,
+    precision_mixed: bool,
+    declared_frames: Option<usize>,
+}
+
 impl IndexedReaderInner {
     fn offsets(&self) -> &FrameOffsets {
         match self {
@@ -110,14 +119,135 @@ impl IndexedReaderInner {
             Self::Xtc(reader) => reader.offsets(),
         }
     }
+
+    fn pending_bytes(&self) -> u64 {
+        match self {
+            Self::Xyz(reader) => reader.pending_bytes(),
+            Self::Dcd(reader) => reader.pending_bytes(),
+            Self::Trr(reader) => reader.pending_bytes(),
+            Self::Xtc(reader) => reader.pending_bytes(),
+        }
+    }
+
+    fn precision_mixed(&self) -> bool {
+        match self {
+            Self::Trr(reader) => reader.precision_mixed(),
+            _ => false,
+        }
+    }
+
+    fn declared_frames(&self) -> Option<usize> {
+        match self {
+            Self::Dcd(reader) => Some(reader.header().declared_frames()),
+            _ => None,
+        }
+    }
+
+    fn snapshot(&self) -> IndexSnapshot {
+        IndexSnapshot {
+            mark: self.offsets().mark(),
+            pending_bytes: self.pending_bytes(),
+            precision_mixed: self.precision_mixed(),
+            declared_frames: self.declared_frames(),
+        }
+    }
+
+    fn restore(&mut self, snapshot: IndexSnapshot) {
+        let IndexSnapshot {
+            mark,
+            pending_bytes,
+            precision_mixed,
+            declared_frames,
+        } = snapshot;
+        match self {
+            Self::Xyz(reader) => reader.restore_index(mark, pending_bytes),
+            Self::Dcd(reader) => {
+                reader.restore_index(mark, declared_frames.unwrap_or(0), pending_bytes);
+            }
+            Self::Trr(reader) => reader.restore_index(mark, precision_mixed, pending_bytes),
+            Self::Xtc(reader) => reader.restore_index(mark, pending_bytes),
+        }
+    }
+
+    /// Indexes the complete frames after the indexed ones; see the codecs'
+    /// `extend`.
+    fn extend(
+        &mut self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        match self {
+            Self::Xyz(reader) => reader.extend(growing, control),
+            Self::Dcd(reader) => reader.extend(growing, control),
+            Self::Trr(reader) => reader.extend(growing, control),
+            Self::Xtc(reader) => reader.extend(growing, control),
+        }
+    }
+
+    /// The stream every read goes through.
+    fn stream_mut(&mut self) -> &mut BufReader<File> {
+        match self {
+            Self::Xyz(reader) => reader.stream_mut(),
+            Self::Dcd(reader) => reader.stream_mut(),
+            Self::Trr(reader) => reader.stream_mut(),
+            Self::Xtc(reader) => reader.stream_mut(),
+        }
+    }
+
+    /// Runs `check` on the file the reader reads, then puts the stream back
+    /// where the reader left it.
+    fn check_file<T>(
+        &mut self,
+        format: TrajectoryFormat,
+        label: &str,
+        check: impl FnOnce(&mut File) -> Result<T, TrajectoryIoError>,
+    ) -> Result<T, TrajectoryIoError> {
+        let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
+        let stream = self.stream_mut();
+        let position = stream.stream_position().map_err(io)?;
+        let checked = check(stream.get_mut());
+        // Seeking also drops the buffer, which the check left behind.
+        let restored = stream.seek(SeekFrom::Start(position));
+        let value = checked?;
+        restored.map_err(io)?;
+        Ok(value)
+    }
+
+    /// Reads on from `file`, which must begin with the indexed bytes, where
+    /// the reader left its stream, and returns the stream it replaces.
+    fn rebind(
+        &mut self,
+        file: File,
+        format: TrajectoryFormat,
+        label: &str,
+    ) -> Result<BufReader<File>, TrajectoryIoError> {
+        let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
+        let stream = self.stream_mut();
+        let position = stream.stream_position().map_err(io)?;
+        let mut replacement = BufReader::new(file);
+        replacement.seek(SeekFrom::Start(position)).map_err(io)?;
+        Ok(std::mem::replace(stream, replacement))
+    }
 }
 
 /// Format-agnostic path-backed indexed reader retaining one file handle.
+///
+/// It indexes the complete frames of the file and verifies each before it
+/// reads it. A file that keeps growing after opening, such as the
+/// trajectory of a running simulation, is followed with [`Self::refresh`],
+/// which indexes the frames appended since without scanning the indexed
+/// ones again; open such a file with
+/// [`TrajectoryOpenOptions::with_growing`], so a frame still being written
+/// is not yet an error. Sequential reads end after the last indexed frame.
 pub struct IndexedFileTrajectoryReader {
     inner: IndexedReaderInner,
     metadata: FileTrajectoryMetadata,
     open_report: TrajectoryOpenReport,
+    /// The fingerprint of the indexed bytes: the file up to the end of its
+    /// last indexed frame.
     fingerprint: TrajectoryFileFingerprint,
+    path: PathBuf,
+    growing: bool,
 }
 
 impl fmt::Debug for IndexedFileTrajectoryReader {
@@ -136,25 +266,156 @@ impl IndexedFileTrajectoryReader {
         &self.open_report
     }
 
-    /// Metadata verified for the whole file while building the index, or
-    /// recorded in the imported index whose fingerprint the file matched.
+    /// Metadata verified for the indexed frames while building the index,
+    /// or recorded in the imported index whose bytes the file begins with,
+    /// and for the frames indexed since.
     pub fn metadata(&self) -> &FileTrajectoryMetadata {
         &self.metadata
     }
 
-    /// Exports the frame offsets, times, and steps with the file's
-    /// fingerprint, copying them, for [`open_indexed_trajectory_from_index`].
+    /// Exports the frame offsets, times, and steps with the fingerprint of
+    /// the indexed bytes, copying them, for
+    /// [`open_indexed_trajectory_from_index`].
     pub fn to_frame_index(&self) -> TrajectoryFrameIndex {
-        let precision_mixed = match &self.inner {
-            IndexedReaderInner::Trr(reader) => reader.precision_mixed(),
-            _ => false,
-        };
         TrajectoryFrameIndex::new(
             self.metadata.format(),
             self.fingerprint.clone(),
             self.inner.offsets().clone(),
-            precision_mixed,
+            self.inner.precision_mixed(),
         )
+    }
+
+    /// The bytes the file held after the last indexed frame when the reader
+    /// last opened or [refreshed](Self::refresh): a frame still being
+    /// written, or more that arrived during the scan. Zero when the indexed
+    /// frames reached the end of the file. Every refresh reads them again.
+    /// Only a reader opened with [`TrajectoryOpenOptions::with_growing`]
+    /// leaves a partial frame pending; for others it is an error.
+    pub fn pending_byte_count(&self) -> u64 {
+        self.inner.pending_bytes()
+    }
+
+    /// Indexes the frames appended to the file since the reader was opened
+    /// or last refreshed, and returns how many there are.
+    ///
+    /// The file must still begin with the indexed bytes, as a file that only
+    /// grew by appending does; the frame-count fields of a DCD header, which
+    /// writers update as they append, are not compared (see
+    /// [`TrajectoryFileFingerprint`]). The indexed frames are not read
+    /// again: the scan starts after the last of them, and verifies every new
+    /// frame as opening does. Under [`TrajectoryOpenOptions::with_growing`] a
+    /// final frame still being written stays pending
+    /// ([`Self::pending_byte_count`]) until a later refresh, and DCD frames
+    /// are counted in the file rather than checked against the header's
+    /// `NSET`; otherwise a partial frame is an error, and a DCD must hold
+    /// exactly the frames its header now counts. Sequential reads resume
+    /// where they stopped and continue into the new frames, and
+    /// [`Self::to_frame_index`] then exports them too.
+    ///
+    /// A refresh reads the file the path names when it runs: a file moved
+    /// to the path in place of the one read so far is read from then on
+    /// when it begins with the indexed bytes, as a copy of the file grown
+    /// further does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::IndexMismatch`] when the indexed bytes
+    /// changed, including while the new frames were read, the decoding error
+    /// of the first invalid new frame,
+    /// [`TrajectoryIoErrorKind::LimitExceeded`] when the index outgrows the
+    /// limits, and [`TrajectoryIoErrorKind::Io`] when the file cannot be
+    /// read. Failure changes nothing: the reader keeps its frames and the
+    /// file it read them from, and can be refreshed again.
+    ///
+    /// ```no_run
+    /// use kekule::{smiles, topology::Topology};
+    /// use kekule_traj::io::{open_indexed_trajectory, TrajectoryOpenOptions};
+    /// use kekule_traj::{SeekableTrajectoryReader, TrajectoryReader};
+    ///
+    /// let molecule = smiles::to_molecules("CC")?.pop().unwrap();
+    /// let topology = Topology::from_molecule(molecule)?;
+    /// // The trajectory of a running simulation.
+    /// let options = TrajectoryOpenOptions::default().with_growing(true);
+    /// let mut reader = open_indexed_trajectory("run.xtc", topology, options)?;
+    /// let mut frame = reader.frame_buffer();
+    /// loop {
+    ///     let added = reader.refresh()?;
+    ///     let count = reader.frame_count().unwrap_or(0);
+    ///     for index in count - added..count {
+    ///         reader.read_frame(index, &mut frame)?;
+    ///         // Show the new frame.
+    ///     }
+    ///     # break;
+    ///     // Wait for the simulation to write more.
+    /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::TrajectoryIoErrorKind::IndexMismatch
+    /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::TrajectoryIoErrorKind::LimitExceeded
+    /// [`TrajectoryIoErrorKind::Io`]: crate::TrajectoryIoErrorKind::Io
+    pub fn refresh(&mut self) -> Result<usize, TrajectoryIoError> {
+        let label = self.path.display().to_string();
+        let format = self.metadata.format();
+        let mut file = File::open(&self.path).map_err(|error| {
+            io_context(TrajectoryIoOperation::Index, Some(format), &label, error)
+        })?;
+        let changed = || {
+            index_mismatch(
+                TrajectoryIoOperation::Index,
+                format,
+                &label,
+                "the file's indexed bytes changed since they were indexed",
+            )
+        };
+        if !self
+            .fingerprint
+            .is_prefix_of_labelled_file(&mut file, &label)?
+        {
+            return Err(changed());
+        }
+        // The scan, the checks, and the fingerprint all read the file
+        // checked here, which may not be the one read so far.
+        let previous = self.inner.rebind(file, format, &label)?;
+        let before = self.inner.offsets().len();
+        let snapshot = self.inner.snapshot();
+        let indexed = &self.fingerprint;
+        let checked = self
+            .inner
+            .extend(self.growing, &IndexBuildControl::default())
+            .and_then(|_| {
+                let end = self.inner.offsets().end();
+                self.inner.check_file(format, &label, |file| {
+                    if indexed.is_prefix_of_labelled_file(file, &label)? {
+                        TrajectoryFileFingerprint::of_labelled_file_prefix(file, end, &label)
+                    } else {
+                        Err(changed())
+                    }
+                })
+            });
+        match checked {
+            Ok(fingerprint) => {
+                self.fingerprint = fingerprint;
+                self.record_counts();
+                Ok(self.inner.offsets().len() - before)
+            }
+            Err(error) => {
+                self.inner.restore(snapshot);
+                *self.inner.stream_mut() = previous;
+                Err(error)
+            }
+        }
+    }
+
+    /// Updates the metadata with the indexed frames.
+    fn record_counts(&mut self) {
+        let count = self.inner.offsets().len();
+        self.metadata
+            .update_frame_counts(count, self.inner.declared_frames());
+        if let IndexedReaderInner::Trr(reader) = &self.inner {
+            self.metadata
+                .update_trr_precision(reader.first_header(), reader.precision_mixed());
+        }
     }
 }
 
@@ -312,6 +573,7 @@ pub fn open_trajectory(
         options.format_hint,
         &options.limits,
         &label,
+        false,
     )?;
     let (inner, metadata, notes) = match detection.format {
         TrajectoryFormat::Xyz => {
@@ -408,24 +670,33 @@ pub fn open_trajectory(
 /// `options` sets the format policies and limits, and may set a cancellation
 /// and a progress callback for the scan
 /// ([`TrajectoryOpenOptions::with_index_cancellation`],
-/// [`TrajectoryOpenOptions::with_index_progress`]).
+/// [`TrajectoryOpenOptions::with_index_progress`]). A file still being
+/// written opens with [`TrajectoryOpenOptions::with_growing`]: its complete
+/// frames are indexed, a final frame still being written is
+/// [pending](IndexedFileTrajectoryReader::pending_byte_count), and
+/// [`IndexedFileTrajectoryReader::refresh`] indexes the frames written
+/// later.
 ///
-/// The file is fingerprinted before and after the scan, so
-/// [`IndexedFileTrajectoryReader::to_frame_index`] can export the offsets for
-/// [`open_indexed_trajectory_from_index`] to reopen the file without
-/// scanning it again.
+/// The bytes the file holds when it is opened must not change during the
+/// scan, though more may be appended. The reader fingerprints the indexed
+/// bytes, so [`IndexedFileTrajectoryReader::to_frame_index`] can export the
+/// offsets for [`open_indexed_trajectory_from_index`] to reopen the file
+/// without scanning it again.
 ///
 /// # Errors
 ///
 /// Returns the errors of [`open_trajectory`], the decoding error of the first
 /// invalid frame, [`TrajectoryIoErrorKind::LimitExceeded`] when the index
 /// outgrows the limits, [`TrajectoryIoErrorKind::Cancelled`] when the
-/// cancellation stops the scan, and [`TrajectoryIoErrorKind::IndexMismatch`]
-/// when the file changes while it is scanned.
+/// cancellation stops the scan, [`TrajectoryIoErrorKind::IndexMismatch`]
+/// when bytes of the file change while it is scanned, and, for a growing
+/// file, [`TrajectoryIoErrorKind::Incomplete`] when it does not yet hold a
+/// complete frame, or for DCD a complete header.
 ///
 /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::TrajectoryIoErrorKind::LimitExceeded
 /// [`TrajectoryIoErrorKind::Cancelled`]: crate::TrajectoryIoErrorKind::Cancelled
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::TrajectoryIoErrorKind::IndexMismatch
+/// [`TrajectoryIoErrorKind::Incomplete`]: crate::TrajectoryIoErrorKind::Incomplete
 ///
 /// ```no_run
 /// use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -458,32 +729,39 @@ pub fn open_indexed_trajectory(
 }
 
 /// Opens an indexed path-backed trajectory reader from a previously exported
-/// [`TrajectoryFrameIndex`] without scanning the file.
+/// [`TrajectoryFrameIndex`] without scanning the frames it indexes.
 ///
 /// The topology order contract and `options` are those of
-/// [`open_indexed_trajectory`]; the index cancellation and progress callback
-/// are not used. Opening fingerprints the file and checks the fingerprint,
-/// the format, the header, and the first frame against the index, and reads
-/// the frame offsets, times, and steps from the index alone. Every frame read
-/// later is fully verified as it is decoded, and a random read checks that the
-/// frame ends exactly where the index places the next frame, or at the end of
-/// the file, and records the index's time and step, so a wrong index yields an
-/// error rather than a wrong frame. DCD times follow the reader's time policy,
-/// so a DCD index opens only under the policy it was built with. Metadata
-/// reports the index's frame count and, for TRR, whether its frames mix
-/// scalar widths.
+/// [`open_indexed_trajectory`]. Opening checks that the file begins with the
+/// bytes the index covers ([`TrajectoryFileFingerprint::is_prefix_of_file`]),
+/// that its format, header, and first frame agree with the index, and reads
+/// the frame offsets, times, and steps from the index alone. A file that
+/// grew by appending since the index was exported is the same file with
+/// more frames: the reader scans the appended bytes alone, verifying and
+/// indexing every complete frame there as [`IndexedFileTrajectoryReader::refresh`]
+/// does, with the index cancellation and progress callback of `options`.
+/// Every frame read later is fully verified as it is decoded, and a random
+/// read checks that the frame ends exactly where the index places the next
+/// frame, or at the end of the indexed bytes, and records the index's time
+/// and step, so a wrong index yields an error rather than a wrong frame.
+/// DCD times follow the reader's time policy, so a DCD index opens only
+/// under the policy it was built with. Metadata reports the frame count
+/// and, for TRR, whether the frames mix scalar widths.
 ///
 /// # Errors
 ///
 /// Returns [`TrajectoryIoErrorKind::IndexMismatch`] when the index was built
-/// for a different file or the file changed since: its fingerprint, format,
-/// first frame offset, DCD frame count, or DCD steps and times under the
-/// reader's time policy disagree. Returns the open and
-/// header errors of [`open_trajectory`], and the frame index limits of
-/// `options` bound the index as [`TrajectoryIoErrorKind::LimitExceeded`].
-/// Later reads return [`TrajectoryIoErrorKind::IndexMismatch`] for a frame
-/// that does not end where the index says or records another time or step,
-/// besides the codec's decoding errors.
+/// for a different file or the file changed since: the indexed bytes, the
+/// format, the first frame offset, or DCD steps and times under the reader's
+/// time policy disagree, or a DCD opened without
+/// [`TrajectoryOpenOptions::with_growing`] does not hold the frames its
+/// header counts. Returns the open and header errors of [`open_trajectory`],
+/// the decoding error of the first invalid appended frame, and the frame
+/// index limits of `options` bound the index as
+/// [`TrajectoryIoErrorKind::LimitExceeded`]. Later reads return
+/// [`TrajectoryIoErrorKind::IndexMismatch`] for a frame that does not end
+/// where the index says or records another time or step, besides the
+/// codec's decoding errors.
 ///
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::TrajectoryIoErrorKind::IndexMismatch
 /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::TrajectoryIoErrorKind::LimitExceeded
@@ -496,7 +774,8 @@ pub fn open_indexed_trajectory_from_index(
     open_indexed(path.as_ref(), topology.into(), Some(index), options)
 }
 
-/// Opens an indexed reader, scanning the file unless `index` is given.
+/// Opens an indexed reader, scanning the file unless `index` is given, and
+/// then the bytes appended after the frames `index` covers.
 fn open_indexed(
     path: &Path,
     topology: Arc<Topology>,
@@ -504,9 +783,23 @@ fn open_indexed(
     options: TrajectoryOpenOptions,
 ) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
     let label = path.display().to_string();
+    let growing = options.growing;
     let mut file = File::open(path)
         .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
-    let fingerprint = TrajectoryFileFingerprint::of_labelled_file(&mut file, &label)?;
+    let length = file
+        .metadata()
+        .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?
+        .len();
+    if growing && length == 0 {
+        return Err(incomplete(None, &label));
+    }
+    // A scan must not see the bytes the file holds now change.
+    let scanned_from = match index {
+        Some(_) => None,
+        None => Some(TrajectoryFileFingerprint::of_labelled_file(
+            &mut file, &label,
+        )?),
+    };
     let mut reader = BufReader::new(file);
     let detection = detect::select_format(
         &mut reader,
@@ -514,6 +807,7 @@ fn open_indexed(
         options.format_hint,
         &options.limits,
         &label,
+        growing,
     )?;
     let format = detection.format;
     let imported = match index {
@@ -526,12 +820,16 @@ fn open_indexed(
                     format!("the index was built for a {} file", index.format()),
                 ));
             }
-            if index.fingerprint() != &fingerprint {
+            // Detection left the reader at the start with an empty buffer.
+            if !index
+                .fingerprint()
+                .is_prefix_of_labelled_file(reader.get_mut(), &label)?
+            {
                 return Err(index_mismatch(
                     TrajectoryIoOperation::Open,
                     format,
                     &label,
-                    "the file's fingerprint differs from the index's",
+                    "the file does not begin with the bytes the index covers",
                 ));
             }
             if index.frame_count() > index_hard_capacity(&options.limits) {
@@ -548,17 +846,31 @@ fn open_indexed(
                     index.frame_count(),
                 )));
             }
-            Some(index.into_parts())
+            Some(index)
         }
         None => None,
     };
-    let is_imported = imported.is_some();
+    let imported_count = imported.as_ref().map(TrajectoryFrameIndex::frame_count);
+    let opened = match (&imported, scanned_from) {
+        (Some(index), _) => index.fingerprint().clone(),
+        (None, Some(fingerprint)) => fingerprint,
+        (None, None) => unreachable!("an index or a scan fingerprint is taken"),
+    };
+    let imported = imported.map(TrajectoryFrameIndex::into_parts);
     let control = IndexBuildControl::new(
         options.index_cancellation.as_ref(),
         options.index_progress.as_ref(),
-        fingerprint.byte_count(),
+        length,
     );
-    let (inner, metadata, note) = match format {
+    // A growing file whose first frame or header is still being written.
+    let unfinished = |error: TrajectoryIoError| {
+        if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord {
+            incomplete(Some(format), &label).with_source(error)
+        } else {
+            error
+        }
+    };
+    let (mut inner, metadata, note) = match format {
         TrajectoryFormat::Xyz => {
             let xyz_options = options
                 .xyz
@@ -566,9 +878,20 @@ fn open_indexed(
                 .with_source_label(label.clone());
             let reader = match imported {
                 Some((offsets, _)) => {
-                    xyz::IndexedXyzReader::from_offsets(reader, topology, xyz_options, offsets)?
+                    let mut reader = xyz::IndexedXyzReader::from_offsets(
+                        reader,
+                        topology,
+                        xyz_options,
+                        offsets,
+                        growing,
+                    )?;
+                    reader.extend(growing, &control)?;
+                    reader
                 }
-                None => xyz::IndexedXyzReader::build(reader, topology, xyz_options, &control)?,
+                None => {
+                    xyz::IndexedXyzReader::build(reader, topology, xyz_options, growing, &control)
+                        .map_err(unfinished)?
+                }
             };
             let count = reader.frame_count().unwrap_or(0);
             let atom_count = reader.topology().atom_count();
@@ -585,9 +908,36 @@ fn open_indexed(
                 .with_source_label(label.clone());
             let reader = match imported {
                 Some((offsets, _)) => {
-                    dcd::IndexedDcdReader::from_offsets(reader, topology, dcd_options, offsets)?
+                    let mut reader = dcd::IndexedDcdReader::from_offsets(
+                        reader,
+                        topology,
+                        dcd_options,
+                        offsets,
+                        growing,
+                    )?;
+                    reader.extend(growing, &control).map_err(|error| {
+                        if error.kind() == TrajectoryIoErrorKind::InconsistentMetadata
+                            && error.expected().is_some()
+                        {
+                            // The frames do not add up to the header's count.
+                            index_mismatch(
+                                TrajectoryIoOperation::Open,
+                                TrajectoryFormat::Dcd,
+                                &label,
+                                "DCD index frame count differs from the header NSET count",
+                            )
+                            .with_counts(error.expected().unwrap_or(0), error.actual().unwrap_or(0))
+                            .with_source(error)
+                        } else {
+                            error
+                        }
+                    })?;
+                    reader
                 }
-                None => dcd::IndexedDcdReader::build(reader, topology, dcd_options, &control)?,
+                None => {
+                    dcd::IndexedDcdReader::build(reader, topology, dcd_options, growing, &control)
+                        .map_err(unfinished)?
+                }
             };
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), Some(count));
@@ -603,14 +953,21 @@ fn open_indexed(
                 .with_limits(options.limits)
                 .with_source_label(label.clone());
             let reader = match imported {
-                Some((offsets, precision_mixed)) => trr::IndexedTrrReader::from_offsets(
-                    reader,
-                    topology,
-                    trr_options,
-                    offsets,
-                    precision_mixed,
-                )?,
-                None => trr::IndexedTrrReader::build(reader, topology, trr_options, &control)?,
+                Some((offsets, precision_mixed)) => {
+                    let mut reader = trr::IndexedTrrReader::from_offsets(
+                        reader,
+                        topology,
+                        trr_options,
+                        offsets,
+                        precision_mixed,
+                    )?;
+                    reader.extend(growing, &control)?;
+                    reader
+                }
+                None => {
+                    trr::IndexedTrrReader::build(reader, topology, trr_options, growing, &control)
+                        .map_err(unfinished)?
+                }
             };
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::trr(
@@ -632,9 +989,19 @@ fn open_indexed(
                 .with_source_label(label.clone());
             let reader = match imported {
                 Some((offsets, _)) => {
-                    xtc::IndexedXtcReader::from_offsets(reader, topology, xtc_options, offsets)?
+                    let mut reader = xtc::IndexedXtcReader::from_offsets(
+                        reader,
+                        topology,
+                        xtc_options,
+                        offsets,
+                    )?;
+                    reader.extend(growing, &control)?;
+                    reader
                 }
-                None => xtc::IndexedXtcReader::build(reader, topology, xtc_options, &control)?,
+                None => {
+                    xtc::IndexedXtcReader::build(reader, topology, xtc_options, growing, &control)
+                        .map_err(unfinished)?
+                }
             };
             let count = reader.frame_count().unwrap_or(0);
             let metadata =
@@ -646,23 +1013,43 @@ fn open_indexed(
             )
         }
     };
-    let note = if is_imported {
-        format!("{format} index imported; every frame is verified as it is read")
+    if growing && format != TrajectoryFormat::Dcd && inner.offsets().is_empty() {
+        // Only DCD, whose header declares the frame count, opens without a
+        // frame; the others need their first frame for its atoms and layout.
+        return Err(incomplete(Some(format), &label));
+    }
+    let count = inner.offsets().len();
+    let fingerprint = if imported_count == Some(count) {
+        // Nothing was scanned, so nothing scanned can have changed.
+        opened
     } else {
-        let mut file = File::open(path)
-            .map_err(|error| io_context(TrajectoryIoOperation::Index, None, &label, error))?;
-        let unchanged = TrajectoryFileFingerprint::of_labelled_file(&mut file, &label)?
-            == fingerprint
-            && inner.offsets().end() == fingerprint.byte_count();
-        if !unchanged {
-            return Err(index_mismatch(
-                TrajectoryIoOperation::Index,
-                format,
-                &label,
-                "the file changed while it was indexed",
-            ));
+        // In the file that was scanned, whatever the path names now.
+        let end = inner.offsets().end();
+        inner.check_file(format, &label, |file| {
+            if !opened.is_prefix_of_labelled_file(file, &label)? {
+                return Err(index_mismatch(
+                    TrajectoryIoOperation::Index,
+                    format,
+                    &label,
+                    "the file changed while it was indexed",
+                ));
+            }
+            if end == opened.byte_count() {
+                Ok(opened)
+            } else {
+                TrajectoryFileFingerprint::of_labelled_file_prefix(file, end, &label)
+            }
+        })?
+    };
+    let note = match imported_count {
+        Some(imported) if imported == count => {
+            format!("{format} index imported; every frame is verified as it is read")
         }
-        note.to_owned()
+        Some(imported) => format!(
+            "{format} index imported and {} appended frames verified; every frame is verified as it is read",
+            count - imported
+        ),
+        None => note.to_owned(),
     };
     let report = TrajectoryOpenReport {
         selected_format: format,
@@ -674,5 +1061,18 @@ fn open_indexed(
         metadata,
         open_report: report,
         fingerprint,
+        path: path.to_path_buf(),
+        growing,
     })
+}
+
+/// A growing file that does not yet hold its first frame or header.
+fn incomplete(format: Option<TrajectoryFormat>, source_label: &str) -> TrajectoryIoError {
+    TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::Incomplete,
+        TrajectoryIoOperation::Open,
+        format,
+    )
+    .with_source_label(source_label)
+    .with_detail("the file does not yet hold a complete frame; open it again once more is written")
 }

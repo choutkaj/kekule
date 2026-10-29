@@ -150,6 +150,11 @@ pub enum TrajectoryIoErrorKind {
     /// file, the file changed since, or a frame does not lie where the index
     /// places it.
     IndexMismatch,
+    /// A growing file does not yet hold what opening it needs: it is empty
+    /// or ends inside its header or, except for DCD, its first frame (see
+    /// [`crate::io::TrajectoryOpenOptions::with_growing`]). Open it again
+    /// once its writer has written more.
+    Incomplete,
 }
 
 impl fmt::Display for TrajectoryIoErrorKind {
@@ -178,6 +183,7 @@ impl fmt::Display for TrajectoryIoErrorKind {
             Self::Cancelled => "trajectory operation cancelled",
             Self::InvalidIndex => "invalid trajectory frame index",
             Self::IndexMismatch => "trajectory frame index does not match the file",
+            Self::Incomplete => "trajectory file holds no complete frame yet",
         };
         formatter.write_str(description)
     }

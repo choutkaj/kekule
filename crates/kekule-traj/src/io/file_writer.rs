@@ -278,6 +278,15 @@ impl<W: Write + Seek> CodecWriter<W> {
             Self::Xtc(writer) => writer.write_frame(frame),
         }
     }
+
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        match self {
+            Self::Xyz(writer) => writer.flush(),
+            Self::Dcd(writer) => writer.flush(),
+            Self::Trr(writer) => writer.flush(),
+            Self::Xtc(writer) => writer.flush(),
+        }
+    }
 }
 
 /// Strict writer of one format over a host's stream, from
@@ -376,6 +385,16 @@ impl<W: Write + Seek> TrajectoryWriter for TrajectoryStreamWriter<W> {
         let result = self.inner.write_frame(frame);
         self.failed = result.is_err();
         result
+    }
+
+    /// Flushes the codec writer, so the host's stream holds every frame
+    /// written so far, whole; a DCD header then counts them. Use it to let
+    /// another process read a trajectory while it is written.
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        if self.failed {
+            return Err(self.poisoned(TrajectoryIoOperation::WriteFrame));
+        }
+        self.inner.flush()
     }
 }
 
@@ -494,6 +513,15 @@ impl TrajectoryWriter for FileTrajectoryWriter {
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
         match &mut self.inner {
             Some(inner) => inner.write_frame(frame),
+            None => unreachable!("finished path writers are consumed"),
+        }
+    }
+
+    /// Flushes the frames written so far to the temporary sibling; the
+    /// destination appears only when the writer finishes.
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        match &mut self.inner {
+            Some(inner) => inner.flush(),
             None => unreachable!("finished path writers are consumed"),
         }
     }

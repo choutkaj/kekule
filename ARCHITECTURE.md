@@ -462,15 +462,30 @@ Because interpretation keeps source atom-row order and structure writers emit
 dense order, a coordinate file written in a structure file's row order addresses
 the same atoms through that file's topology.
 An indexed reader verifies every frame before random access. One opened from
-an exported frame index instead checks the file's fingerprint, then verifies
-each frame as it decodes it and checks that the frame ends where the index
-places the next and records the time and step the index holds for it; an
-index never makes a reader return a frame it has not verified. Streaming buffers bind to one topology layout and publish complete frames
+an exported frame index instead checks that the file begins with the bytes
+the index's fingerprint covers, then verifies each frame as it decodes it
+and checks that the frame ends where the index places the next and records
+the time and step the index holds for it; an index never makes a reader
+return a frame it has not verified. A file that only grew by appending is
+the same file with more frames, and one whose existing bytes changed is not
+(a DCD header's frame counts, which writers rewrite as they append, are not
+content): refreshing a reader, or opening the grown file from an index,
+verifies and indexes the appended frames without scanning the indexed ones
+again. A refresh reads whatever file the path names when it runs, checking,
+scanning, and fingerprinting that one file, so the index and its
+fingerprint always describe the same bytes. A reader of a growing file
+takes a final frame its writer has not finished as pending rather than as
+corruption, reads it again at every refresh, and still rejects corrupt
+data; sequential reads through an indexed reader end with its indexed
+frames. Streaming buffers bind to one topology layout and publish complete frames
 transactionally. A buffer hands its frame out as a one-frame trajectory, and
 takes a frame back, by moving it; the frame stays bound and validated. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
 stream writers write the same bytes into a host's `Write + Seek` stream and
-leave placing the file to the host. Frame state a codec cannot carry fails
+leave placing the file to the host. Codec writers append frames whole and in
+order and never rewrite one, so after a flush the stream holds a complete
+trajectory, a DCD header counting its frames, that another process can read
+while it grows. Frame state a codec cannot carry fails
 unless the caller sets `UnrepresentablePolicy::Omit` for its kind (frame
 metadata, frame properties, or the cell), and the writer reports what it
 left out; collection properties are rejected rather than discarded. A codec

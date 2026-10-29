@@ -103,6 +103,24 @@ pub trait SeekableTrajectoryReader: TrajectoryReader {
 /// refuses every further frame and finishing, rather than extend or report a
 /// corrupt stream as complete.
 ///
+/// # Writing a file another process reads
+///
+/// The file codec writers of [`crate::io`] append each frame's bytes after
+/// the previous frame's, in order, and never rewrite a byte of a frame once
+/// it is written; DCD writes its header first and rewrites only the
+/// header's frame count. After [`Self::flush`] the stream therefore holds a
+/// complete trajectory of every frame written so far, which a reader in
+/// another process sees as whole frames; while a frame is being written, or
+/// between flushes of a buffered stream, the file may end in part of a
+/// frame, which an indexed reader opened with
+/// [`TrajectoryOpenOptions::with_growing`](crate::io::TrajectoryOpenOptions::with_growing)
+/// takes as not yet written. A simulation whose trajectory is viewed while
+/// it runs writes through a stream writer over the destination file
+/// ([`crate::io::create_trajectory_stream_writer`]) and flushes after each
+/// frame, or as often as readers should see frames; a path writer
+/// ([`crate::io::create_trajectory_writer`]) publishes its file only when it
+/// finishes.
+///
 /// # Implementing this trait
 ///
 /// This trait is an extension point for codecs outside this crate. An
@@ -115,6 +133,9 @@ pub trait SeekableTrajectoryReader: TrajectoryReader {
 ///   dropped or approximated beyond the format's documented precision.
 /// - A rejected frame writes nothing; only a failure part-way through writing
 ///   may poison the writer, which then refuses every further frame.
+/// - [`Self::flush`] leaves the destination holding every frame written,
+///   whole; writers without a destination of their own may keep the default,
+///   which does nothing.
 pub trait TrajectoryWriter {
     /// The topology this writer was opened for.
     fn topology(&self) -> &Topology;
@@ -132,6 +153,19 @@ pub trait TrajectoryWriter {
     /// a field the frame carries, another validation kind when the frame
     /// cannot be encoded, and [`TrajectoryIoErrorKind::Io`] when writing fails.
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError>;
+
+    /// Makes every frame written so far reach the destination whole, so
+    /// that a reader of it sees them; see the trait documentation. More
+    /// frames can be written afterwards. The default does nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] after an earlier
+    /// write left a partial frame, and [`TrajectoryIoErrorKind::Io`] when
+    /// the stream fails.
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        Ok(())
+    }
 }
 
 /// In-memory writer that preserves every core frame field.
