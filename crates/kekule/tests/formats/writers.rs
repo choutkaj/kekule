@@ -1038,15 +1038,14 @@ fn sdf_series_items_carry_their_step_or_coordinate_through_data_fields() {
     ] {
         let fields = [SdfDataField::new(name, "1")];
         let item = sdf::SdfRecordSource::from(history.get(0).unwrap()).with_data_fields(&fields);
-        let (kind, detail, _) =
-            described(sdf::write([item], SdfWriteOptions::default()).unwrap_err());
         assert_eq!(
-            (kind, detail),
+            described(sdf::write([item], SdfWriteOptions::default()).unwrap_err()),
             (
                 DiagnosticKind::Inconsistent,
                 Some(FormatErrorDetail::DataField {
                     name: name.to_owned()
-                })
+                }),
+                "this field carries the series item's own metadata".to_owned(),
             )
         );
     }

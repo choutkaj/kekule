@@ -235,10 +235,11 @@ fn write_record(
             item: None,
         },
     )?;
-    let reserved: &[&str] = match record.model.kind() {
-        StructureKind::Sample { .. } => &SAMPLE_FIELDS,
-        StructureKind::Item { .. } => &ITEM_FIELDS,
-        _ => &[],
+    // The names a structure's own metadata uses, and what owns them.
+    let (reserved, owner): (&[&str], &str) = match record.model.kind() {
+        StructureKind::Sample { .. } => (&SAMPLE_FIELDS, "ensemble sample"),
+        StructureKind::Item { .. } => (&ITEM_FIELDS, "series item"),
+        _ => (&[], ""),
     };
     let own_fields = match record.model.kind() {
         StructureKind::Sample {
@@ -263,7 +264,7 @@ fn write_record(
             return Err(FormatError::write(
                 Format::Sdf,
                 DiagnosticKind::Inconsistent,
-                "this field carries the ensemble sample's or series item's own metadata",
+                format!("this field carries the {owner}'s own metadata"),
             )
             .with_detail(FormatErrorDetail::DataField {
                 name: field.name().to_owned(),
