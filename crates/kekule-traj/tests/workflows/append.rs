@@ -15,7 +15,7 @@ use kekule::topology::Topology;
 use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 use kekule_traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule_traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions};
-use kekule_traj::io::xtc::XtcWriteOptions;
+use kekule_traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcWriteOptions};
 use kekule_traj::io::xyz::XyzWriteOptions;
 use kekule_traj::io::{
     append_trajectory, create_trajectory_stream_writer, open_indexed_trajectory, KeepFrames,
@@ -153,7 +153,12 @@ fn straight_through(format: TrajectoryFormat, path: &Path, count: u64) -> Vec<u8
 /// Where each frame of the complete file at `path` ends, and where the first
 /// starts: after a DCD's header, at the start for the other formats.
 fn frame_ends(path: &Path) -> (u64, Vec<u64>) {
-    let index = open_indexed_trajectory(path, topology(), Default::default())
+    frame_ends_read(path, Default::default())
+}
+
+/// [`frame_ends`], read with `options`.
+fn frame_ends_read(path: &Path, options: TrajectoryOpenOptions) -> (u64, Vec<u64>) {
+    let index = open_indexed_trajectory(path, topology(), options)
         .unwrap()
         .to_frame_index();
     let starts = index.frame_offsets();
@@ -275,6 +280,61 @@ fn a_run_restarted_from_checkpoints_again_and_again_writes_one_trajectory() {
         assert_eq!(report.dropped_bytes(), 0, "{format}");
         assert!(fs::read(&path).unwrap() == straight, "{format}");
     }
+}
+
+#[test]
+fn a_non_periodic_xtc_run_continues_under_the_writer_cell_policy() {
+    let format = TrajectoryFormat::Xtc;
+    let zero_boxes = options(format).with_xtc_options(
+        XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
+    );
+    let open_frame = |index: u64| {
+        let mut frame = frame(index);
+        frame.set_cell(None);
+        frame
+    };
+    let directory = Directory::new();
+    let path = directory.file(format);
+    let write = |count: u64| {
+        let file = File::create(&path).unwrap();
+        let mut writer = create_trajectory_stream_writer(
+            BufWriter::new(file),
+            topology(),
+            zero_boxes.clone(),
+            "run",
+        )
+        .unwrap();
+        write_frames(&mut writer, (0..count).map(open_frame));
+        drop(writer.finish().unwrap());
+        fs::read(&path).unwrap()
+    };
+    let straight = write(4);
+    let zero_box_reads = TrajectoryOpenOptions::default().with_xtc_options(
+        XtcReadOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
+    );
+    let (_, ends) = frame_ends_read(&path, zero_box_reads);
+    // Cut inside the third frame, as a run killed while writing it.
+    let cut = usize::try_from(ends[1]).unwrap() + 3;
+    fs::write(&path, &straight[..cut]).unwrap();
+    let (mut writer, report) = append_trajectory(
+        &path,
+        topology(),
+        KeepFrames::ThroughStep(INTERVAL),
+        zero_boxes.clone(),
+    )
+    .unwrap();
+    assert_eq!((report.kept_frames(), report.dropped_frames()), (2, 0));
+    write_frames(&mut writer, (2..4).map(open_frame));
+    drop(writer.finish().unwrap());
+    assert!(fs::read(&path).unwrap() == straight);
+    // Options that require a periodic cell do not continue zero boxes.
+    assert_refused(
+        &path,
+        KeepFrames::First(2),
+        options(format),
+        TrajectoryIoErrorKind::UnsupportedVariant,
+        "XTC zero boxes",
+    );
 }
 
 #[test]

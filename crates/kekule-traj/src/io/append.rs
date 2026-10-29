@@ -14,6 +14,7 @@ use crate::{
 };
 
 use super::file_writer::{resolve_format, resumed_stream_writer};
+use super::xtc::XtcReadOptions;
 use super::{
     codec_context, index_mismatch, io_context, open_indexed_trajectory, TrajectoryFileFingerprint,
     TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryStreamWriter, TrajectoryWriteOptions,
@@ -98,7 +99,10 @@ struct Kept {
 /// file still being written ([`TrajectoryOpenOptions::with_growing`]): a
 /// final frame its writer did not finish is no error and goes with the
 /// frames removed, a file without a complete frame, or for DCD a complete
-/// header, is started again, and corrupt data anywhere is an error. Where the
+/// header, is started again, and corrupt data anywhere is an error. XTC
+/// frames are read under the cell policy of `options`, so the zero boxes
+/// of frames without a cell continue under
+/// [`super::xtc::XtcCellPolicy::ZeroMatrixAsAbsent`] alone. Where the
 /// file records its writer's settings they must be those of `options`: the
 /// DCD header (endianness, step sequence, `DELTA`, unit-cell flag, title),
 /// and the magic and precision of the first XTC frame or the scalar width of
@@ -257,8 +261,13 @@ fn kept_frames(
     options: &TrajectoryWriteOptions,
     label: &str,
 ) -> Result<Kept, TrajectoryIoError> {
+    // The scan reads frames as the writer writes them: an XTC zero box is no
+    // cell exactly when the writer writes one for a frame without a cell.
+    // The other readers accept every frame their writers write.
+    let xtc = XtcReadOptions::default().with_cell_policy(options.xtc_options().cell_policy());
     let open = TrajectoryOpenOptions::default()
         .with_format_hint(TrajectoryFormatHint::Explicit(format))
+        .with_xtc_options(xtc)
         .with_growing(true);
     let mut reader = match open_indexed_trajectory(path, topology, open) {
         Ok(reader) => reader,
