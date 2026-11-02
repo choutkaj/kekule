@@ -1,5 +1,11 @@
 # Aromaticity audit — 2026-09-11
 
+Default perception now marks fused aromatic systems whole (SeekDelta K20): a
+successful subset marks every bond of its rings, fusion bonds included, not
+only its perimeter. Fusion-bond masks below therefore record RDKit parity at
+the audit's revision, not current behavior of `AromaticityModel::RdkitLike`;
+the MDL model still marks perimeters only.
+
 Benchmark paths and commands below refer to the benchmark layer retired after
 [ead90ca9](https://github.com/choutkaj/kekule/tree/ead90ca94f66e6b4f3082e5db49d6ddc042cc32c/benchmarks); they are kept as recorded.
 

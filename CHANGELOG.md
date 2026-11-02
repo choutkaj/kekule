@@ -717,6 +717,19 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** default aromaticity perception (`AromaticityModel::RdkitLike`)
+  marks fused aromatic systems whole (SeekDelta K20). A fusion bond is
+  aromatic when the rings it joins are aromatic together, as azulene's,
+  lumiflavin's isoalloxazine's, and cyclopenta[c]pyran's are, so every bond
+  of an aromatic ring is aromatic. Before, as in RDKit, a fused subset marked
+  only its perimeter, and a fusion bond was aromatic only when one of its
+  rings was aromatic alone. Aromatic atoms are as before, except an atom
+  inside three or more rings of such a system, which is now aromatic with
+  it. `AromaticityModel::Mdl` still marks perimeters only, as RDKit's MDL
+  model does, so OpenFF typing is unchanged.
+  SMILES written from such molecules no longer mark the fusion bond as an
+  explicit single (`-`), and SMARTS aromatic bonds (`:`) match it.
+
 - **Breaking:** a solvated system writes to PDB and mmCIF and reads back as
   written (SeekDelta K61). Solvation's waters and ions leave their
   implicit-hydrogen counts, still zero, to valence inference, with
