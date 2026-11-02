@@ -20,6 +20,7 @@ use super::connections::{
     DeclaredOrder, LabelConnectionSelector, PartnerSpec,
 };
 use super::ensemble::{interpret_conformations, interpret_ensemble, no_coordinate_models};
+use super::sequences::read_polymer_entities;
 use super::types::{
     ensemble_error, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason,
     ConnectivityOptions, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
@@ -194,6 +195,9 @@ fn mmcif_source(
     poll(cancellation)?;
     let catalog = ConnectivityCatalog::from_block(block, connectivity)?;
     poll(cancellation)?;
+    let polymer_entities =
+        read_polymer_entities(block, &rows, connectivity.components().map(AsRef::as_ref))?;
+    poll(cancellation)?;
     Ok(StructureSource {
         name: block.name().to_owned(),
         entity_definitions: entities.len(),
@@ -204,6 +208,7 @@ fn mmcif_source(
         catalog,
         cell: read_cell(block, &mut report.issues)?,
         issues: report.issues,
+        polymer_entities,
     })
 }
 

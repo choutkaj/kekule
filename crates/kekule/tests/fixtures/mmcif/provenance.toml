@@ -87,3 +87,23 @@ sha256 = "e2da911de9b99923fcbb362fa9123d0264855f60be63c069e18fb7cd914af472"
 license = "CC0 1.0 (wwPDB archive data)"
 preprocessing = "None; original downloaded bytes"
 purpose = "Non-covalent interaction regression (EGFR and gefitinib: chlorine halogen bond to Leu788, hinge hydrogen bond to Met793); not a scientific benchmark"
+
+[[fixture]]
+path = "1EHZ.cif"
+source = "RCSB PDB / wwPDB entry 1EHZ"
+url = "https://files.rcsb.org/download/1EHZ.cif"
+retrieved = "2026-11-02"
+sha256 = "3021dd2b6461f850bb66d6748d3c22a5e1bb6cc891c625c15d793f38215b28ab"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Sequence regression (yeast tRNA-Phe: a polyribonucleotide whose modified nucleotides take their parents' one-letter codes); not a scientific benchmark"
+
+[[fixture]]
+path = "1EMA.cif"
+source = "RCSB PDB / wwPDB entry 1EMA"
+url = "https://files.rcsb.org/download/1EMA.cif"
+retrieved = "2026-11-02"
+sha256 = "b7d583424b6f960a7421fd4c88cdb6bbb10025667cd863d8cd14f70bc775aceb"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Sequence regression (green fluorescent protein: selenomethionines, the CRO chromophore the canonical sequence states as X, unobserved termini); not a scientific benchmark"

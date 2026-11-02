@@ -236,6 +236,16 @@ The exact inference and override rules live with
 [builder publication](crates/kekule/src/topology/builder.rs), and
 [component editing](crates/kekule/src/topology/editor.rs).
 
+One-letter codes and sequences are derived, not hierarchy state. A residue's
+code follows from its component identity: the code a component library or the
+bundled dictionary codes state, else its parents' codes, else the unknown (`X`
+or `N`). A chain's sequence joins the codes of the residues it holds. The
+sequence a file states for a polymer entity, with monomers the model does not
+observe, is format metadata: the mmCIF interpretation report owns it and
+places it on the interpreted model's chains and residues. See
+[sequences](crates/kekule/src/sequence.rs) and
+[entity sequences](crates/kekule/src/io/structure_interpret/sequences.rs).
+
 See also [hierarchy](crates/kekule/src/topology/hierarchy.rs) and
 [qualified lookups](crates/kekule/src/topology/lookup.rs).
 
