@@ -305,7 +305,7 @@ fn assign_localized_aromaticity(
             &neighbors,
             &component,
             &donors,
-            if model.is_mdl() { 6 } else { 0 },
+            model,
             work,
         )?;
     }
@@ -472,9 +472,10 @@ fn apply_rdkit_huckel_to_fused_component(
     neighbors: &[Vec<usize>],
     component: &[usize],
     donors: &[AromaticElectronDonorType],
-    min_ring_size: usize,
+    model: AromaticityModel,
     work: &mut AromaticityWork,
 ) -> std::result::Result<(), AromaticityError> {
+    let min_ring_size = if model.is_mdl() { 6 } else { 0 };
     let component_bonds = component
         .iter()
         .flat_map(|index| rings[*index].bonds.iter().copied())
@@ -508,7 +509,7 @@ fn apply_rdkit_huckel_to_fused_component(
                 {
                     return Ok(ControlFlow::Continue(()));
                 }
-                mark_rdkit_aromatic_subset(mol, rings, subset, &mut done_bonds);
+                mark_aromatic_subset(mol, rings, subset, !model.is_mdl(), &mut done_bonds);
                 if done_bonds.len() >= component_bonds.len() {
                     return Ok(ControlFlow::Break(()));
                 }
@@ -522,10 +523,15 @@ fn apply_rdkit_huckel_to_fused_component(
     Ok(())
 }
 
-fn mark_rdkit_aromatic_subset(
+// Marks an aromatic ring subset. RDKit marks its perimeter, the bonds in one
+// of its rings; `whole` marks every bond of its rings, so fusion bonds of rings
+// aromatic only together are aromatic too. Endpoints of marked single and
+// double bonds become aromatic.
+fn mark_aromatic_subset(
     mol: &mut Molecule,
     rings: &[Ring],
     indexes: &[usize],
+    whole: bool,
     done_bonds: &mut BTreeSet<BondId>,
 ) {
     let mut bond_counts = BTreeMap::<BondId, usize>::new();
@@ -535,10 +541,9 @@ fn mark_rdkit_aromatic_subset(
         }
     }
     for (bond_id, count) in bond_counts {
-        if count != 1 {
+        if (!whole && count != 1) || !done_bonds.insert(bond_id) {
             continue;
         }
-        done_bonds.insert(bond_id);
         let Some(bond) = mol.graph.bonds[bond_id.index()].as_ref() else {
             continue;
         };
@@ -812,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn fused_ten_electron_perimeter_preserves_explicit_aromatic_fusion_single() {
+    fn fused_ten_electron_system_marks_its_explicit_single_fusion_bond_aromatic() {
         let source = "On2c1-c(ccc2)ccn1";
         let document =
             crate::io::parse_smiles_document(source, Default::default()).expect("parses");
@@ -822,14 +827,14 @@ mod tests {
             .into_parts()
             .expect("one component");
         let explicit_single_offset = source.find('-').expect("explicit single marker") + 1;
-        let protected_single = report
+        let fusion_single = report
             .bond_mappings()
             .iter()
             .find(|mapping| mapping.source_offset() == explicit_single_offset)
             .map(|mapping| mapping.bond())
-            .expect("explicit aromatic fusion single mapping");
+            .expect("explicit fusion single mapping");
         assert_eq!(
-            molecule.bond(protected_single).unwrap().order,
+            molecule.bond(fusion_single).unwrap().order,
             BondOrder::Single
         );
         let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default());
@@ -843,16 +848,16 @@ mod tests {
         )
         .expect("fused aromaticity");
 
-        let protected = molecule
-            .bond(protected_single)
-            .expect("protected fusion bond");
-        assert_eq!(protected.order, BondOrder::Single);
+        let fusion = molecule.bond(fusion_single).expect("fusion bond");
+        // Represented chemistry keeps the single bond; the rings are aromatic
+        // only together, and the fusion bond is aromatic with them.
+        assert_eq!(fusion.order, BondOrder::Single);
         assert_eq!(
             molecule
                 .perception()
                 .aromaticity()
-                .map(|aromaticity| aromaticity.bond_is_aromatic(protected_single)),
-            Some(false)
+                .map(|aromaticity| aromaticity.bond_is_aromatic(fusion_single)),
+            Some(true)
         );
         assert_eq!(
             molecule

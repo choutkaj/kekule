@@ -252,3 +252,158 @@ fn installed_rings_skip_enumeration_limits_but_not_aromaticity_limits() {
         ));
     assert_eq!(actual.perception(), &before);
 }
+
+/// Aromatic atoms and aromatic bonds as sorted source indices.
+fn aromatic_masks(molecule: &Molecule) -> (Vec<usize>, Vec<(usize, usize)>) {
+    let aromaticity = molecule.perception().aromaticity().unwrap();
+    let atoms = molecule
+        .atom_ids()
+        .filter(|&atom| aromaticity.atom_is_aromatic(atom))
+        .map(|atom| atom.index())
+        .collect();
+    let mut bonds = molecule
+        .bonds()
+        .filter(|&(id, _)| aromaticity.bond_is_aromatic(id))
+        .map(|(_, bond)| {
+            let (a, b) = (bond.a().index(), bond.b().index());
+            (a.min(b), a.max(b))
+        })
+        .collect::<Vec<_>>();
+    bonds.sort_unstable();
+    (atoms, bonds)
+}
+
+/// The ring bonds of `molecule` between two of `atoms`, minus `except`.
+fn ring_bonds_among(
+    molecule: &Molecule,
+    atoms: &[usize],
+    except: &[(usize, usize)],
+) -> Vec<(usize, usize)> {
+    let membership = molecule.perception().rings().unwrap().membership();
+    let mut bonds = molecule
+        .bonds()
+        .filter(|&(id, _)| membership.bond_in_ring(id))
+        .map(|(_, bond)| {
+            let (a, b) = (bond.a().index(), bond.b().index());
+            (a.min(b), a.max(b))
+        })
+        .filter(|(a, b)| atoms.contains(a) && atoms.contains(b) && !except.contains(&(*a, *b)))
+        .collect::<Vec<_>>();
+    bonds.sort_unstable();
+    bonds
+}
+
+/// Label, SMILES, aromatic atoms, and non-aromatic ring bonds between them.
+type FusedCase = (
+    &'static str,
+    &'static str,
+    &'static [usize],
+    &'static [(usize, usize)],
+);
+
+#[test]
+fn fused_aromatic_systems_are_aromatic_whole() {
+    // Each case lists its aromatic atoms and the ring bonds between two of
+    // them that stay non-aromatic; every other ring bond between aromatic
+    // atoms is aromatic, and no other bond is.
+    let cases: &[FusedCase] = &[
+        // Ten-electron perimeters whose rings are not aromatic alone: the
+        // fusion bond is aromatic with the system (RDKit leaves it out).
+        (
+            "azulene",
+            "C1=CC=C2C=CC=C2C=C1",
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            &[],
+        ),
+        (
+            "cyclopenta[c]pyran",
+            "C1=COC=C2C1=CC=C2",
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+            &[],
+        ),
+        (
+            "pyrrolopyrimidine tautomer",
+            "C1=C2C=CN=C2NC=N1",
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+            &[],
+        ),
+        // Isoalloxazine: the pyrazine and pyrimidinedione rings are aromatic
+        // only together, or with the benzene ring.
+        (
+            "lumiflavin",
+            "CC1=CC2=C(C=C1C)N(C3=NC(=O)NC(=O)C3=N2)C",
+            &[1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 13, 14, 16, 17],
+            &[],
+        ),
+        // Rings aromatic alone, as RDKit marks them.
+        (
+            "naphthalene",
+            "C1=CC=C2C=CC=CC2=C1",
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            &[],
+        ),
+        (
+            "indole",
+            "C1=CC=C2C(=C1)C=CN2",
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+            &[],
+        ),
+        (
+            "purine",
+            "C1=C2C(=NC=N1)N=CN2",
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+            &[],
+        ),
+        (
+            "guanine",
+            "C1=NC2=C(N1)C(=O)NC(=N2)N",
+            &[0, 1, 2, 3, 4, 5, 7, 8, 9],
+            &[],
+        ),
+        (
+            "caffeine",
+            "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+            &[1, 2, 3, 4, 5, 6, 8, 9, 11],
+            &[],
+        ),
+        // A bond outside every aromatic ring stays non-aromatic, between
+        // aromatic atoms too.
+        (
+            "biphenylene",
+            "C1=CC=C2C(=C1)C3=CC=CC=C32",
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            &[(3, 11), (4, 6)],
+        ),
+        (
+            "fluorene",
+            "C1=CC=C2C(=C1)CC3=CC=CC=C32",
+            &[0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12],
+            &[(3, 12)],
+        ),
+        // A fusion bond of an aromatic and a non-aromatic ring is aromatic
+        // with the aromatic ring alone; the other ring's bonds are not.
+        ("indane", "C1=CC=C2CCCC2=C1", &[0, 1, 2, 3, 7, 8], &[]),
+        (
+            "1,4-naphthoquinone",
+            "C1=CC=C2C(=C1)C(=O)C=CC2=O",
+            &[0, 1, 2, 3, 4, 5],
+            &[],
+        ),
+        // An eight-electron perimeter is not aromatic.
+        ("pentalene", "C1=CC2=CC=CC2=C1", &[], &[]),
+    ];
+    for &(label, source, atoms, except) in cases {
+        let mut molecule = molecule(source);
+        molecule.perceive().unwrap();
+        let expected = (atoms.to_vec(), ring_bonds_among(&molecule, atoms, except));
+        assert_eq!(aromatic_masks(&molecule), expected, "{label}");
+    }
+
+    // The MDL model marks only perimeters, as RDKit's does.
+    let mut azulene = molecule("C1=CC=C2C=CC=C2C=C1");
+    azulene.perceive().unwrap();
+    perceive_aromaticity(&mut azulene, AromaticityModel::Mdl, Default::default()).unwrap();
+    let (atoms, bonds) = aromatic_masks(&azulene);
+    assert_eq!(atoms, (0..10).collect::<Vec<_>>());
+    assert_eq!(bonds, ring_bonds_among(&azulene, &atoms, &[(3, 7)]));
+}

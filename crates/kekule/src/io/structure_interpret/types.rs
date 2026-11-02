@@ -257,11 +257,14 @@ pub enum StructureInterpretIssue {
         /// The 1-based source lines of the affected records.
         source_lines: Vec<usize>,
     },
-    /// A connection record of a non-covalent type, such as a hydrogen bond,
-    /// was not interpreted as a bond.
-    ConnectionIgnored {
+    /// Connection records of a non-covalent type, such as the hydrogen bonds
+    /// a file lists, were not interpreted as bonds. Each such type is
+    /// reported once.
+    ConnectionsIgnored {
         /// The source connection type, such as `hydrog`.
         connection_type: String,
+        /// The number of records of this type.
+        count: usize,
     },
     /// One declared connection partner matched no selected-model atom.
     ConnectionUnresolved {
