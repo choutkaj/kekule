@@ -737,7 +737,9 @@ flag; where the source leaves the flag unstated, as wwPDB entry files do, the
 flag comes from the component template, as charges do, and without one a
 bond between a metal and a non-metal is coordination. An mmCIF block and its
 PDB rendering therefore give the same bonds. Hydrogen bonds, salt bridges, and links to symmetry mates are never
-bonds; unresolvable links are reported. A heavy atom whose name does not match
+bonds; unresolvable links are reported. The hydrogen bonds and salt bridges a
+file lists are annotations, often thousands of them, so the report counts them
+once per connection type. A heavy atom whose name does not match
 its residue template is an error, not a silently separate molecule. The report
 records the evidence for every bond and names residues whose resolved atoms
 split into several molecules.
