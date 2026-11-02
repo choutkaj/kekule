@@ -13,9 +13,11 @@ use super::types::{
 /// One connection record of a source, before a coordinate model is chosen.
 #[derive(Debug, Clone)]
 pub(super) enum ConnectionRecord {
-    /// A record of a non-covalent type, reported and never bonded.
+    /// The records of one non-covalent type, such as the hydrogen bonds a
+    /// file lists: never bonded, and reported once with their count.
     Ignored {
         connection_type: String,
+        count: usize,
     },
     Bond(Box<DeclaredBond>),
 }
@@ -89,11 +91,15 @@ pub(super) fn resolve_connections(
         // Resolving a partner can scan every row of the model.
         poll(cancellation)?;
         let bond = match record {
-            ConnectionRecord::Ignored { connection_type } => {
+            ConnectionRecord::Ignored {
+                connection_type,
+                count,
+            } => {
                 report
                     .issues
-                    .push(StructureInterpretIssue::ConnectionIgnored {
+                    .push(StructureInterpretIssue::ConnectionsIgnored {
                         connection_type: connection_type.clone(),
+                        count: *count,
                     });
                 continue;
             }
