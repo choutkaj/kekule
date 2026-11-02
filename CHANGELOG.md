@@ -725,11 +725,17 @@ are marked **Breaking:**.
   only its perimeter, and a fusion bond was aromatic only when one of its
   rings was aromatic alone. Aromatic atoms are as before, except an atom
   inside three or more rings of such a system, which is now aromatic with
-  it. `AromaticityModel::Mdl` still marks perimeters only, as RDKit's MDL
-  model does, so OpenFF typing is unchanged.
-  SMILES written from such molecules no longer mark the fusion bond as an
-  explicit single (`-`), and SMARTS aromatic bonds (`:`) match it.
-
+  it. SMILES written from such molecules no longer mark the fusion bond as
+  an explicit single (`-`), and SMARTS aromatic bonds (`:`) match it.
+  `AromaticityModel::Mdl` still marks perimeters only, as RDKit's MDL model
+  does, so OpenFF typing is unchanged.
+- **Breaking:** listed hydrogen bonds no longer flood the interpretation
+  report (SeekDelta K26). mmCIF `_struct_conn` records of a non-covalent
+  type, such as `hydrog` and `saltbr`, still never become bonds, and the
+  report now names each such type once with its record count:
+  `StructureInterpretIssue::ConnectionIgnored { connection_type }`, one per
+  record, became `ConnectionsIgnored { connection_type, count }`, so an
+  entry that lists 2,895 hydrogen bonds reports one issue.
 - **Breaking:** a solvated system writes to PDB and mmCIF and reads back as
   written (SeekDelta K61). Solvation's waters and ions leave their
   implicit-hydrogen counts, still zero, to valence inference, with

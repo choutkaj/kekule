@@ -310,12 +310,16 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, FormatE
     };
     let table = &table;
     let mut records = Vec::new();
+    // Non-covalent rows, such as listed hydrogen bonds, counted per type in
+    // order of first appearance.
+    let mut ignored: Vec<(String, usize)> = Vec::new();
     for row in 0..table.row_count() {
         let kind = required(table, row, "_struct_conn.conn_type_id")?.to_owned();
         if !is_covalent_connection(&kind) {
-            records.push(ConnectionRecord::Ignored {
-                connection_type: kind,
-            });
+            match ignored.iter_mut().find(|(known, _)| *known == kind) {
+                Some((_, count)) => *count += 1,
+                None => ignored.push((kind, 1)),
+            }
             continue;
         }
         // Metal coordination is covalent; the dative order keeps it from
@@ -338,6 +342,14 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, FormatE
             connectivity_only: false,
         })));
     }
+    records.extend(
+        ignored
+            .into_iter()
+            .map(|(connection_type, count)| ConnectionRecord::Ignored {
+                connection_type,
+                count,
+            }),
+    );
     Ok(records)
 }
 

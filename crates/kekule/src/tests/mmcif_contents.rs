@@ -1718,6 +1718,39 @@ _struct_conn.ptnr2_label_atom_id"#,
 }
 
 #[test]
+fn listed_hydrogen_bonds_and_salt_bridges_are_reported_once_per_type() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id"#,
+        r#"hydrog1 hydrog A 1 N A 5 OG
+hydrog2 hydrog A 2 N A 5 OG
+saltbr1 saltbr A 1 N L . O1
+covale1 covale A 1 CA L . C1
+hydrog3 hydrog A 2 N L . O1"#,
+    );
+    let result = (parse(&input)).interpret(Default::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 1);
+    let ignored = result
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            macromolecular::StructureInterpretIssue::ConnectionsIgnored {
+                connection_type,
+                count,
+            } => Some((connection_type.as_str(), *count)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ignored, [("hydrog", 3), ("saltbr", 1)]);
+}
+
+#[test]
 fn struct_conn_zero_candidate_selector_is_reported_unresolved() {
     let input = connection_input(
         CONNECTION_ATOMS,
