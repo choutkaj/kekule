@@ -256,6 +256,7 @@ ATOM      2  CA  MSE A   2       3.800   0.000   0.000  1.00  0.00           C
 ATOM      3  CA  TPO A   3       7.600   0.000   0.000  1.00  0.00           C
 TER
 HETATM    4  O   HOH A 101       0.000  10.000   0.000  1.00  0.00           O
+HETATM    5  PG  GTP A 102       0.000  20.000   0.000  1.00  0.00           P
 END
 ";
     let interpretation = pdb::parse_str(text, Default::default())

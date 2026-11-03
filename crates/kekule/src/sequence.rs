@@ -13,7 +13,10 @@
 //! 3. without either, the explicit unknown: `X` for a peptide-linking
 //!    component or an amino acid, `N` for a nucleotide.
 //!
-//! Other residues, such as water, ions and ligands, have no code. Most codes
+//! Only monomers have codes: residues whose components link into a
+//! polypeptide or a polynucleotide, and amino-acid and nucleotide residues.
+//! Other residues, such as water, ions and ligands, have none, even a ligand
+//! such as `GTP` whose dictionary entry states one. Most codes
 //! are one letter; a few components that stand for several monomers, such as
 //! the chromophore of green fluorescent protein (`CRO`, `TYG`), have several.
 //!
@@ -115,9 +118,9 @@ impl SequenceOptions {
     }
 }
 
-/// The code of the component `id`: its own, else its parents', else the
-/// unknown when it links into a polymer. `None` for a component that does
-/// not, or that no library knows.
+/// The code of the component `id` when it links into a polypeptide or a
+/// polynucleotide: its own, else its parents', else the unknown. `None` for
+/// any other component, or one no library knows.
 pub fn component_code(id: &str, options: &SequenceOptions) -> Option<ResidueCode> {
     CodeSources::new(None, options.components.as_deref()).code(id, None)
 }
@@ -271,18 +274,24 @@ impl<'a> CodeSources<'a> {
     }
 
     /// The code of component `id`, or `unknown` when it has none and its
-    /// linkage does not say which unknown applies.
+    /// linkage does not say which unknown applies. Only a monomer has a code:
+    /// a component that links into a polypeptide or a polynucleotide, or one
+    /// whose context supplies an unknown, such as an amino-acid residue or a
+    /// monomer of a polymer entity. Ligands such as `GTP`, whose dictionary
+    /// entries state codes, have none.
     pub(crate) fn code(&self, id: &str, unknown: Option<&'static str>) -> Option<ResidueCode> {
         let facts = self.facts(id);
+        let linked = facts.linking.and_then(unknown_of_linking);
+        if linked.is_none() && unknown.is_none() {
+            return None;
+        }
         if let Some(code) = facts.code {
             return Some(ResidueCode::new(code, CodeOrigin::Component));
         }
         if let Some(code) = self.parent_code(&facts.parents, PARENT_DEPTH) {
             return Some(ResidueCode::new(code, CodeOrigin::Parent));
         }
-        facts
-            .linking
-            .and_then(unknown_of_linking)
+        linked
             .or(unknown)
             .map(|code| ResidueCode::new(code, CodeOrigin::Unknown))
     }
@@ -371,6 +380,9 @@ mod tests {
         assert_eq!(code("004"), Some(("X".into(), CodeOrigin::Unknown)));
         assert_eq!(code("HOH"), None);
         assert_eq!(code("NOT-A-COMPONENT"), None);
+        // Nucleotide ligands state codes or parents but link into no polymer.
+        assert_eq!(code("GTP"), None);
+        assert_eq!(code("ADP"), None);
     }
 
     #[test]
