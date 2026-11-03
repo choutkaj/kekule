@@ -778,7 +778,7 @@ impl FrameOffsets {
                 operation,
                 format,
                 source_label,
-                format!("{format} frame time or step differs from the index's."),
+                "The frame's time or step differs from the index's.",
             )
             .with_frame(index));
         }
@@ -833,9 +833,9 @@ impl FrameOffsets {
             .with_source_label(source_label)
             .with_frame(index)
             .with_byte_offset(actual_end)
-            .with_counts(expected_end, actual_end)
+            .with_written_counts(expected_end, actual_end)
             .with_detail(format!(
-                "{format} frame does not end where the index places the next frame."
+                "The frame ends at byte {actual_end}, but the index places the next frame at byte {expected_end}."
             )));
         }
         Ok(())
@@ -859,7 +859,7 @@ impl FrameOffsets {
                 TrajectoryIoOperation::Open,
                 format,
                 source_label,
-                format!("{format} index does not start at the file's first frame."),
+                "The index does not start at the file's first frame.",
             ));
         }
         Ok(())

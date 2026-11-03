@@ -102,7 +102,7 @@ impl fmt::Display for ValenceIssue {
                 max_allowed,
             } => write!(
                 formatter,
-                "{} has valence {explicit_valence} plus {} for its radical electrons and                  charge, more than the allowed {max_allowed}.",
+                "{} has valence {explicit_valence} plus {} for its radical electrons and charge, more than the allowed {max_allowed}.",
                 Capitalized(atom),
                 radical_electrons + charge_offset
             ),

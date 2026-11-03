@@ -781,7 +781,10 @@ fn parse_smiles_program(
                 return Err(parse_error(
                     DiagnosticKind::Unsupported,
                     offset,
-                    format!("The character {ch:?} is not supported outside brackets."),
+                    format!(
+                        "The character \"{}\" is not supported outside brackets.",
+                        ch.escape_debug()
+                    ),
                 ));
             }
             _ => {
@@ -1132,7 +1135,7 @@ fn parse_smiles_ring_label(
         return Err(parse_error(
             DiagnosticKind::InvalidValue,
             offset,
-            format!("The ring bond number %{label:02} is below 10."),
+            format!("The ring bond number \"%{label:02}\" is below 10."),
         ));
     }
     Ok((label, cursor + 3))
@@ -1157,13 +1160,16 @@ fn parse_organic_atom(
         return Err(parse_error(
             DiagnosticKind::Syntax,
             offset,
-            format!("The character {ch:?} is not valid SMILES."),
+            format!(
+                "The character \"{}\" is not valid SMILES.",
+                ch.escape_debug()
+            ),
         ));
     } else if !matches!(ch, 'B' | 'C' | 'N' | 'O' | 'P' | 'S' | 'F' | 'I') {
         return Err(parse_error(
             DiagnosticKind::Syntax,
             offset,
-            format!("The atom symbol {ch:?} needs brackets."),
+            format!("The atom symbol \"{ch}\" needs brackets."),
         ));
     }
     Ok((
@@ -1392,8 +1398,8 @@ fn parse_bracket_atom(
                     DiagnosticKind::Unsupported,
                     start + 1 + index,
                     format!(
-                        "The character {:?} is not supported in a bracket atom.",
-                        bytes[index] as char
+                        "The character \"{}\" is not supported in a bracket atom.",
+                        (bytes[index] as char).escape_debug()
                     ),
                 ));
             }
@@ -1402,8 +1408,8 @@ fn parse_bracket_atom(
                     DiagnosticKind::Unsupported,
                     start + 1 + index,
                     format!(
-                        "The character {:?} is not supported in a bracket atom.",
-                        bytes[index] as char
+                        "The character \"{}\" is not supported in a bracket atom.",
+                        (bytes[index] as char).escape_debug()
                     ),
                 ));
             }

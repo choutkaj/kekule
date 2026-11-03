@@ -144,13 +144,11 @@ fn lex(input: &str) -> Result<Vec<Token>, FormatError> {
                     ('>', true) => CompareOp::GreaterEqual,
                     ('=', _) => CompareOp::Equal,
                     ('!', true) => CompareOp::NotEqual,
-                    _ => {
-                        return Err(syntax(
-                            input,
-                            start..start + 1,
-                            "\"!\" must be followed by \"=\". Write \"not\" for negation.",
-                        ))
-                    }
+                    _ => return Err(syntax(
+                        input,
+                        start..start + 1,
+                        "The character \"!\" stands alone. Write \"!=\", or \"not\" for negation.",
+                    )),
                 };
                 tokens.push(Token {
                     kind: TokenKind::Op(op),
@@ -764,7 +762,7 @@ impl Parser<'_> {
                     return Err(syntax(
                         self.input,
                         token.span,
-                        format!("{text:?} is not a keyword."),
+                        format!("The word {text:?} is not a keyword."),
                     ));
                 };
                 self.field(start, field)
@@ -918,8 +916,13 @@ impl Parser<'_> {
         quoted: bool,
         span: Range<usize>,
     ) -> Result<Literal, FormatError> {
-        let fail =
-            |what: &str| invalid(self.input, span.clone(), format!("{text:?} is not {what}."));
+        let fail = |what: &str| {
+            invalid(
+                self.input,
+                span.clone(),
+                format!("The value {text:?} is not {what}."),
+            )
+        };
         Ok(match field.value_type() {
             FieldType::Integer => Literal::Integer(text.parse().map_err(|_| fail("an integer"))?),
             FieldType::Real => Literal::Real {

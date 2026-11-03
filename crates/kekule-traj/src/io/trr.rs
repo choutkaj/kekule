@@ -108,6 +108,14 @@ impl TrrScalarPrecision {
             Self::Float64 => 8,
         }
     }
+
+    /// The precision's name in messages.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Float32 => "single precision",
+            Self::Float64 => "double precision",
+        }
+    }
 }
 
 /// Explicit policy for the TRR lambda scalar.
@@ -823,8 +831,9 @@ pub(crate) fn check_append_frames(
         "The file's TRR frames mix scalar widths. One writer cannot continue them.".to_owned()
     } else if first.precision != options.precision {
         format!(
-            "The file's TRR frames are {:?} and the write options {:?}. Append with the options the file was written with.",
-            first.precision, options.precision
+            "The file's TRR frames are in {}, the write options in {}. Append with the options the file was written with.",
+            first.precision.name(),
+            options.precision.name()
         )
     } else {
         return Ok(());
@@ -1844,7 +1853,7 @@ fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "The frame has energy terms (nre is not zero). Kekule cannot keep them.",
+            "The frame has energy terms. Kekule cannot keep them.",
         ));
     }
     let time = read_scalar(

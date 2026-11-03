@@ -292,6 +292,8 @@ struct TrajectoryIoErrorData {
     byte_offset: Option<u64>,
     expected: Option<u64>,
     actual: Option<u64>,
+    /// Whether the detail or the source already writes the counts.
+    counts_written: bool,
     limit: Option<kekule::diagnostics::LimitExceeded>,
     field: Option<TrajectoryField>,
     detail: Option<String>,
@@ -310,6 +312,7 @@ impl TrajectoryIoError {
             byte_offset: None,
             expected: None,
             actual: None,
+            counts_written: false,
             limit: None,
             field: None,
             detail: None,
@@ -380,6 +383,14 @@ impl TrajectoryIoError {
         self.0.expected = Some(expected);
         self.0.actual = Some(actual);
         self
+    }
+
+    /// Records the expected and actual count of a mismatch that the detail
+    /// or the source already writes, so `Display` does not repeat them.
+    #[must_use]
+    pub(crate) fn with_written_counts(mut self, expected: u64, actual: u64) -> Self {
+        self.0.counts_written = true;
+        self.with_counts(expected, actual)
     }
 
     #[must_use]
@@ -549,7 +560,7 @@ impl fmt::Display for TrajectoryIoError {
         }
         let separator = if head { " " } else { "" };
         let counts = (data.expected, data.actual);
-        let mut counted = false;
+        let mut counted = data.counts_written;
         let frame = data.frame.filter(|_| !frame_named);
         let body = match (&data.detail, data.limit, data.kind) {
             (Some(detail), _, _) => detail.clone(),

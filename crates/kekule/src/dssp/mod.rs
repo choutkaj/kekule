@@ -369,7 +369,11 @@ impl DsspCodeError {
 
 impl fmt::Display for DsspCodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?} is not a DSSP secondary-structure code.", self.code)
+        write!(
+            f,
+            "The character \"{}\" is not a DSSP secondary-structure code.",
+            self.code.escape_debug()
+        )
     }
 }
 

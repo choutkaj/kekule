@@ -361,7 +361,10 @@ pub(crate) fn parse_xyz_str(
                 return Err(xyz_parse_error(
                     DiagnosticKind::Syntax,
                     count_line,
-                    format!("The frame declares {count} atoms but ends after {atom_index}."),
+                    format!(
+                        "The frame declares {} but ends after {atom_index}.",
+                        crate::diagnostics::counted(count, "atom", "atoms")
+                    ),
                 ));
             };
             atoms.push(parse_atom(line, text)?);

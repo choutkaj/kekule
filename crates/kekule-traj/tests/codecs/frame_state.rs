@@ -674,7 +674,7 @@ fn frame_numbering_needs_a_finite_nonnegative_time_interval() {
                 format,
                 "state",
                 None,
-                &format!("{format} frame numbering interval must be a finite, nonnegative time."),
+                &format!("The {format} frame interval is not a finite, nonnegative time."),
             )
         };
         let xtc = XtcWriteOptions::default().with_frame_timing(timing);

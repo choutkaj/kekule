@@ -1198,8 +1198,9 @@ pub(crate) fn check_append_frames(
     };
     if first.magic != options.magic {
         return Err(differs(format!(
-            "The file's XTC frames use magic {:?} and the write options {:?}.",
-            first.magic, options.magic
+            "The file's XTC frames use magic {} and the write options {}.",
+            first.magic.number(),
+            options.magic.number()
         )));
     }
     match first.precision {

@@ -335,6 +335,26 @@ pub enum StereoDescriptor {
     LowerP,
 }
 
+/// Writes the descriptor in CIP notation: `R`, `r`, `seqCis`, `E`, `M`, `p`.
+impl std::fmt::Display for StereoDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::R => "R",
+            Self::S => "S",
+            Self::LowerR => "r",
+            Self::LowerS => "s",
+            Self::SeqTrans => "seqTrans",
+            Self::SeqCis => "seqCis",
+            Self::E => "E",
+            Self::Z => "Z",
+            Self::M => "M",
+            Self::P => "P",
+            Self::LowerM => "m",
+            Self::LowerP => "p",
+        })
+    }
+}
+
 /// An enhanced stereo group: stereo elements whose specified configurations
 /// are related as `kind` states.
 ///

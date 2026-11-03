@@ -809,7 +809,8 @@ impl fmt::Display for SeriesError {
             Self::IndexOutOfRange { index, len } => {
                 write!(
                     formatter,
-                    "Item {index} is outside the series of {len} items."
+                    "Item {index} is outside the series of {}.",
+                    crate::diagnostics::counted(*len, "item", "items")
                 )
             }
             Self::ItemCountMismatch { expected, actual } => write!(

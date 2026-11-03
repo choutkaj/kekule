@@ -1675,11 +1675,13 @@ impl fmt::Display for EnsembleError {
             Self::EmptySource => formatter.write_str("The ensemble has no samples."),
             Self::IndexOutOfRange { index, len } => write!(
                 formatter,
-                "Sample {index} is outside the ensemble of {len} samples."
+                "Sample {index} is outside the ensemble of {}.",
+                crate::diagnostics::counted(*len, "sample", "samples")
             ),
             Self::StateOutOfRange { state, states } => write!(
                 formatter,
-                "State {state} is outside the ensemble of {states} states."
+                "State {state} is outside the ensemble of {}.",
+                crate::diagnostics::counted(*states, "state", "states")
             ),
             Self::TopologyMismatch => {
                 formatter.write_str("The model has a different topology layout from the ensemble.")

@@ -967,7 +967,10 @@ fn open_indexed(
                                 &label,
                                 "The index's frame count differs from the frame count NSET in the header.",
                             )
-                            .with_counts(error.expected().unwrap_or(0), error.actual().unwrap_or(0))
+                            .with_written_counts(
+                                error.expected().unwrap_or(0),
+                                error.actual().unwrap_or(0),
+                            )
                             .with_source(error)
                         } else {
                             error

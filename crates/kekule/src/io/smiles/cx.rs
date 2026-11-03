@@ -137,8 +137,8 @@ impl CxReader<'_> {
                 DiagnosticKind::Syntax,
                 self.position(),
                 format!(
-                    "The CXSMILES extension lacks a {:?} here.",
-                    char::from(expected)
+                    "The CXSMILES extension lacks a \"{}\" here.",
+                    char::from(expected).escape_debug()
                 ),
             ));
         }
@@ -335,7 +335,8 @@ impl CxFeatures {
                     DiagnosticKind::InvalidReference,
                     offset,
                     format!(
-                        "CXSMILES atom index {atom} is out of range. The SMILES has {atom_count} atoms."
+                        "CXSMILES atom index {atom} is out of range. The SMILES has {}.",
+                        crate::diagnostics::counted(atom_count, "atom", "atoms")
                     ),
                 ));
             }

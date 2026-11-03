@@ -486,7 +486,7 @@ impl fmt::Display for PlacementError {
             Self::InvalidDirection => f.write_str("The direction is zero or not finite."),
             Self::StereoHydrogen { atom } => write!(
                 f,
-                "The stereo of {atom} names an implicit hydrogen that cannot become one atom."
+                "Cannot place the hydrogens of {atom}. Its stereo names an implicit hydrogen."
             ),
             Self::HydrogenCountOverflow { atom, count } => write!(
                 f,

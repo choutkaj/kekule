@@ -42,7 +42,7 @@ impl fmt::Display for CipRankingError {
                 write!(f, "CIP ranking exceeded its {}.", limit.describe())
             }
             Self::UnresolvedPriority => f.write_str("CIP ranking cannot order the ligands."),
-            Self::InvalidStereo { issue } => write!(f, "Cannot rank CIP ligands. {issue}"),
+            Self::InvalidStereo { issue } => write!(f, "{issue}"),
             Self::UnknownHydrogenCount { atom } => write!(
                 f,
                 "The hydrogen count of {atom} is unknown. Perceive valence first."
@@ -151,17 +151,12 @@ pub struct CipAssignmentError {
     pub issues: Vec<CipAssignmentIssue>,
 }
 
-/// Writes the first issue, and how many there are when there are several.
+/// Writes the first issue; [`Self::issues`] holds them all.
 impl fmt::Display for CipAssignmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.issues.as_slice() {
-            [] => formatter.write_str("Cannot assign CIP descriptors."),
-            [issue] => write!(formatter, "Cannot assign CIP descriptors. {issue}"),
-            [issue, ..] => write!(
-                formatter,
-                "Cannot assign CIP descriptors: {} problems. {issue}",
-                self.issues.len()
-            ),
+        match self.issues.first() {
+            None => formatter.write_str("Cannot assign CIP descriptors."),
+            Some(issue) => write!(formatter, "{issue}"),
         }
     }
 }

@@ -2210,7 +2210,16 @@ fn header_records(
             TrajectoryIoOperation::Open,
             Some(TrajectoryFormat::Dcd),
             source_label,
-            "The first step or the step interval does not fit a 32-bit header field, or DELTA is not a finite, nonnegative number.",
+            if options.step_interval == 0 {
+                "The step interval is zero.".to_owned()
+            } else if !options.delta.is_finite() || options.delta < 0.0 {
+                format!(
+                    "The time step DELTA is {}. It is not a finite, nonnegative number.",
+                    options.delta
+                )
+            } else {
+                "The first step or the step interval exceeds the 32-bit header field.".to_owned()
+            },
         ));
     }
     validate_time_policy(options.time_policy, source_label)?;
@@ -2278,7 +2287,7 @@ pub(crate) fn check_append_header(
             TrajectoryIoOperation::Open,
             Some(TrajectoryFormat::Dcd),
             source_label,
-            "The file's DCD header differs from the one these write options write: endianness, step sequence, DELTA, unit-cell flag or title. Append with the options the file was written with.",
+            "The file's header differs from the header of the write options. Append with the options the file was written with.",
         ));
     }
     Ok(())
@@ -2506,7 +2515,7 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Dcd),
             source_label,
-            "The DCD cell is not in standard orientation: a along positive x, b in the xy plane with positive y and c with positive z.",
+            "The cell is not in standard orientation. Cell vector a lies along +x, b in the xy plane with +y, c with +z.",
         ));
     }
     let length =
@@ -2542,7 +2551,7 @@ fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], Traje
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Dcd),
             source_label,
-            "The DCD cell becomes degenerate as lengths and angle cosines.",
+            "The cell is degenerate when written as lengths and angles.",
         )
         .with_source(validation_cause(error))
     })?;

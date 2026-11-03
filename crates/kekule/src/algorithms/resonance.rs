@@ -229,7 +229,8 @@ impl fmt::Display for ResonanceError {
             }
             Self::ContributorOutOfRange { index, count } => write!(
                 f,
-                "Resonance contributor {index} does not exist. There are {count} contributors."
+                "Resonance contributor {index} does not exist. There are {}.",
+                crate::diagnostics::counted(*count, "contributor", "contributors")
             ),
             Self::Molecule(_) => f.write_str("Cannot edit the resonance contributor."),
             Self::Publication(_) => f.write_str("Cannot publish the resonance contributor."),

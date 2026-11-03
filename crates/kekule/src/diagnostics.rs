@@ -426,12 +426,18 @@ struct DescribedLimit<'a>(&'a LimitExceeded);
 impl fmt::Display for DescribedLimit<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let limit = self.0;
+        let unit = limit.resource.unit();
+        let unit = match (limit.observed, unit) {
+            (1, "matches") => "match",
+            (1, "entries") => "entry",
+            (1, unit) => unit.strip_suffix('s').unwrap_or(unit),
+            (_, unit) => unit,
+        };
         write!(
             formatter,
-            "{} limit: {} {} of {}",
+            "{} limit: {} {unit} of {}",
             limit.resource.limit_name(),
             Count(limit.observed),
-            limit.resource.unit(),
             Count(limit.limit)
         )
     }
@@ -461,6 +467,34 @@ impl fmt::Display for Count {
             write!(formatter, "{digit}")?;
         }
         Ok(())
+    }
+}
+
+/// A count with its noun, such as `1 atom` or `1,024 atoms`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Counted<'a> {
+    count: usize,
+    singular: &'a str,
+    plural: &'a str,
+}
+
+/// `count` with `singular` or `plural`, such as `1 atom` or `1,024 atoms`.
+pub(crate) const fn counted<'a>(count: usize, singular: &'a str, plural: &'a str) -> Counted<'a> {
+    Counted {
+        count,
+        singular,
+        plural,
+    }
+}
+
+impl fmt::Display for Counted<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let noun = if self.count == 1 {
+            self.singular
+        } else {
+            self.plural
+        };
+        write!(formatter, "{} {noun}", Count(self.count))
     }
 }
 
@@ -1315,6 +1349,28 @@ mod tests {
         assert_eq!(
             error.limit_exceeded(),
             Some(LimitExceeded::new(Resource::Records, 2, 3))
+        );
+    }
+
+    #[test]
+    fn counted_nouns_agree_with_their_count() {
+        assert_eq!(counted(1, "atom", "atoms").to_string(), "1 atom");
+        assert_eq!(counted(0, "atom", "atoms").to_string(), "0 atoms");
+        assert_eq!(
+            counted(1_024, "entry", "entries").to_string(),
+            "1,024 entries"
+        );
+        assert_eq!(
+            LimitExceeded::first_beyond(Resource::Rows, 0)
+                .describe()
+                .to_string(),
+            "row limit: 1 row of 0"
+        );
+        assert_eq!(
+            LimitExceeded::first_beyond(Resource::MatrixEntries, 0)
+                .describe()
+                .to_string(),
+            "matrix entry limit: 1 entry of 0"
         );
     }
 

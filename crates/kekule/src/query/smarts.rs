@@ -46,7 +46,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_input_bytes", max_input_bytes)?;
+        nonzero_option("input size limit", max_input_bytes)?;
         self.max_input_bytes = max_input_bytes;
         Ok(self)
     }
@@ -62,7 +62,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_atoms(mut self, max_atoms: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_atoms", max_atoms)?;
+        nonzero_option("atom limit", max_atoms)?;
         self.max_atoms = max_atoms;
         Ok(self)
     }
@@ -78,7 +78,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_bonds(mut self, max_bonds: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_bonds", max_bonds)?;
+        nonzero_option("bond limit", max_bonds)?;
         self.max_bonds = max_bonds;
         Ok(self)
     }
@@ -94,7 +94,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_branch_depth(mut self, max_branch_depth: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_branch_depth", max_branch_depth)?;
+        nonzero_option("branch depth limit", max_branch_depth)?;
         self.max_branch_depth = max_branch_depth;
         Ok(self)
     }
@@ -110,7 +110,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_ring_closures(mut self, max_ring_closures: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_ring_closures", max_ring_closures)?;
+        nonzero_option("ring closure limit", max_ring_closures)?;
         self.max_ring_closures = max_ring_closures;
         Ok(self)
     }
@@ -129,7 +129,7 @@ impl SmartsParseOptions {
         mut self,
         max_expression_nodes: usize,
     ) -> Result<Self, FormatError> {
-        nonzero_option("max_expression_nodes", max_expression_nodes)?;
+        nonzero_option("expression node limit", max_expression_nodes)?;
         self.max_expression_nodes = max_expression_nodes;
         Ok(self)
     }
@@ -148,7 +148,7 @@ impl SmartsParseOptions {
         mut self,
         max_expression_depth: usize,
     ) -> Result<Self, FormatError> {
-        nonzero_option("max_expression_depth", max_expression_depth)?;
+        nonzero_option("expression depth limit", max_expression_depth)?;
         self.max_expression_depth = max_expression_depth;
         Ok(self)
     }
@@ -167,7 +167,7 @@ impl SmartsParseOptions {
         mut self,
         max_recursive_depth: usize,
     ) -> Result<Self, FormatError> {
-        nonzero_option("max_recursive_depth", max_recursive_depth)?;
+        nonzero_option("recursion depth limit", max_recursive_depth)?;
         self.max_recursive_depth = max_recursive_depth;
         Ok(self)
     }
@@ -186,7 +186,7 @@ impl SmartsParseOptions {
         mut self,
         max_total_expression_nodes: usize,
     ) -> Result<Self, FormatError> {
-        nonzero_option("max_total_expression_nodes", max_total_expression_nodes)?;
+        nonzero_option("total expression node limit", max_total_expression_nodes)?;
         self.max_total_expression_nodes = max_total_expression_nodes;
         Ok(self)
     }
@@ -373,7 +373,7 @@ fn install_cx_groups(
             } else {
                 return Err(unsupported_error(
                     span.clone(),
-                    "This CXSMARTS field is not supported.",
+                    format!("The CXSMARTS field {header:?} is not supported."),
                 ));
             };
             current = Some((tag, number));
@@ -421,12 +421,13 @@ fn install_cx_groups(
         .map_err(|e| syntax_error(span.clone(), "").with_source(e))
 }
 
-fn nonzero_option(name: &str, value: usize) -> Result<(), FormatError> {
+/// Fails when the limit named `limit`, such as `atom limit`, is zero.
+fn nonzero_option(limit: &str, value: usize) -> Result<(), FormatError> {
     if value == 0 {
         return Err(smarts_error(
             DiagnosticKind::Limit,
             0..0,
-            format!("The SMARTS option {name} is 0. Set a positive limit."),
+            format!("The {limit} is 0. Set a positive limit."),
         ));
     }
     Ok(())
@@ -1293,7 +1294,10 @@ impl<'a> BracketParser<'a> {
                         || {
                             syntax_error(
                                 self.absolute(start..start + 1),
-                                "This is not an element symbol.",
+                                format!(
+                                    "The symbol starting with \"{}\" is not an element.",
+                                    char::from(byte)
+                                ),
                             )
                         },
                     )?;

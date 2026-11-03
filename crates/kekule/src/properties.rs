@@ -1762,7 +1762,7 @@ impl fmt::Display for PropertyError {
         match self {
             Self::InvalidKey(key) => write!(
                 formatter,
-                "{key:?} is not a property key. Use an ASCII identifier of 1 to {MAX_PROPERTY_KEY_LEN} characters."
+                "The property key {key:?} is invalid. Use an ASCII identifier of 1 to {MAX_PROPERTY_KEY_LEN} characters."
             ),
             Self::LengthMismatch { expected, actual } => write!(
                 formatter,
@@ -1770,7 +1770,8 @@ impl fmt::Display for PropertyError {
             ),
             Self::InvalidIndex { len, index } => write!(
                 formatter,
-                "Property row {index} does not exist. The table has {len} rows."
+                "Property row {index} does not exist. The table has {}.",
+                crate::diagnostics::counted(*len, "row", "rows")
             ),
             Self::RemovedRow { index } => write!(
                 formatter,

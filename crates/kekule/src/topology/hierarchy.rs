@@ -846,6 +846,8 @@ impl fmt::Display for RawHierarchyError {
     }
 }
 
+impl std::error::Error for RawHierarchyError {}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Chain {
     pub(crate) id: ChainId,
@@ -1153,12 +1155,12 @@ impl fmt::Display for HierarchyError {
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(f, "The hierarchy has run out of {kind} identifiers.")
             }
-            Self::NotFound { kind, query } => write!(f, "No {kind} matches {query:?}."),
+            Self::NotFound { kind, query } => write!(f, "No {kind} matches {query}."),
             Self::Ambiguous {
                 kind,
                 query,
                 matches,
-            } => write!(f, "{matches} {kind}s match {query:?}."),
+            } => write!(f, "{matches} {kind}s match {query}."),
         }
     }
 }

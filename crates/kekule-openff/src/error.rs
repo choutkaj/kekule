@@ -268,6 +268,24 @@ pub(crate) fn atom_list(atoms: &[AtomId]) -> String {
     }
 }
 
+/// `a` or `an` for a noun in a message.
+pub(crate) fn article(noun: &str) -> &'static str {
+    if noun.starts_with(['a', 'e', 'i', 'o', 'u']) {
+        "an"
+    } else {
+        "a"
+    }
+}
+
+/// A count with its noun, such as `1 atom` or `3 atoms`.
+pub(crate) fn counted(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
+}
+
 /// `text` with an upper-case first letter, for a phrase such as
 /// [`atom_list`]'s that starts a sentence.
 pub(crate) fn capitalized(text: &str) -> String {

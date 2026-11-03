@@ -368,8 +368,8 @@ impl<'a, 'input> Sections<'a, 'input> {
                 )
                 .ok_or_else(|| {
                     error(
-                        "Section \"NAGLCharges\" needs a model_file and a 64-digit SHA-256 \
-                         model_file_hash.",
+                        "Section \"NAGLCharges\" lacks the attribute \"model_file\" or a \
+                         64-digit SHA-256 \"model_file_hash\".",
                     )
                 })
             })
@@ -400,7 +400,7 @@ fn check_headers(sections: &Sections<'_, '_>) -> Result<()> {
         let divisor = n.attribute("default_idivf").unwrap_or("auto");
         if divisor != "auto" && number(divisor)? <= 0.0 {
             return Err(error(format!(
-                "The default_idivf {divisor:?} of section {:?} is neither positive nor \"auto\".",
+                "The attribute \"default_idivf\" {divisor:?} of section {:?} is neither positive nor \"auto\".",
                 n.tag_name().name()
             )));
         }
@@ -481,7 +481,7 @@ fn nonbonded_settings(
         electrostatics_nonperiodic_method: ElectrostaticsMethod::Coulomb,
     };
     if settings.vdw_scales[3] != 1.0 || settings.electrostatics_scales[3] != 1.0 {
-        return Err(error("A scale15 other than 1 is not supported."));
+        return Err(error("A \"scale15\" other than 1 is not supported."));
     }
     for (cutoff, width) in [
         (&settings.vdw_cutoff, &settings.vdw_switch_width),

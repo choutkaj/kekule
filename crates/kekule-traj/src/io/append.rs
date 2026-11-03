@@ -446,5 +446,5 @@ fn too_few_frames(
         label,
         format!("Cannot keep {frames} frames. The file holds {count} complete frames."),
     )
-    .with_counts(frames as u64, count as u64)
+    .with_written_counts(frames as u64, count as u64)
 }

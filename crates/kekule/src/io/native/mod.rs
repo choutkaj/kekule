@@ -320,8 +320,15 @@ fn nonzero_option(name: &str, value: usize) -> Result<(), FormatError> {
             Format::Native,
             DiagnosticKind::Limit,
             format!(
-                "The {} limit is zero.",
-                name.trim_start_matches("max_").replace('_', " ")
+                "The {} is 0. Set a positive limit.",
+                match name {
+                    "max_input_bytes" => "input size limit",
+                    "max_atoms" => "atom limit",
+                    "max_bonds" => "bond limit",
+                    "max_items" => "item limit",
+                    "max_string_bytes" => "string size limit",
+                    _ => "limit",
+                }
             ),
         ));
     }

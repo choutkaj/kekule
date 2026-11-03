@@ -608,7 +608,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
             "scratch.xyz",
             Some(0),
             &format!(
-                "Cannot grow the line buffer. The buffers would exceed their limit of {limit} bytes."
+                "The line buffer cannot grow. The buffers would exceed their limit of {limit} bytes."
             ),
         )
     };

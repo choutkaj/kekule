@@ -682,7 +682,8 @@ impl fmt::Display for AlignmentError {
             Self::Correspondence(error) => write!(formatter, "{error}"),
             Self::InsufficientSelectedAtoms { selected, minimum } => write!(
                 formatter,
-                "The selection has {selected} atoms. Rigid alignment needs at least {minimum}."
+                "The selection has {}. Rigid alignment needs at least {minimum}.",
+                crate::diagnostics::counted(*selected, "atom", "atoms")
             ),
             Self::DegenerateGeometry { geometry } => write!(
                 formatter,
@@ -726,7 +727,8 @@ impl fmt::Display for AlignmentError {
             }
             Self::ReferenceOutOfRange { index, len } => write!(
                 formatter,
-                "Reference structure {index} does not exist. There are {len} structures."
+                "Reference structure {index} does not exist. There are {}.",
+                crate::diagnostics::counted(*len, "structure", "structures")
             ),
             Self::Item { index, .. } => write!(formatter, "Cannot align structure {index}."),
             Self::Transform(_) => formatter.write_str("Cannot apply the fitted transform."),

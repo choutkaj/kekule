@@ -884,7 +884,10 @@ impl<R: Read> Decoder<'_, R> {
         if stored_rows != rows {
             return Err(self.error(
                 DiagnosticKind::Inconsistent,
-                format!("A property table has {stored_rows} rows, not {rows}."),
+                format!(
+                    "A property table has {}, not {rows}.",
+                    crate::diagnostics::counted(stored_rows, "row", "rows")
+                ),
             ));
         }
         let count = self.count(self.options.max_items(), Resource::Fields)?;
@@ -1117,10 +1120,8 @@ impl<R: Read> Decoder<'_, R> {
             }
             _ => DiagnosticKind::Inconsistent,
         };
-        self.rejected(
-            kind,
-            format!("The stored hierarchy is inconsistent. {error}"),
-        )
+        self.rejected(kind, "The stored hierarchy is inconsistent.")
+            .with_source(error)
     }
 
     // Structures.

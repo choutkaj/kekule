@@ -117,7 +117,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
                 TrajectoryFormat::Dcd,
                 "acute.dcd",
                 None,
-                "The DCD cell becomes degenerate as lengths and angle cosines.",
+                "The cell is degenerate when written as lengths and angles.",
             )
             .with_source(
                 kekule_traj::TrajectoryIoError::new(TrajectoryIoErrorKind::InvalidFrame)
@@ -365,7 +365,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
                 TrajectoryFormat::Dcd,
                 "oriented.dcd",
                 None,
-                "The DCD cell is not in standard orientation: a along positive x, b in the xy plane with positive y and c with positive z.",
+                "The cell is not in standard orientation. Cell vector a lies along +x, b in the xy plane with +y, c with +z.",
             ))
         );
         assert_eq!(writer.writer(), &before);

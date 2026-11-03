@@ -441,7 +441,8 @@ impl fmt::Display for ClusteringError {
             }
             Self::MatrixMismatch { expected, actual } => write!(
                 formatter,
-                "The distance matrix covers {actual} members. The ensemble has {expected}."
+                "The distance matrix covers {}. The ensemble has {expected}.",
+                crate::diagnostics::counted(*actual, "member", "members")
             ),
             Self::CondensedLength {
                 members,

@@ -1,6 +1,6 @@
 //! Configurable atom features using the versioned NAGL normalization/resonance profile.
 use super::config::Feature;
-use crate::error::{atom_list, capitalized};
+use crate::error::{atom_list, capitalized, counted};
 use crate::{Error, ErrorKind, Result};
 
 use kekule::{
@@ -563,13 +563,19 @@ fn check_categories(molecule: &Molecule, specifications: &[Feature]) -> Result<(
         if let Some(&first) = atoms.first() {
             return Err(Error::new(
                 ErrorKind::UnsupportedMolecule,
-                format!(
-                    "{} {} a number of bonded neighbors the NAGL model has no feature for. \
-                     The first has {} neighbors.",
-                    capitalized(&atom_list(&atoms)),
-                    if atoms.len() == 1 { "has" } else { "have" },
-                    degree(first)
-                ),
+                match atoms.as_slice() {
+                    [_] => format!(
+                        "{} has {}. The NAGL model has no feature for that.",
+                        capitalized(&atom_list(&atoms)),
+                        counted(degree(first), "bonded neighbor", "bonded neighbors")
+                    ),
+                    _ => format!(
+                        "{} have numbers of bonded neighbors the NAGL model has no feature for. \
+                         The first has {}.",
+                        capitalized(&atom_list(&atoms)),
+                        counted(degree(first), "neighbor", "neighbors")
+                    ),
+                },
             )
             .with_atoms(atoms));
         }
@@ -657,9 +663,9 @@ pub(super) fn features(
                             Error::new(
                                 ErrorKind::UnsupportedMolecule,
                                 format!(
-                                    "{} has {degree} bonded neighbors. The NAGL model has no \
-                                     feature for that connectivity.",
-                                    capitalized(&id.to_string())
+                                    "{} has {}. The NAGL model has no feature for that.",
+                                    capitalized(&id.to_string()),
+                                    counted(degree, "bonded neighbor", "bonded neighbors")
                                 ),
                             )
                         })?;

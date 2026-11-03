@@ -267,7 +267,11 @@ impl fmt::Display for DenseArrayError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::IndexOutOfRange { index, len } => {
-                write!(formatter, "Row {index} is outside the array of {len} rows.")
+                write!(
+                    formatter,
+                    "Row {index} is outside the array of {}.",
+                    crate::diagnostics::counted(*len, "row", "rows")
+                )
             }
             Self::CountMismatch { expected, actual } => write!(
                 formatter,

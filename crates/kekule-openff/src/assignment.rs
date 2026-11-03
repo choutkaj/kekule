@@ -1,5 +1,5 @@
 use crate::{
-    error::{atom_list, capitalized},
+    error::{article, atom_list, capitalized, counted},
     explicit,
     offxml::{parameter_name, ForceField, Rule, Sourced},
     parameters::*,
@@ -215,7 +215,7 @@ impl ForceField {
                 return Err(Error::new(
                     ErrorKind::ForceField,
                     format!(
-                        "The constraint {} on the unbonded {} has no distance.",
+                        "Constraint {} has no distance for the unbonded {}.",
                         parameter_name(self.constraints[rule].parameter.identity()),
                         atom_list(pair)
                     ),
@@ -400,9 +400,9 @@ impl ForceField {
                     return Err(Error::new(
                         ErrorKind::Charges,
                         format!(
-                            "The charge assignment has {} charges for {} atoms.",
-                            charges.charges.value().len(),
-                            assigned.molecule.atom_count()
+                            "The charge assignment has {} for {}.",
+                            counted(charges.charges.value().len(), "charge", "charges"),
+                            counted(assigned.molecule.atom_count(), "atom", "atoms")
                         ),
                     ));
                 }
@@ -638,7 +638,7 @@ fn complete<const N: usize>(
             ErrorKind::Unparameterized,
             match missing.len() {
                 1 => format!(
-                    "1 {noun} has no {parameter} parameter. It involves {}.",
+                    "The {noun} of {} has no {parameter} parameter.",
                     atom_list(&first[..])
                 ),
                 count => format!(
@@ -657,8 +657,10 @@ fn complete<const N: usize>(
         let error = Error::new(
             ErrorKind::ForceField,
             format!(
-                "{} match a {parameter} parameter but do not form a {noun}.",
-                capitalized(&atom_list(&first[..]))
+                "{} match {} {parameter} parameter but do not form {} {noun}.",
+                capitalized(&atom_list(&first[..])),
+                article(parameter),
+                article(noun)
             ),
         );
         return Err(error.with_atoms(invalid.into_iter().flatten().copied()));

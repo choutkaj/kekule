@@ -887,7 +887,7 @@ impl fmt::Display for PerceptionInstallError {
                 descriptor,
             } => write!(
                 formatter,
-                "The CIP descriptor {descriptor:?} does not apply to {element}."
+                "The CIP descriptor {descriptor} does not apply to {element}."
             ),
             Self::RingAtomSlotCountMismatch { expected, actual } => write!(
                 formatter,

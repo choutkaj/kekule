@@ -195,9 +195,11 @@ impl NaglModel {
             || model.identity().checkpoint_sha256() != kekule_openff_ash::CHECKPOINT_SHA256
         {
             return Err(model_error(format!(
-                "The bundled Ash manifest declares checkpoint {:?}, not {:?}.",
+                "The bundled Ash manifest declares model \"{}\" with SHA-256 {}, not \"{}\" with SHA-256 {}.",
                 model.identity().model_file(),
-                kekule_openff_ash::MODEL_FILE
+                model.identity().checkpoint_sha256(),
+                kekule_openff_ash::MODEL_FILE,
+                kekule_openff_ash::CHECKPOINT_SHA256
             )));
         }
         Ok(model)

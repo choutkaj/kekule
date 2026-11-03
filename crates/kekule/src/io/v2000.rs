@@ -429,8 +429,9 @@ fn parse_v2000_bond(
                     index,
                     DiagnosticKind::InvalidReference,
                     format!(
-                        "Bond {} refers to atom {serial}, but the atom block has {atom_count} atoms.",
-                        bond_index + 1
+                        "Bond {} refers to atom {serial}, but the atom block has {}.",
+                        bond_index + 1,
+                        crate::diagnostics::counted(atom_count, "atom", "atoms")
                     ),
                 )
             })
@@ -709,7 +710,8 @@ where
                     index,
                     DiagnosticKind::InvalidReference,
                     format!(
-                        "The property record refers to atom {serial}, but the atom block has {atom_count} atoms."
+                        "The property record refers to atom {serial}, but the atom block has {}.",
+                        crate::diagnostics::counted(atom_count, "atom", "atoms")
                     ),
                 )
             })?;

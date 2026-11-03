@@ -88,17 +88,12 @@ pub(crate) struct SourceStereoNormalizationError {
     pub issues: Vec<SourceStereoNormalizationIssue>,
 }
 
-/// Writes the first issue, and how many there are when there are several.
+/// Writes the first issue; [`Self::issues`] holds them all.
 impl fmt::Display for SourceStereoNormalizationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.issues.as_slice() {
-            [] => formatter.write_str("The source stereo cannot be represented."),
-            [issue] => write!(formatter, "{issue}"),
-            [issue, ..] => write!(
-                formatter,
-                "The source stereo has {} problems. {issue}",
-                self.issues.len()
-            ),
+        match self.issues.first() {
+            None => formatter.write_str("The source stereo cannot be represented."),
+            Some(issue) => write!(formatter, "{issue}"),
         }
     }
 }
@@ -111,7 +106,7 @@ impl fmt::Display for SourceStereoNormalizationIssue {
             }
             Self::InvalidSourceBondMarkEndpoint { bond, from } => write!(
                 f,
-                "The stereo mark on {bond} starts at {from}. That atom is not an endpoint of the bond."
+                "The stereo mark on {bond} starts at {from}, not at an endpoint of the bond."
             ),
             Self::UnassembledTetrahedralBondMark { bond, kind } => write!(
                 f,
@@ -135,7 +130,7 @@ impl fmt::Display for SourceStereoNormalizationIssue {
                 write!(f, "The {} on {bond} is not supported.", mark_name(*kind))
             }
             Self::InvalidStereo(issue) => write!(f, "{issue}"),
-            Self::CouldNotCreateStereoElement(error) => write!(f, "{error}"),
+            Self::CouldNotCreateStereoElement(_) => f.write_str("Cannot create the stereo element."),
         }
     }
 }
@@ -148,12 +143,21 @@ fn mark_name(kind: SourceStereoBondMarkKind) -> &'static str {
         SourceStereoBondMarkKind::WedgeUp => "wedge",
         SourceStereoBondMarkKind::WedgeDown => "hash",
         SourceStereoBondMarkKind::WedgeEither => "wavy mark",
-        SourceStereoBondMarkKind::DoubleBondEither => "either double-bond mark",
+        SourceStereoBondMarkKind::DoubleBondEither => "unspecified double-bond mark",
         SourceStereoBondMarkKind::MolfileDoubleBondGeometry => "double-bond drawing",
     }
 }
 
-impl std::error::Error for SourceStereoNormalizationError {}
+/// The source is the molecule error of the first issue, when that issue
+/// failed to create a stereo element.
+impl std::error::Error for SourceStereoNormalizationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self.issues.first() {
+            Some(SourceStereoNormalizationIssue::CouldNotCreateStereoElement(error)) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl fmt::Display for NormalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

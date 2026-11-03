@@ -1924,7 +1924,7 @@ fn read_line<'a, R: BufRead>(
                         operation,
                         source_label,
                         frame,
-                        format!("Cannot grow the line buffer. {detail}"),
+                        format!("The line buffer cannot grow. {detail}"),
                     )
                 },
             )?;

@@ -19,8 +19,8 @@ are marked **Breaking:**.
   capital letter and a full stop, and a cause that repeats the previous text
   appears once. `LimitExceeded::describe` writes a limit with its observed
   value and bound, `work limit: 69,400,898 steps of 69,248,000`, for an error
-  that names its operation. `BondOrder`, `StereoCarrier`, `ValenceIssue` and
-  `CipAssignmentIssue` implement `Display`.
+  that names its operation. `BondOrder`, `StereoCarrier`, `StereoDescriptor`,
+  `ValenceIssue` and `CipAssignmentIssue` implement `Display`.
 
 - Continuing a trajectory file after a restart (SeekDelta K60), as a
   simulation restarted from a checkpoint does.
@@ -749,6 +749,9 @@ are marked **Breaking:**.
     write `… stopped.` and return `Cancelled` from `source()`.
   - `InstanceAtomId` and `InstanceBondId` display as `atom 5 of instance 2`,
     and `HierarchyIdKind::AtomSite` as `atom site`.
+  - Errors that hold a list of issues, such as `StereoValidationError`,
+    `CipAssignmentError` and `ValenceError`, display their first issue;
+    the list holds them all.
   - A `kekule-openff` error writes the file or molecule definition that
     failed as its first sentence, `Cannot parameterize molecule definition
     2.`, then the detail, naming every atom it concerns; `Error::detail` is
@@ -770,8 +773,10 @@ are marked **Breaking:**.
   `GeometryEditError::Unit`, `EnsembleError::Unit`, `SeriesError::Unit`,
   `PeriodicBoxError::{Cell, Geometry}`, `SolvationError::{Unit, Geometry,
   Position}`, `StagedCoordinateError::{Unit, Position}`,
-  `InteractionError::Selection`, `TaggedMatchError::Match` and
-  `AlignmentError::Correspondence`. `PlacementError::LimitExceeded` no
+  `InteractionError::Selection`, `TaggedMatchError::Match`,
+  `AlignmentError::Correspondence` and `CipRankingError::InvalidStereo`.
+  `NormalizationError` returns the `MoleculeError` of a stereo element it
+  could not create. `PlacementError::LimitExceeded` no
   longer returns its limit as a source.
 - **Breaking:** default perception installs resonance delocalization
   (SeekDelta K19): whether resonance delocalizes each bond, and the bond's

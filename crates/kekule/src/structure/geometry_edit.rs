@@ -73,7 +73,7 @@ impl fmt::Display for GeometryEditError {
                 f.write_str("The moving fragment reaches a fixed reference atom.")
             }
             Self::InvalidMovingSelection => f.write_str(
-                "The moving selection must contain the last reference atom and not the first.",
+                "The moving selection lacks the last reference atom or contains the first.",
             ),
             Self::Unit(error) => error.fmt(f),
             Self::InvalidTarget => f.write_str(

@@ -279,7 +279,7 @@ impl fmt::Display for SubstructureMatchError {
         match self {
             Self::InvalidLimit { resource, limit } => write!(
                 f,
-                "The substructure search limit on {resource} is {limit}. It is zero or above its maximum."
+                "The substructure search limit on {resource} is {limit}. Set a positive limit."
             ),
             Self::IncompatiblePerception(perception) => write!(
                 f,
@@ -290,7 +290,11 @@ impl fmt::Display for SubstructureMatchError {
                 "The target has no current {perception} perception. Perceive it before matching."
             ),
             Self::LimitExceeded { limit, .. } => {
-                write!(f, "The substructure search exceeded its {}.", limit.describe())
+                write!(
+                    f,
+                    "The substructure search exceeded its {}.",
+                    limit.describe()
+                )
             }
         }
     }

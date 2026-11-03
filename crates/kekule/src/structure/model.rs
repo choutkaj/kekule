@@ -1040,7 +1040,9 @@ impl fmt::Display for ModelBuildError {
         match self {
             Self::InstancePositionCountMismatch { expected, actual } => write!(
                 formatter,
-                "The molecule has {expected} atoms, but {actual} positions were given."
+                "The molecule has {}, but {} given.",
+                crate::diagnostics::counted(*expected, "atom", "atoms"),
+                crate::diagnostics::counted(*actual, "position was", "positions were")
             ),
             Self::CapacityOverflow => {
                 formatter.write_str("The model exceeds the addressable number of atoms.")

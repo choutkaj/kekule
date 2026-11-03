@@ -482,8 +482,9 @@ fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
                 DiagnosticKind::Limit,
                 Some(SourceLocation::at_line(line)),
                 format!(
-                    "The _atom_site table exceeds its row limit: {} rows of {max_rows}.",
-                    max_rows + 1
+                    "The _atom_site table exceeds its row limit: {} {} of {max_rows}.",
+                    max_rows + 1,
+                    if max_rows == 0 { "row" } else { "rows" }
                 )
                 .as_str()
             ),

@@ -83,7 +83,7 @@ impl fmt::Display for AtomLabel {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "chain {} residue {}{} atom {}",
+            "chain \"{}\" residue {}{} atom \"{}\"",
             self.chain,
             self.residue_number,
             self.insertion_code.as_deref().unwrap_or(""),

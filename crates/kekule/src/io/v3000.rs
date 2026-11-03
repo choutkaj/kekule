@@ -713,7 +713,8 @@ fn parse_v3000_collection(
                 return Err(error(
                     DiagnosticKind::Inconsistent,
                     &format!(
-                        "The stereo group {name:?} declares {count} atoms but lists {}.",
+                        "The stereo group {name:?} declares {} but lists {}.",
+                        crate::diagnostics::counted(count, "atom", "atoms"),
                         members.len()
                     ),
                 ));

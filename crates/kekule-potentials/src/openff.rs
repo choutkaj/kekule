@@ -645,7 +645,9 @@ impl fmt::Display for OpenFfPotentialError {
                 actual,
             } => write!(
                 f,
-                "The {array} cover {actual} atoms, but the topology has {expected}."
+                "The {array} cover {} {}, but the topology has {expected}.",
+                actual,
+                if *actual == 1 { "atom" } else { "atoms" }
             ),
             Self::InvalidParameter { parameter, value } => {
                 let article = if parameter.to_string().starts_with(['a', 'e', 'i', 'o', 'u']) {

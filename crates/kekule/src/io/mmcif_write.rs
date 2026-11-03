@@ -446,7 +446,7 @@ impl fmt::Display for MmcifCellReason {
             Self::SampleCellsDiffer => "The ensemble samples have different cells.",
             Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
             Self::NonstandardOrientation => {
-                "The cell does not have a along x and b in the xy plane."
+                "Cell vector a is not along x, or b is not in the xy plane."
             }
         })
     }

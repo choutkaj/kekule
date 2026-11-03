@@ -175,7 +175,7 @@ fn rejected_frame(
             )));
             (
                 TrajectoryIoErrorKind::UnsupportedVariant,
-                "The DCD cell is not in standard orientation: a along positive x, b in the xy plane with positive y and c with positive z.",
+                "The cell is not in standard orientation. Cell vector a lies along +x, b in the xy plane with +y, c with +z.",
                 None,
                 None,
             )

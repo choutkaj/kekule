@@ -811,7 +811,8 @@ impl fmt::Display for TrajectoryError {
         match self {
             Self::IndexOutOfRange { index, len } => write!(
                 formatter,
-                "Frame {index} is outside the trajectory of {len} frames."
+                "Frame {index} is outside the trajectory of {}.",
+                crate::diagnostics::counted(*len, "frame", "frames")
             ),
             Self::FrameCountMismatch { expected, actual } => write!(
                 formatter,

@@ -173,8 +173,9 @@ fn category<'a>(
         component_error(
             error.kind(),
             error.location(),
-            format!("Component {id:?} is malformed. {}", error.message()),
+            format!("Component \"{id}\" is malformed."),
         )
+        .with_source(error)
     })
 }
 

@@ -155,7 +155,7 @@ impl SelectParseOptions {
     pub fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Result<Self, FormatError> {
         if max_input_bytes == 0 {
             return Err(option_error(
-                "The option max_input_bytes is 0. Set a positive limit.",
+                "The input size limit is 0. Set a positive limit.",
             ));
         }
         self.max_input_bytes = max_input_bytes;
@@ -175,7 +175,7 @@ impl SelectParseOptions {
     pub fn with_max_depth(mut self, max_depth: usize) -> Result<Self, FormatError> {
         if max_depth == 0 {
             return Err(option_error(
-                "The option max_depth is 0. Set a positive limit.",
+                "The nesting depth limit is 0. Set a positive limit.",
             ));
         }
         self.max_depth = max_depth;
@@ -207,7 +207,7 @@ impl SelectParseOptions {
                 && characters.all(|next| next.is_ascii_alphanumeric() || next == '_');
             if !identifier || syntax::KEYWORDS.contains(&keyword.as_str()) {
                 return Err(option_error(format!(
-                    "{keyword:?} cannot be a host keyword. It is not an identifier or is a selection keyword."
+                    "The host keyword {keyword:?} is not an identifier, or is a selection keyword."
                 )));
             }
         }
@@ -742,7 +742,7 @@ impl fmt::Display for SelectEvaluateError {
             ),
             Self::HostPoints { term, .. } => write!(
                 formatter,
-                "The term {term:?} resolved to points. Points can only be a within reference."
+                "The term {term:?} resolved to points. Use points only as a \"within\" reference."
             ),
         }
     }

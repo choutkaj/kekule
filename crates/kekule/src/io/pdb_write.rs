@@ -259,7 +259,7 @@ impl fmt::Display for PdbCellReason {
             Self::SampleCellsDiffer => "The ensemble samples have different cells.",
             Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
             Self::NonstandardOrientation => {
-                "The cell does not have a along x and b in the xy plane."
+                "Cell vector a is not along x, or b is not in the xy plane."
             }
             Self::Placeholder => "The cell is PDB's 1 Å placeholder cube.",
             Self::ParametersOutOfRange => "A cell parameter does not fit its CRYST1 columns.",

@@ -158,8 +158,8 @@ impl Config {
             || readout.layers.len() > 16
         {
             return Err(error(
-                "The model readout is not atom pooling with \
-                 regularized_compute_partial_charges.",
+                "The model readout is not \"atoms\" pooling with the postprocess \
+                 \"regularized_compute_partial_charges\".",
             ));
         }
         for layer in &readout.layers {

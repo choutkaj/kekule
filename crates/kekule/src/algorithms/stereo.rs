@@ -577,17 +577,12 @@ pub struct StereoValidationError {
     pub issues: Vec<StereoValidationIssue>,
 }
 
-/// Writes the first issue, and how many there are when there are several.
+/// Writes the first issue; [`Self::issues`] holds them all.
 impl fmt::Display for StereoValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.issues.as_slice() {
-            [] => formatter.write_str("The represented stereo is invalid."),
-            [issue] => write!(formatter, "{issue}"),
-            [issue, ..] => write!(
-                formatter,
-                "The represented stereo has {} problems. {issue}",
-                self.issues.len()
-            ),
+        match self.issues.first() {
+            None => formatter.write_str("The represented stereo is invalid."),
+            Some(issue) => write!(formatter, "{issue}"),
         }
     }
 }
@@ -622,7 +617,9 @@ impl fmt::Display for CoordinateStereoError {
             }
             Self::PositionCountMismatch { expected, actual } => write!(
                 formatter,
-                "The molecule has {expected} atoms and {actual} positions. Give one position per atom."
+                "The molecule has {} and {}. Give one position per atom.",
+                crate::diagnostics::counted(*expected, "atom", "atoms"),
+                crate::diagnostics::counted(*actual, "position", "positions")
             ),
             Self::InvalidStereo(_) => formatter.write_str("The represented stereo is invalid."),
             Self::CouldNotCreateElement(_) => {

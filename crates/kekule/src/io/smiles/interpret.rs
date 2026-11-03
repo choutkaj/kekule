@@ -685,8 +685,7 @@ fn validate_smiles_source_aromaticity(
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
                 record.span.start,
-                "The aromaticity of the atom differs between its syntax and the parsed program."
-                    .to_owned(),
+                "The aromatic marking of the atom is inconsistent.".to_owned(),
             ));
         }
         if imported {
