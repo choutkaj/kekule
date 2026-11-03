@@ -1,6 +1,8 @@
 //! Connection records are typed once per source and resolve against the atoms
 //! of each selected coordinate model.
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::cell::OnceCell;
+use std::collections::{BTreeSet, HashMap};
+use std::ops::Range;
 
 use crate::diagnostics::{Cancellation, FormatError};
 use crate::molecule::{BondOrder, Element};
@@ -51,8 +53,8 @@ pub(super) type PartnerSpec = Result<ConnectionPartnerSelector, ConnectionResolu
 /// A connection resolved to two atoms of the selected model.
 #[derive(Debug, Clone)]
 pub(super) struct DeclaredConnection {
-    pub(super) left_atom: String,
-    pub(super) right_atom: String,
+    /// The partners' source rows, as [`AtomRow::row_index`].
+    pub(super) rows: [usize; 2],
     /// The instance of the left atom; both atoms end up in one molecule group.
     pub(super) instance_key: String,
     pub(super) order: BondOrder,
@@ -85,7 +87,7 @@ pub(super) struct ResolvedConnections {
 /// uniting the instances that resolved bonds join.
 pub(super) fn resolve_connections(
     records: &[ConnectionRecord],
-    rows: &[AtomRow],
+    rows: &[&AtomRow],
     all_rows: &[AtomRow],
     selected_model: &str,
     union: &mut InstanceUnion,
@@ -102,7 +104,7 @@ pub(super) fn resolve_connections(
             )
         })
         .then(|| SiteIndex::new(rows, all_rows, selected_model));
-    let names = (!records.is_empty()).then(|| NameIndex::new(rows));
+    let names = NameIndex::new(rows);
     let mut resolved = ResolvedConnections::default();
     let mut declared = BTreeSet::new();
     for record in records {
@@ -131,7 +133,7 @@ pub(super) fn resolve_connections(
                     all_rows,
                     selected_model,
                     sites.as_ref(),
-                    names.as_ref(),
+                    &names,
                 ),
                 Err(reason) => ConnectionPartnerResolution::Unresolved(reason.clone()),
             };
@@ -178,8 +180,7 @@ pub(super) fn resolve_connections(
             union.union(&left.instance_key, &right.instance_key);
         }
         resolved.bonds.push(DeclaredConnection {
-            left_atom,
-            right_atom,
+            rows: [left.row_index, right.row_index],
             instance_key: left.instance_key.clone(),
             order,
             connection_id: bond.connection_id.clone(),
@@ -371,7 +372,7 @@ struct SiteIndex<'a> {
 }
 
 impl<'a> SiteIndex<'a> {
-    fn new(selected_rows: &'a [AtomRow], all_rows: &'a [AtomRow], selected_model: &str) -> Self {
+    fn new(selected_rows: &[&'a AtomRow], all_rows: &'a [AtomRow], selected_model: &str) -> Self {
         let index = |rows: &mut dyn Iterator<Item = &'a AtomRow>| {
             let mut index = HashMap::<&str, Vec<&AtomRow>>::new();
             for row in rows {
@@ -382,72 +383,162 @@ impl<'a> SiteIndex<'a> {
             index
         };
         Self {
-            selected: index(&mut selected_rows.iter()),
+            selected: index(&mut selected_rows.iter().copied()),
             model: index(&mut all_rows.iter().filter(|row| row.model_id == selected_model)),
         }
     }
 }
 
-/// Rows of the selected model by asym and atom name, under label and under
-/// author identity, so that a selector naming both does not scan every row.
+/// Rows by asym and atom name.
+type Named<'a> = HashMap<(&'a str, &'a str), Vec<&'a AtomRow>>;
+
+/// Runs of consecutive rows, as ranges of a row list, by key.
+type Runs<K> = HashMap<K, Vec<Range<usize>>>;
+
+/// Rows of the selected model by residue and by asym and atom name, under
+/// label and under author identity, so that resolving a selector reads only
+/// the rows that can match it. Each lookup is built on first use.
 struct NameIndex<'a> {
-    label: HashMap<(&'a str, &'a str), Vec<&'a AtomRow>>,
-    author: HashMap<(&'a str, &'a str), Vec<&'a AtomRow>>,
+    rows: Vec<&'a AtomRow>,
+    label: OnceCell<Named<'a>>,
+    author: OnceCell<Named<'a>>,
+    /// Runs of rows, as ranges of `rows`, by label asym and sequence number.
+    label_residues: OnceCell<Runs<(&'a str, i32)>>,
+    /// Runs of rows by author asym and sequence number.
+    author_residues: OnceCell<Runs<(&'a str, &'a str)>>,
 }
 
 impl<'a> NameIndex<'a> {
-    fn new(rows: &'a [AtomRow]) -> Self {
-        let mut index = Self {
-            label: HashMap::new(),
-            author: HashMap::new(),
-        };
-        for row in rows {
-            if let (Some(asym), Some(atom)) = (&row.label_asym_id, &row.label_atom_name) {
-                index.label.entry((asym, atom)).or_default().push(row);
-            }
-            if let (Some(asym), Some(atom)) = (&row.auth_asym_id, &row.auth_atom_name) {
-                index.author.entry((asym, atom)).or_default().push(row);
-            }
+    fn new(rows: &[&'a AtomRow]) -> Self {
+        Self {
+            rows: rows.to_vec(),
+            label: OnceCell::new(),
+            author: OnceCell::new(),
+            label_residues: OnceCell::new(),
+            author_residues: OnceCell::new(),
         }
-        index
     }
 
-    /// The rows, in source order, that can match a selector stating an asym
-    /// and an atom name, or `None` for a selector that states neither pair.
-    fn candidates<'s>(
-        &'s self,
-        selector: &'s ConnectionPartnerSelector,
-    ) -> Option<&'s [&'a AtomRow]> {
-        fn lookup<'i, 'k, 'a>(
-            index: &'i HashMap<(&'k str, &'k str), Vec<&'a AtomRow>>,
-            asym: Option<&'k str>,
-            atom: Option<&'k str>,
-        ) -> Option<&'i [&'a AtomRow]> {
-            asym.zip(atom)
-                .map(|key| index.get(&key).map_or(&[][..], Vec::as_slice))
+    /// The rows, in source order, among which every row matching `selector`
+    /// is, or `None` for a selector stating no asym with a residue or an
+    /// atom name. A residue, stated under either identity, narrows the most.
+    fn candidates(&self, selector: &ConnectionPartnerSelector) -> Option<Vec<&'a AtomRow>> {
+        let (label, author) = (&selector.label, &selector.author);
+        if label.sequence_id.is_none() && author.sequence_id.is_some() {
+            self.author_rows(author).or_else(|| self.label_rows(label))
+        } else {
+            self.label_rows(label).or_else(|| self.author_rows(author))
         }
-        lookup(
-            &self.label,
-            selector.label.asym_id.as_deref(),
-            selector.label.atom_id.as_deref(),
-        )
-        .or_else(|| {
-            lookup(
-                &self.author,
-                selector.author.asym_id.as_deref(),
-                selector.author.atom_id.as_deref(),
-            )
-        })
     }
+
+    /// The rows, in source order, among which every row matching `label` is:
+    /// its residue's rows, or its atom name's rows within its asym. `None`
+    /// for a selector stating neither.
+    fn label_rows(&self, label: &LabelConnectionSelector) -> Option<Vec<&'a AtomRow>> {
+        let asym = label.asym_id.as_deref()?;
+        match (label.sequence_id, label.atom_id.as_deref()) {
+            (Some(sequence), _) => {
+                let residues = self.label_residues.get_or_init(|| {
+                    runs(&self.rows, |row| {
+                        row.label_asym_id.as_deref().zip(row.label_seq_id)
+                    })
+                });
+                Some(self.residue_rows(residues.get(&(asym, sequence))))
+            }
+            (None, Some(atom)) => {
+                let names = self.label.get_or_init(|| {
+                    names(&self.rows, |row| {
+                        row.label_asym_id
+                            .as_deref()
+                            .zip(row.label_atom_name.as_deref())
+                    })
+                });
+                Some(names.get(&(asym, atom)).cloned().unwrap_or_default())
+            }
+            (None, None) => None,
+        }
+    }
+
+    /// [`Self::label_rows`] for an author selector.
+    fn author_rows(&self, author: &AuthorConnectionSelector) -> Option<Vec<&'a AtomRow>> {
+        let asym = author.asym_id.as_deref()?;
+        match (author.sequence_id.as_deref(), author.atom_id.as_deref()) {
+            (Some(sequence), _) => {
+                let residues = self.author_residues.get_or_init(|| {
+                    runs(&self.rows, |row| {
+                        row.auth_asym_id.as_deref().zip(row.auth_seq_id.as_deref())
+                    })
+                });
+                Some(self.residue_rows(residues.get(&(asym, sequence))))
+            }
+            (None, Some(atom)) => {
+                let names = self.author.get_or_init(|| {
+                    names(&self.rows, |row| {
+                        row.auth_asym_id
+                            .as_deref()
+                            .zip(row.auth_atom_name.as_deref())
+                    })
+                });
+                Some(names.get(&(asym, atom)).cloned().unwrap_or_default())
+            }
+            (None, None) => None,
+        }
+    }
+
+    /// The rows of a residue's runs, in source order.
+    fn residue_rows(&self, runs: Option<&Vec<Range<usize>>>) -> Vec<&'a AtomRow> {
+        runs.into_iter()
+            .flatten()
+            .flat_map(|run| &self.rows[run.clone()])
+            .copied()
+            .collect()
+    }
+}
+
+/// The rows with each key, in source order.
+fn names<'a>(
+    rows: &[&'a AtomRow],
+    key: impl Fn(&'a AtomRow) -> Option<(&'a str, &'a str)>,
+) -> Named<'a> {
+    let mut names = HashMap::<_, Vec<_>>::new();
+    for &row in rows {
+        if let Some(key) = key(row) {
+            names.entry(key).or_default().push(row);
+        }
+    }
+    names
+}
+
+/// The runs of consecutive rows with one key, as ranges of `rows`, by key.
+fn runs<'a, K: std::hash::Hash + Eq + Copy>(
+    rows: &[&'a AtomRow],
+    key: impl Fn(&'a AtomRow) -> Option<K>,
+) -> Runs<K> {
+    let mut runs = Runs::<K>::new();
+    let mut current: Option<(K, usize)> = None;
+    for (position, &row) in rows.iter().enumerate() {
+        let row_key = key(row);
+        if let Some((key, start)) = current {
+            if row_key == Some(key) {
+                continue;
+            }
+            runs.entry(key).or_default().push(start..position);
+        }
+        current = row_key.map(|key| (key, position));
+    }
+    if let Some((key, start)) = current {
+        runs.entry(key).or_default().push(start..rows.len());
+    }
+    runs
 }
 
 fn resolve_partner<'a>(
     selector: &ConnectionPartnerSelector,
-    selected_rows: &'a [AtomRow],
+    selected_rows: &[&'a AtomRow],
     all_rows: &[AtomRow],
     selected_model: &str,
     sites: Option<&SiteIndex<'a>>,
-    names: Option<&NameIndex<'a>>,
+    names: &NameIndex<'a>,
 ) -> ConnectionPartnerResolution<'a> {
     let candidates = match (selector.site_id.as_deref(), sites) {
         (Some(site), Some(sites)) => sites
@@ -458,14 +549,14 @@ fn resolve_partner<'a>(
             .copied()
             .filter(|candidate| selector.matches(candidate))
             .collect::<Vec<_>>(),
-        _ => match names.and_then(|names| names.candidates(selector)) {
+        _ => match names.candidates(selector) {
             Some(rows) => rows
-                .iter()
-                .copied()
+                .into_iter()
                 .filter(|candidate| selector.matches(candidate))
                 .collect(),
             None => selected_rows
                 .iter()
+                .copied()
                 .filter(|candidate| selector.matches(candidate))
                 .collect(),
         },
@@ -501,14 +592,22 @@ fn resolve_partner<'a>(
                     return omitted(alternate_location);
                 }
             }
+            // Whether any selected row matches, reading only the rows an
+            // index narrows the search to where it can.
+            let any = |narrowed: Option<Vec<&AtomRow>>, matches: &dyn Fn(&AtomRow) -> bool| {
+                match narrowed {
+                    Some(rows) => rows.into_iter().any(matches),
+                    None => selected_rows.iter().any(|candidate| matches(candidate)),
+                }
+            };
             if !selector.label.is_empty()
                 && !selector.author.is_empty()
-                && selected_rows
-                    .iter()
-                    .any(|candidate| selector.label.matches(candidate))
-                && selected_rows
-                    .iter()
-                    .any(|candidate| selector.author.matches(candidate))
+                && any(names.label_rows(&selector.label), &|candidate| {
+                    selector.label.matches(candidate)
+                })
+                && any(names.author_rows(&selector.author), &|candidate| {
+                    selector.author.matches(candidate)
+                })
             {
                 return ConnectionPartnerResolution::Unresolved(
                     ConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
@@ -524,50 +623,70 @@ fn resolve_partner<'a>(
 }
 
 #[derive(Debug)]
+/// Instance keys united into molecules; each set's root is its smallest
+/// key.
 pub(super) struct InstanceUnion {
-    parent: BTreeMap<String, String>,
+    indices: HashMap<String, usize>,
+    keys: Vec<String>,
+    parents: Vec<usize>,
 }
 
 impl InstanceUnion {
-    pub(super) fn new(keys: impl IntoIterator<Item = String>) -> Self {
-        let parent = keys.into_iter().map(|key| (key.clone(), key)).collect();
-        Self { parent }
+    pub(super) fn new<'a>(keys: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut union = Self {
+            indices: HashMap::new(),
+            keys: Vec::new(),
+            parents: Vec::new(),
+        };
+        for key in keys {
+            union.index(key);
+        }
+        union
     }
 
-    pub(super) fn find(&mut self, key: &str) -> String {
-        let mut current = key.to_owned();
-        let mut path = Vec::new();
-        loop {
-            let parent = self
-                .parent
-                .get(&current)
-                .cloned()
-                .unwrap_or_else(|| current.clone());
-            if parent == current {
-                break;
-            }
-            path.push(current);
-            current = parent;
+    fn index(&mut self, key: &str) -> usize {
+        if let Some(&index) = self.indices.get(key) {
+            return index;
         }
-        self.parent
-            .entry(current.clone())
-            .or_insert_with(|| current.clone());
-        for node in path {
-            self.parent.insert(node, current.clone());
+        let index = self.keys.len();
+        self.indices.insert(key.to_owned(), index);
+        self.keys.push(key.to_owned());
+        self.parents.push(index);
+        index
+    }
+
+    fn root(&mut self, key: &str) -> usize {
+        let mut current = self.index(key);
+        let start = current;
+        while self.parents[current] != current {
+            current = self.parents[current];
         }
-        current
+        let root = current;
+        let mut current = start;
+        while self.parents[current] != root {
+            let next = self.parents[current];
+            self.parents[current] = root;
+            current = next;
+        }
+        root
+    }
+
+    /// The root key of `key`'s set.
+    pub(super) fn find(&mut self, key: &str) -> &str {
+        let root = self.root(key);
+        &self.keys[root]
     }
 
     fn union(&mut self, left: &str, right: &str) {
-        let left_root = self.find(left);
-        let right_root = self.find(right);
+        let left_root = self.root(left);
+        let right_root = self.root(right);
         if left_root != right_root {
-            let (root, child) = if left_root < right_root {
+            let (root, child) = if self.keys[left_root] < self.keys[right_root] {
                 (left_root, right_root)
             } else {
                 (right_root, left_root)
             };
-            self.parent.insert(child, root);
+            self.parents[child] = root;
         }
     }
 }

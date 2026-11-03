@@ -234,6 +234,38 @@ pub enum SourceResiduePosition {
 }
 
 impl SourceResidueId {
+    /// Whether `row` belongs to this residue: [`Self::of`] the row equals it.
+    pub(super) fn matches(&self, row: &AtomRow) -> bool {
+        let position = match (&self.position, row.label_seq_id) {
+            (SourceResiduePosition::Label(sequence), Some(row_sequence)) => {
+                *sequence == row_sequence
+            }
+            (_, Some(_)) | (SourceResiduePosition::Label(_), None) => false,
+            (SourceResiduePosition::Author(sequence), None) => {
+                row.occurrence.is_none() && row.auth_seq_id.as_deref() == Some(sequence.as_str())
+            }
+            (SourceResiduePosition::RepeatedAuthor { sequence, repeat }, None) => {
+                row.occurrence == Some(*repeat)
+                    && row.auth_seq_id.as_deref() == Some(sequence.as_str())
+            }
+            (
+                SourceResiduePosition::Occurrence {
+                    component_id,
+                    index,
+                },
+                None,
+            ) => {
+                row.auth_seq_id.is_none()
+                    && row.occurrence.unwrap_or_default() == *index
+                    && row.comp_id == *component_id
+            }
+        };
+        position
+            && self.model_id == row.model_id
+            && self.asym_id == row.asym_id
+            && self.insertion_code.as_deref() == row.insertion_code.as_deref()
+    }
+
     pub(super) fn of(row: &AtomRow) -> Self {
         Self::new(
             &row.model_id,
