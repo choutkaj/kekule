@@ -25,11 +25,15 @@ impl WriteErrors {
         FormatError::write(self.0, DiagnosticKind::MissingPerception, message)
     }
 
-    /// A bounded writer calculation, described by `what`, could not complete
-    /// within `limit`.
-    pub(crate) fn resource_limit(self, what: &str, limit: LimitExceeded) -> FormatError {
-        FormatError::write(self.0, DiagnosticKind::Limit, format!("{what} {limit}"))
-            .exceeding(limit)
+    /// A bounded writer calculation could not complete within `limit`;
+    /// `subject` starts the sentence, such as `Canonical labeling`.
+    pub(crate) fn resource_limit(self, subject: &str, limit: LimitExceeded) -> FormatError {
+        FormatError::write(
+            self.0,
+            DiagnosticKind::Limit,
+            format!("{subject} exceeded its {}.", limit.describe()),
+        )
+        .exceeding(limit)
     }
 
     /// The source is internally inconsistent or incomplete, for example a
@@ -391,7 +395,7 @@ pub(crate) fn check_structure_state(
         Some(field) => Err(FormatError::write(
             format,
             DiagnosticKind::Unsupported,
-            format!("{format} cannot represent the {field}; choose to omit it explicitly"),
+            format!("{format} cannot represent the {field}."),
         )
         .with_detail(FormatErrorDetail::UnrepresentableState(field))),
     }

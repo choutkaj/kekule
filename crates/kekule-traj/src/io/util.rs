@@ -58,7 +58,7 @@ pub(crate) fn require_nonempty_writer(
             TrajectoryIoOperation::Finish,
             Some(format),
             source_label,
-            format!("{format} production trajectories must contain at least one frame"),
+            format!("The {format} trajectory has no frame. It needs at least one."),
         ));
     }
     Ok(())
@@ -79,7 +79,7 @@ pub(crate) fn require_no_partial_frame(
             operation,
             Some(format),
             source_label,
-            format!("an earlier {format} write failed partway; the stream may be incomplete"),
+            format!("An earlier {format} write failed partway. The stream is incomplete."),
         ));
     }
     Ok(())
@@ -87,12 +87,11 @@ pub(crate) fn require_no_partial_frame(
 
 /// The cause of a reused reader-side validation failure without the reader's
 /// operation, frame, and source context, which would misdescribe a write.
-pub(crate) fn validation_detail(error: &TrajectoryIoError) -> String {
-    match error.operation() {
-        Some(_) if error.kind() != TrajectoryIoErrorKind::Io => error
-            .detail()
-            .map_or_else(|| error.kind().to_string(), str::to_owned),
-        _ => error.to_string(),
+pub(crate) fn validation_cause(error: TrajectoryIoError) -> TrajectoryIoError {
+    if error.operation().is_none() || error.kind() == TrajectoryIoErrorKind::Io {
+        error
+    } else {
+        error.without_context()
     }
 }
 

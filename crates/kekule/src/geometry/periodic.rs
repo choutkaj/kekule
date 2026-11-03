@@ -21,11 +21,17 @@ pub enum PeriodicGeometryError {
 impl fmt::Display for PeriodicGeometryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unit(_) => f.write_str("periodic calculation input is not a length"),
+            Self::Unit(_) => f.write_str("A periodic calculation input is not a length."),
             Self::NumericalFailure => {
-                f.write_str("periodic calculation exceeds numerical precision or range")
+                f.write_str("The periodic calculation exceeds the numerical precision or range.")
             }
-            Self::LimitExceeded(limit) => write!(f, "nearest-image search {limit}"),
+            Self::LimitExceeded(limit) => {
+                write!(
+                    f,
+                    "The nearest-image search exceeded its {}.",
+                    limit.describe()
+                )
+            }
         }
     }
 }

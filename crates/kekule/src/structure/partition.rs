@@ -196,7 +196,7 @@ impl fmt::Display for PartitionError {
                 states,
             } => write!(
                 formatter,
-                "sample {sample} is assigned to state {state}, but there are {states} states"
+                "Sample {sample} is assigned to state {state}, but there are {states} states."
             ),
             Self::RepresentativeOutOfRange {
                 state,
@@ -204,11 +204,11 @@ impl fmt::Display for PartitionError {
                 samples,
             } => write!(
                 formatter,
-                "state {state} is represented by sample {sample}, but there are {samples} samples"
+                "State {state} is represented by sample {sample}, but there are {samples} samples."
             ),
             Self::RepresentativeNotInState { state, sample } => write!(
                 formatter,
-                "sample {sample} represents state {state} but is assigned to another"
+                "Sample {sample} represents state {state} but is assigned to another state."
             ),
         }
     }

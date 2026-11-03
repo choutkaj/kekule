@@ -135,14 +135,19 @@ impl<W: Write> Encoder<'_, W> {
     }
 
     fn count(&mut self, count: usize) -> Result {
-        let count = u32::try_from(count)
-            .map_err(|_| unrepresentable(format!("{count} entries exceed a native count")))?;
+        let count = u32::try_from(count).map_err(|_| {
+            unrepresentable(format!(
+                "The count {count} exceeds the native maximum of 4,294,967,295."
+            ))
+        })?;
         self.u32(count)
     }
 
     fn str(&mut self, value: &str) -> Result {
         if u32::try_from(value.len()).map_or(true, |len| len == ABSENT_STRING) {
-            return Err(unrepresentable("a string exceeds the native length range"));
+            return Err(unrepresentable(
+                "A string is too long for the native format.",
+            ));
         }
         self.count(value.len())?;
         self.bytes(value.as_bytes())
@@ -183,7 +188,9 @@ impl<W: Write> Encoder<'_, W> {
             match value {
                 Some(value) => {
                     if u32::try_from(value.len()).map_or(true, |len| len == ABSENT_STRING) {
-                        return Err(unrepresentable("a string exceeds the native length range"));
+                        return Err(unrepresentable(
+                            "A string is too long for the native format.",
+                        ));
                     }
                     self.count(value.len())?;
                 }

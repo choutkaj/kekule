@@ -282,3 +282,18 @@ pub enum BondOrder {
     /// from ring perception.
     Dative,
 }
+
+/// Writes the order as an adjective: `zero-order`, `single`, `double`,
+/// `triple`, `quadruple` or `dative`.
+impl std::fmt::Display for BondOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Zero => "zero-order",
+            Self::Single => "single",
+            Self::Double => "double",
+            Self::Triple => "triple",
+            Self::Quadruple => "quadruple",
+            Self::Dative => "dative",
+        })
+    }
+}

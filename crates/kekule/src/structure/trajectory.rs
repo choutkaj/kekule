@@ -809,33 +809,37 @@ pub enum TrajectoryError {
 impl fmt::Display for TrajectoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::IndexOutOfRange { index, len } => {
-                write!(formatter, "index {index} is out of range for {len} frames")
-            }
+            Self::IndexOutOfRange { index, len } => write!(
+                formatter,
+                "Frame {index} is outside the trajectory of {}.",
+                crate::diagnostics::counted(*len, "frame", "frames")
+            ),
             Self::FrameCountMismatch { expected, actual } => write!(
                 formatter,
-                "trajectory requires {expected} replacement frames, but received {actual}"
+                "The trajectory has {expected} frames, but {actual} replacements were given."
             ),
-            Self::MissingTime { frame } => write!(formatter, "frame {frame} has no time"),
+            Self::MissingTime { frame } => write!(formatter, "Frame {frame} has no time."),
             Self::NonMonotonicTime { frame } => {
-                write!(formatter, "time decreases at frame {frame}")
+                write!(
+                    formatter,
+                    "Frame {frame} is earlier than the frame before it."
+                )
             }
             Self::WeightCountMismatch { expected, actual } => write!(
                 formatter,
-                "sampling has {expected} frames, but received {actual} weights"
+                "The sampling has {expected} frames, but {actual} weights were given."
             ),
             Self::InvalidWeight { sample } => write!(
                 formatter,
-                "weight of sample {sample} is not finite and positive"
+                "The weight of sample {sample} is not finite and positive."
             ),
-            Self::TopologyMismatch => {
-                formatter.write_str("frame belongs to a different topology layout")
-            }
+            Self::TopologyMismatch => formatter
+                .write_str("The frame has a different topology layout from the trajectory."),
             Self::FrameNotSampled { frame } => {
-                write!(formatter, "requested frame {frame} was never sampled")
+                write!(formatter, "Frame {frame} was requested but never sampled.")
             }
-            Self::Structure(_) => formatter.write_str("invalid trajectory frame"),
-            Self::Subset(_) => formatter.write_str("cannot subset trajectory"),
+            Self::Structure(_) => formatter.write_str("A trajectory frame is invalid."),
+            Self::Subset(_) => formatter.write_str("Cannot subset the trajectory."),
         }
     }
 }

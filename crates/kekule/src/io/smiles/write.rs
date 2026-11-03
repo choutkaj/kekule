@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{compute_ring_membership, ordered_atom_pair};
-use crate::diagnostics::{FormatError, LimitExceeded, Resource};
+use crate::diagnostics::{Capitalized, FormatError, LimitExceeded, Resource};
 
 /// Maximum carrier combinations isomeric SMILES directional encoding tries.
 pub const MAX_DIRECTIONAL_COMBINATIONS: usize = 4_096;
@@ -153,15 +153,18 @@ pub(super) fn validate_smiles_writeable(
 ) -> std::result::Result<(), FormatError> {
     match stereo {
         StereoWriteMode::Reject if mol.stereo_elements().next().is_some() => {
-            return Err(SMILES_WRITE.unsupported("SMILES writer cannot encode stereochemistry"));
+            return Err(
+                SMILES_WRITE.unsupported("Non-isomeric SMILES cannot state stereochemistry.")
+            );
         }
         StereoWriteMode::Encode => validate_isomeric_smiles_stereo(mol)?,
         StereoWriteMode::Reject => {}
     }
-    for (_, atom) in mol.atoms() {
+    for (atom_id, atom) in mol.atoms() {
         if atom.radical.is_some_and(AtomRadical::has_explicit_spin) {
-            return Err(SMILES_WRITE
-                .unsupported("SMILES writer cannot encode explicit radical spin multiplicity"));
+            return Err(SMILES_WRITE.unsupported(format!(
+                "SMILES cannot state the spin multiplicity of {atom_id}."
+            )));
         }
     }
     for (_, bond) in mol.bonds() {
@@ -169,7 +172,7 @@ pub(super) fn validate_smiles_writeable(
             BondOrder::Single | BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple => {}
             BondOrder::Zero | BondOrder::Dative => {
                 return Err(
-                    SMILES_WRITE.unsupported("SMILES writer cannot encode zero or dative bonds")
+                    SMILES_WRITE.unsupported("SMILES cannot state zero-order or dative bonds.")
                 );
             }
         }
@@ -181,15 +184,16 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Fo
     super::emit::validate_groups(mol)?;
     for (_, element) in mol.stereo_elements() {
         if !element.is_specified() {
-            return Err(SMILES_WRITE
-                .unsupported("isomeric SMILES writer cannot encode explicitly unknown stereo"));
+            return Err(SMILES_WRITE.unsupported("SMILES cannot state explicitly unknown stereo."));
         }
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => {
                 if stereo.carriers.len() != 4 {
-                    return Err(SMILES_WRITE.unsupported(
-                        "isomeric SMILES writer cannot encode invalid tetrahedral stereo",
-                    ));
+                    return Err(SMILES_WRITE.unsupported(format!(
+                        "The tetrahedral stereo of {} has {} carriers, not four.",
+                        stereo.center,
+                        stereo.carriers.len()
+                    )));
                 }
                 let hydrogen_count = stereo
                     .carriers
@@ -197,18 +201,23 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Fo
                     .filter(|carrier| matches!(carrier, StereoCarrier::ImplicitHydrogen))
                     .count();
                 if hydrogen_count > 1 {
-                    return Err(SMILES_WRITE.unsupported(
-                        "isomeric SMILES writer cannot encode tetrahedral stereo with repeated implicit hydrogens",
-                    ));
+                    return Err(SMILES_WRITE.unsupported(format!(
+                        "The tetrahedral stereo of {} has more than one implicit hydrogen.",
+                        stereo.center
+                    )));
                 }
                 let implicit = mol.implicit_hydrogens(stereo.center).ok_or_else(|| {
-                    SMILES_WRITE.missing_perception(
-                        "SMILES stereo atom requires installed hydrogen perception",
-                    )
+                    SMILES_WRITE.missing_perception(format!(
+                        "{} has no hydrogen perception. Perceive the molecule first.",
+                        Capitalized(stereo.center)
+                    ))
                 })?;
                 if implicit != hydrogen_count {
                     return Err(SMILES_WRITE.unsupported(
-                        "SMILES tetrahedral hydrogen carriers disagree with the atom hydrogen count",
+                        format!(
+                            "The tetrahedral stereo of {} names {hydrogen_count} implicit hydrogens, but the atom has {implicit}.",
+                            stereo.center
+                        ),
                     ));
                 }
             }
@@ -229,9 +238,7 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Fo
                 )?;
             }
             StereoElementKind::Axis(_) => {
-                return Err(SMILES_WRITE.unsupported(
-                    "isomeric SMILES writer cannot encode axial stereochemistry yet",
-                ));
+                return Err(SMILES_WRITE.unsupported("SMILES cannot state axial stereochemistry."));
             }
         }
     }
@@ -252,16 +259,18 @@ fn validate_isomeric_double_bond_endpoint(
                 .expect("publication validates stereo carrier adjacency");
             let order = mol.bond(bond).expect("the writer visits live bonds").order;
             if order != BondOrder::Single || atom == other_endpoint {
-                return Err(SMILES_WRITE.unsupported(
-                    "isomeric SMILES writer cannot encode invalid double-bond stereo carrier",
-                ));
+                return Err(SMILES_WRITE.unsupported(format!(
+                    "The double-bond stereo of {focus_bond} has an invalid carrier, {atom}."
+                )));
             }
         }
         StereoCarrier::ImplicitHydrogen => {
             let hydrogens = mol.implicit_hydrogens(endpoint);
             if hydrogens.is_none_or(|count| count == 0) {
                 return Err(SMILES_WRITE.unsupported(
-                    "isomeric SMILES writer cannot encode unavailable implicit double-bond hydrogen carrier",
+                    format!(
+                        "The double-bond stereo of {focus_bond} names an implicit hydrogen that {endpoint} does not have."
+                    ),
                 ));
             }
             if implicit_double_bond_printable_carrier_bond(
@@ -273,13 +282,18 @@ fn validate_isomeric_double_bond_endpoint(
             .is_none()
             {
                 return Err(SMILES_WRITE.unsupported(
-                    "isomeric SMILES writer cannot encode implicit double-bond carrier without a unique explicit substituent bond",
+                    format!(
+                        "SMILES cannot state the double-bond stereo of {focus_bond}. {} has no explicit single-bond substituent.",
+                        Capitalized(endpoint)
+                    ),
                 ));
             }
         }
         StereoCarrier::ImplicitLonePair => {
             return Err(SMILES_WRITE.unsupported(
-                "isomeric SMILES writer cannot encode lone-pair double-bond carrier",
+                format!(
+                    "SMILES cannot state the double-bond stereo of {focus_bond}. Its carrier on {endpoint} is a lone pair."
+                ),
             ));
         }
     }
@@ -407,9 +421,10 @@ impl SmilesStereoWriteContext {
             match &element.kind {
                 StereoElementKind::Tetrahedral(stereo) => {
                     let Some(orientation) = stereo.orientation else {
-                        return Err(SMILES_WRITE.unsupported(
-                            "isomeric SMILES writer cannot encode explicitly unknown tetrahedral stereo",
-                        ));
+                        return Err(SMILES_WRITE.unsupported(format!(
+                            "SMILES cannot state the unknown tetrahedral stereo of {}.",
+                            stereo.center
+                        )));
                     };
                     if tetrahedral
                         .insert(
@@ -421,9 +436,10 @@ impl SmilesStereoWriteContext {
                         )
                         .is_some()
                     {
-                        return Err(SMILES_WRITE.unsupported(
-                            "isomeric SMILES writer cannot encode multiple tetrahedral elements on one atom",
-                        ));
+                        return Err(SMILES_WRITE.unsupported(format!(
+                            "{} has more than one tetrahedral stereo element.",
+                            Capitalized(stereo.center)
+                        )));
                     }
                 }
                 StereoElementKind::DoubleBond(stereo) => {
@@ -533,13 +549,13 @@ fn validate_directional_projection(
     decoded.graph.stereo_groups.clear();
     normalize_source_stereo(&mut decoded, None, &marks).map_err(|error| {
         SMILES_WRITE
-            .unsupported("SMILES directional stereo cannot be represented")
+            .unsupported("Bond directions cannot state the double-bond stereo.")
             .with_source(error)
     })?;
     if decoded.stereo_elements().count() != expected.len() {
-        return Err(SMILES_WRITE.unsupported(
-            "SMILES directional bonds would add or lose a double-bond stereo assertion",
-        ));
+        return Err(
+            SMILES_WRITE.unsupported("Bond directions would add or lose double-bond stereo.")
+        );
     }
     for (_, element) in decoded.stereo_elements() {
         let StereoElementKind::DoubleBond(actual) = &element.kind else {
@@ -547,7 +563,7 @@ fn validate_directional_projection(
         };
         let Some(source) = expected.get(&actual.bond) else {
             return Err(SMILES_WRITE
-                .unsupported("SMILES directional bonds would specify an unasserted double bond"));
+                .unsupported("Bond directions would add stereo to a double bond without it."));
         };
         let inverted = (source.left_carrier != actual.left_carrier)
             != (source.right_carrier != actual.right_carrier);
@@ -556,7 +572,7 @@ fn validate_directional_projection(
             .map(|value| if inverted { value.inverted() } else { value });
         if actual.orientation != orientation {
             return Err(SMILES_WRITE
-                .unsupported("SMILES directional bonds would change double-bond configuration"));
+                .unsupported("Bond directions would change a double-bond configuration."));
         }
     }
     Ok(())
@@ -651,7 +667,7 @@ fn solve_directional_constraints(
                 if let Some(previous) = assigned.get(&neighbor) {
                     if previous.direction_at_endpoint != expected {
                         return Err(SMILES_WRITE.unsupported(
-                            "isomeric SMILES writer cannot encode conflicting double-bond stereo constraints",
+                            "The double-bond stereo elements need conflicting bond directions.",
                         ));
                     }
                 } else {
@@ -718,7 +734,7 @@ fn choose_directional_bonds(
             bonds.sort_by_key(|(label, _)| *label);
             if bonds.is_empty() {
                 return Err(SMILES_WRITE.unsupported(
-                    "SMILES double-bond stereo requires an explicit single-bond substituent",
+                    "An end of a stereo double bond has no explicit single-bond substituent.",
                 ));
             }
             candidates.push(bonds.into_iter().map(|(_, bond)| bond).collect::<Vec<_>>());
@@ -731,7 +747,7 @@ fn choose_directional_bonds(
             .saturating_mul(mol.atom_count().saturating_add(mol.bond_count()));
         if visits > MAX_DIRECTIONAL_VISITS {
             return Err(SMILES_WRITE.resource_limit(
-                "SMILES directional assignment",
+                "Assigning bond directions",
                 LimitExceeded::new(Resource::Work, MAX_DIRECTIONAL_VISITS, visits),
             ));
         }
@@ -796,7 +812,7 @@ fn choose_directional_bonds(
         }
     }
     Err(SMILES_WRITE.resource_limit(
-        "SMILES directional assignment",
+        "Assigning bond directions",
         LimitExceeded::first_beyond(Resource::Combinations, MAX_DIRECTIONAL_COMBINATIONS),
     ))
 }
@@ -824,7 +840,9 @@ fn implicit_double_bond_printable_carrier_bond(
         [bond] => Ok(Some(*bond)),
         [] => Ok(None),
         _ => Err(SMILES_WRITE.unsupported(
-            "isomeric SMILES writer cannot encode implicit double-bond carrier with multiple explicit substituent bonds",
+            format!(
+                "SMILES cannot state the double-bond stereo at {endpoint}. The atom has more than one explicit substituent bond."
+            ),
         )),
     }
 }
@@ -841,7 +859,7 @@ fn directional_mark_for_emitted_bond(
         Ok(invert_directional_mark(direction_at_endpoint))
     } else {
         Err(SMILES_WRITE
-            .unsupported("double-bond stereo endpoint is not on emitted directional bond"))
+            .unsupported("An end of a stereo double bond is not on its directional bond."))
     }
 }
 
@@ -896,8 +914,9 @@ fn tetrahedral_chirality_for_smiles_order(
     }
     if emitted != stereo.carriers {
         let Some(odd) = carrier_permutation_is_odd(&stereo.carriers, &emitted) else {
-            return Err(SMILES_WRITE
-                .unsupported("isomeric SMILES writer cannot encode tetrahedral carrier order"));
+            return Err(SMILES_WRITE.unsupported(
+                "SMILES cannot state the neighbor order of a tetrahedral stereocenter.",
+            ));
         };
         Ok(ChiralAtomWriteState {
             orientation: if odd {
@@ -1141,7 +1160,7 @@ pub(super) fn write_smiles_component(
                                 .or_else(|| (!canonical).then(|| released.pop()).flatten())
                                 .ok_or_else(|| {
                                     SMILES_WRITE.resource_limit(
-                                        "SMILES",
+                                        "The SMILES",
                                         LimitExceeded::first_beyond(Resource::RingClosures, 100),
                                     )
                                 })?;
@@ -1237,7 +1256,7 @@ fn smiles_bond_order(order: BondOrder) -> std::result::Result<SmilesBondOrder, F
         BondOrder::Triple => Ok(SmilesBondOrder::Triple),
         BondOrder::Quadruple => Ok(SmilesBondOrder::Quadruple),
         BondOrder::Zero | BondOrder::Dative => {
-            Err(SMILES_WRITE.unsupported("SMILES writer cannot encode zero or dative bonds"))
+            Err(SMILES_WRITE.unsupported("SMILES cannot state zero-order or dative bonds."))
         }
     }
 }
@@ -1289,9 +1308,8 @@ fn smiles_bond_between_with_direction(
 ) -> std::result::Result<&'static str, FormatError> {
     if let Some(directional) = directional {
         if order != SmilesBondOrder::Single {
-            return Err(SMILES_WRITE.unsupported(
-                "isomeric SMILES writer cannot place directional stereo on a non-single bond",
-            ));
+            return Err(SMILES_WRITE
+                .unsupported("SMILES cannot put a bond direction on a bond that is not single."));
         }
         return match directional {
             SmilesDirectionToken::Up => Ok("/"),
@@ -1427,7 +1445,8 @@ fn smiles_atom_with_style_and_chirality(
     };
     if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() && written.starts_with('[') {
         return Err(SMILES_WRITE.missing_perception(format!(
-            "SMILES bracket {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
+            "{} has no hydrogen perception. Perceive the molecule first.",
+            Capitalized(atom_id)
         )));
     }
     if written.starts_with('[') {
@@ -1457,7 +1476,7 @@ pub(super) fn validate_smiles_bracket_radical(
     );
     if atom.radical != AtomRadical::new(electrons, None) {
         return Err(SMILES_WRITE.unsupported(format!(
-            "SMILES bracket {atom_id} would change radical electron count or spin"
+            "Writing {atom_id} in brackets would change its radical electrons or spin."
         )));
     }
     Ok(())

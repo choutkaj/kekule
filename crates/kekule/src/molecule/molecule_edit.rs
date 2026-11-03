@@ -37,15 +37,15 @@ pub enum MoleculePublicationError {
 impl fmt::Display for MoleculePublicationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyGraph => formatter.write_str("molecule must contain at least one atom"),
+            Self::EmptyGraph => formatter.write_str("The molecule has no atoms."),
             Self::Disconnected { components } => write!(
                 formatter,
-                "molecule must be connected, but contains {components} graph components"
+                "The molecule is not connected. It has {components} components."
             ),
-            Self::InvalidStereo(issue) => write!(formatter, "invalid represented stereo: {issue}"),
+            Self::InvalidStereo(issue) => write!(formatter, "{issue}"),
             Self::UnnormalizedOxohalogen { atom } => write!(
                 formatter,
-                "halogen {atom} has oxo double bonds; normalize oxohalogens before publishing"
+                "Halogen {atom} has oxo double bonds. Normalize oxohalogens first."
             ),
         }
     }
@@ -821,7 +821,7 @@ mod tests {
         );
         assert_eq!(
             error.to_string(),
-            "invalid represented stereo: stereo group 2 lists stereo element 7 more than once"
+            "Stereo group 2 lists stereo element 7 twice."
         );
     }
 

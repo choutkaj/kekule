@@ -83,16 +83,16 @@ pub(crate) fn same_graph(a: &Molecule, b: &Molecule) -> Result<bool> {
 /// without stereo.
 pub(crate) fn mapping(query: &Molecule, entry: &Molecule) -> Result<Vec<AtomId>> {
     if query.atom_count() != entry.atom_count() || query.bond_count() != entry.bond_count() {
-        return Err(error("lookup hit has incompatible graph size"));
+        return Err(error(
+            "The lookup entry has a different number of atoms or bonds than the molecule.",
+        ));
     }
     for mode in 0..3 {
         if let Some(map) = find(query, entry, mode)? {
             return Ok(map);
         }
     }
-    Err(error(
-        "lookup hit could not be mapped to the input molecule",
-    ))
+    Err(error("The lookup entry does not map onto the molecule."))
 }
 
 /// The first correspondence for one relaxation mode, in query atom order.
@@ -177,7 +177,11 @@ impl Search<'_> {
         // Bounds pathological symmetry, not molecule size.
         if *states > self.state_limit {
             return Err(Error::limit(
-                "lookup mapping search limit exceeded",
+                format!(
+                    "Mapping a lookup entry onto the molecule exceeded its {}.",
+                    LimitExceeded::new(Resource::SearchStates, self.state_limit, *states)
+                        .describe()
+                ),
                 LimitExceeded::new(Resource::SearchStates, self.state_limit, *states),
             ));
         }

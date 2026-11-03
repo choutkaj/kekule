@@ -45,7 +45,7 @@ impl BondSyntax {
                 {
                     return Err(syntax_error(
                         left.span.start..right.span.end,
-                        "conflicting bond expressions on ring closure",
+                        "The two ends of the ring closure have conflicting bond expressions.",
                     ));
                 }
                 left.direction = left.direction.or(right.direction);
@@ -81,7 +81,7 @@ impl AtomStereo {
         if bytes.get(end) == Some(&b'@') {
             return Err(syntax_error(
                 base + start..base + end + 1,
-                "duplicate stereochemical atom query",
+                "The atom has two stereo queries.",
             ));
         }
         if bytes
@@ -93,32 +93,31 @@ impl AtomStereo {
         {
             return Err(unsupported_error(
                 base + start..base + bytes.len(),
-                "only specified tetrahedral stereochemical atom queries are supported",
+                "Only specified tetrahedral stereo queries are supported.",
             ));
         }
         // Only the H token immediately following chirality occupies a source
         // carrier slot. A separate ;H1 predicate merely tests hydrogen count.
-        let inline_hydrogen =
-            if bytes.get(end) == Some(&b'H') {
-                let digits: String = source[end + 1..]
-                    .chars()
-                    .take_while(char::is_ascii_digit)
-                    .collect();
-                if digits.is_empty() {
-                    true
-                } else {
-                    match digits.parse::<u8>() {
-                        Ok(0) => false,
-                        Ok(1) => true,
-                        _ => return Err(unsupported_error(
-                            base + start..base + end + 1 + digits.len(),
-                            "tetrahedral inline hydrogen counts greater than one are unsupported",
-                        )),
-                    }
-                }
+        let inline_hydrogen = if bytes.get(end) == Some(&b'H') {
+            let digits: String = source[end + 1..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            if digits.is_empty() {
+                true
             } else {
-                false
-            };
+                match digits.parse::<u8>() {
+                    Ok(0) => false,
+                    Ok(1) => true,
+                    _ => return Err(unsupported_error(
+                        base + start..base + end + 1 + digits.len(),
+                        "Tetrahedral centers with more than one inline hydrogen are not supported.",
+                    )),
+                }
+            }
+        } else {
+            false
+        };
         Ok((
             Self {
                 orientation: if inverted {
@@ -246,9 +245,7 @@ impl StereoSyntax {
                         orientation,
                     },
                 )
-                .map_err(|error| {
-                    syntax_error(stereo.span.clone(), "invalid query").with_source(error)
-                })?;
+                .map_err(|error| syntax_error(stereo.span.clone(), "").with_source(error))?;
         }
         // Direction predicates stay in the bond expression. Validate contradictory
         // literal syntax here; evaluate Boolean alternatives jointly during matching.
@@ -283,7 +280,7 @@ impl StereoSyntax {
                 if seen[usize::from(up)] {
                     return Err(syntax_error(
                         span.start.min(edge.span.start)..span.end.max(edge.span.end),
-                        "contradictory directions at double-bond endpoint",
+                        "The bond directions at a double-bond endpoint contradict each other.",
                     ));
                 }
             } else {

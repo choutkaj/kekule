@@ -379,20 +379,31 @@ pub enum RingPerceptionError {
 impl fmt::Display for RingPerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LimitExceeded(limit) => write!(f, "ring perception {limit}"),
-            Self::Cancelled(_) => f.write_str("ring perception cancelled"),
-            Self::IncompleteRingCoverage {
-                uncovered_bonds, ..
-            } => write!(
-                f,
-                "ring perception did not cover {} cyclic bond(s)",
-                uncovered_bonds.len()
-            ),
+            Self::LimitExceeded(limit) => {
+                write!(f, "Ring perception exceeded its {}.", limit.describe())
+            }
+            Self::Cancelled(_) => f.write_str("Ring perception stopped."),
+            Self::IncompleteRingCoverage { uncovered_bonds } => match uncovered_bonds.as_slice() {
+                [] => f.write_str("Ring perception missed cyclic bonds."),
+                [bond] => write!(f, "Cyclic {bond} is in no perceived ring."),
+                [first, ..] => write!(
+                    f,
+                    "Ring perception missed {} cyclic bonds. The first is {first}.",
+                    uncovered_bonds.len()
+                ),
+            },
         }
     }
 }
 
-impl std::error::Error for RingPerceptionError {}
+impl std::error::Error for RingPerceptionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Cancelled(cancelled) => Some(cancelled),
+            _ => None,
+        }
+    }
+}
 
 /// Installs ring perception: cycle membership and, unless `options` selects
 /// [`RingPerceptionScope::Membership`], the RDKit-like Figueras rings and

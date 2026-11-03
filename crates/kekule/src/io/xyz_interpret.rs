@@ -55,7 +55,7 @@ impl Common {
     fn with_length_unit(mut self, length_unit: Unit) -> Result<Self, FormatError> {
         if length_unit.dimension() != ANGSTROM.dimension() {
             return Err(option_error(format!(
-                "`{length_unit}` is not a length unit"
+                "The unit {length_unit} is not a length unit."
             )));
         }
         self.length_unit = length_unit;
@@ -64,7 +64,7 @@ impl Common {
 
     fn with_max_atom_contacts(mut self, max_atom_contacts: usize) -> Result<Self, FormatError> {
         if max_atom_contacts == 0 {
-            return Err(option_error("the contact limit must be at least one"));
+            return Err(option_error("The contact limit is zero."));
         }
         self.max_atom_contacts = max_atom_contacts;
         Ok(self)
@@ -190,7 +190,7 @@ impl XyzEnsembleInterpretOptions {
         if frames.as_ref().is_some_and(Vec::is_empty) {
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
-                "explicit frame selection is empty",
+                "The frame selection is empty.",
             )
             .with_detail(FormatErrorDetail::EmptyModelSelection));
         }
@@ -408,7 +408,7 @@ fn in_frame(error: FormatError, frame: usize) -> FormatError {
 }
 
 fn no_frames() -> FormatError {
-    interpret_error(DiagnosticKind::Inconsistent, "input contains no frames")
+    interpret_error(DiagnosticKind::Inconsistent, "The input has no frames.")
         .with_detail(FormatErrorDetail::NoCoordinateModels)
 }
 
@@ -422,10 +422,7 @@ pub(crate) fn interpret_xyz(
         XyzFrameSelection::RequireSingle if frames.len() > 1 => {
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
-                format!(
-                    "the input has {} frames; select one or interpret an ensemble",
-                    frames.len()
-                ),
+                format!("The input has {} frames, not one.", frames.len()),
             ))
         }
         XyzFrameSelection::RequireSingle | XyzFrameSelection::First => 0,
@@ -450,7 +447,7 @@ pub(crate) fn interpret_xyz(
 fn unknown_frame(index: usize) -> FormatError {
     interpret_error(
         DiagnosticKind::Inconsistent,
-        format!("frame {index} is not present"),
+        format!("Frame {index} is not in the input."),
     )
     .with_detail(FormatErrorDetail::UnknownRequestedModel {
         model_id: index.to_string(),
@@ -474,7 +471,7 @@ pub(crate) fn interpret_xyz_ensemble(
         if !seen.insert(index) {
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
-                format!("frame {index} was requested more than once"),
+                format!("Frame {index} is selected twice."),
             )
             .with_detail(FormatErrorDetail::DuplicateRequestedModel {
                 model_id: index.to_string(),
@@ -507,7 +504,7 @@ pub(crate) fn interpret_xyz_ensemble(
         if !same_atoms {
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
-                format!("frame {index} has different atoms than frame {first_index}"),
+                format!("Frame {index} has different atoms from frame {first_index}."),
             )
             .at(frame.location())
             .with_detail(FormatErrorDetail::InconsistentAtomSet {
@@ -520,7 +517,7 @@ pub(crate) fn interpret_xyz_ensemble(
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
                 format!(
-                    "frame {index} infers different bonds than frame {first_index} from its distances"
+                    "The distances of frame {index} give different bonds from those of frame {first_index}."
                 ),
             )
             .at(frame.location())
@@ -547,28 +544,39 @@ fn push_sample(
     unit: Unit,
     frame: usize,
 ) -> Result<(), FormatError> {
-    let chemistry = |error: &dyn std::fmt::Display| {
-        in_frame(
-            interpret_error(
-                DiagnosticKind::Chemistry,
-                format!("cannot add the frame to the ensemble: {error}"),
-            ),
-            frame,
-        )
-    };
-    let positions =
-        Positions::from_vec(Quantity::new(points, unit)).map_err(|error| chemistry(&error))?;
-    let sample = EnsembleSample::new(positions, 1.0).map_err(|error| chemistry(&error))?;
+    let positions = Positions::from_vec(Quantity::new(points, unit))
+        .map_err(|error| sample_error(error, frame))?;
+    let sample = EnsembleSample::new(positions, 1.0).map_err(|error| sample_error(error, frame))?;
     if ensemble.is_empty() {
         ensemble
             .push_state(sample, EnsembleState::new())
             .map(|_| ())
-            .map_err(|error| chemistry(&error))
+            .map_err(|error| sample_error(error, frame))
     } else {
         ensemble
             .push_sample(sample, 0)
-            .map_err(|error| chemistry(&error))
+            .map_err(|error| sample_error(error, frame))
     }
+}
+
+/// A failure to build the structure of a frame, keeping its cause.
+fn structure_error(error: impl std::error::Error + Send + Sync + 'static) -> FormatError {
+    interpret_error(DiagnosticKind::Chemistry, "Cannot build the structure.").with_source(error)
+}
+
+/// A failure to add `frame` to the ensemble, keeping its cause.
+fn sample_error(
+    error: impl std::error::Error + Send + Sync + 'static,
+    frame: usize,
+) -> FormatError {
+    in_frame(
+        interpret_error(
+            DiagnosticKind::Chemistry,
+            "Cannot add the frame to the ensemble.",
+        )
+        .with_source(error),
+        frame,
+    )
 }
 
 /// The element an atom line names: a symbol in any letter case, or an
@@ -593,7 +601,7 @@ fn resolve_element(atom: &XyzAtom) -> Result<Element, FormatError> {
     element.ok_or_else(|| {
         interpret_error(
             DiagnosticKind::InvalidValue,
-            format!("`{token}` is not an element symbol or atomic number"),
+            format!("The token {token:?} is neither an element symbol nor an atomic number."),
         )
         .at(atom.location())
     })
@@ -613,11 +621,10 @@ impl Frame {
             .expect("validated length unit converts to angstrom");
         // Parsing rejects a count of zero; a host-built frame may be empty.
         if frame.atoms().is_empty() {
-            return Err(interpret_error(
-                DiagnosticKind::InvalidValue,
-                "an XYZ frame cannot contain zero atoms",
-            )
-            .at(frame.location()));
+            return Err(
+                interpret_error(DiagnosticKind::InvalidValue, "The frame has zero atoms.")
+                    .at(frame.location()),
+            );
         }
         let mut elements = Vec::with_capacity(frame.atoms().len());
         let mut points = Vec::with_capacity(frame.atoms().len());
@@ -643,7 +650,7 @@ impl Frame {
                     _ => {
                         return Err(interpret_error(
                             DiagnosticKind::Unsupported,
-                            "the atom line has columns after its coordinates, which Kekule does not interpret",
+                            "The atom line has columns after its coordinates.",
                         )
                         .at(atom.location()))
                     }
@@ -658,7 +665,7 @@ impl Frame {
             {
                 return Err(interpret_error(
                     DiagnosticKind::InvalidValue,
-                    "a coordinate is not a finite number",
+                    "A coordinate is not a finite number.",
                 )
                 .at(atom.location()));
             }
@@ -668,7 +675,7 @@ impl Frame {
             {
                 return Err(interpret_error(
                     DiagnosticKind::InvalidValue,
-                    "a coordinate exceeds 1e15 Å, beyond what distance inference indexes",
+                    "A coordinate exceeds 1e15 Å.",
                 )
                 .at(atom.location()));
             }
@@ -684,8 +691,9 @@ impl Frame {
                 interpret_error(
                     DiagnosticKind::Limit,
                     format!(
-                        "atom {} has more atoms within bonding distance than allowed",
-                        limit.1
+                        "Atom {} has too many atoms within bonding distance. It exceeds the {}.",
+                        limit.1,
+                        limit.0.describe()
                     ),
                 )
                 .at(frame.atoms()[limit.1].location())
@@ -710,19 +718,13 @@ impl Frame {
     /// of one `UNL` residue per molecule in chain `A`, and atom-line order as
     /// dense atom order.
     fn build_model(&self, unit: Unit) -> Result<Model, FormatError> {
-        let chemistry = |error: &dyn std::fmt::Display| {
-            interpret_error(
-                DiagnosticKind::Chemistry,
-                format!("cannot publish the structure: {error}"),
-            )
-        };
         let components = components(self.elements.len(), &self.report.bonds);
         let mut builder = ModelBuilder::new();
         let mut definitions = super::definition_reuse::DefinitionReuse::new();
         let chain = builder
             .hierarchy_mut()
             .add_chain("A", None)
-            .map_err(|error| chemistry(&error))?;
+            .map_err(structure_error)?;
         let mut order = vec![None; self.elements.len()];
         let mut bonds_by_component = vec![Vec::new(); components.len()];
         let mut component_of = vec![0; self.elements.len()];
@@ -742,31 +744,29 @@ impl Frame {
                 // XYZ lists every atom, so no hydrogen is implicit.
                 let atom =
                     Atom::new(self.elements[row]).with_hydrogens(ImplicitHydrogens::Fixed(0));
-                let id = editor.add_atom(atom).map_err(|error| chemistry(&error))?;
+                let id = editor.add_atom(atom).map_err(structure_error)?;
                 local.insert(row, id);
             }
             for bond in &bonds_by_component[component] {
                 let [a, b] = bond.atoms.map(|atom| local[&atom.index()]);
-                editor
-                    .add_bond(a, b, bond.order)
-                    .map_err(|error| chemistry(&error))?;
+                editor.add_bond(a, b, bond.order).map_err(structure_error)?;
             }
-            let molecule = editor.finish().map_err(|error| chemistry(&error))?;
+            let molecule = editor.finish().map_err(structure_error)?;
             let positions = Positions::from_vec(Quantity::new(
                 rows.iter().map(|&row| self.points[row]).collect(),
                 unit,
             ))
-            .map_err(|error| chemistry(&error))?;
+            .map_err(structure_error)?;
             let atom_ids: Vec<AtomId> = rows.iter().map(|row| local[row]).collect();
             // Atoms carry no names, so chemistry alone decides reuse.
             let labels = vec![(); molecule.atom_count()];
             let definition = definitions
                 .definition(&mut builder, molecule, labels)
-                .map_err(|error| chemistry(&error))?;
+                .map_err(structure_error)?;
             let instance = builder
                 .add_instance(definition, &positions)
-                .map_err(|error| chemistry(&error))?;
-            let sequence = i32::try_from(component + 1).map_err(|error| chemistry(&error))?;
+                .map_err(structure_error)?;
+            let sequence = i32::try_from(component + 1).map_err(structure_error)?;
             let hierarchy = builder.hierarchy_mut();
             let residue = hierarchy
                 .add_residue(
@@ -776,12 +776,12 @@ impl Frame {
                     Some(sequence.to_string()),
                     None,
                 )
-                .map_err(|error| chemistry(&error))?;
+                .map_err(structure_error)?;
             for (&row, atom) in rows.iter().zip(atom_ids) {
                 let atom = InstanceAtomId::new(instance, atom);
                 hierarchy
                     .add_atom_site(residue, atom, AtomSiteMetadata::default())
-                    .map_err(|error| chemistry(&error))?;
+                    .map_err(structure_error)?;
                 order[row] = Some(atom);
             }
         }
@@ -791,8 +791,8 @@ impl Frame {
                     .into_iter()
                     .map(|atom| atom.expect("every atom line belongs to one component")),
             )
-            .map_err(|error| chemistry(&error))?;
-        builder.build().map_err(|error| chemistry(&error))
+            .map_err(structure_error)?;
+        builder.build().map_err(structure_error)
     }
 }
 

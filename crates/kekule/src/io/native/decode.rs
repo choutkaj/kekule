@@ -104,11 +104,12 @@ impl<R: Read> Decoder<'_, R> {
     }
 
     fn limit(&self, resource: Resource, limit: usize, observed: usize) -> FormatError {
+        let limit = LimitExceeded::new(resource, limit, observed);
         self.error(
             DiagnosticKind::Limit,
-            format!("native input exceeds the {resource} limit"),
+            format!("The input exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::new(resource, limit, observed))
+        .exceeding(limit)
     }
 
     // Primitive reads.
@@ -123,10 +124,9 @@ impl<R: Read> Decoder<'_, R> {
         }
         self.source.read_exact(buffer).map_err(|error| {
             if error.kind() == ErrorKind::UnexpectedEof {
-                self.error(DiagnosticKind::Syntax, "native input ends early")
+                self.error(DiagnosticKind::Syntax, "The input ends early.")
             } else {
-                self.error(DiagnosticKind::Io, "reading native input failed")
-                    .with_source(error)
+                self.error(DiagnosticKind::Io, "").with_source(error)
             }
         })?;
         self.crc.update(buffer);
@@ -168,7 +168,7 @@ impl<R: Read> Decoder<'_, R> {
         match self.u8()? {
             0 => Ok(false),
             1 => Ok(true),
-            other => Err(self.invalid(format!("invalid boolean {other}"))),
+            other => Err(self.invalid(format!("The boolean byte is {other}, not 0 or 1."))),
         }
     }
 
@@ -176,7 +176,7 @@ impl<R: Read> Decoder<'_, R> {
         match self.u8()? {
             0 => Ok(false),
             1 => Ok(true),
-            other => Err(self.invalid(format!("invalid {what} tag {other}"))),
+            other => Err(self.invalid(format!("The {what} tag is {other}, not 0 or 1."))),
         }
     }
 
@@ -196,13 +196,13 @@ impl<R: Read> Decoder<'_, R> {
         }
         let mut bytes = vec![0; len];
         self.fill(&mut bytes)?;
-        String::from_utf8(bytes).map_err(|_| self.invalid("a string is not valid UTF-8"))
+        String::from_utf8(bytes).map_err(|_| self.invalid("A string is not valid UTF-8."))
     }
 
     fn str(&mut self) -> Result<String> {
         let len = self.u32()?;
         if len == ABSENT_STRING {
-            return Err(self.invalid("a required string is absent"));
+            return Err(self.invalid("A required string is absent."));
         }
         self.string_bytes(len as usize)
     }
@@ -249,7 +249,7 @@ impl<R: Read> Decoder<'_, R> {
                     if flags.len() < len {
                         flags.push(byte & (1 << bit) != 0);
                     } else if byte & (1 << bit) != 0 {
-                        return Err("unused bits of a bit set are not zero".into());
+                        return Err("Unused bits of a bit set are not zero.".into());
                     }
                 }
             }
@@ -299,7 +299,7 @@ impl<R: Read> Decoder<'_, R> {
         for &length in &lengths {
             if length == ABSENT_STRING {
                 if required {
-                    return Err(self.invalid("a required string is absent"));
+                    return Err(self.invalid("A required string is absent."));
                 }
             } else if length as usize > max {
                 return Err(self.limit(Resource::ValueBytes, max, length as usize));
@@ -323,7 +323,7 @@ impl<R: Read> Decoder<'_, R> {
             let text = bytes
                 .get(start..end)
                 .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                .ok_or_else(|| self.invalid("a string is not valid UTF-8"))?;
+                .ok_or_else(|| self.invalid("A string is not valid UTF-8."))?;
             strings.push(Some(text.to_owned()));
             start = end;
         }
@@ -370,7 +370,7 @@ impl<R: Read> Decoder<'_, R> {
             return Err(self
                 .error(
                     DiagnosticKind::Syntax,
-                    "input is not in Kekule's native format",
+                    "The input does not start with the native format's magic bytes.",
                 )
                 .with_detail(FormatErrorDetail::NativeMagic));
         }
@@ -380,8 +380,7 @@ impl<R: Read> Decoder<'_, R> {
                 .error(
                     DiagnosticKind::Unsupported,
                     format!(
-                        "native format version {version} is not supported; \
-                         this reader implements version {NATIVE_FORMAT_VERSION}"
+                        "The input is in native format version {version}. This reader reads version {NATIVE_FORMAT_VERSION}."
                     ),
                 )
                 .with_detail(FormatErrorDetail::NativeVersion {
@@ -391,12 +390,12 @@ impl<R: Read> Decoder<'_, R> {
         }
         let code = self.u8()?;
         let kind = NativeKind::from_code(code)
-            .ok_or_else(|| self.invalid(format!("unknown native object kind {code}")))?;
+            .ok_or_else(|| self.invalid(format!("The object kind {code} is unknown.")))?;
         let flags = self.u8()?;
         if flags & !1 != 0 {
             return Err(self.error(
                 DiagnosticKind::Unsupported,
-                format!("unknown native header flags {flags:#04x}"),
+                format!("The header flags {flags:#04x} are unknown."),
             ));
         }
         self.stored_perception = flags & 1 != 0;
@@ -404,7 +403,7 @@ impl<R: Read> Decoder<'_, R> {
         if reserved != 0 {
             return Err(self.error(
                 DiagnosticKind::Unsupported,
-                "reserved native header bytes are not zero",
+                "The reserved header bytes are not zero.",
             ));
         }
         Ok(kind)
@@ -414,7 +413,7 @@ impl<R: Read> Decoder<'_, R> {
         if self.u32()? != END_MARKER {
             return Err(self.error(
                 DiagnosticKind::Syntax,
-                "native object is not followed by its end marker",
+                "The object is not followed by its end marker.",
             ));
         }
         let computed = self.crc.finish();
@@ -423,7 +422,7 @@ impl<R: Read> Decoder<'_, R> {
             return Err(self
                 .error(
                     DiagnosticKind::Inconsistent,
-                    "native input checksum does not match its content",
+                    "The checksum does not match the content.",
                 )
                 .with_detail(FormatErrorDetail::NativeChecksum { stored, computed }));
         }
@@ -438,7 +437,7 @@ impl<R: Read> Decoder<'_, R> {
         for _ in 0..atom_count {
             let atom = self.atom()?;
             editor.add_atom(atom).map_err(|error| {
-                self.rejected(DiagnosticKind::Chemistry, "invalid atom")
+                self.rejected(DiagnosticKind::Chemistry, "Cannot add a stored atom.")
                     .with_source(error)
             })?;
         }
@@ -448,13 +447,17 @@ impl<R: Read> Decoder<'_, R> {
             let record = self.array::<9>()?;
             let a = u32::from_le_bytes([record[0], record[1], record[2], record[3]]);
             let b = u32::from_le_bytes([record[4], record[5], record[6], record[7]]);
-            let order = bond_order(record[8])
-                .ok_or_else(|| self.invalid(format!("unknown bond order {}", record[8])))?;
+            let order = bond_order(record[8]).ok_or_else(|| {
+                self.invalid(format!("The bond order code {} is unknown.", record[8]))
+            })?;
             editor
                 .add_bond(AtomId::new(a), AtomId::new(b), order)
                 .map_err(|error| {
-                    self.rejected(DiagnosticKind::InvalidReference, "invalid bond")
-                        .with_source(error)
+                    self.rejected(
+                        DiagnosticKind::InvalidReference,
+                        "Cannot add a stored bond.",
+                    )
+                    .with_source(error)
                 })?;
             // The editor accepted both endpoints, so they index `degrees`.
             for endpoint in [a, b] {
@@ -483,15 +486,18 @@ impl<R: Read> Decoder<'_, R> {
             editor
                 .add_stereo_element(StereoElement::new(kind))
                 .map_err(|error| {
-                    self.rejected(DiagnosticKind::Chemistry, "invalid stereo element")
-                        .with_source(error)
+                    self.rejected(
+                        DiagnosticKind::Chemistry,
+                        "Cannot add a stored stereo element.",
+                    )
+                    .with_source(error)
                 })?;
         }
         let group_count = self.count(element_count, Resource::Values)?;
         for _ in 0..group_count {
             let code = self.u8()?;
             let kind = group_kind(code)
-                .ok_or_else(|| self.invalid(format!("unknown stereo group kind {code}")))?;
+                .ok_or_else(|| self.invalid(format!("The stereo group kind {code} is unknown.")))?;
             let members = self
                 .ids(element_count, Resource::Values)?
                 .into_iter()
@@ -500,8 +506,11 @@ impl<R: Read> Decoder<'_, R> {
             editor
                 .add_stereo_group(StereoGroup { kind, members })
                 .map_err(|error| {
-                    self.rejected(DiagnosticKind::Chemistry, "invalid stereo group")
-                        .with_source(error)
+                    self.rejected(
+                        DiagnosticKind::Chemistry,
+                        "Cannot add a stored stereo group.",
+                    )
+                    .with_source(error)
                 })?;
         }
         let owner = self.owner()?;
@@ -515,7 +524,7 @@ impl<R: Read> Decoder<'_, R> {
         let mut molecule = editor.finish().map_err(|error| {
             self.rejected(
                 DiagnosticKind::Chemistry,
-                "stored chemistry does not publish as a molecule",
+                "The stored chemistry does not form a molecule.",
             )
             .with_source(error)
         })?;
@@ -525,7 +534,7 @@ impl<R: Read> Decoder<'_, R> {
                     return Err(self.rejected(
                         DiagnosticKind::Inconsistent,
                         format!(
-                            "stored adjacency of atom {index} is not a permutation of its bonds"
+                            "The stored bond order of atom {index} does not list each of its bonds once."
                         ),
                     ));
                 }
@@ -540,7 +549,7 @@ impl<R: Read> Decoder<'_, R> {
             molecule.install_perception(perception).map_err(|error| {
                 self.rejected(
                     DiagnosticKind::Inconsistent,
-                    "stored perception does not fit the stored chemistry",
+                    "The stored perception does not fit the stored chemistry.",
                 )
                 .with_source(error)
             })?;
@@ -551,20 +560,20 @@ impl<R: Read> Decoder<'_, R> {
     fn atom(&mut self) -> Result<Atom> {
         let record = self.array::<12>()?;
         let element = Element::from_atomic_number(record[0])
-            .ok_or_else(|| self.invalid(format!("unknown atomic number {}", record[0])))?;
+            .ok_or_else(|| self.invalid(format!("The atomic number {} is unknown.", record[0])))?;
         let isotope = NonZeroU16::new(u16::from_le_bytes([record[1], record[2]]));
         let charge = i8::from_le_bytes([record[3]]);
         let radical = match (record[4], record[5]) {
             (0, 0) => None,
             (electrons, spin) => Some(
                 AtomRadical::new(electrons, (spin != 0).then_some(spin))
-                    .ok_or_else(|| self.invalid("invalid radical"))?,
+                    .ok_or_else(|| self.invalid("The stored radical is not valid."))?,
             ),
         };
         let hydrogens = match (record[6], record[7]) {
             (0, 0) => ImplicitHydrogens::Inferred,
             (1, count) => ImplicitHydrogens::Fixed(count),
-            _ => return Err(self.invalid("invalid hydrogen declaration")),
+            _ => return Err(self.invalid("The stored hydrogen count is not valid.")),
         };
         let atom_map = NonZeroU32::new(u32::from_le_bytes([
             record[8], record[9], record[10], record[11],
@@ -582,7 +591,7 @@ impl<R: Read> Decoder<'_, R> {
             0 => Ok(StereoCarrier::Atom(AtomId::new(self.u32()?))),
             1 => Ok(StereoCarrier::ImplicitHydrogen),
             2 => Ok(StereoCarrier::ImplicitLonePair),
-            other => Err(self.invalid(format!("unknown stereo carrier {other}"))),
+            other => Err(self.invalid(format!("The stereo carrier code {other} is unknown."))),
         }
     }
 
@@ -591,7 +600,7 @@ impl<R: Read> Decoder<'_, R> {
             0 => Ok(None),
             1 => Ok(Some(first)),
             2 => Ok(Some(second)),
-            other => Err(self.invalid(format!("unknown stereo orientation {other}"))),
+            other => Err(self.invalid(format!("The stereo orientation code {other} is unknown."))),
         }
     }
 
@@ -647,7 +656,7 @@ impl<R: Read> Decoder<'_, R> {
                     orientation,
                 }))
             }
-            other => Err(self.invalid(format!("unknown stereo element kind {other}"))),
+            other => Err(self.invalid(format!("The stereo element kind {other} is unknown."))),
         }
     }
 
@@ -677,24 +686,26 @@ impl<R: Read> Decoder<'_, R> {
         if sections & !0b11_1111 != 0 {
             return Err(self.error(
                 DiagnosticKind::Unsupported,
-                format!("unknown perception sections {sections:#04x}"),
+                format!("The perception sections {sections:#04x} are unknown."),
             ));
         }
         let built = |decoder: &Self, error| {
             decoder
-                .invalid("invalid stored perception")
+                .invalid("The stored perception is not valid.")
                 .with_source(error)
         };
         let mut builder = Perception::builder();
         if sections & 1 != 0 {
             let model = match self.u8()? {
                 0 => ValenceModel::RdkitLike,
-                other => return Err(self.invalid(format!("unknown valence model {other}"))),
+                other => return Err(self.invalid(format!("The valence model {other} is unknown."))),
             };
             let validation = match self.u8()? {
                 0 => ValenceValidation::Strict,
                 1 => ValenceValidation::Permissive,
-                other => return Err(self.invalid(format!("unknown valence validation {other}"))),
+                other => {
+                    return Err(self.invalid(format!("The valence validation {other} is unknown.")))
+                }
             };
             let count = self.count(atom_count, Resource::Atoms)?;
             let mut hydrogens = Vec::with_capacity(count);
@@ -712,7 +723,11 @@ impl<R: Read> Decoder<'_, R> {
             let basis = if self.tag("ring basis")? {
                 let model = match self.u8()? {
                     0 => RingBasisModel::FiguerasSssrLike,
-                    other => return Err(self.invalid(format!("unknown ring basis model {other}"))),
+                    other => {
+                        return Err(
+                            self.invalid(format!("The ring basis model {other} is unknown."))
+                        )
+                    }
                 };
                 let fallback = self.bool()?;
                 let ring_count = self.count(bond_count, Resource::Values)?;
@@ -737,7 +752,9 @@ impl<R: Read> Decoder<'_, R> {
             let model = match self.u8()? {
                 0 => AromaticityModel::RdkitLike,
                 1 => AromaticityModel::Mdl,
-                other => return Err(self.invalid(format!("unknown aromaticity model {other}"))),
+                other => {
+                    return Err(self.invalid(format!("The aromaticity model {other} is unknown.")))
+                }
             };
             let atoms = self.atom_ids(atom_count)?;
             let bonds = self.bond_ids(bond_count)?;
@@ -748,7 +765,9 @@ impl<R: Read> Decoder<'_, R> {
         if sections & 8 != 0 {
             let model = match self.u8()? {
                 0 => ConjugationModel::RdkitLike,
-                other => return Err(self.invalid(format!("unknown conjugation model {other}"))),
+                other => {
+                    return Err(self.invalid(format!("The conjugation model {other} is unknown.")))
+                }
             };
             let atoms = self.atom_ids(atom_count)?;
             let bonds = self.bond_ids(bond_count)?;
@@ -759,7 +778,9 @@ impl<R: Read> Decoder<'_, R> {
         if sections & 16 != 0 {
             let model = match self.u8()? {
                 0 => ResonanceModel::ChargeMoves,
-                other => return Err(self.invalid(format!("unknown resonance model {other}"))),
+                other => {
+                    return Err(self.invalid(format!("The resonance model {other} is unknown.")))
+                }
             };
             let group_count = self.count(bond_count, Resource::Values)?;
             let mut groups = Vec::with_capacity(group_count.min(CHUNK_BYTES));
@@ -778,8 +799,9 @@ impl<R: Read> Decoder<'_, R> {
             for _ in 0..count {
                 let element = StereoElementId::new(self.u32()?);
                 let code = self.u8()?;
-                let descriptor = descriptor(code)
-                    .ok_or_else(|| self.invalid(format!("unknown CIP descriptor {code}")))?;
+                let descriptor = descriptor(code).ok_or_else(|| {
+                    self.invalid(format!("The CIP descriptor {code} is unknown."))
+                })?;
                 descriptors.push((element, descriptor));
             }
             builder = builder
@@ -798,16 +820,20 @@ impl<R: Read> Decoder<'_, R> {
         }
         let scale = self.f64()?;
         let symbol = self.opt_str()?;
-        unit_with_symbol(dimension, scale, symbol.as_deref())
-            .map_err(|error| self.invalid("invalid unit").with_source(error))
+        unit_with_symbol(dimension, scale, symbol.as_deref()).map_err(|error| {
+            self.invalid("A stored unit is not valid.")
+                .with_source(error)
+        })
     }
 
     fn key(&mut self, previous: Option<&PropertyKey>) -> Result<PropertyKey> {
         let text = self.str()?;
-        let key = PropertyKey::new(text)
-            .map_err(|error| self.invalid("invalid property key").with_source(error))?;
+        let key = PropertyKey::new(text).map_err(|error| {
+            self.invalid("A stored property key is not valid.")
+                .with_source(error)
+        })?;
         if previous.is_some_and(|previous| previous >= &key) {
-            return Err(self.invalid("property keys are not strictly ascending"));
+            return Err(self.invalid("The stored property keys are not in ascending order."));
         }
         Ok(key)
     }
@@ -827,11 +853,12 @@ impl<R: Read> Decoder<'_, R> {
                     PropertyValue::Real { value, unit }
                 }
                 3 => PropertyValue::String(self.str()?),
-                other => return Err(self.invalid(format!("unknown property type {other}"))),
+                other => return Err(self.invalid(format!("The property type {other} is unknown."))),
             };
-            owner
-                .insert(key.clone(), value)
-                .map_err(|error| self.invalid("invalid property value").with_source(error))?;
+            owner.insert(key.clone(), value).map_err(|error| {
+                self.invalid("A stored property value is not valid.")
+                    .with_source(error)
+            })?;
             previous = Some(key);
         }
         Ok(owner)
@@ -843,7 +870,7 @@ impl<R: Read> Decoder<'_, R> {
         mut read: impl FnMut(&mut Self) -> Result<T>,
     ) -> Result<Vec<Option<T>>> {
         if !present.contains(&true) {
-            return Err(self.invalid("a stored column has no values"));
+            return Err(self.invalid("A stored column has no values."));
         }
         let mut values = Vec::with_capacity(present.len());
         for &present in present {
@@ -857,7 +884,10 @@ impl<R: Read> Decoder<'_, R> {
         if stored_rows != rows {
             return Err(self.error(
                 DiagnosticKind::Inconsistent,
-                format!("a property table has {stored_rows} rows instead of {rows}"),
+                format!(
+                    "A property table has {}, not {rows}.",
+                    crate::diagnostics::counted(stored_rows, "row", "rows")
+                ),
             ));
         }
         let count = self.count(self.options.max_items(), Resource::Fields)?;
@@ -886,11 +916,12 @@ impl<R: Read> Decoder<'_, R> {
                     let present = self.bits(rows)?;
                     PropertyColumn::String(self.cells(&present, Self::str)?)
                 }
-                other => return Err(self.invalid(format!("unknown column type {other}"))),
+                other => return Err(self.invalid(format!("The column type {other} is unknown."))),
             };
-            table
-                .insert(key.clone(), column)
-                .map_err(|error| self.invalid("invalid property column").with_source(error))?;
+            table.insert(key.clone(), column).map_err(|error| {
+                self.invalid("A stored property column is not valid.")
+                    .with_source(error)
+            })?;
             previous = Some(key);
         }
         Ok(table)
@@ -907,7 +938,7 @@ impl<R: Read> Decoder<'_, R> {
             let molecule = self.molecule()?;
             let code = self.u8()?;
             let class = molecule_class(code)
-                .ok_or_else(|| self.invalid(format!("unknown molecule class {code}")))?;
+                .ok_or_else(|| self.invalid(format!("The molecule class {code} is unknown.")))?;
             let explicit = self.bool()?;
             definitions.push(RawDefinition {
                 molecule,
@@ -923,7 +954,7 @@ impl<R: Read> Decoder<'_, R> {
             let definition = definitions.get(raw as usize).ok_or_else(|| {
                 self.error(
                     DiagnosticKind::InvalidReference,
-                    format!("an instance names missing definition {raw}"),
+                    format!("An instance refers to definition {raw}, which is missing."),
                 )
             })?;
             atom_total = atom_total.saturating_add(definition.molecule.atom_count());
@@ -1022,7 +1053,7 @@ impl<R: Read> Decoder<'_, R> {
         .map_err(|error| {
             self.rejected(
                 DiagnosticKind::Inconsistent,
-                "stored topology does not publish",
+                "The stored topology is not valid.",
             )
             .with_source(error)
         })
@@ -1046,10 +1077,10 @@ impl<R: Read> Decoder<'_, R> {
         })?;
         let mut classes = Vec::with_capacity(count);
         for code in codes {
-            classes.push(
-                residue_class(code)
-                    .ok_or_else(|| self.invalid(format!("unknown residue class {code}")))?,
-            );
+            classes
+                .push(residue_class(code).ok_or_else(|| {
+                    self.invalid(format!("The residue class {code} is unknown."))
+                })?);
         }
         let explicit = self.bits(count)?;
         let sites = self.lists(count, site_limit, Resource::Atoms, AtomSiteId::new)?;
@@ -1089,7 +1120,8 @@ impl<R: Read> Decoder<'_, R> {
             }
             _ => DiagnosticKind::Inconsistent,
         };
-        self.rejected(kind, format!("stored hierarchy is inconsistent: {error}"))
+        self.rejected(kind, "The stored hierarchy is inconsistent.")
+            .with_source(error)
     }
 
     // Structures.
@@ -1120,8 +1152,10 @@ impl<R: Read> Decoder<'_, R> {
 
     fn positions(&mut self, count: usize) -> Result<Positions> {
         let points = self.points(count)?;
-        Positions::from_vec(Quantity::new(points, CANONICAL_LENGTH_UNIT))
-            .map_err(|error| self.invalid("invalid positions").with_source(error))
+        Positions::from_vec(Quantity::new(points, CANONICAL_LENGTH_UNIT)).map_err(|error| {
+            self.invalid("The stored positions are not valid.")
+                .with_source(error)
+        })
     }
 
     fn cell(&mut self) -> Result<Option<PeriodicCell>> {
@@ -1131,7 +1165,7 @@ impl<R: Read> Decoder<'_, R> {
         let vectors = self.vectors(3)?;
         let axes = self.u8()?;
         if axes & !0b111 != 0 {
-            return Err(self.invalid(format!("invalid periodic axes {axes:#04x}")));
+            return Err(self.invalid(format!("The periodic axes {axes:#04x} are not valid.")));
         }
         let vectors = [vectors[0], vectors[1], vectors[2]];
         PeriodicCell::new(
@@ -1139,7 +1173,10 @@ impl<R: Read> Decoder<'_, R> {
             [axes & 1 != 0, axes & 2 != 0, axes & 4 != 0],
         )
         .map(Some)
-        .map_err(|error| self.invalid("invalid periodic cell").with_source(error))
+        .map_err(|error| {
+            self.invalid("The stored periodic cell is not valid.")
+                .with_source(error)
+        })
     }
 
     fn scalars(&mut self, count: usize) -> Result<Option<Vec<Option<f64>>>> {
@@ -1162,8 +1199,11 @@ impl<R: Read> Decoder<'_, R> {
         &self,
         error: impl std::error::Error + Send + Sync + 'static,
     ) -> FormatError {
-        self.rejected(DiagnosticKind::InvalidValue, "invalid stored structure")
-            .with_source(error)
+        self.rejected(
+            DiagnosticKind::InvalidValue,
+            "The stored structure is not valid.",
+        )
+        .with_source(error)
     }
 
     fn model(&mut self) -> Result<Model> {
@@ -1325,7 +1365,7 @@ impl<R: Read> Decoder<'_, R> {
         let axis = match self.u8()? {
             0 => SeriesAxis::Step,
             1 => SeriesAxis::Coordinate(self.unit()?),
-            other => return Err(self.invalid(format!("unknown series axis {other}"))),
+            other => return Err(self.invalid(format!("The series axis {other} is unknown."))),
         };
         let count = self.count(self.options.max_items(), Resource::Records)?;
         let mut items = Vec::with_capacity(count.min(CHUNK_BYTES));

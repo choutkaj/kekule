@@ -168,7 +168,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
         let marks = molfile_double_bond_geometry_marks(&staged, &[]);
         decode(&mut staged, &marks).map_err(|error| {
             MOLFILE_WRITE
-                .unsupported("source stereo cannot be decoded from the emitted coordinates")
+                .unsupported("The stereo cannot be read back from the written coordinates.")
                 .with_source(error)
         })?;
         for (_, element) in staged
@@ -191,10 +191,10 @@ pub(crate) fn project_molfile_stereo_bond_marks(
             }
         }
     }
-    for (_, target) in molecule.stereo_elements() {
+    for (element, target) in molecule.stereo_elements() {
         if target.is_specified() && geometry.is_none() {
             return Err(MOLFILE_WRITE.unsupported(
-                "cannot encode specified stereo: Molfile output requires a Model with coordinates",
+                "The molecule has specified stereo and no coordinates. Molfile stereo needs coordinates.",
             ));
         }
         if !keeps(target) {
@@ -202,7 +202,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
                 unreachable!("only double-bond stereo is conformation-dependent");
             };
             return Err(MOLFILE_WRITE.unsupported(format!(
-                "cannot encode specified double-bond stereo at {}: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands",
+                "Cannot encode the specified stereo of {}. The bond is aromatic, or an endpoint has identical terminal ligands.",
                 stereo.bond
             )));
         }
@@ -247,17 +247,14 @@ pub(crate) fn project_molfile_stereo_bond_marks(
                     }
                 };
                 return Err(MOLFILE_WRITE.unsupported(format!(
-                    "specified {focus} contradicts the emitted coordinates, which readers take as the configuration"
+                    "The specified {focus} contradicts the written coordinates."
                 )));
             }
             if matches!(&target.kind, StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_some())
             {
-                return Err(MOLFILE_WRITE.unsupported("specified double-bond stereo disagrees with emitted coordinates or has degenerate geometry"));
+                return Err(MOLFILE_WRITE.unsupported("The specified double-bond stereo does not match the written coordinates, or its geometry is degenerate."));
             }
-            return Err(MOLFILE_WRITE.unsupported(format!(
-                "Molfile writer cannot encode canonical stereo element {:?}",
-                target.kind
-            )));
+            return Err(MOLFILE_WRITE.unsupported(format!("Molfile cannot encode {element}.")));
         };
         projected.insert(bond, projection);
     }
@@ -272,7 +269,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
     source_marks.extend(molfile_double_bond_geometry_marks(&staged, &source_marks));
     let report = decode(&mut staged, &source_marks).map_err(|error| {
         MOLFILE_WRITE
-            .unsupported("projected Molfile stereo is inconsistent")
+            .unsupported("The Molfile stereo marks do not reproduce the stereo.")
             .with_source(error)
     })?;
     let decoded = staged
@@ -287,7 +284,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
         || added_unknown.iter().any(|bond| !decoded.iter().any(|actual|
             matches!(&actual.kind, StereoElementKind::DoubleBond(stereo) if stereo.bond == *bond && stereo.orientation.is_none())))
     {
-        return Err(MOLFILE_WRITE.unsupported("Molfile bond annotations cannot preserve all stereo assertions together"));
+        return Err(MOLFILE_WRITE.unsupported("Molfile bond marks cannot keep all stereo of the molecule together."));
     }
     Ok(projected)
 }
@@ -335,7 +332,7 @@ fn molfile_projection_candidates(
                 .require_incident_bonds(stereo.center)
                 .map_err(|error| {
                     MOLFILE_WRITE
-                        .invalid_model("inconsistent source model")
+                        .invalid_model("The molecule is inconsistent.")
                         .with_source(error)
                 })?
                 .filter(|(_, bond)| bond.order == BondOrder::Single)
@@ -354,9 +351,8 @@ fn molfile_projection_candidates(
         }
         StereoElementKind::Axis(stereo) => {
             if stereo.orientation.is_none() {
-                return Err(
-                    MOLFILE_WRITE.unsupported("Molfile writer cannot encode unknown axis stereo")
-                );
+                return Err(MOLFILE_WRITE
+                    .unsupported("Molfile cannot encode axis stereo of unknown configuration."));
             }
             let kinds = [
                 SourceStereoBondMarkKind::WedgeUp,
@@ -364,7 +360,7 @@ fn molfile_projection_candidates(
             ];
             let axis = molecule.require_bond(stereo.axis).map_err(|error| {
                 MOLFILE_WRITE
-                    .invalid_model("inconsistent source model")
+                    .invalid_model("The molecule is inconsistent.")
                     .with_source(error)
             })?;
             Ok([axis.a(), axis.b()]

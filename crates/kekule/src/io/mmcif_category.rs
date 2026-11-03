@@ -50,14 +50,14 @@ impl MmcifBlock {
                         return Err(structure_error(
                             DiagnosticKind::Inconsistent,
                             line,
-                            format!("category {category} shares a loop with another category"),
+                            format!("Category {category} shares a loop with another category."),
                         ));
                     }
                     if table.replace(candidate).is_some() {
                         return Err(structure_error(
                             DiagnosticKind::Inconsistent,
                             line,
-                            format!("category {category} is split across multiple loops"),
+                            format!("Category {category} is split across several loops."),
                         ));
                     }
                 }
@@ -68,7 +68,7 @@ impl MmcifBlock {
             (Some(_), false) => Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 Some(scalars[0].value().line()),
-                format!("category {category} mixes scalar items and a loop"),
+                format!("Category {category} mixes single items and a loop."),
             )),
             (Some(table), true) => Ok(Some(MmcifCategory::Loop(table))),
             (None, false) => Ok(Some(MmcifCategory::Scalars(scalars))),

@@ -83,6 +83,23 @@ pub enum InteractionCriterion {
     HydrophobicDistance,
 }
 
+impl InteractionCriterion {
+    /// Whether the criterion is an angle rather than a length.
+    pub(super) const fn is_angle(self) -> bool {
+        matches!(
+            self,
+            Self::HydrogenBondHydrogenAngle
+                | Self::HydrogenBondDonorAngle
+                | Self::HydrogenBondAcceptorAngle
+                | Self::PiStackingParallelAngle
+                | Self::PiStackingPerpendicularAngle
+                | Self::HalogenBondDonorAngle
+                | Self::HalogenBondMinAcceptorAngle
+                | Self::HalogenBondMaxAcceptorAngle
+        )
+    }
+}
+
 impl fmt::Display for InteractionCriterion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {

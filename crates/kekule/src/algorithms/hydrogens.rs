@@ -1,4 +1,4 @@
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{Capitalized, LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -312,25 +312,28 @@ pub enum HydrogenTransformError {
 impl fmt::Display for HydrogenTransformError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingValencePerception => write!(
-                f,
-                "hydrogen transformation requires current valence perception"
-            ),
-            Self::LimitExceeded(limit) => write!(f, "hydrogen addition {limit}"),
+            Self::MissingValencePerception => {
+                f.write_str("Hydrogen counts are not perceived. Perceive valence first.")
+            }
+            Self::LimitExceeded(limit) => {
+                write!(f, "Adding hydrogens exceeded its {}.", limit.describe())
+            }
             Self::HydrogenCountOverflow { atom, count } => write!(
                 f,
-                "{atom} requires {count} encoded hydrogens, which exceeds the supported count"
+                "{} needs {count} hydrogens. That count is too large to store.",
+                Capitalized(atom)
             ),
             Self::InconsistentStereoHydrogen { element, atom } => write!(
                 f,
-                "{element} has an inconsistent implicit hydrogen at {atom}"
+                "{} names an implicit hydrogen on {atom}. The hydrogen count of {atom} does not match.",
+                Capitalized(element)
             ),
             Self::UnsupportedImplicitAxisHydrogen { element } => write!(
                 f,
-                "axis {element} cannot materialize an implicit hydrogen carrier"
+                "Cannot make the implicit hydrogen carrier of the axis {element} explicit."
             ),
-            Self::Molecule(_) => f.write_str("cannot edit the molecule"),
-            Self::Publication(_) => f.write_str("cannot publish the transformed molecule"),
+            Self::Molecule(_) => f.write_str("Cannot edit the molecule."),
+            Self::Publication(_) => f.write_str("Cannot publish the transformed molecule."),
         }
     }
 }

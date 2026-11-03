@@ -410,18 +410,28 @@ pub enum MolfileUnsupportedContent {
     TrailingContent,
 }
 
+/// Writes a noun phrase without an article, such as `V3000 option "HCOUNT"
+/// of atom 3`, numbering atoms and bonds from 1 as the Molfile does.
 impl fmt::Display for MolfileUnsupportedContent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PropertyRecord(code) => write!(formatter, "property record `M  {code}`"),
-            Self::Record(keyword) => write!(formatter, "record `{keyword}`"),
-            Self::AtomOption { key, .. } => write!(formatter, "V3000 atom option `{key}`"),
-            Self::BondOption { key, .. } => write!(formatter, "V3000 bond option `{key}`"),
-            Self::AtomField { field, .. } => write!(formatter, "V2000 atom {field} field"),
-            Self::BondField { field, .. } => write!(formatter, "V2000 bond {field} field"),
-            Self::Collection(name) => write!(formatter, "V3000 collection `{name}`"),
-            Self::Block(name) => write!(formatter, "V3000 block `{name}`"),
-            Self::TrailingContent => formatter.write_str("content after `M  END`"),
+            Self::PropertyRecord(code) => write!(formatter, "property record \"M  {code}\""),
+            Self::Record(keyword) => write!(formatter, "record {keyword:?}"),
+            Self::AtomOption { atom, key } => {
+                write!(formatter, "V3000 option {key:?} of atom {}", atom + 1)
+            }
+            Self::BondOption { bond, key } => {
+                write!(formatter, "V3000 option {key:?} of bond {}", bond + 1)
+            }
+            Self::AtomField { atom, field } => {
+                write!(formatter, "V2000 {field} field of atom {}", atom + 1)
+            }
+            Self::BondField { bond, field } => {
+                write!(formatter, "V2000 {field} field of bond {}", bond + 1)
+            }
+            Self::Collection(name) => write!(formatter, "V3000 collection {name:?}"),
+            Self::Block(name) => write!(formatter, "V3000 block {name:?}"),
+            Self::TrailingContent => formatter.write_str("content after \"M  END\""),
         }
     }
 }
@@ -584,16 +594,13 @@ pub(crate) fn parse_molfile_document(
     options: MolfileParseOptions,
 ) -> Result<MolfileDocument, FormatError> {
     if input.len() > options.max_input_bytes {
+        let limit = LimitExceeded::new(Resource::InputBytes, options.max_input_bytes, input.len());
         return Err(molfile_parse_error(
             DiagnosticKind::Limit,
             1,
-            "input exceeds configured byte limit",
+            format!("The input exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::new(
-            Resource::InputBytes,
-            options.max_input_bytes,
-            input.len(),
-        )));
+        .exceeding(limit));
     }
     let source = normalize_line_endings(input);
     let lines = source.lines().collect::<Vec<_>>();
@@ -636,7 +643,7 @@ pub(super) fn parse_molfile_lines(
         return Err(lines.error(
             0,
             DiagnosticKind::Syntax,
-            "Molfile must contain three header lines and a counts line",
+            "The Molfile has fewer than three header lines and a counts line.",
         ));
     };
     let version = if counts.contains("V3000") {
@@ -647,7 +654,7 @@ pub(super) fn parse_molfile_lines(
         return Err(lines.error(
             3,
             DiagnosticKind::Syntax,
-            "counts line must declare V2000 or V3000",
+            "The counts line declares neither V2000 nor V3000.",
         ));
     };
     let (ctab, end) = match version {

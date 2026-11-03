@@ -1,7 +1,7 @@
 use crate::{
-    error::atom_list,
+    error::{article, atom_list, capitalized, counted},
     explicit,
-    offxml::{ForceField, Rule},
+    offxml::{parameter_name, ForceField, Rule, Sourced},
     parameters::*,
     ChargeAssignment, ChargeSource, Error, ErrorKind, NaglModel, Result,
 };
@@ -43,10 +43,11 @@ impl<'a> From<&'a NaglModel> for ChargeMethod<'a> {
     }
 }
 
-/// A tagged-pattern failure: invalid tags are a force-field defect, an
-/// exceeded search bound a resource limit, and anything else an underlying
-/// matching failure.
-pub(crate) fn matching(error: TaggedMatchError) -> Error {
+/// A failure to match the tagged pattern that `pattern` names, such as
+/// `parameter "b1"`: invalid tags are a force-field defect, an exceeded
+/// search bound a resource limit, and anything else an underlying matching
+/// failure.
+pub(crate) fn matching(pattern: &str, error: TaggedMatchError) -> Error {
     let (kind, limit) = match error {
         TaggedMatchError::Match(SubstructureMatchError::LimitExceeded { limit, .. }) => {
             (ErrorKind::ResourceLimit, Some(limit))
@@ -54,7 +55,11 @@ pub(crate) fn matching(error: TaggedMatchError) -> Error {
         TaggedMatchError::Match(_) => (ErrorKind::Chemistry, None),
         _ => (ErrorKind::ForceField, None),
     };
-    let error = Error::wrap(kind, error);
+    let error = Error::caused(
+        kind,
+        format!("Cannot match the SMIRKS pattern of {pattern}."),
+        error,
+    );
     match limit {
         Some(limit) => error.with_limit(limit),
         None => error,
@@ -84,7 +89,7 @@ fn ordered<const N: usize>(mut a: [AtomId; N]) -> [AtomId; N] {
     }
     a
 }
-fn assignments<const N: usize, P>(
+fn assignments<const N: usize, P: Sourced>(
     target: &PreparedTarget<'_>,
     rules: &[Rule<P>],
     improper: bool,
@@ -92,14 +97,18 @@ fn assignments<const N: usize, P>(
 ) -> Result<BTreeMap<[AtomId; N], usize>> {
     let mut map = BTreeMap::new();
     for (i, rule) in rules.iter().enumerate() {
-        let query = TaggedQuery::new(&rule.query).map_err(matching)?;
+        let name = parameter_name(rule.parameter.identity());
+        let query = TaggedQuery::new(&rule.query).map_err(|e| matching(&name, e))?;
         for tuple in query
             .find_matches(target, options, TupleMode::Distinct)
-            .map_err(matching)?
+            .map_err(|e| matching(&name, e))?
         {
-            let mut atoms: [AtomId; N] = tuple
-                .try_into()
-                .map_err(|_| Error::new(ErrorKind::ForceField, "incorrect parameter tag count"))?;
+            let mut atoms: [AtomId; N] = tuple.try_into().map_err(|_| {
+                Error::new(
+                    ErrorKind::ForceField,
+                    format!("The SMIRKS pattern of {name} does not tag {N} atoms."),
+                )
+            })?;
             if improper {
                 let mut outer = [atoms[0], atoms[2], atoms[3]];
                 outer.sort();
@@ -127,7 +136,7 @@ impl ForceField {
     fn assign(&self, input: &Molecule) -> Result<Assigned> {
         let mut molecule = explicit(input)?;
         aromaticity::perceive_aromaticity(&mut molecule, AromaticityModel::Mdl, Default::default())
-            .map_err(Error::chemistry)?;
+            .map_err(|e| Error::chemistry("Cannot perceive the aromaticity of the molecule.", e))?;
         let target = PreparedTarget::new(&molecule);
         let options = options(molecule.atom_count());
         let assigned = Assigned {
@@ -172,18 +181,29 @@ impl ForceField {
                 }
             }
         }
-        complete("Bonds", &bonds, &assigned.bonds)?;
-        complete("Angles", &angles, &assigned.angles)?;
-        complete("ProperTorsions", &propers, &assigned.propers)?;
-        complete("vdW", &m.atom_ids().map(|a| [a]).collect(), &assigned.vdw)?;
+        complete("bond", "bond", &bonds, &assigned.bonds)?;
+        complete("angle", "angle", &angles, &assigned.angles)?;
+        complete(
+            "proper torsion",
+            "proper torsion",
+            &propers,
+            &assigned.propers,
+        )?;
+        complete(
+            "atom",
+            "vdW",
+            &m.atom_ids().map(|a| [a]).collect(),
+            &assigned.vdw,
+        )?;
         for atoms in assigned.impropers.keys() {
             for i in [0, 2, 3] {
                 if m.bond_between(atoms[1], atoms[i]).is_none() {
                     return Err(Error::new(
                         ErrorKind::ForceField,
                         format!(
-                            "improper parameter has invalid connectivity of {}",
-                            atom_list(atoms)
+                            "{} match an improper torsion parameter but are not bonded \
+                             around a central atom.",
+                            capitalized(&atom_list(atoms))
                         ),
                     )
                     .with_atoms(*atoms));
@@ -195,7 +215,8 @@ impl ForceField {
                 return Err(Error::new(
                     ErrorKind::ForceField,
                     format!(
-                        "a nonbonded constraint of {} requires an explicit distance",
+                        "Constraint {} has no distance for the unbonded {}.",
+                        parameter_name(self.constraints[rule].parameter.identity()),
                         atom_list(pair)
                     ),
                 )
@@ -319,7 +340,8 @@ impl ForceField {
                         return Err(Error::new(
                             ErrorKind::ModelMismatch,
                             format!(
-                                "force field requires NAGL model {} ({}), supplied {} ({})",
+                                "The force field requires NAGL model {:?} (SHA-256 {}). The \
+                                 supplied model is {:?} (SHA-256 {}).",
                                 required.model_file(),
                                 required.checkpoint_sha256(),
                                 model.identity().model_file(),
@@ -330,8 +352,7 @@ impl ForceField {
                     None => {
                         return Err(Error::new(
                             ErrorKind::ModelMismatch,
-                            "force field declares no NAGLCharges handler; \
-                             use ChargeMethod::LibraryOnly",
+                            "The force field declares no NAGL model.",
                         ))
                     }
                 }
@@ -341,7 +362,7 @@ impl ForceField {
                 self.charges(m, |_| {
                     Err(Error::new(
                         ErrorKind::Charges,
-                        "LibraryCharges do not completely cover the molecule",
+                        "The library charges do not cover every atom of the molecule.",
                     ))
                 })
             }),
@@ -360,7 +381,8 @@ impl ForceField {
         molecule: Molecule,
         charges: impl Into<ChargeMethod<'a>>,
     ) -> Result<ParameterizedTopology> {
-        let topology = Topology::from_molecule(molecule).map_err(Error::chemistry)?;
+        let topology = Topology::from_molecule(molecule)
+            .map_err(|e| Error::chemistry("Cannot build a topology of the molecule.", e))?;
         self.parameterize(topology, charges)
     }
 
@@ -377,7 +399,11 @@ impl ForceField {
                 if charges.charges.value().len() != assigned.molecule.atom_count() {
                     return Err(Error::new(
                         ErrorKind::Charges,
-                        "charge assignment does not cover every molecule atom",
+                        format!(
+                            "The charge assignment has {} for {}.",
+                            counted(charges.charges.value().len(), "charge", "charges"),
+                            counted(assigned.molecule.atom_count(), "atom", "atoms")
+                        ),
                     ));
                 }
                 Ok((assigned, charges))
@@ -472,7 +498,10 @@ impl ForceField {
                     .ok_or_else(|| {
                         Error::new(
                             ErrorKind::Chemistry,
-                            "parameterized atom is absent from the topology",
+                            format!(
+                                "Parameterized {} is absent from the topology.",
+                                qualify(atom)
+                            ),
                         )
                     })?
                     .index();
@@ -524,8 +553,8 @@ impl ForceField {
             return Err(Error::new(
                 ErrorKind::Unparameterized,
                 format!(
-                    "{} {} no vdW parameter",
-                    atom_list(&atoms),
+                    "{} {} no vdW parameter.",
+                    capitalized(&atom_list(&atoms)),
                     if atoms.len() == 1 { "has" } else { "have" }
                 ),
             )
@@ -546,10 +575,11 @@ impl ForceField {
         let mut charges = BTreeMap::new();
         let mut sources = BTreeMap::new();
         for rule in &self.library {
+            let name = parameter_name(rule.parameter.identity());
             for tuple in TaggedQuery::new(&rule.query)
-                .map_err(matching)?
+                .map_err(|e| matching(&name, e))?
                 .find_matches(&target, options, TupleMode::Distinct)
-                .map_err(matching)?
+                .map_err(|e| matching(&name, e))?
             {
                 for (atom, q) in tuple.into_iter().zip(&rule.parameter.charges) {
                     charges.insert(atom, *q);
@@ -562,7 +592,11 @@ impl ForceField {
             if (values.iter().sum::<f64>() - molecule.formal_charge() as f64).abs() > 1e-6 {
                 return Err(Error::new(
                     ErrorKind::Charges,
-                    "library charges do not sum to the molecular formal charge",
+                    format!(
+                        "The library charges sum to {:.6} e, not to the formal charge {} e.",
+                        values.iter().sum::<f64>(),
+                        molecule.formal_charge()
+                    ),
                 ));
             }
             return Ok(ChargeAssignment {
@@ -590,7 +624,8 @@ fn shared<P: Clone>(rules: &[Rule<P>]) -> Vec<Arc<P>> {
 /// Fails naming every atom of the handler's unassigned interactions, or of
 /// the matches with invalid connectivity.
 fn complete<const N: usize>(
-    handler: &str,
+    noun: &str,
+    parameter: &str,
     expected: &BTreeSet<[AtomId; N]>,
     actual: &BTreeMap<[AtomId; N], usize>,
 ) -> Result<()> {
@@ -601,12 +636,16 @@ fn complete<const N: usize>(
     if let Some(first) = missing.first() {
         let error = Error::new(
             ErrorKind::Unparameterized,
-            format!(
-                "{} unassigned {handler} interaction{}, the first of {}",
-                missing.len(),
-                if missing.len() == 1 { "" } else { "s" },
-                atom_list(&first[..])
-            ),
+            match missing.len() {
+                1 => format!(
+                    "The {noun} of {} has no {parameter} parameter.",
+                    atom_list(&first[..])
+                ),
+                count => format!(
+                    "{count} {noun}s have no {parameter} parameter. The first involves {}.",
+                    atom_list(&first[..])
+                ),
+            },
         );
         return Err(error.with_atoms(missing.into_iter().flatten().copied()));
     }
@@ -618,8 +657,10 @@ fn complete<const N: usize>(
         let error = Error::new(
             ErrorKind::ForceField,
             format!(
-                "{handler} pattern matches invalid connectivity of {}",
-                atom_list(&first[..])
+                "{} match {} {parameter} parameter but do not form {} {noun}.",
+                capitalized(&atom_list(&first[..])),
+                article(parameter),
+                article(noun)
             ),
         );
         return Err(error.with_atoms(invalid.into_iter().flatten().copied()));
@@ -637,27 +678,37 @@ mod tests {
     #[test]
     fn exceeded_match_limits_are_resource_limits_with_the_wrapped_cause() {
         let limit = LimitExceeded::new(Resource::SearchStates, 10, 11);
-        let error = matching(TaggedMatchError::Match(
-            SubstructureMatchError::LimitExceeded {
+        let error = matching(
+            "parameter \"b1\"",
+            TaggedMatchError::Match(SubstructureMatchError::LimitExceeded {
                 limit,
                 work: SubstructureMatchWork::default(),
-            },
-        ));
+            }),
+        );
         assert_eq!(error.kind(), ErrorKind::ResourceLimit);
         assert_eq!(error.limit_exceeded(), Some(limit));
-        assert_eq!(error.to_string(), "a bounded search exceeded its limit");
         assert_eq!(
-            std::error::Error::source(&error).unwrap().to_string(),
-            "tagged substructure search failed"
+            error.to_string(),
+            "Cannot match the SMIRKS pattern of parameter \"b1\"."
         );
+        assert!(matches!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .downcast_ref::<TaggedMatchError>(),
+            Some(TaggedMatchError::Match(
+                SubstructureMatchError::LimitExceeded { .. }
+            ))
+        ));
 
-        let error = matching(TaggedMatchError::ZeroTag);
+        let error = matching("parameter \"b1\"", TaggedMatchError::ZeroTag);
         assert_eq!(error.kind(), ErrorKind::ForceField);
         assert_eq!(error.limit_exceeded(), None);
-        assert_eq!(
-            std::error::Error::source(&error).unwrap().to_string(),
-            "tagged projection requires positive tags"
-        );
+        assert!(matches!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .downcast_ref::<TaggedMatchError>(),
+            Some(TaggedMatchError::ZeroTag)
+        ));
     }
 
     #[test]

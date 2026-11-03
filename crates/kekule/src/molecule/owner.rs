@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+
+use crate::diagnostics::Capitalized;
 use std::ops::{Deref, DerefMut};
 
 use crate::properties::{MoleculeProperties, MoleculePropertiesMut, PropertyError};
@@ -1481,17 +1483,19 @@ pub enum MoleculeError {
 impl fmt::Display for MoleculeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidAtomId(id) => write!(f, "invalid atom id: {id}"),
-            Self::InvalidBondId(id) => write!(f, "invalid bond id: {id}"),
-            Self::InvalidStereoElementId(id) => write!(f, "invalid stereo element id: {id}"),
-            Self::InvalidStereoGroupId(id) => write!(f, "invalid stereo group id: {id}"),
-            Self::InvalidStereoReference(issue) => write!(f, "invalid stereo: {issue}"),
-            Self::SelfBond(id) => write!(f, "cannot create a bond from {id} to itself"),
-            Self::DuplicateBond { a, b } => write!(f, "duplicate bond between {a} and {b}"),
-            Self::IdentifierCapacityExceeded(kind) => {
-                write!(f, "{kind} identifier capacity exceeded")
+            Self::InvalidAtomId(id) => write!(f, "{} does not exist.", Capitalized(id)),
+            Self::InvalidBondId(id) => write!(f, "{} does not exist.", Capitalized(id)),
+            Self::InvalidStereoElementId(id) => write!(f, "{} does not exist.", Capitalized(id)),
+            Self::InvalidStereoGroupId(id) => write!(f, "{} does not exist.", Capitalized(id)),
+            Self::InvalidStereoReference(issue) => write!(f, "{issue}"),
+            Self::SelfBond(id) => write!(f, "Cannot bond {id} to itself."),
+            Self::DuplicateBond { a, b } => {
+                write!(f, "{} and {b} are already bonded.", Capitalized(a))
             }
-            Self::Property(_) => f.write_str("invalid molecule property"),
+            Self::IdentifierCapacityExceeded(kind) => {
+                write!(f, "The molecule has run out of {kind} identifiers.")
+            }
+            Self::Property(_) => f.write_str("The molecule property is invalid."),
         }
     }
 }

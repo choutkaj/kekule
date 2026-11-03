@@ -73,7 +73,7 @@ fn chemistry(source: impl std::error::Error + Send + Sync + 'static) -> FormatEr
     interpret_error(
         DiagnosticKind::Chemistry,
         None,
-        "molecule construction failed",
+        "Cannot build the molecule.",
     )
     .with_source(source)
 }
@@ -82,10 +82,14 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
     let invalid =
         |message: String| interpret_error_at(DiagnosticKind::InvalidValue, atom.location, message);
     let element = Element::from_symbol(&atom.symbol)
-        .ok_or_else(|| invalid(format!("unsupported element symbol `{}`", atom.symbol)))?;
+        .ok_or_else(|| invalid(format!("Element symbol {:?} is unknown.", atom.symbol)))?;
     let mut value = Atom::new(element);
-    value.formal_charge = i8::try_from(atom.formal_charge)
-        .map_err(|_| invalid("formal charge is outside i8 range".to_owned()))?;
+    value.formal_charge = i8::try_from(atom.formal_charge).map_err(|_| {
+        invalid(format!(
+            "Formal charge {} is outside the range of -128 to 127.",
+            atom.formal_charge
+        ))
+    })?;
     value.isotope = atom.isotope.and_then(NonZeroU16::new);
     if let Some(difference) = atom.mass_difference {
         let nominal = crate::descriptors::mass_difference_reference(element).ok_or_else(|| {
@@ -93,7 +97,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
                 DiagnosticKind::Unsupported,
                 atom.location,
                 format!(
-                    "V2000 mass difference on {} has no reference mass, since the element has no naturally abundant isotope; declare the mass number with `M  ISO`",
+                    "Element {} has no reference mass for a V2000 mass difference. Declare the mass number with an \"M  ISO\" line.",
                     element.symbol()
                 ),
             )
@@ -104,7 +108,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
                 .and_then(std::num::NonZeroU16::new)
                 .ok_or_else(|| {
                     invalid(format!(
-                        "V2000 mass difference {difference} gives no mass number for {}",
+                        "Mass difference {difference} gives no valid mass number for {}.",
                         element.symbol()
                     ))
                 })?,
@@ -141,15 +145,19 @@ fn apply_molfile_declared_valence(
             DiagnosticKind::Unsupported,
             location,
             format!(
-                "declared {version_name} valence cannot determine hydrogens for this bond order"
+                "A declared {version_name} valence on an atom with aromatic or quadruple bonds is not supported."
             ),
         )
     };
     let represented_valence = molecule
         .require_incident_bonds(atom)
         .map_err(|error| {
-            interpret_error_at(DiagnosticKind::Chemistry, location, "invalid graph atom")
-                .with_source(error)
+            interpret_error_at(
+                DiagnosticKind::Chemistry,
+                location,
+                "Cannot apply the declared valence.",
+            )
+            .with_source(error)
         })?
         .try_fold(0usize, |total, (bond, value)| {
             if source_aromatic_bonds.contains(&bond) {
@@ -170,14 +178,18 @@ fn apply_molfile_declared_valence(
             interpret_error_at(
                 DiagnosticKind::Inconsistent,
                 location,
-                format!("declared {version_name} valence is below represented bond valence"),
+                format!(
+                    "The declared {version_name} valence {declared_valence} is below the valence {represented_valence} of the atom's bonds."
+                ),
             )
         })?;
     let explicit = u8::try_from(inferred_hydrogens).map_err(|_| {
         interpret_error_at(
             DiagnosticKind::InvalidValue,
             location,
-            format!("declared {version_name} hydrogen count exceeds u8"),
+            format!(
+                "The declared {version_name} valence implies {inferred_hydrogens} hydrogens, more than 255."
+            ),
         )
     })?;
     molecule
@@ -206,15 +218,19 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, FormatErro
             interpret_error_at(
                 DiagnosticKind::Chemistry,
                 atom.location,
-                "invalid graph atom",
+                "Cannot add the atom.",
             )
             .with_source(error)
         })?;
         geometry
             .set_position(id, Quantity::new(atom.position, ANGSTROM))
             .map_err(|error| {
-                interpret_error_at(DiagnosticKind::Chemistry, atom.location, "invalid position")
-                    .with_source(error)
+                interpret_error_at(
+                    DiagnosticKind::Chemistry,
+                    atom.location,
+                    "Cannot set the atom's position.",
+                )
+                .with_source(error)
             })?;
         atom_ids.push(id);
     }
@@ -234,7 +250,7 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, FormatErro
             interpret_error_at(
                 DiagnosticKind::Chemistry,
                 bond.location,
-                "invalid graph bond",
+                "Cannot add the bond.",
             )
             .with_source(error)
         })?;
@@ -273,7 +289,7 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, FormatErro
             interpret_error(
                 DiagnosticKind::Chemistry,
                 first_aromatic,
-                "aromatic bond localization failed",
+                "Cannot assign single and double bonds to the aromatic bonds.",
             )
             .with_source(error)
         },
@@ -529,7 +545,7 @@ pub(crate) fn interpret_molfile_document(
                 return Err(interpret_error_at(
                     DiagnosticKind::Unsupported,
                     unsupported.location(),
-                    format!("unsupported {}", unsupported.content()),
+                    format!("The {} is not supported.", unsupported.content()),
                 ));
             }
             Vec::new()
@@ -591,7 +607,7 @@ pub(crate) fn interpret_molfile_document(
             interpret_error(
                 DiagnosticKind::Chemistry,
                 canonicalization_error_location(&error, &atom_lines, &bond_lines),
-                "could not publish canonical molecule",
+                "Cannot publish the molecule.",
             )
             .with_source(error)
         })?;
@@ -640,7 +656,7 @@ pub(crate) fn interpret_molfile_document(
                     interpret_error(
                         DiagnosticKind::Chemistry,
                         component_location,
-                        "could not materialize Molfile coordinate stereo",
+                        "Cannot add the stereochemistry of the coordinates.",
                     )
                     .with_source(error)
                 })?,
@@ -655,7 +671,7 @@ pub(crate) fn interpret_molfile_document(
             interpret_error(
                 DiagnosticKind::Chemistry,
                 component_location,
-                "cannot publish molecule",
+                "Cannot publish the molecule.",
             )
             .with_source(error)
         })?;
@@ -679,7 +695,7 @@ pub(crate) fn interpret_molfile_document(
             interpret_error(
                 DiagnosticKind::Chemistry,
                 component_location,
-                "could not retain published coordinates",
+                "Cannot keep the coordinates of the published molecule.",
             )
             .with_source(error)
         })?;
@@ -750,12 +766,8 @@ pub(crate) fn interpret_molfile_document(
         ));
     }
     publish_molfile_components(components, omitted).map_err(|error| {
-        interpret_error(
-            DiagnosticKind::Chemistry,
-            None,
-            "could not build Molfile model",
-        )
-        .with_source(error)
+        interpret_error(DiagnosticKind::Chemistry, None, "Cannot build the model.")
+            .with_source(error)
     })
 }
 
@@ -781,7 +793,7 @@ fn install_v3000_atom_cfg(
             crate::chemistry::source_tetrahedral_carriers(molecule, center).ok_or_else(|| {
                 error(
                     DiagnosticKind::Chemistry,
-                    "V3000 atom CFG requires four supported tetrahedral carriers".into(),
+                    "The atom's V3000 CFG needs four tetrahedral neighbors.".into(),
                 )
             })?;
         let mut orientation = match parity {
@@ -830,7 +842,7 @@ fn install_v3000_atom_cfg(
                 if existing != asserted {
                     return Err(error(
                         DiagnosticKind::Inconsistent,
-                        "V3000 atom CFG conflicts with bond wedge configuration".into(),
+                        "The atom's V3000 CFG contradicts its wedge bonds.".into(),
                     ));
                 }
             } else if orientation.is_none() && stereo.orientation.is_some() {
@@ -843,7 +855,7 @@ fn install_v3000_atom_cfg(
                     .map_err(|cause| {
                         error(
                             DiagnosticKind::Chemistry,
-                            "cannot replace stereo center".to_owned(),
+                            "Cannot replace the stereocenter.".to_owned(),
                         )
                         .with_source(cause)
                     })?;
@@ -862,7 +874,7 @@ fn install_v3000_atom_cfg(
                 .map_err(|cause| {
                     error(
                         DiagnosticKind::Chemistry,
-                        "cannot add stereo center".to_owned(),
+                        "Cannot add the stereocenter.".to_owned(),
                     )
                     .with_source(cause)
                 })?;
@@ -900,7 +912,7 @@ fn install_molfile_stereo_groups(
         if present != group.atoms.len() && kind != StereoGroupKind::Absolute {
             return Err(error(
                 DiagnosticKind::Unsupported,
-                "relative V3000 stereo groups spanning disconnected molecules cannot be represented",
+                "A relative V3000 stereo group spans disconnected molecules. It is not supported.",
             ));
         }
         let mut seen_atoms = BTreeSet::new();
@@ -909,14 +921,14 @@ fn install_molfile_stereo_groups(
             if !seen_atoms.insert(atom) {
                 return Err(error(
                     DiagnosticKind::Inconsistent,
-                    "duplicate V3000 stereo group atom",
+                    "A V3000 stereo group lists an atom twice.",
                 ));
             }
             let candidates = molfile_stereo_group_members_at_atom(molecule, atom);
             let [member] = candidates.as_slice() else {
                 return Err(error(
                     DiagnosticKind::Chemistry,
-                    "V3000 stereo group atom must identify one tetrahedral center or atropisomeric axis",
+                    "A V3000 stereo group atom is not one stereocenter or atropisomeric axis.",
                 ));
             };
             members.insert(*member);
@@ -929,8 +941,9 @@ fn install_molfile_stereo_groups(
             .map_err(|cause| {
                 error(
                     DiagnosticKind::Chemistry,
-                    &format!("invalid V3000 stereo group: {cause}"),
+                    "Cannot add the V3000 stereo group.",
                 )
+                .with_source(cause)
             })?;
     }
     Ok(())
@@ -999,7 +1012,10 @@ fn molfile_points(
                 interpret_error(
                     DiagnosticKind::Chemistry,
                     None,
-                    format!("missing source coordinates for {atom}"),
+                    format!(
+                        "{} has no coordinates.",
+                        crate::diagnostics::Capitalized(atom)
+                    ),
                 )
             })
         })
@@ -1027,7 +1043,7 @@ pub(super) fn molfile_coordinate_double_bonds(
         Err(error) => Err(interpret_error(
             DiagnosticKind::Chemistry,
             None,
-            "could not classify Molfile coordinate double bonds",
+            "Cannot classify the double bonds of the coordinates.",
         )
         .with_source(error)),
     }
@@ -1064,7 +1080,7 @@ pub(super) fn molfile_coordinate_tetrahedra(
             return Err(interpret_error(
                 DiagnosticKind::Chemistry,
                 None,
-                "could not infer Molfile coordinate stereo",
+                "Cannot infer stereochemistry from the coordinates.",
             )
             .with_source(error))
         }
@@ -1236,7 +1252,7 @@ mod stereo_group_tests {
         assert_eq!(error.location(), Some(SourceLocation::at_line(73)));
         assert_eq!(
             error.message(),
-            "V3000 stereo group atom must identify one tetrahedral center or atropisomeric axis"
+            "A V3000 stereo group atom is not one stereocenter or atropisomeric axis."
         );
         assert_eq!(molecule.stereo_groups().count(), 0);
 

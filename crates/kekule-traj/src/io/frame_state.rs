@@ -46,7 +46,7 @@ impl FrameTimingPolicy {
                 TrajectoryIoOperation::Open,
                 Some(format),
                 source_label,
-                format!("{format} frame numbering interval must be a finite, nonnegative time"),
+                format!("The {format} frame interval is not a finite, nonnegative time."),
             )),
         }
     }

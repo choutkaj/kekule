@@ -21,23 +21,31 @@ pub(super) fn parse_v3000_ctab(
 ) -> std::result::Result<(MolfileCtab, usize), FormatError> {
     let (records, end) = collect_v3000_lines(lines, options)?;
     let Some(first) = records.first() else {
-        return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 BEGIN CTAB"));
+        return Err(lines.error(
+            end,
+            DiagnosticKind::Syntax,
+            "The \"BEGIN CTAB\" line is missing.",
+        ));
     };
     if first.body != "BEGIN CTAB" {
         return Err(lines.error(
             first.index,
             DiagnosticKind::Syntax,
-            "V3000 records must be inside the CTAB",
+            "The V3000 record lies outside the CTAB.",
         ));
     }
     let Some(close) = records.iter().position(|record| record.body == "END CTAB") else {
-        return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 END CTAB"));
+        return Err(lines.error(
+            end,
+            DiagnosticKind::Syntax,
+            "The \"END CTAB\" line is missing.",
+        ));
     };
     if let Some(outside) = records.get(close + 1) {
         return Err(lines.error(
             outside.index,
             DiagnosticKind::Syntax,
-            "V3000 records must be inside the CTAB",
+            "The V3000 record lies outside the CTAB.",
         ));
     }
 
@@ -59,24 +67,26 @@ pub(super) fn parse_v3000_ctab(
             let length = body[position..]
                 .iter()
                 .position(|row| row.body == close)
-                .ok_or_else(|| syntax(&format!("missing V3000 END {name}")))?;
+                .ok_or_else(|| syntax(&format!("The \"END {name}\" line is missing.")))?;
             let rows = &body[position..position + length];
             position += length + 1;
             match name {
                 "ATOM" => {
                     if atoms_read {
-                        return Err(syntax("V3000 must contain exactly one ATOM section"));
+                        return Err(syntax("The CTAB has a second ATOM section."));
                     }
                     let Some((counts, counts_index)) = counts else {
-                        return Err(syntax(
-                            "V3000 COUNTS line must occur before the ATOM section",
-                        ));
+                        return Err(syntax("The ATOM section comes before the COUNTS line."));
                     };
                     if rows.len() != counts.atoms {
                         return Err(lines.error(
                             counts_index,
                             DiagnosticKind::Inconsistent,
-                            "V3000 COUNTS do not match the ATOM section size",
+                            format!(
+                                "The COUNTS line declares {} atoms, but the ATOM section has {}.",
+                                counts.atoms,
+                                rows.len()
+                            ),
                         ));
                     }
                     for row in rows {
@@ -86,7 +96,7 @@ pub(super) fn parse_v3000_ctab(
                             return Err(lines.error(
                                 row.index,
                                 DiagnosticKind::Inconsistent,
-                                "duplicate V3000 atom index",
+                                format!("Atom index {serial} appears twice."),
                             ));
                         }
                         ctab.atoms.push(atom);
@@ -95,21 +105,25 @@ pub(super) fn parse_v3000_ctab(
                 }
                 "BOND" => {
                     let (Some((counts, counts_index)), true) = (counts, atoms_read) else {
-                        return Err(syntax("V3000 BOND section must follow the ATOM section"));
+                        return Err(syntax("The BOND section comes before the ATOM section."));
                     };
                     if bonds_read {
-                        return Err(syntax("V3000 must contain exactly one BOND section"));
+                        return Err(syntax("The CTAB has a second BOND section."));
                     }
                     if collection_read {
                         return Err(syntax(
-                            "V3000 BOND section must precede the COLLECTION section",
+                            "The BOND section comes after the COLLECTION section.",
                         ));
                     }
                     if rows.len() != counts.bonds {
                         return Err(lines.error(
                             counts_index,
                             DiagnosticKind::Inconsistent,
-                            "V3000 COUNTS do not match the BOND section size",
+                            format!(
+                                "The COUNTS line declares {} bonds, but the BOND section has {}.",
+                                counts.bonds,
+                                rows.len()
+                            ),
                         ));
                     }
                     parse_v3000_bonds(lines, rows, &atom_positions, &mut ctab)?;
@@ -118,16 +132,16 @@ pub(super) fn parse_v3000_ctab(
                 "COLLECTION" => {
                     if !bonds_read && !bond_block_optional(counts, atoms_read) {
                         return Err(syntax(
-                            "V3000 COLLECTION section must follow the BOND section",
+                            "The COLLECTION section comes before the BOND section.",
                         ));
                     }
                     if collection_read {
-                        return Err(syntax("V3000 permits one COLLECTION section"));
+                        return Err(syntax("The CTAB has a second COLLECTION section."));
                     }
                     parse_v3000_collection(lines, rows, &atom_positions, &mut ctab)?;
                     collection_read = true;
                 }
-                "CTAB" => return Err(syntax("V3000 must contain exactly one CTAB")),
+                "CTAB" => return Err(syntax("The Molfile has a second CTAB.")),
                 _ => ctab.unsupported.push(MolfileUnsupported {
                     content: MolfileUnsupportedContent::Block(name.to_owned()),
                     location: lines.location(record.index),
@@ -140,42 +154,35 @@ pub(super) fn parse_v3000_ctab(
         };
         if keyword == "COUNTS" {
             if counts.is_some() {
-                return Err(syntax("V3000 CTAB must contain exactly one COUNTS line"));
+                return Err(syntax("The CTAB has a second COUNTS line."));
             }
             let parsed = parse_v3000_counts(&record.body)
-                .ok_or_else(|| syntax("invalid V3000 COUNTS line"))?;
-            if parsed.atoms > options.max_v3000_atoms() {
-                return Err(lines
-                    .error(
-                        record.index,
-                        DiagnosticKind::Limit,
-                        "V3000 atom count exceeds configured limit",
-                    )
-                    .exceeding(LimitExceeded::new(
-                        Resource::Atoms,
-                        options.max_v3000_atoms(),
-                        parsed.atoms,
-                    )));
-            }
-            if parsed.bonds > options.max_v3000_bonds() {
-                return Err(lines
-                    .error(
-                        record.index,
-                        DiagnosticKind::Limit,
-                        "V3000 bond count exceeds configured limit",
-                    )
-                    .exceeding(LimitExceeded::new(
-                        Resource::Bonds,
-                        options.max_v3000_bonds(),
-                        parsed.bonds,
-                    )));
+                .ok_or_else(|| syntax("The COUNTS line is malformed."))?;
+            for limit in [
+                LimitExceeded::check(Resource::Atoms, options.max_v3000_atoms(), parsed.atoms),
+                LimitExceeded::check(Resource::Bonds, options.max_v3000_bonds(), parsed.bonds),
+            ] {
+                if let Err(limit) = limit {
+                    return Err(lines
+                        .error(
+                            record.index,
+                            DiagnosticKind::Limit,
+                            format!("The COUNTS line exceeds the {}.", limit.describe()),
+                        )
+                        .exceeding(limit));
+                }
             }
             ctab.chiral_flag = parsed.chiral;
             counts = Some((parsed, record.index));
         } else if keyword == "END" {
-            return Err(syntax(&format!("unexpected V3000 {}", record.body)));
+            return Err(syntax(&format!(
+                "The line {:?} closes no section.",
+                record.body
+            )));
         } else if is_v3000_stereo_group(keyword) {
-            return Err(syntax("V3000 stereo group is outside COLLECTION"));
+            return Err(syntax(
+                "The stereo group lies outside the COLLECTION section.",
+            ));
         } else {
             ctab.unsupported.push(MolfileUnsupported {
                 content: MolfileUnsupportedContent::Record(keyword.to_owned()),
@@ -184,10 +191,10 @@ pub(super) fn parse_v3000_ctab(
         }
     }
     if !atoms_read {
-        return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 ATOM section"));
+        return Err(lines.error(end, DiagnosticKind::Syntax, "The ATOM section is missing."));
     }
     if !bonds_read && !bond_block_optional(counts, atoms_read) {
-        return Err(lines.error(end, DiagnosticKind::Syntax, "missing V3000 BOND section"));
+        return Err(lines.error(end, DiagnosticKind::Syntax, "The BOND section is missing."));
     }
     Ok((ctab, end))
 }
@@ -217,16 +224,17 @@ fn collect_v3000_lines(
     options: MolfileParseOptions,
 ) -> std::result::Result<(Vec<V3000Line>, usize), FormatError> {
     let limit = |index| {
+        let limit = LimitExceeded::first_beyond(
+            Resource::RecordBytes,
+            options.max_v3000_logical_line_bytes(),
+        );
         lines
             .error(
                 index,
                 DiagnosticKind::Limit,
-                "V3000 logical line exceeds configured byte limit",
+                format!("The V3000 line exceeds its {}.", limit.describe()),
             )
-            .exceeding(LimitExceeded::first_beyond(
-                Resource::RecordBytes,
-                options.max_v3000_logical_line_bytes(),
-            ))
+            .exceeding(limit)
     };
     let mut records = Vec::new();
     let mut index = 4usize;
@@ -235,8 +243,13 @@ fn collect_v3000_lines(
         if line.trim() == "M  END" {
             return Ok((records, index));
         }
-        let body = v3000_body(line)
-            .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "expected M  V30 record"))?;
+        let body = v3000_body(line).ok_or_else(|| {
+            lines.error(
+                index,
+                DiagnosticKind::Syntax,
+                "The line does not start with \"M  V30\".",
+            )
+        })?;
         if body.len() > options.max_v3000_logical_line_bytes() {
             return Err(limit(start));
         }
@@ -248,12 +261,16 @@ fn collect_v3000_lines(
                 lines.error(
                     start,
                     DiagnosticKind::Syntax,
-                    "unterminated V3000 continuation",
+                    "The continued V3000 line has no next line.",
                 )
             })?;
             let continuation = v3000_body(continuation_line)
                 .ok_or_else(|| {
-                    lines.error(index, DiagnosticKind::Syntax, "invalid V3000 continuation")
+                    lines.error(
+                        index,
+                        DiagnosticKind::Syntax,
+                        "The continuation line does not start with \"M  V30\".",
+                    )
                 })?
                 .trim_start();
             if body.len().saturating_add(continuation.len())
@@ -269,7 +286,7 @@ fn collect_v3000_lines(
     Err(lines.error(
         lines.len().saturating_sub(1),
         DiagnosticKind::Syntax,
-        "missing M  END",
+        "The \"M  END\" line is missing.",
     ))
 }
 
@@ -338,12 +355,18 @@ fn parse_v3000_atom(
     position: usize,
     unsupported: &mut Vec<MolfileUnsupported>,
 ) -> std::result::Result<(usize, MolfileAtom), FormatError> {
-    let syntax = || lines.error(row.index, DiagnosticKind::Syntax, "invalid V3000 atom line");
+    let syntax = || {
+        lines.error(
+            row.index,
+            DiagnosticKind::Syntax,
+            format!("The line of atom {} is malformed.", position + 1),
+        )
+    };
     let invalid = |name: &str| {
         lines.error(
             row.index,
             DiagnosticKind::InvalidValue,
-            format!("invalid V3000 {name} value"),
+            format!("The {name} value of atom {} is not valid.", position + 1),
         )
     };
     let fields = v3000_fields(&row.body).ok_or_else(syntax)?;
@@ -355,7 +378,7 @@ fn parse_v3000_atom(
         return Err(lines.error(
             row.index,
             DiagnosticKind::InvalidValue,
-            "V3000 atom indices must be positive",
+            "The atom index is 0. Atom indices start at 1.",
         ));
     }
     let coordinate = |value: &str| parse_finite_f64(value).ok_or_else(syntax);
@@ -370,7 +393,7 @@ fn parse_v3000_atom(
             return Err(lines.error(
                 row.index,
                 DiagnosticKind::Syntax,
-                format!("duplicate V3000 atom option `{key}`"),
+                format!("Atom {serial} has the option {key:?} twice."),
             ));
         }
         match key {
@@ -454,13 +477,15 @@ fn parse_v3000_bonds(
             &mut ctab.unsupported,
         )?;
         let inconsistent =
-            |message: &str| lines.error(row.index, DiagnosticKind::Inconsistent, message);
+            |message: String| lines.error(row.index, DiagnosticKind::Inconsistent, message);
         if !serials.insert(serial) {
-            return Err(inconsistent("duplicate V3000 bond index"));
+            return Err(inconsistent(format!("Bond index {serial} appears twice.")));
         }
         let [a, b] = bond.atoms;
         if !endpoints.insert((a.min(b), a.max(b))) {
-            return Err(inconsistent("duplicate bond endpoints"));
+            return Err(inconsistent(format!(
+                "Bond {serial} bonds two atoms that another bond already joins."
+            )));
         }
         ctab.bonds.push(bond);
     }
@@ -474,7 +499,13 @@ fn parse_v3000_bond(
     atom_positions: &BTreeMap<usize, usize>,
     unsupported: &mut Vec<MolfileUnsupported>,
 ) -> std::result::Result<(usize, MolfileBond), FormatError> {
-    let syntax = || lines.error(row.index, DiagnosticKind::Syntax, "invalid V3000 bond line");
+    let syntax = || {
+        lines.error(
+            row.index,
+            DiagnosticKind::Syntax,
+            format!("The line of bond {} is malformed.", position + 1),
+        )
+    };
     let fields = v3000_fields(&row.body).ok_or_else(syntax)?;
     let [serial, order, a, b, options @ ..] = fields.as_slice() else {
         return Err(syntax());
@@ -484,7 +515,7 @@ fn parse_v3000_bond(
         return Err(lines.error(
             row.index,
             DiagnosticKind::InvalidValue,
-            "V3000 bond indices must be positive",
+            "The bond index is 0. Bond indices start at 1.",
         ));
     }
     let order_code = order.parse::<u8>().map_err(|_| syntax())?;
@@ -499,24 +530,24 @@ fn parse_v3000_bond(
             return Err(lines.error(
                 row.index,
                 DiagnosticKind::Unsupported,
-                format!("unsupported V3000 bond order code {order_code}"),
+                format!("The bond order code {order_code} of bond {serial} is not supported."),
             ))
         }
         _ => {
             return Err(lines.error(
                 row.index,
                 DiagnosticKind::InvalidValue,
-                format!("invalid V3000 bond order code {order_code}"),
+                format!("The bond order code {order_code} of bond {serial} is not valid."),
             ))
         }
     };
-    let endpoint = |serial: &str| {
-        let serial = serial.parse::<usize>().map_err(|_| syntax())?;
-        atom_positions.get(&serial).copied().ok_or_else(|| {
+    let endpoint = |atom: &str| {
+        let atom = atom.parse::<usize>().map_err(|_| syntax())?;
+        atom_positions.get(&atom).copied().ok_or_else(|| {
             lines.error(
                 row.index,
                 DiagnosticKind::InvalidReference,
-                "bond endpoint outside atom block",
+                format!("Bond {serial} refers to atom {atom}, which the ATOM section lacks."),
             )
         })
     };
@@ -525,7 +556,7 @@ fn parse_v3000_bond(
         return Err(lines.error(
             row.index,
             DiagnosticKind::InvalidValue,
-            "bond endpoints must be distinct",
+            format!("Bond {serial} joins atom {a} to itself."),
         ));
     }
     let mut stereo = None;
@@ -536,7 +567,7 @@ fn parse_v3000_bond(
             return Err(lines.error(
                 row.index,
                 DiagnosticKind::Syntax,
-                format!("duplicate V3000 bond option `{key}`"),
+                format!("Bond {serial} has the option {key:?} twice."),
             ));
         }
         if key != "CFG" {
@@ -556,7 +587,7 @@ fn parse_v3000_bond(
                 return Err(lines.error(
                     row.index,
                     DiagnosticKind::Unsupported,
-                    format!("V3000 bond CFG value {cfg} is unsupported for an aromatic bond"),
+                    format!("The CFG value {cfg} of aromatic bond {serial} is not supported."),
                 ))
             }
             (MolfileBondOrder::Single, 1) => Some(MolfileBondStereo::Up),
@@ -567,7 +598,9 @@ fn parse_v3000_bond(
                 return Err(lines.error(
                     row.index,
                     DiagnosticKind::InvalidValue,
-                    format!("V3000 bond CFG value {cfg} is invalid for bond order {order:?}"),
+                    format!(
+                        "The CFG value {cfg} of bond {serial} does not apply to its bond order."
+                    ),
                 ))
             }
         };
@@ -600,7 +633,7 @@ fn parse_v3000_collection(
         let error = |kind, message: &str| lines.error(row.index, kind, message);
         let syntax = |message: &str| error(DiagnosticKind::Syntax, message);
         let fields =
-            v3000_fields(&row.body).ok_or_else(|| syntax("invalid V3000 collection line"))?;
+            v3000_fields(&row.body).ok_or_else(|| syntax("The collection line is malformed."))?;
         let Some((&name, lists)) = fields.split_first() else {
             continue;
         };
@@ -608,7 +641,7 @@ fn parse_v3000_collection(
             Ok(number) if number > 0 => Ok(number),
             _ => Err(error(
                 DiagnosticKind::InvalidValue,
-                "invalid V3000 stereo group number",
+                &format!("The stereo group {name:?} has no positive number."),
             )),
         };
         let kind = if name == "MDLV30/STEABS" {
@@ -626,35 +659,52 @@ fn parse_v3000_collection(
         };
         let mut atoms = None;
         for field in lists {
-            let (key, value) = split_v3000_option(field)
-                .ok_or_else(|| syntax("invalid V3000 stereo group member list"))?;
+            let (key, value) = split_v3000_option(field).ok_or_else(|| {
+                syntax(&format!(
+                    "The atom list of stereo group {name:?} is malformed."
+                ))
+            })?;
             if key != "ATOMS" {
                 return Err(error(
                     DiagnosticKind::Unsupported,
-                    &format!("unsupported V3000 stereo group member list `{key}`"),
+                    &format!("The stereo group list {key:?} is not supported."),
                 ));
             }
             if atoms.is_some() {
-                return Err(syntax("duplicate V3000 stereo group member list"));
+                return Err(syntax(&format!(
+                    "The stereo group {name:?} has two atom lists."
+                )));
             }
             let list = value
                 .strip_prefix('(')
                 .and_then(|list| list.strip_suffix(')'))
-                .ok_or_else(|| syntax("invalid V3000 stereo group member list"))?;
+                .ok_or_else(|| {
+                    syntax(&format!(
+                        "The atom list of stereo group {name:?} is malformed."
+                    ))
+                })?;
             let mut values = list.split_whitespace();
             let count = values
                 .next()
                 .and_then(|count| count.parse::<usize>().ok())
-                .ok_or_else(|| syntax("invalid V3000 stereo group member count"))?;
+                .ok_or_else(|| {
+                    syntax(&format!(
+                        "The atom list of stereo group {name:?} has no count."
+                    ))
+                })?;
             let members = values
                 .map(|serial| {
-                    let serial = serial
-                        .parse::<usize>()
-                        .map_err(|_| syntax("invalid V3000 stereo group member"))?;
-                    atom_positions.get(&serial).copied().ok_or_else(|| {
+                    let atom = serial.parse::<usize>().map_err(|_| {
+                        syntax(&format!(
+                            "The stereo group {name:?} lists {serial:?}, which is not an atom index."
+                        ))
+                    })?;
+                    atom_positions.get(&atom).copied().ok_or_else(|| {
                         error(
                             DiagnosticKind::InvalidReference,
-                            "V3000 stereo group member is outside the atom block",
+                            &format!(
+                                "The stereo group {name:?} lists atom {atom}, which the ATOM section lacks."
+                            ),
                         )
                     })
                 })
@@ -662,7 +712,11 @@ fn parse_v3000_collection(
             if members.len() != count {
                 return Err(error(
                     DiagnosticKind::Inconsistent,
-                    "V3000 stereo group member count mismatch",
+                    &format!(
+                        "The stereo group {name:?} declares {} but lists {}.",
+                        crate::diagnostics::counted(count, "atom", "atoms"),
+                        members.len()
+                    ),
                 ));
             }
             atoms = Some(members);
@@ -670,7 +724,7 @@ fn parse_v3000_collection(
         let atoms = atoms.filter(|atoms| !atoms.is_empty()).ok_or_else(|| {
             error(
                 DiagnosticKind::InvalidValue,
-                "V3000 stereo group must have members",
+                &format!("The stereo group {name:?} has no atoms."),
             )
         })?;
         if let Some(group) = ctab

@@ -141,11 +141,17 @@ enum AromaticElectronDonorType {
 impl fmt::Display for AromaticityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::IncompatibleRingBasis => {
-                f.write_str("MDL aromaticity requires compatible SSSR ring perception")
+            Self::IncompatibleRingBasis => f.write_str(
+                "The installed rings are not an SSSR ring set. MDL aromaticity needs one.",
+            ),
+            Self::RingPerception(_) => f.write_str("Cannot perceive rings for aromaticity."),
+            Self::LimitExceeded(limit) => {
+                write!(
+                    f,
+                    "Aromaticity perception exceeded its {}.",
+                    limit.describe()
+                )
             }
-            Self::RingPerception(_) => f.write_str("ring perception failed"),
-            Self::LimitExceeded(limit) => write!(f, "aromaticity {limit}"),
         }
     }
 }

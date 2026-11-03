@@ -74,7 +74,7 @@ fn hierarchy_views_read_what_the_builder_staged() {
     );
 
     assert!(topology.chain(ChainId::new(99)).is_none());
-    assert_eq!(HierarchyIdKind::AtomSite.to_string(), "atom-site");
+    assert_eq!(HierarchyIdKind::AtomSite.to_string(), "atom site");
 }
 
 #[test]

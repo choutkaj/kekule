@@ -12,10 +12,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Write;
 
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField};
+use crate::diagnostics::{
+    Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField,
+};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
+use crate::io::mmcif_write::bond_order_name;
 use crate::io::structure_interpret::is_metal;
 use crate::io::write_error::{
     check_structure_state, record_multi_model_ensemble, record_multi_model_series, Omissions,
@@ -223,9 +226,9 @@ impl fmt::Display for PdbAtomField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Isotope => "isotope",
-            Self::Radical => "radical",
+            Self::Radical => "radical electrons",
             Self::Hydrogens => "fixed implicit hydrogen count",
-            Self::AtomMap => "atom map",
+            Self::AtomMap => "atom-map number",
         })
     }
 }
@@ -248,16 +251,18 @@ pub enum PdbCellReason {
     ParametersOutOfRange,
 }
 
+/// Writes the reason as a sentence, such as `The cell is not periodic along
+/// all three axes.`
 impl fmt::Display for PdbCellReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::SampleCellsDiffer => "ensemble samples have different cells",
-            Self::PartiallyPeriodic => "a CRYST1 cell is periodic along all three axes",
+            Self::SampleCellsDiffer => "The ensemble samples have different cells.",
+            Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
             Self::NonstandardOrientation => {
-                "a CRYST1 cell has a along x and b in the xy plane, as its coordinates assume"
+                "Cell vector a is not along x, or b is not in the xy plane."
             }
-            Self::Placeholder => "the cell would be written as the 1 Å placeholder cube",
-            Self::ParametersOutOfRange => "a cell parameter does not fit its CRYST1 columns",
+            Self::Placeholder => "The cell is PDB's 1 Å placeholder cube.",
+            Self::ParametersOutOfRange => "A cell parameter does not fit its CRYST1 columns.",
         })
     }
 }
@@ -271,7 +276,8 @@ impl fmt::Display for PdbCellReason {
 pub enum PdbWriteIssue {
     /// The chain identifier is longer than PDB's one column, and under
     /// [`PdbChainIdPolicy::SegmentId`] than the four segment identifier
-    /// columns or not printable ASCII.
+    /// columns or not printable ASCII. [`PdbChainIdPolicy::SegmentId`]
+    /// writes identifiers of up to four printable characters.
     ChainIdTooLong {
         /// An atom of the chain.
         atom: InstanceAtomId,
@@ -435,77 +441,98 @@ impl fmt::Display for PdbWriteIssue {
         match self {
             Self::ChainIdTooLong { atom, chain_id } => write!(
                 f,
-                "chain `{chain_id}` of {atom} is longer than PDB's one-character chain identifier; PdbChainIdPolicy::SegmentId writes up to four characters as a segment identifier"
+                "Chain ID {chain_id:?} of {atom} does not fit PDB's chain columns."
             ),
             Self::ResidueNameTooLong { atom, name } => write!(
                 f,
-                "residue name `{name}` of {atom} is longer than PDB's three characters"
+                "Residue name {name:?} of {atom} is longer than PDB's three characters."
             ),
             Self::InvalidAtomName { atom, name } => write!(
                 f,
-                "atom name `{name}` of {atom} does not fit PDB's four atom-name columns"
+                "Atom name {name:?} of {atom} does not fit PDB's four atom-name columns."
             ),
-            Self::DuplicateAtomName { atom, name } => {
-                write!(f, "{atom} repeats atom name `{name}` within its residue")
-            }
+            Self::DuplicateAtomName { atom, name } => write!(
+                f,
+                "{} repeats atom name {name:?} in its residue.",
+                Capitalized(atom)
+            ),
             Self::InsertionCodeTooLong { atom, code } => write!(
                 f,
-                "insertion code `{code}` of {atom} is longer than PDB's one character"
+                "Insertion code {code:?} of {atom} is longer than PDB's one character."
             ),
             Self::InvalidResidueNumber { atom, number } => match number {
                 Some(number) => write!(
                     f,
-                    "residue number `{number}` of {atom} is not a PDB residue sequence number"
+                    "Residue number {number:?} of {atom} is not a PDB residue number."
                 ),
-                None => write!(f, "the residue of {atom} has no sequence number"),
+                None => write!(f, "The residue of {atom} has no sequence number."),
             },
             Self::NonContiguousResidue { atom } => write!(
                 f,
-                "{atom} resumes a residue whose atoms are not consecutive in dense order"
+                "{} resumes its residue after atoms of another residue.",
+                Capitalized(atom)
             ),
             Self::TooManyAtoms { serials } => write!(
                 f,
-                "the entry needs {serials} serial numbers, more than PDB's {MAX_ATOM_SERIAL}"
+                "The entry needs {} serial numbers. PDB has {}.",
+                Count(*serials),
+                Count(MAX_ATOM_SERIAL as usize)
             ),
-            Self::CoordinateOutOfRange { atom } => {
-                write!(f, "a coordinate of {atom} does not fit PDB's columns")
-            }
-            Self::OccupancyOutOfRange { atom } => {
-                write!(f, "the occupancy of {atom} does not fit PDB's columns")
-            }
-            Self::BFactorOutOfRange { atom } => {
-                write!(f, "the B factor of {atom} does not fit PDB's columns")
-            }
+            Self::CoordinateOutOfRange { atom } => write!(
+                f,
+                "A coordinate of {atom} is outside PDB's range of -999.999 to 9999.999 Å."
+            ),
+            Self::OccupancyOutOfRange { atom } => write!(
+                f,
+                "The occupancy of {atom} is outside PDB's range of -99.99 to 999.99."
+            ),
+            Self::BFactorOutOfRange { atom } => write!(
+                f,
+                "The B factor of {atom} is outside PDB's range of -99.99 to 999.99 Å²."
+            ),
             Self::FormalChargeOutOfRange { atom, charge } => write!(
                 f,
-                "{atom} formal charge {charge} is outside PDB's range -9..=9"
+                "{} has formal charge {charge}, outside PDB's range of -9 to 9.",
+                Capitalized(atom)
             ),
             Self::UnsupportedAtomField { atom, field } => {
-                write!(f, "PDB cannot represent the {field} of {atom}")
+                write!(f, "The {field} of {atom} has no PDB representation.")
             }
-            Self::UnsupportedStereo(molecule) => {
-                write!(f, "PDB cannot represent the stereo assertions of {molecule}")
-            }
-            Self::UnsupportedBondOrder { bond, order } => {
-                write!(f, "CONECT records cannot state {bond} as {order:?}")
-            }
+            Self::UnsupportedStereo(molecule) => write!(
+                f,
+                "The stereochemistry of {molecule} has no PDB representation."
+            ),
+            Self::UnsupportedBondOrder { bond, order } => write!(
+                f,
+                "The {} order of {bond} has no CONECT representation.",
+                bond_order_name(*order)
+            ),
             Self::UnrepresentableEnsembleSample { sample, field } => write!(
                 f,
-                "PDB cannot represent the {field} of ensemble sample {sample}"
+                "The {field} of ensemble sample {sample} has no PDB representation."
             ),
-            Self::UnrepresentableCell { reason } => {
-                write!(f, "CRYST1 cannot represent the periodic cell: {reason}")
-            }
-            Self::DictionaryBondConflict { atoms, order } => write!(
+            Self::UnrepresentableCell { reason } => reason.fmt(f),
+            Self::DictionaryBondConflict { atoms, order } => match order {
+                Some(order) => write!(
+                    f,
+                    "The {} bond between {} and {} differs from the component dictionary.",
+                    bond_order_name(*order),
+                    atoms[0],
+                    atoms[1]
+                ),
+                None => write!(
+                    f,
+                    "{} and {} are not bonded, but the component dictionary bonds them.",
+                    Capitalized(atoms[0]),
+                    atoms[1]
+                ),
+            },
+            Self::EmptyEnsemble => f.write_str("The ensemble has no samples."),
+            Self::UnrepresentableSeriesItem { item, field } => write!(
                 f,
-                "the bond between {} and {} ({order:?}) differs from the component dictionary a PDB reader applies",
-                atoms[0], atoms[1]
+                "The {field} of series item {item} has no PDB representation."
             ),
-            Self::EmptyEnsemble => f.write_str("cannot write an empty ensemble as PDB"),
-            Self::UnrepresentableSeriesItem { item, field } => {
-                write!(f, "PDB cannot represent the {field} of series item {item}")
-            }
-            Self::EmptySeries => f.write_str("cannot write an empty series as PDB"),
+            Self::EmptySeries => f.write_str("The series has no items."),
         }
     }
 }
@@ -1415,13 +1442,15 @@ fn adjacent(
 /// One structure's coordinates, occupancies, and B factors in dense order,
 /// each checked against its columns after rounding.
 fn structure_values(view: ModelView<'_>, plan: &Plan) -> Result<Vec<SiteValues>, FormatError> {
-    let inconsistent = |error: crate::units::UnitError| {
-        FormatError::write(
-            Format::Pdb,
-            DiagnosticKind::Inconsistent,
-            "inconsistent source model",
-        )
-        .with_source(error)
+    let invalid = |what: &'static str, atom: InstanceAtomId| {
+        move |error: crate::units::UnitError| {
+            FormatError::write(
+                Format::Pdb,
+                DiagnosticKind::Inconsistent,
+                format!("The {what} of {atom} is invalid."),
+            )
+            .with_source(error)
+        }
     };
     let fits = |value: f64, low: f64, high: f64, places: i32| {
         (low..=high).contains(&rounded(value, places))
@@ -1434,7 +1463,7 @@ fn structure_values(view: ModelView<'_>, plan: &Plan) -> Result<Vec<SiteValues>,
             .get(index)
             .expect("a structure has one position per topology atom")
             .value_in(ANGSTROM)
-            .map_err(inconsistent)?;
+            .map_err(invalid("position", record.atom))?;
         if ![position.x, position.y, position.z]
             .into_iter()
             .all(|value| fits(value, -999.999, 9999.999, 3))
@@ -1453,7 +1482,7 @@ fn structure_values(view: ModelView<'_>, plan: &Plan) -> Result<Vec<SiteValues>,
             .b_factor(dense)
             .map(|value| value.value_in(SQUARE_ANGSTROM))
             .transpose()
-            .map_err(inconsistent)?;
+            .map_err(invalid("B factor", record.atom))?;
         if b_factor.is_some_and(|value| !fits(value, -99.99, 999.99, 2)) {
             return Err(fail(PdbWriteIssue::BFactorOutOfRange { atom: record.atom }));
         }

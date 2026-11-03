@@ -199,10 +199,18 @@ impl NativeObject {
 
     fn kind_error(&self, expected: NativeKind) -> FormatError {
         let found = self.kind();
+        let article = |kind| match kind {
+            NativeKind::Ensemble => "an",
+            _ => "a",
+        };
         FormatError::interpret(
             Format::Native,
             DiagnosticKind::Inconsistent,
-            format!("native input holds a {found}, not a {expected}"),
+            format!(
+                "The input holds {} {found}, not {} {expected}.",
+                article(found),
+                article(expected)
+            ),
         )
         .with_detail(FormatErrorDetail::NativeKind { expected, found })
     }
@@ -311,7 +319,17 @@ fn nonzero_option(name: &str, value: usize) -> Result<(), FormatError> {
         return Err(FormatError::parse(
             Format::Native,
             DiagnosticKind::Limit,
-            format!("native option {name} must be greater than zero"),
+            format!(
+                "The {} is 0. Set a positive limit.",
+                match name {
+                    "max_input_bytes" => "input size limit",
+                    "max_atoms" => "atom limit",
+                    "max_bonds" => "bond limit",
+                    "max_items" => "item limit",
+                    "max_string_bytes" => "string size limit",
+                    _ => "limit",
+                }
+            ),
         ));
     }
     Ok(())

@@ -437,11 +437,12 @@ impl fmt::Display for ClusteringError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRadius => {
-                formatter.write_str("clustering radius must be finite and nonnegative")
+                formatter.write_str("The clustering radius is negative or not finite.")
             }
             Self::MatrixMismatch { expected, actual } => write!(
                 formatter,
-                "distance matrix covers {actual} members, but the ensemble has {expected}"
+                "The distance matrix covers {}. The ensemble has {expected}.",
+                crate::diagnostics::counted(*actual, "member", "members")
             ),
             Self::CondensedLength {
                 members,
@@ -449,38 +450,33 @@ impl fmt::Display for ClusteringError {
                 actual,
             } => write!(
                 formatter,
-                "{members} members require {expected} condensed distances, but received {actual}"
+                "{members} members need {expected} condensed distances. {actual} were given."
             ),
             Self::InvalidDistance { index } => write!(
                 formatter,
-                "condensed distance {index} must be finite and nonnegative"
+                "Condensed distance {index} is negative or not finite."
             ),
             Self::MatrixTooLarge { members } => write!(
                 formatter,
-                "pairwise distances of {members} members are not addressable"
+                "The pairwise distances of {members} members are too many to store."
             ),
-            Self::PairFit {
-                first,
-                second,
-                source,
-            } => write!(
-                formatter,
-                "cannot fit members {first} and {second}: {source}"
-            ),
+            Self::PairFit { first, second, .. } => {
+                write!(formatter, "Cannot fit members {first} and {second}.")
+            }
             Self::InvalidHeight => {
-                formatter.write_str("dendrogram cut height must be finite and nonnegative")
+                formatter.write_str("The dendrogram cut height is negative or not finite.")
             }
             Self::InvalidClusterCount { requested, members } => write!(
                 formatter,
-                "cannot cut {members} members into {requested} clusters"
+                "Cannot cut {members} members into {requested} clusters."
             ),
             Self::DirectedCorrespondence => formatter.write_str(
-                "member distances require a selection, not a directed atom correspondence",
+                "Distances between members need an atom selection, not an atom correspondence.",
             ),
-            Self::Alignment(_) => formatter.write_str("cannot fit members"),
-            Self::Ensemble(_) => formatter.write_str("invalid ensemble"),
-            Self::Unit(_) => formatter.write_str("invalid quantity unit"),
-            Self::Cancelled(_) => formatter.write_str("clustering cancelled"),
+            Self::Alignment(_) => formatter.write_str("Cannot fit the members."),
+            Self::Ensemble(_) => formatter.write_str("Cannot read the ensemble."),
+            Self::Unit(_) => formatter.write_str("A clustering quantity has the wrong unit."),
+            Self::Cancelled(_) => formatter.write_str("Clustering stopped."),
         }
     }
 }

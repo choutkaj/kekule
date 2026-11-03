@@ -83,7 +83,7 @@ impl fmt::Display for AtomLabel {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "chain {} residue {}{} atom {}",
+            "chain \"{}\" residue {}{} atom \"{}\"",
             self.chain,
             self.residue_number,
             self.insertion_code.as_deref().unwrap_or(""),
@@ -113,9 +113,12 @@ impl AmbiguousLabel {
 
 impl fmt::Display for AmbiguousLabel {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} names atoms ", self.label)?;
+        write!(formatter, "{} names ", self.label)?;
+        let last = self.atoms.len().saturating_sub(1);
         for (position, atom) in self.atoms.iter().enumerate() {
-            if position > 0 {
+            if position == last && position > 0 {
+                formatter.write_str(" and ")?;
+            } else if position > 0 {
                 formatter.write_str(", ")?;
             }
             write!(formatter, "{atom}")?;

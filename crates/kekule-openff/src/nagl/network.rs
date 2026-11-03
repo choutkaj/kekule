@@ -46,14 +46,17 @@ impl Network {
     ) -> Result<Self> {
         let (words, remainder) = raw.as_chunks::<4>();
         if !remainder.is_empty() {
-            return Err(error("NAGL weights must be little-endian float32"));
+            return Err(error(format!(
+                "The weights have {} bytes, not a whole number of float32 values.",
+                raw.len()
+            )));
         }
         let weights = words
             .iter()
             .map(|&b| f32::from_le_bytes(b))
             .collect::<Vec<_>>();
         if weights.iter().any(|v| !v.is_finite()) {
-            return Err(error("nonfinite NAGL weights"));
+            return Err(error("The weights hold a nonfinite value."));
         }
         // Every byte belongs to one named tensor. No hidden, overlapping or unused tensors.
         let mut spans = tensors
@@ -64,25 +67,35 @@ impl Network {
         let mut end = 0usize;
         for (offset, length) in spans {
             if offset != end || length == 0 {
-                return Err(error("invalid NAGL tensor storage layout"));
+                return Err(error("The weight tensors overlap or leave gaps."));
             }
             end = end
                 .checked_add(length)
-                .ok_or_else(|| error("NAGL tensor overflow"))?;
+                .ok_or_else(|| error("The weight tensors end beyond the addressable size."))?;
         }
         if end != weights.len() {
-            return Err(error("NAGL tensor storage size mismatch"));
+            return Err(error(format!(
+                "The weight tensors cover {end} values of {}.",
+                weights.len()
+            )));
         }
         let mut tensor = |name: String, shape: &[usize]| -> Result<Vec<f32>> {
             let t = tensors
                 .remove(&name)
-                .ok_or_else(|| error(format!("missing NAGL tensor {name}")))?;
+                .ok_or_else(|| error(format!("The weight tensor {name:?} is missing.")))?;
             if t.shape != shape || t.length != shape.iter().product::<usize>() {
-                return Err(error(format!("NAGL tensor shape mismatch: {name}")));
+                return Err(error(format!(
+                    "The weight tensor {name:?} has shape {:?}, not {shape:?}.",
+                    t.shape
+                )));
             }
             Ok(weights
                 .get(t.offset..t.offset + t.length)
-                .ok_or_else(|| error("NAGL tensor offset out of bounds"))?
+                .ok_or_else(|| {
+                    error(format!(
+                        "The weight tensor {name:?} ends beyond the weights."
+                    ))
+                })?
                 .to_vec())
         };
         let mut linear =
@@ -92,7 +105,13 @@ impl Network {
                         (output, input),
                         tensor(format!("{prefix}.weight"), &[output, input])?,
                     )
-                    .map_err(|e| Error::wrap(ErrorKind::Model, e))?,
+                    .map_err(|e| {
+                        Error::caused(
+                            ErrorKind::Model,
+                            format!("Cannot shape the weight tensor \"{prefix}.weight\"."),
+                            e,
+                        )
+                    })?,
                     bias: if bias {
                         Array1::from_vec(tensor(format!("{prefix}.bias"), &[output])?)
                     } else {
@@ -148,7 +167,14 @@ impl Network {
             Activation::Identity,
         ));
         if !tensors.is_empty() {
-            return Err(error("unexpected NAGL tensors"));
+            return Err(error(format!(
+                "The weights hold unused tensors: {}.",
+                tensors
+                    .keys()
+                    .map(|name| format!("{name:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
         }
         Ok(Self { layers, readout })
     }
@@ -190,7 +216,7 @@ impl Network {
             if row.iter().any(|v| !v.is_finite()) || row[2] == 0.0 {
                 return Err(Error::new(
                     ErrorKind::Charges,
-                    "invalid NAGL charge-equilibration output",
+                    "Charge equilibration produced a nonfinite value or a zero hardness.",
                 ));
             }
             priors += f64::from(row[0]);
@@ -201,7 +227,7 @@ impl Network {
         if !fraction.is_finite() {
             return Err(Error::new(
                 ErrorKind::Charges,
-                "singular NAGL charge equilibration",
+                "Charge equilibration is singular.",
             ));
         }
         Ok(x.rows()

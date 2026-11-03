@@ -321,23 +321,27 @@ pub enum StructureError {
 impl fmt::Display for StructureError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Array(_) => formatter.write_str("invalid per-atom state"),
+            Self::Array(error) => error.fmt(formatter),
             Self::BondCountMismatch { expected, actual } => write!(
                 formatter,
-                "structure requires {expected} bond property rows, but has {actual}"
+                "The bond properties have {actual} rows, but the structure has {expected} bonds."
             ),
-            Self::NonFiniteTime => formatter.write_str("frame time must be finite"),
-            Self::NonFiniteEnergy => formatter.write_str("ensemble state energy must be finite"),
+            Self::NonFiniteTime => formatter.write_str("The frame time is not finite."),
+            Self::NonFiniteEnergy => {
+                formatter.write_str("The ensemble state energy is not finite.")
+            }
             Self::NonFiniteCoordinate => {
-                formatter.write_str("series item coordinate must be finite")
+                formatter.write_str("The series item coordinate is not finite.")
             }
             Self::InvalidWeight => {
-                formatter.write_str("ensemble weight must be finite and positive")
+                formatter.write_str("The ensemble weight is not finite and positive.")
             }
-            Self::CapacityOverflow => formatter.write_str("structure exceeds addressable capacity"),
-            Self::Property(_) => formatter.write_str("invalid structure property"),
-            Self::Cell(_) => formatter.write_str("invalid periodic cell"),
-            Self::Unit(_) => formatter.write_str("invalid quantity unit"),
+            Self::CapacityOverflow => {
+                formatter.write_str("The structure exceeds the addressable capacity.")
+            }
+            Self::Property(error) => error.fmt(formatter),
+            Self::Cell(error) => error.fmt(formatter),
+            Self::Unit(error) => error.fmt(formatter),
         }
     }
 }
@@ -345,10 +349,10 @@ impl fmt::Display for StructureError {
 impl std::error::Error for StructureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Array(error) => Some(error),
-            Self::Property(error) => Some(error.as_ref()),
-            Self::Cell(error) => Some(error.as_ref()),
-            Self::Unit(error) => Some(error.as_ref()),
+            Self::Array(error) => error.source(),
+            Self::Property(error) => error.source(),
+            Self::Cell(error) => error.source(),
+            Self::Unit(error) => error.source(),
             _ => None,
         }
     }

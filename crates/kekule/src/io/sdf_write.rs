@@ -264,7 +264,10 @@ fn write_record(
             return Err(FormatError::write(
                 Format::Sdf,
                 DiagnosticKind::Inconsistent,
-                format!("this field carries the {owner}'s own metadata"),
+                format!(
+                    "The data field {:?} is reserved for the data of the {owner}.",
+                    field.name()
+                ),
             )
             .with_detail(FormatErrorDetail::DataField {
                 name: field.name().to_owned(),
@@ -336,16 +339,16 @@ fn validate_title(title: &str) -> Result<(), FormatError> {
         )
     };
     if title.contains(['\r', '\n']) {
-        return invalid("SDF record titles cannot contain line breaks");
+        return invalid("The title contains a line break.");
     }
     if title.trim() == "$$$$" {
-        return invalid("SDF record titles cannot be a record delimiter");
+        return invalid("The title is \"$$$$\".");
     }
     Ok(())
 }
 
 fn validate_data_field(field: &SdfDataField) -> Result<(), FormatError> {
-    let invalid = |message: &str| {
+    let invalid = |message: String| {
         Err(
             FormatError::write(Format::Sdf, DiagnosticKind::Unsupported, message).with_detail(
                 FormatErrorDetail::DataField {
@@ -356,19 +359,25 @@ fn validate_data_field(field: &SdfDataField) -> Result<(), FormatError> {
     };
     let name = field.name();
     if name.is_empty() || name.trim() != name || name.contains(['<', '>', '\r', '\n']) {
-        return invalid(
-            "SDF data field names must be nonempty, trimmed, and exclude angle brackets or line breaks",
-        );
+        return invalid(format!(
+            "The data field name {name:?} is empty, padded, or holds angle brackets or line breaks."
+        ));
     }
     let value = field.value();
     if value.contains('\r') {
-        return invalid("SDF data field values cannot contain carriage returns");
+        return invalid(format!(
+            "The value of data field {name:?} contains a carriage return."
+        ));
     }
     if !value.is_empty() && value.split('\n').any(str::is_empty) {
-        return invalid("SDF data field values cannot contain blank lines");
+        return invalid(format!(
+            "The value of data field {name:?} contains a blank line."
+        ));
     }
     if value.lines().any(|line| line.trim() == "$$$$") {
-        return invalid("SDF data field values cannot contain a record delimiter line");
+        return invalid(format!(
+            "The value of data field {name:?} contains a \"$$$$\" line."
+        ));
     }
     Ok(())
 }

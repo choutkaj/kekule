@@ -70,7 +70,7 @@ fn canonical_smiles_requires_installed_aromaticity() {
             (error.kind(), error.message()),
             (
                 DiagnosticKind::MissingPerception,
-                "canonical SMILES requires installed aromaticity perception; perceive the molecule before writing"
+                "The molecule has no aromaticity perception. Perceive it first."
             ),
             "{source}"
         );

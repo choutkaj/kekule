@@ -423,7 +423,7 @@ pub mod smiles {
                 FormatError::interpret(
                     Format::Smiles,
                     DiagnosticKind::Chemistry,
-                    "cannot assemble topology",
+                    "Cannot build the topology.",
                 )
                 .with_source(error)
             })?;
@@ -552,7 +552,7 @@ pub mod smiles {
                 return Err(FormatError::write(
                     Format::Smiles,
                     DiagnosticKind::Unsupported,
-                    "SMILES record names must be nonempty, trimmed, and on one line",
+                    "The record name is empty, has surrounding spaces or spans lines.",
                 )
                 .with_detail(crate::diagnostics::FormatErrorDetail::Title));
             }
