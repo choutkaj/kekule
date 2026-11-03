@@ -183,6 +183,10 @@ are marked **Breaking:**.
   `published` and `source` look up one index. The source is the topology the
   editor started from; entities added or appended since have no source.
   The handle lookups `EditCorrespondence::atom` and `bond` are unchanged.
+- An informational benchmark of reading a large mmCIF entry
+  (`cargo bench -p kekule --bench structure_interpretation -- <mmCIF>`),
+  which times parsing, interpretation, and default perception of an
+  externally supplied entry such as PDB 6SPB or 7K00.
 - An informational benchmark of a ligand edit in a large model
   (`cargo bench -p kekule --bench model_edit_scale -- <mmCIF> <ligand>`),
   which merges 66 copies of an externally supplied entry such as PDB 9UOH.
@@ -717,6 +721,15 @@ are marked **Breaking:**.
 
 ### Changed
 
+- mmCIF and PDB interpretation of large entries is faster, with unchanged
+  results (SeekDelta K24). Rows pass through interpretation by index
+  instead of being copied at each stage, connection partners are found
+  through residue and atom-name indices instead of a scan of every row,
+  residues and chains are looked up once per run of their rows, molecules
+  split into components in one pass, and close contacts come from a sorted
+  cell grid. PDB 6SPB (90,351 atoms) interprets in 0.6 s instead of
+  1.6 s, and 7K00 (149,338 atoms) in 1.1 s instead of 3.5 s
+  (medians, release, one thread).
 - **Breaking:** mmCIF, PDB, and XYZ interpretation gives identical molecules
   one definition (SeekDelta K23), so instances map atom for atom and default
   perception runs once per distinct molecule. Molecules are identical when,
