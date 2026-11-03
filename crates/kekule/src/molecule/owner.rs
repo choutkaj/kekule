@@ -186,6 +186,31 @@ impl Molecule {
         &self.graph
     }
 
+    /// Hashes the graph in local atom order: atoms (element, isotope, formal
+    /// charge, radical, implicit hydrogens, atom map), bonds with their
+    /// endpoints and orders, and the number of stereo elements. Equal graphs
+    /// hash equally, so this keys a search for identical molecules.
+    pub(crate) fn hash_graph(&self, state: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        let graph = &self.graph;
+        graph.atoms.len().hash(state);
+        for atom in graph.atoms.iter().flatten() {
+            atom.element.hash(state);
+            atom.isotope.hash(state);
+            atom.formal_charge.hash(state);
+            atom.radical.hash(state);
+            atom.hydrogens.hash(state);
+            atom.atom_map.hash(state);
+        }
+        graph.bonds.len().hash(state);
+        for bond in graph.bonds.iter().flatten() {
+            bond.a.hash(state);
+            bond.b.hash(state);
+            bond.order.hash(state);
+        }
+        graph.stereo_elements.len().hash(state);
+    }
+
     /// Inserts an atom into crate-private construction/edit state.
     ///
     /// Public molecule construction goes through [`MoleculeEditor`], because

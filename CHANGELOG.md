@@ -768,6 +768,16 @@ are marked **Breaking:**.
   counts its molecule as its residue. Both `find_interactions_within` and
   `find_interactions_between` reduce. KRas G12C's inhibitor (PDB 9UOH) has 11
   hydrophobic contacts instead of 20.
+- **Breaking:** appending a model shares identical definitions (SeekDelta
+  K23b). `ModelEditor::append_model` gives an appended molecule the
+  definition the draft already holds for an identical one, from the draft's
+  source or an earlier append, by the identity interpretation uses (K23):
+  equal graph in local atom order, properties, and per-atom component and
+  atom names, and also equal perception and class. A 9UOH model with two
+  copies of itself appended has 6 definitions instead of 18, and each
+  definition three times the instances. Editing one instance still copies
+  its definition and leaves the others unchanged. Consumers that counted
+  definitions per appended model count instances instead.
 - **Breaking:** only monomers of a polymer have one-letter codes (SeekDelta
   K21b). `residue_code` and `chain_sequences` give a code to a residue whose
   component links into a polymer, or an amino-acid or nucleotide residue,
@@ -1231,6 +1241,13 @@ are marked **Breaking:**.
 
 ### Fixed
 
+- A hierarchy edit of one instance of a shared definition no longer
+  changes the class of the others (SeekDelta K23b). Setting a residue's
+  class, or adding, changing, moving or deleting an atom site, published the whole
+  definition for classification again, so changing one of 9UOH's 93 waters
+  to an ion made all of them `Other`. The edited instance now gets a
+  definition of its own, which shares the molecule, and the others keep
+  theirs.
 - Ring perception of large nucleic acids (SeekDelta K25). A ring that two
   degree-two roots find again was recovered on a copy of the whole graph for
   each root, so the work grew with rings times molecule size. Ribosomes such

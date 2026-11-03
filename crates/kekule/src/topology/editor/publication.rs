@@ -386,22 +386,18 @@ impl TopologyEditor {
                 .definition()
         };
         // Preserve definition order/reuse for untouched source occurrences.
+        // An occurrence whose class an edit cleared is classified on its own,
+        // in a definition of its own that shares the molecule, so the other
+        // occurrences of its definition keep their class.
         let mut retained = vec![false; definition_count];
-        let mut invalidated = vec![false; definition_count];
-        let mut invalidated_added = BTreeSet::new();
         for (index, group) in groups.iter().enumerate() {
             match group {
                 GroupSlot::Source => retained[source_definition(index).index()] = true,
-                GroupSlot::Live(group) => match &group.chemistry {
-                    GroupChemistry::Source(id) => {
+                GroupSlot::Live(group) => {
+                    if let (GroupChemistry::Source(id), Some(_)) = (&group.chemistry, group.class) {
                         retained[id.index()] = true;
-                        invalidated[id.index()] |= group.class.is_none();
                     }
-                    GroupChemistry::Added(molecule, _) if group.class.is_none() => {
-                        invalidated_added.insert(Arc::as_ptr(molecule));
-                    }
-                    _ => {}
-                },
+                }
                 GroupSlot::Merged => {}
             }
         }
@@ -422,12 +418,10 @@ impl TopologyEditor {
             builder.extend_shared_definitions(kept.into_iter().map(|definition| {
                 let id = definition.id();
                 let explicit = overrides.contains_key(&id);
-                let class = (!invalidated[id.index()] || explicit)
-                    .then_some((definition.class(), explicit));
                 (
                     Arc::clone(&definition.molecule),
                     definition.default_perception,
-                    class,
+                    Some((definition.class(), explicit)),
                 )
             }))?;
         }
@@ -465,8 +459,20 @@ impl TopologyEditor {
             let handles = (&group.atoms, &group.bonds);
             match group.chemistry {
                 GroupChemistry::Source(id) => {
-                    let definition =
-                        source_definitions[id.index()].expect("retained source definition");
+                    let definition = match group.class {
+                        Some(_) => {
+                            source_definitions[id.index()].expect("retained source definition")
+                        }
+                        None => {
+                            let shared = source
+                                .and_then(|source| source.definition(id))
+                                .expect("source groups name source definitions");
+                            builder.add_shared_definition(
+                                Arc::clone(&shared.molecule),
+                                shared.default_perception,
+                            )?
+                        }
+                    };
                     let instance = staged.add(definition, group.instance_slot);
                     let molecule = builder.require_definition(definition)?.molecule();
                     self.record_component(
@@ -479,19 +485,19 @@ impl TopologyEditor {
                 }
                 GroupChemistry::Added(owned, default_perception) => {
                     // Only explicit shared definitions are reused, never chemical guesses.
+                    // A copy of perceived chemistry keeps its profile.
                     let identity = Arc::as_ptr(&owned);
-                    let definition = if let Some(&id) = added_definitions.get(&identity) {
-                        id
-                    } else {
-                        // A copy of perceived chemistry keeps its profile.
-                        let id = builder.add_shared_definition(owned, default_perception)?;
-                        if let Some(class) = group.class {
-                            if !invalidated_added.contains(&identity) || group.class_explicit {
-                                builder.preserve_molecule_class(id, class, group.class_explicit)?;
-                            }
+                    let definition = match group.class {
+                        None => builder.add_shared_definition(owned, default_perception)?,
+                        Some(_) if added_definitions.contains_key(&identity) => {
+                            added_definitions[&identity]
                         }
-                        added_definitions.insert(identity, id);
-                        id
+                        Some(class) => {
+                            let id = builder.add_shared_definition(owned, default_perception)?;
+                            builder.preserve_molecule_class(id, class, group.class_explicit)?;
+                            added_definitions.insert(identity, id);
+                            id
+                        }
                     };
                     let instance = staged.add(definition, group.instance_slot);
                     let molecule = builder.require_definition(definition)?.molecule();

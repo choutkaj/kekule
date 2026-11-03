@@ -26,21 +26,11 @@ impl TopologyEditor {
             residues: BTreeMap::new(),
             sites: BTreeMap::new(),
         };
-        let definitions = source
-            .definitions()
-            // A fresh allocation per import: added groups reuse a definition
-            // only when they share one, which stays within this import. The
-            // copy keeps the definition's perception, and so its profile.
-            .map(|definition| {
-                (
-                    definition.id(),
-                    (
-                        Arc::new(definition.molecule().clone()),
-                        definition.default_perception,
-                    ),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+        // An occurrence shares an identical definition the draft holds, from
+        // its source or an earlier append. Otherwise its definition is copied
+        // once per import, so occurrences of one source definition share the
+        // copy. The copy keeps the definition's perception, and so its profile.
+        let mut copies = BTreeMap::<MoleculeDefinitionId, Arc<Molecule>>::new();
         let instance_start = self.properties.molecule_instances().len();
         self.properties
             .molecule_instances_mut()
@@ -49,15 +39,38 @@ impl TopologyEditor {
         let bases = (self.properties.atoms().len(), self.properties.bonds().len());
         let handles = GroupIdentity::source_handles(&source);
         for (instance, value) in source.instance_records() {
-            let (molecule, default_perception) = &definitions[&value.definition()];
+            let definition = source
+                .definition(value.definition())
+                .expect("instances name source definitions");
+            let molecule = definition.molecule();
+            let labels = sharing::instance_labels(&source, instance);
+            let appended = sharing::Appended {
+                molecule,
+                default_perception: definition.default_perception,
+                labels: &labels,
+                class: definition.class(),
+                class_explicit: source
+                    .molecule_class_overrides
+                    .contains_key(&definition.id()),
+            };
+            let chemistry = match self.shared.find(self.source.as_deref(), &appended) {
+                Some(shared) => shared,
+                None => {
+                    let copy = Arc::clone(
+                        copies
+                            .entry(definition.id())
+                            .or_insert_with(|| Arc::new(molecule.clone())),
+                    );
+                    self.shared.insert(Arc::clone(&copy), &appended);
+                    GroupChemistry::Added(copy, definition.default_perception)
+                }
+            };
             let identity = GroupIdentity::dense(&source, instance, handles, bases);
             let group = self.register_group(
-                GroupChemistry::Added(Arc::clone(molecule), *default_perception),
+                chemistry,
                 molecule,
-                Some(source.definition(value.definition()).unwrap().class()),
-                source
-                    .molecule_class_overrides
-                    .contains_key(&value.definition()),
+                Some(appended.class),
+                appended.class_explicit,
                 identity,
             );
             let added = self.group_handles(group);
