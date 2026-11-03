@@ -749,9 +749,9 @@ are marked **Breaking:**.
     write `… stopped.` and return `Cancelled` from `source()`.
   - `InstanceAtomId` and `InstanceBondId` display as `atom 5 of instance 2`,
     and `HierarchyIdKind::AtomSite` as `atom site`.
-  - Errors that hold a list of issues, such as `StereoValidationError`,
-    `CipAssignmentError` and `ValenceError`, display their first issue;
-    the list holds them all.
+  - `StereoValidationError` and `CipAssignmentError` display their first
+    issue; the list holds them all. `ValenceError` adds the number of atoms
+    with an invalid valence state.
   - A `kekule-openff` error writes the file or molecule definition that
     failed as its first sentence, `Cannot parameterize molecule definition
     2.`, then the detail, naming every atom it concerns; `Error::detail` is
