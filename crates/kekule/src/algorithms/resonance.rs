@@ -1,15 +1,17 @@
-//! RDKit-like connected conjugated groups and explicit resonance enumeration.
+//! Resonance delocalization perception and explicit RDKit-like contributor
+//! enumeration over connected conjugated groups.
 //!
-//! The search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
+//! The enumeration search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
-use crate::diagnostics::LimitExceeded;
+use crate::diagnostics::{Cancellation, Cancelled, LimitExceeded};
 use crate::molecule::{
     AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, MoleculeError,
-    MoleculePublicationError, ResonanceGroup, ResonancePerception,
+    MoleculePublicationError, ResonanceGroup, ResonanceModel, ResonancePerception,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+mod delocalization;
 mod kekule;
 mod search;
 
@@ -127,7 +129,43 @@ impl Default for ResonanceOptions {
     }
 }
 
-/// Why resonance perception or enumeration failed.
+/// Why resonance perception failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResonancePerceptionError {
+    /// Aromaticity is not installed.
+    MissingAromaticity,
+    /// The implicit hydrogen count of an atom the search reads is unknown.
+    UnknownHydrogens(AtomId),
+    /// The path search exceeded its work bound, which grows with the graph.
+    LimitExceeded(LimitExceeded),
+    /// The caller's [`Cancellation`] stopped the path search. Only
+    /// cancellable perception, such as
+    /// [`Model::perceive_cancellable`](crate::structure::Model::perceive_cancellable),
+    /// reports it, as [`PerceptionError::Cancelled`](crate::perception::PerceptionError::Cancelled);
+    /// [`perceive_resonance`] never does.
+    Cancelled(Cancelled),
+}
+impl fmt::Display for ResonancePerceptionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingAromaticity => f.write_str("resonance requires installed aromaticity"),
+            Self::UnknownHydrogens(a) => write!(f, "resonance requires known hydrogens at {a}"),
+            Self::LimitExceeded(limit) => write!(f, "resonance {limit}"),
+            Self::Cancelled(_) => f.write_str("resonance perception cancelled"),
+        }
+    }
+}
+impl std::error::Error for ResonancePerceptionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Cancelled(cancelled) => Some(cancelled),
+            _ => None,
+        }
+    }
+}
+
+/// Why resonance enumeration failed.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ResonanceError {
@@ -184,16 +222,58 @@ impl std::error::Error for ResonanceError {
     }
 }
 
-/// Prepares connected conjugated groups, without enumerating contributors.
-/// Success installs only the group partition; failure leaves all state intact.
+/// Installs resonance delocalization: which bonds resonance delocalizes, in
+/// connected groups.
+///
+/// [`ResonanceModel::ChargeMoves`] moves each mobile formal charge of ±1 along
+/// simple paths of alternately raised and lowered bond orders to an atom that
+/// can carry the same kind of charge, and marks every bond of such a path.
+/// Aromatic bonds are left to aromaticity, so groups never contain them.
+/// Neutral push-pull systems such as amides stay localized. See
+/// `docs/resonance.md` for the rules. No contributor is enumerated. Only
+/// charged atoms start a search, so a neutral molecule costs one scan of its
+/// formal charges.
+///
+/// Success replaces resonance; failure leaves all state intact.
 ///
 /// # Errors
 ///
-/// [`ResonanceError::MissingConjugation`] when conjugation perception is not
-/// installed.
-pub fn perceive_resonance(mol: &mut Molecule) -> Result<(), ResonanceError> {
-    let groups = conjugated_groups(mol)?;
-    mol.perception.resonance = Some(ResonancePerception { groups });
+/// - [`ResonancePerceptionError::MissingAromaticity`] when aromaticity is not
+///   installed.
+/// - [`ResonancePerceptionError::UnknownHydrogens`] for the first atom the
+///   search reads whose implicit hydrogen count is unknown.
+/// - [`ResonancePerceptionError::LimitExceeded`] when the path search exceeds
+///   its work bound.
+///
+/// ```
+/// use kekule::{perception::resonance::perceive_resonance, smiles};
+/// use kekule::perception::resonance::ResonanceModel;
+/// let mut acetate = smiles::to_molecules("CC(=O)[O-]")?.remove(0);
+/// acetate.perceive()?;
+/// let resonance = acetate.perception().resonance().expect("default perception");
+/// assert_eq!(resonance.model(), ResonanceModel::ChargeMoves);
+/// assert_eq!(resonance.groups().len(), 1);
+/// assert_eq!(resonance.bonds().len(), 2);
+/// perceive_resonance(&mut acetate, ResonanceModel::ChargeMoves)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn perceive_resonance(
+    mol: &mut Molecule,
+    model: ResonanceModel,
+) -> Result<(), ResonancePerceptionError> {
+    perceive_resonance_cancellable(mol, model, None)
+}
+
+/// [`perceive_resonance`], polling `cancellation` as the path search works.
+pub(crate) fn perceive_resonance_cancellable(
+    mol: &mut Molecule,
+    model: ResonanceModel,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), ResonancePerceptionError> {
+    let groups = match model {
+        ResonanceModel::ChargeMoves => delocalization::delocalized_groups(mol, cancellation)?,
+    };
+    mol.perception.resonance = Some(ResonancePerception::new(model, groups));
     Ok(())
 }
 
@@ -263,7 +343,8 @@ pub struct ResonanceStructures<'a> {
     limit_reached: bool,
 }
 impl ResonanceStructures<'_> {
-    /// The connected conjugated groups the contributors vary over.
+    /// The connected conjugated groups the contributors vary over, which
+    /// differ from installed resonance delocalization.
     pub fn groups(&self) -> &[ResonanceGroup] {
         &self.groups
     }
@@ -323,8 +404,8 @@ impl ResonanceStructures<'_> {
 
 /// Enumerates RDKit-like resonance contributors on an immutable source.
 ///
-/// Requires installed conjugation; groups are reused or prepared locally. All
-/// five RDKit flags are supported. Graph-indexed structures preserve localized
+/// Requires installed conjugation; contributors vary over its connected
+/// groups, prepared here. All five RDKit flags are supported. Graph-indexed structures preserve localized
 /// bond orders, even on aromatic atoms. This operation is never run by default
 /// perception. Resource exhaustion returns no partial result.
 /// At a contributor cutoff, exact ties use deterministic indexed ordering;
@@ -332,8 +413,7 @@ impl ResonanceStructures<'_> {
 ///
 /// # Errors
 ///
-/// - [`ResonanceError::MissingConjugation`] when neither resonance groups nor
-///   conjugation are installed.
+/// - [`ResonanceError::MissingConjugation`] when conjugation is not installed.
 /// - [`ResonanceError::InvalidStructureLimit`] when the structure limit is one
 ///   and the molecule has a conjugated group.
 /// - [`ResonanceError::UnknownHydrogens`] for the first atom whose implicit
@@ -360,10 +440,7 @@ pub fn enumerate_resonance(
 ) -> Result<ResonanceStructures<'_>, ResonanceError> {
     options.flags = options.flags.effective();
     options.max_structures = options.max_structures.min(ResonanceOptions::MAX_STRUCTURES);
-    let groups = match mol.perception().resonance() {
-        Some(state) => state.groups().to_vec(),
-        None => conjugated_groups(mol)?,
-    };
+    let groups = conjugated_groups(mol)?;
     if options.max_structures == 1 && !groups.is_empty() {
         return Err(ResonanceError::InvalidStructureLimit);
     }

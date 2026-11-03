@@ -717,6 +717,32 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** default perception installs resonance delocalization
+  (SeekDelta K19): whether resonance delocalizes each bond, and the bond's
+  connected group. `ResonanceModel::ChargeMoves` moves each formal charge of
+  ±1 along simple paths of alternately raised and lowered bond orders to an
+  atom that can carry the same kind of charge, and marks every bond of such
+  a path: carboxylates, guanidinium and amidinium, nitro groups, the terminal
+  P–O and S–O bonds of phosphates and sulfonates, enolates. Amides and other
+  neutral push-pull systems stay localized, aromatic bonds are left to
+  aromaticity, and ylidic P⁺–O⁻ drawings delocalize as P=O does. Only
+  charged atoms start a search, so the cost on a protein is about a
+  millisecond. `perceive_resonance(mol, model)` installs it standalone and
+  requires aromaticity, not conjugation, with the new
+  `ResonancePerceptionError`; `PerceptionError::Resonance` reports it from
+  default perception. `ResonancePerception` records its model and answers
+  `bond_is_delocalized`, `bonds`, `bond_group` and `atom_group`. The section
+  no longer holds RDKit's connected conjugated groups:
+  `enumerate_resonance` prepares those itself and returns them from
+  `ResonanceStructures::groups`. `PerceptionBuilder::with_resonance_groups`
+  became `with_resonance(model, groups)`, installation checks groups against
+  aromaticity rather than as a partition of conjugation, and
+  `DelocalizationIssue` changed accordingly. Replacing conjugation no longer
+  clears resonance.
+- **Breaking:** the native format moves to version 3 (SeekDelta K19). Its
+  resonance section stores the resonance model before the groups. Readers
+  refuse version 2 files with `FormatErrorDetail::NativeVersion { found: 2,
+  supported: 3 }`, and the message names version 2.
 - **Breaking:** mmCIF, PDB, and XYZ interpretation gives identical molecules
   one definition (SeekDelta K23), so instances map atom for atom and default
   perception runs once per distinct molecule. Molecules are identical when,

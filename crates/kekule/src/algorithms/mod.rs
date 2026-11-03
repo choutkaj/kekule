@@ -31,9 +31,10 @@ pub use hydrogens::{
     HydrogenCountAdjustment, HydrogenTransformError, RemoveHydrogensReport, RemovedHydrogen,
     RetainedHydrogen, RetainedHydrogenReason,
 };
+pub(crate) use resonance::perceive_resonance_cancellable;
 pub use resonance::{
     enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError, ResonanceFlags,
-    ResonanceOptions, ResonanceStructures,
+    ResonanceOptions, ResonancePerceptionError, ResonanceStructures,
 };
 pub(crate) use rings::{compute_ring_membership, ordered_atom_pair, perceive_rings_cancellable};
 pub use rings::{perceive_rings, RingPerceptionError, RingPerceptionOptions, RingPerceptionScope};

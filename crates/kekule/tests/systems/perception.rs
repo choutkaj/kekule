@@ -32,7 +32,7 @@ fn assert_default_perception(topology: &Topology) {
         assert!(molecule.perception().rings().is_some());
         assert!(molecule.perception().aromaticity().is_some());
         assert!(molecule.perception().conjugation().is_some());
-        assert!(molecule.perception().resonance().is_none());
+        assert!(molecule.perception().resonance().is_some());
         assert!(molecule.perception().cip().is_none());
     }
 }
@@ -43,7 +43,6 @@ fn failing_topology() -> Arc<Topology> {
         .remove(0);
     good.perceive().unwrap();
     stereo::cip::assign_cip_descriptors(&mut good, Default::default()).unwrap();
-    perception::resonance::perceive_resonance(&mut good).unwrap();
     assert!(good
         .perception()
         .cip()

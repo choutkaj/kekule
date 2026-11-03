@@ -4,10 +4,13 @@ use crate::algorithms::{
     perceive_aromaticity_in_place, perceive_rings_cancellable, perceive_valence, AromaticityError,
     RingPerceptionError, RingPerceptionOptions, ValenceError, ValenceOptions,
 };
-use crate::algorithms::{perceive_conjugation, ConjugationError};
+use crate::algorithms::{
+    perceive_conjugation, perceive_resonance_cancellable, ConjugationError,
+    ResonancePerceptionError,
+};
 use crate::diagnostics::{Cancellation, Cancelled};
-use crate::molecule::ConjugationModel;
 use crate::molecule::{AromaticityModel, Molecule, ValenceModel};
+use crate::molecule::{ConjugationModel, ResonanceModel};
 
 /// Failure from the default discrete chemical perception profile.
 #[non_exhaustive]
@@ -15,6 +18,8 @@ use crate::molecule::{AromaticityModel, Molecule, ValenceModel};
 pub enum PerceptionError {
     /// Conjugation perception failed; see the source.
     Conjugation(ConjugationError),
+    /// Resonance perception failed; see the source.
+    Resonance(ResonancePerceptionError),
     /// Valence perception failed; see the source.
     Valence(ValenceError),
     /// Ring perception failed; see the source.
@@ -32,6 +37,7 @@ impl fmt::Display for PerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Conjugation(_) => f.write_str("conjugation perception failed"),
+            Self::Resonance(_) => f.write_str("resonance perception failed"),
             Self::Valence(_) => f.write_str("valence perception failed"),
             Self::Rings(_) => f.write_str("ring perception failed"),
             Self::Aromaticity(_) => f.write_str("aromaticity perception failed"),
@@ -44,6 +50,7 @@ impl std::error::Error for PerceptionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Conjugation(error) => Some(error),
+            Self::Resonance(error) => Some(error),
             Self::Valence(error) => Some(error),
             Self::Rings(error) => Some(error),
             Self::Aromaticity(error) => Some(error),
@@ -55,7 +62,8 @@ impl std::error::Error for PerceptionError {
 /// Install the default discrete perception state on canonical chemistry.
 ///
 /// The fixed profile is RDKit-like valence and implicit hydrogens, followed by
-/// the default deterministic ring set, RDKit-like aromaticity and conjugation. The complete
+/// the default deterministic ring set, RDKit-like aromaticity and conjugation,
+/// and charge-move resonance delocalization. The complete
 /// operation is transactional and never rewrites represented chemistry.
 pub(crate) fn perceive_molecule(molecule: &mut Molecule) -> Result<(), PerceptionError> {
     perceive_molecule_cancellable(molecule, None)
@@ -98,5 +106,12 @@ fn perceive_molecule_in_place(
         .map_err(PerceptionError::Aromaticity)?;
     poll()?;
     perceive_conjugation(molecule, ConjugationModel::RdkitLike)
-        .map_err(PerceptionError::Conjugation)
+        .map_err(PerceptionError::Conjugation)?;
+    poll()?;
+    perceive_resonance_cancellable(molecule, ResonanceModel::ChargeMoves, cancellation).map_err(
+        |error| match error {
+            ResonancePerceptionError::Cancelled(cancelled) => PerceptionError::Cancelled(cancelled),
+            error => PerceptionError::Resonance(error),
+        },
+    )
 }

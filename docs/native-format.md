@@ -51,7 +51,7 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 
 ## Versioning
 
-The header carries one format version, currently **2**. A reader accepts only
+The header carries one format version, currently **3**. A reader accepts only
 the versions it implements and rejects any other with
 `FormatErrorDetail::NativeVersion { found, supported }` of kind
 `DiagnosticKind::Unsupported`. Before kekule 1.0 a version may change
@@ -64,7 +64,8 @@ states and an optional temperature; version 1 stored ensemble members with
 their own weights and energies. Series, kind 6, joined version 2 without
 changing the layout of any other kind, so every earlier version 2 file still
 reads the same; readers that predate them reject a series as an unknown
-kind.
+kind. Version 3 stores resonance delocalization with its model; version 2
+stored conjugated groups without one.
 
 ## Layout
 
@@ -179,7 +180,7 @@ rings      := atom_flags:bits(atom_count) bond_flags:bits(bond_count)
 ring       := atom_count:count atom:u32[atom_count] bond_count:count bond:u32[bond_count]
 aromaticity:= model:u8 count atom:u32[count] count bond:u32[count]
 conjugation:= model:u8 count atom:u32[count] count bond:u32[count]
-resonance  := group_count:count (count atom:u32[..] count bond:u32[..])[group_count]
+resonance  := model:u8 group_count:count (count atom:u32[..] count bond:u32[..])[group_count]
 cip        := count (element:u32 descriptor:u8)[count]
 ```
 
@@ -187,7 +188,7 @@ cip        := count (element:u32 descriptor:u8)[count]
 and CIP in that order; other bits are rejected. Models: valence `0`
 RDKit-like; validation `0` strict, `1` permissive; ring basis `0`
 Figueras SSSR-like; aromaticity `0` RDKit-like, `1` MDL; conjugation `0`
-RDKit-like. CIP descriptors: `0` R, `1` S, `2` r, `3` s, `4` seqTrans, `5`
+RDKit-like; resonance `0` charge moves. CIP descriptors: `0` R, `1` S, `2` r, `3` s, `4` seqTrans, `5`
 seqCis, `6` E, `7` Z, `8` M, `9` P, `10` m, `11` p.
 
 ### Topology
