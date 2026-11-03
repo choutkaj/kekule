@@ -957,6 +957,12 @@ fn write_model_block_to(
     omissions.record(WriteOmission::ImplicitHydrogens {
         atoms: prepared.omitted_hydrogens,
     });
+    omissions.record(WriteOmission::Coordination {
+        records: prepared.omitted_coordination,
+    });
+    omissions.record(WriteOmission::CoordinationBonds {
+        bonds: prepared.coordination_bonds,
+    });
     Ok(())
 }
 
@@ -1080,6 +1086,12 @@ fn write_ensemble_block_to(
     // Samples share one topology, so the block omits each atom's count once.
     omissions.record(WriteOmission::ImplicitHydrogens {
         atoms: first.omitted_hydrogens,
+    });
+    omissions.record(WriteOmission::Coordination {
+        records: first.omitted_coordination,
+    });
+    omissions.record(WriteOmission::CoordinationBonds {
+        bonds: first.coordination_bonds,
     });
     Ok(())
 }

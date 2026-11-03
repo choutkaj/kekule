@@ -167,8 +167,9 @@ impl SourceBondOrder {
         }
     }
 
-    /// Metal coordination is covalent but does not count toward the valence
-    /// of the ligand atom, so it is a dative bond whatever its stated order.
+    /// Metal coordination within a component does not count toward the
+    /// valence of the ligand atom, so it is a dative bond whatever its stated
+    /// order.
     const fn of_template(bond: &TemplateBond) -> Self {
         if bond.metal_coordination() {
             return Self::Localized(BondOrder::Dative);
@@ -2163,8 +2164,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 .map(|(name, charge)| (name.to_owned(), charge))
         );
 
-        // A metal-coordination link joins a zinc ion and a cysteine into one
-        // molecule; the ion's charge comes from its template.
+        // A metal-coordination link between residues is recorded, not
+        // bonded: the zinc ion and the cysteine stay separate molecules, and
+        // the ion's charge comes from its template.
         let zinc = interpret(&block(
             "N N CYS A 1 1.585 0.483 -0.081
              C CA CYS A 1 0.141 0.450 0.186
@@ -2175,7 +2177,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
              ZN ZN ZN B . -0.247 0.004 -4.784",
             "loop_\n_struct_conn.id\n_struct_conn.conn_type_id\n_struct_conn.ptnr1_label_asym_id\n_struct_conn.ptnr1_label_atom_id\n_struct_conn.ptnr1_label_seq_id\n_struct_conn.ptnr2_label_asym_id\n_struct_conn.ptnr2_label_atom_id\n_struct_conn.ptnr2_label_seq_id\nmetalc1 metalc A SG 1 B ZN .\n",
         ));
-        assert_eq!(zinc.topology().instance_count(), 1);
+        assert_eq!(zinc.topology().instance_count(), 2);
         let cysteine = template("CYS", None);
         let as_strings = |rows: &[(&str, &str, BondOrder, BondEvidence)]| {
             rows.iter()
@@ -2187,15 +2189,6 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert_eq!(
             bonds(&zinc),
             as_strings(&[
-                (
-                    "SG",
-                    "ZN",
-                    BondOrder::Dative,
-                    BondEvidence::Connection {
-                        connection_id: Some("metalc1".to_owned()),
-                        connection_type: "metalc".to_owned(),
-                    },
-                ),
                 ("N", "CA", BondOrder::Single, cysteine.clone()),
                 ("CA", "C", BondOrder::Single, cysteine.clone()),
                 ("CA", "CB", BondOrder::Single, cysteine.clone()),
@@ -2204,6 +2197,78 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             ])
         );
         assert_eq!(charges(&zinc), [("ZN".to_owned(), 2)]);
+        let [record] = zinc.report().coordination() else {
+            panic!("one coordination record");
+        };
+        let names = |result: &StructureInterpretation| {
+            let [record] = result.report().coordination() else {
+                panic!("one coordination record");
+            };
+            record.atoms().map(|atom| {
+                result
+                    .report()
+                    .instances()
+                    .iter()
+                    .flat_map(|instance| instance.atoms())
+                    .find(|candidate| candidate.atom() == atom)
+                    .unwrap()
+                    .atom_name()
+                    .to_owned()
+            })
+        };
+        assert_eq!(names(&zinc), ["SG", "ZN"]);
+        assert_ne!(record.atoms()[0].instance(), record.atoms()[1].instance());
+        assert_eq!(
+            (record.connection_id(), record.connection_type()),
+            (Some("metalc1"), "metalc")
+        );
+        assert_eq!(zinc.report().applied_connections(), 1);
+
+        // Written with its report, the coordination is a `metalc` row again;
+        // a record naming an atom the model lacks is left out and reported.
+        let written = |report: &crate::macromolecular::StructureInterpretationReport| {
+            crate::mmcif::write(
+                [crate::mmcif::MmcifBlockSource::model(zinc.model())
+                    .with_reports(std::slice::from_ref(report))],
+                Default::default(),
+            )
+            .unwrap()
+        };
+        let (text, write_report) = written(zinc.report());
+        assert_eq!(text.matches(" metalc ").count(), 1);
+        assert!(write_report.omissions().is_empty());
+        let reread = interpret(&text);
+        assert_eq!(reread.topology().instance_count(), 2);
+        assert_eq!(names(&reread), ["SG", "ZN"]);
+        let mut dangling = zinc.report().clone();
+        let ion = dangling.coordination[0].atoms[1];
+        dangling.coordination[0].atoms[1] =
+            crate::topology::InstanceAtomId::new(ion.instance(), crate::molecule::AtomId::new(99));
+        let (text, write_report) = written(&dangling);
+        assert!(!text.contains("metalc"));
+        assert_eq!(
+            write_report.omissions(),
+            [crate::diagnostics::WriteOmission::Coordination { records: 1 }]
+        );
+
+        // A model's own dative bond between residues is written as
+        // coordination, which reads back as a record, and is reported so.
+        let mut editor = zinc.model().to_editor();
+        let [sulfur, ion] = zinc.report().coordination()[0]
+            .atoms()
+            .map(|atom| editor.topology().atom_handle(atom).unwrap());
+        editor.add_bond(sulfur, ion, BondOrder::Dative).unwrap();
+        let bonded = editor.finish().unwrap();
+        assert_eq!(bonded.topology().instance_count(), 1);
+        let (text, write_report) = crate::mmcif::write([&bonded], Default::default()).unwrap();
+        assert_eq!(text.matches(" metalc ").count(), 1);
+        assert_eq!(
+            write_report.omissions(),
+            [crate::diagnostics::WriteOmission::CoordinationBonds { bonds: 1 }]
+        );
+        let reread = interpret(&text);
+        assert_eq!(reread.topology().instance_count(), 2);
+        assert_eq!(names(&reread), ["SG", "ZN"]);
     }
 
     #[test]

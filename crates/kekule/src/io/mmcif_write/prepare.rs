@@ -1,7 +1,7 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
 use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
-use super::implied::mark_implied;
+use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
 use super::{fail, invalid_model, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
 use crate::diagnostics::FormatError;
@@ -68,6 +68,12 @@ pub(super) struct PreparedModel {
     pub(super) connections: Vec<ConnectionRow>,
     /// Atoms whose fixed implicit-hydrogen counts the rows leave out.
     pub(super) omitted_hydrogens: usize,
+    /// Interpretation-report coordination records left out because the
+    /// model lacks a partner.
+    pub(super) omitted_coordination: usize,
+    /// Dative bonds between residues, stated as `metalc` rows that readers
+    /// record as coordination rather than bonds.
+    pub(super) coordination_bonds: usize,
 }
 
 pub(super) fn prepare_model(
@@ -80,6 +86,8 @@ pub(super) fn prepare_model(
         entities,
         asyms,
         atoms: assignments,
+        coordination,
+        omitted_coordination,
     } = plan;
 
     let mut atoms = Vec::new();
@@ -155,6 +163,24 @@ pub(super) fn prepare_model(
         &atom_indexes,
         coordinate_precision,
     );
+    // Readers record coordination between residues rather than bond it, so
+    // a model's dative bond between residues does not read back as a bond.
+    let coordination_bonds = connections
+        .iter()
+        .filter(|connection| {
+            connection.order == BondOrder::Dative
+                && residue_key(&atoms[atom_indexes[&connection.left]])
+                    != residue_key(&atoms[atom_indexes[&connection.right]])
+        })
+        .count();
+    // Coordination between residues is no bond; the report keeps it and the
+    // block states it as `metalc`, which readers record the same way.
+    connections.extend(coordination.into_iter().map(|[left, right]| ConnectionRow {
+        left,
+        right,
+        order: BondOrder::Dative,
+        implied: None,
+    }));
     // A polymer link another ensemble sample stretches beyond bonding
     // distance is stated after all, so its partners are checked too.
     let selectors = ConnectionSelectors::new(&atoms);
@@ -171,6 +197,8 @@ pub(super) fn prepare_model(
         atoms,
         connections,
         omitted_hydrogens,
+        omitted_coordination,
+        coordination_bonds,
     })
 }
 
