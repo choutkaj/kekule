@@ -217,12 +217,16 @@ impl std::fmt::Display for SourceResidueId {
             SourceResiduePosition::RepeatedAuthor { sequence, repeat } => write!(
                 formatter,
                 "author residue {sequence:?} (occurrence {})",
-                repeat + 1
+                repeat.saturating_add(1)
             )?,
             SourceResiduePosition::Occurrence {
                 component_id,
                 index,
-            } => write!(formatter, "{component_id:?} residue number {}", index + 1)?,
+            } => write!(
+                formatter,
+                "{component_id:?} residue number {}",
+                index.saturating_add(1)
+            )?,
         }
         if let Some(code) = &self.insertion_code {
             write!(formatter, " insertion code {code:?}")?;

@@ -482,7 +482,7 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!(
-                    "The CONECT records list the bond between atoms {left} and {right} {count} times. A bond is listed at most three times."
+                    "The CONECT records list the bond between atoms {left} and {right} {count} times."
                 ),
                 ))
             }
