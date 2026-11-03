@@ -789,7 +789,7 @@ impl<'r> Resolver<'r, '_> {
                 DiagnosticKind::Unsupported,
                 residue.sites.first().map(|site| site.line),
                 format!(
-                    "component `{}` has no template or bond table; supply a template or enable distance inference",
+                    "Component {:?} has no template or bond table. Supply a template or turn on distance inference.",
                     residue.key.component_id
                 ),
             ));
@@ -1067,7 +1067,7 @@ impl<'r> Resolver<'r, '_> {
                     DiagnosticKind::Inconsistent,
                     residue.sites.first().map(|site| site.line),
                     format!(
-                        "hydrogens of a `{}` residue match neither its template nor a protonation variant",
+                        "The hydrogens of a {:?} residue match neither its template nor a protonation variant.",
                         templated.component.id()
                     ),
                 )
@@ -1138,7 +1138,7 @@ impl<'r> Resolver<'r, '_> {
             .map(|(atom, index, difference)| {
                 let base = candidate.atoms()[index].formal_charge().unwrap_or(0);
                 let delta = i8::try_from(difference).map_err(|_| {
-                    chemistry_error("hydrogen count difference exceeds charge range")
+                    chemistry_error("A residue's hydrogen count differs from its template by more than a formal charge holds.")
                 })?;
                 Ok(TemplateCharge {
                     atom,
@@ -1254,7 +1254,7 @@ fn match_template(
             Some((index, template_atom)) => {
                 if template_atom.element() != site.element {
                     return failure(format!(
-                        "atom `{}` of component `{}` is {} in the model but {} in its template",
+                        "Atom {:?} of component {:?} is {} in the model but {} in its template.",
                         site.name,
                         component.id(),
                         site.element.symbol(),
@@ -1263,7 +1263,7 @@ fn match_template(
                 }
                 if matched.insert(index, site.atom).is_some() {
                     return failure(format!(
-                        "two atoms of one `{}` residue match template atom `{}`",
+                        "Two atoms of one {:?} residue match template atom {:?}.",
                         component.id(),
                         template_atom.name()
                     ));
@@ -1272,7 +1272,7 @@ fn match_template(
             None if is_hydrogen(site.element) => strays.push(site.atom),
             None => {
                 return failure(format!(
-                    "atom `{}` is not in component `{}`",
+                    "Atom {:?} is not in component {:?}.",
                     site.name,
                     component.id()
                 ))
@@ -1455,11 +1455,11 @@ fn add_bond_if_missing(
     };
     if !consistent {
         let source_order = match source_order {
-            SourceBondOrder::Localized(order) => format!("{order:?}"),
-            SourceBondOrder::Aromatic => "Aromatic".to_owned(),
+            SourceBondOrder::Localized(order) => order.to_string(),
+            SourceBondOrder::Aromatic => "aromatic".to_owned(),
         };
         return Err(chemistry_error(format!(
-            "conflicting authoritative bond evidence for one atom pair: {existing_order:?} versus {source_order}"
+            "The bond records give one atom pair two orders: {existing_order} and {source_order}."
         )));
     }
     Ok(())
@@ -1480,7 +1480,7 @@ fn component_bond_order(
             table,
             row,
             DiagnosticKind::Unsupported,
-            format!("unsupported component bond order `{other}`"),
+            format!("The component bond order {other:?} is not supported."),
         )),
     }
 }
@@ -1512,7 +1512,7 @@ fn required<'a>(
             table,
             row,
             DiagnosticKind::InvalidValue,
-            format!("missing required {tag}"),
+            format!("The required {tag} is missing."),
         )
     })?;
     value.optional_text().ok_or_else(|| {
@@ -1520,7 +1520,7 @@ fn required<'a>(
             table,
             row,
             DiagnosticKind::InvalidValue,
-            format!("missing required {tag}"),
+            format!("The required {tag} is missing."),
         )
     })
 }
@@ -1531,7 +1531,7 @@ fn required_i32(table: &MmcifCategory<'_>, row: usize, tag: &str) -> Result<i32,
             table,
             row,
             DiagnosticKind::InvalidValue,
-            format!("invalid integer {tag}"),
+            format!("The {tag} value is not a whole number."),
         )
     })
 }
@@ -1553,7 +1553,7 @@ fn row_error(
 
 /// Molecule construction failed with `source` as the cause.
 fn interpret_error(source: impl std::error::Error + Send + Sync + 'static) -> FormatError {
-    chemistry_error("molecule construction failed").with_source(source)
+    chemistry_error("Cannot build the molecule.").with_source(source)
 }
 
 fn chemistry_error(message: impl Into<String>) -> FormatError {
@@ -2622,7 +2622,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             error.location().map(|location| location.line()),
             Some(line_of(&unknown_atom, " CX GLY"))
         );
-        assert_eq!(error.message(), "atom `CX` is not in component `GLY`");
+        assert_eq!(error.message(), "Atom \"CX\" is not in component \"GLY\".");
 
         // Without its CA, a glycine's amine is cut off from its carbonyl.
         let split = interpret(&block(

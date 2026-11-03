@@ -42,14 +42,14 @@ pub(crate) fn interpret_mmcif(
         return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
-            "document has no atom-site category",
+            "The document has no _atom_site category.",
         ));
     }
     if blocks.len() > 1 {
         return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
-            "document has atom-site data in more than one data block",
+            "More than one data block has _atom_site data.",
         ));
     }
     interpret_mmcif_block(blocks[0], options)
@@ -124,7 +124,7 @@ pub(crate) fn alternate_location_inventory(
         structure_error(
             DiagnosticKind::Inconsistent,
             None,
-            "block has no atom-site category",
+            "The data block has no _atom_site category.",
         )
     })?;
     let rows = read_atom_rows(
@@ -148,7 +148,7 @@ fn atom_site_block(document: &MmcifDocument) -> Result<&MmcifBlock, FormatError>
     if blocks.next().is_some() {
         return Err(ensemble_error(
             DiagnosticKind::Inconsistent,
-            "mmCIF document has atom-site data in more than one data block",
+            "More than one data block has _atom_site data.",
             FormatErrorDetail::MultipleAtomSiteBlocks,
         ));
     }
@@ -168,14 +168,14 @@ fn mmcif_source(
         structure_error(
             DiagnosticKind::Inconsistent,
             None,
-            "block has no atom-site category",
+            "The data block has no _atom_site category.",
         )
     })?;
     if atom_table.row_count() == 0 {
         return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
-            "atom-site category contains no rows",
+            "The _atom_site category has no rows.",
         ));
     }
     let mut report = StructureInterpretationReport::default();
@@ -248,7 +248,7 @@ fn read_cell(
                         &table,
                         0,
                         DiagnosticKind::InvalidValue,
-                        format!("invalid {tag} `{text}`"),
+                        format!("The {tag} value {text:?} is not a number."),
                     )
                 })?,
         );
@@ -287,10 +287,13 @@ fn read_cell(
             issues.push(StructureInterpretIssue::CellOmitted { reason, location });
             Ok(None)
         }
-        Err(error) => Err(
-            row_error(&table, 0, DiagnosticKind::InvalidValue, "invalid `_cell`")
-                .with_source(error),
-        ),
+        Err(error) => Err(row_error(
+            &table,
+            0,
+            DiagnosticKind::InvalidValue,
+            "The _cell is not a valid periodic cell.",
+        )
+        .with_source(error)),
     }
 }
 
@@ -372,7 +375,7 @@ fn connection_bond_order(table: &MmcifCategory<'_>, row: usize) -> Result<BondOr
             table,
             row,
             DiagnosticKind::Unsupported,
-            format!("unsupported struct_conn bond order `{order}`"),
+            format!("The _struct_conn bond order {order:?} is not supported."),
         )),
     }
 }

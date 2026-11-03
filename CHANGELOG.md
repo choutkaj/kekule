@@ -763,6 +763,15 @@ are marked **Breaking:**.
   cell grid. PDB 6SPB (90,351 atoms) interprets in 0.6 s instead of
   1.7 s, and 7K00 (149,338 atoms) in 1.1 s instead of 3.2 s
   (medians, release, one thread).
+- **Breaking:** mmCIF and PDB interpretation errors are sentences too
+  (SeekDelta K62), as the rest of Kekule's messages: atom-site, residue,
+  coordinate-model, alternate-location, connection and template failures
+  name their records, atoms and values, such as `The _cell.length_b value
+  "abc" is not a number.` or `Residue 7 of chain "A" in model "1" has
+  alternate locations.` `ConnectionResolutionReason` displays as a
+  sentence, and the new `Display` for `SourceResidueId` writes `residue 12
+  insertion code "A" of chain "B" in model "1"`. A cancelled interpretation
+  has an empty message and keeps `Cancelled` as its source.
 - **Breaking:** error messages are sentences (SeekDelta K62). The `Display`
   text of every public error and issue in `kekule`, `kekule-traj`,
   `kekule-openff` and `kekule-potentials` is one or two short sentences with

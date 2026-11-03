@@ -205,6 +205,40 @@ impl SourceResidueId {
     }
 }
 
+/// Writes the residue as a noun phrase, such as `residue 12 insertion code
+/// "A" of chain "B" in model "1"`.
+impl std::fmt::Display for SourceResidueId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.position {
+            SourceResiduePosition::Label(sequence) => write!(formatter, "residue {sequence}")?,
+            SourceResiduePosition::Author(sequence) => {
+                write!(formatter, "author residue {sequence:?}")?
+            }
+            SourceResiduePosition::RepeatedAuthor { sequence, repeat } => write!(
+                formatter,
+                "author residue {sequence:?} (occurrence {})",
+                repeat.saturating_add(1)
+            )?,
+            SourceResiduePosition::Occurrence {
+                component_id,
+                index,
+            } => write!(
+                formatter,
+                "{component_id:?} residue number {}",
+                index.saturating_add(1)
+            )?,
+        }
+        if let Some(code) = &self.insertion_code {
+            write!(formatter, " insertion code {code:?}")?;
+        }
+        write!(
+            formatter,
+            " of chain {:?} in model {:?}",
+            self.asym_id, self.model_id
+        )
+    }
+}
+
 /// The position part of a [`SourceResidueId`], in the first namespace the
 /// source provides.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

@@ -95,7 +95,7 @@ fn pdb_source(
         return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
-            "PDB entries declare no entity types; strict entity metadata cannot be satisfied",
+            "A PDB entry declares no entity types. Turn off strict entity metadata.",
         ));
     }
     let (rows, inferred) = read_rows(document, cancellation)?;
@@ -130,7 +130,7 @@ fn pdb_source(
                     return Err(structure_error(
                         DiagnosticKind::InvalidValue,
                         Some(record.location().line()),
-                        "invalid CRYST1 cell",
+                        "The CRYST1 record is not a valid periodic cell.",
                     )
                     .with_source(error))
                 }
@@ -244,7 +244,7 @@ fn read_rows(
         return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
-            "PDB entry has no coordinate records",
+            "The entry has no coordinate records.",
         ));
     }
     let terminated = document
@@ -320,7 +320,7 @@ fn read_rows(
                 structure_error(
                     DiagnosticKind::InvalidValue,
                     Some(line),
-                    format!("unknown element `{symbol}`"),
+                    format!("The element symbol {symbol:?} is unknown."),
                 )
             })?,
             None => {
@@ -331,7 +331,7 @@ fn read_rows(
                             DiagnosticKind::InvalidValue,
                             Some(line),
                             format!(
-                                "atom `{}` has no element symbol, and its name implies none",
+                                "Atom {:?} has no element symbol, and its name gives none.",
                                 atom.name()
                             ),
                         )
@@ -482,7 +482,7 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!(
-                    "CONECT records list the bond between atoms {left} and {right} {count} times"
+                    "The CONECT records list the bond between atoms {left} and {right} {count} times."
                 ),
                 ))
             }

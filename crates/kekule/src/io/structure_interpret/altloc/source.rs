@@ -38,7 +38,7 @@ pub(in crate::io::structure_interpret) fn conformations(
                 row,
                 DiagnosticKind::InvalidReference,
                 format!(
-                    "source conformation `{id}` references unavailable alternate label `{label}`"
+                    "Source conformation {id:?} names alternate location {label:?}, which no atom has."
                 ),
             ));
         }
@@ -51,7 +51,7 @@ pub(in crate::io::structure_interpret) fn conformations(
                 &table,
                 row,
                 DiagnosticKind::Inconsistent,
-                format!("duplicate alternate label `{label}` in source conformation `{id}`"),
+                format!("Source conformation {id:?} lists alternate location {label:?} twice."),
             ));
         }
     }
