@@ -13,15 +13,31 @@
 //! 3. without either, the explicit unknown: `X` for a peptide-linking
 //!    component or an amino acid, `N` for a nucleotide.
 //!
-//! Only monomers have codes: residues whose components link into a
-//! polypeptide or a polynucleotide, and amino-acid and nucleotide residues.
-//! Other residues, such as water, ions and ligands, have none, even a ligand
-//! such as `GTP` whose dictionary entry states one. Most codes
-//! are one letter; a few components that stand for several monomers, such as
-//! the chromophore of green fluorescent protein (`CRO`, `TYG`), have several.
+//! Only monomers of a polymer have codes. A monomer is a residue whose
+//! component links into a polypeptide or a polynucleotide, or an amino-acid or
+//! nucleotide residue, that is part of a polymer:
 //!
-//! A chain's sequence lists its residues that have codes, in chain order, and
-//! joins their codes. It is the sequence of the residues the topology holds;
+//! - its molecule holds another such residue, as when a peptide or
+//!   phosphodiester bond links it to its neighbour;
+//! - or the file numbers it in a polymer sequence (`label_seq_id`), as mmCIF
+//!   does for a residue that chain breaks leave alone and for a one-residue
+//!   polymer;
+//! - or its atoms have no bonds at all, as in a Cα or phosphorus trace.
+//!
+//! Other residues have no code: water, ions, ligands, and free monomers such
+//! as a lone `GDP` or an amino acid bound as a ligand, although the dictionary
+//! states codes for their components. A PDB file numbers no residue in a
+//! sequence, so a residue it leaves unbonded to its neighbours, such as a
+//! terminal residue beyond bonding distance, has no code. Most codes are one
+//! letter; a few components that stand for several monomers, such as the
+//! chromophore of green fluorescent protein (`CRO`, `TYG`), have several.
+//!
+//! A code also names the components a modified monomer derives from, its
+//! parents, such as `MET` for selenomethionine (`MSE`), so that a sequence
+//! view can mark it ([`ResidueCode::parents`], [`ResidueCode::is_modified`]).
+//!
+//! A chain's sequence lists its monomers in chain order and joins their
+//! codes. It is the sequence of the residues the topology holds;
 //! the sequence a file states for a polymer entity, with the residues it does
 //! not observe, comes with the mmCIF interpretation
 //! ([`StructureInterpretationReport::polymer_entities`](crate::macromolecular::StructureInterpretationReport::polymer_entities)).
@@ -33,6 +49,8 @@
 //! let threonine = sequence::component_code("TPO", &options).expect("phosphothreonine");
 //! assert_eq!(threonine.as_str(), "T");
 //! assert_eq!(threonine.origin(), CodeOrigin::Component);
+//! assert!(threonine.is_modified());
+//! assert_eq!(threonine.parents().collect::<Vec<_>>(), ["THR"]);
 //! assert!(sequence::component_code("HOH", &options).is_none());
 //! ```
 
@@ -41,7 +59,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::io::{dictionary_code, ComponentLibrary, ComponentLinking};
-use crate::topology::{ChainId, ResidueClass, ResidueId, ResidueView, Topology};
+use crate::topology::{
+    ChainId, InstanceView, MoleculeInstanceId, ResidueClass, ResidueId, ResidueView, Topology,
+};
 
 /// Where a residue's one-letter code comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -58,18 +78,32 @@ pub enum CodeOrigin {
     Unknown,
 }
 
-/// The one-letter code of a residue or monomer, usually one letter.
+/// The one-letter code of a residue or monomer, usually one letter, and the
+/// components it derives from.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ResidueCode {
     code: Box<str>,
     origin: CodeOrigin,
+    parents: Box<[Box<str>]>,
 }
 
 impl ResidueCode {
+    /// A code without parents.
     pub(crate) fn new(code: impl Into<Box<str>>, origin: CodeOrigin) -> Self {
         Self {
             code: code.into(),
             origin,
+            parents: Box::default(),
+        }
+    }
+
+    /// The same component with `code` from `origin`.
+    #[must_use]
+    pub(crate) fn restated(&self, code: impl Into<Box<str>>, origin: CodeOrigin) -> Self {
+        Self {
+            code: code.into(),
+            origin,
+            parents: self.parents.clone(),
         }
     }
 
@@ -87,6 +121,20 @@ impl ResidueCode {
     /// Whether the code is the explicit unknown, `X` or `N`.
     pub fn is_unknown(&self) -> bool {
         self.origin == CodeOrigin::Unknown
+    }
+
+    /// The components the residue's component derives from
+    /// (`mon_nstd_parent_comp_id`), such as `MET` for selenomethionine (`MSE`)
+    /// or `THR`, `TYR` and `GLY` for the chromophore `CRO`. Empty for a
+    /// standard component.
+    pub fn parents(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
+        self.parents.iter().map(AsRef::as_ref)
+    }
+
+    /// Whether the residue's component derives from others, as a modified
+    /// monomer such as `MSE` or `TPO` does.
+    pub fn is_modified(&self) -> bool {
+        !self.parents.is_empty()
     }
 }
 
@@ -120,19 +168,26 @@ impl SequenceOptions {
 
 /// The code of the component `id` when it links into a polypeptide or a
 /// polynucleotide: its own, else its parents', else the unknown. `None` for
-/// any other component, or one no library knows.
+/// any other component, or one no library knows. A residue of the component
+/// has the code only as a monomer of a polymer ([`residue_code`]).
 pub fn component_code(id: &str, options: &SequenceOptions) -> Option<ResidueCode> {
     CodeSources::new(None, options.components.as_deref()).code(id, None)
 }
 
-/// The code of a residue, from its component; an amino acid or nucleotide
-/// whose component has no code takes the unknown, `X` or `N`. `None` for
-/// other residues.
+/// The code of a monomer of a polymer, from its component; an amino acid or
+/// nucleotide whose component has no code takes the unknown, `X` or `N`.
+/// `None` for other residues, such as ligands and free monomers.
 pub fn residue_code(residue: ResidueView<'_>, options: &SequenceOptions) -> Option<ResidueCode> {
-    CodeSources::new(None, options.components.as_deref()).code(
-        residue_component(residue),
-        unknown_of_class(residue.class()),
-    )
+    let sources = CodeSources::new(None, options.components.as_deref());
+    let code = candidate_code(&sources, residue)?;
+    let in_polymer = residue.label_seq_id().is_some()
+        || is_trace(residue)
+        || molecules(residue).into_iter().any(|molecule| {
+            molecule.residues().any(|other| {
+                other.id() != residue.id() && candidate_code(&sources, other).is_some()
+            })
+        });
+    in_polymer.then_some(code)
 }
 
 /// The residues of one chain that have codes, in chain order.
@@ -179,22 +234,46 @@ impl ChainMonomer {
     }
 }
 
-/// The sequence of every chain with at least one residue that has a code, in
-/// hierarchy order. Water, ions and ligands a chain holds are left out.
+/// The sequence of every chain with at least one monomer, in hierarchy order.
+/// Water, ions, ligands and free monomers a chain holds are left out
+/// ([`residue_code`]).
 pub fn chain_sequences(topology: &Topology, options: &SequenceOptions) -> Vec<ChainSequence> {
     let sources = CodeSources::new(None, options.components.as_deref());
     let mut known = HashMap::<(&str, Option<&'static str>), Option<ResidueCode>>::new();
+    // The code and molecules of each residue whose component is a monomer's,
+    // and how many such residues each molecule holds.
+    let mut candidates = Vec::with_capacity(topology.residues().len());
+    let mut per_molecule = HashMap::<MoleculeInstanceId, usize>::new();
+    for residue in topology.residues() {
+        let unknown = unknown_of_class(residue.class());
+        let component = residue_component(residue);
+        let code = known
+            .entry((component, unknown))
+            .or_insert_with(|| sources.code(component, unknown))
+            .clone();
+        candidates.push(code.map(|code| {
+            let molecules = molecules(residue)
+                .into_iter()
+                .map(InstanceView::id)
+                .collect::<Vec<_>>();
+            for &molecule in &molecules {
+                *per_molecule.entry(molecule).or_default() += 1;
+            }
+            (code, molecules)
+        }));
+    }
     let mut sequences = Vec::new();
     for chain in topology.chains() {
         let mut monomers = Vec::new();
         let mut sequence = String::new();
         for residue in chain.residues() {
-            let unknown = unknown_of_class(residue.class());
-            let component = residue_component(residue);
-            let code = known
-                .entry((component, unknown))
-                .or_insert_with(|| sources.code(component, unknown));
-            if let Some(code) = code {
+            let Some((code, molecules)) = &candidates[residue.id().index()] else {
+                continue;
+            };
+            let in_polymer = residue.label_seq_id().is_some()
+                || is_trace(residue)
+                || molecules.iter().any(|molecule| per_molecule[molecule] > 1);
+            if in_polymer {
                 sequence.push_str(code.as_str());
                 monomers.push(ChainMonomer {
                     residue: residue.id(),
@@ -211,6 +290,35 @@ pub fn chain_sequences(topology: &Topology, options: &SequenceOptions) -> Vec<Ch
         }
     }
     sequences
+}
+
+/// The code of a residue whose component is a monomer's, whether or not it is
+/// part of a polymer.
+fn candidate_code(sources: &CodeSources<'_>, residue: ResidueView<'_>) -> Option<ResidueCode> {
+    sources.code(
+        residue_component(residue),
+        unknown_of_class(residue.class()),
+    )
+}
+
+/// The molecules a residue's atoms belong to, usually one.
+fn molecules(residue: ResidueView<'_>) -> Vec<InstanceView<'_>> {
+    let mut molecules = Vec::<InstanceView<'_>>::new();
+    for site in residue.atom_sites() {
+        let molecule = site.atom().instance();
+        if !molecules.iter().any(|known| known.id() == molecule.id()) {
+            molecules.push(molecule);
+        }
+    }
+    molecules
+}
+
+/// Whether no atom of a residue has a bond, as in a Cα trace, so that bonds
+/// cannot show its linkage.
+fn is_trace(residue: ResidueView<'_>) -> bool {
+    residue
+        .atom_sites()
+        .all(|site| site.atom().bonds().next().is_none())
 }
 
 fn residue_component<'a>(residue: ResidueView<'a>) -> &'a str {
@@ -285,15 +393,18 @@ impl<'a> CodeSources<'a> {
         if linked.is_none() && unknown.is_none() {
             return None;
         }
-        if let Some(code) = facts.code {
-            return Some(ResidueCode::new(code, CodeOrigin::Component));
-        }
-        if let Some(code) = self.parent_code(&facts.parents, PARENT_DEPTH) {
-            return Some(ResidueCode::new(code, CodeOrigin::Parent));
-        }
-        linked
-            .or(unknown)
-            .map(|code| ResidueCode::new(code, CodeOrigin::Unknown))
+        let (code, origin) = if let Some(code) = facts.code {
+            (code.into(), CodeOrigin::Component)
+        } else if let Some(code) = self.parent_code(&facts.parents, PARENT_DEPTH) {
+            (code.into(), CodeOrigin::Parent)
+        } else {
+            (linked.or(unknown)?.into(), CodeOrigin::Unknown)
+        };
+        Some(ResidueCode {
+            code,
+            origin,
+            parents: facts.parents.iter().map(|&parent| parent.into()).collect(),
+        })
     }
 
     /// The linkage the first source that knows `id` states.
@@ -383,6 +494,24 @@ mod tests {
         // Nucleotide ligands state codes or parents but link into no polymer.
         assert_eq!(code("GTP"), None);
         assert_eq!(code("ADP"), None);
+    }
+
+    #[test]
+    fn codes_name_their_parents() {
+        let parents = |id: &str| {
+            component_code(id, &SequenceOptions::default()).map(|code| {
+                (
+                    code.parents().collect::<Vec<_>>().join(","),
+                    code.is_modified(),
+                )
+            })
+        };
+        assert_eq!(parents("ALA"), Some((String::new(), false)));
+        assert_eq!(parents("MSE"), Some(("MET".into(), true)));
+        assert_eq!(parents("SEP"), Some(("SER".into(), true)));
+        assert_eq!(parents("CRO"), Some(("THR,TYR,GLY".into(), true)));
+        assert_eq!(parents("02O"), Some(("ALA".into(), true)));
+        assert_eq!(parents("004"), Some((String::new(), false)));
     }
 
     #[test]

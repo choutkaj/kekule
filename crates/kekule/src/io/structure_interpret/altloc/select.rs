@@ -1,6 +1,6 @@
 //! Alternate-location selection and inventory over typed atom rows.
 use super::super::types::{poll, poll_every, structure_error};
-use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
+use crate::diagnostics::{Cancellation, Capitalized, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::atom_site::AtomRow;
@@ -20,13 +20,24 @@ fn residues<'a>(
     rows: &'a [AtomRow],
     cancellation: Option<&Cancellation>,
 ) -> Result<Vec<Residue<'a>>, FormatError> {
+    // A residue's rows usually follow each other, so its identity is built
+    // once per run of rows rather than once per row.
     let mut grouped = BTreeMap::<SourceResidueId, Vec<&AtomRow>>::new();
+    let mut run: Option<(SourceResidueId, Vec<&AtomRow>)> = None;
     for (step, row) in rows.iter().enumerate() {
         poll_every(cancellation, step)?;
-        grouped
-            .entry(SourceResidueId::of(row))
-            .or_default()
-            .push(row);
+        match &mut run {
+            Some((id, rows)) if id.matches(row) => rows.push(row),
+            _ => {
+                if let Some((id, rows)) = run.take() {
+                    grouped.entry(id).or_default().extend(rows);
+                }
+                run = Some((SourceResidueId::of(row), vec![row]));
+            }
+        }
+    }
+    if let Some((id, rows)) = run {
+        grouped.entry(id).or_default().extend(rows);
     }
     grouped
         .into_iter()
@@ -40,7 +51,7 @@ fn residues<'a>(
                         DiagnosticKind::Inconsistent,
                         Some(row.line),
                         format!(
-                            "atom `{}` has duplicate records for one alternate location in {id:?}",
+                            "Atom {:?} has two records for one alternate location in source conformation {id:?}.",
                             row.atom_name
                         ),
                     ));
@@ -85,7 +96,7 @@ fn selection_error(
     structure_error(
         kind,
         Some(residue.rows[0].line),
-        format!("{message} at {:?}", residue.id),
+        format!("{} {message}", Capitalized(&residue.id)),
     )
 }
 
@@ -114,13 +125,13 @@ fn candidate_rows<'a>(
         &labelled
     }
     .iter()
-    .map(|row| row.comp_id.clone())
+    .map(|row| row.comp_id.as_str())
     .collect::<BTreeSet<_>>();
     if components.len() != 1 {
         return Err(selection_error(
             residue,
             DiagnosticKind::Inconsistent,
-            "canonical residue identity has conflicting chemical components in alternate selection",
+            "has different components in its selected alternate locations.",
         ));
     }
     let mut selected = labelled;
@@ -137,10 +148,7 @@ fn candidate_rows<'a>(
             return Err(selection_error(
                 residue,
                 DiagnosticKind::Inconsistent,
-                format!(
-                    "alternate selection contains overlapping sites for atom `{}`",
-                    row.atom_name
-                ),
+                format!("has two selected sites for atom {:?}.", row.atom_name),
             ));
         }
     }
@@ -213,7 +221,7 @@ fn groups(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
-                    "alternate-location selection refers to unknown or unlabelled residue {id:?}"
+                    "The alternate-location selection names {id}, which has no alternate locations."
                 ),
             ));
         }
@@ -223,14 +231,14 @@ fn groups(
             return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
-                "alternate-location group requires at least two distinct residues",
+                "An alternate-location group names fewer than two distinct residues.",
             ));
         }
         if group.iter().any(|id| id.model_id != group[0].model_id) {
             return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
-                "alternate-location group crosses source coordinate models",
+                "An alternate-location group spans more than one coordinate model.",
             ));
         }
         let first = indices[&group[0]];
@@ -269,13 +277,19 @@ struct Candidate<'a> {
     preferred: usize,
 }
 
+/// The selected rows as their positions in `rows` (each row's `row_index`)
+/// with their sites' dense order, sorted by that order.
 pub(in crate::io::structure_interpret) fn select_alt_locations(
     rows: &[AtomRow],
     conformations: &BTreeMap<String, BTreeSet<String>>,
     policy: &AltLocPolicy,
     report: &mut StructureInterpretationReport,
     cancellation: Option<&Cancellation>,
-) -> Result<Vec<AtomRow>, FormatError> {
+) -> Result<Vec<(usize, usize)>, FormatError> {
+    debug_assert!(rows
+        .iter()
+        .enumerate()
+        .all(|(position, row)| row.row_index == position));
     let residues = residues(rows, cancellation)?;
     let selection = configuration(policy);
     if let Some(id) = &selection.source_conformation {
@@ -283,7 +297,7 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
             return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
-                format!("source alternate conformation `{id}` is unavailable"),
+                format!("Source conformation {id:?} does not exist."),
             ));
         }
     }
@@ -303,7 +317,7 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
                 return Err(selection_error(
                     residue,
                     DiagnosticKind::Unsupported,
-                    "residue has alternate locations",
+                    "has alternate locations.",
                 ));
             }
             let missing = residue
@@ -392,26 +406,33 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
         }
     }
     // Dense atom order follows each site's first source occurrence, independently
-    // of which alternative's row supplied its coordinates.
-    let mut order = BTreeMap::new();
-    for (step, row) in rows.iter().enumerate() {
-        poll_every(cancellation, step)?;
-        order
-            .entry((SourceResidueId::of(row), &row.comp_id, &row.atom_name))
-            .or_insert(row.row_index);
+    // of which alternative's row supplied its coordinates. Rows without
+    // alternatives are their sites' only rows.
+    let mut site_orders = BTreeMap::new();
+    for residue in residues.iter().filter(|residue| !residue.labels.is_empty()) {
+        poll(cancellation)?;
+        let mut first = BTreeMap::<(&str, &str), usize>::new();
+        for row in &residue.rows {
+            let order = *first
+                .entry((row.comp_id.as_str(), row.atom_name.as_str()))
+                .or_insert(row.row_index);
+            site_orders.insert(row.row_index, order);
+        }
     }
     let mut selected = selected
         .into_iter()
         .enumerate()
         .map(|(step, row)| {
             poll_every(cancellation, step)?;
-            let mut chosen = row.clone();
-            chosen.site_order = order[&(SourceResidueId::of(row), &row.comp_id, &row.atom_name)];
-            Ok(chosen)
+            let order = site_orders
+                .get(&row.row_index)
+                .copied()
+                .unwrap_or(row.row_index);
+            Ok((row.row_index, order))
         })
         .collect::<Result<Vec<_>, FormatError>>()?;
     poll(cancellation)?;
-    selected.sort_by_key(|row| row.site_order);
+    selected.sort_by_key(|&(_, order)| order);
     Ok(selected)
 }
 
@@ -476,7 +497,7 @@ fn choose<'a>(
                         StructureInterpretIssue::AlternateLocationCombinationRejected {
                             residue: residue.id.clone(),
                             alternative: id.clone(),
-                            reason: "combination contains no alternate label for this residue"
+                            reason: "The combination has no alternate location of this residue."
                                 .into(),
                         },
                     );
@@ -503,7 +524,7 @@ fn choose<'a>(
                         return Err(selection_error(
                             residue,
                             DiagnosticKind::Unsupported,
-                            "residue has alternate locations",
+                            "has alternate locations.",
                         ))
                     }
                     AltLocPreference::PreferLabel(label) if selected_labels.contains(label) => {
@@ -542,8 +563,8 @@ fn choose<'a>(
     }
     if candidates.is_empty() {
         return Err(last_error.unwrap_or_else(|| selection_error(&residues[group[0]], DiagnosticKind::Inconsistent, format!(
-            "no complete alternate configuration satisfies the requested labels, residue groups, and source constraints (default: {:?}, overrides: {:?}, available: {})",
-            selection.default, selection.overrides, alternatives.keys().cloned().collect::<Vec<_>>().join(", ")
+            "has no complete alternate-location combination that meets the selection. The source conformations are {}.",
+            alternatives.keys().map(|id| format!("{id:?}")).collect::<Vec<_>>().join(", ")
         ))));
     }
     candidates.sort_by(|a, b| {

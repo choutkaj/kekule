@@ -62,3 +62,7 @@ harness = false
 [[bench]]
 name = "model_edit_scale"
 harness = false
+
+[[bench]]
+name = "structure_interpretation"
+harness = false

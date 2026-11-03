@@ -150,7 +150,7 @@ fn mmcif_present_categories_missing_required_fields_reject_in_both_encodings() {
         let scalar_error = scalar_doc.interpret(Default::default()).unwrap_err();
         assert_eq!(loop_error.message(), scalar_error.message(), "{category}");
         assert!(
-            scalar_error.message().contains("missing required"),
+            scalar_error.message().contains("is missing"),
             "{category}: {scalar_error}"
         );
         assert!(loop_error.location().is_some() && scalar_error.location().is_some());
@@ -189,7 +189,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         .interpret(Default::default())
         .unwrap_err()
         .message()
-        .contains("more than one data block"));
+        .contains("More than one data block"));
     assert_eq!(
         error_detail(doc.interpret_ensemble(Default::default())),
         Some(FormatErrorDetail::MultipleAtomSiteBlocks)

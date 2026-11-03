@@ -44,6 +44,11 @@ are marked **Breaking:**.
   the model's residue and the author numbering of `_pdbx_poly_seq_scheme`,
   unobserved monomers included. `Component::one_letter_code` and
   `Component::parent_ids` read the dictionary items.
+- Parents of modified residues (SeekDelta K21b). `ResidueCode::parents`
+  names the components a residue's component derives from, such as `MET`
+  for selenomethionine (`MSE`) or `THR`, `TYR` and `GLY` for the chromophore
+  `CRO`, and `ResidueCode::is_modified` says whether it has any, so a
+  sequence view can mark modified residues.
 - Continuing a trajectory file after a restart (SeekDelta K60), as a
   simulation restarted from a checkpoint does.
   `kekule_traj::io::append_trajectory` verifies and indexes the frames a
@@ -216,6 +221,10 @@ are marked **Breaking:**.
   `published` and `source` look up one index. The source is the topology the
   editor started from; entities added or appended since have no source.
   The handle lookups `EditCorrespondence::atom` and `bond` are unchanged.
+- An informational benchmark of reading a large mmCIF entry
+  (`cargo bench -p kekule --bench structure_interpretation -- <mmCIF>`),
+  which times parsing, interpretation, and default perception of an
+  externally supplied entry such as PDB 6SPB or 7K00.
 - An informational benchmark of a ligand edit in a large model
   (`cargo bench -p kekule --bench model_edit_scale -- <mmCIF> <ligand>`),
   which merges 66 copies of an externally supplied entry such as PDB 9UOH.
@@ -750,6 +759,32 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** only monomers of a polymer have one-letter codes (SeekDelta
+  K21b). `residue_code` and `chain_sequences` give a code to a residue whose
+  component links into a polymer, or an amino-acid or nucleotide residue,
+  only when its molecule holds another such residue, the file numbers it in
+  a polymer sequence (`label_seq_id`), or its atoms have no bonds, as in a
+  Cα trace. A free nucleotide or amino acid bound as a ligand, such as the
+  `GDP` of KRas, has no code, so it no longer adds a one-letter sequence to
+  its chain. `component_code` is unchanged.
+- mmCIF and PDB interpretation of large entries is faster, with unchanged
+  results (SeekDelta K24). Rows pass through interpretation by index
+  instead of being copied at each stage, connection partners are found
+  through residue and atom-name indices instead of a scan of every row,
+  residues and chains are looked up once per run of their rows, molecules
+  split into components in one pass, and close contacts come from a sorted
+  cell grid. PDB 6SPB (90,351 atoms) interprets in 0.6 s instead of
+  1.7 s, and 7K00 (149,338 atoms) in 1.1 s instead of 3.2 s
+  (medians, release, one thread).
+- **Breaking:** mmCIF and PDB interpretation errors are sentences too
+  (SeekDelta K62), as the rest of Kekule's messages: atom-site, residue,
+  coordinate-model, alternate-location, connection and template failures
+  name their records, atoms and values, such as `The _cell.length_b value
+  "abc" is not a number.` or `Residue 7 of chain "A" in model "1" has
+  alternate locations.` `ConnectionResolutionReason` displays as a
+  sentence, and the new `Display` for `SourceResidueId` writes `residue 12
+  insertion code "A" of chain "B" in model "1"`. A cancelled interpretation
+  has an empty message and keeps `Cancelled` as its source.
 - **Breaking:** error messages are sentences (SeekDelta K62). The `Display`
   text of every public error and issue in `kekule`, `kekule-traj`,
   `kekule-openff` and `kekule-potentials` is one or two short sentences with

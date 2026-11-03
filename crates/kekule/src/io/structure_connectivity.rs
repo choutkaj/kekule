@@ -365,6 +365,18 @@ struct ResidueKey {
 }
 
 impl ResidueKey {
+    /// Whether `atom` belongs to the residue this key names.
+    fn matches(&self, atom: &StagedAtomProvenance<'_>) -> bool {
+        self.label_sequence_id == atom.label_sequence_id
+            && self.polymer_position == atom.polymer_position
+            && self.occurrence == atom.occurrence
+            && self.asym_id == atom.asym_id
+            && self.component_id == atom.component_id
+            && self.entity_id.as_deref() == atom.entity_id
+            && self.author_sequence_id.as_deref() == atom.author_sequence_id
+            && self.insertion_code.as_deref() == atom.insertion_code
+    }
+
     fn id(&self, model_id: &str) -> raw::SourceResidueId {
         raw::SourceResidueId::new(
             model_id,
@@ -415,23 +427,34 @@ fn residue_atoms<'a>(
     cancellation: Option<&Cancellation>,
 ) -> Result<BTreeMap<ResidueKey, ResidueAtoms>, FormatError> {
     let mut residues = BTreeMap::new();
+    // A residue's atoms usually follow each other, so the residue receiving
+    // atoms is looked up once per run of them.
+    let mut current: Option<ResidueAtoms> = None;
     for (step, atom) in atoms.into_iter().enumerate() {
         raw::poll_every(cancellation, step)?;
-        let key = ResidueKey {
-            asym_id: atom.asym_id.to_owned(),
-            entity_id: atom.entity_id.map(str::to_owned),
-            label_sequence_id: atom.label_sequence_id,
-            author_sequence_id: atom.author_sequence_id.map(str::to_owned),
-            insertion_code: atom.insertion_code.map(str::to_owned),
-            occurrence: atom.occurrence,
-            component_id: atom.component_id.to_owned(),
-            polymer_position: atom.polymer_position,
+        let residue = match &mut current {
+            Some(residue) if residue.key.matches(&atom) => residue,
+            _ => {
+                if let Some(residue) = current.take() {
+                    residues.insert(residue.key.clone(), residue);
+                }
+                let key = ResidueKey {
+                    asym_id: atom.asym_id.to_owned(),
+                    entity_id: atom.entity_id.map(str::to_owned),
+                    label_sequence_id: atom.label_sequence_id,
+                    author_sequence_id: atom.author_sequence_id.map(str::to_owned),
+                    insertion_code: atom.insertion_code.map(str::to_owned),
+                    occurrence: atom.occurrence,
+                    component_id: atom.component_id.to_owned(),
+                    polymer_position: atom.polymer_position,
+                };
+                current.insert(residues.remove(&key).unwrap_or(ResidueAtoms {
+                    key,
+                    atoms: BTreeMap::new(),
+                    sites: Vec::new(),
+                }))
+            }
         };
-        let residue = residues.entry(key.clone()).or_insert_with(|| ResidueAtoms {
-            key,
-            atoms: BTreeMap::new(),
-            sites: Vec::new(),
-        });
         residue.atoms.insert(atom.atom_name.to_owned(), atom.atom);
         residue.sites.push(ResidueSite {
             name: atom.atom_name.to_owned(),
@@ -441,6 +464,9 @@ fn residue_atoms<'a>(
             line: atom.line,
             stated_charge: atom.stated_charge,
         });
+    }
+    if let Some(residue) = current {
+        residues.insert(residue.key.clone(), residue);
     }
     raw::poll(cancellation)?;
     Ok(residues)
@@ -824,7 +850,7 @@ impl<'r> Resolver<'r, '_> {
                 DiagnosticKind::Unsupported,
                 residue.sites.first().map(|site| site.line),
                 format!(
-                    "component `{}` has no template or bond table; supply a template or enable distance inference",
+                    "Component {:?} has no template or bond table. Supply a template or turn on distance inference.",
                     residue.key.component_id
                 ),
             ));
@@ -1102,7 +1128,7 @@ impl<'r> Resolver<'r, '_> {
                     DiagnosticKind::Inconsistent,
                     residue.sites.first().map(|site| site.line),
                     format!(
-                        "hydrogens of a `{}` residue match neither its template nor a protonation variant",
+                        "The hydrogens of a {:?} residue match neither its template nor a protonation variant.",
                         templated.component.id()
                     ),
                 )
@@ -1173,7 +1199,7 @@ impl<'r> Resolver<'r, '_> {
             .map(|(atom, index, difference)| {
                 let base = candidate.atoms()[index].formal_charge().unwrap_or(0);
                 let delta = i8::try_from(difference).map_err(|_| {
-                    chemistry_error("hydrogen count difference exceeds charge range")
+                    chemistry_error("A residue's hydrogen count differs from its template by more than a formal charge holds.")
                 })?;
                 Ok(TemplateCharge {
                     atom,
@@ -1236,17 +1262,17 @@ impl<'r> Resolver<'r, '_> {
 
     fn report_fragmented_residues(&mut self, residues: &BTreeMap<ResidueKey, ResidueAtoms>) {
         let components = self.graph.connected_components();
-        let mut component_of = BTreeMap::new();
+        let mut component_of = vec![None; self.graph.graph.atom_slot_count()];
         for (index, component) in components.iter().enumerate() {
             for atom in component {
-                component_of.insert(*atom, index);
+                component_of[atom.index()] = Some(index);
             }
         }
         for residue in residues.values() {
             let fragments = residue
                 .sites
                 .iter()
-                .filter_map(|site| component_of.get(&site.atom))
+                .filter_map(|site| component_of.get(site.atom.index()).copied().flatten())
                 .collect::<BTreeSet<_>>()
                 .len();
             if fragments > 1 {
@@ -1289,7 +1315,7 @@ fn match_template(
             Some((index, template_atom)) => {
                 if template_atom.element() != site.element {
                     return failure(format!(
-                        "atom `{}` of component `{}` is {} in the model but {} in its template",
+                        "Atom {:?} of component {:?} is {} in the model but {} in its template.",
                         site.name,
                         component.id(),
                         site.element.symbol(),
@@ -1298,7 +1324,7 @@ fn match_template(
                 }
                 if matched.insert(index, site.atom).is_some() {
                     return failure(format!(
-                        "two atoms of one `{}` residue match template atom `{}`",
+                        "Two atoms of one {:?} residue match template atom {:?}.",
                         component.id(),
                         template_atom.name()
                     ));
@@ -1307,7 +1333,7 @@ fn match_template(
             None if is_hydrogen(site.element) => strays.push(site.atom),
             None => {
                 return failure(format!(
-                    "atom `{}` is not in component `{}`",
+                    "Atom {:?} is not in component {:?}.",
                     site.name,
                     component.id()
                 ))
@@ -1490,11 +1516,11 @@ fn add_bond_if_missing(
     };
     if !consistent {
         let source_order = match source_order {
-            SourceBondOrder::Localized(order) => format!("{order:?}"),
-            SourceBondOrder::Aromatic => "Aromatic".to_owned(),
+            SourceBondOrder::Localized(order) => order.to_string(),
+            SourceBondOrder::Aromatic => "aromatic".to_owned(),
         };
         return Err(chemistry_error(format!(
-            "conflicting authoritative bond evidence for one atom pair: {existing_order:?} versus {source_order}"
+            "The bond records give one atom pair two orders: {existing_order} and {source_order}."
         )));
     }
     Ok(())
@@ -1515,7 +1541,7 @@ fn component_bond_order(
             table,
             row,
             DiagnosticKind::Unsupported,
-            format!("unsupported component bond order `{other}`"),
+            format!("The component bond order {other:?} is not supported."),
         )),
     }
 }
@@ -1547,7 +1573,7 @@ fn required<'a>(
             table,
             row,
             DiagnosticKind::InvalidValue,
-            format!("missing required {tag}"),
+            format!("The required {tag} is missing."),
         )
     })?;
     value.optional_text().ok_or_else(|| {
@@ -1555,7 +1581,7 @@ fn required<'a>(
             table,
             row,
             DiagnosticKind::InvalidValue,
-            format!("missing required {tag}"),
+            format!("The required {tag} is missing."),
         )
     })
 }
@@ -1566,7 +1592,7 @@ fn required_i32(table: &MmcifCategory<'_>, row: usize, tag: &str) -> Result<i32,
             table,
             row,
             DiagnosticKind::InvalidValue,
-            format!("invalid integer {tag}"),
+            format!("The {tag} value is not a whole number."),
         )
     })
 }
@@ -1588,7 +1614,7 @@ fn row_error(
 
 /// Molecule construction failed with `source` as the cause.
 fn interpret_error(source: impl std::error::Error + Send + Sync + 'static) -> FormatError {
-    chemistry_error("molecule construction failed").with_source(source)
+    chemistry_error("Cannot build the molecule.").with_source(source)
 }
 
 fn chemistry_error(message: impl Into<String>) -> FormatError {
@@ -2714,7 +2740,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             error.location().map(|location| location.line()),
             Some(line_of(&unknown_atom, " CX GLY"))
         );
-        assert_eq!(error.message(), "atom `CX` is not in component `GLY`");
+        assert_eq!(error.message(), "Atom \"CX\" is not in component \"GLY\".");
 
         // Without its CA, a glycine's amine is cut off from its carbonyl.
         let split = interpret(&block(

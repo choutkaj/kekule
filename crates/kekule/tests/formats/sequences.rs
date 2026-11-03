@@ -7,6 +7,7 @@ use kekule::{mmcif, pdb};
 
 const TRNA: &str = include_str!("../fixtures/mmcif/1EHZ.cif");
 const GFP: &str = include_str!("../fixtures/mmcif/1EMA.cif");
+const KRAS: &str = include_str!("../fixtures/mmcif/9UOH.cif");
 
 fn interpret(text: &str) -> StructureInterpretation {
     mmcif::parse_str(text, Default::default())
@@ -40,7 +41,9 @@ fn modified_nucleotides_take_their_parents_codes() {
         assert_eq!(monomer.component_id(), component);
         assert_eq!(monomer.code().as_str(), code);
         assert_eq!(monomer.code().origin(), CodeOrigin::Component);
+        assert!(monomer.code().is_modified());
     }
+    assert!(!monomer(1).code().is_modified());
 
     // Every monomer is observed, so the chain's sequence is the entity's.
     let instance = &trna.instances()[0];
@@ -61,6 +64,7 @@ fn modified_nucleotides_take_their_parents_codes() {
     assert_eq!(residue.name(), "2MG");
     let code = sequence::residue_code(residue, &SequenceOptions::default()).expect("code");
     assert_eq!(code.as_str(), "G");
+    assert_eq!(code.parents().collect::<Vec<_>>(), ["G"]);
     // Magnesium ions and water have no code.
     assert!(topology
         .residues()
@@ -84,9 +88,17 @@ fn stated_sequences_place_the_observed_residues() {
     );
     assert_eq!(chromophore.code().as_str(), "X");
     assert_eq!(chromophore.code().origin(), CodeOrigin::Sequence);
+    assert_eq!(
+        chromophore.code().parents().collect::<Vec<_>>(),
+        ["THR", "TYR", "GLY"]
+    );
     let selenomethionine = &gfp.monomers()[0];
     assert_eq!(selenomethionine.component_id(), "MSE");
     assert_eq!(selenomethionine.code().as_str(), "M");
+    assert_eq!(
+        selenomethionine.code().parents().collect::<Vec<_>>(),
+        ["MET"]
+    );
 
     // The first monomer and the last nine are not observed; the scheme still
     // numbers them.
@@ -114,6 +126,117 @@ fn stated_sequences_place_the_observed_residues() {
     assert!(chain.sequence().starts_with("SKGEELFTG"));
     assert!(chain.sequence().contains("TFTYGVQCF"));
     assert_eq!(chain.monomers().len(), 226);
+    let modified = chain
+        .monomers()
+        .iter()
+        .filter(|monomer| monomer.code().is_modified())
+        .map(|monomer| topology.residue(monomer.residue()).expect("residue").name())
+        .collect::<Vec<_>>();
+    assert_eq!(modified, ["CRO", "MSE", "MSE", "MSE", "MSE"]);
+}
+
+/// The codes of a polymer entity's observed monomers, joined.
+fn observed_sequence(interpretation: &StructureInterpretation) -> String {
+    let entity = &interpretation.report().polymer_entities()[0];
+    entity.instances()[0]
+        .positions()
+        .iter()
+        .zip(entity.monomers())
+        .filter(|(position, _)| position.residue().is_some())
+        .map(|(_, monomer)| monomer.code().as_str())
+        .collect()
+}
+
+#[test]
+fn a_free_nucleotide_has_no_code() {
+    let options = SequenceOptions::default();
+    let interpretation = interpret(KRAS);
+    let protein = observed_sequence(&interpretation);
+    assert!(protein.starts_with("MTEYKLVVVGACGVGKS"));
+    // GDP links into polynucleotides, but here it is a lone ligand.
+    assert_eq!(
+        sequence::component_code("GDP", &options).map(|code| code.to_string()),
+        Some("G".to_owned())
+    );
+
+    // The same entry as PDB records, which number no residue in a sequence
+    // and name residues with three characters.
+    let short = interpret(&KRAS.replace("A1L9E", "L9E"));
+    let (written, _) = pdb::write(short.model(), Default::default()).expect("writes");
+    let reread = pdb::parse_str(&written, Default::default())
+        .expect("parses")
+        .interpret(Default::default())
+        .expect("interprets");
+    for topology in [interpretation.topology(), reread.topology()] {
+        let chains = sequence::chain_sequences(topology, &options);
+        assert_eq!(chains.len(), 1);
+        assert_eq!(chains[0].sequence(), protein);
+        let gdp = topology
+            .residues()
+            .find(|residue| residue.name() == "GDP")
+            .expect("GDP");
+        assert!(sequence::residue_code(gdp, &options).is_none());
+        let glycine = topology
+            .residues()
+            .find(|residue| residue.name() == "GLY")
+            .expect("glycine");
+        assert_eq!(
+            sequence::residue_code(glycine, &options).map(|code| code.to_string()),
+            Some("G".to_owned())
+        );
+    }
+}
+
+const LONE_MONOMERS: &str = r"
+data_lone
+loop_
+_entity.id
+_entity.type
+1 polymer
+2 non-polymer
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+ATOM 1 N N ALA A 1 1 2.281 26.213 12.804 1 A
+ATOM 2 C CA ALA A 1 1 1.169 26.942 13.411 1 A
+ATOM 3 C C ALA A 1 1 1.539 28.344 13.874 1 A
+ATOM 4 O O ALA A 1 1 2.709 28.647 14.114 1 A
+ATOM 5 C CB ALA A 1 1 0.601 26.143 14.574 1 A
+HETATM 6 N N ALA B 2 . 12.281 26.213 12.804 101 A
+HETATM 7 C CA ALA B 2 . 11.169 26.942 13.411 101 A
+HETATM 8 C C ALA B 2 . 11.539 28.344 13.874 101 A
+HETATM 9 O O ALA B 2 . 12.709 28.647 14.114 101 A
+HETATM 10 C CB ALA B 2 . 10.601 26.143 14.574 101 A
+HETATM 11 O OXT ALA B 2 . 10.523 29.194 13.997 101 A
+";
+
+#[test]
+fn a_lone_amino_acid_is_a_monomer_only_in_a_polymer() {
+    let interpretation = interpret(LONE_MONOMERS);
+    let topology = interpretation.topology();
+    let options = SequenceOptions::default();
+    // The polymer entity of one residue keeps its code; the ligand has none.
+    let codes = topology
+        .residues()
+        .map(|residue| {
+            sequence::residue_code(residue, &options).map(|code| code.as_str().to_owned())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(codes, [Some("A".to_owned()), None]);
+    let chains = sequence::chain_sequences(topology, &options);
+    assert_eq!(chains.len(), 1);
+    assert_eq!(chains[0].sequence(), "A");
 }
 
 const TOY: &str = r"
@@ -257,6 +380,12 @@ ATOM      3  CA  TPO A   3       7.600   0.000   0.000  1.00  0.00           C
 TER
 HETATM    4  O   HOH A 101       0.000  10.000   0.000  1.00  0.00           O
 HETATM    5  PG  GTP A 102       0.000  20.000   0.000  1.00  0.00           P
+HETATM    6  N   ALA A 103       2.281  26.213  12.804  1.00  0.00           N
+HETATM    7  CA  ALA A 103       1.169  26.942  13.411  1.00  0.00           C
+HETATM    8  C   ALA A 103       1.539  28.344  13.874  1.00  0.00           C
+HETATM    9  O   ALA A 103       2.709  28.647  14.114  1.00  0.00           O
+HETATM   10  CB  ALA A 103       0.601  26.143  14.574  1.00  0.00           C
+HETATM   11  OXT ALA A 103       0.523  29.194  13.997  1.00  0.00           O
 END
 ";
     let interpretation = pdb::parse_str(text, Default::default())
@@ -264,10 +393,16 @@ END
         .interpret(Default::default())
         .expect("interprets");
     assert!(interpretation.report().polymer_entities().is_empty());
+    // The Cα trace has codes; the free alanine has none.
     let chains = sequence::chain_sequences(interpretation.topology(), &SequenceOptions::default());
     assert_eq!(chains.len(), 1);
     assert_eq!(chains[0].sequence(), "GMT");
-    assert_eq!(chains[0].monomers().len(), 3);
+    let parents = chains[0]
+        .monomers()
+        .iter()
+        .map(|monomer| monomer.code().parents().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    assert_eq!(parents, [vec![], vec!["MET"], vec!["THR"]]);
 }
 
 #[test]

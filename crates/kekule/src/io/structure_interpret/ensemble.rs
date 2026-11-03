@@ -31,7 +31,7 @@ pub(super) fn interpret_ensemble(
         if !seen.insert(model.clone()) {
             return Err(ensemble_error(
                 DiagnosticKind::Inconsistent,
-                format!("coordinate model `{model}` was requested more than once"),
+                format!("Coordinate model {model:?} is requested twice."),
                 FormatErrorDetail::DuplicateRequestedModel {
                     model_id: model.clone(),
                 },
@@ -40,7 +40,7 @@ pub(super) fn interpret_ensemble(
         if !available.contains(model) {
             return Err(ensemble_error(
                 DiagnosticKind::Inconsistent,
-                format!("coordinate model `{model}` is not present"),
+                format!("Coordinate model {model:?} does not exist."),
                 FormatErrorDetail::UnknownRequestedModel {
                     model_id: model.clone(),
                 },
@@ -79,7 +79,7 @@ pub(super) fn interpret_conformations(
     if selections.is_empty() {
         return Err(ensemble_error(
             DiagnosticKind::Inconsistent,
-            "explicit conformation selection is empty",
+            "The conformation selection is empty.",
             FormatErrorDetail::EmptyConformationSelection,
         ));
     }
@@ -95,7 +95,7 @@ pub(super) fn interpret_conformations(
 pub(super) fn empty_model_selection() -> FormatError {
     ensemble_error(
         DiagnosticKind::Inconsistent,
-        "explicit coordinate model selection is empty",
+        "The coordinate model selection is empty.",
         FormatErrorDetail::EmptyModelSelection,
     )
 }
@@ -104,7 +104,7 @@ pub(super) fn empty_model_selection() -> FormatError {
 pub(super) fn no_coordinate_models() -> FormatError {
     ensemble_error(
         DiagnosticKind::Inconsistent,
-        "input contains no coordinate models",
+        "The input has no coordinate models.",
         FormatErrorDetail::NoCoordinateModels,
     )
 }
@@ -117,7 +117,7 @@ fn in_model(error: FormatError, model_id: String) -> FormatError {
 fn inconsistent_atom_set(model_id: String) -> FormatError {
     ensemble_error(
         DiagnosticKind::Inconsistent,
-        format!("coordinate model `{model_id}` has an inconsistent atom identity set"),
+        format!("Coordinate model {model_id:?} has other atoms than the first model."),
         FormatErrorDetail::InconsistentAtomSet { model_id },
     )
 }
@@ -125,7 +125,7 @@ fn inconsistent_atom_set(model_id: String) -> FormatError {
 fn inconsistent_dense_atom_order(model_id: String) -> FormatError {
     ensemble_error(
         DiagnosticKind::Inconsistent,
-        format!("coordinate model `{model_id}` has an inconsistent dense atom identity order"),
+        format!("Coordinate model {model_id:?} orders its atoms differently from the first model."),
         FormatErrorDetail::InconsistentDenseAtomOrder { model_id },
     )
 }
@@ -134,7 +134,7 @@ fn assembly_error(error: EnsembleError) -> FormatError {
     FormatError::interpret(
         Format::Mmcif,
         DiagnosticKind::Chemistry,
-        "cannot assemble ensemble",
+        "Cannot assemble the ensemble.",
     )
     .with_source(error)
 }
@@ -175,7 +175,7 @@ fn assemble(
             return Err(ensemble_error(
                 DiagnosticKind::Inconsistent,
                 format!(
-                    "coordinate model `{model_id}` has inconsistent molecule partition, chemistry, connectivity, or hierarchy"
+                    "Coordinate model {model_id:?} differs from the first model in its molecules, chemistry, bonds or residues."
                 ),
                 FormatErrorDetail::InconsistentTopology { model_id },
             ));

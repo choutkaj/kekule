@@ -262,13 +262,13 @@ fn mmcif_altloc_rejects_single_label_and_duplicate_sites() {
         .interpret(Default::default())
         .unwrap_err()
         .message()
-        .contains("duplicate"));
+        .contains("has two"));
     let overlapping = document("1 C C1 LIG X 1 1 . A 1 0 0 0 1\n2 C C1 LIG X 1 1 . . 1 1 0 0 1");
     assert!(overlapping
         .interpret(Default::default())
         .unwrap_err()
         .message()
-        .contains("overlapping"));
+        .contains("two selected sites"));
 }
 
 fn with_conformations(rows: &str, mapping: &str) -> MmcifDocument {
@@ -509,7 +509,7 @@ fn mmcif_altloc_unselected_models_still_validate_alternate_sites() {
                 .with_model_selection(ModelSelection::Select("1".into())),
         )
         .unwrap_err();
-    assert!(error.message().contains("duplicate"));
+    assert!(error.message().contains("has two"));
 }
 
 #[test]
@@ -564,7 +564,7 @@ fn mmcif_altloc_rejected_source_combinations_are_reported() {
     assert_eq!(choices(&result), [vec!["A"], vec!["C"]]);
     assert!(result.report().issues().iter().any(|issue| matches!(issue,
         StructureInterpretIssue::AlternateLocationCombinationRejected { alternative, reason, .. }
-        if alternative == "bad" && reason.contains("overlapping")
+        if alternative == "bad" && reason.contains("two selected sites")
     )));
     let source = with_conformations(DECLARED, "bad A\ngood A\ngood C\n");
     assert!(source.interpret(Default::default()).unwrap().report().issues().iter().any(|issue| matches!(issue,

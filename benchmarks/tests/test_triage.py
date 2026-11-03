@@ -252,6 +252,11 @@ class ErrorKinds(unittest.TestCase):
         self.assertEqual(errors.refine("reference", "sanitize", "Explicit valence for atom # 1 N, 4"), "sanitize:valence")
         self.assertEqual(errors.refine("kekule", "parse", "unclosed ring closure"), "parse")
         self.assertEqual(errors.refine("kekule", "interpret", "unknown atom-site element `D`"), "interpret:deuterium")
+        self.assertEqual(errors.refine("kekule", "interpret", 'The element symbol "D" is unknown.'), "interpret:deuterium")
+        self.assertEqual(
+            errors.refine("kekule", "interpret", "Residue 3 of chain \"A\" in model \"1\" has no complete alternate-location combination that meets the selection."),
+            "interpret:altloc",
+        )
         self.assertEqual(errors.refine("kekule", "parse", "unsupported element symbol `CL`"), "parse:uppercase-element")
         self.assertEqual(errors.refine("kekule", "parse", "unsupported element symbol `R1`"), "parse:query-atom")
         self.assertEqual(errors.refine("kekule", "parse", "unsupported element symbol `R`"), "parse:query-atom")

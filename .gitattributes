@@ -20,5 +20,4 @@ fuzz/corpus/trajectory_index/** binary
 crates/kekule-openff-ash/data/** binary
 # Bundled Chemical Component Dictionary entries keep their exact bytes.
 crates/kekule/data/components/*.cif -text
-# The generated dictionary code table keeps the bytes its lock pins.
 crates/kekule/data/components/codes.tsv -text

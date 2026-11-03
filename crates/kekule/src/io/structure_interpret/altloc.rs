@@ -205,6 +205,40 @@ impl SourceResidueId {
     }
 }
 
+/// Writes the residue as a noun phrase, such as `residue 12 insertion code
+/// "A" of chain "B" in model "1"`.
+impl std::fmt::Display for SourceResidueId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.position {
+            SourceResiduePosition::Label(sequence) => write!(formatter, "residue {sequence}")?,
+            SourceResiduePosition::Author(sequence) => {
+                write!(formatter, "author residue {sequence:?}")?
+            }
+            SourceResiduePosition::RepeatedAuthor { sequence, repeat } => write!(
+                formatter,
+                "author residue {sequence:?} (occurrence {})",
+                repeat.saturating_add(1)
+            )?,
+            SourceResiduePosition::Occurrence {
+                component_id,
+                index,
+            } => write!(
+                formatter,
+                "{component_id:?} residue number {}",
+                index.saturating_add(1)
+            )?,
+        }
+        if let Some(code) = &self.insertion_code {
+            write!(formatter, " insertion code {code:?}")?;
+        }
+        write!(
+            formatter,
+            " of chain {:?} in model {:?}",
+            self.asym_id, self.model_id
+        )
+    }
+}
+
 /// The position part of a [`SourceResidueId`], in the first namespace the
 /// source provides.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -234,6 +268,38 @@ pub enum SourceResiduePosition {
 }
 
 impl SourceResidueId {
+    /// Whether `row` belongs to this residue: [`Self::of`] the row equals it.
+    pub(super) fn matches(&self, row: &AtomRow) -> bool {
+        let position = match (&self.position, row.label_seq_id) {
+            (SourceResiduePosition::Label(sequence), Some(row_sequence)) => {
+                *sequence == row_sequence
+            }
+            (_, Some(_)) | (SourceResiduePosition::Label(_), None) => false,
+            (SourceResiduePosition::Author(sequence), None) => {
+                row.occurrence.is_none() && row.auth_seq_id.as_deref() == Some(sequence.as_str())
+            }
+            (SourceResiduePosition::RepeatedAuthor { sequence, repeat }, None) => {
+                row.occurrence == Some(*repeat)
+                    && row.auth_seq_id.as_deref() == Some(sequence.as_str())
+            }
+            (
+                SourceResiduePosition::Occurrence {
+                    component_id,
+                    index,
+                },
+                None,
+            ) => {
+                row.auth_seq_id.is_none()
+                    && row.occurrence.unwrap_or_default() == *index
+                    && row.comp_id == *component_id
+            }
+        };
+        position
+            && self.model_id == row.model_id
+            && self.asym_id == row.asym_id
+            && self.insertion_code.as_deref() == row.insertion_code.as_deref()
+    }
+
     pub(super) fn of(row: &AtomRow) -> Self {
         Self::new(
             &row.model_id,

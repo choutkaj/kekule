@@ -591,23 +591,24 @@ pub enum ConnectionResolutionReason {
 impl fmt::Display for ConnectionResolutionReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedSymmetry { symmetry } => {
-                write!(formatter, "unsupported symmetry mate `{symmetry}`")
-            }
-            Self::MissingSelector => formatter.write_str("missing partner atom selector"),
+            Self::UnsupportedSymmetry { symmetry } => write!(
+                formatter,
+                "The partner is symmetry mate {symmetry:?}. Symmetry mates are not supported."
+            ),
+            Self::MissingSelector => formatter.write_str("The record names no partner atom."),
             Self::ConflictingSelectorValues { selector } => {
-                write!(formatter, "conflicting values for {selector}")
+                write!(formatter, "The {selector} disagree.")
             }
             Self::ConflictingLabelAndAuthorSelectors => {
-                formatter.write_str("label and author selectors identify different atoms")
+                formatter.write_str("The label and author selectors name different atoms.")
             }
             Self::AlternateLocationOmitted { alternate_location } => write!(
                 formatter,
-                "alternate location `{alternate_location}` was omitted by selection policy"
+                "Alternate location {alternate_location:?} is not in the selected structure."
             ),
-            Self::NoMatchingAtom => formatter.write_str("no atom matches the partner selector"),
+            Self::NoMatchingAtom => formatter.write_str("No atom matches the partner selector."),
             Self::MultipleMatchingAtoms => {
-                formatter.write_str("multiple atoms match the partner selector")
+                formatter.write_str("Several atoms match the partner selector.")
             }
         }
     }
@@ -997,12 +998,7 @@ pub(in crate::io) fn structure_error(
 
 /// Interpretation stopped because its cancellation was requested.
 pub(in crate::io) fn cancelled(cancelled: Cancelled) -> FormatError {
-    FormatError::interpret(
-        Format::Mmcif,
-        DiagnosticKind::Cancelled,
-        "interpretation cancelled",
-    )
-    .with_source(cancelled)
+    FormatError::interpret(Format::Mmcif, DiagnosticKind::Cancelled, "").with_source(cancelled)
 }
 
 /// Polls interpretation's cancellation, if any.

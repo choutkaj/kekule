@@ -259,7 +259,7 @@ pub(super) fn read_polymer_entities(
                     &table,
                     row,
                     DiagnosticKind::Inconsistent,
-                    format!("duplicate polymer entity `{id}`"),
+                    format!("Polymer entity {id:?} appears twice."),
                 ));
             }
             entities.list[index].polymer_type =
@@ -492,7 +492,7 @@ fn read_stated_components(
                 &table,
                 row,
                 DiagnosticKind::Inconsistent,
-                format!("duplicate component `{id}`"),
+                format!("Component {id:?} appears twice."),
             ));
         }
     }
@@ -598,7 +598,7 @@ fn adopt_stated_letters(monomers: &mut [EntityMonomer], sequence: &str) {
         let letters = &sequence[start..start + length];
         start += length;
         if letters != monomer.code.as_str() {
-            monomer.code = ResidueCode::new(letters, CodeOrigin::Sequence);
+            monomer.code = monomer.code.restated(letters, CodeOrigin::Sequence);
         }
     }
 }
@@ -616,7 +616,7 @@ fn required_i32(table: &MmcifCategory<'_>, row: usize, field: Field) -> Result<i
             table,
             row,
             DiagnosticKind::InvalidValue,
-            format!("invalid integer {}", field.tag()),
+            format!("The {} value {text:?} is not a whole number.", field.tag()),
         )
     })
 }
