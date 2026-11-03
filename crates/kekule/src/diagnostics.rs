@@ -1193,9 +1193,7 @@ pub(crate) fn read_bounded(
     reader
         .take(limit)
         .read_to_end(&mut bytes)
-        .map_err(|error| {
-            FormatError::parse(format, DiagnosticKind::Io, "").with_source(error)
-        })?;
+        .map_err(|error| FormatError::parse(format, DiagnosticKind::Io, "").with_source(error))?;
     if bytes.len() > max_bytes {
         let limit = LimitExceeded::new(Resource::InputBytes, max_bytes, bytes.len());
         return Err(FormatError::parse(
