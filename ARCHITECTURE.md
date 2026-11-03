@@ -594,12 +594,12 @@ indices of each side's topology. Criteria are a plain options value in
 excludes ends of one molecule; across structures no bond joins the sides, so
 the two searches agree on the parts of a structure no bond joins. Both reduce
 hydrophobic contacts as PLIP does, after every pair is found: none between
-π-stacked rings, then the closest per atom and residue in each direction. The side with
-fewer atoms lists its features; the other reads only atoms within reach of
-them, and pairs are found on the uniform point grid that group contact
-occupancy also uses. Hydrogen-bond occupancy is a weighted, mergeable
-accumulator of found interactions, with the transactional observation and
-merge rules of the weighted statistics. See
+π-stacked rings, reported or not, then the closest per atom and residue in each
+direction. The side with fewer atoms lists its features; the other reads only
+atoms within reach of them, and pairs are found on the uniform point grid that
+group contact occupancy also uses. Hydrogen-bond occupancy is a weighted,
+mergeable accumulator of found interactions, with the transactional observation
+and merge rules of the weighted statistics. See
 [interactions](crates/kekule/src/interactions/mod.rs).
 
 For format profiles, limits, periodic conventions, statistical definitions, and

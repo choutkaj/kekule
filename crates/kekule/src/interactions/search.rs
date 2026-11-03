@@ -89,8 +89,9 @@ impl<'a> InteractionSide<'a> {
 /// hydrogen when one qualifies, otherwise with the first end donating.
 ///
 /// Hydrophobic contacts are reduced as PLIP reduces them (Salentin et al.
-/// 2015). Contacts between the atoms of two rings that π-stack are dropped,
-/// since the stacking covers them. Then each atom of `first` keeps only its
+/// 2015). Contacts between the atoms of two rings that π-stack by the
+/// π-stacking criteria are dropped, since the stacking covers them, whether
+/// or not π stacking is reported. Then each atom of `first` keeps only its
 /// closest contact with each residue, and each atom of `second` keeps only
 /// its closest remaining contact with each residue. An atom of both sets
 /// keeps one contact with each residue whichever end it is, so the result
@@ -668,6 +669,18 @@ impl<'a> Search<'a> {
         if c.hydrophobic.enabled {
             self.search(Role::Hydrophobic, Role::Hydrophobic, c.hydrophobic.distance);
         }
+        // The reduction drops contacts between stacked rings, so it needs the
+        // stackings even when they are not reported. Ring candidates do not
+        // depend on the nearby atoms, so these are the stackings a search
+        // that reports them finds.
+        let unreported = !c.pi_stacking.enabled
+            && self
+                .found
+                .iter()
+                .any(|interaction| interaction.kind == InteractionKind::HydrophobicContact);
+        if unreported {
+            self.search(Role::Ring, Role::Ring, c.pi_stacking.distance);
+        }
         let mut found = std::mem::take(&mut self.found);
         found.sort_by(|a, b| {
             (
@@ -727,7 +740,10 @@ impl<'a> Search<'a> {
             })
             .map(|(_, interaction)| interaction)
             .collect::<Vec<_>>();
-        let kept = self.reduce_hydrophobic_contacts(kept);
+        let mut kept = self.reduce_hydrophobic_contacts(kept);
+        if unreported {
+            kept.retain(|interaction| !stacking(interaction));
+        }
         Interactions {
             first: self.first_topology,
             second: self.second_topology,
@@ -749,12 +765,7 @@ impl<'a> Search<'a> {
         // Atom pairs of rings that π-stack. Within one structure, the
         // contact's lower atom comes first, so either ring may hold it.
         let mut stacked = HashSet::new();
-        for stacking in found.iter().filter(|interaction| {
-            matches!(
-                interaction.kind,
-                InteractionKind::PiStackingParallel | InteractionKind::PiStackingTShaped
-            )
-        }) {
+        for stacking in found.iter().filter(|interaction| stacking(interaction)) {
             for &first in &stacking.first.atoms {
                 for &second in &stacking.second.atoms {
                     stacked.insert((first, second));
@@ -1016,6 +1027,14 @@ fn end(side: &Side<'_>, role: Role, candidate: &Candidate) -> InteractionEnd {
         center: candidate.point,
         normal: (role == Role::Ring).then_some(candidate.normal),
     }
+}
+
+/// Whether `interaction` is a π stacking, parallel or T-shaped.
+fn stacking(interaction: &Interaction) -> bool {
+    matches!(
+        interaction.kind,
+        InteractionKind::PiStackingParallel | InteractionKind::PiStackingTShaped
+    )
 }
 
 /// The interaction of a `p` candidate of `p_side` and a `q` candidate of
