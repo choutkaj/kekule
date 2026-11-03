@@ -151,11 +151,11 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
             TrajectoryFormat::Xtc,
             "box-rounding.xtc",
             None,
-            "The XTC cell cannot be represented as a float32 box.",
+            "The cell does not fit single precision.",
         )
         .with_source(
             kekule_traj::TrajectoryIoError::new(TrajectoryIoErrorKind::InvalidFrame)
-                .with_detail("The XTC periodic cell is invalid."),
+                .with_detail("The periodic cell is invalid."),
         ))
     );
     assert_eq!(writer.writer(), &before);
@@ -608,7 +608,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
             TrajectoryFormat::Xtc,
             "overflow-writer.xtc",
             None,
-            "XTC step exceeds nonnegative signed 32-bit XDR capacity.",
+            "The frame's step exceeds the 32-bit step field.",
         ))
     );
     assert!(writer.writer().get_ref().is_empty());
@@ -889,7 +889,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
                 TrajectoryFormat::Xtc,
                 "XTC writer options",
                 None,
-                "XTC precision must be finite and positive.",
+                "The precision is not a finite, positive number.",
             )),
             "{precision}"
         );
@@ -934,7 +934,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
             TrajectoryFormat::Xtc,
             "strict.xtc",
             Some(0),
-            "XTC cannot preserve frame properties.",
+            "XTC cannot store the frame properties.",
         )
         .with_field(TrajectoryField::Properties))
     );
@@ -959,7 +959,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
             TrajectoryFormat::Xtc,
             "strict.xtc",
             Some(0),
-            "XTC cannot preserve bond properties.",
+            "XTC cannot store the bond properties.",
         )
         .with_field(TrajectoryField::BondProperties))
     );
@@ -971,8 +971,8 @@ fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
     // from -1500 to 1500 nm (3e9) does not. GROMACS bounds both by
     // i32::MAX - 2; an unchecked span wrapped into a corrupt frame.
     const SPAN: &str =
-        "XTC coordinate span along an axis exceeds the selected precision's integer range.";
-    const MAGNITUDE: &str = "XTC coordinate exceeds the selected precision's integer range.";
+        "The coordinates span more along one axis than the integer range of the selected precision holds.";
+    const MAGNITUDE: &str = "A coordinate exceeds the integer range of the selected precision.";
     let topology = topology(10);
     let options = XtcWriteOptions::default()
         .with_precision(Quantity::new(1.0e6, PER_NANOMETER))

@@ -200,7 +200,7 @@ impl fmt::Display for PeriodicError {
             }
             Self::NonSequentialFrame { previous, frame } => write!(
                 f,
-                "Frame {frame} does not follow frame {previous}. Unwrapping in time needs consecutive frames."
+                "Frame {frame} does not follow frame {previous}."
             ),
             Self::NonMonotonicTime { frame } => {
                 write!(f, "Time decreases at frame {frame}.")
@@ -215,7 +215,7 @@ impl fmt::Display for PeriodicError {
             }
             Self::AmbiguousDisplacement { frame, atom, axis } => write!(
                 f,
-                "The displacement of {atom} along cell axis {} in frame {frame} is half a cell, so its image is ambiguous.",
+                "The displacement of {atom} along cell axis {} in frame {frame} is half a cell. Its image is ambiguous.",
                 ["a", "b", "c"].get(*axis).copied().unwrap_or("?")
             ),
             Self::LimitExceeded { frame, limit } => write!(
@@ -225,7 +225,7 @@ impl fmt::Display for PeriodicError {
             ),
             Self::NumericalFailure { frame } => write!(
                 f,
-                "A periodic coordinate in frame {frame} exceeds numerical precision or range."
+                "A periodic coordinate in frame {frame} exceeds the precision or range of double-precision numbers."
             ),
             Self::Position { frame, .. } => write!(f, "Frame {frame} has invalid positions."),
             Self::Publication(_) => f.write_str("Cannot publish the periodic coordinates."),

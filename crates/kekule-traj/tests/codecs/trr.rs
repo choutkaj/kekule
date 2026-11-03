@@ -155,11 +155,11 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
                     TrajectoryFormat::Trr,
                     "box-rounding.trr",
                     None,
-                    "The TRR cell cannot be represented at the selected precision.",
+                    "The cell does not fit the selected precision.",
                 )
                 .with_source(
                     kekule_traj::TrajectoryIoError::new(TrajectoryIoErrorKind::InvalidFrame)
-                        .with_detail("The TRR periodic cell is invalid."),
+                        .with_detail("The periodic cell is invalid."),
                 ))
             );
             assert_eq!(writer.writer(), &before);
@@ -576,7 +576,7 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
             TrajectoryFormat::Trr,
             "zero.trr",
             Some(0),
-            "TRR cannot preserve frame properties.",
+            "TRR cannot store the frame properties.",
         )
         .with_field(TrajectoryField::Properties))
     );
@@ -707,7 +707,7 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
             let error = reader.read_next(&mut destination).unwrap_err();
             assert!(error
                 .to_string()
-                .contains(&format!("TRR {field} contains a non-finite value.")));
+                .contains(&format!("A {field} value is not finite.")));
             assert_eq!(buffer_snapshot(&destination), snapshot);
         }
     }
@@ -743,7 +743,7 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
                 TrajectoryFormat::Trr,
                 "triplets.trr",
                 None,
-                &format!("TRR {field} is not representable at the selected precision."),
+                &format!("A {field} value does not fit the selected precision."),
             ))
         );
         assert_eq!(writer.writer().get_ref(), &Vec::<u8>::new());
@@ -780,7 +780,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
             TrajectoryFormat::Trr,
             "late-invalid.trr",
             None,
-            "TRR position is not representable at the selected precision.",
+            "A position value does not fit the selected precision.",
         ))
     );
     assert!(writer.writer().get_ref().is_empty());
@@ -806,7 +806,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
             TrajectoryFormat::Trr,
             "late-invalid.trr",
             Some(0),
-            "TRR cannot preserve bond properties.",
+            "TRR cannot store the bond properties.",
         )
         .with_field(TrajectoryField::BondProperties))
     );

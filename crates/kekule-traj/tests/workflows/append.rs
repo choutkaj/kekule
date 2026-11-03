@@ -505,7 +505,7 @@ fn appending_with_settings_other_than_the_file_records_is_refused() {
         keep,
         options(TrajectoryFormat::Trr),
         mismatch,
-        "The TRR lambda is truncated.",
+        "The lambda value is truncated.",
     );
     let (writer, report) = append_trajectory(&path, topology(), keep, lambdas).unwrap();
     assert_eq!(report.dropped_frames(), 1);

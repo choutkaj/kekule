@@ -68,7 +68,7 @@ use crate::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
-use kekule::diagnostics::{UnrepresentablePolicy, WriteReport};
+use kekule::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{OwnerProperties, PropertyKey, PropertyValue, StructureProperties};
 use kekule::structure::TrajectoryFrameView;
@@ -79,6 +79,7 @@ use kekule::units::{
 };
 
 use super::frame_state::{record, unrepresentable_frame_state};
+use super::limits::exceeded_bytes;
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
@@ -378,37 +379,46 @@ impl<R: Read + Seek> TrrReader<R> {
             )
         })?;
         let first_header = read_header(&mut reader, limits, source_label, Some(atom_count), false)?
-            .ok_or_else(|| header_error(source_label, "TRR stream is empty."))?;
+            .ok_or_else(|| header_error(source_label, "The stream is empty."))?;
         validate_lambda(first_header.lambda, options.lambda_policy, source_label, 0)?;
         let mut positions = Vec::new();
         let mut velocities = Vec::new();
         let mut forces = Vec::new();
         let vector_bytes = atom_count
             .checked_mul(std::mem::size_of::<Vector3>())
-            .ok_or_else(|| resource_error(source_label, None, "TRR vector scratch overflows."))?;
+            .ok_or_else(|| {
+                resource_error(
+                    source_label,
+                    None,
+                    "The vector buffers exceed this platform's address range.",
+                )
+            })?;
         let scratch_bytes = vector_bytes.checked_mul(3).ok_or_else(|| {
             resource_error(
                 source_label,
                 None,
-                "TRR aggregate vector scratch overflows.",
+                "The vector buffers exceed this platform's address range.",
             )
         })?;
         if scratch_bytes > limits.max_scratch_bytes() {
             return Err(resource_error(
                 source_label,
                 None,
-                "TRR vector scratch exceeds the configured limit.",
+                format!(
+                    "The vector buffers need {scratch_bytes} bytes, more than the buffer limit of {} bytes.",
+                    limits.max_scratch_bytes()
+                ),
             ));
         }
         positions.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(source_label, None, "Cannot reserve TRR position scratch.")
+            resource_error(source_label, None, "Cannot allocate the position buffer.")
         })?;
         velocities.try_reserve_exact(atom_count).map_err(|_| {
-            resource_error(source_label, None, "Cannot reserve TRR velocity scratch.")
+            resource_error(source_label, None, "Cannot allocate the velocity buffer.")
         })?;
         forces
             .try_reserve_exact(atom_count)
-            .map_err(|_| resource_error(source_label, None, "Cannot reserve TRR force scratch."))?;
+            .map_err(|_| resource_error(source_label, None, "Cannot allocate the force buffer."))?;
         positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         velocities.resize(atom_count, Vector3::zero());
         forces.resize(atom_count, Vector3::zero());
@@ -493,11 +503,12 @@ impl<R: Read + Seek> TrrReader<R> {
             if clean_eof {
                 return Ok(None);
             }
-            return Err(resource_error(
-                &self.options.source_label,
-                Some(self.frame_cursor),
-                "TRR frame count exceeds the configured limit.",
-            ));
+            return Err(
+                resource_error(&self.options.source_label, Some(self.frame_cursor), "").exceeding(
+                    "The trajectory",
+                    LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+                ),
+            );
         }
         let Some(header) = self.next_header()? else {
             return Ok(None);
@@ -518,7 +529,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 resource_error(
                     &self.options.source_label,
                     Some(self.frame_cursor),
-                    "TRR payload size overflows.",
+                    "The frame's size exceeds this platform's address range.",
                 )
             })?;
         let frame_bytes = header
@@ -528,15 +539,16 @@ impl<R: Read + Seek> TrrReader<R> {
                 resource_error(
                     &self.options.source_label,
                     Some(self.frame_cursor),
-                    "TRR frame size overflows.",
+                    "The frame's size exceeds the 64-bit range.",
                 )
             })?;
         if frame_bytes > self.options.limits.max_frame_bytes() {
-            return Err(resource_error(
-                &self.options.source_label,
-                Some(self.frame_cursor),
-                "TRR frame exceeds the configured byte limit.",
-            ));
+            return Err(
+                resource_error(&self.options.source_label, Some(self.frame_cursor), "").exceeding(
+                    "The frame",
+                    exceeded_bytes(self.options.limits.max_frame_bytes(), frame_bytes),
+                ),
+            );
         }
 
         // The reusable raw record and all three dense arrays coexist. Account
@@ -569,7 +581,10 @@ impl<R: Read + Seek> TrrReader<R> {
             return Err(resource_error(
                 &self.options.source_label,
                 Some(self.frame_cursor),
-                "TRR aggregate decode scratch exceeds the configured limit.",
+                format!(
+                    "The frame's buffers exceed the buffer limit of {} bytes.",
+                    self.options.limits.max_scratch_bytes()
+                ),
             ));
         }
 
@@ -581,7 +596,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 &self.options.limits,
                 &self.options.source_label,
                 self.frame_cursor,
-                "TRR box",
+                "box",
             )?;
             Some(decode_cell(
                 &self.raw,
@@ -599,7 +614,7 @@ impl<R: Read + Seek> TrrReader<R> {
             &self.options.limits,
             &self.options.source_label,
             self.frame_cursor,
-            "TRR positions",
+            "position",
         )?;
         decode_triplets(
             &self.raw,
@@ -618,7 +633,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 &self.options.limits,
                 &self.options.source_label,
                 self.frame_cursor,
-                "TRR velocities",
+                "velocity",
             )?;
             decode_triplets(
                 &self.raw,
@@ -638,7 +653,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 &self.options.limits,
                 &self.options.source_label,
                 self.frame_cursor,
-                "TRR forces",
+                "force",
             )?;
             decode_triplets(
                 &self.raw,
@@ -663,7 +678,7 @@ impl<R: Read + Seek> TrrReader<R> {
                     frame_error(
                         &self.options.source_label,
                         self.frame_cursor,
-                        "TRR lambda scratch property became invalid.",
+                        "The lambda value is not a valid frame property.",
                     )
                 })?;
         }
@@ -671,7 +686,7 @@ impl<R: Read + Seek> TrrReader<R> {
             resource_error(
                 &self.options.source_label,
                 Some(self.frame_cursor),
-                "TRR frame cursor overflows.",
+                "The frame number exceeds this platform's address range.",
             )
         })?;
         Ok(Some(TrrDecodedFrame { header, cell }))
@@ -1017,11 +1032,8 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                 if clean_eof {
                     return Ok(0);
                 }
-                return Err(resource_error(
-                    &label,
-                    Some(self.offsets.len()),
-                    format!("TRR index {limit} exceeds the configured limit."),
-                ));
+                return Err(resource_error(&label, Some(self.offsets.len()), "")
+                    .exceeding("The frame index", limit));
             }
             let offset = if self.inner.pending_header.is_some() {
                 self.inner.current_header_offset
@@ -1160,7 +1172,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
                         TrajectoryIoOperation::ReadFrame,
                         TrajectoryFormat::Trr,
                         &self.inner.options.source_label,
-                        "TRR frame scalar width differs from the first frame's in an index of uniform width.",
+                        "The frame's scalar width differs from the first frame's.",
                     )
                     .with_frame(index));
                 }
@@ -1248,7 +1260,10 @@ impl<W: Write> TrrWriter<W> {
                 TrajectoryIoOperation::Open,
                 Some(TrajectoryFormat::Trr),
                 &source_label,
-                "TRR atom count must fit the signed 32-bit format.",
+                format!(
+                    "The topology has {} atoms. TRR holds 1 to 715,827,882.",
+                    topology.atom_count()
+                ),
             ));
         }
         options
@@ -1371,7 +1386,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         if self.frame_count == usize::MAX {
             return Err(writer_limit(
                 &self.source_label,
-                "TRR frame count overflows.",
+                "The frame count exceeds this platform's address range.",
             ));
         }
         let (step, time) =
@@ -1393,7 +1408,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Trr),
                 &self.source_label,
-                "TRR step exceeds signed 32-bit capacity.",
+                "The frame's step exceeds the 32-bit step field.",
             )
         })?;
         let time = time.ok_or_else(|| {
@@ -1425,13 +1440,18 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         let scalar_bytes = self.options.precision.bytes();
         validate_representable(time, self.options.precision, &self.source_label, "time")?;
         validate_representable(lambda, self.options.precision, &self.source_label, "lambda")?;
-        let atom_scalars =
-            self.topology.atom_count().checked_mul(3).ok_or_else(|| {
-                writer_limit(&self.source_label, "TRR atom scalar count overflows.")
-            })?;
-        let vector_bytes = atom_scalars
-            .checked_mul(scalar_bytes)
-            .ok_or_else(|| writer_limit(&self.source_label, "TRR vector byte size overflows."))?;
+        let atom_scalars = self.topology.atom_count().checked_mul(3).ok_or_else(|| {
+            writer_limit(
+                &self.source_label,
+                "The frame's values exceed this platform's address range.",
+            )
+        })?;
+        let vector_bytes = atom_scalars.checked_mul(scalar_bytes).ok_or_else(|| {
+            writer_limit(
+                &self.source_label,
+                "The frame's vectors exceed this platform's address range.",
+            )
+        })?;
         let box_size = if frame.cell().is_some() {
             9 * scalar_bytes
         } else {
@@ -1455,7 +1475,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Trr),
                     &self.source_label,
-                    "TRR cell requires all three periodic axes.",
+                    "The cell is not periodic along all three axes. TRR stores only fully periodic cells.",
                 ));
             }
             let factor = CANONICAL_LENGTH_UNIT
@@ -1511,7 +1531,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Trr),
                     &self.source_label,
-                    "The TRR cell cannot be represented at the selected precision.",
+                    "The cell does not fit the selected precision.",
                 )
                 .with_source(validation_cause(error))
             })?;
@@ -1555,8 +1575,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 .iter_mut()
                 .zip([0, 0, box_size, 0, 0, 0, 0, vector_bytes, v_size, f_size])
         {
-            *target = i32::try_from(size)
-                .map_err(|_| writer_limit(&self.source_label, "TRR block size exceeds i32."))?;
+            *target = i32::try_from(size).map_err(|_| {
+                writer_limit(&self.source_label, "A block exceeds the 32-bit block size.")
+            })?;
         }
         // Every scalar and size was checked above, so a rejected frame leaves
         // the stream untouched; from here only I/O can fail.
@@ -1637,10 +1658,12 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
         }
         self.partial = false;
-        self.frame_count = self
-            .frame_count
-            .checked_add(1)
-            .ok_or_else(|| writer_limit(&self.source_label, "TRR frame count overflows."))?;
+        self.frame_count = self.frame_count.checked_add(1).ok_or_else(|| {
+            writer_limit(
+                &self.source_label,
+                "The frame count exceeds this platform's address range.",
+            )
+        })?;
         record(&mut self.report, omitted);
         Ok(())
     }
@@ -1674,7 +1697,7 @@ fn read_header<R: Read>(
     let mut magic = [0_u8; 4];
     match reader.read(&mut magic[..1]) {
         Ok(0) if clean_eof => return Ok(None),
-        Ok(0) => return Err(header_error(source_label, "The TRR magic is missing.")),
+        Ok(0) => return Err(header_error(source_label, "The magic number is missing.")),
         Ok(_) => {}
         Err(error) => {
             return Err(io_context(
@@ -1690,16 +1713,16 @@ fn read_header<R: Read>(
         &mut magic[1..],
         source_label,
         None,
-        "The TRR magic is incomplete.",
+        "The magic number is incomplete.",
     )?;
     if i32::from_be_bytes(magic) != TRR_MAGIC {
-        return Err(header_error(source_label, "TRR magic is not 1993."));
+        return Err(header_error(source_label, "The magic number is not 1993."));
     }
     let declared_version_bytes = read_i32(
         reader,
         source_label,
         None,
-        "The TRR version storage is truncated.",
+        "The version length is truncated.",
     )?;
     if declared_version_bytes
         != i32::try_from(TRR_VERSION.len() + 1).expect("TRR version length fits i32")
@@ -1709,7 +1732,7 @@ fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "TRR declared version storage is not the GMX_trn_file profile.",
+            "The version length is not that of GMX_trn_file.",
         ));
     }
     let (version_matches, version_bytes) = read_xdr_string(reader, limits, source_label)?;
@@ -1719,24 +1742,18 @@ fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "TRR version string is not GMX_trn_file.",
+            "The version string is not GMX_trn_file.",
         ));
     }
     let mut sizes = [0_usize; 10];
     for size in &mut sizes {
-        let value = read_i32(
-            reader,
-            source_label,
-            None,
-            "The TRR size field is truncated.",
-        )?;
+        let value = read_i32(reader, source_label, None, "A block size is truncated.")?;
         *size = usize::try_from(value)
-            .map_err(|_| header_error(source_label, "TRR block size is negative."))?;
+            .map_err(|_| header_error(source_label, "A block size is negative."))?;
         if *size as u64 > limits.max_record_bytes() {
-            return Err(resource_error(
-                source_label,
-                None,
-                "TRR block exceeds the configured record limit.",
+            return Err(resource_error(source_label, None, "").exceeding(
+                "A block",
+                exceeded_bytes(limits.max_record_bytes(), *size as u64),
             ));
         }
     }
@@ -1744,9 +1761,9 @@ fn read_header<R: Read>(
         reader,
         source_label,
         None,
-        "The TRR atom count is truncated.",
+        "The atom count is truncated.",
     )?)
-    .map_err(|_| header_error(source_label, "TRR atom count is negative."))?;
+    .map_err(|_| header_error(source_label, "The atom count is negative."))?;
     validate_atom_count(atom_count, limits, source_label)?;
     if let Some(expected) = expected_atoms {
         if atom_count != expected {
@@ -1769,7 +1786,7 @@ fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "The TRR frame has input record, energy, virial, pressure, topology or symbol blocks. They cannot be kept.",
+            "The frame has input record, energy, virial, pressure, topology or symbol blocks. Kekule cannot keep them.",
         ));
     }
     if x_size == 0 {
@@ -1778,14 +1795,20 @@ fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "The TRR frame has no positions.",
+            "The frame has no positions.",
         ));
     }
     let precision = infer_precision(atom_count, box_size, x_size, v_size, f_size, source_label)?;
     let expected_vectors = atom_count
         .checked_mul(3)
         .and_then(|count| count.checked_mul(precision.bytes()))
-        .ok_or_else(|| resource_error(source_label, None, "TRR vector size overflows."))?;
+        .ok_or_else(|| {
+            resource_error(
+                source_label,
+                None,
+                "A vector block exceeds this platform's address range.",
+            )
+        })?;
     if x_size != expected_vectors
         || (v_size != 0 && v_size != expected_vectors)
         || (f_size != 0 && f_size != expected_vectors)
@@ -1796,24 +1819,24 @@ fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "TRR block sizes do not match atom count and scalar precision.",
+            "The block sizes do not match the atom count and the scalar precision.",
         ));
     }
-    let step_raw = read_i32(reader, source_label, None, "The TRR step is truncated.")?;
+    let step_raw = read_i32(reader, source_label, None, "The step is truncated.")?;
     let step = u64::try_from(step_raw).map_err(|_| {
         codec_context(
             TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "TRR step is negative.",
+            "The step is negative.",
         )
     })?;
     let nre = read_i32(
         reader,
         source_label,
         None,
-        "The TRR nre field is truncated.",
+        "The energy count nre is truncated.",
     )?;
     if nre != 0 {
         return Err(codec_context(
@@ -1821,7 +1844,7 @@ fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "TRR nonzero nre metadata cannot be preserved.",
+            "The frame has energy terms (nre is not zero). Kekule cannot keep them.",
         ));
     }
     let time = read_scalar(
@@ -1829,19 +1852,19 @@ fn read_header<R: Read>(
         precision,
         source_label,
         None,
-        "The TRR time is truncated.",
+        "The time is truncated.",
     )?;
     let lambda = read_scalar(
         reader,
         precision,
         source_label,
         None,
-        "The TRR lambda is truncated.",
+        "The lambda value is truncated.",
     )?;
     if !time.is_finite() || !lambda.is_finite() {
         return Err(header_error(
             source_label,
-            "TRR time and lambda must be finite.",
+            format!("The time {time} or the lambda value {lambda} is not finite."),
         ));
     }
     let header_bytes = 4_u64
@@ -1849,7 +1872,13 @@ fn read_header<R: Read>(
         .and_then(|bytes| bytes.checked_add(version_bytes))
         .and_then(|bytes| bytes.checked_add(11 * 4 + 2 * 4))
         .and_then(|bytes| bytes.checked_add((2 * precision.bytes()) as u64))
-        .ok_or_else(|| resource_error(source_label, None, "TRR header size overflows."))?;
+        .ok_or_else(|| {
+            resource_error(
+                source_label,
+                None,
+                "The frame header's size exceeds the 64-bit range.",
+            )
+        })?;
     Ok(Some(TrrFrameHeader {
         precision,
         atom_count,
@@ -1881,11 +1910,16 @@ fn infer_precision(
     let (size, scalars) = candidates
         .into_iter()
         .find(|(size, _)| *size != 0)
-        .ok_or_else(|| header_error(source_label, "TRR has no precision-bearing block."))?;
+        .ok_or_else(|| {
+            header_error(
+                source_label,
+                "The frame has no block that shows its precision.",
+            )
+        })?;
     let width = size
         .checked_div(scalars)
         .filter(|_| size % scalars == 0)
-        .ok_or_else(|| header_error(source_label, "TRR scalar width is inconsistent."))?;
+        .ok_or_else(|| header_error(source_label, "The block sizes give no whole scalar width."))?;
     match width {
         4 => Ok(TrrScalarPrecision::Float32),
         8 => Ok(TrrScalarPrecision::Float64),
@@ -1894,7 +1928,7 @@ fn infer_precision(
             TrajectoryIoOperation::ReadHeader,
             Some(TrajectoryFormat::Trr),
             source_label,
-            "TRR scalar width must be f32 or f64.",
+            format!("The scalar width is {width} bytes, not 4 or 8."),
         )),
     }
 }
@@ -1908,33 +1942,39 @@ fn read_xdr_string<R: Read>(
         reader,
         source_label,
         None,
-        "The TRR version length is truncated.",
+        "The version string's length is truncated.",
     )?)
-    .map_err(|_| header_error(source_label, "TRR version length is negative."))?;
+    .map_err(|_| header_error(source_label, "The version string's length is negative."))?;
     if length > 256 || length > limits.max_text_line_bytes() || length > limits.max_scratch_bytes()
     {
         return Err(resource_error(
             source_label,
             None,
-            "TRR version string exceeds configured limits.",
+            format!("The version string has {length} bytes, more than 256 or the line limit."),
         ));
     }
     let padded = length
         .checked_add(3)
         .map(|value| value & !3)
-        .ok_or_else(|| resource_error(source_label, None, "TRR string padding overflows."))?;
+        .ok_or_else(|| {
+            resource_error(
+                source_label,
+                None,
+                "The version string's padding exceeds this platform's address range.",
+            )
+        })?;
     let mut bytes = [0_u8; 256];
     read_exact(
         reader,
         &mut bytes[..padded],
         source_label,
         None,
-        "The TRR version string is truncated.",
+        "The version string is truncated.",
     )?;
     if bytes[length..].iter().any(|byte| *byte != 0) {
         return Err(header_error(
             source_label,
-            "TRR XDR string padding is not zero.",
+            "The version string's padding is not zero.",
         ));
     }
     Ok((&bytes[..length] == TRR_VERSION, 4 + padded as u64))
@@ -1953,7 +1993,11 @@ fn read_raw<R: Read>(
         return Err(resource_error(
             source_label,
             Some(frame),
-            format!("The {field} exceeds the scratch or record limits."),
+            format!(
+                "The {field} block has {length} bytes, more than the record limit of {} bytes or the buffer limit of {} bytes.",
+                limits.max_record_bytes(),
+                limits.max_scratch_bytes()
+            ),
         ));
     }
     if raw.capacity() < length {
@@ -1962,7 +2006,7 @@ fn read_raw<R: Read>(
                 resource_error(
                     source_label,
                     Some(frame),
-                    format!("Cannot reserve {field} scratch."),
+                    format!("Cannot allocate the {field} buffer."),
                 )
             })?;
     }
@@ -1996,7 +2040,7 @@ fn decode_triplets<T>(
             return Err(frame_error(
                 source_label,
                 frame,
-                format!("TRR {field} contains a non-finite value."),
+                format!("A {field} value is not finite."),
             ));
         }
         *destination = construct(x, y, z);
@@ -2021,7 +2065,7 @@ fn decode_cell(
         "box",
     )?;
     PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3]).map_err(|error| {
-        frame_error(source_label, frame, "The TRR periodic cell is invalid.").with_source(error)
+        frame_error(source_label, frame, "The periodic cell is invalid.").with_source(error)
     })
 }
 
@@ -2051,7 +2095,7 @@ fn encode_points_to_raw(
         precision,
         source_label,
         "position",
-        "TRR position bytes overflow.",
+        "The positions exceed this platform's address range.",
     )
 }
 
@@ -2070,7 +2114,7 @@ fn encode_vectors_to_raw(
         precision,
         source_label,
         field,
-        "TRR vector bytes overflow.",
+        "The vectors exceed this platform's address range.",
     )
 }
 
@@ -2089,7 +2133,7 @@ fn encode_triplets_to_raw(
         .checked_mul(3 * precision.bytes())
         .ok_or_else(|| writer_limit(source_label, overflow_message))?;
     raw.try_reserve(bytes.saturating_sub(raw.len()))
-        .map_err(|_| writer_limit(source_label, "Cannot reserve TRR writer scratch."))?;
+        .map_err(|_| writer_limit(source_label, "Cannot allocate the writer's buffers."))?;
     for triplet in values {
         for value in triplet {
             push_scalar(raw, value * factor, precision, source_label, field)?;
@@ -2127,7 +2171,7 @@ fn validate_representable(
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Trr),
             source_label,
-            format!("TRR {field} is not representable at the selected precision."),
+            format!("A {field} value does not fit the selected precision."),
         ));
     }
     Ok(())
@@ -2176,7 +2220,7 @@ fn writer_lambda(
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Trr),
                     source_label,
-                    "The TRR lambda policy names a property other than gromacs.trr.lambda.",
+                    "The lambda policy names a property other than gromacs.trr.lambda.",
                 ));
             }
             match properties.owner().get(&trr_lambda_key()) {
@@ -2190,7 +2234,7 @@ fn writer_lambda(
                     TrajectoryIoOperation::WriteFrame,
                     Some(TrajectoryFormat::Trr),
                     source_label,
-                    "TRR lambda property must be one finite float.",
+                    "The lambda property is not one finite, dimensionless number.",
                 )),
             }
         }
@@ -2221,7 +2265,7 @@ fn validate_lambda(
         )
         .with_source_label(source_label)
         .with_frame(frame)
-        .with_detail("The TRR lambda is not zero."));
+        .with_detail("The lambda value is not zero."));
     }
     Ok(())
 }
@@ -2314,8 +2358,12 @@ fn write_xdr_string<W: Write>(
 ) -> Result<(), TrajectoryIoError> {
     write_i32(
         writer,
-        i32::try_from(value.len())
-            .map_err(|_| writer_limit(source_label, "TRR version is too long."))?,
+        i32::try_from(value.len()).map_err(|_| {
+            writer_limit(
+                source_label,
+                "The version string exceeds the 32-bit length field.",
+            )
+        })?,
         source_label,
     )?;
     write_bytes(writer, value, source_label)?;
@@ -2357,11 +2405,18 @@ fn validate_atom_count(
     limits: &TrajectoryIoLimits,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {
-    if atom_count == 0 || atom_count > limits.max_atoms() || atom_count > i32::MAX as usize / 3 {
+    if atom_count == 0 {
         return Err(resource_error(
             source_label,
             None,
-            "The TRR atom count is zero or exceeds its limits.",
+            "The header declares no atoms.",
+        ));
+    }
+    let limit = limits.max_atoms().min(i32::MAX as usize / 3);
+    if atom_count > limit {
+        return Err(resource_error(source_label, None, "").exceeding(
+            "The atom count",
+            LimitExceeded::new(Resource::Atoms, limit, atom_count),
         ));
     }
     Ok(())
@@ -2430,7 +2485,7 @@ fn writer_unit(
         TrajectoryIoOperation::WriteFrame,
         Some(TrajectoryFormat::Trr),
         source_label,
-        format!("The TRR {field} unit is incompatible."),
+        format!("The {field} unit is incompatible."),
     )
     .with_source(error)
 }
@@ -2448,5 +2503,5 @@ fn writer_field_error(
     .with_source_label(source_label)
     .with_frame(frame)
     .with_field(field)
-    .with_detail(format!("TRR cannot preserve {field}."))
+    .with_detail(format!("TRR cannot store the {field}."))
 }

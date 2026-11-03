@@ -65,14 +65,14 @@ use crate::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
-use kekule::diagnostics::{UnrepresentablePolicy, WriteReport};
+use kekule::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 
 use super::frame_state::{record, unrepresentable_frame_state};
-use super::limits::{reserve_scratch, scratch_bytes};
+use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
     require_no_partial_frame, require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp,
@@ -248,7 +248,7 @@ impl XtcWriteOptions {
                 TrajectoryIoOperation::Open,
                 Some(TrajectoryFormat::Xtc),
                 "XTC writer options",
-                "XTC precision must be an inverse length.",
+                "The XTC precision is not an inverse length.",
             )
         };
         let precision = precision.value_in(PER_NANOMETER).map_err(|_| invalid())? as f32;
@@ -406,12 +406,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let mut header = [0_u8; XTC_HEADER_BYTES];
         match self.reader.read(&mut header[..1]) {
             Ok(0) if clean_eof => return Ok(None),
-            Ok(0) => {
-                return Err(header_error(
-                    source_label,
-                    "The XTC frame header is missing.",
-                ))
-            }
+            Ok(0) => return Err(header_error(source_label, "The frame header is missing.")),
             Ok(_) => {}
             Err(error) => {
                 return Err(io_context(
@@ -429,19 +424,24 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             &mut header[1..4],
             source_label,
             Some(frame_index),
-            "The XTC frame header is truncated.",
+            "The frame header is truncated.",
         )?;
         let magic = match i32::from_be_bytes(header[..4].try_into().expect("magic")) {
             1995 => XtcMagic::Xtc1995,
             2023 => XtcMagic::Xtc2023,
-            _ => return Err(header_error(source_label, "XTC magic is not 1995 or 2023.")),
+            _ => {
+                return Err(header_error(
+                    source_label,
+                    "The magic number is not 1995 or 2023.",
+                ))
+            }
         };
         read_exact(
             &mut self.reader,
             &mut header[4..],
             source_label,
             Some(frame_index),
-            "The XTC frame header is truncated.",
+            "The frame header is truncated.",
         )?;
         let atom_count_raw = i32::from_be_bytes(header[4..8].try_into().expect("natoms"));
         let atom_count = nonnegative_xdr_count(
@@ -480,7 +480,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .with_source_label(source_label)
             .with_frame(frame_index)
             .with_counts(atom_count as u64, repeated as u64)
-            .with_detail("XTC repeated atom count differs from its header."));
+            .with_detail("The repeated atom count differs from the header's."));
         }
         let step_raw = i32::from_be_bytes(header[8..12].try_into().expect("step"));
         let step = u64::try_from(step_raw).map_err(|_| {
@@ -492,14 +492,14 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .with_source_label(source_label)
             .with_frame(frame_index)
             .with_byte_offset(start + 8)
-            .with_detail("XTC step is a negative signed XDR integer.")
+            .with_detail("The step is negative.")
         })?;
         let time = f64::from(f32::from_be_bytes(header[12..16].try_into().expect("time")));
         if !time.is_finite() {
             return Err(frame_error(
                 source_label,
                 frame_index,
-                "XTC frame time is not finite.",
+                "The frame's time is not finite.",
             ));
         }
         let mut box_values = [0_f64; 9];
@@ -510,13 +510,21 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             *value = f64::from(f32::from_be_bytes(*chunk));
         }
         let cell = decode_cell(box_values, options.cell_policy, source_label, frame_index)?;
-        let coordinate_scalars = atom_count
-            .checked_mul(3)
-            .ok_or_else(|| resource_error(source_label, None, "XTC coordinate count overflows."))?;
+        let coordinate_scalars = atom_count.checked_mul(3).ok_or_else(|| {
+            resource_error(
+                source_label,
+                None,
+                "The coordinate count exceeds this platform's address range.",
+            )
+        })?;
         let (precision, compressed_bytes, end) = if atom_count <= 9 {
-            let coordinate_bytes = atom_count
-                .checked_mul(12)
-                .ok_or_else(|| resource_error(source_label, None, "XTC small frame overflows."))?;
+            let coordinate_bytes = atom_count.checked_mul(12).ok_or_else(|| {
+                resource_error(
+                    source_label,
+                    None,
+                    "The frame's size exceeds this platform's address range.",
+                )
+            })?;
             self.reserve_decode_scratch(
                 coordinate_scalars,
                 coordinate_bytes,
@@ -531,7 +539,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 &mut self.scratch,
                 source_label,
                 Some(frame_index),
-                "The XTC small-frame coordinates is truncated.",
+                "The coordinates are truncated.",
             )?;
             for chunk in self.scratch.as_chunks::<4>().0 {
                 let value = f32::from_be_bytes(*chunk);
@@ -539,7 +547,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     return Err(corrupt_error(
                         source_label,
                         frame_index,
-                        "XTC small-frame coordinate is not finite.",
+                        "A coordinate is not finite.",
                     ));
                 }
                 self.decoded_positions.push(value);
@@ -547,7 +555,13 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             let end = start
                 .checked_add(XTC_HEADER_BYTES as u64)
                 .and_then(|offset| offset.checked_add(coordinate_bytes as u64))
-                .ok_or_else(|| resource_error(source_label, None, "XTC frame end overflows."))?;
+                .ok_or_else(|| {
+                    resource_error(
+                        source_label,
+                        None,
+                        "The frame's end exceeds the 64-bit range.",
+                    )
+                })?;
             (None, coordinate_bytes, end)
         } else {
             let mut prelude = [0_u8; XTC_COMPRESSED_PRELUDE_BYTES];
@@ -556,7 +570,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 &mut prelude,
                 source_label,
                 Some(frame_index),
-                "The XTC compressed prelude is truncated.",
+                "The compressed-coordinate header is truncated.",
             )?;
             let precision = f32::from_be_bytes(prelude[..4].try_into().expect("precision"));
             validate_precision(precision, source_label)?;
@@ -578,7 +592,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     return Err(corrupt_error(
                         source_label,
                         frame_index,
-                        "XTC compressed coordinate bounds are reversed.",
+                        "The compressed coordinates' lower bound exceeds the upper bound.",
                     ));
                 }
             }
@@ -589,25 +603,40 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 resource_error(
                     source_label,
                     Some(frame_index),
-                    "XTC small-index does not fit.",
+                    "The compressed coordinates' small index is negative or too large.",
                 )
             })?;
             if !(XTC_FIRST_SMALL_INDEX..XTC_MAGIC_INTS.len()).contains(&small_index) {
                 return Err(corrupt_error(
                     source_label,
                     frame_index,
-                    "XTC compressed small-index is outside the audited table.",
+                    "The compressed coordinates' small index is outside the table.",
                 ));
             }
             let compressed_bytes = read_nbytes(&mut self.reader, magic, source_label, frame_index)?;
-            if compressed_bytes == 0
-                || compressed_bytes as u64 > limits.max_record_bytes()
-                || compressed_bytes > limits.max_scratch_bytes()
-            {
+            if compressed_bytes == 0 {
                 return Err(resource_error(
                     source_label,
                     Some(frame_index),
-                    "XTC compressed payload is zero or exceeds configured limits.",
+                    "The compressed coordinates have no bytes.",
+                ));
+            }
+            if compressed_bytes as u64 > limits.max_record_bytes() {
+                return Err(
+                    resource_error(source_label, Some(frame_index), "").exceeding(
+                        "The compressed coordinates",
+                        exceeded_bytes(limits.max_record_bytes(), compressed_bytes as u64),
+                    ),
+                );
+            }
+            if compressed_bytes > limits.max_scratch_bytes() {
+                return Err(resource_error(
+                    source_label,
+                    Some(frame_index),
+                    format!(
+                        "The compressed coordinates have {compressed_bytes} bytes, more than the buffer limit of {} bytes.",
+                        limits.max_scratch_bytes()
+                    ),
                 ));
             }
             self.reserve_decode_scratch(
@@ -624,7 +653,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 &mut self.scratch,
                 source_label,
                 Some(frame_index),
-                "The XTC compressed payload is truncated.",
+                "The compressed coordinates are truncated.",
             )?;
             decode_compressed_payload(
                 &self.scratch,
@@ -641,24 +670,37 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             )?;
             let padded = compressed_bytes
                 .checked_add((4 - compressed_bytes % 4) % 4)
-                .ok_or_else(|| resource_error(source_label, None, "XTC padding overflows."))?;
+                .ok_or_else(|| {
+                    resource_error(
+                        source_label,
+                        None,
+                        "The padding exceeds this platform's address range.",
+                    )
+                })?;
             let end = start
                 .checked_add(XTC_HEADER_BYTES as u64)
                 .and_then(|offset| offset.checked_add(XTC_COMPRESSED_PRELUDE_BYTES as u64))
                 .and_then(|offset| offset.checked_add(magic.nbytes_width() as u64))
                 .and_then(|offset| offset.checked_add(padded as u64))
-                .ok_or_else(|| resource_error(source_label, None, "XTC frame end overflows."))?;
+                .ok_or_else(|| {
+                    resource_error(
+                        source_label,
+                        None,
+                        "The frame's end exceeds the 64-bit range.",
+                    )
+                })?;
             (Some(precision), compressed_bytes, end)
         };
-        let frame_bytes = end
-            .checked_sub(start)
-            .ok_or_else(|| resource_error(source_label, None, "XTC frame size underflows."))?;
+        let frame_bytes = end.checked_sub(start).ok_or_else(|| {
+            resource_error(source_label, None, "The frame ends before it starts.")
+        })?;
         if frame_bytes > limits.max_frame_bytes() {
-            return Err(resource_error(
-                source_label,
-                Some(frame_index),
-                "XTC frame exceeds the configured byte limit.",
-            ));
+            return Err(
+                resource_error(source_label, Some(frame_index), "").exceeding(
+                    "The frame",
+                    exceeded_bytes(limits.max_frame_bytes(), frame_bytes),
+                ),
+            );
         }
         let file_end = self.reader.seek(SeekFrom::End(0)).map_err(|error| {
             io_context(
@@ -680,7 +722,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             return Err(truncated_error(
                 source_label,
                 Some(frame_index),
-                "XTC frame payload ends beyond the stream.",
+                "The frame ends after the end of the file.",
             ));
         }
         if let Some(precision) = precision {
@@ -702,13 +744,13 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     &mut pad[..padding],
                     source_label,
                     Some(frame_index),
-                    "The XTC padding is truncated.",
+                    "The padding is truncated.",
                 )?;
                 if pad[..padding].iter().any(|byte| *byte != 0) {
                     return Err(corrupt_error(
                         source_label,
                         frame_index,
-                        "XTC XDR padding is not zero.",
+                        "The padding is not zero.",
                     ));
                 }
             }
@@ -780,7 +822,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             return Err(corrupt_error(
                 source_label,
                 frame_index,
-                "XTC preflight cache does not match the requested frame.",
+                "The frame changed between its first and second reading.",
             ));
         }
         self.reader
@@ -806,7 +848,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             return Err(corrupt_error(
                 source_label,
                 frame_index,
-                "XTC adapter output disagrees with bounded preflight metadata.",
+                "The decoded frame differs from its header.",
             ));
         }
         if self
@@ -817,7 +859,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             return Err(corrupt_error(
                 source_label,
                 frame_index,
-                "XTC decoder produced a non-finite coordinate.",
+                "A decoded coordinate is not finite.",
             ));
         }
         self.decoded_start = None;
@@ -896,7 +938,7 @@ impl<R: Read + Seek> XtcReader<R> {
         let first_info = adapter
             .preflight(&topology, &options, 0, false, positions.capacity())
             .map_err(|error| frame_offset_context(error, 0, stream_start))?
-            .ok_or_else(|| header_error(source_label, "XTC stream is empty."))?;
+            .ok_or_else(|| header_error(source_label, "The stream is empty."))?;
         Ok(Self {
             adapter,
             topology,
@@ -956,11 +998,12 @@ impl<R: Read + Seek> XtcReader<R> {
             if clean_eof {
                 return Ok(None);
             }
-            return Err(resource_error(
-                &self.options.source_label,
-                Some(self.frame_cursor),
-                "XTC frame count exceeds the configured limit.",
-            ));
+            return Err(
+                resource_error(&self.options.source_label, Some(self.frame_cursor), "").exceeding(
+                    "The trajectory",
+                    LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+                ),
+            );
         }
         let Some(info) = self.next_info()? else {
             return Ok(None);
@@ -974,9 +1017,7 @@ impl<R: Read + Seek> XtcReader<R> {
             .with_source_label(&self.options.source_label)
             .with_frame(self.frame_cursor)
             .with_byte_offset(info.start)
-            .with_detail(
-                "XTC magic and coordinate precision must remain constant across frames.",
-            ));
+            .with_detail("The frame's magic number or precision differs from the first frame's."));
         }
         if self.adapter.decoded_start != Some(info.start) {
             self.adapter
@@ -1003,14 +1044,14 @@ impl<R: Read + Seek> XtcReader<R> {
                     truncated_error(
                         &self.options.source_label,
                         Some(self.frame_cursor),
-                        "XTC indexed frame disappeared during preflight.",
+                        "An indexed frame is no longer in the file.",
                     )
                 })?;
             if refreshed != info {
                 return Err(corrupt_error(
                     &self.options.source_label,
                     self.frame_cursor,
-                    "XTC repeated preflight metadata changed.",
+                    "The frame changed between its first and second reading.",
                 ));
             }
         }
@@ -1031,7 +1072,7 @@ impl<R: Read + Seek> XtcReader<R> {
             resource_error(
                 &self.options.source_label,
                 Some(self.frame_cursor),
-                "XTC frame cursor overflows.",
+                "The frame number exceeds this platform's address range.",
             )
         })?;
         Ok(Some(info))
@@ -1346,11 +1387,8 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                 if clean_eof {
                     return Ok(0);
                 }
-                return Err(resource_error(
-                    &label,
-                    Some(self.offsets.len()),
-                    format!("XTC index {limit} exceeds the configured limit."),
-                ));
+                return Err(resource_error(&label, Some(self.offsets.len()), "")
+                    .exceeding("The frame index", limit));
             }
             let offset = match &self.inner.pending_info {
                 Some(info) => info.start,
@@ -1568,14 +1606,20 @@ impl<W: Write> XtcWriter<W> {
             return Err(resource_error(
                 &source_label,
                 None,
-                "XTC writer atom count must fit a positive signed 32-bit XDR integer.",
+                format!(
+                    "The topology has {} atoms. XTC holds 1 to 2,147,483,647.",
+                    topology.atom_count()
+                ),
             ));
         }
         if options.magic == XtcMagic::Xtc1995 && topology.atom_count() > XTC_1995_MAX_ATOMS {
             return Err(resource_error(
                 &source_label,
                 None,
-                "XTC 1995 atom count exceeds the GROMACS limit for its byte count.",
+                format!(
+                    "The topology has {} atoms. XTC 1995 holds at most 298,261,617. Use XTC 2023.",
+                    topology.atom_count()
+                ),
             ));
         }
         Ok(Self {
@@ -1719,7 +1763,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xtc),
                 &self.source_label,
-                "XTC step exceeds nonnegative signed 32-bit XDR capacity.",
+                "The frame's step exceeds the 32-bit step field.",
             )
         })?;
         let time = time.ok_or_else(|| {
@@ -1761,7 +1805,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                         TrajectoryIoOperation::WriteFrame,
                         Some(TrajectoryFormat::Xtc),
                         &self.source_label,
-                        "XTC writer requires all three periodic axes.",
+                        "The cell is not periodic along all three axes. XTC stores only fully periodic cells.",
                     ));
                 }
                 let vectors = cell.vectors().value_in(NANOMETER).map_err(|error| {
@@ -1795,7 +1839,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                         TrajectoryIoOperation::WriteFrame,
                         Some(TrajectoryFormat::Xtc),
                         &self.source_label,
-                        "The XTC cell cannot be represented as a float32 box.",
+                        "The cell does not fit single precision.",
                     )
                     .with_source(validation_cause(error))
                 })?;
@@ -1824,7 +1868,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             resource_error(
                 &self.source_label,
                 Some(self.frame_count),
-                "Cannot reserve XTC writer coordinate scratch.",
+                "Cannot allocate the coordinate buffer.",
             )
         };
         self.positions.clear();
@@ -1834,7 +1878,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 resource_error(
                     &self.source_label,
                     Some(self.frame_count),
-                    "XTC writer coordinate count overflows.",
+                    "The coordinate count exceeds this platform's address range.",
                 )
             })?)
             .map_err(reserve_error)?;
@@ -1858,7 +1902,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                             TrajectoryIoOperation::WriteFrame,
                             Some(TrajectoryFormat::Xtc),
                             &self.source_label,
-                            "XTC coordinate exceeds the selected precision's integer range.",
+                            "A coordinate exceeds the integer range of the selected precision.",
                         ));
                     }
                     let scaled = scaled as i32;
@@ -1879,14 +1923,14 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xtc),
                 &self.source_label,
-                "XTC coordinate span along an axis exceeds the selected precision's integer range.",
+                "The coordinates span more along one axis than the integer range of the selected precision holds.",
             ));
         }
         let atom_count = i32::try_from(atom_count).map_err(|_| {
             resource_error(
                 &self.source_label,
                 Some(self.frame_count),
-                "XTC writer atom count exceeds a signed 32-bit XDR integer.",
+                "The atom count exceeds the 32-bit atom-count field.",
             )
         })?;
         self.bytes.clear();
@@ -1925,7 +1969,11 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         })?;
         self.partial = false;
         self.frame_count = self.frame_count.checked_add(1).ok_or_else(|| {
-            resource_error(&self.source_label, None, "XTC frame count overflows.")
+            resource_error(
+                &self.source_label,
+                None,
+                "The frame count exceeds this platform's address range.",
+            )
         })?;
         record(&mut self.report, omitted);
         Ok(())
@@ -1965,7 +2013,7 @@ impl<'a> CheckedByteBuffer<'a> {
             corrupt_error(
                 source_label,
                 frame_index,
-                "XTC compressed bitstream ends before all atoms are decoded.",
+                "The compressed coordinates end before the last atom.",
             )
         })?;
         self.index += 1;
@@ -2008,7 +2056,7 @@ fn decode_compressed_payload(
             corrupt_error(
                 source_label,
                 frame_index,
-                "XTC compressed coordinate span exceeds the audited decoder profile.",
+                "The compressed coordinates span more than the decoder supports.",
             )
         })?;
         sizes[axis] = u32::try_from(span)
@@ -2018,7 +2066,7 @@ fn decode_compressed_payload(
                 corrupt_error(
                     source_label,
                     frame_index,
-                    "XTC compressed coordinate size overflows.",
+                    "The compressed coordinates' size exceeds this platform's address range.",
                 )
             })?;
     }
@@ -2029,7 +2077,7 @@ fn decode_compressed_payload(
                 return Err(corrupt_error(
                     source_label,
                     frame_index,
-                    "XTC compressed axis requires a 32-bit scalar unsupported by the audited adapter.",
+                    "A compressed axis needs 32-bit values. The decoder does not support them.",
                 ));
             }
         }
@@ -2063,7 +2111,7 @@ fn decode_compressed_payload(
                     return Err(corrupt_error(
                         source_label,
                         frame_index,
-                        "XTC compressed absolute coordinate is outside declared bounds.",
+                        "A compressed coordinate is outside the declared bounds.",
                     ));
                 }
                 decoded[axis] = value as i32;
@@ -2087,7 +2135,7 @@ fn decode_compressed_payload(
                     corrupt_error(
                         source_label,
                         frame_index,
-                        "XTC compressed absolute coordinate overflows declared bounds.",
+                        "A compressed coordinate exceeds the declared bounds.",
                     )
                 })?;
         }
@@ -2117,14 +2165,14 @@ fn decode_compressed_payload(
                     corrupt_error(
                         source_label,
                         frame_index,
-                        "XTC compressed run atom count overflows.",
+                        "A compressed run's atom count exceeds this platform's address range.",
                     )
                 })?;
             if emitted_atoms > atom_count - read_atoms {
                 return Err(corrupt_error(
                     source_label,
                     frame_index,
-                    "XTC compressed run exceeds the declared atom count.",
+                    "A compressed run extends past the declared atom count.",
                 ));
             }
             let small_size = u32::try_from(XTC_MAGIC_INTS[small_index])
@@ -2148,7 +2196,7 @@ fn decode_compressed_payload(
                             corrupt_error(
                                 source_label,
                                 frame_index,
-                                "XTC compressed run coordinate overflows declared bounds.",
+                                "A compressed run's coordinate exceeds the declared bounds.",
                             )
                         })?;
                 }
@@ -2182,7 +2230,7 @@ fn decode_compressed_payload(
                     return Err(corrupt_error(
                         source_label,
                         frame_index,
-                        "XTC compressed small-index would underflow.",
+                        "The compressed coordinates' small index drops below the table.",
                     ));
                 }
                 small_index -= 1;
@@ -2198,7 +2246,7 @@ fn decode_compressed_payload(
                     return Err(corrupt_error(
                         source_label,
                         frame_index,
-                        "XTC compressed small-index would overflow.",
+                        "The compressed coordinates' small index rises above the table.",
                     ));
                 }
                 small_index += 1;
@@ -2213,7 +2261,7 @@ fn decode_compressed_payload(
         return Err(corrupt_error(
             source_label,
             frame_index,
-            "XTC compressed payload contains unused trailing bytes.",
+            "The compressed coordinates have unused trailing bytes.",
         ));
     }
     let trailing_mask = if state.last_bits == 0 {
@@ -2225,7 +2273,7 @@ fn decode_compressed_payload(
         return Err(corrupt_error(
             source_label,
             frame_index,
-            "XTC compressed payload contains nonzero trailing bits.",
+            "The compressed coordinates have nonzero trailing bits.",
         ));
     }
     Ok(())
@@ -2242,7 +2290,7 @@ fn decode_checked_bits(
         return Err(corrupt_error(
             source_label,
             frame_index,
-            "XTC compressed scalar requests more than 32 bits.",
+            "A compressed value needs more than 32 bits.",
         ));
     }
     let mask = if count == 32 {
@@ -2286,7 +2334,7 @@ fn push_checked_coordinate(
             return Err(corrupt_error(
                 source_label,
                 frame_index,
-                "XTC decoded coordinate is not finite.",
+                "A decoded coordinate is not finite.",
             ));
         }
         output.push(value);
@@ -2304,7 +2352,7 @@ fn validate_decoded_count(
         return Err(corrupt_error(
             source_label,
             frame_index,
-            "XTC compressed bitstream did not produce the declared atom count.",
+            "The compressed coordinates decode to fewer or more atoms than declared.",
         ));
     }
     Ok(())
@@ -2361,7 +2409,7 @@ fn decode_checked_triplet(
                 return Err(corrupt_error(
                     source_label,
                     frame_index,
-                    "XTC compressed mixed-radix quotient overflows.",
+                    "A compressed coordinate triple exceeds its bounds.",
                 ));
             }
             encoded[index] = quotient as u8;
@@ -2373,7 +2421,7 @@ fn decode_checked_triplet(
         return Err(corrupt_error(
             source_label,
             frame_index,
-            "XTC compressed x coordinate overflows.",
+            "A compressed x coordinate exceeds its bounds.",
         ));
     }
     let mut x = [0_u8; 4];
@@ -2385,7 +2433,7 @@ fn decode_checked_triplet(
             return Err(corrupt_error(
                 source_label,
                 frame_index,
-                "XTC compressed coordinate is outside its mixed-radix bounds.",
+                "A compressed coordinate is outside its bounds.",
             ));
         }
     }
@@ -2402,7 +2450,7 @@ fn decode_cell(
         return Err(frame_error(
             source_label,
             frame,
-            "XTC box contains a non-finite value.",
+            "The box holds a value that is not finite.",
         ));
     }
     if values.iter().all(|value| *value == 0.0) {
@@ -2413,7 +2461,7 @@ fn decode_cell(
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Xtc),
                 source_label,
-                "The XTC box is a zero matrix.",
+                "The box is a zero matrix.",
             )),
         };
     }
@@ -2425,7 +2473,7 @@ fn decode_cell(
     PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3])
         .map(Some)
         .map_err(|error| {
-            frame_error(source_label, frame, "The XTC periodic cell is invalid.").with_source(error)
+            frame_error(source_label, frame, "The periodic cell is invalid.").with_source(error)
         })
 }
 
@@ -2441,7 +2489,7 @@ fn read_nbytes<R: Read>(
         &mut bytes[..magic.nbytes_width()],
         source_label,
         Some(frame),
-        "The XTC compressed-byte count is truncated.",
+        "The compressed-byte count is truncated.",
     )?;
     let value = match magic {
         XtcMagic::Xtc1995 => u64::from(u32::from_be_bytes(bytes[..4].try_into().expect("u32"))),
@@ -2451,7 +2499,7 @@ fn read_nbytes<R: Read>(
         resource_error(
             source_label,
             Some(frame),
-            "XTC byte count does not fit usize.",
+            "The compressed-byte count exceeds this platform's address range.",
         )
     })
 }
@@ -2486,11 +2534,18 @@ fn validate_atom_count(
     limits: &TrajectoryIoLimits,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {
-    if atom_count == 0 || atom_count > limits.max_atoms() || atom_count > u32::MAX as usize {
+    if atom_count == 0 {
         return Err(resource_error(
             source_label,
             None,
-            "The XTC atom count is zero or exceeds its limits.",
+            "The header declares no atoms.",
+        ));
+    }
+    let limit = limits.max_atoms().min(u32::MAX as usize);
+    if atom_count > limit {
+        return Err(resource_error(source_label, None, "").exceeding(
+            "The atom count",
+            LimitExceeded::new(Resource::Atoms, limit, atom_count),
         ));
     }
     Ok(())
@@ -2512,7 +2567,7 @@ fn nonnegative_xdr_count(
         .with_source_label(source_label)
         .with_frame(frame)
         .with_byte_offset(byte_offset)
-        .with_detail(format!("XTC {field} is a negative signed XDR integer."))
+        .with_detail(format!("The {field} is negative."))
     })
 }
 
@@ -2523,7 +2578,7 @@ fn validate_precision(precision: f32, source_label: &str) -> Result<(), Trajecto
             TrajectoryIoOperation::Open,
             Some(TrajectoryFormat::Xtc),
             source_label,
-            "XTC precision must be finite and positive.",
+            "The precision is not a finite, positive number.",
         ));
     }
     Ok(())
@@ -2537,7 +2592,7 @@ fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, Trajec
             TrajectoryIoOperation::WriteFrame,
             Some(TrajectoryFormat::Xtc),
             source_label,
-            format!("XTC {field} cannot be represented as finite f32."),
+            format!("A {field} value does not fit single precision."),
         ));
     }
     Ok(narrowed)
@@ -2632,7 +2687,7 @@ fn writer_field_error(
     .with_source_label(source_label)
     .with_frame(frame)
     .with_field(field)
-    .with_detail(format!("XTC cannot preserve {field}."))
+    .with_detail(format!("XTC cannot store the {field}."))
 }
 
 #[cfg(test)]

@@ -278,7 +278,7 @@ pub fn append_trajectory(
             TrajectoryIoOperation::Open,
             Some(format),
             &label,
-            "XYZ frames record no step. Keep frames by count.",
+            "XYZ frames have no step. Keep frames by count.",
         ));
     }
     // The scan reads frames as the writer writes them: an XTC zero box is no

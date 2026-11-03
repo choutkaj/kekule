@@ -397,6 +397,18 @@ impl TrajectoryIoError {
     }
 
     #[must_use]
+    /// Records the exceeded bound, with a detail naming what exceeded it:
+    /// `{subject} exceeds its frame limit: 1,001 frames of 1,000.`
+    pub(crate) fn exceeding(
+        self,
+        subject: &str,
+        limit: kekule::diagnostics::LimitExceeded,
+    ) -> Self {
+        self.with_detail(format!("{subject} exceeds its {}.", limit.describe()))
+            .with_limit(limit)
+    }
+
+    #[must_use]
     /// Names the unsupported field.
     pub fn with_field(mut self, field: TrajectoryField) -> Self {
         self.0.field = Some(field);
@@ -492,7 +504,7 @@ impl TrajectoryIoError {
 
 /// Writes the operation that failed and its place, such as `Cannot read frame
 /// 3 of the XTC trajectory "run.xtc" at byte 1200.`, then what went wrong:
-/// the exceeded limit, the detail, or a sentence for the kind.
+/// the detail, the exceeded limit, or a sentence for the kind.
 impl fmt::Display for TrajectoryIoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         use TrajectoryIoErrorKind as Kind;
@@ -539,13 +551,13 @@ impl fmt::Display for TrajectoryIoError {
         let counts = (data.expected, data.actual);
         let mut counted = false;
         let frame = data.frame.filter(|_| !frame_named);
-        let body = match (data.limit, &data.detail, data.kind) {
-            (Some(limit), _, _) => limit.to_string(),
-            (None, Some(detail), _) => detail.clone(),
+        let body = match (&data.detail, data.limit, data.kind) {
+            (Some(detail), _, _) => detail.clone(),
+            (None, Some(limit), _) => limit.to_string(),
             (None, None, kind) => match kind {
                 Kind::Io | Kind::Cancelled if head => return Ok(()),
                 Kind::Io => "Reading or writing the trajectory failed.".to_owned(),
-                Kind::Cancelled => "The trajectory operation was cancelled.".to_owned(),
+                Kind::Cancelled => "The trajectory operation stopped.".to_owned(),
                 Kind::UnknownFormat => {
                     "The content matches no supported trajectory format.".to_owned()
                 }

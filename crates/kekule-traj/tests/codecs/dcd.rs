@@ -121,7 +121,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
             )
             .with_source(
                 kekule_traj::TrajectoryIoError::new(TrajectoryIoErrorKind::InvalidFrame)
-                    .with_detail("DCD cell angles are degenerate."),
+                    .with_detail("The cell angles are degenerate."),
             ))
         );
         assert_eq!(writer.writer(), &before);
@@ -909,7 +909,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
             TrajectoryFormat::Dcd,
             "late-invalid.dcd",
             None,
-            "DCD coordinate cannot be represented as finite f32.",
+            "A coordinate does not fit single precision.",
         ))
     );
     assert_eq!(writer.writer().get_ref().len(), header_bytes);
@@ -942,7 +942,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
             TrajectoryFormat::Dcd,
             "late-invalid.dcd",
             Some(0),
-            "DCD cannot preserve bond properties.",
+            "DCD cannot store the bond properties.",
         )
         .with_field(TrajectoryField::BondProperties))
     );
@@ -1073,7 +1073,7 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
             TrajectoryFormat::Dcd,
             "timestep.dcd",
             None,
-            "DCD frame time does not match the explicit DELTA policy.",
+            "The frame's time differs from the time the step and DELTA give.",
         ))
     );
     let bytes = writer.finish().unwrap().into_inner();

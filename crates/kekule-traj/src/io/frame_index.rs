@@ -367,11 +367,11 @@ impl TrajectoryFileFingerprint {
             WHAT,
         )?;
         if bytes.len() != FINGERPRINT_BYTES {
-            return Err(invalid_index("File fingerprint has trailing bytes."));
+            return Err(invalid_index("The file fingerprint has trailing bytes."));
         }
         if bytes[12..14] != [0, 0] {
             return Err(invalid_index(
-                "File fingerprint reserved bytes are nonzero.",
+                "A reserved byte of the file fingerprint is not zero.",
             ));
         }
         Self::read_fields(&bytes[FINGERPRINT_FIELDS], WHAT)
@@ -429,7 +429,7 @@ impl FromStr for TrajectoryFileFingerprint {
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         if text.len() != 2 * FINGERPRINT_BYTES {
             return Err(invalid_index(
-                "File fingerprint text is not 112 hexadecimal digits.",
+                "The file fingerprint text is not 112 hexadecimal digits.",
             ));
         }
         let digit = |byte: u8| match byte {
@@ -444,7 +444,9 @@ impl FromStr for TrajectoryFileFingerprint {
             .iter()
             .map(|&[high, low]| Some((digit(high)? << 4) | digit(low)?))
             .collect::<Option<Vec<u8>>>()
-            .ok_or_else(|| invalid_index("File fingerprint text is not lowercase hexadecimal."))?;
+            .ok_or_else(|| {
+                invalid_index("The file fingerprint text is not lowercase hexadecimal.")
+            })?;
         Self::from_bytes(&bytes)
     }
 }
@@ -885,9 +887,7 @@ fn reserve_stamps<T>(
             )
             .with_source_label(source_label)
             .with_frame(frame)
-            .with_detail(format!(
-                "Cannot grow {format} index times or steps toward its bounded capacity."
-            ))
+            .with_detail("Cannot allocate the frame index's times or steps.")
         })
 }
 
@@ -1156,7 +1156,7 @@ impl TrajectoryFrameIndex {
             4 => TrajectoryFormat::Xtc,
             code => {
                 return Err(invalid_index(format!(
-                    "Frame index format {code} is unknown."
+                    "The frame index names the unknown format {code}."
                 )))
             }
         };
@@ -1165,7 +1165,7 @@ impl TrajectoryFrameIndex {
             || (flags & FLAG_MIXED_PRECISION != 0 && format != TrajectoryFormat::Trr)
         {
             return Err(invalid_index(format!(
-                "Frame index flags {flags:#04x} are invalid for {format}."
+                "The frame index flags {flags:#04x} are invalid for {format}."
             )));
         }
         let has_steps = flags & FLAG_STEPS != 0;
@@ -1183,12 +1183,14 @@ impl TrajectoryFrameIndex {
                     TrajectoryIoOperation::Index,
                     Some(format),
                 )
-                .with_detail("Frame index frame count exceeds the configured index limits.")
-                .with_limit(LimitExceeded::new(
-                    Resource::Frames,
-                    capacity,
-                    usize::try_from(declared).unwrap_or(usize::MAX),
-                ))
+                .exceeding(
+                    "The index",
+                    LimitExceeded::new(
+                        Resource::Frames,
+                        capacity,
+                        usize::try_from(declared).unwrap_or(usize::MAX),
+                    ),
+                )
             })?;
         let recorded = match format {
             _ if frame_count == 0 => (false, false),
@@ -1210,7 +1212,7 @@ impl TrajectoryFrameIndex {
             .is_none_or(|length| length != tables.len())
         {
             return Err(invalid_index(
-                "Frame index length disagrees with its frame count.",
+                "The frame index's length does not match its frame count.",
             ));
         }
         let (offset_bytes, stamp_bytes) = tables.split_at(table_bytes);
@@ -1223,7 +1225,7 @@ impl TrajectoryFrameIndex {
                 || start >= fingerprint.byte_count
             {
                 return Err(invalid_index(format!(
-                    "Frame index offset {} is out of order or outside the file.",
+                    "The frame index offset {} is out of order or outside the file.",
                     starts.len()
                 )));
             }
@@ -1248,7 +1250,7 @@ impl TrajectoryFrameIndex {
                 let time = f64::from_le_bytes(*chunk);
                 if !time.is_finite() {
                     return Err(invalid_index(format!(
-                        "Frame index time {} is not finite.",
+                        "The frame index time {} is not finite.",
                         times.len()
                     )));
                 }
@@ -1284,7 +1286,7 @@ fn reserve_decoded<T>(
             TrajectoryIoOperation::Index,
             Some(format),
         )
-        .with_detail("Cannot reserve frame index tables.")
+        .with_detail("Cannot allocate the frame index.")
     })?;
     Ok(table)
 }

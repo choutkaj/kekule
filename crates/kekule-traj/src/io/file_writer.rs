@@ -334,7 +334,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
                 TrajectoryIoOperation::Finish,
                 Some(self.format),
                 &self.source_label,
-                "Cannot finish a trajectory after an earlier frame-write failure.",
+                "An earlier frame failed to write. The trajectory is incomplete.",
             ));
         }
         self.inner.finish()
@@ -364,7 +364,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
             operation,
             Some(self.format),
             &self.source_label,
-            "Trajectory writer is poisoned by an earlier frame-write failure.",
+            "An earlier frame failed to write. The trajectory is incomplete.",
         )
     }
 }
@@ -447,7 +447,7 @@ impl FileTrajectoryWriter {
                 TrajectoryIoOperation::Finish,
                 Some(self.format),
                 &label,
-                "Cannot publish a trajectory after an earlier frame-write failure.",
+                "An earlier frame failed to write. The trajectory is incomplete.",
             ));
         }
         if let Some(inner) = self.inner.take() {
@@ -689,7 +689,7 @@ pub fn create_trajectory_stream_writer<W: Write + Seek>(
             TrajectoryIoOperation::Open,
             None,
             &source_label,
-            "A stream writer needs an explicit format.",
+            "A stream has no extension. Choose the format explicitly.",
         )
     })?;
     stream_writer(format, writer, topology.into(), options, source_label)
@@ -796,7 +796,10 @@ pub fn create_trajectory_writer(
             TrajectoryIoOperation::Open,
             Some(format),
             &label,
-            io::Error::new(io::ErrorKind::AlreadyExists, "Destination already exists."),
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "The destination already exists.",
+            ),
         ));
     }
     let temporary = create_temporary_sibling(&destination, format)?;
@@ -814,7 +817,7 @@ pub fn create_trajectory_writer(
                 TrajectoryIoOperation::Open,
                 Some(format),
                 &label,
-                "The destination does not support the hard link that publishing without                  overwriting needs.",
+                "The destination's file system has no hard links. Writing without overwriting needs them.",
             )
             .with_source(error));
         }
@@ -858,7 +861,7 @@ fn create_temporary_sibling(
         TrajectoryIoOperation::Open,
         Some(format),
         &destination.display().to_string(),
-        "Cannot reserve a unique temporary sibling name.",
+        "Cannot find a free name for the temporary file.",
     ))
 }
 

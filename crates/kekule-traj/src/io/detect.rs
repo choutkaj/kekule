@@ -33,7 +33,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "Detection requires at least one configured prefix byte.",
+            "The detection limit is 0 bytes. Detection reads at least 1 byte.",
         ));
     }
     if max > limits.max_scratch_bytes() {
@@ -42,7 +42,10 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "Detection prefix exceeds the configured scratch limit.",
+            format!(
+                "The detection limit of {max} bytes exceeds the buffer limit of {} bytes.",
+                limits.max_scratch_bytes()
+            ),
         ));
     }
     let mut prefix = Vec::new();
@@ -52,7 +55,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "Cannot reserve bounded detection scratch.",
+            "Cannot allocate the detection buffer.",
         )
     })?;
     let read_result = Read::by_ref(reader)
@@ -71,7 +74,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "Compressed trajectory wrappers are not supported.",
+            "The file is compressed. Decompress it first.",
         ));
     }
 
@@ -117,14 +120,14 @@ pub(crate) fn select_format<R: Read + Seek>(
                 TrajectoryIoOperation::Detect,
                 Some(extension),
                 source_label,
-                "Known extension has no conclusive matching signature.",
+                "The content does not match the format its extension names.",
             )),
             (None, None) => Err(codec_context(
                 TrajectoryIoErrorKind::UnknownFormat,
                 TrajectoryIoOperation::Detect,
                 None,
                 source_label,
-                "Bounded prefix does not identify a supported trajectory format.",
+                "The content matches no supported trajectory format.",
             )),
         },
     }

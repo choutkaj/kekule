@@ -236,7 +236,7 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
             TrajectoryFormat::Xyz,
             "state.xyz",
             Some(0),
-            "XYZ cannot preserve velocities.",
+            "XYZ cannot store the velocities.",
         )
         .with_field(TrajectoryField::Velocities))
     );
@@ -297,7 +297,7 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
             TrajectoryFormat::Dcd,
             "state.dcd",
             Some(0),
-            "DCD cannot preserve time.",
+            "DCD cannot store the time.",
         )
         .with_field(TrajectoryField::Time))
     );
@@ -360,7 +360,7 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
                 TrajectoryFormat::Xtc,
                 "state.xtc",
                 Some(0),
-                &format!("XTC cannot preserve {field}."),
+                &format!("XTC cannot store the {field}."),
             )
             .with_field(field))
         );
@@ -433,7 +433,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
             TrajectoryFormat::Trr,
             "state.trr",
             None,
-            "The TRR lambda policy names a property other than gromacs.trr.lambda.",
+            "The lambda policy names a property other than gromacs.trr.lambda.",
         ))
     );
     let zero = TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
@@ -565,8 +565,7 @@ fn dcd_numbers_frames_on_the_step_sequence() {
                 TrajectoryFormat::Dcd,
                 "state.dcd",
                 None,
-                "DCD frame step must be exactly 100; \
-                 DcdFrameTimingPolicy::Number numbers frames on the step sequence",
+                "The frame's step is not 100, the next step of the header's sequence.",
             ))
         );
     }
@@ -654,8 +653,7 @@ fn dcd_numbering_times_frames_with_the_header_delta() {
             TrajectoryFormat::Dcd,
             "state.dcd",
             None,
-            "DCD explicit time policy requires frame time; \
-             DcdFrameTimingPolicy::Number times frames without one",
+            "The frame has no time. The header's time policy needs one.",
         ))
     );
 }

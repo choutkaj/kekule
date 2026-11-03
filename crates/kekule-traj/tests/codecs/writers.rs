@@ -163,7 +163,7 @@ fn rejected_frame(
                 .unwrap();
             (
                 TrajectoryIoErrorKind::UnsupportedField,
-                "XYZ cannot preserve time.",
+                "XYZ cannot store the time.",
                 Some(1),
                 Some(TrajectoryField::Time),
             )
