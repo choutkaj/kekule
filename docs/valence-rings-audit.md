@@ -63,8 +63,10 @@ the reference and corrected implementation return nine.
 
 The short-ring helper now uses the same edge policy as normal ring perception:
 zero-order and dative edges do not form chemical rings. Search setup, recovery
-copies/scans and ring comparisons are charged to the existing total-work budget,
-and resource failures leave previous perception intact. Degree-two root selection
+trims and scans and ring comparisons are charged to the existing total-work budget,
+and resource failures leave previous perception intact. Recovering a ring that
+several degree-two roots find trims the other roots in place and restores them,
+so its cost follows the trimmed atoms, not the molecule. Degree-two root selection
 now scans each fragment once instead of repeatedly scanning its prefix. Obsolete
 bespoke recovery code was removed.
 

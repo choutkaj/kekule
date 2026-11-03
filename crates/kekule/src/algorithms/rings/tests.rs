@@ -685,7 +685,7 @@ fn work_polls_cancellation_once_per_stride() {
 #[test]
 fn search_and_recovery_charge_setup_before_visiting_paths() {
     let molecule = graph(3, &[(0, 1), (1, 2), (2, 0)]);
-    let active = ActiveRingGraph::new(&molecule);
+    let mut active = ActiveRingGraph::new(&molecule);
     let tracker_with_budget = |max_total_work| {
         RingWorkTracker::new(
             RingPerceptionOptions::default().with_max_total_work(max_total_work),
@@ -708,32 +708,55 @@ fn search_and_recovery_charge_setup_before_visiting_paths() {
     );
     assert_eq!(tracker.path_expansions, 1);
 
-    // Recovery charges a complete graph copy before searching.
-    let mut tracker = tracker_with_budget(17);
+    // Recovery charges the bonds of the roots it trims before trimming or
+    // searching, so an exceeded budget leaves the graph as it was.
+    let mut tracker = tracker_with_budget(1);
     let mut candidates = Vec::new();
     let mut invariants = BTreeSet::new();
     let duplicate_roots = BTreeMap::from([(
         vec![AtomId::new(0), AtomId::new(1), AtomId::new(2)],
         vec![AtomId::new(0), AtomId::new(1)],
     )]);
+    let duplicate_map = BTreeMap::from([
+        (AtomId::new(0), vec![AtomId::new(1)]),
+        (AtomId::new(1), vec![AtomId::new(0)]),
+    ]);
     assert_eq!(
         recover_duplicate_degree_two_candidates(
-            &active,
+            &mut active,
             &duplicate_roots,
-            &BTreeMap::new(),
+            &duplicate_map,
             &mut candidates,
             &mut invariants,
             &mut tracker,
         ),
         Err(RingPerceptionError::LimitExceeded(LimitExceeded::new(
             Resource::Work,
-            17,
-            18
+            1,
+            2
         )))
     );
     assert_eq!(tracker.path_expansions, 0);
     assert!(candidates.is_empty());
     assert!(invariants.is_empty());
+    assert_eq!(active.atom_degrees, [2, 2, 2]);
+    assert!(active.active_bonds.iter().all(|active| *active));
+
+    // Each root searches without the other, whose trim is undone afterwards.
+    let mut tracker = tracker_with_budget(usize::MAX);
+    recover_duplicate_degree_two_candidates(
+        &mut active,
+        &duplicate_roots,
+        &duplicate_map,
+        &mut candidates,
+        &mut invariants,
+        &mut tracker,
+    )
+    .unwrap();
+    assert!(candidates.is_empty());
+    assert!(tracker.path_expansions > 0);
+    assert_eq!(active.atom_degrees, [2, 2, 2]);
+    assert!(active.active_bonds.iter().all(|active| *active));
 
     let mut tracker = tracker_with_budget(2);
     let mut discovered = RingMembership {
@@ -864,4 +887,21 @@ fn ring_rich_polymers_perceive_with_default_bounds() {
         .clone();
     assert_eq!(rings.rings().len(), 1000);
     molecule.perceive().unwrap();
+}
+
+// Regression: each ring that two degree-two roots find again was recovered
+// on a copy of the whole graph, so ring perception grew with rings times
+// molecule size. Every 1,4-cyclohexylene ring here has two such roots.
+#[test]
+fn rings_found_from_two_roots_recover_locally() {
+    let mut molecule = crate::smiles::to_molecules(&"C1CCC(CC1)".repeat(1000))
+        .unwrap()
+        .remove(0);
+    perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    let rings = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("rings installed");
+    assert_eq!(rings.rings().len(), 1000);
 }

@@ -6,6 +6,7 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::algorithms::{rdkit_valence_issue, ValenceIssue};
 use crate::chemistry::localize_source_aromatic_bonds;
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
@@ -662,8 +663,68 @@ impl<'r> Resolver<'r, '_> {
             raw::poll(self.cancellation)?;
             self.assign_template_charges(residue, &residues[&residue.key])?;
         }
+        let templated = templated
+            .iter()
+            .map(|residue| &residue.key)
+            .collect::<BTreeSet<_>>();
+        for residue in residues.values() {
+            raw::poll(self.cancellation)?;
+            if !templated.contains(&residue.key) {
+                self.assign_implied_charges(residue)?;
+            }
+        }
         raw::poll(self.cancellation)?;
         self.report_fragmented_residues(&residues);
+        Ok(())
+    }
+
+    /// Charges the atoms of a residue that no template gives charges, as
+    /// their bonds imply. A source can state bond orders but no charges, as
+    /// the component tables of wwPDB entry files do. A neutral atom with
+    /// more bonds than its valence allows, such as the methylated N7 of
+    /// 7-methylguanosine, then takes the charge of one that makes its
+    /// valence valid, +1 before -1. Stated charges are kept.
+    fn assign_implied_charges(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
+        let mut charged_atoms = Vec::new();
+        for site in &residue.sites {
+            if site.stated_charge.is_some() {
+                continue;
+            }
+            let atom = self
+                .graph
+                .require_atom(site.atom)
+                .map_err(interpret_error)?
+                .clone();
+            if atom.formal_charge != 0
+                || !matches!(
+                    rdkit_valence_issue(self.graph, site.atom, &atom),
+                    Some(ValenceIssue::ValenceExceeded { .. })
+                )
+            {
+                continue;
+            }
+            let valid = |charge: i8| {
+                let mut charged = atom.clone();
+                charged.formal_charge = charge;
+                rdkit_valence_issue(self.graph, site.atom, &charged).is_none()
+            };
+            let Some(charge) = [1, -1].into_iter().find(|&charge| valid(charge)) else {
+                continue;
+            };
+            self.graph
+                .require_atom_mut(site.atom)
+                .map_err(interpret_error)?
+                .formal_charge = charge;
+            charged_atoms.push((site.name.clone(), charge));
+        }
+        if !charged_atoms.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::ChargesFromBonds {
+                    residue: residue.key.id(self.model_id),
+                    component_id: residue.key.component_id.clone(),
+                    charged_atoms,
+                });
+        }
         Ok(())
     }
 
@@ -2447,6 +2508,63 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         C C1 XYZ A 1 0.0 0.0 0.0
         C C2 XYZ A 1 1.5 0.0 0.0
         O O1 XYZ A 1 2.0 1.2 0.0";
+
+    #[test]
+    fn residues_without_template_charges_take_the_charges_their_bonds_imply() {
+        // wwPDB entry files state component bond orders but no charges. A
+        // quaternary nitrogen takes +1 and a tetrahedral boron -1; a carbon
+        // with five bonds fits neither and stays neutral.
+        let mut table = String::from(
+            "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n",
+        );
+        for (component, center, ligands) in [("XNM", "N", 4), ("XBM", "B", 4), ("XCM", "C", 5)] {
+            for ligand in 1..=ligands {
+                table.push_str(&format!("{component} {center} C{ligand} sing\n"));
+            }
+        }
+        let result = interpret(&block(
+            "N N XNM A 1 0.000 0.000 0.000
+             C C1 XNM A 1 0.860 0.860 0.860
+             C C2 XNM A 1 -0.860 -0.860 0.860
+             C C3 XNM A 1 -0.860 0.860 -0.860
+             C C4 XNM A 1 0.860 -0.860 -0.860
+             B B XBM A 2 10.000 0.000 0.000
+             C C1 XBM A 2 10.900 0.900 0.900
+             C C2 XBM A 2 9.100 -0.900 0.900
+             C C3 XBM A 2 9.100 0.900 -0.900
+             C C4 XBM A 2 10.900 -0.900 -0.900
+             C C XCM A 3 20.000 0.000 0.000
+             C C1 XCM A 3 21.500 0.000 0.000
+             C C2 XCM A 3 18.500 0.000 0.000
+             C C3 XCM A 3 20.000 1.500 0.000
+             C C4 XCM A 3 20.000 -1.500 0.000
+             C C5 XCM A 3 20.000 0.000 1.500",
+            &table,
+        ));
+        assert_eq!(
+            charges(&result),
+            [("N".to_owned(), 1), ("B".to_owned(), -1)]
+        );
+        let charged = issues(&result)
+            .into_iter()
+            .filter(|issue| matches!(issue, StructureInterpretIssue::ChargesFromBonds { .. }))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            charged,
+            [
+                StructureInterpretIssue::ChargesFromBonds {
+                    residue: residue("A", 1),
+                    component_id: "XNM".to_owned(),
+                    charged_atoms: vec![("N".to_owned(), 1)],
+                },
+                StructureInterpretIssue::ChargesFromBonds {
+                    residue: residue("A", 2),
+                    component_id: "XBM".to_owned(),
+                    charged_atoms: vec![("B".to_owned(), -1)],
+                },
+            ]
+        );
+    }
 
     #[test]
     fn residues_without_templates_infer_bonds_unless_disabled() {
