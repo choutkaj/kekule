@@ -1074,12 +1074,20 @@ Every operation has exactly one home.
 - Each functional area has one error type with typed payloads, never
   `&'static str` reasons or stringified causes.
 - `source()` returns the underlying cause, and `Display` does not repeat it.
+  A wrapper keeps its cause as a typed value, never as text. A variant that
+  adds nothing to its cause is transparent: it displays the cause and returns
+  the cause's own source.
+- `diagnostics::ErrorChain` writes an error and its source chain as
+  consecutive sentences: `Cannot build the solvated model. Atom 12 overlaps
+  atom 3.`
 - Every format's parse, interpretation, and write failures, SMARTS included,
   are one `diagnostics::FormatError`. It carries the stage, a
   `DiagnosticKind`, the format, the source location, and the record.
 - Resource exhaustion is reported everywhere as
   `diagnostics::LimitExceeded`, naming the resource, the limit, and the
-  observed value. Default limits are exported as constants.
+  observed value. The error of the operation names it in its own sentence:
+  `Ring perception exceeded its work limit: 69,400,898 steps of 69,248,000.`
+  Default limits are exported as constants.
 - Cancellation is cooperative. A long-running operation accepts an optional
   `diagnostics::Cancellation`, through its options or a `*_cancellable`
   lifecycle method when it has none. It polls the cancellation between
@@ -1089,6 +1097,24 @@ Every operation has exactly one home.
 - A recoverable draft (`try_build`, `try_finish`) fails with
   `DraftError<D, E>`, which returns the draft with the error. It is the only
   generic error wrapper.
+
+**Error messages.** Applications show `Display` texts to their users.
+- A message is one or two short plain sentences, each with a capital letter
+  and a full stop. The fact comes first: what failed and why, then the one
+  action if there is an obvious one. `Atom 7 has no coordinates. Add them
+  before measuring.`
+- It names its objects: atoms, bonds, residues, records, lines, files, and
+  numbers with their units. Text taken from the input is in double quotes.
+- It states facts, not mechanisms. No relative clause explains how Kekule
+  works, no rule follows the fact, nothing hedges, and no Rust API is named.
+  The variant's documentation explains the cause and names the API that
+  avoids it.
+- A wrapper's sentence says what failed at its level, `Cannot build the
+  solvated model.`, so that its cause reads as the next sentence.
+- A `FormatError`'s first sentence names the stage, the format, and the
+  place, `Cannot parse the PDB input at line 12.`, and its message follows.
+- Identifiers display as lowercase noun phrases, such as `atom 3`, for use
+  inside sentences.
 
 **Panics.** Public functions do not panic on any input their types allow.
 Internal invariants may use `expect`, and the message names the invariant.

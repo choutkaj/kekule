@@ -259,6 +259,93 @@ impl fmt::Display for Resource {
     }
 }
 
+impl Resource {
+    /// The name of the limit on this resource, such as `work` in "work
+    /// limit".
+    const fn limit_name(self) -> &'static str {
+        match self {
+            Self::InputBytes => "input size",
+            Self::RecordBytes => "record size",
+            Self::ValueBytes => "value size",
+            Self::Records => "record",
+            Self::Blocks => "data block",
+            Self::Rows => "row",
+            Self::Values => "value",
+            Self::Atoms => "atom",
+            Self::GraphSlots => "graph slot",
+            Self::Labels => "pending label",
+            Self::Bonds => "bond",
+            Self::Hydrogens => "hydrogen",
+            Self::Components => "component",
+            Self::ExpressionNodes => "expression node",
+            Self::ExpressionDepth => "expression depth",
+            Self::RecursionDepth => "recursion depth",
+            Self::BranchDepth => "branch depth",
+            Self::RingClosures => "ring closure",
+            Self::Work => "work",
+            Self::SearchStates => "search state",
+            Self::CandidateCycles => "candidate cycle",
+            Self::PathExpansions => "path expansion",
+            Self::ShortestPaths => "shortest path",
+            Self::RingSize => "ring size",
+            Self::Matches => "match",
+            Self::Permutations => "permutation",
+            Self::DigraphNodes => "digraph node",
+            Self::DigraphDepth => "digraph depth",
+            Self::Structures => "resonance structure",
+            Self::LatticeImages => "lattice image",
+            Self::Positions => "candidate position",
+            Self::MatrixEntries => "matrix entry",
+            Self::Residues => "residue",
+            Self::Frames => "frame",
+            Self::Fields => "field",
+            Self::Combinations => "combination",
+            Self::CandidatePairs => "candidate pair",
+            Self::Ladders => "ladder",
+        }
+    }
+
+    /// The unit a count of this resource is given in.
+    const fn unit(self) -> &'static str {
+        match self {
+            Self::InputBytes | Self::RecordBytes | Self::ValueBytes => "bytes",
+            Self::Records => "records",
+            Self::Blocks => "data blocks",
+            Self::Rows => "rows",
+            Self::Values => "values",
+            Self::Atoms | Self::RingSize => "atoms",
+            Self::GraphSlots => "slots",
+            Self::Labels => "labels",
+            Self::Bonds => "bonds",
+            Self::Hydrogens => "hydrogens",
+            Self::Components => "components",
+            Self::ExpressionNodes | Self::DigraphNodes => "nodes",
+            Self::ExpressionDepth
+            | Self::RecursionDepth
+            | Self::BranchDepth
+            | Self::DigraphDepth => "levels",
+            Self::RingClosures => "ring closures",
+            Self::Work => "steps",
+            Self::SearchStates => "states",
+            Self::CandidateCycles => "cycles",
+            Self::PathExpansions => "expansions",
+            Self::ShortestPaths => "paths",
+            Self::Matches => "matches",
+            Self::Permutations => "permutations",
+            Self::Structures => "structures",
+            Self::LatticeImages => "images",
+            Self::Positions => "positions",
+            Self::MatrixEntries => "entries",
+            Self::Residues => "residues",
+            Self::Frames => "frames",
+            Self::Fields => "fields",
+            Self::Combinations => "combinations",
+            Self::CandidatePairs => "pairs",
+            Self::Ladders => "ladders",
+        }
+    }
+}
+
 /// A bounded operation stopped because it would exceed a resource limit.
 ///
 /// `observed` is the value that exceeded `limit`. An operation that stops at
@@ -315,15 +402,148 @@ impl LimitExceeded {
     pub const fn observed(&self) -> usize {
         self.observed
     }
+
+    /// The limit with the observed value and the bound, such as `work limit:
+    /// 69,400,898 steps of 69,248,000`, for the error of an operation to name
+    /// in a sentence of its own.
+    ///
+    /// ```
+    /// use kekule::diagnostics::{LimitExceeded, Resource};
+    ///
+    /// let limit = LimitExceeded::new(Resource::Work, 69_248_000, 69_400_898);
+    /// assert_eq!(
+    ///     format!("Ring perception exceeded its {}.", limit.describe()),
+    ///     "Ring perception exceeded its work limit: 69,400,898 steps of 69,248,000."
+    /// );
+    /// ```
+    pub fn describe(&self) -> impl fmt::Display + '_ {
+        DescribedLimit(self)
+    }
 }
 
-impl fmt::Display for LimitExceeded {
+struct DescribedLimit<'a>(&'a LimitExceeded);
+
+impl fmt::Display for DescribedLimit<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let limit = self.0;
         write!(
             formatter,
-            "{} limit exceeded: observed {}, limit {}",
-            self.resource, self.observed, self.limit
+            "{} limit: {} {} of {}",
+            limit.resource.limit_name(),
+            Count(limit.observed),
+            limit.resource.unit(),
+            Count(limit.limit)
         )
+    }
+}
+
+/// Writes `Exceeded the work limit: 69,400,898 steps of 69,248,000.`; an
+/// error that carries the limit names its operation with
+/// [`LimitExceeded::describe`] instead.
+impl fmt::Display for LimitExceeded {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Exceeded the {}.", self.describe())
+    }
+}
+
+/// A count written with thousands separators, such as `69,248,000`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Count(pub(crate) usize);
+
+impl fmt::Display for Count {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let digits = self.0.to_string();
+        let lead = digits.len() % 3;
+        for (index, digit) in digits.char_indices() {
+            if index != 0 && index % 3 == lead {
+                formatter.write_str(",")?;
+            }
+            write!(formatter, "{digit}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Writes a value's display text with its first letter in upper case, for a
+/// noun phrase such as an identifier (`atom 3`) that starts a sentence.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Capitalized<T>(pub(crate) T);
+
+impl<T: fmt::Display> fmt::Display for Capitalized<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = self.0.to_string();
+        let mut characters = text.chars();
+        if let Some(first) = characters.next() {
+            write!(formatter, "{}", first.to_uppercase())?;
+            formatter.write_str(characters.as_str())?;
+        }
+        Ok(())
+    }
+}
+
+/// An error followed by every error of its
+/// [`source`](std::error::Error::source) chain, written as consecutive
+/// sentences.
+///
+/// Every Kekule error displays as one or two sentences and does not repeat
+/// its source, so the chain reads as one message, such as `Cannot build the
+/// solvated model. Atom 12 overlaps atom 3.` Errors from outside Kekule in
+/// the chain, such as I/O errors, get an upper-case first letter and a
+/// closing full stop when they lack them. A cause whose text equals the
+/// previous one, as a transparent wrapper writes it, appears once. The
+/// alternate form, `{:#}`, writes one error per line.
+///
+/// ```
+/// use kekule::diagnostics::ErrorChain;
+///
+/// let error = kekule::smiles::to_molecules("C1CC").unwrap_err();
+/// let message = ErrorChain::new(&error).to_string();
+/// assert!(message.starts_with("Cannot parse the SMILES input"));
+/// assert!(message.ends_with('.'));
+/// ```
+#[derive(Clone, Copy)]
+pub struct ErrorChain<'a> {
+    error: &'a (dyn std::error::Error + 'static),
+}
+
+impl<'a> ErrorChain<'a> {
+    /// The chain that starts at `error`.
+    pub fn new(error: &'a (dyn std::error::Error + 'static)) -> Self {
+        Self { error }
+    }
+}
+
+impl fmt::Debug for ErrorChain<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ErrorChain")
+            .field("error", &self.error)
+            .finish()
+    }
+}
+
+impl fmt::Display for ErrorChain<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let separator = if formatter.alternate() { "\n" } else { " " };
+        let mut previous: Option<String> = None;
+        let mut next = Some(self.error);
+        while let Some(error) = next {
+            next = error.source();
+            let text = error.to_string();
+            let text = text.trim();
+            if text.is_empty() || previous.as_deref() == Some(text) {
+                continue;
+            }
+            if previous.is_some() {
+                formatter.write_str(separator)?;
+            }
+            write!(formatter, "{}", Capitalized(text))?;
+            if !text.ends_with(['.', '!', '?']) {
+                formatter.write_str(".")?;
+            }
+            previous = Some(text.to_owned());
+        }
+        Ok(())
     }
 }
 
@@ -441,7 +661,7 @@ pub struct Cancelled;
 
 impl fmt::Display for Cancelled {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("operation cancelled")
+        formatter.write_str("The operation was cancelled.")
     }
 }
 
@@ -739,12 +959,7 @@ impl FormatError {
 
     /// A failure of the output sink, keeping `error` as the source.
     pub(crate) fn sink(format: Format, error: std::io::Error) -> Self {
-        Self::write(
-            format,
-            DiagnosticKind::Io,
-            format!("{format} output failed"),
-        )
-        .with_source(error)
+        Self::write(format, DiagnosticKind::Io, "").with_source(error)
     }
 
     #[must_use]
@@ -885,16 +1100,23 @@ impl FormatError {
         self.0.detail.as_ref()
     }
 
-    /// Human-readable description of the failure, without its location,
-    /// record or source.
+    /// What went wrong, in one or two sentences, without the format, stage,
+    /// location, record or source; empty when the source says it all.
     pub fn message(&self) -> &str {
         &self.0.message
     }
 }
 
+/// Writes the stage that failed, the format and the place, such as `Cannot
+/// parse the SDF input in record 3 at line 12.`, followed by the message.
 impl fmt::Display for FormatError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} {} error", self.0.format, self.0.stage)?;
+        let format = self.0.format;
+        match self.0.stage {
+            FormatStage::Parse => write!(formatter, "Cannot parse the {format} input")?,
+            FormatStage::Interpret => write!(formatter, "Cannot interpret the {format} input")?,
+            FormatStage::Write => write!(formatter, "Cannot write the {format} output")?,
+        }
         if let Some(record) = self.0.record {
             write!(formatter, " in record {record}")?;
         }
@@ -904,7 +1126,11 @@ impl fmt::Display for FormatError {
         if let Some(offset) = self.0.byte_offset {
             write!(formatter, " at byte {offset}")?;
         }
-        write!(formatter, ": {}", self.0.message)
+        formatter.write_str(".")?;
+        if !self.0.message.is_empty() {
+            write!(formatter, " {}", self.0.message)?;
+        }
+        Ok(())
     }
 }
 
@@ -968,22 +1194,19 @@ pub(crate) fn read_bounded(
         .take(limit)
         .read_to_end(&mut bytes)
         .map_err(|error| {
-            FormatError::parse(format, DiagnosticKind::Io, "cannot read input").with_source(error)
+            FormatError::parse(format, DiagnosticKind::Io, "").with_source(error)
         })?;
     if bytes.len() > max_bytes {
+        let limit = LimitExceeded::new(Resource::InputBytes, max_bytes, bytes.len());
         return Err(FormatError::parse(
             format,
             DiagnosticKind::Limit,
-            "input exceeds configured byte limit",
+            format!("The input exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::new(
-            Resource::InputBytes,
-            max_bytes,
-            bytes.len(),
-        )));
+        .exceeding(limit));
     }
     String::from_utf8(bytes).map_err(|error| {
-        FormatError::parse(format, DiagnosticKind::Io, "input is not valid UTF-8")
+        FormatError::parse(format, DiagnosticKind::Io, "The input is not valid UTF-8.")
             .with_source(error)
     })
 }
