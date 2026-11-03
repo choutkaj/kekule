@@ -426,7 +426,8 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     let target = &result;
     assert_eq!(target.atom_count(), source.atom_count() * 3);
     assert_eq!(target.topology().instance_count(), 9);
-    assert_eq!(target.topology().definition_count(), 6);
+    // The copies share the draft's identical definitions.
+    assert_eq!(target.topology().definition_count(), 2);
     assert_eq!(target.topology().chains().count(), 3); // Equal labels never merge chains.
     assert_eq!(target.topology().residues().count(), 3);
     assert_eq!(
@@ -453,7 +454,8 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
         assert_eq!(target.position(id).unwrap(), source.position(id).unwrap());
         assert_ne!(first.atom(id).unwrap(), second.atom(id).unwrap());
     }
-    // Explicitly reused occurrences share a definition; equal independent ones do not.
+    // Explicitly reused occurrences share a definition; ones of another class
+    // do not.
     for first_instance in [3, 6] {
         let defs = source
             .topology()
@@ -938,4 +940,89 @@ fn edited_source_ids_and_reordered_definition_occurrences_keep_dense_state_assoc
     let result = destination.finish().unwrap();
     assert_import(&source, &result, 1);
     assert_eq!(result.topology().definition_count(), 3);
+}
+
+fn kras() -> Model {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mmcif/9UOH.cif");
+    kekule::mmcif::parse_str(&std::fs::read_to_string(path).unwrap(), Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_model()
+}
+
+#[test]
+fn appended_copies_share_identical_definitions() {
+    // Two separately read copies share no definition by allocation.
+    let (first, second) = (kras(), kras());
+    let source = first.topology();
+    assert_eq!(source.definition_count(), 6);
+    let instances = source.instance_count();
+    let mut editor = ModelEditor::new();
+    editor.append_model(&first).unwrap();
+    editor.append_model(&second).unwrap();
+    let merged = editor.finish().unwrap();
+    assert_eq!(merged.topology().definition_count(), 6);
+    assert_eq!(merged.topology().instance_count(), 2 * instances);
+    let definition = |model: &Model, index: usize| {
+        model
+            .topology()
+            .instance(MoleculeInstanceId::new(index as u32))
+            .unwrap()
+            .definition_id()
+    };
+    for index in 0..instances {
+        assert_eq!(
+            definition(&merged, index),
+            definition(&merged, instances + index)
+        );
+    }
+
+    // Appending to a draft of the merged model shares its source definitions.
+    let mut editor = merged.to_editor();
+    editor.append_model(&kras()).unwrap();
+    let tripled = editor.finish().unwrap();
+    assert_eq!(tripled.topology().definition_count(), 6);
+    assert_eq!(tripled.topology().instance_count(), 3 * instances);
+    for index in 0..instances {
+        assert_eq!(
+            definition(&tripled, index),
+            definition(&tripled, 2 * instances + index)
+        );
+    }
+
+    // Editing one occurrence of a shared definition leaves the others.
+    let gdp = source
+        .residues()
+        .find(|residue| residue.name() == "GDP")
+        .unwrap();
+    let gdp_atom = gdp.atom_sites().next().unwrap().atom();
+    let mut editor = tripled.to_editor();
+    let charged = gdp_atom.atom().clone().with_formal_charge(1);
+    let target = editor
+        .topology()
+        .atom_handle(InstanceAtomId::new(
+            MoleculeInstanceId::new((2 * instances + gdp_atom.id().instance().index()) as u32),
+            gdp_atom.id().atom(),
+        ))
+        .unwrap();
+    editor.replace_atom(target, charged).unwrap();
+    let edited = editor.finish().unwrap();
+    assert_eq!(edited.topology().definition_count(), 7);
+    let gdp_instance = gdp_atom.id().instance().index();
+    let molecule = |index: usize| {
+        edited
+            .topology()
+            .instance(MoleculeInstanceId::new(index as u32))
+            .unwrap()
+            .molecule()
+            .clone()
+    };
+    let original = source
+        .instance(gdp_atom.id().instance())
+        .unwrap()
+        .molecule();
+    assert_eq!(&molecule(gdp_instance), original);
+    assert_eq!(&molecule(instances + gdp_instance), original);
+    assert_ne!(&molecule(2 * instances + gdp_instance), original);
 }

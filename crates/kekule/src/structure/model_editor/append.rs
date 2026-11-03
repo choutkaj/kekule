@@ -13,7 +13,12 @@ impl ModelEditor {
     /// system. No fitting, imaging, bond inference or geometry generation is done.
     ///
     /// Molecule definitions retain their reuse within this import, represented
-    /// stereo, perception, classification and definition properties. Instances,
+    /// stereo, perception, classification and definition properties. A molecule
+    /// identical to a definition the draft already holds, from its source or an
+    /// earlier append, becomes an instance of that definition: equal graph in
+    /// local atom order, properties, perception, class, and component and atom
+    /// names of its atoms, as interpretation shares identical molecules. Editing
+    /// one instance later copies its definition and leaves the others. Instances,
     /// atoms, bonds and hierarchy receive distinct editing identities. Chains are
     /// kept separate even when their labels coincide; labels and author identifiers
     /// are preserved. All entity property columns at definition, topology and model
