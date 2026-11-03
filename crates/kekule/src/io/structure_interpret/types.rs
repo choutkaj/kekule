@@ -385,6 +385,17 @@ pub enum StructureInterpretIssue {
         /// The residue that would be linked to it.
         next: SourceResidueId,
     },
+    /// A residue that no template gives charges had atoms with more bonds
+    /// than a neutral atom allows. Each took the formal charge its bonds
+    /// imply, as the methylated N7 of 7-methylguanosine takes +1.
+    ChargesFromBonds {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The charged atoms, by atom name, with their formal charge in e.
+        charged_atoms: Vec<(String, i8)>,
+    },
     /// The model's hydrogens differ from the reference template: a protonation
     /// variant was selected, or heteroatom charges were adjusted by one per
     /// added or removed hydrogen.

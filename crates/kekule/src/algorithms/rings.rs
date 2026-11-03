@@ -468,7 +468,6 @@ pub(crate) fn perceive_rings_cancellable(
     Ok(())
 }
 
-#[derive(Clone)]
 struct ActiveRingGraph {
     adjacency: Vec<Vec<(AtomId, BondId)>>,
     active_bonds: Vec<bool>,
@@ -477,7 +476,6 @@ struct ActiveRingGraph {
     /// every cycle through a root lies within the root's biconnected component,
     /// so bridges never contribute, while degrees keep the full active graph.
     ring_bonds: Vec<bool>,
-    copy_work: usize,
 }
 
 impl ActiveRingGraph {
@@ -489,7 +487,6 @@ impl ActiveRingGraph {
         let mut adjacency = vec![Vec::new(); mol.graph.atom_slot_count()];
         let mut active_bonds = vec![false; mol.graph.bond_slot_count()];
         let mut atom_degrees = vec![0usize; mol.graph.atom_slot_count()];
-        let mut adjacency_entries = 0usize;
         for (bond_id, bond) in mol.bonds() {
             if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
                 continue;
@@ -499,23 +496,12 @@ impl ActiveRingGraph {
             active_bonds[bond_id.index()] = true;
             atom_degrees[bond.a.index()] += 1;
             atom_degrees[bond.b.index()] += 1;
-            adjacency_entries = adjacency_entries.saturating_add(2);
         }
-        // Trimming only changes flags/degrees, so this allocation-size estimate
-        // remains valid and constant-time to read for every recovery clone.
-        let ring_bonds = membership.bond_flags.clone();
-        let copy_work = adjacency
-            .len()
-            .saturating_mul(2)
-            .saturating_add(active_bonds.len())
-            .saturating_add(ring_bonds.len())
-            .saturating_add(adjacency_entries);
         Self {
             adjacency,
             active_bonds,
             atom_degrees,
-            ring_bonds,
-            copy_work,
+            ring_bonds: membership.bond_flags.clone(),
         }
     }
 
@@ -533,18 +519,43 @@ impl ActiveRingGraph {
     }
 
     fn trim_atom(&mut self, atom: AtomId, changed: &mut VecDeque<AtomId>) {
-        let incident = self.adjacency[atom.index()].clone();
-        for (other, bond) in incident {
+        for index in 0..self.adjacency[atom.index()].len() {
+            let (other, bond) = self.adjacency[atom.index()][index];
             if !self.active_bonds[bond.index()] {
                 continue;
             }
             if self.atom_degrees[other.index()] <= 2 {
                 changed.push_back(other);
             }
-            self.active_bonds[bond.index()] = false;
-            self.atom_degrees[other.index()] = self.atom_degrees[other.index()].saturating_sub(1);
-            self.atom_degrees[atom.index()] = self.atom_degrees[atom.index()].saturating_sub(1);
+            self.deactivate(bond, atom, other);
         }
+    }
+
+    /// Deactivates the active bonds of `atom` without trimming further atoms,
+    /// recording each so that [`Self::restore`] can undo it.
+    fn trim_atom_undoably(&mut self, atom: AtomId, trimmed: &mut Vec<(BondId, AtomId, AtomId)>) {
+        for index in 0..self.adjacency[atom.index()].len() {
+            let (other, bond) = self.adjacency[atom.index()][index];
+            if self.active_bonds[bond.index()] {
+                self.deactivate(bond, atom, other);
+                trimmed.push((bond, atom, other));
+            }
+        }
+    }
+
+    /// Reactivates the bonds that [`Self::trim_atom_undoably`] recorded.
+    fn restore(&mut self, trimmed: &mut Vec<(BondId, AtomId, AtomId)>) {
+        for (bond, atom, other) in trimmed.drain(..).rev() {
+            self.active_bonds[bond.index()] = true;
+            self.atom_degrees[atom.index()] += 1;
+            self.atom_degrees[other.index()] += 1;
+        }
+    }
+
+    fn deactivate(&mut self, bond: BondId, atom: AtomId, other: AtomId) {
+        self.active_bonds[bond.index()] = false;
+        self.atom_degrees[other.index()] = self.atom_degrees[other.index()].saturating_sub(1);
+        self.atom_degrees[atom.index()] = self.atom_degrees[atom.index()].saturating_sub(1);
     }
 }
 
@@ -764,7 +775,7 @@ fn find_rings_from_degree_two_nodes(
 }
 
 fn recover_duplicate_degree_two_candidates(
-    graph: &ActiveRingGraph,
+    graph: &mut ActiveRingGraph,
     duplicate_roots: &BTreeMap<Vec<AtomId>, Vec<AtomId>>,
     duplicate_map: &BTreeMap<AtomId, Vec<AtomId>>,
     candidates: &mut Vec<Ring>,
@@ -777,15 +788,23 @@ fn recover_duplicate_degree_two_candidates(
         }
         let mut recovered = Vec::<Vec<AtomId>>::new();
         let mut minimum_size = usize::MAX;
+        let mut trimmed = Vec::new();
         for root in roots {
-            tracker.add_work(graph.copy_work)?;
-            let mut reduced = graph.clone();
-            let mut changed = VecDeque::new();
-            for duplicate in duplicate_map.get(root).into_iter().flatten().copied() {
-                reduced.trim_atom(duplicate, &mut changed);
+            // Search from each root without the roots that found the same
+            // ring, then restore them for the next root.
+            let duplicates = duplicate_map.get(root).map_or(&[][..], Vec::as_slice);
+            tracker.add_work(
+                duplicates
+                    .iter()
+                    .map(|duplicate| graph.adjacency[duplicate.index()].len())
+                    .sum(),
+            )?;
+            for duplicate in duplicates {
+                graph.trim_atom_undoably(*duplicate, &mut trimmed);
             }
-            let atom_rings = smallest_rings_bfs(*root, &reduced, &BTreeSet::new(), tracker)?;
-            for atoms in atom_rings {
+            let atom_rings = smallest_rings_bfs(*root, graph, &BTreeSet::new(), tracker);
+            graph.restore(&mut trimmed);
+            for atoms in atom_rings? {
                 minimum_size = minimum_size.min(atoms.len());
                 recovered.push(atoms);
             }
