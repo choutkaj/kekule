@@ -750,10 +750,14 @@ fn count_bond_candidates(
         .flat_map(|x| (-1_i64..=1).flat_map(move |y| (-1_i64..=1).map(move |z| [x, y, z])))
         .filter(|offset| *offset > [0, 0, 0])
         .collect::<Vec<_>>();
-    for (step, &(cell, start, end)) in occupied.iter().enumerate() {
-        poll_every(cancellation, step)?;
+    // Pair scans poll once per atom whose partners they visit, since one
+    // dense cell can hold many atoms.
+    let mut scanned = 0usize;
+    for &(cell, start, end) in &occupied {
         let members = &order[start..end];
         for (offset, &left) in members.iter().enumerate() {
+            poll_every(cancellation, scanned)?;
+            scanned += 1;
             for &right in &members[offset + 1..] {
                 count(left, right)?;
             }
@@ -773,6 +777,8 @@ fn count_bond_candidates(
             };
             let (_, neighbor_start, neighbor_end) = occupied[neighbor];
             for &left in members {
+                poll_every(cancellation, scanned)?;
+                scanned += 1;
                 for &right in &order[neighbor_start..neighbor_end] {
                     count(left, right)?;
                 }
