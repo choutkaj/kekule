@@ -598,7 +598,7 @@ fn adopt_stated_letters(monomers: &mut [EntityMonomer], sequence: &str) {
         let letters = &sequence[start..start + length];
         start += length;
         if letters != monomer.code.as_str() {
-            monomer.code = ResidueCode::new(letters, CodeOrigin::Sequence);
+            monomer.code = monomer.code.restated(letters, CodeOrigin::Sequence);
         }
     }
 }
