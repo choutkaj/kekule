@@ -46,7 +46,7 @@ retrieved = "2026-10-26"
 sha256 = "0956aba81b95abbe13a9ec6c9ebaa7f93355d9b6e4a9ddca743bdea2f5291f0f"
 license = "CC0 1.0 (wwPDB archive data)"
 preprocessing = "None; original downloaded bytes"
-purpose = "Non-covalent interaction regressions (KRas G12C with the inhibitor ASP2453: hydrogen bonds, T-shaped stacking, a salt bridge), the interaction benchmark, and the metal-coordination interpretation regression (Mg2+ coordinated by Ser17 and GDP stays a separate molecule); not a scientific benchmark"
+purpose = "Non-covalent interaction regressions (KRas G12C with the inhibitor ASP2453: hydrogen bonds, T-shaped stacking, a salt bridge), the interaction benchmark, the metal-coordination interpretation regression (Mg2+ coordinated by Ser17 and GDP stays a separate molecule), and the definition-reuse regression (its waters share one definition); not a scientific benchmark"
 
 [[fixture]]
 path = "3PTB.cif"

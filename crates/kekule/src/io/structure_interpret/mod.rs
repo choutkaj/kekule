@@ -19,6 +19,7 @@ use crate::structure::ModelBuilder;
 use crate::topology::HierarchyBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
+use super::definition_reuse::DefinitionReuse;
 use super::structure_connectivity::ConnectivityCatalog;
 use altloc::select_alt_locations;
 use atom_site::{atom_key, AtomRow};
@@ -283,6 +284,7 @@ fn publish_model(
             .push(connection);
     }
     let mut builder = ModelBuilder::new();
+    let mut definitions = DefinitionReuse::new();
     let mut qualified_atom_data = Vec::new();
     for group in groups {
         poll(cancellation)?;
@@ -290,8 +292,12 @@ fn publish_model(
         let mut built = build_molecule(group, &declared, cancellation)?;
         built.complete_connectivity(catalog, &mut report, cancellation)?;
         for built in built.publish_components(cancellation)? {
+            let labels = built.provenance.atom_labels(built.molecule.atom_count());
+            let definition = definitions
+                .definition(&mut builder, built.molecule, labels)
+                .map_err(graph_error)?;
             let id = builder
-                .add_molecule(built.molecule, &built.positions)
+                .add_instance(definition, &built.positions)
                 .map_err(graph_error)?;
             poll(cancellation)?;
             let (provenance, atom_data) = built.provenance.qualify(id);
