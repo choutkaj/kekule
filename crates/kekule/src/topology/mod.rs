@@ -318,7 +318,7 @@ impl InstanceAtomId {
 
 impl fmt::Display for InstanceAtomId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:{}", self.molecule, self.atom)
+        write!(formatter, "{} of {}", self.atom, self.molecule)
     }
 }
 
@@ -376,7 +376,7 @@ impl InstanceBondId {
 
 impl fmt::Display for InstanceBondId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:{}", self.molecule, self.bond)
+        write!(formatter, "{} of {}", self.bond, self.molecule)
     }
 }
 

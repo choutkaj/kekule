@@ -267,14 +267,20 @@ impl fmt::Display for DenseArrayError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::IndexOutOfRange { index, len } => {
-                write!(formatter, "row {index} is outside an array of {len} rows")
+                write!(
+                    formatter,
+                    "Row {index} is outside the array of {}.",
+                    crate::diagnostics::counted(*len, "row", "rows")
+                )
             }
             Self::CountMismatch { expected, actual } => write!(
                 formatter,
-                "array requires {expected} rows, but received {actual}"
+                "The array has {actual} rows, but {expected} are required."
             ),
-            Self::NonFinite { index } => write!(formatter, "value at row {index} is not finite"),
-            Self::Unit(_) => formatter.write_str("invalid unit"),
+            Self::NonFinite { index } => {
+                write!(formatter, "The value in row {index} is not finite.")
+            }
+            Self::Unit(_) => formatter.write_str("The values have a unit of the wrong dimension."),
         }
     }
 }

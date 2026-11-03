@@ -1,6 +1,6 @@
 //! Compatibility with RDKit's nitrogen/phosphorus cleanup on a private copy.
 //! See THIRD_PARTY.md for the reference revision and BSD attribution.
-use crate::error::atom_list;
+use crate::error::{atom_list, capitalized};
 use crate::{Error, ErrorKind, Result};
 use kekule::molecule::{BondOrder, Molecule};
 
@@ -11,11 +11,12 @@ use kekule::molecule::{BondOrder, Molecule};
 /// to the input atom for atom.
 pub(crate) fn explicit(molecule: &Molecule) -> Result<Molecule> {
     let mut copy = normalize_valence(molecule)?;
-    copy.perceive().map_err(Error::chemistry)?;
+    copy.perceive()
+        .map_err(|e| Error::chemistry("Cannot perceive the molecule.", e))?;
     if !copy.atom_ids().eq(molecule.atom_ids()) {
         return Err(Error::new(
             ErrorKind::Chemistry,
-            "molecule preparation changed atom identities",
+            "Preparing the molecule changed its atom IDs.",
         ));
     }
     let implicit: Vec<_> = copy
@@ -26,8 +27,8 @@ pub(crate) fn explicit(molecule: &Molecule) -> Result<Molecule> {
         return Err(Error::new(
             ErrorKind::UnsupportedMolecule,
             format!(
-                "{} {} implicit hydrogens; expand hydrogens before parameterization",
-                atom_list(&implicit),
+                "{} {} implicit hydrogens. Add them as explicit atoms.",
+                capitalized(&atom_list(&implicit)),
                 if implicit.len() == 1 { "has" } else { "have" },
             ),
         )
@@ -42,8 +43,13 @@ pub(crate) fn explicit(molecule: &Molecule) -> Result<Molecule> {
         return Err(Error::new(
             ErrorKind::UnsupportedMolecule,
             format!(
-                "radicals are outside the supported parameterization domain: {}",
-                atom_list(&radicals)
+                "{} {}. Radicals are not supported.",
+                capitalized(&atom_list(&radicals)),
+                if radicals.len() == 1 {
+                    "is a radical"
+                } else {
+                    "are radicals"
+                },
             ),
         )
         .with_atoms(radicals));
@@ -109,7 +115,9 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
                     .bond_mut(bond)
                     .expect("bond IDs come from this molecule")
                     .set_order(new);
-                copy = editor.finish().map_err(Error::chemistry)?;
+                copy = editor
+                    .finish()
+                    .map_err(|e| Error::chemistry("Cannot normalize the nitrogen valences.", e))?;
             }
         }
     }
@@ -117,7 +125,7 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
     if copy.formal_charge() != input.formal_charge() {
         return Err(Error::new(
             ErrorKind::Chemistry,
-            "input valence normalization changed total charge",
+            "Normalizing the valences changed the molecule's total charge.",
         ));
     }
     Ok(copy)
@@ -192,7 +200,9 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
             .expect("bond IDs come from this molecule")
             .set_order(BondOrder::Single);
     }
-    editor.finish().map_err(Error::chemistry)
+    editor
+        .finish()
+        .map_err(|e| Error::chemistry("Cannot normalize the phosphorus valences.", e))
 }
 
 #[cfg(test)]

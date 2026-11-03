@@ -38,7 +38,7 @@ fn elements_outside_the_charge_model_name_every_such_atom() {
     assert_eq!(error.atoms(), ids(&[1, 3]));
     assert_eq!(
         error.to_string(),
-        "element Mg is outside the model domain: atoms 1, 3"
+        "The NAGL model does not support element Mg of atoms 1 and 3."
     );
     assert!(!ash.supports_element(magnesium));
 
@@ -90,7 +90,7 @@ fn unassigned_interactions_name_all_their_atoms() {
     assert_eq!(error.atoms(), ids(&[0, 1, 2, 3, 4]));
     assert_eq!(
         error.detail(),
-        "4 unassigned Bonds interactions, the first of atoms 0, 1"
+        "4 bonds have no bond parameter. The first involves atoms 0 and 1."
     );
 }
 
@@ -103,7 +103,7 @@ fn implicit_hydrogens_and_radicals_name_their_atoms() {
     assert_eq!(error.atoms(), ids(&[0, 2]));
     assert_eq!(
         error.detail(),
-        "atoms 0, 2 have implicit hydrogens; expand hydrogens before parameterization"
+        "Atoms 0 and 2 have implicit hydrogens. Add them as explicit atoms."
     );
     // H0 C1 H2 H3 C4 H5 H6: C4 is a radical.
     let error = ff

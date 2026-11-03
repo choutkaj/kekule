@@ -56,11 +56,11 @@ pub enum PeriodicBoxError {
 impl fmt::Display for PeriodicBoxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidPadding => f.write_str("padding must be finite and positive"),
-            Self::NotFullyPeriodic => f.write_str("box construction requires three periodic axes"),
-            Self::Unit(_) => f.write_str("invalid box unit"),
-            Self::Cell(_) => f.write_str("invalid periodic cell"),
-            Self::Geometry(_) => f.write_str("periodic geometry failed"),
+            Self::InvalidPadding => f.write_str("The padding is not finite and positive."),
+            Self::NotFullyPeriodic => f.write_str("The box is not periodic along all three axes."),
+            Self::Unit(_) => f.write_str("The padding is not a length."),
+            Self::Cell(error) => error.fmt(f),
+            Self::Geometry(error) => error.fmt(f),
         }
     }
 }
@@ -68,8 +68,8 @@ impl std::error::Error for PeriodicBoxError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unit(e) => Some(e),
-            Self::Cell(e) => Some(e),
-            Self::Geometry(e) => Some(e),
+            Self::Cell(e) => e.source(),
+            Self::Geometry(e) => e.source(),
             _ => None,
         }
     }

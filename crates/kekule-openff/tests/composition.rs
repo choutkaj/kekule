@@ -185,7 +185,11 @@ fn incomplete_or_nonconserving_charges_and_implicit_nonbonded_distances_fail() {
     assert_eq!(error.kind(), kekule_openff::ErrorKind::Charges);
     // System failures name the molecule definition that failed.
     assert_eq!(error.definition().map(|d| d.index()), Some(0));
-    assert!(error.to_string().starts_with("molecule definition 0: "));
+    assert_eq!(
+        error.to_string(),
+        "Cannot parameterize molecule definition 0. \
+         The library charges do not cover every atom of the molecule."
+    );
 }
 
 fn two_waters() -> Arc<Topology> {

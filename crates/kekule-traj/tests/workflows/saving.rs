@@ -193,7 +193,7 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
     )
     .with_source_label(label(&path))
     .with_detail(
-        "destination extension does not identify a supported format; supply explicit write options",
+        "The destination's extension names no supported format. Choose the format explicitly.",
     );
     assert_eq!(
         write_trajectory(&path, &trajectory, Default::default()),
@@ -258,7 +258,7 @@ fn every_empty_path_writer_rejects_publication_and_removes_temporary_files() {
                 format,
                 &label(&path),
                 None,
-                &format!("{format} production trajectories must contain at least one frame"),
+                &format!("The {format} trajectory has no frame. It needs at least one."),
             ))
         );
         assert_eq!(directory.names(), Vec::<String>::new());
@@ -294,7 +294,7 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
                 TrajectoryFormat::Xyz,
                 &label(&path),
                 None,
-                "XYZ production trajectories must contain at least one frame",
+                "The XYZ trajectory has no frame. It needs at least one.",
             ),
         ),
         (
@@ -305,7 +305,7 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
                 TrajectoryFormat::Xyz,
                 &label(&path),
                 Some(1),
-                "XYZ cannot preserve step",
+                "XYZ cannot store the step.",
             )
             .with_field(TrajectoryField::Step),
         ),
@@ -365,7 +365,7 @@ fn a_failed_frame_write_prevents_publication_of_the_frames_before_it() {
             TrajectoryFormat::Xyz,
             &label(&path),
             Some(1),
-            "XYZ cannot preserve step",
+            "XYZ cannot store the step.",
         )
         .with_field(TrajectoryField::Step))
     );
@@ -377,7 +377,7 @@ fn a_failed_frame_write_prevents_publication_of_the_frames_before_it() {
             TrajectoryFormat::Xyz,
             &label(&path),
             None,
-            "cannot publish a trajectory after an earlier frame-write failure",
+            "An earlier frame failed to write. The trajectory is incomplete.",
         ))
     );
     assert_eq!(directory.names(), Vec::<String>::new());
@@ -398,7 +398,10 @@ fn forbid_policy_never_replaces_an_existing_destination() {
         write_trajectory(&path, &single_frame(5.0), Default::default()),
         Err(TrajectoryIoError::io(
             TrajectoryIoOperation::Open,
-            io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists"),
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "The destination already exists."
+            ),
         )
         .with_format(TrajectoryFormat::Xyz)
         .with_source_label(label(&path)))
@@ -705,7 +708,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
             None,
         )
         .with_source_label("host stream")
-        .with_detail("a stream writer needs an explicit format; use TrajectoryWriteOptions::new"))
+        .with_detail("A stream has no extension. Choose the format explicitly."))
     );
 
     // XYZ under its default options refuses the cell of every DCD frame.
@@ -725,7 +728,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
         TrajectoryFormat::Xyz,
         "host stream",
         None,
-        "trajectory writer is poisoned by an earlier frame-write failure",
+        "An earlier frame failed to write. The trajectory is incomplete.",
     );
     assert_eq!(writer.write_frame(source.get(0).unwrap()), Err(poisoned));
     assert!(writer.writer().get_ref().is_empty());
@@ -737,7 +740,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
             TrajectoryFormat::Xyz,
             "host stream",
             None,
-            "cannot finish a trajectory after an earlier frame-write failure",
+            "An earlier frame failed to write. The trajectory is incomplete.",
         ))
     );
 }

@@ -3,7 +3,7 @@ mod config;
 mod features;
 mod network;
 use crate::assignment::options;
-use crate::error::atom_list;
+use crate::error::{atom_list, capitalized};
 use crate::{explicit, identity, Error, ErrorKind, Result};
 use kekule::{
     molecule::{Element, Molecule},
@@ -61,7 +61,11 @@ pub(crate) fn lookup_molecule(input: &Molecule) -> Result<Molecule> {
                 .set_isotope(None);
         }
     }
-    explicit(&editor.finish().map_err(Error::chemistry)?)
+    explicit(
+        &editor
+            .finish()
+            .map_err(|e| Error::chemistry("Cannot remove the isotopes of the molecule.", e))?,
+    )
 }
 
 fn model_error(detail: impl std::fmt::Display) -> Error {
@@ -166,11 +170,18 @@ impl NaglModel {
         flate2::read::ZlibDecoder::new(kekule_openff_ash::WEIGHT_PLANES_ZLIB)
             .take(bundle::WEIGHTS_LIMIT + 1)
             .read_to_end(&mut planes)
-            .map_err(|e| Error::wrap(ErrorKind::Model, e))?;
+            .map_err(|e| {
+                Error::caused(
+                    ErrorKind::Model,
+                    "Cannot decompress the bundled Ash weights.",
+                    e,
+                )
+            })?;
         if planes.len() % 4 != 0 {
-            return Err(model_error(
-                "bundled Ash weights are not float32 byte planes",
-            ));
+            return Err(model_error(format!(
+                "The bundled Ash weights have {} bytes, not a multiple of 4.",
+                planes.len()
+            )));
         }
         let count = planes.len() / 4;
         let mut weights = vec![0; planes.len()];
@@ -183,9 +194,13 @@ impl NaglModel {
         if model.identity().model_file() != kekule_openff_ash::MODEL_FILE
             || model.identity().checkpoint_sha256() != kekule_openff_ash::CHECKPOINT_SHA256
         {
-            return Err(model_error(
-                "bundled Ash manifest declares another checkpoint",
-            ));
+            return Err(model_error(format!(
+                "The bundled Ash manifest declares model \"{}\" with SHA-256 {}, not \"{}\" with SHA-256 {}.",
+                model.identity().model_file(),
+                model.identity().checkpoint_sha256(),
+                kekule_openff_ash::MODEL_FILE,
+                kekule_openff_ash::CHECKPOINT_SHA256
+            )));
         }
         Ok(model)
     }
@@ -196,8 +211,13 @@ impl NaglModel {
             .forbidden_patterns
             .iter()
             .map(|p| {
-                smarts::parse_str(p, Default::default())
-                    .map_err(|e| Error::wrap(ErrorKind::Model, e))
+                smarts::parse_str(p, Default::default()).map_err(|e| {
+                    Error::caused(
+                        ErrorKind::Model,
+                        format!("Cannot parse the forbidden domain pattern {p:?}."),
+                        e,
+                    )
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         let lookup: Vec<_> = bundle.lookup.into_values().collect();
@@ -299,10 +319,22 @@ impl NaglModel {
         }
         if let Some(position) = self.index.select(&molecule)? {
             let entry = &self.lookup[position];
-            let mut components = kekule::smiles::to_molecules(&entry.mapped_smiles)
-                .map_err(|e| Error::wrap(ErrorKind::Model, e))?;
+            let mut components =
+                kekule::smiles::to_molecules(&entry.mapped_smiles).map_err(|e| {
+                    Error::caused(
+                        ErrorKind::Model,
+                        format!(
+                            "Cannot read the SMILES {:?} of a lookup entry.",
+                            entry.mapped_smiles
+                        ),
+                        e,
+                    )
+                })?;
             if components.len() != 1 {
-                return Err(model_error("lookup entry is disconnected"));
+                return Err(model_error(format!(
+                    "The lookup entry {:?} is not one connected molecule.",
+                    entry.mapped_smiles
+                )));
             }
             let reference = explicit(&components.remove(0))?;
             let tags = reference
@@ -312,9 +344,11 @@ impl NaglModel {
             if reference.atom_count() != entry.charges.len()
                 || tags != (1..=entry.charges.len() as u32).collect()
             {
-                return Err(model_error(
-                    "lookup charge array requires consecutive unique atom maps",
-                ));
+                return Err(model_error(format!(
+                    "The atoms of lookup entry {:?} are not mapped 1 to {} once each.",
+                    entry.mapped_smiles,
+                    entry.charges.len()
+                )));
             }
             let mapping = identity::mapping(&molecule, &reference)?;
             let mut values = Vec::new();
@@ -323,11 +357,18 @@ impl NaglModel {
                     .atom(atom)
                     .expect("atom IDs come from this molecule")
                     .atom_map()
-                    .ok_or_else(|| model_error("unmapped lookup atom"))?;
-                let q = entry
-                    .charges
-                    .get(map.get() as usize - 1)
-                    .ok_or_else(|| model_error("lookup charge array mismatch"))?;
+                    .ok_or_else(|| {
+                        model_error(format!(
+                            "An atom of lookup entry {:?} has no atom map.",
+                            entry.mapped_smiles
+                        ))
+                    })?;
+                let q = entry.charges.get(map.get() as usize - 1).ok_or_else(|| {
+                    model_error(format!(
+                        "Lookup entry {:?} has no charge for atom map {map}.",
+                        entry.mapped_smiles
+                    ))
+                })?;
                 values.push(f64::from(*q));
             }
             return normalize_charges(
@@ -361,17 +402,18 @@ impl NaglModel {
             let atoms: Vec<_> = outside.iter().map(|(id, _)| *id).collect();
             return Err(Error::new(
                 ErrorKind::UnsupportedMolecule,
-                format!(
-                    "{} {} {} outside the model domain: {}",
-                    if elements.len() == 1 {
-                        "element"
-                    } else {
-                        "elements"
-                    },
-                    elements.join(", "),
-                    if elements.len() == 1 { "is" } else { "are" },
-                    atom_list(&atoms)
-                ),
+                match elements.as_slice() {
+                    [element] => format!(
+                        "The NAGL model does not support element {element} of {}.",
+                        atom_list(&atoms)
+                    ),
+                    [rest @ .., last] => format!(
+                        "The NAGL model does not support elements {} and {last} of {}.",
+                        rest.join(", "),
+                        atom_list(&atoms)
+                    ),
+                    [] => unreachable!("atoms outside the domain have elements"),
+                },
             )
             .with_atoms(atoms));
         }
@@ -379,7 +421,7 @@ impl NaglModel {
         for pattern in &self.forbidden {
             let Some(first) = target
                 .first(pattern, Default::default())
-                .map_err(Error::chemistry)?
+                .map_err(|e| Error::chemistry("Cannot match a forbidden domain pattern.", e))?
             else {
                 continue;
             };
@@ -395,8 +437,9 @@ impl NaglModel {
             return Err(Error::new(
                 ErrorKind::UnsupportedMolecule,
                 format!(
-                    "molecule matches a forbidden model domain pattern at {}",
-                    atom_list(&atoms)
+                    "{} {} a pattern the NAGL model excludes.",
+                    capitalized(&atom_list(&atoms)),
+                    if atoms.len() == 1 { "matches" } else { "match" }
                 ),
             )
             .with_atoms(atoms));
@@ -427,7 +470,7 @@ fn normalize_charges(
     if values.is_empty() || values.iter().any(|q| !q.is_finite()) {
         return Err(Error::new(
             ErrorKind::Charges,
-            "NAGL produced nonfinite or empty charges",
+            "The NAGL model produced no charges or a nonfinite charge.",
         ));
     }
     let correction = (formal as f64 - values.iter().sum::<f64>()) / values.len() as f64;

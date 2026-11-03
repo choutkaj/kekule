@@ -113,13 +113,13 @@ fn canonical_hydrogen_collapse_requires_a_known_parent_count() {
     );
     assert_eq!(
         error.message(),
-        "canonical SMILES hydrogen normalization failed"
+        "Cannot normalize the hydrogens of the molecule."
     );
     assert_eq!(
         std::error::Error::source(&error)
             .expect("the hydrogen transform failure is the source")
             .to_string(),
-        "hydrogen transformation requires current valence perception"
+        "Hydrogen counts are not perceived. Perceive valence first."
     );
     inferred.perceive().unwrap();
     for original in [inferred, molecule("[H][CH3]")] {

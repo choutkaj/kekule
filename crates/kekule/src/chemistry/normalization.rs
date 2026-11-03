@@ -88,29 +88,89 @@ pub(crate) struct SourceStereoNormalizationError {
     pub issues: Vec<SourceStereoNormalizationIssue>,
 }
 
+/// Writes the first issue; [`Self::issues`] holds them all.
 impl fmt::Display for SourceStereoNormalizationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "source-stereo canonicalization reported {} issue(s): {:?}",
-            self.issues.len(),
-            self.issues
-        )
+        match self.issues.first() {
+            None => formatter.write_str("The source stereo cannot be represented."),
+            Some(issue) => write!(formatter, "{issue}"),
+        }
     }
 }
 
-impl std::error::Error for SourceStereoNormalizationError {}
+impl fmt::Display for SourceStereoNormalizationIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingSourceBondMark { bond } => {
+                write!(f, "A stereo mark names a missing {bond}.")
+            }
+            Self::InvalidSourceBondMarkEndpoint { bond, from } => write!(
+                f,
+                "The stereo mark on {bond} starts at {from}, not at an endpoint of the bond."
+            ),
+            Self::UnassembledTetrahedralBondMark { bond, kind } => write!(
+                f,
+                "The {} on {bond} marks no stereo center.",
+                mark_name(*kind)
+            ),
+            Self::AmbiguousDirectionalBondMarks {
+                double_bond,
+                endpoint,
+                mark_count,
+            } => write!(
+                f,
+                "{} has {mark_count} conflicting directional marks next to the double {double_bond}.",
+                crate::diagnostics::Capitalized(endpoint)
+            ),
+            Self::UnpairedDirectionalBondMark { bond } => write!(
+                f,
+                "The directional mark on {bond} has no partner across a double bond."
+            ),
+            Self::UnsupportedSourceBondMark { bond, kind } => {
+                write!(f, "The {} on {bond} is not supported.", mark_name(*kind))
+            }
+            Self::InvalidStereo(issue) => write!(f, "{issue}"),
+            Self::CouldNotCreateStereoElement(_) => f.write_str("Cannot create the stereo element."),
+        }
+    }
+}
+
+/// The name of a source bond mark, such as `wedge`.
+fn mark_name(kind: SourceStereoBondMarkKind) -> &'static str {
+    match kind {
+        SourceStereoBondMarkKind::DirectionalUp => "up-directional mark",
+        SourceStereoBondMarkKind::DirectionalDown => "down-directional mark",
+        SourceStereoBondMarkKind::WedgeUp => "wedge",
+        SourceStereoBondMarkKind::WedgeDown => "hash",
+        SourceStereoBondMarkKind::WedgeEither => "wavy mark",
+        SourceStereoBondMarkKind::DoubleBondEither => "unspecified double-bond mark",
+        SourceStereoBondMarkKind::MolfileDoubleBondGeometry => "double-bond drawing",
+    }
+}
+
+/// The source is the molecule error of the first issue, when that issue
+/// failed to create a stereo element.
+impl std::error::Error for SourceStereoNormalizationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self.issues.first() {
+            Some(SourceStereoNormalizationIssue::CouldNotCreateStereoElement(error)) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl fmt::Display for NormalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAromaticRepresentation(atom) => {
-                write!(f, "invalid imported aromatic representation at {atom}")
+                write!(f, "The aromatic bonds at {atom} cannot be localized.")
             }
-            Self::AromaticLocalizationLimit { atom, limit } => {
-                write!(f, "imported aromatic localization at {atom}: {limit}")
-            }
-            Self::SourceStereo(_) => f.write_str("source stereo cannot be represented canonically"),
+            Self::AromaticLocalizationLimit { atom, limit } => write!(
+                f,
+                "Localizing the aromatic bonds at {atom} exceeded its {}.",
+                limit.describe()
+            ),
+            Self::SourceStereo(error) => write!(f, "{error}"),
         }
     }
 }
@@ -118,7 +178,7 @@ impl fmt::Display for NormalizationError {
 impl std::error::Error for NormalizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::SourceStereo(error) => Some(error),
+            Self::SourceStereo(error) => std::error::Error::source(error),
             _ => None,
         }
     }

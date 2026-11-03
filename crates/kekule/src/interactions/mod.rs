@@ -94,7 +94,7 @@ pub enum InteractionError {
     /// A structure or selection does not share its features' topology
     /// layout.
     TopologyMismatch,
-    /// An atom selection is invalid; see the source.
+    /// An atom selection is invalid. It displays as the selection error.
     Selection(SelectionError),
     /// A criterion is not a finite, nonnegative length, or an angle between
     /// 0 and 180°.
@@ -129,25 +129,31 @@ pub enum InteractionError {
 impl fmt::Display for InteractionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyMismatch => {
-                f.write_str("structure or selection does not share the features' topology layout")
+            Self::TopologyMismatch => f.write_str(
+                "The structure or selection has a different topology layout from the features.",
+            ),
+            Self::Selection(error) => write!(f, "{error}"),
+            Self::InvalidCriterion(criterion) if criterion.is_angle() => {
+                write!(f, "The {criterion} is not between 0 and 180°.")
             }
-            Self::Selection(_) => f.write_str("invalid atom selection"),
-            Self::InvalidCriterion(criterion) => write!(f, "invalid {criterion}"),
-            Self::DegenerateRing => f.write_str("aromatic ring has no plane"),
-            Self::InvalidWeight { index } => {
-                write!(f, "observation {index} weight is not finite and positive")
+            Self::InvalidCriterion(criterion) => {
+                write!(f, "The {criterion} is not a finite, nonnegative length.")
             }
+            Self::DegenerateRing => f.write_str("An aromatic ring has no plane."),
+            Self::InvalidWeight { index } => write!(
+                f,
+                "The weight of observation {index} is not finite and positive."
+            ),
             Self::WeightOverflow { index } => {
-                write!(f, "total weight overflowed at observation {index}")
+                write!(f, "The total weight overflows at observation {index}.")
             }
             Self::ObservationMismatch { index } => write!(
                 f,
-                "observation {index} comes from another search than earlier observations"
+                "Observation {index} comes from a different search from the earlier ones."
             ),
-            Self::MergeMismatch => f.write_str("accumulators observed different searches"),
-            Self::MergeWeightOverflow => f.write_str("merged total weight overflowed"),
-            Self::NoObservations => f.write_str("no observations"),
+            Self::MergeMismatch => f.write_str("The accumulators observed different searches."),
+            Self::MergeWeightOverflow => f.write_str("The merged total weight overflows."),
+            Self::NoObservations => f.write_str("The occupancy has no observations."),
         }
     }
 }
@@ -155,7 +161,7 @@ impl fmt::Display for InteractionError {
 impl std::error::Error for InteractionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Selection(error) => Some(error),
+            Self::Selection(error) => error.source(),
             _ => None,
         }
     }

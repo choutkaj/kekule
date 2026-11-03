@@ -228,7 +228,7 @@ impl fmt::Display for QueryPerception {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Valence => f.write_str("valence"),
-            Self::RingBasis => f.write_str("compatible SSSR ring basis"),
+            Self::RingBasis => f.write_str("SSSR ring basis"),
             Self::RingMembership => f.write_str("ring membership"),
             Self::Aromaticity => f.write_str("aromaticity"),
         }
@@ -277,17 +277,25 @@ impl SubstructureMatchError {
 impl fmt::Display for SubstructureMatchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidLimit { resource, limit } => {
-                write!(f, "invalid substructure {resource} limit {limit}")
-            }
-            Self::IncompatiblePerception(perception) => {
-                write!(f, "substructure query requires compatible {perception}")
-            }
+            Self::InvalidLimit { resource, limit } => write!(
+                f,
+                "The substructure search limit on {resource} is {limit}. Set a positive limit."
+            ),
+            Self::IncompatiblePerception(perception) => write!(
+                f,
+                "The target's {perception} perception is incompatible with the query."
+            ),
             Self::MissingPerception(perception) => write!(
                 f,
-                "substructure query requires current {perception} perception on the target"
+                "The target has no current {perception} perception. Perceive it before matching."
             ),
-            Self::LimitExceeded { limit, .. } => write!(f, "substructure search {limit}"),
+            Self::LimitExceeded { limit, .. } => {
+                write!(
+                    f,
+                    "The substructure search exceeded its {}.",
+                    limit.describe()
+                )
+            }
         }
     }
 }

@@ -1762,25 +1762,32 @@ impl fmt::Display for PropertyError {
         match self {
             Self::InvalidKey(key) => write!(
                 formatter,
-                "invalid property key {key:?}; use a 1-{MAX_PROPERTY_KEY_LEN} character ASCII identifier"
+                "The property key {key:?} is invalid. Use an ASCII identifier of 1 to {MAX_PROPERTY_KEY_LEN} characters."
             ),
-            Self::LengthMismatch { expected, actual } => {
-                write!(formatter, "property column requires {expected} values, received {actual}")
-            }
-            Self::InvalidIndex { len, index } => {
-                write!(formatter, "property index {index} is outside table length {len}")
-            }
-            Self::RemovedRow { index } => {
-                write!(formatter, "property row {index} belongs to a removed draft entity")
-            }
-            Self::TypeMismatch { key } => write!(formatter, "property {key:?} has a different type"),
+            Self::LengthMismatch { expected, actual } => write!(
+                formatter,
+                "The property table has {expected} rows. {actual} values were given."
+            ),
+            Self::InvalidIndex { len, index } => write!(
+                formatter,
+                "Property row {index} does not exist. The table has {}.",
+                crate::diagnostics::counted(*len, "row", "rows")
+            ),
+            Self::RemovedRow { index } => write!(
+                formatter,
+                "Property row {index} belongs to a removed atom or bond."
+            ),
+            Self::TypeMismatch { key } => write!(
+                formatter,
+                "The property \"{key}\" already has another type."
+            ),
             Self::NonFiniteValue { index: Some(index) } => {
-                write!(formatter, "real property value at index {index} must be finite")
+                write!(formatter, "The property value in row {index} is not finite.")
             }
             Self::NonFiniteValue { index: None } => {
-                formatter.write_str("real property value must be finite")
+                formatter.write_str("The property value is not finite.")
             }
-            Self::Unit(_) => formatter.write_str("invalid property unit"),
+            Self::Unit(_) => formatter.write_str("Cannot convert the property to the column's unit."),
         }
     }
 }

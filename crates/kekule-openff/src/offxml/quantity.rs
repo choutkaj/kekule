@@ -42,13 +42,19 @@ impl Parser<'_> {
             let right = self.factor(depth)?;
             if divide {
                 if right.magnitude == 0.0 {
-                    return Err(error("division by zero in quantity"));
+                    return Err(error("The quantity divides by zero."));
                 }
                 value.magnitude /= right.magnitude;
-                value.unit = value.unit.try_div(right.unit).map_err(invalid)?;
+                value.unit = value
+                    .unit
+                    .try_div(right.unit)
+                    .map_err(|e| invalid("Cannot divide the units of the quantity.", e))?;
             } else {
                 value.magnitude *= right.magnitude;
-                value.unit = value.unit.try_mul(right.unit).map_err(invalid)?;
+                value.unit = value
+                    .unit
+                    .try_mul(right.unit)
+                    .map_err(|e| invalid("Cannot multiply the units of the quantity.", e))?;
             }
             finite(value.magnitude)?;
         }
@@ -56,7 +62,9 @@ impl Parser<'_> {
     }
     fn factor(&mut self, depth: usize) -> Result<Value> {
         if depth > 32 {
-            return Err(error("quantity nesting limit exceeded (32)"));
+            return Err(error(
+                "The quantity nests parentheses more than 32 levels deep.",
+            ));
         }
         self.whitespace();
         // Unary signs bind less tightly than powers, as in the reference parser.
@@ -71,7 +79,7 @@ impl Parser<'_> {
         let mut value = if self.take("(") {
             let value = self.expression(depth + 1)?;
             if !self.take(")") {
-                return Err(error("missing closing parenthesis in quantity"));
+                return Err(error("The quantity has no closing parenthesis."));
             }
             value
         } else if self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'.') {
@@ -115,17 +123,28 @@ impl Parser<'_> {
             while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                 self.position += 1;
             }
-            let power = self.source[start..self.position]
-                .parse::<i32>()
-                .map_err(invalid)?;
+            let exponent = &self.source[start..self.position];
+            let power = exponent.parse::<i32>().map_err(|e| {
+                invalid(
+                    format!("The quantity exponent {exponent:?} is not an integer."),
+                    e,
+                )
+            })?;
             if !(-32..=32).contains(&power) {
-                return Err(error("quantity exponent limit exceeded (32)"));
+                return Err(error(format!(
+                    "The quantity exponent {power} is outside -32 to 32."
+                )));
             }
             if parenthesized && !self.take(")") {
-                return Err(error("invalid parenthesized quantity exponent"));
+                return Err(error(
+                    "The parenthesized quantity exponent has no closing parenthesis.",
+                ));
             }
             value.magnitude = value.magnitude.powi(power);
-            value.unit = value.unit.try_powi(power).map_err(invalid)?;
+            value.unit = value
+                .unit
+                .try_powi(power)
+                .map_err(|e| invalid("Cannot raise the unit of the quantity to its power.", e))?;
             finite(value.magnitude)?;
         }
         Ok(value)
@@ -136,7 +155,7 @@ fn finite(value: f64) -> Result<()> {
     if value.is_finite() {
         Ok(())
     } else {
-        Err(error("nonfinite quantity"))
+        Err(error("The quantity is not finite."))
     }
 }
 
@@ -155,7 +174,7 @@ fn named_unit(name: &str) -> Result<Unit> {
         "dimensionless" => DIMENSIONLESS,
         _ => {
             return Err(error(format!(
-                "unsupported unit or quantity token {name:?}"
+                "The unit or quantity token {name:?} is not supported."
             )))
         }
     })
@@ -163,7 +182,9 @@ fn named_unit(name: &str) -> Result<Unit> {
 
 pub(crate) fn parse_quantity(source: &str, target: Unit) -> Result<Quantity<f64>> {
     if source.len() > 4096 || !source.is_ascii() {
-        return Err(error("quantity must be ASCII and at most 4096 bytes"));
+        return Err(error(
+            "The quantity is not ASCII or is longer than 4,096 bytes.",
+        ));
     }
     let mut parser = Parser {
         source,
@@ -173,13 +194,18 @@ pub(crate) fn parse_quantity(source: &str, target: Unit) -> Result<Quantity<f64>
     parser.whitespace();
     if parser.position != source.len() {
         return Err(error(format!(
-            "unexpected quantity text at byte {}",
+            "The quantity has unexpected text at byte {}.",
             parser.position
         )));
     }
     let converted = Quantity::new(value.magnitude, value.unit)
         .to_unit(target)
-        .map_err(invalid)?;
+        .map_err(|e| {
+            invalid(
+                format!("Cannot convert the quantity {source:?} to {target}."),
+                e,
+            )
+        })?;
     finite(*converted.value())?;
     Ok(converted)
 }

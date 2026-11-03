@@ -490,10 +490,10 @@ fn sdf_interpretation_errors_carry_record_kind_and_input_location() {
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     // The atom line of the second record, counted in the SDF input.
     assert_eq!(error.location(), Some(SourceLocation::at_line(12)));
-    assert_eq!(error.message(), "unsupported element symbol `Xx`");
+    assert_eq!(error.message(), "Element symbol \"Xx\" is unknown.");
     assert_eq!(
         error.to_string(),
-        "SDF interpretation error in record 2 at line 12: unsupported element symbol `Xx`"
+        "Cannot interpret the SDF input in record 2 at line 12. Element symbol \"Xx\" is unknown."
     );
     // The Molfile failure is reported as the SDF record's own failure.
     assert_eq!(
@@ -720,7 +720,7 @@ fn molfile_unsupported_content_is_rejected_by_default_and_reported_on_request() 
             .expect_err("rejected by default");
         assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{content}");
         assert_eq!(error.location(), Some(SourceLocation::at_line(line)));
-        assert_eq!(error.message(), format!("unsupported {content}"));
+        assert_eq!(error.message(), format!("The {content} is not supported."));
 
         let interpretation = document.interpret(report).expect("reported on request");
         assert_eq!(interpretation.omitted(), expected, "{content}");

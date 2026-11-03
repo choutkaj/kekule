@@ -11,6 +11,16 @@ are marked **Breaking:**.
 
 ### Added
 
+- Error chains as one message (SeekDelta K62).
+  `kekule::diagnostics::ErrorChain` writes an error and every error of its
+  `source()` chain as consecutive sentences, such as `Cannot build the
+  solvated model. Atom 12 overlaps atom 3.`; `{:#}` writes one error per
+  line. Errors from outside Kekule in the chain, such as I/O errors, get a
+  capital letter and a full stop, and a cause that repeats the previous text
+  appears once. `LimitExceeded::describe` writes a limit with its observed
+  value and bound, `work limit: 69,400,898 steps of 69,248,000`, for an error
+  that names its operation. `BondOrder`, `StereoCarrier`, `StereoDescriptor`,
+  `ValenceIssue` and `CipAssignmentIssue` implement `Display`.
 - One-letter residue codes and polymer sequences (SeekDelta K21). The new
   `kekule::sequence` gives a residue its code from its chemical component
   (`residue_code`, `component_code`): the code a caller's library
@@ -740,6 +750,56 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** error messages are sentences (SeekDelta K62). The `Display`
+  text of every public error and issue in `kekule`, `kekule-traj`,
+  `kekule-openff` and `kekule-potentials` is one or two short sentences with
+  a capital letter and a full stop: what failed and why, naming the atoms,
+  bonds, residues, records, lines, files and values with units, then the
+  one action if there is an obvious one. Texts name no Rust API; the
+  variants' documentation does. Applications that match message text must
+  update.
+  - `FormatError` writes the stage, format and place as its first sentence,
+    `Cannot parse the PDB input at line 12.`, then its message.
+    `FormatError::message` holds only the sentences after it, and is empty
+    when the source says it all.
+  - Limits name their operation, limit, observed value and bound:
+    `Ring perception exceeded its work limit: 69,400,898 steps of
+    69,248,000.` A bare `LimitExceeded` writes `Exceeded the work limit: …`.
+    `kekule-traj`'s limit failures now carry these values too.
+  - `Cancelled` writes `The operation was cancelled.`, and the cancelled
+    variants of ring, resonance and default perception and of clustering
+    write `… stopped.` and return `Cancelled` from `source()`.
+  - `InstanceAtomId` and `InstanceBondId` display as `atom 5 of instance 2`,
+    and `HierarchyIdKind::AtomSite` as `atom site`.
+  - `StereoValidationError` and `CipAssignmentError` display their first
+    issue; the list holds them all. `ValenceError` adds the number of atoms
+    with an invalid valence state.
+  - A `kekule-openff` error writes the file or molecule definition that
+    failed as its first sentence, `Cannot parameterize molecule definition
+    2.`, then the detail, naming every atom it concerns; `Error::detail` is
+    empty when the path and the source say it all.
+- **Breaking:** wrapper errors keep their causes (SeekDelta K62). Causes
+  that were written into a message are now typed sources: in CXSMILES and
+  V3000 stereo groups, Molfile writing, XYZ interpretation,
+  `ClusteringError::PairFit`, the selection language's SMARTS term,
+  `kekule-openff`'s unit conversions and `kekule-traj`'s codecs and cell
+  checks. `TopologyPerceptionError` no longer repeats its source. Variants
+  that add nothing to their cause are transparent: they display the cause
+  and return the cause's own source. These are `DraftError`, whose cause
+  stays available through `DraftError::error`, `ModelError::Structure`,
+  `ModelBuildError::Model`, `StructureError::{Array, Property, Cell, Unit}`,
+  `ModelEditError::{Topology, Position, Property, Structure, Model}`,
+  `PlacementError::Edit`, `TopologyEditError::Property`,
+  `TopologyBuildError::Property`, `TopologySubsetError::Selection`,
+  `MeasurementError::{Selection, Unit}`, `BondDihedralError::Measurement`,
+  `GeometryEditError::Unit`, `EnsembleError::Unit`, `SeriesError::Unit`,
+  `PeriodicBoxError::{Cell, Geometry}`, `SolvationError::{Unit, Geometry,
+  Position}`, `StagedCoordinateError::{Unit, Position}`,
+  `InteractionError::Selection`, `TaggedMatchError::Match`,
+  `AlignmentError::Correspondence` and `CipRankingError::InvalidStereo`.
+  `NormalizationError` returns the `MoleculeError` of a stereo element it
+  could not create. `PlacementError::LimitExceeded` no
+  longer returns its limit as a source.
 - **Breaking:** default perception installs resonance delocalization
   (SeekDelta K19): whether resonance delocalizes each bond, and the bond's
   connected group. `ResonanceModel::ChargeMoves` moves each formal charge of

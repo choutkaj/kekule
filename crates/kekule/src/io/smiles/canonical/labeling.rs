@@ -665,7 +665,7 @@ impl Search {
 
 fn limit(resource: Resource, bound: usize, observed: usize) -> FormatError {
     SMILES_WRITE.resource_limit(
-        "canonical SMILES labeling",
+        "Canonical labeling of the molecule",
         LimitExceeded::new(resource, bound, observed),
     )
 }

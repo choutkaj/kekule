@@ -2,6 +2,13 @@
 
 use super::{AtomSiteView, ChainView, HierarchyError, HierarchyIdKind, ResidueView, Topology};
 
+/// ` insertion code "B"` for a residue address with an insertion code.
+fn insertion_phrase(insertion: Option<&str>) -> String {
+    insertion
+        .map(|code| format!(" insertion code \"{code}\""))
+        .unwrap_or_default()
+}
+
 fn unique<T>(
     mut items: impl Iterator<Item = T>,
     kind: HierarchyIdKind,
@@ -41,7 +48,12 @@ impl Topology {
                     && residue.insertion_code() == insertion
             }),
             HierarchyIdKind::Residue,
-            || format!("author chain {chain:?} residue {sequence:?} insertion {insertion:?}"),
+            || {
+                format!(
+                    "author chain \"{chain}\" residue \"{sequence}\"{}",
+                    insertion_phrase(insertion)
+                )
+            },
         )
     }
 
@@ -50,7 +62,7 @@ impl Topology {
         unique(
             self.chains().filter(|chain| chain.label_id() == label),
             HierarchyIdKind::Chain,
-            || format!("label {label:?}"),
+            || format!("label ID \"{label}\""),
         )
     }
 
@@ -60,7 +72,7 @@ impl Topology {
             self.chains()
                 .filter(|chain| chain.author_id() == Some(author)),
             HierarchyIdKind::Chain,
-            || format!("author {author:?}"),
+            || format!("author ID \"{author}\""),
         )
     }
 }
@@ -72,7 +84,7 @@ impl<'a> ChainView<'a> {
             self.residues()
                 .filter(|residue| residue.label_seq_id() == Some(sequence)),
             HierarchyIdKind::Residue,
-            || format!("{} label {sequence}", self.id()),
+            || format!("label sequence number {sequence} in {}", self.id()),
         )
     }
 
@@ -88,7 +100,13 @@ impl<'a> ChainView<'a> {
                 residue.author_seq_id() == Some(sequence) && residue.insertion_code() == insertion
             }),
             HierarchyIdKind::Residue,
-            || format!("{} author {sequence:?} insertion {insertion:?}", self.id()),
+            || {
+                format!(
+                    "author residue \"{sequence}\"{} in {}",
+                    insertion_phrase(insertion),
+                    self.id()
+                )
+            },
         )
     }
 }
@@ -100,7 +118,7 @@ impl<'a> ResidueView<'a> {
             self.atom_sites()
                 .filter(|site| site.metadata().label_atom_id.as_deref() == Some(name)),
             HierarchyIdKind::AtomSite,
-            || format!("{} label atom {name:?}", self.id()),
+            || format!("label atom name \"{name}\" in {}", self.id()),
         )
     }
 
@@ -110,7 +128,7 @@ impl<'a> ResidueView<'a> {
             self.atom_sites()
                 .filter(|site| site.metadata().auth_atom_id.as_deref() == Some(name)),
             HierarchyIdKind::AtomSite,
-            || format!("{} author atom {name:?}", self.id()),
+            || format!("author atom name \"{name}\" in {}", self.id()),
         )
     }
 }

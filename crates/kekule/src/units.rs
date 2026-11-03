@@ -367,23 +367,21 @@ pub enum UnitError {
 impl fmt::Display for UnitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidScale(scale) => {
-                write!(
-                    formatter,
-                    "unit scale must be finite and positive, got {scale}"
-                )
-            }
+            Self::InvalidScale(scale) => write!(
+                formatter,
+                "The unit scale {scale} is not positive or not finite."
+            ),
             Self::IncompatibleUnits { from, to } => write!(
                 formatter,
-                "unit {from} with dimension {} is incompatible with unit {to} with dimension {}",
+                "Cannot convert {from} to {to}. Their dimensions are {} and {}.",
                 from.dimension, to.dimension
             ),
             Self::UnrepresentableConversion { from, to } => write!(
                 formatter,
-                "conversion factor from {from} to {to} is not finite and positive"
+                "The conversion factor from {from} to {to} is not finite."
             ),
             Self::DimensionOverflow => {
-                formatter.write_str("composed unit dimension exponent exceeds the i32 range")
+                formatter.write_str("A dimension exponent of the composed unit overflows.")
             }
         }
     }

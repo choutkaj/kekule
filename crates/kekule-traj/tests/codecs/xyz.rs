@@ -556,7 +556,7 @@ fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
                 "frame-bytes.xyz",
                 Some(0),
                 &format!(
-                    "XYZ frame exceeds configured {}-byte limit",
+                    "The frame exceeds its record size limit: {frame_bytes} bytes of {}.",
                     frame_bytes - 1
                 ),
             )
@@ -600,14 +600,18 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
     // The retained line buffer must hold the longest line, here the comment
     // with its terminator; the count and atom lines alone would fit.
     let required = positions + comment.len() + 1;
-    let exceeded = codec_error(
-        TrajectoryIoErrorKind::LimitExceeded,
-        TrajectoryIoOperation::ReadHeader,
-        TrajectoryFormat::Xyz,
-        "scratch.xyz",
-        Some(0),
-        "XYZ line buffer: aggregate decode scratch exceeds the configured limit",
-    );
+    let exceeded = |limit: usize| {
+        codec_error(
+            TrajectoryIoErrorKind::LimitExceeded,
+            TrajectoryIoOperation::ReadHeader,
+            TrajectoryFormat::Xyz,
+            "scratch.xyz",
+            Some(0),
+            &format!(
+                "The line buffer cannot grow. The buffers would exceed their limit of {limit} bytes."
+            ),
+        )
+    };
     let untouched = support::buffer_snapshot(&FrameBuffer::new(Arc::clone(&topology)));
 
     // A seven-byte buffer splits the comment across many chunks; the result
@@ -621,7 +625,11 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
     for max_scratch_bytes in [positions, required - 1] {
         for stream in streams() {
             let (result, destination) = read_first_xyz_frame(stream, &topology, max_scratch_bytes);
-            assert_eq!(result, Err(exceeded.clone()), "{max_scratch_bytes}");
+            assert_eq!(
+                result,
+                Err(exceeded(max_scratch_bytes)),
+                "{max_scratch_bytes}"
+            );
             assert_eq!(support::buffer_snapshot(&destination), untouched);
         }
         let indexed = IndexedXyzReader::new(
@@ -633,7 +641,11 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
                 )
                 .with_source_label("scratch.xyz"),
         );
-        assert_eq!(indexed.err(), Some(exceeded.clone()), "{max_scratch_bytes}");
+        assert_eq!(
+            indexed.err(),
+            Some(exceeded(max_scratch_bytes)),
+            "{max_scratch_bytes}"
+        );
     }
     for stream in streams() {
         let (result, destination) = read_first_xyz_frame(stream, &topology, required);

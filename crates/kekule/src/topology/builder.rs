@@ -1173,34 +1173,41 @@ pub enum TopologyBuildError {
 
 impl fmt::Display for TopologyBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::diagnostics::Capitalized;
         match self {
             Self::NoMoleculeInstances => {
-                formatter.write_str("topology must contain at least one molecule instance")
+                formatter.write_str("The topology has no molecule instances.")
             }
-            Self::Property(_) => formatter.write_str("invalid topology properties"),
+            Self::Property(error) => error.fmt(formatter),
             Self::InvalidMoleculeDefinitionId(id) => {
-                write!(formatter, "invalid molecule definition: {id}")
+                write!(formatter, "Molecule {id} is not in the topology.")
             }
-            Self::InvalidResidueId(id) => write!(formatter, "invalid topology residue: {id}"),
+            Self::InvalidResidueId(id) => {
+                write!(formatter, "{} is not in the topology.", Capitalized(id))
+            }
             Self::UnusedMoleculeDefinition(id) => {
-                write!(formatter, "{id} is not referenced by any instance")
+                write!(formatter, "Molecule {id} has no instance.")
             }
             Self::MissingHierarchyAtom { site, atom } => write!(
                 formatter,
-                "hierarchy {site} places {atom}, which the topology does not contain"
+                "{} places {atom}, and the topology has no such atom.",
+                Capitalized(site)
             ),
             Self::IdentifierCapacityExceeded(kind) => {
-                write!(formatter, "{kind} identifier capacity exceeded")
+                write!(formatter, "The topology has run out of {kind} identifiers.")
             }
             Self::AtomOrderLengthMismatch { expected, actual } => write!(
                 formatter,
-                "dense atom order must list {expected} staged atoms, but lists {actual}"
+                "The atom order lists {actual} atoms, but the topology has {expected}."
             ),
             Self::InvalidAtomOrderEntry(atom) => {
-                write!(formatter, "dense atom order names unknown {atom}")
+                write!(
+                    formatter,
+                    "The atom order names {atom}, which is not in the topology."
+                )
             }
             Self::DuplicateAtomOrderEntry(atom) => {
-                write!(formatter, "dense atom order lists {atom} more than once")
+                write!(formatter, "The atom order lists {atom} more than once.")
             }
         }
     }
@@ -1209,7 +1216,7 @@ impl fmt::Display for TopologyBuildError {
 impl std::error::Error for TopologyBuildError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Property(error) => Some(error),
+            Self::Property(error) => error.source(),
             _ => None,
         }
     }

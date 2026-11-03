@@ -154,7 +154,9 @@ impl SelectParseOptions {
     /// [`DiagnosticKind::InvalidValue`] when the bound is zero.
     pub fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Result<Self, FormatError> {
         if max_input_bytes == 0 {
-            return Err(option_error("max_input_bytes must be greater than zero"));
+            return Err(option_error(
+                "The input size limit is 0. Set a positive limit.",
+            ));
         }
         self.max_input_bytes = max_input_bytes;
         Ok(self)
@@ -172,7 +174,9 @@ impl SelectParseOptions {
     /// [`DiagnosticKind::InvalidValue`] when the bound is zero.
     pub fn with_max_depth(mut self, max_depth: usize) -> Result<Self, FormatError> {
         if max_depth == 0 {
-            return Err(option_error("max_depth must be greater than zero"));
+            return Err(option_error(
+                "The nesting depth limit is 0. Set a positive limit.",
+            ));
         }
         self.max_depth = max_depth;
         Ok(self)
@@ -203,7 +207,7 @@ impl SelectParseOptions {
                 && characters.all(|next| next.is_ascii_alphanumeric() || next == '_');
             if !identifier || syntax::KEYWORDS.contains(&keyword.as_str()) {
                 return Err(option_error(format!(
-                    "`{keyword}` cannot be a host keyword"
+                    "The host keyword {keyword:?} is not an identifier, or is a selection keyword."
                 )));
             }
         }
@@ -463,7 +467,9 @@ pub struct HostTermError {
 }
 
 impl HostTermError {
-    /// A failure described by `message`.
+    /// A failure described by `message`: one or two sentences, each with a
+    /// capital letter and a full stop, that do not repeat a source attached
+    /// with [`Self::with_source`].
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -699,41 +705,44 @@ impl SelectEvaluateError {
 impl fmt::Display for SelectEvaluateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RequiresStructure { term, .. } => {
-                write!(
-                    formatter,
-                    "`{term}` needs coordinates; evaluate it on a structure"
-                )
-            }
+            Self::RequiresStructure { term, .. } => write!(
+                formatter,
+                "The term {term:?} needs coordinates. Evaluate it on a structure."
+            ),
             Self::MissingPerception { term, .. } => write!(
                 formatter,
-                "`{term}` needs installed perception; perceive the topology first"
+                "The term {term:?} needs perception. Perceive the topology first."
             ),
             Self::UnknownProperty { key, .. } => {
-                write!(formatter, "no atom property `{key}` is defined")
+                write!(formatter, "No atom property {key:?} is defined.")
             }
             Self::AmbiguousProperty { key, .. } => write!(
                 formatter,
-                "atom property `{key}` is defined in more than one scope"
+                "The atom property {key:?} is defined in more than one scope."
             ),
             Self::PropertyType { key, term, .. } => write!(
                 formatter,
-                "`{term}` compares a value that does not fit property `{key}`"
+                "The value in the term {term:?} does not fit the property {key:?}."
             ),
-            Self::Unit { term, .. } => write!(formatter, "`{term}` uses an incompatible unit"),
-            Self::InvalidSmarts { term, .. } => write!(formatter, "`{term}` is not valid SMARTS"),
-            Self::Smarts { term, .. } => write!(formatter, "matching `{term}` failed"),
-            Self::NoResolver { term, .. } => {
-                write!(formatter, "`{term}` is a host term and no resolver is set")
+            Self::Unit { term, .. } => {
+                write!(formatter, "The term {term:?} uses an incompatible unit.")
             }
-            Self::Host { term, .. } => write!(formatter, "resolving `{term}` failed"),
+            Self::InvalidSmarts { term, .. } => {
+                write!(formatter, "The term {term:?} is not valid SMARTS.")
+            }
+            Self::Smarts { term, .. } => write!(formatter, "Cannot match the term {term:?}."),
+            Self::NoResolver { term, .. } => write!(
+                formatter,
+                "The term {term:?} needs a host resolver. None is set."
+            ),
+            Self::Host { term, .. } => write!(formatter, "Cannot resolve the term {term:?}."),
             Self::HostTopologyMismatch { term, .. } => write!(
                 formatter,
-                "`{term}` resolved to atoms of another topology layout"
+                "The term {term:?} resolved to atoms of another topology layout."
             ),
             Self::HostPoints { term, .. } => write!(
                 formatter,
-                "`{term}` resolved to points; points are only a `within` reference"
+                "The term {term:?} resolved to points. Use points only as a \"within\" reference."
             ),
         }
     }

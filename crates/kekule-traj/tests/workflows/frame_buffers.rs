@@ -85,7 +85,6 @@ fn errors_retain_nested_causes() {
     let position_error =
         Positions::new(Quantity::new([Point3::new(f64::NAN, 0.0, 0.0)], NANOMETER)).unwrap_err();
     let frame_error = StructureError::from(position_error);
-    let source_text = frame_error.source().unwrap().to_string();
     let trajectory_error = TrajectoryIoError::from(frame_error.clone());
     assert_eq!(
         trajectory_error.kind(),
@@ -95,10 +94,9 @@ fn errors_retain_nested_causes() {
         trajectory_error
             .source()
             .unwrap()
-            .source()
-            .unwrap()
-            .to_string(),
-        source_text
+            .downcast_ref::<StructureError>()
+            .map(ToString::to_string),
+        Some(frame_error.to_string())
     );
     // A collection error wrapping a structure error flattens to it.
     let flattened = TrajectoryIoError::from(TrajectoryError::from(frame_error));

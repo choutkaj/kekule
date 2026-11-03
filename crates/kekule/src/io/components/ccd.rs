@@ -14,18 +14,14 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
     let scalar = |tag: &str| block.item(tag).and_then(|value| value.optional_text());
     let id = scalar("_chem_comp.id").unwrap_or(block.name()).to_owned();
     let error = |kind, value: Option<MmcifValue<'_>>, message: String| {
-        component_error(
-            kind,
-            value.map(|value| value.location()),
-            format!("component `{id}`: {message}"),
-        )
+        component_error(kind, value.map(|value| value.location()), message)
     };
 
     let atoms_table = category(block, "_chem_comp_atom", &id)?.ok_or_else(|| {
         component_error(
             DiagnosticKind::Syntax,
             None,
-            format!("component `{id}` has no _chem_comp_atom category"),
+            format!("Component {id:?} has no _chem_comp_atom category."),
         )
     })?;
     let mut atoms = Vec::with_capacity(atoms_table.row_count());
@@ -38,7 +34,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
                 component_error(
                     DiagnosticKind::Syntax,
                     atoms_table.row_line(row).map(SourceLocation::at_line),
-                    format!("component `{id}`: atom row lacks {tag}"),
+                    format!("An atom row of component {id:?} lacks {tag}."),
                 )
             })
         };
@@ -48,7 +44,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
             return Err(error(
                 DiagnosticKind::Inconsistent,
                 field("_chem_comp_atom.atom_id"),
-                format!("duplicate atom `{name}`"),
+                format!("Component {id:?} repeats atom {name:?}."),
             ));
         }
         let symbol = required("_chem_comp_atom.type_symbol")?;
@@ -56,7 +52,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
             error(
                 DiagnosticKind::InvalidValue,
                 field("_chem_comp_atom.type_symbol"),
-                format!("unknown element `{symbol}`"),
+                format!("Atom {name:?} of component {id:?} has unknown element {symbol:?}."),
             )
         })?;
         let formal_charge = text("_chem_comp_atom.charge")
@@ -65,7 +61,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
                     error(
                         DiagnosticKind::InvalidValue,
                         field("_chem_comp_atom.charge"),
-                        format!("invalid charge `{charge}`"),
+                        format!("Atom {name:?} of component {id:?} has invalid charge {charge:?}."),
                     )
                 })
             })
@@ -100,7 +96,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
                     component_error(
                         DiagnosticKind::Syntax,
                         table.row_line(row).map(SourceLocation::at_line),
-                        format!("component `{id}`: bond row lacks {tag}"),
+                        format!("A bond row of component {id:?} lacks {tag}."),
                     )
                 })?;
                 *endpoint = atoms
@@ -110,7 +106,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
                         error(
                             DiagnosticKind::InvalidReference,
                             field(tag),
-                            format!("bond names unknown atom `{name}`"),
+                            format!("A bond of component {id:?} names unknown atom {name:?}."),
                         )
                     })?;
             }
@@ -119,10 +115,14 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
                 return Err(error(
                     DiagnosticKind::Inconsistent,
                     field("_chem_comp_bond.atom_id_1"),
-                    format!(
-                        "self or duplicate bond `{}`-`{}`",
-                        atoms[a].name, atoms[b].name
-                    ),
+                    if a == b {
+                        format!("Component {id:?} bonds atom {:?} to itself.", atoms[a].name)
+                    } else {
+                        format!(
+                            "Component {id:?} repeats the bond between atoms {:?} and {:?}.",
+                            atoms[a].name, atoms[b].name
+                        )
+                    },
                 ));
             }
             let order = match text("_chem_comp_bond.value_order")
@@ -141,7 +141,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
                     return Err(error(
                         DiagnosticKind::InvalidValue,
                         field("_chem_comp_bond.value_order"),
-                        format!("unknown bond order `{other}`"),
+                        format!("A bond of component {id:?} has unknown order {other:?}."),
                     ))
                 }
             };
@@ -177,8 +177,9 @@ fn category<'a>(
         component_error(
             error.kind(),
             error.location(),
-            format!("component `{id}`: {}", error.message()),
+            format!("Component \"{id}\" is malformed."),
         )
+        .with_source(error)
     })
 }
 
@@ -188,7 +189,7 @@ fn check_component(id: &str, value: Option<MmcifValue<'_>>) -> Result<(), Format
         Some((value, text)) if !text.eq_ignore_ascii_case(id) => Err(component_error(
             DiagnosticKind::Inconsistent,
             Some(value.location()),
-            format!("component `{id}` contains a row of component `{text}`"),
+            format!("Component {id:?} contains a row of component {text:?}."),
         )),
         _ => Ok(()),
     }

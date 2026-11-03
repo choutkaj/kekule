@@ -199,19 +199,13 @@ fn structural_error_chains_retain_the_underlying_unit_failure() {
     let error = EnsembleError::from(StructureError::from(position_error.clone()));
     let structure = error.source().unwrap();
     assert!(structure.is::<StructureError>());
-    let position = structure.source().unwrap();
-    assert!(position.is::<DenseArrayError>());
-    assert!(position.source().unwrap().is::<UnitError>());
-    let error = ModelError::from(position_error);
-    assert!(error.source().unwrap().is::<StructureError>());
-    assert!(error
-        .source()
-        .unwrap()
-        .source()
-        .unwrap()
-        .source()
-        .unwrap()
-        .is::<UnitError>());
+    // Structure state wraps its array error transparently: it displays the
+    // array error and continues with the array error's own source.
+    assert_eq!(structure.to_string(), position_error.to_string());
+    assert!(structure.source().unwrap().is::<UnitError>());
+    let error = ModelError::from(position_error.clone());
+    assert_eq!(error.to_string(), position_error.to_string());
+    assert!(error.source().unwrap().is::<UnitError>());
     let cell_error = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(1.0, 1.0, 1.0), DIMENSIONLESS),
         [true; 3],

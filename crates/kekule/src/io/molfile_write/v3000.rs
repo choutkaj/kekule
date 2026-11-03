@@ -99,9 +99,8 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
                 StereoGroupKind::Or => format!("MDLV30/STEREL{}", index + 1),
                 StereoGroupKind::And => format!("MDLV30/STERAC{}", index + 1),
                 _ => {
-                    return Err(
-                        MOLFILE_WRITE.unsupported("V3000 cannot encode this stereo group kind")
-                    )
+                    return Err(MOLFILE_WRITE
+                        .unsupported("V3000 cannot state racemic or relative stereo groups."))
                 }
             };
             let mut line = format!("{kind} ATOMS=({}", atoms.len());
@@ -147,7 +146,7 @@ fn v3000_bond_code(order: BondOrder) -> Result<u8, FormatError> {
         BondOrder::Triple => Ok(3),
         BondOrder::Dative => Ok(9),
         BondOrder::Quadruple => {
-            Err(MOLFILE_WRITE.unsupported("V3000 writer does not support quadruple bonds"))
+            Err(MOLFILE_WRITE.unsupported("V3000 cannot state quadruple bonds."))
         }
     }
 }
@@ -163,7 +162,7 @@ fn v3000_bond_cfg(
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(Some(2)),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeDown)) => Ok(Some(3)),
         (BondOrder::Double, Some(SourceStereoBondMarkKind::DoubleBondEither)) => Ok(Some(2)),
-        _ => Err(MOLFILE_WRITE.unsupported("V3000 bond CFG is incompatible with the bond order")),
+        _ => Err(MOLFILE_WRITE.unsupported("A bond stereo mark does not apply to its bond order.")),
     }
 }
 
@@ -172,8 +171,7 @@ fn v3000_radical_code(radical: AtomRadical) -> Result<u8, FormatError> {
         (2, Some(1)) => Ok(1),
         (1, Some(2)) => Ok(2),
         (2, Some(3)) => Ok(3),
-        _ => Err(MOLFILE_WRITE.unsupported(
-            "V3000 writer requires an encodable radical electron count and explicit spin multiplicity",
-        )),
+        _ => Err(MOLFILE_WRITE
+            .unsupported("V3000 cannot state a radical other than a singlet, doublet or triplet.")),
     }
 }

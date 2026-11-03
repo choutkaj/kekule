@@ -269,7 +269,7 @@ impl SmilesParseOptions {
             return Err(parse_error(
                 DiagnosticKind::Limit,
                 0,
-                "configured atom and bond limits must fit the public identifier range",
+                "Atom and bond limits cannot exceed 4,294,967,295.",
             ));
         }
         self.max_atoms = max_atoms;
@@ -291,7 +291,7 @@ impl SmilesParseOptions {
             return Err(parse_error(
                 DiagnosticKind::Limit,
                 0,
-                "configured atom and bond limits must fit the public identifier range",
+                "Atom and bond limits cannot exceed 4,294,967,295.",
             ));
         }
         self.max_bonds = max_bonds;
@@ -359,16 +359,13 @@ fn parse_smiles_record_text(
     options: SmilesParseOptions,
 ) -> std::result::Result<SmilesDocument, FormatError> {
     if input.len() > options.max_input_bytes {
+        let limit = LimitExceeded::new(Resource::InputBytes, options.max_input_bytes, input.len());
         return Err(parse_error(
             DiagnosticKind::Limit,
             0,
-            "input exceeds configured byte limit",
+            format!("The input exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::new(
-            Resource::InputBytes,
-            options.max_input_bytes,
-            input.len(),
-        )));
+        .exceeding(limit));
     }
     let source = input;
     let record = split_smiles_record(source)?;
@@ -407,7 +404,7 @@ fn split_smiles_record(input: &str) -> Result<SmilesRecordSpans, FormatError> {
         return Err(parse_error(
             DiagnosticKind::Syntax,
             offset,
-            "a SMILES document must contain one record",
+            "The input has more than one line.",
         ));
     }
     let skip_space =
@@ -420,7 +417,7 @@ fn split_smiles_record(input: &str) -> Result<SmilesRecordSpans, FormatError> {
         return Err(parse_error(
             DiagnosticKind::Syntax,
             start,
-            "empty SMILES document",
+            "The input is empty.",
         ));
     }
     let mut suffix = skip_space(end);
@@ -432,7 +429,7 @@ fn split_smiles_record(input: &str) -> Result<SmilesRecordSpans, FormatError> {
                 parse_error(
                     DiagnosticKind::Syntax,
                     suffix,
-                    "unclosed CXSMILES extension",
+                    "The CXSMILES extension has no closing \"|\".",
                 )
             })?;
         let span = suffix..close + 1;
@@ -441,7 +438,7 @@ fn split_smiles_record(input: &str) -> Result<SmilesRecordSpans, FormatError> {
             return Err(parse_error(
                 DiagnosticKind::Syntax,
                 suffix,
-                "record name must be separated from the CXSMILES extension by whitespace",
+                "No space separates the record name from the CXSMILES extension.",
             ));
         }
         Some(span)
@@ -505,11 +502,15 @@ fn parse_smiles_program(
                     return Err(parse_error(
                         DiagnosticKind::Syntax,
                         offset,
-                        "invalid branch start",
+                        "The branch does not follow an atom.",
                     ));
                 }
                 let atom = current.ok_or_else(|| {
-                    parse_error(DiagnosticKind::Syntax, offset, "branch without atom")
+                    parse_error(
+                        DiagnosticKind::Syntax,
+                        offset,
+                        "The branch does not follow an atom.",
+                    )
                 })?;
                 stack.push(atom);
                 previous = SmilesTokenKind::BranchOpen;
@@ -530,11 +531,15 @@ fn parse_smiles_program(
                     return Err(parse_error(
                         DiagnosticKind::Syntax,
                         offset,
-                        "empty or incomplete branch",
+                        "The branch is empty or ends with a bond.",
                     ));
                 }
                 current = Some(stack.pop().ok_or_else(|| {
-                    parse_error(DiagnosticKind::Syntax, offset, "unmatched branch close")
+                    parse_error(
+                        DiagnosticKind::Syntax,
+                        offset,
+                        "The closing parenthesis closes no branch.",
+                    )
                 })?);
                 previous = SmilesTokenKind::BranchClose;
                 tokens.push(SmilesDocumentToken {
@@ -554,12 +559,16 @@ fn parse_smiles_program(
                     return Err(parse_error(
                         DiagnosticKind::Syntax,
                         offset,
-                        "invalid component separator",
+                        "The dot does not follow an atom.",
                     ));
                 }
                 current = None;
                 component = component.checked_add(1).ok_or_else(|| {
-                    parse_error(DiagnosticKind::Limit, offset, "component counter overflow")
+                    parse_error(
+                        DiagnosticKind::Limit,
+                        offset,
+                        "The SMILES has too many components.",
+                    )
                 })?;
                 previous = SmilesTokenKind::Dot;
                 fragments.push(fragment_start..tokens.len());
@@ -584,7 +593,7 @@ fn parse_smiles_program(
                     return Err(parse_error(
                         DiagnosticKind::Syntax,
                         offset,
-                        "bond without left endpoint",
+                        "The bond does not follow an atom.",
                     ));
                 }
                 let token = match ch {
@@ -611,7 +620,11 @@ fn parse_smiles_program(
             }
             '0'..='9' | '%' => {
                 let atom = current.ok_or_else(|| {
-                    parse_error(DiagnosticKind::Syntax, offset, "ring closure without atom")
+                    parse_error(
+                        DiagnosticKind::Syntax,
+                        offset,
+                        "The ring bond number does not follow an atom.",
+                    )
                 })?;
                 let (label, next_cursor) = parse_smiles_ring_label(chars, cursor)?;
                 let close_bond = pending_bond
@@ -631,7 +644,9 @@ fn parse_smiles_program(
                             return Err(parse_error(
                                 DiagnosticKind::Inconsistent,
                                 offset,
-                                "conflicting ring bond symbols",
+                                format!(
+                                    "The ends of ring bond {label} have different bond symbols."
+                                ),
                             ));
                         }
                     }
@@ -751,7 +766,7 @@ fn parse_smiles_program(
                     return Err(parse_error(
                         DiagnosticKind::Syntax,
                         offset,
-                        "bond without left endpoint",
+                        "The bond does not follow an atom.",
                     ));
                 }
                 current = Some(atom_id);
@@ -766,7 +781,10 @@ fn parse_smiles_program(
                 return Err(parse_error(
                     DiagnosticKind::Unsupported,
                     offset,
-                    "unsupported stereochemistry or query syntax",
+                    format!(
+                        "The character \"{}\" is not supported outside brackets.",
+                        ch.escape_debug()
+                    ),
                 ));
             }
             _ => {
@@ -819,7 +837,7 @@ fn parse_smiles_program(
                     return Err(parse_error(
                         DiagnosticKind::Syntax,
                         offset,
-                        "bond without left endpoint",
+                        "The bond does not follow an atom.",
                     ));
                 }
                 current = Some(atom_id);
@@ -836,28 +854,31 @@ fn parse_smiles_program(
         return Err(parse_error(
             DiagnosticKind::Syntax,
             input.len(),
-            "unclosed branch",
+            "A branch is not closed.",
         ));
     }
     if !rings.is_empty() {
         return Err(parse_error(
             DiagnosticKind::Syntax,
             input.len(),
-            "unclosed ring closure",
+            format!(
+                "Ring bond {} is not closed.",
+                rings.keys().next().copied().unwrap_or_default()
+            ),
         ));
     }
     if let Some((_, _, offset)) = pending_bond {
         return Err(parse_error(
             DiagnosticKind::Syntax,
             offset,
-            "bond without right endpoint",
+            "No atom follows the bond.",
         ));
     }
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(parse_error(
             DiagnosticKind::Syntax,
             input.len(),
-            "incomplete SMILES",
+            "The SMILES ends without an atom.",
         ));
     }
     // Dots separate written fragments, not necessarily connected components:
@@ -869,7 +890,7 @@ fn parse_smiles_program(
             return Err(parse_error(
                 DiagnosticKind::Inconsistent,
                 bond.offset,
-                "duplicate bond",
+                "The same two atoms are bonded twice.",
             ));
         }
         adjacency[bond.left].push(bond.right);
@@ -919,18 +940,19 @@ fn next_smiles_atom_index(
     max_atoms: usize,
 ) -> std::result::Result<usize, FormatError> {
     if atom_count >= max_atoms {
+        let limit = LimitExceeded::first_beyond(Resource::Atoms, max_atoms);
         return Err(parse_error(
             DiagnosticKind::Limit,
             offset,
-            "SMILES atom count exceeds configured limit",
+            format!("The SMILES exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::first_beyond(Resource::Atoms, max_atoms)));
+        .exceeding(limit));
     }
     if atom_count > u32::MAX as usize {
         return Err(parse_error(
             DiagnosticKind::Limit,
             offset,
-            "SMILES atom index capacity exceeded",
+            "The SMILES has more than 4,294,967,295 atoms.",
         ));
     }
     Ok(atom_count)
@@ -948,18 +970,19 @@ fn add_smiles_program_bond(
     let (offset, direction_from, direction_offset) = source_offsets;
     let (left, right) = endpoints;
     if bonds.len() >= max_bonds {
+        let limit = LimitExceeded::first_beyond(Resource::Bonds, max_bonds);
         return Err(parse_error(
             DiagnosticKind::Limit,
             offset,
-            "SMILES bond count exceeds configured limit",
+            format!("The SMILES exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::first_beyond(Resource::Bonds, max_bonds)));
+        .exceeding(limit));
     }
     if left == right {
         return Err(parse_error(
             DiagnosticKind::InvalidValue,
             offset,
-            "self bond",
+            "An atom is bonded to itself.",
         ));
     }
     bonds.push(SmilesProgramBond {
@@ -1093,7 +1116,7 @@ fn parse_smiles_ring_label(
             parse_error(
                 DiagnosticKind::Syntax,
                 offset,
-                "malformed percent ring label",
+                "A ring bond number after \"%\" needs two digits.",
             )
         })?;
     let second = chars
@@ -1103,7 +1126,7 @@ fn parse_smiles_ring_label(
             parse_error(
                 DiagnosticKind::Syntax,
                 offset,
-                "malformed percent ring label",
+                "A ring bond number after \"%\" needs two digits.",
             )
         })?;
     let label = first.1.to_digit(10).unwrap_or(0) as usize * 10
@@ -1112,7 +1135,7 @@ fn parse_smiles_ring_label(
         return Err(parse_error(
             DiagnosticKind::InvalidValue,
             offset,
-            "percent ring labels must be between 10 and 99",
+            format!("The ring bond number \"%{label:02}\" is below 10."),
         ));
     }
     Ok((label, cursor + 3))
@@ -1137,13 +1160,16 @@ fn parse_organic_atom(
         return Err(parse_error(
             DiagnosticKind::Syntax,
             offset,
-            format!("invalid SMILES syntax character `{ch}`"),
+            format!(
+                "The character \"{}\" is not valid SMILES.",
+                ch.escape_debug()
+            ),
         ));
     } else if !matches!(ch, 'B' | 'C' | 'N' | 'O' | 'P' | 'S' | 'F' | 'I') {
         return Err(parse_error(
             DiagnosticKind::Syntax,
             offset,
-            format!("unsupported organic-subset atom `{ch}`"),
+            format!("The atom symbol \"{ch}\" needs brackets."),
         ));
     }
     Ok((
@@ -1175,7 +1201,7 @@ fn parse_bracket_atom(
         return Err(parse_error(
             DiagnosticKind::Syntax,
             start,
-            "unclosed bracket atom",
+            "The bracket atom is not closed.",
         ));
     }
     let text = chars[cursor + 1..end]
@@ -1186,14 +1212,14 @@ fn parse_bracket_atom(
         return Err(parse_error(
             DiagnosticKind::Syntax,
             start,
-            "empty bracket atom",
+            "The bracket atom is empty.",
         ));
     }
     if !text.is_ascii() {
         return Err(parse_error(
             DiagnosticKind::Syntax,
             start,
-            "bracket atom must use ASCII syntax",
+            "The bracket atom contains non-ASCII characters.",
         ));
     }
     let bytes = text.as_bytes();
@@ -1204,7 +1230,7 @@ fn parse_bracket_atom(
             parse_error(
                 DiagnosticKind::InvalidValue,
                 start + 1 + index,
-                "invalid isotope",
+                format!("The isotope {:?} is too large.", &text[index..isotope_end]),
             )
         })?;
         index = isotope_end;
@@ -1217,7 +1243,7 @@ fn parse_bracket_atom(
         parse_error(
             DiagnosticKind::Syntax,
             start,
-            "bracket atom missing element",
+            "The bracket atom has no element symbol.",
         )
     })?;
     let aromatic = first.is_ascii_lowercase();
@@ -1227,7 +1253,7 @@ fn parse_bracket_atom(
                 parse_error(
                     DiagnosticKind::InvalidValue,
                     start + 1 + index,
-                    "unsupported aromatic bracket element",
+                    "The aromatic element symbol is not supported.",
                 )
             })?;
         index += symbol_len;
@@ -1242,7 +1268,7 @@ fn parse_bracket_atom(
         return Err(parse_error(
             DiagnosticKind::Syntax,
             start + 1 + index,
-            "bracket atom missing element",
+            "The bracket atom has no element symbol.",
         ));
     };
     let mut specified_hydrogens = 0;
@@ -1282,7 +1308,7 @@ fn parse_bracket_atom(
                         parse_error(
                             DiagnosticKind::InvalidValue,
                             start + 1 + index,
-                            "invalid hydrogen count",
+                            "The hydrogen count is too large.",
                         )
                     })?;
                     index = digit_end;
@@ -1300,7 +1326,7 @@ fn parse_bracket_atom(
                         parse_error(
                             DiagnosticKind::InvalidValue,
                             start + 1 + index,
-                            "charge overflow",
+                            "The charge is too large.",
                         )
                     })?;
                     index += 1;
@@ -1311,14 +1337,14 @@ fn parse_bracket_atom(
                         return Err(parse_error(
                             DiagnosticKind::Syntax,
                             start + 1 + index,
-                            "charge cannot mix repeated signs and digits",
+                            "The charge mixes repeated signs and digits.",
                         ));
                     }
                     magnitude = text[index..digit_end].parse::<u16>().map_err(|_| {
                         parse_error(
                             DiagnosticKind::InvalidValue,
                             start + 1 + index,
-                            "invalid charge",
+                            "The charge is too large.",
                         )
                     })?;
                     index = digit_end;
@@ -1328,21 +1354,21 @@ fn parse_bracket_atom(
                         parse_error(
                             DiagnosticKind::InvalidValue,
                             start + 1 + index,
-                            "charge overflow",
+                            "The charge is too large.",
                         )
                     })?)
                     .ok_or_else(|| {
                         parse_error(
                             DiagnosticKind::InvalidValue,
                             start + 1 + index,
-                            "charge overflow",
+                            "The charge is too large.",
                         )
                     })?;
                 formal_charge = i8::try_from(charge).map_err(|_| {
                     parse_error(
                         DiagnosticKind::InvalidValue,
                         start + 1 + index,
-                        "charge is outside i8 range",
+                        format!("The charge {charge} is outside -128 to 127."),
                     )
                 })?;
             }
@@ -1354,14 +1380,14 @@ fn parse_bracket_atom(
                     return Err(parse_error(
                         DiagnosticKind::Syntax,
                         start + 1 + index,
-                        "atom map requires digits",
+                        "The atom map has no digits.",
                     ));
                 }
                 let map = text[index..digit_end].parse::<u32>().map_err(|_| {
                     parse_error(
                         DiagnosticKind::InvalidValue,
                         start + 1 + index,
-                        "invalid atom map",
+                        "The atom map number is too large.",
                     )
                 })?;
                 atom_map = Some(map);
@@ -1371,14 +1397,20 @@ fn parse_bracket_atom(
                 return Err(parse_error(
                     DiagnosticKind::Unsupported,
                     start + 1 + index,
-                    "unsupported stereochemistry or query syntax",
+                    format!(
+                        "The character \"{}\" is not supported in a bracket atom.",
+                        (bytes[index] as char).escape_debug()
+                    ),
                 ));
             }
             _ => {
                 return Err(parse_error(
                     DiagnosticKind::Unsupported,
                     start + 1 + index,
-                    "unsupported bracket atom syntax",
+                    format!(
+                        "The character \"{}\" is not supported in a bracket atom.",
+                        (bytes[index] as char).escape_debug()
+                    ),
                 ));
             }
         }
@@ -1467,22 +1499,23 @@ impl<R: Read> Iterator for SmilesRecords<R> {
                 }
                 Err(error) => {
                     self.done = true;
-                    return Some(Err(parse_error(DiagnosticKind::Io, 0, "cannot read input")
+                    return Some(Err(parse_error(DiagnosticKind::Io, 0, "")
                         .with_source(error)
                         .on_line(number)));
                 }
             };
             self.lines_read = number;
             if truncated {
+                let limit = LimitExceeded::first_beyond(
+                    Resource::RecordBytes,
+                    self.options.max_input_bytes,
+                );
                 return Some(Err(parse_error(
                     DiagnosticKind::Limit,
                     0,
-                    "input exceeds configured byte limit",
+                    format!("The record exceeds its {}.", limit.describe()),
                 )
-                .exceeding(LimitExceeded::first_beyond(
-                    Resource::RecordBytes,
-                    self.options.max_input_bytes,
-                ))
+                .exceeding(limit)
                 .on_line(number)));
             }
             let text = match std::str::from_utf8(&self.line) {
@@ -1491,7 +1524,7 @@ impl<R: Read> Iterator for SmilesRecords<R> {
                     return Some(Err(parse_error(
                         DiagnosticKind::Io,
                         error.valid_up_to(),
-                        "SMILES record is not valid UTF-8",
+                        "The record is not valid UTF-8.",
                     )
                     .with_source(error)
                     .on_line(number)))

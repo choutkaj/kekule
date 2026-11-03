@@ -206,11 +206,15 @@ pub enum SymmetryError {
 impl fmt::Display for SymmetryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Perception(_) => formatter.write_str("cannot perceive hydrogen counts"),
+            Self::Perception(_) => formatter.write_str("Cannot perceive hydrogen counts."),
             Self::UnknownHydrogenCount { atom } => {
-                write!(formatter, "hydrogen count of {atom} is unknown")
+                write!(formatter, "The hydrogen count of {atom} is unknown.")
             }
-            Self::LimitExceeded(limit) => write!(formatter, "symmetry search {limit}"),
+            Self::LimitExceeded(limit) => write!(
+                formatter,
+                "The symmetry search exceeded its {}.",
+                limit.describe()
+            ),
         }
     }
 }

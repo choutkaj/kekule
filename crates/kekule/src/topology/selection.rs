@@ -947,32 +947,43 @@ pub enum SelectionError {
 
 impl fmt::Display for SelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::diagnostics::Capitalized;
         match self {
             Self::TopologyMismatch => {
-                formatter.write_str("selection belongs to a different topology")
+                formatter.write_str("The selection belongs to a different topology.")
             }
             Self::InvalidMoleculeDefinitionId(id) => {
-                write!(formatter, "invalid selected molecule definition: {id}")
+                write!(formatter, "Molecule {id} is not in the topology.")
             }
             Self::InvalidMoleculeInstanceId(id) => {
-                write!(formatter, "invalid selected molecule instance: {id}")
+                write!(formatter, "Molecule {id} is not in the topology.")
             }
-            Self::InvalidAtomId(id) => write!(formatter, "invalid selected atom: {id}"),
-            Self::InvalidChainId(id) => write!(formatter, "invalid selected chain: {id}"),
-            Self::InvalidResidueId(id) => write!(formatter, "invalid selected residue: {id}"),
-            Self::InvalidAtomSiteId(id) => write!(formatter, "invalid selected atom site: {id}"),
-            Self::InvalidAtomIndex(index) => write!(formatter, "invalid selected {index}"),
-            Self::UnsortedAtomIndex(index) => {
-                write!(formatter, "selected {index} is out of order or repeated")
-            }
+            Self::InvalidAtomId(id) => not_in_topology(formatter, id),
+            Self::InvalidChainId(id) => not_in_topology(formatter, id),
+            Self::InvalidResidueId(id) => not_in_topology(formatter, id),
+            Self::InvalidAtomSiteId(id) => not_in_topology(formatter, id),
+            Self::InvalidAtomIndex(index) => not_in_topology(formatter, index),
+            Self::UnsortedAtomIndex(index) => write!(
+                formatter,
+                "{} is out of order or repeated in the selection.",
+                Capitalized(index)
+            ),
             Self::AtomMaskLength { expected, found } => write!(
                 formatter,
-                "atom mask has {found} words; the topology needs {expected}"
+                "The atom mask has {found} words, but the topology needs {expected}."
             ),
-            Self::InvalidBondId(id) => write!(formatter, "invalid selected bond: {id}"),
-            Self::InvalidBondIndex(index) => write!(formatter, "invalid selected {index}"),
+            Self::InvalidBondId(id) => not_in_topology(formatter, id),
+            Self::InvalidBondIndex(index) => not_in_topology(formatter, index),
         }
     }
+}
+
+fn not_in_topology(formatter: &mut fmt::Formatter<'_>, id: &dyn fmt::Display) -> fmt::Result {
+    write!(
+        formatter,
+        "{} is not in the topology.",
+        crate::diagnostics::Capitalized(id)
+    )
 }
 
 impl std::error::Error for SelectionError {}

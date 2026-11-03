@@ -393,7 +393,10 @@ impl ComponentLibrary {
             return Err(component_error(
                 DiagnosticKind::InvalidValue,
                 None,
-                format!("variant of `{}` has no variant name", variant.id),
+                format!(
+                    "A variant of component {:?} has no variant name.",
+                    variant.id
+                ),
             ));
         };
         let entry = self
@@ -403,7 +406,7 @@ impl ComponentLibrary {
                 component_error(
                     DiagnosticKind::InvalidReference,
                     None,
-                    format!("variant `{name}` names unknown component `{}`", variant.id),
+                    format!("Variant {name:?} names unknown component {:?}.", variant.id),
                 )
             })?;
         entry

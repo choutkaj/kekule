@@ -145,7 +145,7 @@ fn chains_named_by_segment_round_trip_under_the_segment_policy() {
         issue(&error),
         PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "PROA"
     ));
-    assert!(error.message().contains("PdbChainIdPolicy::SegmentId"));
+    assert!(error.message().contains("does not fit PDB's chain columns"));
     let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
     let (written, report) = pdb::write(&reread, options).unwrap();
     assert_eq!(written, segmented);

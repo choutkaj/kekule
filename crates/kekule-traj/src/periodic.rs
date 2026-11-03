@@ -188,20 +188,47 @@ pub enum PeriodicError {
 impl fmt::Display for PeriodicError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingCell { frame } => write!(f, "frame {frame} has no periodic cell"),
-            Self::SelectionTopologyMismatch => f.write_str("anchor selection belongs to another topology"),
-            Self::ReferenceTopologyMismatch => f.write_str("reference structure belongs to another topology"),
-            Self::TopologyMismatch { frame } => write!(f, "frame {frame} belongs to another topology"),
-            Self::NonSequentialFrame { previous, frame } => write!(f, "frame {frame} must immediately follow frame {previous} for temporal unwrapping"),
-            Self::NonMonotonicTime { frame } => write!(f, "time decreases at frame {frame} during temporal unwrapping"),
-            Self::EmptyAnchors => f.write_str("imaging requires at least one anchor atom"),
-            Self::InconsistentBondImages { frame, bond } => write!(f, "frame {frame} has inconsistent periodic images around {bond}"),
-            Self::PeriodicAxesChanged { frame } => write!(f, "periodic axes change at frame {frame}"),
-            Self::AmbiguousDisplacement { frame, atom, axis } => write!(f, "frame {frame}, {atom}, cell axis {axis}: ambiguous half-cell displacement"),
-            Self::LimitExceeded { frame, limit } => write!(f, "frame {frame}: nearest-image search {limit}"),
-            Self::NumericalFailure { frame } => write!(f, "frame {frame}: periodic coordinate calculation exceeds numerical precision or range"),
-            Self::Position { frame, .. } => write!(f, "frame {frame} has invalid positions"),
-            Self::Publication(_) => f.write_str("cannot publish periodic coordinates"),
+            Self::MissingCell { frame } => write!(f, "Frame {frame} has no periodic cell."),
+            Self::SelectionTopologyMismatch => {
+                f.write_str("The anchor selection belongs to another topology.")
+            }
+            Self::ReferenceTopologyMismatch => {
+                f.write_str("The reference structure belongs to another topology.")
+            }
+            Self::TopologyMismatch { frame } => {
+                write!(f, "Frame {frame} belongs to another topology.")
+            }
+            Self::NonSequentialFrame { previous, frame } => write!(
+                f,
+                "Frame {frame} does not follow frame {previous}."
+            ),
+            Self::NonMonotonicTime { frame } => {
+                write!(f, "Time decreases at frame {frame}.")
+            }
+            Self::EmptyAnchors => f.write_str("No anchor atom is selected."),
+            Self::InconsistentBondImages { frame, bond } => write!(
+                f,
+                "The periodic images around {bond} in frame {frame} are inconsistent."
+            ),
+            Self::PeriodicAxesChanged { frame } => {
+                write!(f, "The periodic axes change at frame {frame}.")
+            }
+            Self::AmbiguousDisplacement { frame, atom, axis } => write!(
+                f,
+                "The displacement of {atom} along cell axis {} in frame {frame} is half a cell. Its image is ambiguous.",
+                ["a", "b", "c"].get(*axis).copied().unwrap_or("?")
+            ),
+            Self::LimitExceeded { frame, limit } => write!(
+                f,
+                "The nearest-image search in frame {frame} exceeded its {}.",
+                limit.describe()
+            ),
+            Self::NumericalFailure { frame } => write!(
+                f,
+                "A periodic coordinate in frame {frame} exceeds the precision or range of double-precision numbers."
+            ),
+            Self::Position { frame, .. } => write!(f, "Frame {frame} has invalid positions."),
+            Self::Publication(_) => f.write_str("Cannot publish the periodic coordinates."),
         }
     }
 }
