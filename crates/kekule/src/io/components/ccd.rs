@@ -157,6 +157,10 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
     Ok(Component {
         name: scalar("_chem_comp.name").unwrap_or_default().to_owned(),
         kind: scalar("_chem_comp.type").unwrap_or_default().to_owned(),
+        one_letter_code: scalar("_chem_comp.one_letter_code").map(str::to_owned),
+        parents: scalar("_chem_comp.mon_nstd_parent_comp_id")
+            .map(parent_ids)
+            .unwrap_or_default(),
         id,
         variant: None,
         atoms,
@@ -189,6 +193,15 @@ fn check_component(id: &str, value: Option<MmcifValue<'_>>) -> Result<(), Format
         )),
         _ => Ok(()),
     }
+}
+
+/// The identifiers of a comma-separated parent list such as `THR,TYR, GLY`.
+pub(crate) fn parent_ids(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn flag(value: Option<&str>) -> bool {

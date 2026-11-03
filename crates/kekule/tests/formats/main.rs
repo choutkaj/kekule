@@ -13,6 +13,7 @@ mod mmcif;
 mod native;
 mod pdb;
 mod pdb_write;
+mod sequences;
 mod smiles_stereo;
 mod writers;
 mod xyz;

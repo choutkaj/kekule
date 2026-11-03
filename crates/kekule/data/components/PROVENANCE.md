@@ -25,5 +25,13 @@ offline that the shipped files, the lock and the Rust bundle list agree; CI runs
 that check. The selection rationale is in
 [`tools/components/README.md`](https://github.com/choutkaj/kekule/blob/main/tools/components/README.md).
 
+`codes.tsv` lists the one-letter codes and parents of every dictionary
+component that links into a polypeptide or a polynucleotide. It is generated
+by `tools/components/codes.py` from the complete dictionary
+(`https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz`, entries
+modified up to 2026-10-23), whose checksum
+[`tools/components/codes.lock.json`](https://github.com/choutkaj/kekule/blob/main/tools/components/codes.lock.json)
+records. `kekule::sequence` reads it.
+
 The neutral histidine tautomers are derived in code
 (`src/io/components/bundled.rs`) and are not dictionary entries.
