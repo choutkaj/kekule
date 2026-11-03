@@ -1222,6 +1222,19 @@ are marked **Breaking:**.
 
 ### Fixed
 
+- Ring perception of large nucleic acids (SeekDelta K25). A ring that two
+  degree-two roots find again was recovered on a copy of the whole graph for
+  each root, so the work grew with rings times molecule size. Ribosomes such
+  as PDB 6SPB and 7K00 exceeded the work limit. Recovery now trims and
+  restores the roots in place. The rings of 6SPB's largest molecule
+  (32,657 atoms) now take 0.3 % of the limit.
+- A residue without template charges takes the charges its bonds imply
+  (SeekDelta K25). wwPDB entry files state component bond orders but no
+  charges, so the methylated N7 of 7-methylguanosine (`G7M`) was a neutral
+  nitrogen with four bonds and failed valence perception. An atom with more
+  bonds than a neutral atom allows now takes +1, or else -1, when that
+  charge makes its valence valid. The report names these atoms
+  (`StructureInterpretIssue::ChargesFromBonds`). Stated charges are kept.
 - A DCD unit-cell or coordinate record whose marker gives another size than
   the frame layout fixes is corrupt. Before, a reader of a growing file took
   one claiming more bytes than the file held for a frame still being

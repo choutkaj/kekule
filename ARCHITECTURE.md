@@ -782,7 +782,10 @@ records the evidence for every bond and names residues whose resolved atoms
 split into several molecules.
 
 Formal charges come from the source when stated, otherwise from the template,
-including when the source's own bond table supplies the bonds. Hydrogens present
+including when the source's own bond table supplies the bonds. Without a
+template, an atom with more bonds than a neutral atom allows takes the charge
+that makes its valence valid, +1 before -1, as the methylated N7 of
+7-methylguanosine takes +1. Hydrogens present
 in the model are atoms; remaining hydrogens follow from valence, so a template's
 protonation is never asserted as a fixed hydrogen count. When a residue's model
 hydrogens differ from its template on a heteroatom, a variant template that

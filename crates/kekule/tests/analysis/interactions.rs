@@ -48,16 +48,9 @@ fn labels(topology: &Topology, end: &InteractionEnd) -> String {
 
 type Found = Vec<(InteractionKind, String, String, Interaction)>;
 
-/// The interactions of one residue's atoms with every atom.
+/// The interactions of one residue's atoms with every atom, in a model
+/// whose every molecule perceives.
 fn of_ligand(model: &Model, ligand: &str) -> Found {
-    let (found, unperceived) = of_ligand_unperceived(model, ligand);
-    assert!(unperceived.is_empty(), "{unperceived:?}");
-    found
-}
-
-/// [`of_ligand`], with the residue names of the definitions whose
-/// perception failed.
-fn of_ligand_unperceived(model: &Model, ligand: &str) -> (Found, Vec<String>) {
     let topology = model.shared_topology();
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let unperceived = features
@@ -69,6 +62,7 @@ fn of_ligand_unperceived(model: &Model, ligand: &str) -> (Found, Vec<String>) {
             atom.residue().unwrap().name().to_owned()
         })
         .collect::<Vec<_>>();
+    assert!(unperceived.is_empty(), "{unperceived:?}");
     let ligand = AtomSelection::from_predicate(Arc::clone(&topology), |atom| {
         atom.residue()
             .is_some_and(|residue| residue.name() == ligand)
@@ -82,7 +76,7 @@ fn of_ligand_unperceived(model: &Model, ligand: &str) -> (Found, Vec<String>) {
         &InteractionCriteria::default(),
     )
     .unwrap();
-    let found = found
+    found
         .interactions()
         .iter()
         .map(|interaction| {
@@ -93,8 +87,7 @@ fn of_ligand_unperceived(model: &Model, ligand: &str) -> (Found, Vec<String>) {
                 interaction.clone(),
             )
         })
-        .collect();
-    (found, unperceived)
+        .collect()
 }
 
 /// The one interaction of `kind` between ends labelled `first` and
@@ -236,11 +229,9 @@ fn acetylcholinesterase_tacrine_1acj() {
 #[test]
 fn acetylcholinesterase_decamethonium_1acl() {
     // Decamethonium's quaternary ammoniums sit over Trp84 and Trp279. The
-    // entry gives their four-bonded nitrogens no charge, so perception
-    // rejects the ligand's valence; it is classified from its bonds alone,
-    // which still make the nitrogens amines.
-    let (found, unperceived) = of_ligand_unperceived(&load("1ACL"), "DME");
-    assert_eq!(unperceived, ["DME"]);
+    // entry states no charges, so its four-bonded nitrogens take the +1
+    // their bonds imply.
+    let found = of_ligand(&load("1ACL"), "DME");
     let cation = expect(
         &found,
         InteractionKind::CationPi,
