@@ -299,7 +299,7 @@ fn v3000_atom_cfg_checks_redundant_wedges_and_unknown_precedence() {
     assert!(read_molfile(&with_cfg(2))
         .unwrap_err()
         .to_string()
-        .contains("conflicts with bond wedge"));
+        .contains("contradicts its wedge bonds"));
     assert!(read_molfile(&with_cfg(3))
         .unwrap()
         .stereo_elements()
@@ -411,7 +411,10 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
                     .with_version(molfile::MolfileWriteVersion::V3000),
             ),
         ] {
-            assert!(output.unwrap_err().message().contains("requires a Model"));
+            assert!(output
+                .unwrap_err()
+                .message()
+                .contains("Molfile stereo needs coordinates"));
         }
         for invalid_y in [-last_y, 0.0, 0.00000001 * last_y] {
             let mut invalid_points = points.clone();
@@ -433,7 +436,7 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
                 assert!(output
                     .unwrap_err()
                     .message()
-                    .contains("emitted coordinates"));
+                    .contains("written coordinates"));
             }
         }
     }
@@ -688,7 +691,7 @@ fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
     );
     assert_eq!(
         error.message(),
-        "cannot encode specified double-bond stereo at bond 0: a conformation's coordinates give it no E/Z, since it is aromatic or an endpoint has identical terminal ligands"
+        "Cannot encode the specified stereo of bond 0. The bond is aromatic, or an endpoint has identical terminal ligands."
     );
 }
 
@@ -1003,7 +1006,7 @@ M  END
         .interpret(Default::default())
         .expect_err("core element support belongs to interpretation")
         .message()
-        .contains("unsupported element"));
+        .contains("is unknown"));
 }
 
 #[test]
@@ -1222,14 +1225,16 @@ M  END
         molfile::MolfileParseOptions::default().with_max_v3000_atoms(0),
     )
     .expect_err("V3000 atom limit should apply");
-    assert!(atom_error.message().contains("atom count"));
+    assert!(atom_error.message().contains("atom limit"));
 
     let line_error = molfile::parse_str(
         input,
         molfile::MolfileParseOptions::default().with_max_v3000_logical_line_bytes(4),
     )
     .expect_err("V3000 logical line limit should apply");
-    assert!(line_error.message().contains("logical line"));
+    assert!(line_error
+        .message()
+        .contains("V3000 line exceeds its record size limit"));
 }
 
 #[test]
@@ -1347,7 +1352,7 @@ fn mol_writers_reject_radical_states_that_require_guessing_or_losing_spin() {
             assert!(result
                 .unwrap_err()
                 .message()
-                .contains("electron count and explicit spin"));
+                .contains("other than a singlet, doublet or triplet"));
         }
         assert_eq!(molecule.atoms().next().unwrap().1.radical, Some(radical));
     }
@@ -1437,7 +1442,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
     )
     .expect_err("invalid stereo element should be rejected")
     .message()
-    .contains("cannot encode"));
+    .contains("needs coordinates"));
 
     let mut molecule = crate::molecule::MoleculeEditor::new();
     let a = molecule

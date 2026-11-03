@@ -255,7 +255,7 @@ fn invalid_aromatic_source_is_rejected_before_publication() {
     let error = read_smiles("c1cccc1")
         .expect_err("unmatchable aromatic representation must fail interpretation");
 
-    assert!(chain_text(&*error).contains("invalid imported aromatic representation"));
+    assert!(chain_text(&*error).contains("cannot be localized"));
 }
 
 #[test]

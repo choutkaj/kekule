@@ -109,14 +109,16 @@ impl Emission {
                 StereoGroupKind::And => and.push(members.clone()),
                 StereoGroupKind::Or => or.push(members.clone()),
                 StereoGroupKind::Relative => relative += 1,
-                StereoGroupKind::Racemic => return Err(SMILES_WRITE.unsupported(
-                    "CXSMILES cannot encode a quantitative racemic group without losing its distinction from AND")),
+                StereoGroupKind::Racemic => {
+                    return Err(SMILES_WRITE.unsupported(
+                        "CXSMILES cannot state a racemic stereo group apart from an AND group.",
+                    ))
+                }
             }
         }
         if relative > 1 {
-            return Err(SMILES_WRITE.unsupported(
-                "CXSMILES r cannot encode multiple independent relative stereo groups",
-            ));
+            return Err(SMILES_WRITE
+                .unsupported("CXSMILES cannot state more than one relative stereo group."));
         }
         // The record-level r flag applies to every otherwise ungrouped center.
         // Shield known absolute centers so it cannot weaken their configuration.
@@ -166,7 +168,9 @@ pub(super) fn validate_groups(mol: &Molecule) -> Result<(), FormatError> {
     let mut relative = 0;
     for (_, group) in mol.stereo_groups() {
         if group.kind == StereoGroupKind::Racemic {
-            return Err(SMILES_WRITE.unsupported("CXSMILES cannot encode a quantitative racemic group without losing its distinction from AND"));
+            return Err(SMILES_WRITE.unsupported(
+                "CXSMILES cannot state a racemic stereo group apart from an AND group.",
+            ));
         }
         relative += usize::from(group.kind == StereoGroupKind::Relative);
         for member in &group.members {
@@ -174,13 +178,15 @@ pub(super) fn validate_groups(mol: &Molecule) -> Result<(), FormatError> {
                 mol.stereo_element(*member).map(|s| &s.kind),
                 Some(StereoElementKind::Tetrahedral(_))
             ) {
-                return Err(SMILES_WRITE.unsupported("CXSMILES group export requires tetrahedral members; this stereo family has no supported SMILES encoding"));
+                return Err(SMILES_WRITE
+                    .unsupported("CXSMILES stereo groups can hold only tetrahedral stereo."));
             }
         }
     }
     if relative > 1 {
-        return Err(SMILES_WRITE
-            .unsupported("CXSMILES r cannot encode multiple independent relative stereo groups"));
+        return Err(
+            SMILES_WRITE.unsupported("CXSMILES cannot state more than one relative stereo group.")
+        );
     }
     Ok(())
 }

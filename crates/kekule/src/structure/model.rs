@@ -712,9 +712,13 @@ pub enum ModelError {
 impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
-            Self::Structure(_) => formatter.write_str("invalid model structure"),
-            Self::Subset(_) => formatter.write_str("cannot subset model topology"),
+            Self::InvalidAtomId(atom) => write!(
+                formatter,
+                "{} is not in the model's topology.",
+                crate::diagnostics::Capitalized(atom)
+            ),
+            Self::Structure(error) => error.fmt(formatter),
+            Self::Subset(_) => formatter.write_str("Cannot subset the model's topology."),
         }
     }
 }
@@ -722,7 +726,7 @@ impl fmt::Display for ModelError {
 impl std::error::Error for ModelError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Structure(error) => Some(error),
+            Self::Structure(error) => error.source(),
             Self::Subset(error) => Some(error),
             _ => None,
         }
@@ -1036,14 +1040,14 @@ impl fmt::Display for ModelBuildError {
         match self {
             Self::InstancePositionCountMismatch { expected, actual } => write!(
                 formatter,
-                "definition instance requires {expected} positions, but received {actual}"
+                "The molecule has {expected} atoms, but {actual} positions were given."
             ),
             Self::CapacityOverflow => {
-                formatter.write_str("model construction exceeds coordinate capacity")
+                formatter.write_str("The model exceeds the addressable number of atoms.")
             }
-            Self::Topology(_) => formatter.write_str("cannot build topology"),
-            Self::Hierarchy(_) => formatter.write_str("cannot build hierarchy"),
-            Self::Model(_) => formatter.write_str("cannot build model"),
+            Self::Topology(_) => formatter.write_str("Cannot build the topology."),
+            Self::Hierarchy(_) => formatter.write_str("Cannot build the hierarchy."),
+            Self::Model(error) => error.fmt(formatter),
         }
     }
 }
@@ -1053,7 +1057,7 @@ impl std::error::Error for ModelBuildError {
         match self {
             Self::Topology(e) => Some(e),
             Self::Hierarchy(e) => Some(e),
-            Self::Model(e) => Some(e),
+            Self::Model(e) => e.source(),
             _ => None,
         }
     }

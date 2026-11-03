@@ -56,6 +56,7 @@
 
 use std::fmt;
 
+use crate::diagnostics::Capitalized;
 use crate::geometry::{Point3, Vector3};
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError};
 use crate::units::{Quantity, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
@@ -111,18 +112,16 @@ pub enum MeasurementError {
 impl fmt::Display for MeasurementError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidAtomId(atom) => write!(f, "invalid measurement atom: {atom}"),
-            Self::MissingBond { a, b } => {
-                write!(f, "measurement requires a direct bond between {a} and {b}")
-            }
-            Self::Selection(_) => f.write_str("invalid measurement selection"),
-            Self::Unit(_) => f.write_str("invalid measurement unit"),
-            Self::InvalidCutoff => f.write_str("distance cutoff must be finite and nonnegative"),
+            Self::InvalidAtomId(atom) => write!(f, "{} is not in the topology.", Capitalized(atom)),
+            Self::MissingBond { a, b } => write!(f, "{} and {b} are not bonded.", Capitalized(a)),
+            Self::Selection(error) => error.fmt(f),
+            Self::Unit(error) => error.fmt(f),
+            Self::InvalidCutoff => f.write_str("The distance cutoff is negative or not finite."),
             Self::DegenerateGeometry => {
-                f.write_str("angle or dihedral is undefined for this geometry")
+                f.write_str("The atoms define no angle or dihedral: a direction has zero length.")
             }
             Self::NumericalFailure => {
-                f.write_str("Cartesian measurement exceeds finite numerical range")
+                f.write_str("The measurement exceeds the finite numerical range.")
             }
         }
     }
@@ -131,8 +130,8 @@ impl fmt::Display for MeasurementError {
 impl std::error::Error for MeasurementError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Selection(error) => Some(error),
-            Self::Unit(error) => Some(error),
+            Self::Selection(error) => error.source(),
+            Self::Unit(error) => error.source(),
             _ => None,
         }
     }

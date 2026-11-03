@@ -88,14 +88,68 @@ pub(crate) struct SourceStereoNormalizationError {
     pub issues: Vec<SourceStereoNormalizationIssue>,
 }
 
+/// Writes the first issue, and how many there are when there are several.
 impl fmt::Display for SourceStereoNormalizationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "source-stereo canonicalization reported {} issue(s): {:?}",
-            self.issues.len(),
-            self.issues
-        )
+        match self.issues.as_slice() {
+            [] => formatter.write_str("The source stereo cannot be represented."),
+            [issue] => write!(formatter, "{issue}"),
+            [issue, ..] => write!(
+                formatter,
+                "The source stereo has {} problems. {issue}",
+                self.issues.len()
+            ),
+        }
+    }
+}
+
+impl fmt::Display for SourceStereoNormalizationIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingSourceBondMark { bond } => {
+                write!(f, "A stereo mark names a missing {bond}.")
+            }
+            Self::InvalidSourceBondMarkEndpoint { bond, from } => write!(
+                f,
+                "The stereo mark on {bond} starts at {from}. That atom is not an endpoint of the bond."
+            ),
+            Self::UnassembledTetrahedralBondMark { bond, kind } => write!(
+                f,
+                "The {} on {bond} marks no stereo center.",
+                mark_name(*kind)
+            ),
+            Self::AmbiguousDirectionalBondMarks {
+                double_bond,
+                endpoint,
+                mark_count,
+            } => write!(
+                f,
+                "{} has {mark_count} conflicting directional marks next to the double {double_bond}.",
+                crate::diagnostics::Capitalized(endpoint)
+            ),
+            Self::UnpairedDirectionalBondMark { bond } => write!(
+                f,
+                "The directional mark on {bond} has no partner across a double bond."
+            ),
+            Self::UnsupportedSourceBondMark { bond, kind } => {
+                write!(f, "The {} on {bond} is not supported.", mark_name(*kind))
+            }
+            Self::InvalidStereo(issue) => write!(f, "{issue}"),
+            Self::CouldNotCreateStereoElement(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+/// The name of a source bond mark, such as `wedge`.
+fn mark_name(kind: SourceStereoBondMarkKind) -> &'static str {
+    match kind {
+        SourceStereoBondMarkKind::DirectionalUp => "up-directional mark",
+        SourceStereoBondMarkKind::DirectionalDown => "down-directional mark",
+        SourceStereoBondMarkKind::WedgeUp => "wedge",
+        SourceStereoBondMarkKind::WedgeDown => "hash",
+        SourceStereoBondMarkKind::WedgeEither => "wavy mark",
+        SourceStereoBondMarkKind::DoubleBondEither => "either double-bond mark",
+        SourceStereoBondMarkKind::MolfileDoubleBondGeometry => "double-bond drawing",
     }
 }
 
@@ -105,12 +159,14 @@ impl fmt::Display for NormalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAromaticRepresentation(atom) => {
-                write!(f, "invalid imported aromatic representation at {atom}")
+                write!(f, "The aromatic bonds at {atom} cannot be localized.")
             }
-            Self::AromaticLocalizationLimit { atom, limit } => {
-                write!(f, "imported aromatic localization at {atom}: {limit}")
-            }
-            Self::SourceStereo(_) => f.write_str("source stereo cannot be represented canonically"),
+            Self::AromaticLocalizationLimit { atom, limit } => write!(
+                f,
+                "Localizing the aromatic bonds at {atom} exceeded its {}.",
+                limit.describe()
+            ),
+            Self::SourceStereo(error) => write!(f, "{error}"),
         }
     }
 }
@@ -118,7 +174,7 @@ impl fmt::Display for NormalizationError {
 impl std::error::Error for NormalizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::SourceStereo(error) => Some(error),
+            Self::SourceStereo(error) => std::error::Error::source(error),
             _ => None,
         }
     }

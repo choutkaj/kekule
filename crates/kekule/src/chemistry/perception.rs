@@ -36,12 +36,12 @@ pub enum PerceptionError {
 impl fmt::Display for PerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Conjugation(_) => f.write_str("conjugation perception failed"),
-            Self::Resonance(_) => f.write_str("resonance perception failed"),
-            Self::Valence(_) => f.write_str("valence perception failed"),
-            Self::Rings(_) => f.write_str("ring perception failed"),
-            Self::Aromaticity(_) => f.write_str("aromaticity perception failed"),
-            Self::Cancelled(_) => f.write_str("perception cancelled"),
+            Self::Conjugation(_) => f.write_str("Cannot perceive conjugation."),
+            Self::Resonance(_) => f.write_str("Cannot perceive resonance."),
+            Self::Valence(_) => f.write_str("Cannot perceive valence."),
+            Self::Rings(_) => f.write_str("Cannot perceive rings."),
+            Self::Aromaticity(_) => f.write_str("Cannot perceive aromaticity."),
+            Self::Cancelled(_) => f.write_str("Perception stopped."),
         }
     }
 }

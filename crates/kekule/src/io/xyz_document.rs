@@ -287,16 +287,13 @@ pub(crate) fn parse_xyz_str(
     options: XyzParseOptions,
 ) -> Result<XyzDocument, FormatError> {
     if input.len() > options.max_input_bytes {
+        let limit = LimitExceeded::new(Resource::InputBytes, options.max_input_bytes, input.len());
         return Err(xyz_parse_error(
             DiagnosticKind::Limit,
             1,
-            "input exceeds configured byte limit",
+            format!("The input exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::new(
-            Resource::InputBytes,
-            options.max_input_bytes,
-            input.len(),
-        )));
+        .exceeding(limit));
     }
     // Every terminator (`\r\n`, `\r`, `\n`) ends one line; a final terminator
     // does not start another.
@@ -321,7 +318,7 @@ pub(crate) fn parse_xyz_str(
                 return Err(xyz_parse_error(
                     DiagnosticKind::Syntax,
                     line,
-                    "content follows a blank line after the last frame",
+                    "Content follows a blank line after the last frame.",
                 ));
             }
             break;
@@ -330,35 +327,32 @@ pub(crate) fn parse_xyz_str(
             xyz_parse_error(
                 DiagnosticKind::Syntax,
                 count_line,
-                "the atom-count line is not one unsigned integer",
+                "The atom count line does not hold one whole number.",
             )
         })?;
         if count == 0 {
             return Err(xyz_parse_error(
                 DiagnosticKind::InvalidValue,
                 count_line,
-                "an XYZ frame cannot contain zero atoms",
+                "The frame has zero atoms.",
             ));
         }
         let total = atom_records.saturating_add(count);
         if total > options.max_atom_records {
+            let limit = LimitExceeded::new(Resource::Atoms, options.max_atom_records, total);
             return Err(xyz_parse_error(
                 DiagnosticKind::Limit,
                 count_line,
-                "atom lines exceed the configured limit",
+                format!("The input exceeds its {}.", limit.describe()),
             )
-            .exceeding(LimitExceeded::new(
-                Resource::Atoms,
-                options.max_atom_records,
-                total,
-            )));
+            .exceeding(limit));
         }
         atom_records = total;
         let Some((_, comment)) = lines.next() else {
             return Err(xyz_parse_error(
                 DiagnosticKind::Syntax,
                 count_line,
-                "the frame ends before its comment line",
+                "The frame ends before its comment line.",
             ));
         };
         let mut atoms = Vec::with_capacity(count);
@@ -367,7 +361,7 @@ pub(crate) fn parse_xyz_str(
                 return Err(xyz_parse_error(
                     DiagnosticKind::Syntax,
                     count_line,
-                    format!("the frame declares {count} atoms but ends after {atom_index}"),
+                    format!("The frame declares {count} atoms but ends after {atom_index}."),
                 ));
             };
             atoms.push(parse_atom(line, text)?);
@@ -394,7 +388,7 @@ fn parse_atom(line: usize, text: &str) -> Result<XyzAtom, FormatError> {
         return Err(xyz_parse_error(
             DiagnosticKind::Syntax,
             line,
-            "an atom line needs an element and three coordinates",
+            "The atom line lacks an element or one of three coordinates.",
         ));
     };
     let coordinate = |value: &str| {
@@ -406,7 +400,7 @@ fn parse_atom(line: usize, text: &str) -> Result<XyzAtom, FormatError> {
                 xyz_parse_error(
                     DiagnosticKind::InvalidValue,
                     line,
-                    format!("`{value}` is not a finite coordinate"),
+                    format!("The coordinate {value:?} is not a finite number."),
                 )
             })
     };

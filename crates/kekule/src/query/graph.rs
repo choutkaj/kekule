@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{Capitalized, LimitExceeded, Resource};
 
 /// Why a query stereo constraint or group is invalid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,21 +33,25 @@ pub enum QueryStereoIssue {
 impl fmt::Display for QueryStereoIssue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::FrameFocusMismatch => "atom frame must have the same tetrahedral focus",
-            Self::DuplicateFocus => "duplicate query stereo focus",
-            Self::MissingCarrierFrame => "tetrahedral predicate requires a carrier frame",
-            Self::EmptyGroup => "empty query stereo group",
-            Self::DuplicateGroupMember => "duplicate query stereo group member",
-            Self::MemberAlreadyGrouped => "query stereo member already grouped",
+            Self::FrameFocusMismatch => {
+                "A query atom's carrier frame names a different tetrahedral center."
+            }
+            Self::DuplicateFocus => "Two query stereo constraints share one focus.",
+            Self::MissingCarrierFrame => "A tetrahedral query constraint has no carrier frame.",
+            Self::EmptyGroup => "A query stereo group has no members.",
+            Self::DuplicateGroupMember => "A query stereo group lists a member twice.",
+            Self::MemberAlreadyGrouped => {
+                "A query stereo constraint already belongs to another group."
+            }
             Self::GroupMemberWithoutFrame => {
-                "query stereo group member requires a tetrahedral carrier frame"
+                "A query stereo group member has no tetrahedral carrier frame."
             }
             Self::IncompleteTetrahedralCarriers => {
-                "tetrahedral carriers must cover all query neighbors, at most four"
+                "The tetrahedral carriers do not cover every query neighbor, or exceed four."
             }
-            Self::DuplicateTetrahedralCarrier => "tetrahedral carriers must be distinct neighbors",
+            Self::DuplicateTetrahedralCarrier => "A tetrahedral carrier is listed twice.",
             Self::InvalidDoubleBondCarriers => {
-                "double-bond carriers must be distinct substituents at the corresponding endpoints"
+                "The double-bond carriers are not distinct substituents of their endpoints."
             }
         })
     }
@@ -588,13 +592,17 @@ impl From<LimitExceeded> for QueryGraphError {
 impl fmt::Display for QueryGraphError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyGraph => f.write_str("query graph must contain at least one atom"),
-            Self::InvalidAtomId(id) => write!(f, "invalid query atom id: {id}"),
-            Self::InvalidBondId(id) => write!(f, "invalid query bond id: {id}"),
-            Self::InvalidStereo(issue) => write!(f, "invalid query stereo: {issue}"),
-            Self::SelfBond(id) => write!(f, "cannot create a query bond from {id} to itself"),
-            Self::DuplicateBond { a, b } => write!(f, "duplicate query bond between {a} and {b}"),
-            Self::LimitExceeded(limit) => write!(f, "query graph {limit}"),
+            Self::EmptyGraph => f.write_str("The query has no atoms."),
+            Self::InvalidAtomId(id) => write!(f, "{} does not exist.", Capitalized(id)),
+            Self::InvalidBondId(id) => write!(f, "{} does not exist.", Capitalized(id)),
+            Self::InvalidStereo(issue) => write!(f, "{issue}"),
+            Self::SelfBond(id) => write!(f, "Cannot bond {id} to itself."),
+            Self::DuplicateBond { a, b } => {
+                write!(f, "{} and {b} are already bonded.", Capitalized(a))
+            }
+            Self::LimitExceeded(limit) => {
+                write!(f, "The query exceeded its {}.", limit.describe())
+            }
         }
     }
 }

@@ -405,14 +405,14 @@ fn axes_and_errors_describe_themselves() {
     };
     assert_eq!(
         mismatch.to_string(),
-        "item does not lie on a series axis of a coordinate in A"
+        "The series' items are placed by a coordinate in A, and this item is not."
     );
     let mut scan = Series::new(chain(3), SeriesAxis::Coordinate(ANGSTROM));
     let angle = SeriesItem::at_coordinate(positions(0.0), Quantity::new(1.0, RADIAN)).unwrap();
     let error = scan.push(angle).unwrap_err();
-    assert!(std::error::Error::source(&error).is_some());
+    assert!(matches!(error, SeriesError::Unit(_)), "{error:?}");
     assert_eq!(
         StructureError::NonFiniteCoordinate.to_string(),
-        "series item coordinate must be finite"
+        "The series item coordinate is not finite."
     );
 }

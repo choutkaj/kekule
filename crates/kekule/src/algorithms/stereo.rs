@@ -1,4 +1,5 @@
 use crate::chemistry::AtomPositionSource;
+use crate::diagnostics::Capitalized;
 use crate::geometry::{Point3, Vector3};
 use crate::molecule::*;
 use crate::structure::Positions;
@@ -389,14 +390,16 @@ pub enum StereoValidationIssue {
 impl fmt::Display for StereoValidationIssue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DuplicateStereoFocus { element, previous } => {
-                write!(f, "{element} and {previous} assert the same focus")
-            }
+            Self::DuplicateStereoFocus { element, previous } => write!(
+                f,
+                "{} and {previous} describe the same focus.",
+                Capitalized(element)
+            ),
             Self::MissingStereoAtom { element, atom } => {
-                write!(f, "{element} references missing {atom}")
+                write!(f, "{} names a missing {atom}.", Capitalized(element))
             }
             Self::MissingStereoBond { element, bond } => {
-                write!(f, "{element} references missing {bond}")
+                write!(f, "{} names a missing {bond}.", Capitalized(element))
             }
             Self::InvalidTetrahedralCarrierCount {
                 element,
@@ -404,54 +407,78 @@ impl fmt::Display for StereoValidationIssue {
                 carrier_count,
             } => write!(
                 f,
-                "{element} at {center} has {carrier_count} carriers, not four"
+                "{} at {center} has {carrier_count} carriers. A tetrahedral center needs four.",
+                Capitalized(element)
             ),
             Self::DuplicateTetrahedralCarrier {
                 element,
                 center,
                 carrier,
-            } => write!(f, "{element} at {center} repeats carrier {carrier:?}"),
+            } => write!(
+                f,
+                "{} at {center} lists {carrier} twice.",
+                Capitalized(element)
+            ),
             Self::UnrepresentedTetrahedralNeighbor {
                 element,
                 center,
                 neighbor,
-            } => write!(f, "{element} at {center} omits bonded neighbor {neighbor}"),
+            } => write!(
+                f,
+                "{} at {center} omits its bonded neighbor {neighbor}.",
+                Capitalized(element)
+            ),
             Self::TetrahedralCarrierNotAdjacent {
                 element,
                 center,
                 carrier,
-            } => write!(f, "{element} carrier {carrier:?} is not bonded to {center}"),
+            } => write!(
+                f,
+                "{} lists {carrier} as a carrier. It is not bonded to {center}.",
+                Capitalized(element)
+            ),
             Self::InvalidDoubleBondOrder {
                 element,
                 bond,
                 order,
-            } => write!(f, "{element} focus {bond} has order {order:?}, not double"),
+            } => write!(
+                f,
+                "The focus {bond} of {element} is a {order} bond, not a double bond."
+            ),
             Self::DoubleBondFocusMismatch {
                 element,
                 bond,
                 left,
                 right,
-            } => write!(f, "{element} endpoints {left} and {right} do not match {bond}"),
+            } => write!(
+                f,
+                "The endpoints {left} and {right} of {element} are not the atoms of {bond}."
+            ),
             Self::DoubleBondCarrierIsFocusAtom {
                 element,
                 endpoint,
                 carrier,
             } => write!(
                 f,
-                "{element} carrier {carrier} of {endpoint} is the other endpoint"
+                "{} lists {carrier} as a carrier of {endpoint}. It is the other endpoint of the double bond.",
+                Capitalized(element)
             ),
             Self::DoubleBondCarrierNotAdjacent {
                 element,
                 endpoint,
                 carrier,
-            } => write!(f, "{element} carrier {carrier:?} is not bonded to {endpoint}"),
+            } => write!(
+                f,
+                "{} lists {carrier} as a carrier. It is not bonded to {endpoint}.",
+                Capitalized(element)
+            ),
             Self::ImplicitHydrogenCarrierMismatch {
                 element,
                 atom,
                 fixed_hydrogens,
             } => write!(
                 f,
-                "{element} implicit-hydrogen carriers on {atom} disagree with its {fixed_hydrogens} fixed implicit hydrogen(s)"
+                "The implicit hydrogen carriers of {element} on {atom} do not match its {fixed_hydrogens} fixed implicit hydrogens."
             ),
             Self::UnsupportedDoubleBondCarrier {
                 element,
@@ -459,7 +486,8 @@ impl fmt::Display for StereoValidationIssue {
                 carrier,
             } => write!(
                 f,
-                "{element} carrier {carrier:?} of {endpoint} is neither an atom nor an implicit hydrogen"
+                "{} cannot use {carrier} as a carrier of {endpoint}. Double-bond carriers are atoms or implicit hydrogens.",
+                Capitalized(element)
             ),
             Self::DoubleBondEndpointOvercoordinated {
                 element,
@@ -467,29 +495,38 @@ impl fmt::Display for StereoValidationIssue {
                 substituent_count,
             } => write!(
                 f,
-                "{element} endpoint {endpoint} has {substituent_count} substituents, more than two"
+                "The endpoint {endpoint} of {element} has {substituent_count} substituents. A double-bond endpoint has at most two."
             ),
             Self::AxisCarrierIsFocusAtom {
                 element,
                 axis,
                 carrier,
-            } => write!(f, "{element} carrier {carrier} is an endpoint of {axis}"),
+            } => write!(
+                f,
+                "{} lists {carrier} as a carrier. It is an endpoint of the axis {axis}.",
+                Capitalized(element)
+            ),
             Self::AxisCarrierNotAdjacent {
                 element,
                 axis,
                 carrier,
             } => write!(
                 f,
-                "{element} carrier {carrier:?} is not bonded to exactly one endpoint of {axis}"
+                "{} lists {carrier} as a carrier. It is not bonded to exactly one endpoint of the axis {axis}.",
+                Capitalized(element)
             ),
             Self::UnsupportedAxisCarrier {
                 element,
                 axis,
                 carrier,
-            } => write!(f, "{element} carrier {carrier:?} on {axis} is not an atom"),
+            } => write!(
+                f,
+                "{} cannot use {carrier} as a carrier of the axis {axis}. Axis carriers are atoms.",
+                Capitalized(element)
+            ),
             Self::AxisCarrierEndpointMismatch { element, axis } => write!(
                 f,
-                "{element} carriers are not one at each endpoint of {axis}"
+                "The carriers of {element} are not one at each endpoint of the axis {axis}."
             ),
             Self::AxisEndpointOvercoordinated {
                 element,
@@ -497,31 +534,37 @@ impl fmt::Display for StereoValidationIssue {
                 substituent_count,
             } => write!(
                 f,
-                "{element} endpoint {endpoint} has {substituent_count} substituents, more than two"
+                "The axis endpoint {endpoint} of {element} has {substituent_count} substituents. An axis endpoint has at most two."
             ),
             Self::GroupMembershipOutsideGroupEdit { element } => write!(
                 f,
-                "{element} group membership changes only through stereo-group operations"
+                "The stereo group of {element} changed outside a stereo group edit."
             ),
             Self::MissingStereoGroup { element, group } => {
-                write!(f, "{element} names missing {group}")
+                write!(f, "{} names a missing {group}.", Capitalized(element))
             }
-            Self::EmptyStereoGroup { group } => write!(f, "{group} has no members"),
+            Self::EmptyStereoGroup { group } => {
+                write!(f, "{} has no members.", Capitalized(group))
+            }
             Self::DuplicateStereoGroupMember { group, element } => {
-                write!(f, "{group} lists {element} more than once")
+                write!(f, "{} lists {element} twice.", Capitalized(group))
             }
             Self::MissingStereoGroupMember { group, element } => {
-                write!(f, "{group} lists missing {element}")
+                write!(f, "{} lists a missing {element}.", Capitalized(group))
             }
-            Self::InconsistentStereoGroupMembership { group, element } => {
-                write!(f, "{group} and {element} disagree about membership")
-            }
-            Self::StereoElementAlreadyGrouped { element, group } => {
-                write!(f, "{element} already belongs to {group}")
-            }
+            Self::InconsistentStereoGroupMembership { group, element } => write!(
+                f,
+                "{} and {element} disagree about membership.",
+                Capitalized(group)
+            ),
+            Self::StereoElementAlreadyGrouped { element, group } => write!(
+                f,
+                "{} already belongs to {group}.",
+                Capitalized(element)
+            ),
             Self::SplitCorrelatedStereoGroup { group } => write!(
                 f,
-                "splitting the molecule would separate correlated {group} across molecules"
+                "Splitting the molecule would separate the members of {group}."
             ),
         }
     }
@@ -534,13 +577,18 @@ pub struct StereoValidationError {
     pub issues: Vec<StereoValidationIssue>,
 }
 
+/// Writes the first issue, and how many there are when there are several.
 impl fmt::Display for StereoValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "stereo validation reported {} issue(s)",
-            self.issues.len()
-        )
+        match self.issues.as_slice() {
+            [] => formatter.write_str("The represented stereo is invalid."),
+            [issue] => write!(formatter, "{issue}"),
+            [issue, ..] => write!(
+                formatter,
+                "The represented stereo has {} problems. {issue}",
+                self.issues.len()
+            ),
+        }
     }
 }
 
@@ -569,14 +617,16 @@ pub enum CoordinateStereoError {
 impl fmt::Display for CoordinateStereoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Perception(_) => formatter.write_str("stereo search failed"),
+            Self::Perception(_) => {
+                formatter.write_str("Cannot find the stereo elements of the molecule.")
+            }
             Self::PositionCountMismatch { expected, actual } => write!(
                 formatter,
-                "molecule requires {expected} positions, but received {actual}"
+                "The molecule has {expected} atoms and {actual} positions. Give one position per atom."
             ),
-            Self::InvalidStereo(_) => formatter.write_str("represented stereo is invalid"),
+            Self::InvalidStereo(_) => formatter.write_str("The represented stereo is invalid."),
             Self::CouldNotCreateElement(_) => {
-                formatter.write_str("could not materialize coordinate stereo")
+                formatter.write_str("Cannot add a stereo element perceived from coordinates.")
             }
         }
     }

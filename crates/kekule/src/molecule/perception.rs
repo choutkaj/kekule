@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::diagnostics::Capitalized;
+
 use super::{
     checked_fixed_id_collection_len, AtomId, BondId, Molecule, StereoDescriptor, StereoElementId,
     StereoElementKind,
@@ -663,28 +665,26 @@ pub enum PerceptionBuildError {
 impl fmt::Display for PerceptionBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DuplicateConjugationMember => formatter.write_str("duplicate conjugation member"),
+            Self::DuplicateConjugationMember => {
+                formatter.write_str("A conjugation member is listed twice.")
+            }
             Self::ComponentCapacityExceeded(component) => {
-                write!(formatter, "{component} capacity exceeded")
+                write!(formatter, "There are too many {component}.")
             }
-            Self::DuplicateInferredHydrogen(atom) => {
-                write!(
-                    formatter,
-                    "duplicate inferred-hydrogen assignment for {atom}"
-                )
-            }
+            Self::DuplicateInferredHydrogen(atom) => write!(
+                formatter,
+                "The inferred hydrogens of {atom} are assigned twice."
+            ),
             Self::DuplicateAromaticAtom(atom) => {
-                write!(formatter, "duplicate aromatic atom reference {atom}")
+                write!(formatter, "Aromatic {atom} is listed twice.")
             }
             Self::DuplicateAromaticBond(bond) => {
-                write!(formatter, "duplicate aromatic bond reference {bond}")
+                write!(formatter, "Aromatic {bond} is listed twice.")
             }
-            Self::DuplicateCipDescriptor(element) => {
-                write!(
-                    formatter,
-                    "duplicate CIP descriptor assignment for {element}"
-                )
-            }
+            Self::DuplicateCipDescriptor(element) => write!(
+                formatter,
+                "The CIP descriptor of {element} is assigned twice."
+            ),
         }
     }
 }
@@ -775,36 +775,35 @@ impl fmt::Display for DelocalizationIssue {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ResonanceWithoutAromaticity => {
-                formatter.write_str("resonance requires aromaticity")
+                formatter.write_str("Resonance is installed without aromaticity.")
             }
             Self::ConjugationWithoutAromaticity => {
-                formatter.write_str("conjugation requires aromaticity")
+                formatter.write_str("Conjugation is installed without aromaticity.")
             }
-            Self::ConjugatedAtomsNotBondEndpoints => {
-                formatter.write_str("conjugated atoms must be exactly bond endpoints")
-            }
+            Self::ConjugatedAtomsNotBondEndpoints => formatter
+                .write_str("The conjugated atoms are not exactly the conjugated bond endpoints."),
             Self::AromaticBondNotConjugated => {
-                formatter.write_str("aromatic bonds must be conjugated")
+                formatter.write_str("An aromatic bond is not conjugated.")
             }
-            Self::EmptyGroup { group } => write!(formatter, "group {group} is empty"),
+            Self::EmptyGroup { group } => write!(formatter, "Delocalized group {group} is empty."),
             Self::RepeatedGroupBond { group } => write!(
                 formatter,
-                "group {group} repeats a bond or shares one with an earlier group"
+                "Delocalized group {group} repeats a bond or shares one with an earlier group."
             ),
             Self::AromaticGroupBond { group } => {
-                write!(formatter, "group {group} has an aromatic bond")
+                write!(formatter, "Delocalized group {group} has an aromatic bond.")
             }
-            Self::OverlappingGroupAtom { group } => {
-                write!(
-                    formatter,
-                    "group {group} has a duplicate or overlapping atom"
-                )
-            }
+            Self::OverlappingGroupAtom { group } => write!(
+                formatter,
+                "Delocalized group {group} repeats an atom or shares one with another group."
+            ),
             Self::GroupAtomsNotBondEndpoints { group } => write!(
                 formatter,
-                "group {group} atoms are not exactly its bond endpoints"
+                "The atoms of delocalized group {group} are not exactly its bond endpoints."
             ),
-            Self::DisconnectedGroup { group } => write!(formatter, "group {group} is disconnected"),
+            Self::DisconnectedGroup { group } => {
+                write!(formatter, "Delocalized group {group} is not connected.")
+            }
         }
     }
 }
@@ -866,63 +865,61 @@ pub enum PerceptionInstallError {
 impl fmt::Display for PerceptionInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidDelocalization(issue) => {
-                write!(formatter, "invalid delocalization state: {issue}")
-            }
+            Self::InvalidDelocalization(issue) => write!(formatter, "{issue}"),
             Self::ComponentCapacityExceeded(component) => {
-                write!(formatter, "{component} capacity exceeded")
+                write!(formatter, "There are too many {component}.")
             }
-            Self::InvalidAtomId(atom) => write!(formatter, "invalid perception atom id: {atom}"),
+            Self::InvalidAtomId(atom) => {
+                write!(formatter, "Perception names a missing {atom}.")
+            }
             Self::InferredHydrogensOnFixedAtom(atom) => write!(
                 formatter,
-                "perception infers hydrogens on {atom}, whose implicit count is fixed"
+                "Perception infers hydrogens on {atom}. Its implicit hydrogen count is fixed."
             ),
-            Self::InvalidBondId(bond) => write!(formatter, "invalid perception bond id: {bond}"),
+            Self::InvalidBondId(bond) => {
+                write!(formatter, "Perception names a missing {bond}.")
+            }
             Self::InvalidStereoElementId(element) => {
-                write!(formatter, "invalid perception stereo-element id: {element}")
+                write!(formatter, "Perception names a missing {element}.")
             }
             Self::IncompatibleStereoDescriptor {
                 element,
                 descriptor,
             } => write!(
                 formatter,
-                "CIP descriptor {descriptor:?} is incompatible with {element}"
+                "The CIP descriptor {descriptor:?} does not apply to {element}."
             ),
             Self::RingAtomSlotCountMismatch { expected, actual } => write!(
                 formatter,
-                "ring atom-slot count mismatch: expected {expected}, got {actual}"
+                "Ring perception has {actual} atom slots. The molecule has {expected}."
             ),
             Self::RingBondSlotCountMismatch { expected, actual } => write!(
                 formatter,
-                "ring bond-slot count mismatch: expected {expected}, got {actual}"
+                "Ring perception has {actual} bond slots. The molecule has {expected}."
             ),
             Self::MalformedRing { ring, reason } => {
-                write!(formatter, "malformed installed ring {ring}: {reason}")
+                write!(formatter, "Installed ring {ring} is malformed: {reason}.")
             }
-            Self::InconsistentRingAtomMembership(atom) => {
-                write!(
-                    formatter,
-                    "installed ring {atom} is not marked in membership"
-                )
-            }
-            Self::InconsistentRingBondMembership(bond) => {
-                write!(
-                    formatter,
-                    "installed ring {bond} is not marked in membership"
-                )
-            }
-            Self::RingAtomMissingFromBasis(atom) => {
-                write!(
-                    formatter,
-                    "ring membership {atom} is absent from the ring basis"
-                )
-            }
-            Self::RingBondMissingFromBasis(bond) => {
-                write!(
-                    formatter,
-                    "ring membership {bond} is absent from the ring basis"
-                )
-            }
+            Self::InconsistentRingAtomMembership(atom) => write!(
+                formatter,
+                "{} is in an installed ring and not marked as a ring atom.",
+                Capitalized(atom)
+            ),
+            Self::InconsistentRingBondMembership(bond) => write!(
+                formatter,
+                "{} is in an installed ring and not marked as a ring bond.",
+                Capitalized(bond)
+            ),
+            Self::RingAtomMissingFromBasis(atom) => write!(
+                formatter,
+                "{} is marked as a ring atom and is in no installed ring.",
+                Capitalized(atom)
+            ),
+            Self::RingBondMissingFromBasis(bond) => write!(
+                formatter,
+                "{} is marked as a ring bond and is in no installed ring.",
+                Capitalized(bond)
+            ),
         }
     }
 }

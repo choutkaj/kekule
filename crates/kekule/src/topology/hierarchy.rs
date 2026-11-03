@@ -822,19 +822,26 @@ pub(crate) enum RawHierarchyError {
 
 impl fmt::Display for RawHierarchyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::diagnostics::Capitalized;
         match self {
             Self::IdentifierCapacityExceeded(kind) => {
-                write!(f, "{kind} identifier capacity exceeded")
+                write!(f, "The hierarchy has run out of {kind} identifiers.")
             }
-            Self::InvalidResidue(id) => write!(f, "a chain lists missing {id}"),
-            Self::InvalidAtomSite(id) => write!(f, "a residue lists missing {id}"),
-            Self::ResidueListedTwice(id) => write!(f, "{id} is listed by more than one chain"),
+            Self::InvalidResidue(id) => write!(f, "A chain lists {id}, which does not exist."),
+            Self::InvalidAtomSite(id) => {
+                write!(f, "A residue lists {id}, which does not exist.")
+            }
+            Self::ResidueListedTwice(id) => {
+                write!(f, "{} is listed by more than one chain.", Capitalized(id))
+            }
             Self::AtomSiteListedTwice(id) => {
-                write!(f, "{id} is listed by more than one residue")
+                write!(f, "{} is listed by more than one residue.", Capitalized(id))
             }
-            Self::ResidueUnlisted(id) => write!(f, "{id} belongs to no chain"),
-            Self::AtomSiteUnlisted(id) => write!(f, "{id} belongs to no residue"),
-            Self::DuplicateAtomPlacement(atom) => write!(f, "{atom} has more than one atom site"),
+            Self::ResidueUnlisted(id) => write!(f, "{} belongs to no chain.", Capitalized(id)),
+            Self::AtomSiteUnlisted(id) => write!(f, "{} belongs to no residue.", Capitalized(id)),
+            Self::DuplicateAtomPlacement(atom) => {
+                write!(f, "{} has more than one atom site.", Capitalized(atom))
+            }
         }
     }
 }
@@ -1092,7 +1099,7 @@ impl fmt::Display for HierarchyIdKind {
         formatter.write_str(match self {
             Self::Chain => "chain",
             Self::Residue => "residue",
-            Self::AtomSite => "atom-site",
+            Self::AtomSite => "atom site",
         })
     }
 }
@@ -1131,20 +1138,27 @@ pub enum HierarchyError {
 
 impl fmt::Display for HierarchyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::diagnostics::Capitalized;
         match self {
-            Self::InvalidChainId(id) => write!(f, "invalid chain id: {}", id.raw()),
-            Self::InvalidResidueId(id) => write!(f, "invalid residue id: {}", id.raw()),
-            Self::InvalidAtomSiteId(id) => write!(f, "invalid atom-site id: {}", id.raw()),
-            Self::DuplicateAtomPlacement(id) => write!(f, "duplicate hierarchy placement for {id}"),
-            Self::IdentifierCapacityExceeded(kind) => {
-                write!(f, "{kind} identifier capacity exceeded")
+            Self::InvalidChainId(id) => write!(f, "{} is not in the hierarchy.", Capitalized(id)),
+            Self::InvalidResidueId(id) => {
+                write!(f, "{} is not in the hierarchy.", Capitalized(id))
             }
-            Self::NotFound { kind, query } => write!(f, "no {kind} matches {query}"),
+            Self::InvalidAtomSiteId(id) => {
+                write!(f, "{} is not in the hierarchy.", Capitalized(id))
+            }
+            Self::DuplicateAtomPlacement(id) => {
+                write!(f, "{} already has an atom site.", Capitalized(id))
+            }
+            Self::IdentifierCapacityExceeded(kind) => {
+                write!(f, "The hierarchy has run out of {kind} identifiers.")
+            }
+            Self::NotFound { kind, query } => write!(f, "No {kind} matches {query:?}."),
             Self::Ambiguous {
                 kind,
                 query,
                 matches,
-            } => write!(f, "{matches} {kind} matches for {query}"),
+            } => write!(f, "{matches} {kind}s match {query:?}."),
         }
     }
 }

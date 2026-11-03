@@ -132,18 +132,18 @@ pub enum TaggedMatchError {
 impl fmt::Display for TaggedMatchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingTags => f.write_str("tagged projection requires at least one atom tag"),
-            Self::ZeroTag => f.write_str("tagged projection requires positive tags"),
-            Self::DuplicateTag(t) => write!(f, "duplicate atom tag {t}"),
-            Self::MappingSize => f.write_str("mapping does not have this query's atom count"),
-            Self::Match(_) => f.write_str("tagged substructure search failed"),
+            Self::MissingTags => f.write_str("The query has no tagged atom. Tag at least one."),
+            Self::ZeroTag => f.write_str("An atom tag is 0. Tags are positive."),
+            Self::DuplicateTag(t) => write!(f, "Two query atoms carry tag {t}."),
+            Self::MappingSize => f.write_str("The mapping's atom count differs from the query's."),
+            Self::Match(error) => write!(f, "{error}"),
         }
     }
 }
 impl std::error::Error for TaggedMatchError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Match(error) => Some(error),
+            Self::Match(error) => std::error::Error::source(error),
             _ => None,
         }
     }

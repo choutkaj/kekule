@@ -638,16 +638,13 @@ pub(crate) fn parse_pdb_str(
     options: PdbParseOptions,
 ) -> Result<PdbDocument, FormatError> {
     if input.len() > options.max_input_bytes {
+        let limit = LimitExceeded::new(Resource::InputBytes, options.max_input_bytes, input.len());
         return Err(pdb_parse_error(
             DiagnosticKind::Limit,
             SourceLocation::at_line(1),
-            "input exceeds configured byte limit",
+            format!("The input exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::new(
-            Resource::InputBytes,
-            options.max_input_bytes,
-            input.len(),
-        )));
+        .exceeding(limit));
     }
     let mut parser = Parser::default();
     // Every terminator (`\r\n`, `\r`, `\n`) ends one line.
@@ -704,7 +701,7 @@ impl Parser {
             return Err(pdb_parse_error(
                 DiagnosticKind::Unsupported,
                 at_line,
-                "content after the END record; split concatenated entries before parsing",
+                "Content follows the END record. Split concatenated entries before parsing.",
             ));
         }
         let end = (0..=line.len().min(6))
@@ -728,7 +725,7 @@ impl Parser {
             return Err(pdb_parse_error(
                 DiagnosticKind::Syntax,
                 at_line,
-                format!("{name} record contains non-ASCII text"),
+                format!("The {name} record contains non-ASCII text."),
             ));
         }
         let fields = Fields { line, number };
@@ -740,7 +737,7 @@ impl Parser {
                     return Err(pdb_parse_error(
                         DiagnosticKind::Inconsistent,
                         at_line,
-                        "duplicate CRYST1 record",
+                        "The CRYST1 record appears twice.",
                     ));
                 }
                 document.cryst1 = Some(record);
@@ -750,7 +747,7 @@ impl Parser {
                     return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         at_line,
-                        "coordinate record outside a MODEL block",
+                        "A coordinate record lies outside a MODEL block.",
                     ));
                 }
                 if self.model.is_none() {
@@ -764,15 +761,14 @@ impl Parser {
                 let atom = fields.atom(kind, self.model)?;
                 let document = self.document();
                 if document.atoms.len() >= options.max_atom_records {
+                    let limit =
+                        LimitExceeded::first_beyond(Resource::Atoms, options.max_atom_records);
                     return Err(pdb_parse_error(
                         DiagnosticKind::Limit,
                         at_line,
-                        "coordinate records exceed configured limit",
+                        format!("The coordinate records exceed their {}.", limit.describe()),
                     )
-                    .exceeding(LimitExceeded::first_beyond(
-                        Resource::Atoms,
-                        options.max_atom_records,
-                    )));
+                    .exceeding(limit));
                 }
                 document.atoms.push(atom);
             }
@@ -787,14 +783,14 @@ impl Parser {
                     return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         at_line,
-                        "MODEL record inside an open MODEL block",
+                        "A MODEL record opens inside an open MODEL block.",
                     ));
                 }
                 if let Some(line) = self.unmodelled_atom {
                     return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         SourceLocation::at_line(line),
-                        "coordinate record outside a MODEL block",
+                        "A coordinate record lies outside a MODEL block.",
                     ));
                 }
                 let serial = fields.model_serial()?;
@@ -802,7 +798,7 @@ impl Parser {
                     return Err(pdb_parse_error(
                         DiagnosticKind::Inconsistent,
                         at_line,
-                        format!("duplicate MODEL serial number {serial}"),
+                        format!("MODEL serial number {serial} appears twice."),
                     ));
                 }
                 self.model = Some(serial);
@@ -816,7 +812,7 @@ impl Parser {
                     return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         at_line,
-                        "ENDMDL record without an open MODEL block",
+                        "An ENDMDL record has no open MODEL block.",
                     ));
                 }
             }
@@ -884,6 +880,14 @@ impl<'a> Fields<'a> {
         )
     }
 
+    /// The value in columns `first` to `last` is not a valid `what`.
+    fn invalid(&self, first: usize, last: usize, what: &str) -> FormatError {
+        self.error(
+            first,
+            format!("The {what} {:?} is invalid.", self.text(first, last).trim()),
+        )
+    }
+
     fn optional_text(&self, first: usize, last: usize) -> Option<String> {
         let text = self.text(first, last).trim();
         (!text.is_empty()).then(|| text.to_owned())
@@ -891,7 +895,7 @@ impl<'a> Fields<'a> {
 
     fn integer(&self, first: usize, last: usize, what: &str) -> Result<Option<i64>, FormatError> {
         hybrid36(self.text(first, last), last - first + 1)
-            .map_err(|()| self.error(first, format!("invalid {what}")))
+            .map_err(|()| self.invalid(first, last, what))
     }
 
     fn serial(&self, first: usize, last: usize, what: &str) -> Result<Option<u32>, FormatError> {
@@ -905,9 +909,7 @@ impl<'a> Fields<'a> {
             return Ok(None);
         }
         self.integer(first, last, what)?
-            .map(|value| {
-                u32::try_from(value).map_err(|_| self.error(first, format!("invalid {what}")))
-            })
+            .map(|value| u32::try_from(value).map_err(|_| self.invalid(first, last, what)))
             .transpose()
     }
 
@@ -915,14 +917,14 @@ impl<'a> Fields<'a> {
         self.integer(first, last, "residue sequence number")?
             .map(|value| {
                 i32::try_from(value)
-                    .map_err(|_| self.error(first, "residue sequence number out of range"))
+                    .map_err(|_| self.invalid(first, last, "residue sequence number"))
             })
             .transpose()
     }
 
     fn required_sequence(&self, first: usize, last: usize) -> Result<i32, FormatError> {
         self.sequence(first, last)?
-            .ok_or_else(|| self.error(first, "missing residue sequence number"))
+            .ok_or_else(|| self.error(first, "The residue sequence number is missing."))
     }
 
     fn real(&self, first: usize, last: usize, what: &str) -> Result<Option<f64>, FormatError> {
@@ -932,19 +934,19 @@ impl<'a> Fields<'a> {
         }
         match text.parse::<f64>() {
             Ok(value) if value.is_finite() => Ok(Some(value)),
-            _ => Err(self.error(first, format!("invalid {what}"))),
+            _ => Err(self.invalid(first, last, what)),
         }
     }
 
     fn coordinate(&self, first: usize, axis: &str) -> Result<f64, FormatError> {
         self.real(first, first + 7, &format!("{axis} coordinate"))?
-            .ok_or_else(|| self.error(first, format!("missing {axis} coordinate")))
+            .ok_or_else(|| self.error(first, format!("The {axis} coordinate is missing.")))
     }
 
     fn atom(&self, kind: PdbAtomKind, model: Option<u32>) -> Result<PdbAtom, FormatError> {
         let name_field = format!("{:<4}", self.text(13, 16));
         if name_field.trim().is_empty() {
-            return Err(self.error(13, "missing atom name"));
+            return Err(self.error(13, "The atom name is missing."));
         }
         Ok(PdbAtom {
             kind,
@@ -982,7 +984,7 @@ impl<'a> Fields<'a> {
             {
                 (digit - b'0', *sign)
             }
-            _ => return Err(self.error(79, format!("invalid charge `{text}`"))),
+            _ => return Err(self.error(79, format!("The charge {text:?} is invalid."))),
         };
         let magnitude = i8::try_from(digits).expect("one digit");
         Ok(Some(if sign == b'-' { -magnitude } else { magnitude }))
@@ -1003,7 +1005,7 @@ impl<'a> Fields<'a> {
             space_group: self.optional_text(56, 66),
             z: self
                 .integer(67, 70, "Z value")?
-                .map(|value| u32::try_from(value).map_err(|_| self.error(67, "invalid Z value")))
+                .map(|value| u32::try_from(value).map_err(|_| self.invalid(67, 70, "Z value")))
                 .transpose()?,
             location: SourceLocation::at_line(self.number),
         })
@@ -1026,15 +1028,15 @@ impl<'a> Fields<'a> {
         // The serial belongs in columns 11-14; writers vary its alignment.
         let text = self.text(7, self.line.len()).trim();
         text.parse::<u32>()
-            .map_err(|_| self.error(7, format!("invalid MODEL serial number `{text}`")))
+            .map_err(|_| self.error(7, format!("The MODEL serial number {text:?} is invalid.")))
     }
 
     fn conect(&self) -> Result<PdbConect, FormatError> {
         let serial = self
             .integer(7, 11, "CONECT serial number")?
-            .ok_or_else(|| self.error(7, "missing CONECT serial number"))?;
+            .ok_or_else(|| self.error(7, "The CONECT serial number is missing."))?;
         let serial =
-            u32::try_from(serial).map_err(|_| self.error(7, "invalid CONECT serial number"))?;
+            u32::try_from(serial).map_err(|_| self.invalid(7, 11, "CONECT serial number"))?;
         let mut bonded = Vec::new();
         // Columns 32-61 held hydrogen bonds and salt bridges in older versions
         // of the format; they are not bonds and are not read.
@@ -1042,7 +1044,7 @@ impl<'a> Fields<'a> {
             if let Some(partner) = self.integer(first, first + 4, "CONECT serial number")? {
                 bonded.push(
                     u32::try_from(partner)
-                        .map_err(|_| self.error(first, "invalid CONECT serial number"))?,
+                        .map_err(|_| self.invalid(first, first + 4, "CONECT serial number"))?,
                 );
             }
         }
@@ -1059,7 +1061,7 @@ impl<'a> Fields<'a> {
             .trim()
             .to_owned();
         if residue_name.is_empty() {
-            return Err(self.error(columns.residue_name, "missing residue name"));
+            return Err(self.error(columns.residue_name, "The residue name is missing."));
         }
         Ok(PdbPartner {
             atom_name: columns
@@ -1095,7 +1097,7 @@ impl<'a> Fields<'a> {
             })?,
         ];
         if partners.iter().any(|partner| partner.atom_name.is_none()) {
-            return Err(self.error(13, "LINK record without an atom name"));
+            return Err(self.error(13, "A LINK partner has no atom name."));
         }
         Ok(PdbLink {
             partners,

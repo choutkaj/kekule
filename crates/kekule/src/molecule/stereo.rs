@@ -190,6 +190,17 @@ pub enum StereoCarrier {
     ImplicitLonePair,
 }
 
+/// Writes `atom 3`, `the implicit hydrogen` or `the lone pair`.
+impl std::fmt::Display for StereoCarrier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Atom(atom) => write!(f, "{atom}"),
+            Self::ImplicitHydrogen => f.write_str("the implicit hydrogen"),
+            Self::ImplicitLonePair => f.write_str("the lone pair"),
+        }
+    }
+}
+
 impl StereoCarrier {
     pub(crate) const fn canonical_order_key(self) -> (u8, u32) {
         match self {

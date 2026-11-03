@@ -149,10 +149,17 @@ pub enum ResonancePerceptionError {
 impl fmt::Display for ResonancePerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingAromaticity => f.write_str("resonance requires installed aromaticity"),
-            Self::UnknownHydrogens(a) => write!(f, "resonance requires known hydrogens at {a}"),
-            Self::LimitExceeded(limit) => write!(f, "resonance {limit}"),
-            Self::Cancelled(_) => f.write_str("resonance perception cancelled"),
+            Self::MissingAromaticity => {
+                f.write_str("Aromaticity is not perceived. Perceive it before resonance.")
+            }
+            Self::UnknownHydrogens(a) => write!(
+                f,
+                "The hydrogen count of {a} is unknown. Perceive valence first."
+            ),
+            Self::LimitExceeded(limit) => {
+                write!(f, "Resonance perception exceeded its {}.", limit.describe())
+            }
+            Self::Cancelled(_) => f.write_str("Resonance perception stopped."),
         }
     }
 }
@@ -197,18 +204,35 @@ pub enum ResonanceError {
 impl fmt::Display for ResonanceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingConjugation => f.write_str("resonance requires installed conjugation"),
-            Self::UnknownHydrogens(a) => write!(f, "resonance requires known hydrogens at {a}"),
-            Self::UnsupportedBond(b) => write!(f, "resonance group contains unsupported {b}"),
-            Self::InvalidElectronCount => f.write_str("invalid electron count in resonance search"),
-            Self::InvalidStructureLimit => f.write_str("RDKit-compatible conjugated enumeration requires a structure limit of zero or at least two"),
-            Self::LimitExceeded(limit) => write!(f, "resonance {limit}"),
+            Self::MissingConjugation => {
+                f.write_str("Conjugation is not perceived. Perceive it before resonance.")
+            }
+            Self::UnknownHydrogens(a) => write!(
+                f,
+                "The hydrogen count of {a} is unknown. Perceive valence first."
+            ),
+            Self::UnsupportedBond(b) => {
+                write!(f, "Resonance enumeration does not support {b}.")
+            }
+            Self::InvalidElectronCount => {
+                f.write_str("Resonance enumeration reached an impossible electron count.")
+            }
+            Self::InvalidStructureLimit => {
+                f.write_str("The resonance structure limit is 1. Use 0 or at least 2.")
+            }
+            Self::LimitExceeded(limit) => {
+                write!(
+                    f,
+                    "Resonance enumeration exceeded its {}.",
+                    limit.describe()
+                )
+            }
             Self::ContributorOutOfRange { index, count } => write!(
                 f,
-                "resonance contributor {index} is out of range for {count} contributors"
+                "Resonance contributor {index} does not exist. There are {count} contributors."
             ),
-            Self::Molecule(_) => f.write_str("cannot edit the resonance contributor"),
-            Self::Publication(_) => f.write_str("cannot publish the resonance contributor"),
+            Self::Molecule(_) => f.write_str("Cannot edit the resonance contributor."),
+            Self::Publication(_) => f.write_str("Cannot publish the resonance contributor."),
         }
     }
 }

@@ -369,7 +369,7 @@ impl DsspCodeError {
 
 impl fmt::Display for DsspCodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown DSSP secondary-structure code {:?}", self.code)
+        write!(f, "{:?} is not a DSSP secondary-structure code.", self.code)
     }
 }
 
@@ -1024,33 +1024,35 @@ pub enum DsspError {
 impl fmt::Display for DsspError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidPolyprolineStretch { value } => {
-                write!(f, "DSSP polyproline-II stretch must be 2 or 3, got {value}")
-            }
-            Self::AmbiguousBackboneAtom { residue, atom } => {
-                write!(f, "{residue} has more than one `{atom}` backbone atom")
-            }
-            Self::DegenerateBackboneGeometry { residue } => {
-                write!(
-                    f,
-                    "{residue} has degenerate geometry for preceding carbonyl bond"
-                )
-            }
-            Self::NonFiniteGeometry { residue } => {
-                write!(f, "{residue} produced non-finite hydrogen-bond energy")
-            }
-            Self::CoordinateOutOfRange { residue } => {
-                write!(
-                    f,
-                    "{residue} has backbone coordinate outside DSSP's numeric range"
-                )
-            }
+            Self::InvalidPolyprolineStretch { value } => write!(
+                f,
+                "The polyproline-II stretch is {value}. Use 2 or 3."
+            ),
+            Self::AmbiguousBackboneAtom { residue, atom } => write!(
+                f,
+                "{} has more than one {atom} atom.",
+                crate::diagnostics::Capitalized(residue)
+            ),
+            Self::DegenerateBackboneGeometry { residue } => write!(
+                f,
+                "The preceding carbonyl bond of {residue} is degenerate. Its amide hydrogen cannot be placed."
+            ),
+            Self::NonFiniteGeometry { residue } => write!(
+                f,
+                "A hydrogen-bond energy of donor {residue} is not finite."
+            ),
+            Self::CoordinateOutOfRange { residue } => write!(
+                f,
+                "A backbone coordinate of {residue} is outside the DSSP range."
+            ),
             Self::NoAnalyzableProteinResidues => {
-                f.write_str("model contains no residue with a complete N/CA/C/O backbone")
+                f.write_str("No residue has a complete N, CA, C and O backbone.")
             }
-            Self::LimitExceeded(limit) => write!(f, "DSSP {limit}"),
+            Self::LimitExceeded(limit) => {
+                write!(f, "DSSP exceeded its {}.", limit.describe())
+            }
             Self::TopologyMismatch => {
-                f.write_str("structure does not share the DSSP plan's topology layout")
+                f.write_str("The structure's topology layout differs from the DSSP plan's.")
             }
         }
     }

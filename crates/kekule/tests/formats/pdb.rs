@@ -565,7 +565,7 @@ fn cryst1_is_the_model_cell_only_for_a_whole_unit_cell() {
         (
             DiagnosticKind::Inconsistent,
             Some(SourceLocation::at_line(2)),
-            "duplicate CRYST1 record"
+            "The CRYST1 record appears twice."
         )
     );
 }

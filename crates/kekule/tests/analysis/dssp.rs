@@ -607,7 +607,7 @@ fn dssp_plan_rejects_structures_of_another_layout() {
     }
     assert_eq!(
         DsspError::TopologyMismatch.to_string(),
-        "structure does not share the DSSP plan's topology layout"
+        "The structure's topology layout differs from the DSSP plan's."
     );
 }
 

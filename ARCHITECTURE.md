@@ -1092,8 +1092,10 @@ Every operation has exactly one home.
   `diagnostics::Cancellation`, through its options or a `*_cancellable`
   lifecycle method when it has none. It polls the cancellation between
   stages and inside long loops, and fails with `diagnostics::Cancelled`, or
-  `DiagnosticKind::Cancelled` in a `FormatError`. It never returns a partial
-  result. Without a cancellation, it does not poll.
+  `DiagnosticKind::Cancelled` in a `FormatError`. The error keeps `Cancelled`
+  as its source: `Resonance perception stopped. The operation was
+  cancelled.` It never returns a partial result. Without a cancellation, it
+  does not poll.
 - A recoverable draft (`try_build`, `try_finish`) fails with
   `DraftError<D, E>`, which returns the draft with the error. It is the only
   generic error wrapper.

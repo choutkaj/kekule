@@ -407,43 +407,54 @@ pub enum SolvationError {
 impl fmt::Display for SolvationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingCell => f.write_str("solvation requires a periodic cell"),
-            Self::NotFullyPeriodic => f.write_str("solvation requires three periodic axes"),
+            Self::MissingCell => f.write_str("The model has no periodic cell."),
+            Self::NotFullyPeriodic => {
+                f.write_str("The model's cell is not periodic along all three axes.")
+            }
             Self::RadiusTopologyMismatch => {
-                f.write_str("solute radii belong to a different topology snapshot")
+                f.write_str("The solute radii belong to a different topology.")
             }
             Self::RadiusCountMismatch => {
-                f.write_str("provide exactly one radius per topology atom")
+                f.write_str("The number of solute radii differs from the number of atoms.")
             }
-            Self::InvalidRadius => f.write_str("radii must be finite and nonnegative"),
-            Self::MissingElementRadius(atom) => {
-                write!(f, "no elemental radius for {atom}; supply explicit radii")
-            }
+            Self::InvalidRadius => f.write_str("A solute radius is negative or not finite."),
+            Self::MissingElementRadius(atom) => write!(
+                f,
+                "No van der Waals radius is known for the element of {atom}. Supply explicit radii."
+            ),
             Self::InvalidIonicStrength => {
-                f.write_str("ionic strength must be finite and nonnegative")
+                f.write_str("The ionic strength is negative or not finite.")
             }
-            Self::InvalidIonSeparation => f.write_str("ion separation must be finite and positive"),
-            Self::LimitExceeded(limit) => write!(f, "solvent tiling {limit}"),
-            Self::CapacityOverflow => f.write_str("solvation count or allocation exceeds capacity"),
-            Self::NoSolventSpace => f.write_str("no nonclashing water sites fit in this cell"),
+            Self::InvalidIonSeparation => {
+                f.write_str("The ion separation is not finite and positive.")
+            }
+            Self::LimitExceeded(limit) => {
+                write!(f, "Solvent tiling exceeded its {}.", limit.describe())
+            }
+            Self::CapacityOverflow => {
+                f.write_str("An ion count or allocation exceeds the addressable capacity.")
+            }
+            Self::NoSolventSpace => {
+                f.write_str("No water fits in the cell without clashing with the solute.")
+            }
             Self::InsufficientIonSites { requested, placed } => write!(
                 f,
-                "cannot place {requested} ions; found {placed} eligible sites"
+                "Cannot place {requested} ions: only {placed} water sites satisfy the ion separation."
             ),
-            Self::Unit(_) => f.write_str("invalid quantity unit"),
-            Self::Geometry(_) => f.write_str("periodic geometry failed"),
-            Self::Position(_) => f.write_str("invalid positions"),
-            Self::Build(_) => f.write_str("cannot build the solvated model"),
-            Self::Hierarchy(_) => f.write_str("cannot build the solvent hierarchy"),
+            Self::Unit(error) => error.fmt(f),
+            Self::Geometry(error) => error.fmt(f),
+            Self::Position(error) => error.fmt(f),
+            Self::Build(_) => f.write_str("Cannot build the solvated model."),
+            Self::Hierarchy(_) => f.write_str("Cannot build the solvent hierarchy."),
         }
     }
 }
 impl std::error::Error for SolvationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Unit(e) => Some(e),
-            Self::Geometry(e) => Some(e),
-            Self::Position(e) => Some(e),
+            Self::Unit(e) => e.source(),
+            Self::Geometry(e) => e.source(),
+            Self::Position(e) => e.source(),
             Self::Build(e) => Some(e),
             Self::Hierarchy(e) => Some(e),
             _ => None,

@@ -19,10 +19,13 @@ pub enum ConjugationError {
 impl fmt::Display for ConjugationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingAromaticity => f.write_str("conjugation requires installed aromaticity"),
-            Self::UnknownHydrogens(atom) => {
-                write!(f, "conjugation requires known hydrogen counts at {atom}")
+            Self::MissingAromaticity => {
+                f.write_str("Aromaticity is not perceived. Perceive it before conjugation.")
             }
+            Self::UnknownHydrogens(atom) => write!(
+                f,
+                "The hydrogen count of {atom} is unknown. Perceive valence first."
+            ),
         }
     }
 }

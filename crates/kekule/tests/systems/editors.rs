@@ -1125,7 +1125,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     let handle = editor.topology().atom_handle(id).unwrap();
     editor.delete_atom(handle).unwrap();
     let failed = editor.try_finish().unwrap_err();
-    assert!(failed.source().is_some());
+    assert_eq!(failed.to_string(), failed.error().to_string());
     let mut editor = failed.into_draft();
     let replacement = editor
         .add_atom(atom("N"), Quantity::new(Point3::origin(), ANGSTROM))

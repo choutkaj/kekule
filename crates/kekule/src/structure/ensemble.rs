@@ -1672,45 +1672,44 @@ pub enum EnsembleError {
 impl fmt::Display for EnsembleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptySource => formatter.write_str("ensemble source is empty"),
-            Self::IndexOutOfRange { index, len } => {
-                write!(formatter, "index {index} is out of range for {len} samples")
-            }
-            Self::StateOutOfRange { state, states } => {
-                write!(
-                    formatter,
-                    "state {state} is out of range for {states} states"
-                )
-            }
+            Self::EmptySource => formatter.write_str("The ensemble has no samples."),
+            Self::IndexOutOfRange { index, len } => write!(
+                formatter,
+                "Sample {index} is outside the ensemble of {len} samples."
+            ),
+            Self::StateOutOfRange { state, states } => write!(
+                formatter,
+                "State {state} is outside the ensemble of {states} states."
+            ),
             Self::TopologyMismatch => {
-                formatter.write_str("model belongs to a different topology layout")
+                formatter.write_str("The model has a different topology layout from the ensemble.")
             }
             Self::SampleCountMismatch { expected, actual } => write!(
                 formatter,
-                "ensemble requires {expected} replacement samples, but received {actual}"
+                "The ensemble has {expected} samples, but {actual} replacements were given."
             ),
             Self::PartitionMismatch { expected, actual } => write!(
                 formatter,
-                "partition covers {actual} samples, but the ensemble has {expected}"
+                "The partition covers {actual} samples, but the ensemble has {expected}."
             ),
             Self::RepresentativeRemoval { sample, state } => write!(
                 formatter,
-                "sample {sample} represents state {state}, which has other samples"
+                "Sample {sample} represents state {state}. Remove the state's other samples first."
             ),
-            Self::MissingEnergy { state } => write!(formatter, "state {state} has no energy"),
+            Self::MissingEnergy { state } => write!(formatter, "State {state} has no energy."),
             Self::InvalidTemperature => {
-                formatter.write_str("temperature must be finite and positive")
+                formatter.write_str("The temperature is not finite and positive.")
             }
             Self::InvalidEnergyWindow => {
-                formatter.write_str("energy window must be finite and nonnegative")
+                formatter.write_str("The energy window is not finite and nonnegative.")
             }
             Self::InvalidFraction => {
-                formatter.write_str("population fraction must be greater than 0 and at most 1")
+                formatter.write_str("The population fraction is not greater than 0 and at most 1.")
             }
-            Self::Structure(_) => formatter.write_str("invalid ensemble sample"),
-            Self::Subset(_) => formatter.write_str("cannot subset ensemble"),
-            Self::TopologyBuild(_) => formatter.write_str("cannot build topology"),
-            Self::Unit(_) => formatter.write_str("invalid quantity unit"),
+            Self::Structure(_) => formatter.write_str("An ensemble sample is invalid."),
+            Self::Subset(_) => formatter.write_str("Cannot subset the ensemble."),
+            Self::TopologyBuild(_) => formatter.write_str("Cannot build the ensemble's topology."),
+            Self::Unit(error) => error.fmt(formatter),
         }
     }
 }
@@ -1721,7 +1720,7 @@ impl std::error::Error for EnsembleError {
             Self::Structure(error) => Some(error),
             Self::Subset(error) => Some(error),
             Self::TopologyBuild(error) => Some(error),
-            Self::Unit(error) => Some(error.as_ref()),
+            Self::Unit(error) => error.source(),
             _ => None,
         }
     }

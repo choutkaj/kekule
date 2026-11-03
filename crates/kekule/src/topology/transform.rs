@@ -395,13 +395,13 @@ pub enum TopologySubsetError {
 impl fmt::Display for TopologySubsetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptySelection => formatter.write_str("topology subset selection is empty"),
-            Self::Selection(_) => formatter.write_str("invalid subset selection"),
-            Self::Molecule(_) => formatter.write_str("cannot construct subset molecule"),
-            Self::Publication(_) => formatter.write_str("cannot publish subset molecule"),
-            Self::Hierarchy(_) => formatter.write_str("cannot filter subset hierarchy"),
-            Self::TopologyBuild(_) => formatter.write_str("cannot publish subset topology"),
-            Self::Property(_) => formatter.write_str("cannot project subset properties"),
+            Self::EmptySelection => formatter.write_str("The selection has no atoms."),
+            Self::Selection(error) => error.fmt(formatter),
+            Self::Molecule(_) => formatter.write_str("Cannot extract a selected molecule."),
+            Self::Publication(_) => formatter.write_str("Cannot publish a selected molecule."),
+            Self::Hierarchy(_) => formatter.write_str("Cannot build the subset's hierarchy."),
+            Self::TopologyBuild(_) => formatter.write_str("Cannot build the subset's topology."),
+            Self::Property(_) => formatter.write_str("Cannot copy the properties to the subset."),
         }
     }
 }
@@ -409,7 +409,7 @@ impl fmt::Display for TopologySubsetError {
 impl std::error::Error for TopologySubsetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Selection(error) => Some(error),
+            Self::Selection(error) => error.source(),
             Self::Molecule(error) => Some(error),
             Self::Publication(error) => Some(error),
             Self::Hierarchy(error) => Some(error),

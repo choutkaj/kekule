@@ -98,13 +98,13 @@ fn smiles_rejects_directional_projection_that_invents_an_alkene_assertion() {
         smiles_api::write(&mol, smiles_api::SmilesWriteOptions::isomeric())
             .unwrap_err()
             .message()
-            .contains("stereo assertion")
+            .contains("would add or lose double-bond stereo")
     );
     assert!(
         smiles_api::write(&mol, smiles_api::SmilesWriteOptions::canonical())
             .unwrap_err()
             .message()
-            .contains("stereo assertion")
+            .contains("would add or lose double-bond stereo")
     );
 }
 
@@ -208,14 +208,14 @@ fn smiles_parse_options_bound_input_atoms_and_bonds() {
         SmilesParseOptions::default().with_max_atoms(1).unwrap(),
     )
     .expect_err("SMILES atom limit should apply");
-    assert!(atom_error.message().contains("atom count"));
+    assert!(atom_error.message().contains("atom limit"));
 
     let bond_error = smiles_api::parse_str(
         "CC",
         SmilesParseOptions::default().with_max_bonds(0).unwrap(),
     )
     .expect_err("SMILES bond limit should apply");
-    assert!(bond_error.message().contains("bond count"));
+    assert!(bond_error.message().contains("bond limit"));
 }
 
 #[test]
@@ -579,7 +579,7 @@ fn cxsmiles_stereo_references_use_source_indices_and_respect_component_ownership
             .interpret(Default::default())
             .unwrap_err()
             .message()
-            .contains("disconnected"));
+            .contains("spanning several molecules"));
     }
     assert!(
         smiles_api::parse_str(&format!("{base} |&1:1,o1:5|"), Default::default())
@@ -674,7 +674,10 @@ fn unsupported_cxsmiles_fields_are_typed_and_reported_on_request() {
     let error = document.interpret(Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(error.location(), Some(SourceLocation::at_column(1, 19)));
-    assert_eq!(error.message(), "unsupported CXSMILES field `c:1`");
+    assert_eq!(
+        error.message(),
+        "The CXSMILES field \"c:1\" is not supported."
+    );
 
     let report = SmilesInterpretOptions::default().with_unsupported(UnsupportedContent::Report);
     let interpretation = document.interpret(report).unwrap();
@@ -781,9 +784,9 @@ fn smiles_record_limits_cover_metadata_and_syntax_errors_point_into_base() {
         .unwrap();
     assert!(smiles_api::parse_str(source, options).is_ok());
     for (options, message) in [
-        (options.with_max_input_bytes(source.len() - 1), "byte limit"),
-        (options.with_max_atoms(1).unwrap(), "atom count"),
-        (options.with_max_bonds(0).unwrap(), "bond count"),
+        (options.with_max_input_bytes(source.len() - 1), "size limit"),
+        (options.with_max_atoms(1).unwrap(), "atom limit"),
+        (options.with_max_bonds(0).unwrap(), "bond limit"),
     ] {
         assert!(smiles_api::parse_str(source, options)
             .unwrap_err()
@@ -1051,7 +1054,7 @@ fn malformed_smiles_grammar_is_rejected_by_the_document_parser() {
         smiles_api::parse_str("C(", Default::default())
             .unwrap_err()
             .to_string(),
-        "SMILES parse error at line 1, column 3: unclosed branch"
+        "Cannot parse the SMILES input at line 1, column 3. A branch is not closed."
     );
 }
 
@@ -1254,47 +1257,31 @@ fn invalid_lowercase_aromatic_ring_returns_structured_error() {
     for smiles in ["c1cccc1", "c1ccccc1.c1cccc1"] {
         let error = read_smiles_components(smiles)
             .expect_err("unlocalizable aromatic source must fail interpretation");
-        assert!(chain_text(&*error).contains("invalid imported aromatic representation"));
+        assert!(chain_text(&*error).contains("cannot be localized"));
     }
 }
 
 #[test]
 fn smiles_interpretation_rejects_inconsistent_source_aromaticity() {
     let cases = [
-        (
-            "c",
-            0,
-            "source-aromatic atom is not part of a source-aromatic bond",
-        ),
-        (
-            "c-C",
-            0,
-            "source-aromatic atom is not part of a source-aromatic bond",
-        ),
-        (
-            "c-c",
-            0,
-            "source-aromatic atom is not part of a source-aromatic bond",
-        ),
-        (
-            "c=C",
-            0,
-            "source-aromatic atom is not part of a source-aromatic bond",
-        ),
+        ("c", 0, "The aromatic atom has no aromatic bond."),
+        ("c-C", 0, "The aromatic atom has no aromatic bond."),
+        ("c-c", 0, "The aromatic atom has no aromatic bond."),
+        ("c=C", 0, "The aromatic atom has no aromatic bond."),
         (
             "C:C",
             1,
-            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+            "The aromatic bond joins an atom that is not aromatic.",
         ),
         (
             "c:C",
             1,
-            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+            "The aromatic bond joins an atom that is not aromatic.",
         ),
         (
             "C:c",
             1,
-            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+            "The aromatic bond joins an atom that is not aromatic.",
         ),
     ];
 
@@ -1388,7 +1375,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     )
     .expect_err("dative bond should be rejected")
     .message()
-    .contains("cannot encode"));
+    .contains("cannot state zero-order or dative bonds"));
 
     molecule
         .bond_mut(bond)
@@ -1438,7 +1425,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     )
     .expect_err("ordinary SMILES cannot preserve an explicit spin assertion")
     .message()
-    .contains("explicit radical spin"));
+    .contains("spin multiplicity"));
 
     {
         let mut atom = molecule.atom_mut(a).expect("atom");
@@ -1623,7 +1610,7 @@ fn bracket_atoms_interpret_radical_electrons_without_asserting_spin() {
         .interpret(Default::default())
         .expect_err("unsupported core element belongs to interpretation")
         .message()
-        .contains("unsupported element"));
+        .contains("is unknown"));
 }
 
 #[test]
@@ -1709,7 +1696,7 @@ fn smiles_writers_reject_brackets_that_would_change_radical_occupancy() {
             assert!(result
                 .unwrap_err()
                 .message()
-                .contains("radical electron count or spin"));
+                .contains("radical electrons or spin"));
         }
     }
 }

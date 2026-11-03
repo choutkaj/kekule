@@ -805,23 +805,29 @@ pub enum SeriesError {
 impl fmt::Display for SeriesError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptySource => formatter.write_str("series source is empty"),
+            Self::EmptySource => formatter.write_str("The series has no items."),
             Self::IndexOutOfRange { index, len } => {
-                write!(formatter, "index {index} is out of range for {len} items")
+                write!(
+                    formatter,
+                    "Item {index} is outside the series of {len} items."
+                )
             }
             Self::ItemCountMismatch { expected, actual } => write!(
                 formatter,
-                "series requires {expected} replacement items, but received {actual}"
+                "The series has {expected} items, but {actual} replacements were given."
             ),
             Self::TopologyMismatch => {
-                formatter.write_str("model belongs to a different topology layout")
+                formatter.write_str("The model has a different topology layout from the series.")
             }
             Self::AxisMismatch { axis } => {
-                write!(formatter, "item does not lie on a series axis of {axis}")
+                write!(
+                    formatter,
+                    "The series' items are placed by {axis}, and this item is not."
+                )
             }
-            Self::Structure(_) => formatter.write_str("invalid series item"),
-            Self::Subset(_) => formatter.write_str("cannot subset series"),
-            Self::Unit(_) => formatter.write_str("invalid coordinate unit"),
+            Self::Structure(_) => formatter.write_str("A series item is invalid."),
+            Self::Subset(_) => formatter.write_str("Cannot subset the series."),
+            Self::Unit(error) => error.fmt(formatter),
         }
     }
 }
@@ -831,7 +837,7 @@ impl std::error::Error for SeriesError {
         match self {
             Self::Structure(error) => Some(error),
             Self::Subset(error) => Some(error),
-            Self::Unit(error) => Some(error.as_ref()),
+            Self::Unit(error) => error.source(),
             _ => None,
         }
     }

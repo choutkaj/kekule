@@ -220,7 +220,7 @@ impl fmt::Display for MolecularDescriptorError {
         match self {
             Self::MissingImplicitHydrogens { atom } => write!(
                 formatter,
-                "implicit-hydrogen state is not installed for {atom}"
+                "The implicit hydrogens of {atom} are not perceived. Perceive valence first."
             ),
             Self::UnknownIsotope {
                 atom,
@@ -228,15 +228,15 @@ impl fmt::Display for MolecularDescriptorError {
                 mass_number,
             } => write!(
                 formatter,
-                "AME 2020 has no atomic mass for [{mass_number}{element}] at {atom}"
+                "AME 2020 has no atomic mass for {mass_number}{element}, the isotope of {atom}."
             ),
             Self::MissingStandardAtomicWeight { atom, element } => write!(
                 formatter,
-                "CIAAW 2024 has no abridged standard atomic weight for {element} at {atom}"
+                "CIAAW 2024 has no standard atomic weight for {element}, the element of {atom}."
             ),
             Self::MissingNaturalIsotope { atom, element } => write!(
                 formatter,
-                "CIAAW 2024 has no naturally occurring isotope for {element} at {atom}"
+                "CIAAW 2024 lists no naturally occurring isotope of {element}, the element of {atom}."
             ),
             Self::CountOverflow {
                 element,
@@ -244,11 +244,11 @@ impl fmt::Display for MolecularDescriptorError {
             } => match mass_number {
                 Some(mass_number) => write!(
                     formatter,
-                    "formula count overflowed for [{mass_number}{element}]"
+                    "The formula count of {mass_number}{element} is too large."
                 ),
-                None => write!(formatter, "formula count overflowed for {element}"),
+                None => write!(formatter, "The formula count of {element} is too large."),
             },
-            Self::MassOverflow => formatter.write_str("molecular mass exceeded finite f64 range"),
+            Self::MassOverflow => formatter.write_str("The molecular mass is too large."),
         }
     }
 }

@@ -97,7 +97,7 @@ fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
         assert!(mmcif::parse_str(&input, options)
             .unwrap_err()
             .message()
-            .contains("row count"));
+            .contains("row limit"));
     }
 }
 
@@ -163,11 +163,11 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
     for (extra, message) in [
         (
             "_entity_poly.entity_id 1\nloop_\n_entity_poly.type\npolypeptide(L)\n",
-            "mixes scalar",
+            "mixes single items",
         ),
         (
             "loop_\n_entity_poly.entity_id\n1\nloop_\n_entity_poly.type\npolypeptide(L)\n",
-            "multiple loops",
+            "several loops",
         ),
         (
             "loop_\n_entity_poly.entity_id\n_other.type\n1 polypeptide(L)\n",
@@ -315,7 +315,7 @@ fn mmcif_quotes_must_close_before_whitespace_or_end_of_line() {
         let error = mmcif::parse_str(&format!("data_x\n_x.text {literal}\n"), Default::default())
             .unwrap_err();
         assert_eq!(error.location().unwrap().line(), 2);
-        assert!(error.message().contains("unterminated quoted value"));
+        assert!(error.message().contains("quoted value is not closed"));
     }
 }
 
@@ -371,7 +371,9 @@ fn mmcif_semicolon_closing_line_preserves_following_tokens() {
     let error =
         mmcif::parse_str("data_x\n_x.text\n;value\nno end", Default::default()).unwrap_err();
     assert_eq!(error.location().unwrap().line(), 3);
-    assert!(error.message().contains("unterminated semicolon"));
+    assert!(error
+        .message()
+        .contains("semicolon text field is not closed"));
 }
 
 #[test]
@@ -384,7 +386,7 @@ fn mmcif_semicolon_size_limit_counts_opening_line_and_newlines() {
     for field in [";123456789\n;", ";1234\n6789\n;", ";12345678\n\n;"] {
         let error = mmcif::parse_str(&format!("data_x\n_x.v\n{field}\n"), options).unwrap_err();
         assert_eq!(error.location().unwrap().line(), 3);
-        assert!(error.message().contains("token limit"));
+        assert!(error.message().contains("value size limit"));
     }
 }
 
@@ -479,7 +481,11 @@ fn mmcif_atom_site_row_limit_stops_at_the_first_excess_row() {
             (
                 DiagnosticKind::Limit,
                 Some(SourceLocation::at_line(line)),
-                "atom-site row count exceeds configured limit"
+                format!(
+                    "The _atom_site table exceeds its row limit: {} rows of {max_rows}.",
+                    max_rows + 1
+                )
+                .as_str()
             ),
             "{input:?}"
         );

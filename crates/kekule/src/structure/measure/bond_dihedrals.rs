@@ -1,6 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use crate::algorithms::{bond_reference_atoms, CipAssignmentOptions, CipRankingError};
+use crate::diagnostics::Capitalized;
 use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, InstanceBondId, Topology};
 use crate::units::Quantity;
@@ -29,12 +30,15 @@ pub enum BondDihedralError {
 impl fmt::Display for BondDihedralError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidBondId(bond) => write!(f, "invalid dihedral bond: {bond}"),
-            Self::TopologyMismatch => f.write_str("bond dihedral belongs to a different topology"),
-            Self::Ranking { bond, .. } => {
-                write!(f, "dihedral reference ranking for {bond} failed")
+            Self::InvalidBondId(bond) => write!(f, "{} is not in the topology.", Capitalized(bond)),
+            Self::TopologyMismatch => {
+                f.write_str("The bond dihedral belongs to a different topology.")
             }
-            Self::Measurement(_) => f.write_str("bond dihedral measurement failed"),
+            Self::Ranking { bond, .. } => write!(
+                f,
+                "Cannot choose the reference atoms of the dihedral of {bond}."
+            ),
+            Self::Measurement(error) => error.fmt(f),
         }
     }
 }
@@ -43,7 +47,7 @@ impl std::error::Error for BondDihedralError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Ranking { error, .. } => Some(error),
-            Self::Measurement(error) => Some(error),
+            Self::Measurement(error) => error.source(),
             _ => None,
         }
     }

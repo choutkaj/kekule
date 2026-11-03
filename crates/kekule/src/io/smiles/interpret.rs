@@ -66,7 +66,7 @@ fn component_count_error(actual: usize) -> FormatError {
     FormatError::interpret(
         Format::Smiles,
         DiagnosticKind::Inconsistent,
-        format!("single-molecule SMILES access requires exactly one component, found {actual}"),
+        format!("The SMILES holds {actual} molecules, not one."),
     )
     .with_detail(FormatErrorDetail::ComponentCount { actual })
 }
@@ -431,14 +431,14 @@ fn fragment_source_span(
         return Err(interpret_error(
             DiagnosticKind::Syntax,
             document.source().len(),
-            "empty SMILES component".to_owned(),
+            "A SMILES component is empty.".to_owned(),
         ));
     }
     let first = document.tokens().get(token_range.start).ok_or_else(|| {
         interpret_error(
             DiagnosticKind::Syntax,
             document.source().len(),
-            "component token range starts outside the SMILES document".to_owned(),
+            "A component starts outside the SMILES.".to_owned(),
         )
     })?;
     let last = document
@@ -448,7 +448,7 @@ fn fragment_source_span(
             interpret_error(
                 DiagnosticKind::Syntax,
                 document.source().len(),
-                "component token range ends outside the SMILES document".to_owned(),
+                "A component ends outside the SMILES.".to_owned(),
             )
         })?;
     Ok(first.span().start..last.span().end)
@@ -481,7 +481,7 @@ fn interpret_smiles_program_component(
             interpret_error(
                 DiagnosticKind::Chemistry,
                 record.span.start,
-                "invalid represented atom",
+                "Cannot add the atom.",
             )
             .with_source(error)
         })?;
@@ -502,14 +502,14 @@ fn interpret_smiles_program_component(
             interpret_error(
                 DiagnosticKind::Chemistry,
                 bond.offset,
-                "bond left endpoint is outside its SMILES component".to_owned(),
+                "The first atom of the bond is outside its component.".to_owned(),
             )
         })?;
         let right = source_to_atom.get(&bond.right).copied().ok_or_else(|| {
             interpret_error(
                 DiagnosticKind::Chemistry,
                 bond.offset,
-                "bond right endpoint is outside its SMILES component".to_owned(),
+                "The second atom of the bond is outside its component.".to_owned(),
             )
         })?;
         let (order, source_aromatic) = interpret_smiles_bond_token(bond.token);
@@ -519,14 +519,14 @@ fn interpret_smiles_program_component(
                 interpret_error(
                     DiagnosticKind::Chemistry,
                     bond.direction_offset.unwrap_or(bond.offset),
-                    "directional bond is missing its textual origin endpoint".to_owned(),
+                    "The directional bond has no atom before it.".to_owned(),
                 )
             })?;
             let from = source_to_atom.get(&source_from).copied().ok_or_else(|| {
                 interpret_error(
                     DiagnosticKind::Chemistry,
                     bond.direction_offset.unwrap_or(bond.offset),
-                    "directional bond origin is outside its SMILES component".to_owned(),
+                    "The atom before the directional bond is outside its component.".to_owned(),
                 )
             })?;
             source_stereo.push(SourceStereoBondMark {
@@ -549,7 +549,7 @@ fn interpret_smiles_program_component(
             interpret_error(
                 DiagnosticKind::Chemistry,
                 first_aromatic_offset.unwrap_or(end_offset),
-                "cannot localize aromatic bonds",
+                "Cannot assign single and double bonds to the aromatic bonds.",
             )
             .with_source(error)
         },
@@ -598,7 +598,7 @@ fn interpret_smiles_program_component(
         interpret_error(
             DiagnosticKind::Chemistry,
             canonicalization_error_offset(&error, &atom_mappings, &bond_mappings, end_offset),
-            "could not publish canonical molecule",
+            "Cannot build the molecule.",
         )
         .with_source(error)
     })?;
@@ -610,7 +610,7 @@ fn interpret_smiles_program_component(
             atom_mappings
                 .first()
                 .map_or(end_offset, |mapping| mapping.source_span.start),
-            "cannot publish molecule",
+            "Cannot build the molecule.",
         )
         .with_source(error)
     })?;
@@ -685,7 +685,8 @@ fn validate_smiles_source_aromaticity(
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
                 record.span.start,
-                "inconsistent aromatic atom syntax state".to_owned(),
+                "The aromaticity of the atom differs between its syntax and the parsed program."
+                    .to_owned(),
             ));
         }
         if imported {
@@ -706,8 +707,7 @@ fn validate_smiles_source_aromaticity(
             return Err(interpret_error(
                 DiagnosticKind::Inconsistent,
                 explicit_aromatic_bond_offset(source, bond.offset),
-                "source-aromatic bond requires source-aromatic atom syntax at both endpoints"
-                    .to_owned(),
+                "The aromatic bond joins an atom that is not aromatic.".to_owned(),
             ));
         }
         atoms_with_source_aromatic_bonds.insert(bond.left);
@@ -723,7 +723,7 @@ fn validate_smiles_source_aromaticity(
         return Err(interpret_error(
             DiagnosticKind::Inconsistent,
             record.span.start,
-            "source-aromatic atom is not part of a source-aromatic bond".to_owned(),
+            "The aromatic atom has no aromatic bond.".to_owned(),
         ));
     }
 
@@ -746,7 +746,7 @@ fn interpret_smiles_atom(
         interpret_error(
             DiagnosticKind::InvalidValue,
             offset,
-            format!("unsupported element symbol `{}`", syntax.symbol),
+            format!("The element symbol {:?} is unknown.", syntax.symbol),
         )
     })?;
     let mut atom = Atom::new(element);
@@ -786,7 +786,8 @@ fn add_smiles_bond(
     offset: usize,
 ) -> std::result::Result<BondId, FormatError> {
     editor.add_bond(left, right, order).map_err(|error| {
-        interpret_error(DiagnosticKind::Chemistry, offset, "cannot add bond").with_source(error)
+        interpret_error(DiagnosticKind::Chemistry, offset, "Cannot add the bond.")
+            .with_source(error)
     })
 }
 
@@ -818,7 +819,7 @@ fn add_smiles_tetrahedral_elements(
                 interpret_error(
                     DiagnosticKind::Chemistry,
                     offset,
-                    "cannot add stereo center",
+                    "Cannot add the stereocenter.",
                 )
                 .with_source(error)
             })?;
@@ -837,7 +838,7 @@ fn add_smiles_tetrahedral_elements(
                 interpret_error(
                     DiagnosticKind::Chemistry,
                     offset,
-                    "cannot add stereo center",
+                    "Cannot add the stereocenter.",
                 )
                 .with_source(error)
             })?;
@@ -863,7 +864,7 @@ fn resolve_smiles_tetrahedral_carriers(
                     interpret_error(
                         DiagnosticKind::Chemistry,
                         offset,
-                        "tetrahedral carrier is outside its SMILES component".to_owned(),
+                        "A neighbor of the stereocenter is outside its component.".to_owned(),
                     )
                 }),
             PendingStereoCarrier::Resolved(SmilesStereoCarrier::ImplicitHydrogen) => {
@@ -872,7 +873,7 @@ fn resolve_smiles_tetrahedral_carriers(
             PendingStereoCarrier::Ring { .. } => Err(interpret_error(
                 DiagnosticKind::Chemistry,
                 offset,
-                "unresolved tetrahedral ring carrier".to_owned(),
+                "A ring bond neighbor of the stereocenter is not resolved.".to_owned(),
             )),
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;

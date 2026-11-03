@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::algorithms::{
     allowed_valences, rdkit_default_valence, HydrogenTransformError, RemoveHydrogensReport,
 };
-use crate::diagnostics::{FormatError, LimitExceeded, Resource};
+use crate::diagnostics::{Capitalized, FormatError, LimitExceeded, Resource};
 use crate::io::write_error::SMILES_WRITE;
 use crate::molecule::Molecule;
 use crate::molecule::*;
@@ -70,7 +70,7 @@ fn write_canonical_emission_with_limits(
         .checked_add(molecule.graph.bond_slot_count());
     if slots.is_none_or(|slots| slots > max_graph_slots) {
         return Err(SMILES_WRITE.resource_limit(
-            "canonical SMILES",
+            "The molecule",
             LimitExceeded::new(
                 Resource::GraphSlots,
                 max_graph_slots,
@@ -90,7 +90,7 @@ fn write_canonical_emission_with_limits(
         .and_then(|visits| visits.checked_mul(2));
     if input_complexity.is_none_or(|score| score > max_input_complexity) {
         return Err(SMILES_WRITE.resource_limit(
-            "canonical SMILES input",
+            "Canonical ordering of the molecule",
             LimitExceeded::new(
                 Resource::Work,
                 max_input_complexity,
@@ -109,9 +109,8 @@ fn write_canonical_emission_with_limits(
     if molecule.bond_count() >= molecule.atom_count()
         && molecule.perception().aromaticity().is_none()
     {
-        return Err(SMILES_WRITE.missing_perception(
-            "canonical SMILES requires installed aromaticity perception; perceive the molecule before writing",
-        ));
+        return Err(SMILES_WRITE
+            .missing_perception("The molecule has no aromaticity perception. Perceive it first."));
     }
     let atom_style = canonical_atom_style(&normalized);
     let projected = canonical_projection_graph(&normalized, atom_style)?;
@@ -186,7 +185,7 @@ fn double_bond_reference_hydrogens(mol: &Molecule) -> BTreeSet<AtomId> {
 
 /// Classifies a hydrogen-normalization failure by its cause.
 fn hydrogen_normalization_error(error: HydrogenTransformError) -> FormatError {
-    let message = "canonical SMILES hydrogen normalization failed";
+    let message = "Cannot normalize the hydrogens of the molecule.";
     let classified = match &error {
         HydrogenTransformError::MissingValencePerception => {
             SMILES_WRITE.missing_perception(message)
@@ -418,7 +417,8 @@ fn canonical_smiles_atom_representation(
     if smiles_atom_requires_brackets(&payload, aromatic, inferred_hydrogens) {
         if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() {
             return Err(SMILES_WRITE.missing_perception(format!(
-                "canonical SMILES bracket {atom_id} requires installed hydrogen perception; perceive the molecule before writing"
+                "{} has no hydrogen perception. Perceive the molecule first.",
+                Capitalized(atom_id)
             )));
         }
         payload.hydrogens = ImplicitHydrogens::Fixed(

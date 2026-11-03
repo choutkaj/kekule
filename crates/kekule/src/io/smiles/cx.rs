@@ -97,7 +97,7 @@ pub(super) fn parse_cx_fields(
             if reader.peek().is_none() {
                 return Err(syntax(
                     reader.position(),
-                    "trailing CXSMILES field separator",
+                    "The CXSMILES extension ends with a comma.",
                 ));
             }
         }
@@ -133,7 +133,14 @@ impl CxReader<'_> {
     fn expect(&mut self, expected: u8) -> Result<(), FormatError> {
         self.skip_space();
         if self.peek() != Some(expected) {
-            return Err(syntax(self.position(), "invalid CXSMILES field syntax"));
+            return Err(parse_error(
+                DiagnosticKind::Syntax,
+                self.position(),
+                format!(
+                    "The CXSMILES extension lacks a {:?} here.",
+                    char::from(expected)
+                ),
+            ));
         }
         self.cursor += 1;
         Ok(())
@@ -148,7 +155,7 @@ impl CxReader<'_> {
         let tag = &rest[..tag_len];
         let has_atoms = rest[tag_len..].starts_with(':');
         if tag.is_empty() {
-            return Err(syntax(self.position(), "empty CXSMILES field"));
+            return Err(syntax(self.position(), "A CXSMILES field is empty."));
         }
         if tag == "r" && !has_atoms {
             self.cursor += 1;
@@ -181,7 +188,7 @@ impl CxReader<'_> {
                         return Err(parse_error(
                             DiagnosticKind::InvalidValue,
                             code_offset,
-                            "invalid CXSMILES radical code",
+                            format!("The CXSMILES radical code {code} is not 1 to 7."),
                         ))
                     }
                 };
@@ -210,13 +217,16 @@ impl CxReader<'_> {
     fn tag_number(&self, digits: &str) -> Result<usize, FormatError> {
         let offset = self.position() + 1;
         if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-            return Err(syntax(offset, "expected unsigned CXSMILES index"));
+            return Err(syntax(
+                offset,
+                "The CXSMILES field has no number after its tag.",
+            ));
         }
         digits.parse().map_err(|_| {
             parse_error(
                 DiagnosticKind::InvalidValue,
                 offset,
-                "CXSMILES index exceeds supported range",
+                "The number after the CXSMILES field tag is too large.",
             )
         })
     }
@@ -249,7 +259,7 @@ impl CxReader<'_> {
         self.skip_space();
         let start = self.position();
         if !self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
-            return Err(syntax(start, "expected unsigned CXSMILES index"));
+            return Err(syntax(start, "A CXSMILES atom index is missing."));
         }
         let mut value = 0usize;
         while let Some(ch @ b'0'..=b'9') = self.peek() {
@@ -260,7 +270,7 @@ impl CxReader<'_> {
                     parse_error(
                         DiagnosticKind::InvalidValue,
                         start,
-                        "CXSMILES index exceeds supported range",
+                        "A CXSMILES atom index is too large.",
                     )
                 })?;
             self.cursor += 1;
@@ -314,17 +324,19 @@ impl CxFeatures {
         for field in document.cx_fields() {
             let offset = field.span.start;
             let inconsistent =
-                |message: &str| error(DiagnosticKind::Inconsistent, offset, message.to_owned());
+                |message: String| error(DiagnosticKind::Inconsistent, offset, message);
             let atoms = match &field.kind {
                 SmilesCxFieldKind::Radical { atoms, .. }
                 | SmilesCxFieldKind::StereoGroup { atoms, .. } => atoms.as_slice(),
                 _ => &[],
             };
-            if atoms.iter().any(|&atom| atom >= atom_count) {
+            if let Some(atom) = atoms.iter().find(|&&atom| atom >= atom_count) {
                 return Err(error(
                     DiagnosticKind::InvalidReference,
                     offset,
-                    "CXSMILES atom index is outside the base SMILES".to_owned(),
+                    format!(
+                        "CXSMILES atom index {atom} is out of range. The SMILES has {atom_count} atoms."
+                    ),
                 ));
             }
             match &field.kind {
@@ -337,14 +349,18 @@ impl CxFeatures {
                         .expect("CX radical codes specify valid electron/spin states");
                     for &atom in atoms {
                         if features.radicals.insert(atom, radical).is_some() {
-                            return Err(inconsistent("duplicate CXSMILES radical atom"));
+                            return Err(inconsistent(format!(
+                                "CXSMILES lists atom index {atom} as a radical twice."
+                            )));
                         }
                     }
                 }
                 SmilesCxFieldKind::StereoGroup { kind, atoms } => {
                     for &atom in atoms {
                         if !grouped_atoms.insert(atom) {
-                            return Err(inconsistent("duplicate CXSMILES stereo group atom"));
+                            return Err(inconsistent(format!(
+                                "CXSMILES lists atom index {atom} in more than one stereo group."
+                            )));
                         }
                     }
                     let index = *group_indices.entry(*kind).or_insert_with(|| {
@@ -364,7 +380,7 @@ impl CxFeatures {
                 SmilesCxFieldKind::RelativeConfiguration => {
                     if relative.replace(offset).is_some() {
                         return Err(inconsistent(
-                            "duplicate CXSMILES relative configuration flag",
+                            "CXSMILES has the relative configuration flag twice.".to_owned(),
                         ));
                     }
                 }
@@ -374,7 +390,7 @@ impl CxFeatures {
                         return Err(error(
                             DiagnosticKind::Unsupported,
                             offset,
-                            format!("unsupported CXSMILES field `{text}`"),
+                            format!("The CXSMILES field {text:?} is not supported."),
                         ))
                     }
                 },
@@ -410,7 +426,7 @@ impl CxFeatures {
                 return Err(error(
                     DiagnosticKind::Unsupported,
                     group.offset,
-                    "CXSMILES stereo relationships spanning disconnected molecules cannot be represented"
+                    "A CXSMILES stereo group spanning several molecules is not supported."
                         .to_owned(),
                 ));
             }
@@ -450,8 +466,9 @@ pub(super) fn install_stereo_groups(
                         error(
                             DiagnosticKind::Chemistry,
                             group.offset,
-                            "CXSMILES stereo group atom must identify a represented tetrahedral center"
-                                .to_owned(),
+                            format!(
+                                "CXSMILES stereo group atom index {source} is not a tetrahedral stereocenter."
+                            ),
                         )
                     })
             })
@@ -465,8 +482,9 @@ pub(super) fn install_stereo_groups(
                 error(
                     DiagnosticKind::Chemistry,
                     group.offset,
-                    format!("invalid CXSMILES stereo group: {cause}"),
+                    "Cannot add a CXSMILES stereo group.".to_owned(),
                 )
+                .with_source(cause)
             })?;
     }
     Ok(())

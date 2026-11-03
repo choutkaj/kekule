@@ -524,14 +524,15 @@ pub enum PeriodicCellError {
 impl fmt::Display for PeriodicCellError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unit(_) => formatter.write_str("invalid periodic-cell unit"),
-            Self::NoPeriodicAxes => formatter.write_str("periodic cell has no periodic axis"),
-            Self::NonFiniteVector => formatter.write_str("periodic-cell vectors must be finite"),
+            Self::Unit(_) => formatter.write_str("The cell vectors are not lengths."),
+            Self::NoPeriodicAxes => formatter.write_str("The cell has no periodic axis."),
+            Self::NonFiniteVector => formatter.write_str("A cell vector is not finite."),
             Self::DegenerateVectors => {
-                formatter.write_str("periodic-cell vectors must have non-zero finite volume")
+                formatter.write_str("The cell vectors span no finite, nonzero volume.")
             }
-            Self::InvalidOrthorhombicLengths => formatter
-                .write_str("orthorhombic cell lengths must be finite and strictly positive"),
+            Self::InvalidOrthorhombicLengths => {
+                formatter.write_str("An orthorhombic cell length is not finite and positive.")
+            }
         }
     }
 }
@@ -566,10 +567,10 @@ pub enum RigidTransformError {
 impl fmt::Display for RigidTransformError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unit(_) => formatter.write_str("rigid translation is not a length"),
-            Self::NonFinite => formatter.write_str("rigid transform must be finite"),
+            Self::Unit(_) => formatter.write_str("The translation is not a length."),
+            Self::NonFinite => formatter.write_str("The rotation or translation is not finite."),
             Self::NonRigidRotation => {
-                formatter.write_str("rotation matrix must be right-handed and orthonormal")
+                formatter.write_str("The rotation matrix is not orthonormal with determinant +1.")
             }
         }
     }

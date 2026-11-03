@@ -21,12 +21,14 @@ pub(super) fn parse_v2000_ctab(
 ) -> std::result::Result<(MolfileCtab, usize), FormatError> {
     let counts = lines.text(3).expect("the caller checked the counts line");
     let (atom_count, bond_count) = parse_counts_line(counts)
-        .ok_or_else(|| lines.error(3, DiagnosticKind::Syntax, "invalid V2000 counts line"))?;
+        .ok_or_else(|| lines.error(3, DiagnosticKind::Syntax, "The counts line is malformed."))?;
     if atom_count > V2000_MAX_ATOMS || bond_count > V2000_MAX_BONDS {
         return Err(lines.error(
             3,
             DiagnosticKind::InvalidValue,
-            "V2000 counts exceed the supported 999 atom or bond limit",
+            format!(
+                "The counts line declares {atom_count} atoms and {bond_count} bonds. V2000 holds at most 999 of each."
+            ),
         ));
     }
     let bond_start = 4 + atom_count;
@@ -35,7 +37,7 @@ pub(super) fn parse_v2000_ctab(
         return Err(lines.error(
             lines.len() - 1,
             DiagnosticKind::Syntax,
-            "Molfile ended before declared atom and bond blocks",
+            format!("The Molfile ends before its {atom_count} atoms and {bond_count} bonds."),
         ));
     }
 
@@ -64,7 +66,7 @@ pub(super) fn parse_v2000_ctab(
             return Err(lines.error(
                 index,
                 DiagnosticKind::Inconsistent,
-                "duplicate bond endpoints",
+                format!("Atoms {} and {} are bonded twice.", a + 1, b + 1),
             ));
         }
         ctab.bonds.push(bond);
@@ -79,7 +81,7 @@ pub(super) fn parse_v2000_ctab(
             lines.error(
                 lines.len().saturating_sub(1),
                 DiagnosticKind::Syntax,
-                "missing M  END",
+                "The \"M  END\" line is missing.",
             )
         })?;
     parse_v2000_properties(lines, property_start..end, &mut ctab)?;
@@ -114,13 +116,21 @@ fn parse_v2000_atom(
     unsupported: &mut Vec<MolfileUnsupported>,
     atom_index: usize,
 ) -> std::result::Result<MolfileAtom, FormatError> {
-    let symbol = atom_symbol_from_v2000_line(line)
-        .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "invalid V2000 atom line"))?;
+    let symbol = atom_symbol_from_v2000_line(line).ok_or_else(|| {
+        lines.error(
+            index,
+            DiagnosticKind::Syntax,
+            format!("The line of atom {} is malformed.", atom_index + 1),
+        )
+    })?;
     let [x, y, z] = atom_coordinates_from_v2000_line(line).ok_or_else(|| {
         lines.error(
             index,
             DiagnosticKind::Syntax,
-            "invalid V2000 atom coordinates",
+            format!(
+                "The coordinates of atom {} are not numbers.",
+                atom_index + 1
+            ),
         )
     })?;
     let mut atom = MolfileAtom::new(symbol, Point3::new(x, y, z), lines.location(index));
@@ -269,7 +279,10 @@ fn apply_atom_v2000_fields(
                     lines.error(
                         index,
                         DiagnosticKind::Syntax,
-                        format!("invalid V2000 atom {name} field"),
+                        format!(
+                            "The {name} field of atom {} is not a number.",
+                            atom_index + 1
+                        ),
                     )
                 })
             })
@@ -279,7 +292,8 @@ fn apply_atom_v2000_fields(
     if let Some(difference) = number(MASS_DIFFERENCE, "mass difference")?.filter(|&d| d != 0) {
         if !(-3..=4).contains(&difference) {
             return Err(invalid(format!(
-                "V2000 mass difference {difference} is outside -3 to 4"
+                "The mass difference {difference} of atom {} is outside -3 to 4.",
+                atom_index + 1
             )));
         }
         atom.mass_difference = Some(difference as i8);
@@ -295,7 +309,8 @@ fn apply_atom_v2000_fields(
             7 => -3,
             _ => {
                 return Err(invalid(format!(
-                    "invalid V2000 atom charge code {charge_code}"
+                    "The charge code {charge_code} of atom {} is not 0 to 7.",
+                    atom_index + 1
                 )))
             }
         };
@@ -306,7 +321,8 @@ fn apply_atom_v2000_fields(
     if let Some(code) = number(HYDROGEN_COUNT, "hydrogen-count code")? {
         if !(0..=5).contains(&code) {
             return Err(invalid(format!(
-                "invalid V2000 atom hydrogen-count code {code}"
+                "The hydrogen-count code {code} of atom {} is not 0 to 5.",
+                atom_index + 1
             )));
         }
     }
@@ -315,7 +331,12 @@ fn apply_atom_v2000_fields(
             0 => None,
             1..=14 => Some(code as u8),
             15 => Some(0),
-            _ => return Err(invalid(format!("invalid V2000 atom valence code {code}"))),
+            _ => {
+                return Err(invalid(format!(
+                    "The valence code {code} of atom {} is not 0 to 15.",
+                    atom_index + 1
+                )))
+            }
         };
     }
     for (field, name) in UNSUPPORTED_ATOM_FIELDS {
@@ -330,7 +351,7 @@ fn apply_atom_v2000_fields(
         }
     }
     let atom_map = match &fields {
-        V2000AtomFields::Columns(..) => number(ATOM_MAP, "map")?,
+        V2000AtomFields::Columns(..) => number(ATOM_MAP, "atom map")?,
         // Loosely spaced lines from some writers omit the unused fields
         // before the atom map.
         V2000AtomFields::Tokens(tokens) => {
@@ -339,12 +360,16 @@ fn apply_atom_v2000_fields(
             } else {
                 ATOM_MAP - 1
             };
-            number(field, "map")?
+            number(field, "atom map")?
         }
     };
     if let Some(atom_map) = atom_map {
-        let atom_map = u32::try_from(atom_map)
-            .map_err(|_| invalid(format!("invalid V2000 atom map {atom_map}")))?;
+        let atom_map = u32::try_from(atom_map).map_err(|_| {
+            invalid(format!(
+                "The atom map {atom_map} of atom {} is negative.",
+                atom_index + 1
+            ))
+        })?;
         if atom_map != 0 {
             atom.atom_map = Some(atom_map);
         }
@@ -360,8 +385,13 @@ fn parse_v2000_bond(
     unsupported: &mut Vec<MolfileUnsupported>,
     bond_index: usize,
 ) -> std::result::Result<MolfileBond, FormatError> {
-    let fields = parse_v2000_bond_line(line)
-        .ok_or_else(|| lines.error(index, DiagnosticKind::Syntax, "invalid V2000 bond line"))?;
+    let fields = parse_v2000_bond_line(line).ok_or_else(|| {
+        lines.error(
+            index,
+            DiagnosticKind::Syntax,
+            format!("The line of bond {} is malformed.", bond_index + 1),
+        )
+    })?;
     let (a, b, order_code) = fields.required;
     let number = |field: usize, name: &str| -> std::result::Result<u8, FormatError> {
         fields.optional[field].map_or(Ok(0), |value| {
@@ -369,7 +399,10 @@ fn parse_v2000_bond(
                 lines.error(
                     index,
                     DiagnosticKind::Syntax,
-                    format!("invalid V2000 bond {name} field"),
+                    format!(
+                        "The {name} field of bond {} is not a number.",
+                        bond_index + 1
+                    ),
                 )
             })
         })
@@ -395,7 +428,10 @@ fn parse_v2000_bond(
                 lines.error(
                     index,
                     DiagnosticKind::InvalidReference,
-                    "bond endpoint outside atom block",
+                    format!(
+                        "Bond {} refers to atom {serial}, but the atom block has {atom_count} atoms.",
+                        bond_index + 1
+                    ),
                 )
             })
     };
@@ -404,7 +440,11 @@ fn parse_v2000_bond(
         return Err(lines.error(
             index,
             DiagnosticKind::InvalidValue,
-            "bond endpoints must be distinct",
+            format!(
+                "Bond {} joins atom {} to itself.",
+                bond_index + 1,
+                atoms[0] + 1
+            ),
         ));
     }
     let order = match order_code {
@@ -418,14 +458,20 @@ fn parse_v2000_bond(
             return Err(lines.error(
                 index,
                 DiagnosticKind::Unsupported,
-                format!("unsupported V2000 bond order code {order_code}"),
+                format!(
+                    "The bond order code {order_code} of bond {} is not supported.",
+                    bond_index + 1
+                ),
             ))
         }
         _ => {
             return Err(lines.error(
                 index,
                 DiagnosticKind::InvalidValue,
-                format!("invalid V2000 bond order code {order_code}"),
+                format!(
+                    "The bond order code {order_code} of bond {} is not valid.",
+                    bond_index + 1
+                ),
             ))
         }
     };
@@ -435,7 +481,10 @@ fn parse_v2000_bond(
             return Err(lines.error(
                 index,
                 DiagnosticKind::Unsupported,
-                format!("V2000 stereo code {stereo_code} is unsupported for an aromatic bond"),
+                format!(
+                    "The stereo code {stereo_code} of aromatic bond {} is not supported.",
+                    bond_index + 1
+                ),
             ))
         }
         (MolfileBondOrder::Single, 1) => Some(MolfileBondStereo::Up),
@@ -446,7 +495,10 @@ fn parse_v2000_bond(
             return Err(lines.error(
                 index,
                 DiagnosticKind::InvalidValue,
-                format!("V2000 stereo code {stereo_code} is invalid for bond order {order:?}"),
+                format!(
+                    "The stereo code {stereo_code} of bond {} does not apply to its bond order.",
+                    bond_index + 1
+                ),
             ))
         }
     };
@@ -587,9 +639,10 @@ fn parse_v2000_properties(
                     atom.isotope = match value {
                         0 => None,
                         value if value > 0 => Some(
-                            u16::try_from(value).map_err(|_| "M  ISO mass number exceeds u16")?,
+                            u16::try_from(value)
+                                .map_err(|_| format!("The mass number {value} is too large."))?,
                         ),
-                        _ => return Err("M  ISO mass number must not be negative"),
+                        _ => return Err(format!("The mass number {value} is negative.")),
                     };
                     Ok(())
                 })?
@@ -601,7 +654,7 @@ fn parse_v2000_properties(
                         1 => Some(MolfileRadical::Singlet),
                         2 => Some(MolfileRadical::Doublet),
                         3 => Some(MolfileRadical::Triplet),
-                        _ => return Err("invalid M  RAD code"),
+                        _ => return Err(format!("The radical code {value} is not 0 to 3.")),
                     };
                     Ok(())
                 })?
@@ -623,25 +676,31 @@ fn parse_atom_value_pairs<F>(
     mut apply: F,
 ) -> std::result::Result<(), FormatError>
 where
-    F: FnMut(&mut MolfileAtom, i32) -> std::result::Result<(), &'static str>,
+    F: FnMut(&mut MolfileAtom, i32) -> std::result::Result<(), String>,
 {
-    let syntax = |message: &str| lines.error(index, DiagnosticKind::Syntax, message);
+    let syntax = |message: String| lines.error(index, DiagnosticKind::Syntax, message);
     let (count, pairs) = fields
         .split_first()
-        .ok_or_else(|| syntax("invalid M record count"))?;
-    let count = count
-        .parse::<usize>()
-        .map_err(|_| syntax("invalid M record count"))?;
+        .ok_or_else(|| syntax("The property record has no entry count.".to_owned()))?;
+    let count = count.parse::<usize>().map_err(|_| {
+        syntax(format!(
+            "The entry count {count:?} of the property record is not a number."
+        ))
+    })?;
     if count.checked_mul(2) != Some(pairs.len()) {
-        return Err(syntax("M record pair count does not match its fields"));
+        return Err(syntax(format!(
+            "The property record declares {count} entries but has {} fields after the count.",
+            pairs.len()
+        )));
     }
+    let atom_count = atoms.len();
     for pair in pairs.chunks(2) {
         let serial = pair[0]
             .parse::<usize>()
-            .map_err(|_| syntax("invalid M record atom index"))?;
+            .map_err(|_| syntax(format!("The atom number {:?} is not a number.", pair[0])))?;
         let value = pair[1]
             .parse::<i32>()
-            .map_err(|_| syntax("invalid M record value"))?;
+            .map_err(|_| syntax(format!("The value {:?} is not a number.", pair[1])))?;
         let atom = serial
             .checked_sub(1)
             .and_then(|atom| atoms.get_mut(atom))
@@ -649,7 +708,9 @@ where
                 lines.error(
                     index,
                     DiagnosticKind::InvalidReference,
-                    "M record atom outside atom block",
+                    format!(
+                        "The property record refers to atom {serial}, but the atom block has {atom_count} atoms."
+                    ),
                 )
             })?;
         apply(atom, value)

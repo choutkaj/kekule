@@ -22,11 +22,7 @@ pub struct TopologyPerceptionError {
 
 impl fmt::Display for TopologyPerceptionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "perception failed for {}: {}",
-            self.definition, self.source
-        )
+        write!(formatter, "Cannot perceive molecule {}.", self.definition)
     }
 }
 

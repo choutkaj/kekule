@@ -455,42 +455,53 @@ pub enum PlacementError {
 
 impl fmt::Display for PlacementError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::diagnostics::Capitalized;
         match self {
-            Self::Edit(_) => f.write_str("cannot edit the draft"),
-            Self::InvalidValence { atom } => write!(f, "{atom:?} exceeds its valence"),
-            Self::NoFreePosition { atom } => write!(f, "{atom:?} has no free position"),
-            Self::UnsupportedGeometry { atom, domains } => {
-                write!(
-                    f,
-                    "{atom:?} would arrange {domains} domains; at most 6 are supported"
-                )
+            Self::Edit(error) => error.fmt(f),
+            Self::InvalidValence { atom } => {
+                write!(f, "{} exceeds its valence.", Capitalized(atom))
             }
+            Self::NoFreePosition { atom } => {
+                write!(f, "{} has no free position.", Capitalized(atom))
+            }
+            Self::UnsupportedGeometry { atom, domains } => write!(
+                f,
+                "{} would arrange {domains} electron domains. At most 6 are supported.",
+                Capitalized(atom)
+            ),
             Self::DegenerateGeometry { atom } => {
-                write!(f, "the neighbors of {atom:?} give it no orientation")
+                write!(f, "The neighbors of {atom} give it no orientation.")
             }
             Self::UnknownBondLength { first, second } => write!(
                 f,
-                "no bond length between {} and {}",
+                "No bond length is known between {} and {}.",
                 first.symbol(),
                 second.symbol()
             ),
             Self::NotReplaceableHydrogen { atom, hydrogen } => write!(
                 f,
-                "{hydrogen:?} is not an explicit hydrogen singly bonded to {atom:?}"
+                "{} is not an explicit hydrogen singly bonded to {atom}.",
+                Capitalized(hydrogen)
             ),
-            Self::InvalidDirection => f.write_str("direction is zero or not finite"),
+            Self::InvalidDirection => f.write_str("The direction is zero or not finite."),
             Self::StereoHydrogen { atom } => write!(
                 f,
-                "the represented stereo of {atom:?} cannot follow its hydrogens"
+                "The stereo of {atom} names an implicit hydrogen that cannot become one atom."
             ),
-            Self::HydrogenCountOverflow { atom, count } => {
-                write!(f, "{atom:?} would have {count} implicit hydrogens")
+            Self::HydrogenCountOverflow { atom, count } => write!(
+                f,
+                "{} would have {count} implicit hydrogens, more than a count can hold.",
+                Capitalized(atom)
+            ),
+            Self::LimitExceeded(limit) => {
+                write!(f, "Hydrogen placement exceeded its {}.", limit.describe())
             }
-            Self::LimitExceeded(_) => f.write_str("too many hydrogens to add"),
-            Self::UnknownFragment { name } => write!(f, "no fragment named `{name}`"),
-            Self::FragmentAtomWithoutHydrogen { fragment, atom } => {
-                write!(f, "{atom:?} of fragment {fragment} carries no hydrogen")
-            }
+            Self::UnknownFragment { name } => write!(f, "No fragment is named {name:?}."),
+            Self::FragmentAtomWithoutHydrogen { fragment, atom } => write!(
+                f,
+                "{} of fragment {fragment:?} carries no hydrogen.",
+                Capitalized(atom)
+            ),
         }
     }
 }
@@ -498,8 +509,7 @@ impl fmt::Display for PlacementError {
 impl std::error::Error for PlacementError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Edit(error) => Some(error.as_ref()),
-            Self::LimitExceeded(error) => Some(error),
+            Self::Edit(error) => error.source(),
             _ => None,
         }
     }

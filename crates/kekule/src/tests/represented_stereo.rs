@@ -356,7 +356,7 @@ fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() 
                 descriptor: rejected
             }
         );
-        assert!(error.to_string().contains("incompatible"));
+        assert!(error.to_string().contains("does not apply to"));
         assert_eq!(molecule, before);
         assert_eq!(molecule.perception(), &previous);
     }

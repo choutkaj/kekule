@@ -228,7 +228,7 @@ fn labels_naming_several_atoms_are_refused_by_name() {
     assert_eq!(labels[1].atoms(), ids(topology, &[1, 4]));
     assert!(error
         .to_string()
-        .starts_with("2 moving label(s) name more than one selected atom; chain A residue 1 atom CA names atoms "));
+        .starts_with("2 moving labels name more than one selected atom: chain A residue 1 atom CA names atom "), "{error}");
 
     // The reference side is checked too, whether or not the moving side names
     // the label.

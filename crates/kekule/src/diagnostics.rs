@@ -1246,12 +1246,12 @@ mod tests {
     #[test]
     fn format_errors_display_format_stage_record_and_location_but_not_their_source() {
         let cause = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "closed");
-        let error = FormatError::write(Format::Sdf, DiagnosticKind::Io, "SDF output failed")
+        let error = FormatError::write(Format::Sdf, DiagnosticKind::Io, "")
             .in_record(3)
             .with_source(cause);
         assert_eq!(
             error.to_string(),
-            "SDF write error in record 3: SDF output failed"
+            "Cannot write the SDF output in record 3."
         );
         assert_eq!(
             std::error::Error::source(&error)
@@ -1260,24 +1260,32 @@ mod tests {
             Some(std::io::ErrorKind::BrokenPipe)
         );
 
-        let located = FormatError::parse(Format::Smiles, DiagnosticKind::Syntax, "unclosed ring")
-            .at(SourceLocation::at_column(1, 4))
-            .on_line(7)
-            .shift_column(2);
+        let located = FormatError::parse(
+            Format::Smiles,
+            DiagnosticKind::Syntax,
+            "Ring bond 1 is not closed.",
+        )
+        .at(SourceLocation::at_column(1, 4))
+        .on_line(7)
+        .shift_column(2);
         assert_eq!(located.location(), Some(SourceLocation::at_column(7, 6)));
         assert_eq!(located.record(), None);
         assert_eq!(
             located.to_string(),
-            "SMILES parse error at line 7, column 6: unclosed ring"
+            "Cannot parse the SMILES input at line 7, column 6. Ring bond 1 is not closed."
         );
         assert!(std::error::Error::source(&located).is_none());
 
-        let lined = FormatError::interpret(Format::Pdb, DiagnosticKind::Inconsistent, "duplicate")
-            .on_line(2);
+        let lined = FormatError::interpret(
+            Format::Pdb,
+            DiagnosticKind::Inconsistent,
+            "Atom 3 appears twice.",
+        )
+        .on_line(2);
         assert_eq!(lined.location(), Some(SourceLocation::at_line(2)));
         assert_eq!(
             lined.to_string(),
-            "PDB interpretation error at line 2: duplicate"
+            "Cannot interpret the PDB input at line 2. Atom 3 appears twice."
         );
     }
 
@@ -1291,7 +1299,12 @@ mod tests {
         );
         assert_eq!(
             exceeded.to_string(),
-            "atoms limit exceeded: observed 5, limit 3"
+            "Exceeded the atom limit: 5 atoms of 3."
+        );
+        let work = LimitExceeded::new(Resource::Work, 69_248_000, 69_400_898);
+        assert_eq!(
+            format!("Ring perception exceeded its {}.", work.describe()),
+            "Ring perception exceeded its work limit: 69,400,898 steps of 69,248,000."
         );
         assert_eq!(
             LimitExceeded::first_beyond(Resource::Records, usize::MAX).observed(),
@@ -1302,6 +1315,56 @@ mod tests {
         assert_eq!(
             error.limit_exceeded(),
             Some(LimitExceeded::new(Resource::Records, 2, 3))
+        );
+    }
+
+    #[test]
+    fn counts_group_thousands() {
+        for (count, text) in [
+            (0, "0"),
+            (999, "999"),
+            (1_000, "1,000"),
+            (12_345, "12,345"),
+            (123_456, "123,456"),
+            (1_234_567, "1,234,567"),
+        ] {
+            assert_eq!(Count(count).to_string(), text);
+        }
+    }
+
+    #[test]
+    fn error_chains_read_as_sentences() {
+        #[derive(Debug)]
+        struct Outer(std::io::Error);
+        impl fmt::Display for Outer {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("Cannot build the solvated model.")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let error = Outer(std::io::Error::other("disk full"));
+        assert_eq!(
+            ErrorChain::new(&error).to_string(),
+            "Cannot build the solvated model. Disk full."
+        );
+        assert_eq!(
+            format!("{:#}", ErrorChain::new(&error)),
+            "Cannot build the solvated model.
+Disk full."
+        );
+
+        let sink = FormatError::sink(
+            Format::Pdb,
+            std::io::Error::other("Access is denied. (os error 5)"),
+        );
+        assert_eq!(
+            ErrorChain::new(&sink).to_string(),
+            "Cannot write the PDB output. Access is denied. (os error 5)."
         );
     }
 

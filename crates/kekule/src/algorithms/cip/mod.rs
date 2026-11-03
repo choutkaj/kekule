@@ -38,12 +38,14 @@ pub enum CipRankingError {
 impl fmt::Display for CipRankingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LimitExceeded(limit) => write!(f, "CIP ranking {limit}"),
-            Self::UnresolvedPriority => f.write_str("CIP ligand priority could not be resolved"),
-            Self::InvalidStereo { issue } => write!(f, "invalid stereo for CIP ranking: {issue:?}"),
+            Self::LimitExceeded(limit) => {
+                write!(f, "CIP ranking exceeded its {}.", limit.describe())
+            }
+            Self::UnresolvedPriority => f.write_str("CIP ranking cannot order the ligands."),
+            Self::InvalidStereo { issue } => write!(f, "Cannot rank CIP ligands. {issue}"),
             Self::UnknownHydrogenCount { atom } => write!(
                 f,
-                "CIP ranking requires known implicit hydrogen counts: {atom}"
+                "The hydrogen count of {atom} is unknown. Perceive valence first."
             ),
         }
     }
@@ -149,13 +151,18 @@ pub struct CipAssignmentError {
     pub issues: Vec<CipAssignmentIssue>,
 }
 
+/// Writes the first issue, and how many there are when there are several.
 impl fmt::Display for CipAssignmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "CIP assignment reported {} issue(s)",
-            self.issues.len()
-        )
+        match self.issues.as_slice() {
+            [] => formatter.write_str("Cannot assign CIP descriptors."),
+            [issue] => write!(formatter, "Cannot assign CIP descriptors. {issue}"),
+            [issue, ..] => write!(
+                formatter,
+                "Cannot assign CIP descriptors: {} problems. {issue}",
+                self.issues.len()
+            ),
+        }
     }
 }
 
@@ -238,6 +245,26 @@ pub enum CipAssignmentIssue {
         /// The atom whose implicit hydrogen count is unknown.
         atom: AtomId,
     },
+}
+
+impl fmt::Display for CipAssignmentIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidStereo { issue } => write!(f, "{issue}"),
+            Self::UnresolvedPriority { element } => {
+                write!(f, "CIP ranking cannot order the ligands of {element}.")
+            }
+            Self::LimitExceeded { element, limit } => write!(
+                f,
+                "CIP ranking of {element} exceeded its {}.",
+                limit.describe()
+            ),
+            Self::UnknownHydrogenCount { atom } => write!(
+                f,
+                "The hydrogen count of {atom} is unknown. Perceive valence first."
+            ),
+        }
+    }
 }
 
 /// Assigns CIP descriptors from represented local stereochemistry.

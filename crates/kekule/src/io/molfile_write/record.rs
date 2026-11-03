@@ -12,11 +12,11 @@ use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::ANGSTROM;
 
-use crate::diagnostics::FormatError;
+use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::structure_documents::{
     materialize_molfile_stereo_hydrogens, molfile_coordinate_double_bonds,
     molfile_coordinate_tetrahedra, molfile_coordinates_are_flat,
-    molfile_stereo_group_members_at_atom,
+    molfile_stereo_group_members_at_atom, MolfileInterpretationWarning,
 };
 use crate::io::write_error::MOLFILE_WRITE;
 use crate::io::MolfileVersion;
@@ -132,11 +132,14 @@ impl<'a> MolfileRecord<'a> {
             let occurrence = view.instance();
             let position = model
                 .position(qualified)
-                .ok_or_else(|| MOLFILE_WRITE.invalid_model("inconsistent source model"))?
+                .ok_or_else(|| {
+                    MOLFILE_WRITE
+                        .invalid_model(format!("{} has no position.", Capitalized(qualified)))
+                })?
                 .value_in(ANGSTROM)
                 .map_err(|error| {
                     MOLFILE_WRITE
-                        .invalid_model("inconsistent source model")
+                        .invalid_model(format!("Cannot read the position of {qualified}."))
                         .with_source(error)
                 })?;
             // V2000 has four-place fixed-width fields. V3000 emits round-trip
@@ -282,13 +285,23 @@ fn stereo_projections(
         let inferred =
             molfile_coordinate_tetrahedra(molecule, geometry, &mut warnings).map_err(|error| {
                 MOLFILE_WRITE
-                    .invalid_model("inconsistent source model")
+                    .invalid_model("Cannot perceive stereo from the 3D coordinates.")
                     .with_source(error)
             })?;
         if !warnings.is_empty() {
-            return Err(MOLFILE_WRITE.unsupported(format!(
-                "cannot verify 3D stereo preservation: {warnings:?}"
-            )));
+            let error = MOLFILE_WRITE.unsupported(
+                "Cannot check that the 3D coordinates keep the stereo of the molecule.",
+            );
+            let valence = warnings.into_iter().find_map(|warning| match warning {
+                MolfileInterpretationWarning::CoordinateStereoValenceUnsupported { error } => {
+                    Some(error)
+                }
+                _ => None,
+            });
+            return Err(match valence {
+                Some(cause) => error.with_source(cause),
+                None => error,
+            });
         }
         if inferred.is_empty() {
             molecule
@@ -301,7 +314,7 @@ fn stereo_projections(
                 }
                 staged.add_stereo_element(element).map_err(|error| {
                     MOLFILE_WRITE
-                        .invalid_model("inconsistent source model")
+                        .invalid_model("Cannot add the stereo of the 3D coordinates.")
                         .with_source(error)
                 })?;
             }
@@ -317,7 +330,7 @@ fn stereo_projections(
         .transpose()
         .map_err(|error| {
             MOLFILE_WRITE
-                .invalid_model("inconsistent source model")
+                .invalid_model("Cannot perceive double-bond stereo from the 3D coordinates.")
                 .with_source(error)
         })?
         .flatten();
@@ -341,7 +354,7 @@ fn project_stereo_groups(
                 StereoGroupKind::Absolute | StereoGroupKind::And | StereoGroupKind::Or
             ) {
                 return Err(MOLFILE_WRITE
-                    .unsupported("Molfile writer cannot encode this stereo group kind"));
+                    .unsupported("A Molfile cannot state racemic or relative stereo groups."));
             }
             let mut projected = MolfileStereoGroup {
                 kind: group.kind,
@@ -360,18 +373,16 @@ fn project_stereo_groups(
                         vec![bond.a(), bond.b()]
                     }
                     StereoElementKind::DoubleBond(_) => {
-                        return Err(MOLFILE_WRITE.unsupported(
-                            "Molfile writer cannot encode double-bond stereo group members",
-                        ))
+                        return Err(MOLFILE_WRITE
+                            .unsupported("A Molfile stereo group cannot hold double-bond stereo."))
                     }
                 };
                 let atom = candidates
                     .into_iter()
                     .find(|atom| molfile_stereo_group_members_at_atom(molecule, *atom) == [*member])
                     .ok_or_else(|| {
-                        MOLFILE_WRITE.unsupported(
-                            "V3000 stereo group member has no unambiguous atom or axis endpoint",
-                        )
+                        MOLFILE_WRITE
+                            .unsupported("A stereo group member has no atom of its own to list.")
                     })?;
                 projected.atoms.push(atom_serial(atom));
             }

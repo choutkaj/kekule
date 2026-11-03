@@ -184,7 +184,7 @@ fn interpretation_enforces_small_ring_double_bond_boundary() {
         .interpret(Default::default())
         .expect_err("excluded small-ring directional marks must reject interpretation");
     assert_eq!(byte_offset(&error), 2);
-    assert!(chain_text(&error).contains("UnpairedDirectionalBondMark"));
+    assert!(chain_text(&error).contains("has no partner across a double bond"));
 
     let (cyclooctene, report) =
         read_smiles_with_report(r"C1/C=C\CCCCC1").expect("marked cyclooctene interprets");
@@ -1563,7 +1563,7 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
         )
         .unwrap_err()
         .message()
-        .contains("enhanced stereo groups"));
+        .contains("cannot hold stereo groups"));
     }
 }
 
@@ -1803,7 +1803,7 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         )
         .unwrap_err()
         .message()
-        .contains("unknown axis"));
+        .contains("unknown configuration"));
     }
 }
 
@@ -1935,7 +1935,7 @@ fn v3000_rejects_relative_groups_across_components_and_preserves_absolute_member
                 .interpret(Default::default())
                 .unwrap_err()
                 .message()
-                .contains("spanning disconnected molecules"));
+                .contains("spans disconnected molecules"));
         }
     }
 }

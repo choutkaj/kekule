@@ -674,50 +674,62 @@ pub enum AlignmentError {
 impl fmt::Display for AlignmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyMismatch => formatter.write_str(
-                "moving and reference models belong to different topology allocations",
-            ),
+            Self::TopologyMismatch => formatter
+                .write_str("The moving and reference models have different topology layouts."),
             Self::SelectionTopologyMismatch => {
-                formatter.write_str("atom selection belongs to a different topology allocation")
+                formatter.write_str("The atom selection belongs to a different topology layout.")
             }
-            Self::Correspondence(_) => formatter.write_str("atom correspondence failed"),
+            Self::Correspondence(error) => write!(formatter, "{error}"),
             Self::InsufficientSelectedAtoms { selected, minimum } => write!(
                 formatter,
-                "rigid alignment requires at least {minimum} selected atoms, but received {selected}"
+                "The selection has {selected} atoms. Rigid alignment needs at least {minimum}."
             ),
-            Self::DegenerateGeometry { geometry } => {
-                write!(formatter, "{geometry} geometry is rank deficient")
-            }
+            Self::DegenerateGeometry { geometry } => write!(
+                formatter,
+                "The {geometry} geometry does not span two dimensions."
+            ),
             Self::WeightCountMismatch { expected, actual } => write!(
                 formatter,
-                "rigid alignment requires {expected} weights, but received {actual}"
+                "The selection has {expected} atoms and {actual} weights. Give one weight per atom."
             ),
             Self::NonFiniteWeight { selection_index } => write!(
                 formatter,
-                "alignment weight at selection index {selection_index} is not finite"
+                "The alignment weight at selection index {selection_index} is not finite."
             ),
             Self::NonPositiveWeight { selection_index } => write!(
                 formatter,
-                "alignment weight at selection index {selection_index} is not strictly positive"
+                "The alignment weight at selection index {selection_index} is not positive."
             ),
-            Self::PeriodicCoordinates {
-                moving,
-                reference,
-            } => write!(
-                formatter,
-                "periodic alignment is rejected by policy (moving cell: {moving}, reference cell: {reference})"
-            ),
-            Self::NumericalFailure => {
-                formatter.write_str("rigid alignment numerical solution failed")
+            Self::PeriodicCoordinates { moving, reference } => {
+                let models = match (moving, reference) {
+                    (true, true) => "Both models have",
+                    (true, false) => "The moving model has",
+                    (false, true) => "The reference model has",
+                    (false, false) => {
+                        return formatter
+                            .write_str("Alignment does not support periodic coordinates.")
+                    }
+                };
+                write!(
+                    formatter,
+                    "{models} a periodic cell. Alignment does not support periodic coordinates."
+                )
             }
-            Self::InvalidRigidTransform(_) => formatter.write_str("fitted rigid transform is invalid"),
-            Self::EmptySelection => formatter.write_str("RMSD requires at least one atom pair"),
+            Self::NumericalFailure => {
+                formatter.write_str("The rigid alignment did not reach a finite solution.")
+            }
+            Self::InvalidRigidTransform(_) => {
+                formatter.write_str("The fitted rigid transform is invalid.")
+            }
+            Self::EmptySelection => {
+                formatter.write_str("The selection is empty. RMSD needs at least one atom pair.")
+            }
             Self::ReferenceOutOfRange { index, len } => write!(
                 formatter,
-                "reference index {index} is out of range for {len} structures"
+                "Reference structure {index} does not exist. There are {len} structures."
             ),
-            Self::Item { index, .. } => write!(formatter, "structure {index} failed"),
-            Self::Transform(_) => formatter.write_str("cannot apply fitted transform"),
+            Self::Item { index, .. } => write!(formatter, "Cannot align structure {index}."),
+            Self::Transform(_) => formatter.write_str("Cannot apply the fitted transform."),
         }
     }
 }
@@ -735,7 +747,7 @@ impl fmt::Display for AlignmentGeometry {
 impl std::error::Error for AlignmentError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Correspondence(error) => Some(error),
+            Self::Correspondence(error) => std::error::Error::source(error),
             Self::InvalidRigidTransform(error) => Some(error),
             Self::Item { source, .. } => Some(source.as_ref()),
             Self::Transform(error) => Some(error),

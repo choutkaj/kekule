@@ -174,49 +174,45 @@ impl fmt::Display for MergeMismatch {
 impl fmt::Display for StatisticsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Selection(_) => f.write_str("invalid statistics selection"),
-            Self::Unit(_) => f.write_str("invalid statistics unit"),
-            Self::EmptySelection => f.write_str("statistic requires at least one atom or pair"),
-            Self::NoObservations => f.write_str("statistic requires at least one observation"),
-            Self::InvalidCutoff => f.write_str("contact cutoff must be finite and nonnegative"),
-            Self::SelfPair { pair } => write!(f, "contact pair {pair} repeats the same atom"),
-            Self::DuplicatePair { pair } => write!(
-                f,
-                "contact pair {pair} duplicates an earlier unordered pair"
-            ),
-            Self::EmptyGroup { group } => write!(f, "contact group {group} has no atom"),
+            Self::Selection(_) => f.write_str("The statistics selection is invalid."),
+            Self::Unit(_) => f.write_str("A statistics quantity has the wrong unit."),
+            Self::EmptySelection => f.write_str("The selection names no atom or pair."),
+            Self::NoObservations => f.write_str("The statistic has no observations."),
+            Self::InvalidCutoff => f.write_str("The contact cutoff is negative or not finite."),
+            Self::SelfPair { pair } => write!(f, "Contact pair {pair} names the same atom twice."),
+            Self::DuplicatePair { pair } => {
+                write!(f, "Contact pair {pair} repeats an earlier pair.")
+            }
+            Self::EmptyGroup { group } => write!(f, "Contact group {group} has no atom."),
             Self::UnknownGroup { pair } => {
-                write!(f, "contact pair {pair} names a group past the last")
+                write!(f, "Contact pair {pair} names a group past the last.")
             }
             Self::OverlappingGroups { pair } => {
-                write!(f, "contact pair {pair} names groups that share an atom")
-            }
-            Self::TopologyMismatch { index } => write!(
-                f,
-                "observation {index} belongs to a different topology snapshot"
-            ),
-            Self::InvalidWeight { index } => {
-                write!(f, "observation {index} weight must be finite and positive")
-            }
-            Self::WeightOverflow { index } => write!(
-                f,
-                "observation {index} total weight exceeds finite numerical range"
-            ),
-            Self::NumericalFailure { index, atom } => write!(
-                f,
-                "observation {index} statistic exceeds finite numerical range at {atom}"
-            ),
-            Self::MergeMismatch(mismatch) => {
-                write!(f, "cannot merge accumulators with different {mismatch}")
-            }
-            Self::MergeWeightOverflow => {
-                f.write_str("merged total weight exceeds finite numerical range")
-            }
-            Self::MergeNumericalFailure { atom } => {
                 write!(
                     f,
-                    "merged statistic exceeds finite numerical range at {atom}"
+                    "Contact pair {pair} names two groups that share an atom."
                 )
+            }
+            Self::TopologyMismatch { index } => {
+                write!(f, "Observation {index} has a different topology layout.")
+            }
+            Self::InvalidWeight { index } => write!(
+                f,
+                "The weight of observation {index} is not positive or not finite."
+            ),
+            Self::WeightOverflow { index } => {
+                write!(f, "The total weight overflows at observation {index}.")
+            }
+            Self::NumericalFailure { index, atom } => write!(
+                f,
+                "The statistic of {atom} overflows at observation {index}."
+            ),
+            Self::MergeMismatch(mismatch) => {
+                write!(f, "Cannot merge accumulators with different {mismatch}.")
+            }
+            Self::MergeWeightOverflow => f.write_str("The merged total weight overflows."),
+            Self::MergeNumericalFailure { atom } => {
+                write!(f, "The merged statistic of {atom} overflows.")
             }
         }
     }

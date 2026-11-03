@@ -404,7 +404,9 @@ impl From<LimitExceeded> for QueryExpressionError {
 impl fmt::Display for QueryExpressionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LimitExceeded(limit) => write!(f, "query expression {limit}"),
+            Self::LimitExceeded(limit) => {
+                write!(f, "The query expression exceeded its {}.", limit.describe())
+            }
         }
     }
 }

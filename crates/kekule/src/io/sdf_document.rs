@@ -370,17 +370,14 @@ pub(crate) fn parse_sdf_document(
     options: SdfParseOptions,
 ) -> Result<SdfDocument, FormatError> {
     if input.len() > options.max_input_bytes {
+        let limit = LimitExceeded::new(Resource::InputBytes, options.max_input_bytes, input.len());
         return Err(sdf_parse_error(
             1,
             DiagnosticKind::Limit,
             1,
-            "input exceeds configured byte limit",
+            format!("The input exceeds its {}.", limit.describe()),
         )
-        .exceeding(LimitExceeded::new(
-            Resource::InputBytes,
-            options.max_input_bytes,
-            input.len(),
-        )));
+        .exceeding(limit));
     }
     let records = SdfRecords::new(input.as_bytes(), options).collect::<Result<_, _>>()?;
     Ok(SdfDocument { records })
@@ -439,16 +436,14 @@ impl<R: Read> SdfRecords<R> {
     fn finish(&mut self, first_line: usize) -> Result<usize, FormatError> {
         if self.records >= self.options.max_records {
             self.done = true;
+            let limit = LimitExceeded::first_beyond(Resource::Records, self.options.max_records);
             return Err(self
                 .record_error(
                     DiagnosticKind::Limit,
                     first_line,
-                    "SDF record count exceeds configured limit",
+                    format!("The SD file exceeds its {}.", limit.describe()),
                 )
-                .exceeding(LimitExceeded::first_beyond(
-                    Resource::Records,
-                    self.options.max_records,
-                )));
+                .exceeding(limit));
         }
         self.records += 1;
         Ok(self.records)
@@ -490,14 +485,14 @@ impl<R: Read> Iterator for SdfRecords<R> {
                             record,
                             DiagnosticKind::Syntax,
                             self.lines_read,
-                            "missing final $$$$ record delimiter",
+                            "The last record does not end with \"$$$$\".",
                         )),
                     });
                 }
                 Err(error) => {
                     self.done = true;
                     return Some(Err(self
-                        .record_error(DiagnosticKind::Io, self.lines_read + 1, "cannot read input")
+                        .record_error(DiagnosticKind::Io, self.lines_read + 1, "")
                         .with_source(error)));
                 }
             };
@@ -522,17 +517,18 @@ impl<R: Read> Iterator for SdfRecords<R> {
             }
             bytes = bytes.saturating_add(self.line.len() + 1);
             if truncated || bytes > self.options.max_record_bytes {
+                let limit = LimitExceeded::new(
+                    Resource::RecordBytes,
+                    self.options.max_record_bytes,
+                    bytes.max(self.options.max_record_bytes.saturating_add(1)),
+                );
                 failure = Some(
                     self.record_error(
                         DiagnosticKind::Limit,
                         number,
-                        "SDF record exceeds configured byte limit",
+                        format!("The record exceeds its {}.", limit.describe()),
                     )
-                    .exceeding(LimitExceeded::new(
-                        Resource::RecordBytes,
-                        self.options.max_record_bytes,
-                        bytes.max(self.options.max_record_bytes.saturating_add(1)),
-                    )),
+                    .exceeding(limit),
                 );
                 continue;
             }
@@ -548,7 +544,7 @@ impl<R: Read> Iterator for SdfRecords<R> {
                         self.record_error(
                             DiagnosticKind::Io,
                             number,
-                            "SDF record is not valid UTF-8",
+                            "The record is not valid UTF-8.",
                         )
                         .with_source(error),
                     );
@@ -592,13 +588,14 @@ fn parse_sdf_record(
             continue;
         }
         if !line.trim_start().starts_with('>') {
-            return Err(syntax(
-                index,
-                "unexpected content outside an SDF data field",
-            ));
+            return Err(syntax(index, "The line lies outside a data field."));
         }
-        let name =
-            sdf_field_name(line).ok_or_else(|| syntax(index, "invalid SDF data field header"))?;
+        let name = sdf_field_name(line).ok_or_else(|| {
+            syntax(
+                index,
+                "The data field header has no name in angle brackets.",
+            )
+        })?;
         index += 1;
         let mut values = Vec::new();
         let mut terminated = false;
@@ -614,7 +611,7 @@ fn parse_sdf_record(
         if !terminated && !ended_by_delimiter {
             return Err(syntax(
                 lines.len() - 1,
-                "SDF data field is missing its terminating blank line",
+                "The data field does not end with a blank line.",
             ));
         }
         data_fields.push(SdfDataField {

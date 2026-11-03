@@ -1,5 +1,7 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField};
+use crate::diagnostics::{
+    Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField,
+};
 use crate::geometry::PeriodicCell;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::{
@@ -376,9 +378,9 @@ impl fmt::Display for MmcifAtomField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Isotope => "isotope",
-            Self::Radical => "radical",
-            Self::Hydrogens => "hydrogens",
-            Self::AtomMap => "atom_map",
+            Self::Radical => "radical electrons",
+            Self::Hydrogens => "implicit hydrogens",
+            Self::AtomMap => "atom-map number",
             Self::LabelAsymId => "label_asym_id",
             Self::SourceAsymId => "source asym_id",
             Self::TypeSymbol => "type_symbol",
@@ -436,13 +438,15 @@ pub enum MmcifCellReason {
     NonstandardOrientation,
 }
 
+/// Writes the reason as a sentence, such as `The cell is not periodic along
+/// all three axes.`
 impl fmt::Display for MmcifCellReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::SampleCellsDiffer => "ensemble samples have different cells",
-            Self::PartiallyPeriodic => "an mmCIF cell is periodic along all three axes",
+            Self::SampleCellsDiffer => "The ensemble samples have different cells.",
+            Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
             Self::NonstandardOrientation => {
-                "an mmCIF cell has a along x and b in the xy plane, as its coordinates assume"
+                "The cell does not have a along x and b in the xy plane."
             }
         })
     }
@@ -490,129 +494,208 @@ impl MmcifWriteIssue {
 impl fmt::Display for MmcifWriteIssue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidBlockName(name) => {
-                write!(f, "invalid mmCIF data block name `{name}`")
-            }
+            Self::InvalidBlockName(name) => write!(
+                f,
+                "Data block name {name:?} is invalid. Use letters, digits, \"_\", \"-\" and \".\"."
+            ),
             Self::DuplicateBlockName(name) => {
-                write!(f, "duplicate mmCIF data block name `{name}`")
+                write!(f, "Data block name {name:?} is used twice.")
             }
             Self::CoordinatePrecisionTooLarge(precision) => write!(
                 f,
-                "mmCIF coordinate precision {precision} exceeds the supported maximum of {MAX_COORDINATE_PRECISION}"
+                "Coordinate precision {precision} exceeds the maximum of {MAX_COORDINATE_PRECISION} decimal places."
             ),
             Self::MissingEntityClassification(molecule) => write!(
                 f,
-                "{molecule} has no explicit mmCIF entity classification"
+                "{} has no entity classification.",
+                Capitalized(molecule)
             ),
             Self::DuplicateEntityClassification(molecule) => write!(
                 f,
-                "mmCIF entity semantics classify {molecule} more than once"
+                "{} is classified more than once.",
+                Capitalized(molecule)
             ),
             Self::ConflictingEntityClassifications {
                 molecule,
                 classifications,
             } => write!(
                 f,
-                "{molecule} has conflicting mmCIF entity classifications {classifications:?}"
+                "The entity of {molecule} covers instances classified as {}.",
+                entity_kinds(classifications)
             ),
             Self::UnsupportedEntityClassification {
                 molecule,
                 classification,
             } => write!(
                 f,
-                "{molecule} has unsupported mmCIF entity classification `{classification}`"
+                "{} has unsupported entity type {classification:?}.",
+                Capitalized(molecule)
             ),
             Self::UnresolvedCanonicalEntityClassification {
                 molecule,
                 classification,
             } => write!(
                 f,
-                "cannot derive an unambiguous mmCIF entity kind for {molecule} from canonical class {classification:?}"
+                "The {} class of {molecule} does not determine one entity type.",
+                class_name(*classification)
             ),
             Self::ConflictingAsymEntityIds {
                 asym_id,
                 entity_ids,
             } => write!(
                 f,
-                "mmCIF structural instance `{asym_id}` has conflicting source entity IDs {entity_ids:?}"
+                "Structural instance {asym_id:?} has several entity IDs: {}.",
+                quoted_list(entity_ids)
             ),
             Self::ConflictingAsymEntityClassifications {
                 asym_id,
                 classifications,
             } => write!(
                 f,
-                "mmCIF structural instance `{asym_id}` has conflicting entity classifications {classifications:?}"
+                "Structural instance {asym_id:?} has several entity classifications: {}.",
+                entity_kinds(classifications)
             ),
             Self::ConflictingSourceEntityClassifications {
                 entity_id,
                 classifications,
             } => write!(
                 f,
-                "source mmCIF entity `{entity_id}` has conflicting classifications {classifications:?}"
+                "Source entity {entity_id:?} has several classifications: {}.",
+                entity_kinds(classifications)
             ),
             Self::UnknownClassifiedMolecule(molecule) => write!(
                 f,
-                "mmCIF entity semantics reference unknown {molecule}"
+                "The entity classifications name {molecule}. The model has no such instance."
             ),
-            Self::MissingAtomSite(atom) => write!(f, "{atom} has no biomolecular atom site"),
+            Self::MissingAtomSite(atom) => {
+                write!(f, "{} has no atom site.", Capitalized(atom))
+            }
             Self::DuplicateAtomSite(atom) => {
-                write!(f, "{atom} appears in more than one biomolecular atom site")
+                write!(f, "{} is in more than one atom site.", Capitalized(atom))
             }
-            Self::InconsistentAtomSite { atom, field } => {
-                write!(f, "{atom} has inconsistent atom-site {field}")
-            }
+            Self::InconsistentAtomSite { atom, field } => write!(
+                f,
+                "The {field} of {atom} differs from the rest of its residue or chain."
+            ),
             Self::DuplicateAtomIdentity(atom) => write!(
                 f,
-                "{atom} duplicates an mmCIF atom identity within one residue"
+                "{} repeats the identity of another atom of its residue.",
+                Capitalized(atom)
             ),
-            Self::MissingAtomProvenance(atom) => {
-                write!(f, "{atom} has no atom-level mmCIF source provenance")
-            }
-            Self::DuplicateAtomProvenance(atom) => {
-                write!(f, "{atom} has duplicate atom-level mmCIF source provenance")
-            }
-            Self::UnknownAtomProvenance(atom) => {
-                write!(f, "mmCIF source provenance references unknown {atom}")
-            }
-            Self::UnsupportedAtomField { atom, field } => {
-                write!(f, "{atom} has unsupported atom field `{field}`")
-            }
+            Self::MissingAtomProvenance(atom) => write!(
+                f,
+                "The interpretation reports have no source record of {atom}."
+            ),
+            Self::DuplicateAtomProvenance(atom) => write!(
+                f,
+                "The interpretation reports have two source records of {atom}."
+            ),
+            Self::UnknownAtomProvenance(atom) => write!(
+                f,
+                "The interpretation reports have a source record of {atom}. The model has no such atom."
+            ),
+            Self::UnsupportedAtomField { atom, field } => write!(
+                f,
+                "The {field} of {atom} has no mmCIF representation."
+            ),
             Self::FormalChargeOutOfRange { atom, charge } => write!(
                 f,
-                "{atom} formal charge {charge} is outside the PDBx/mmCIF range -8..=8"
+                "{} has formal charge {charge}, outside mmCIF's range of -8 to 8.",
+                Capitalized(atom)
             ),
             Self::UnsupportedStereo(molecule) => write!(
                 f,
-                "{molecule} contains stereochemistry not represented by the foundational mmCIF writer"
+                "The stereochemistry of {molecule} has no mmCIF representation."
             ),
-            Self::UnsupportedBondOrder { bond, order } => {
-                write!(f, "{bond} has unsupported mmCIF bond order {order:?}")
-            }
+            Self::UnsupportedBondOrder { bond, order } => write!(
+                f,
+                "The {} order of {bond} has no mmCIF representation.",
+                bond_order_name(*order)
+            ),
             Self::AmbiguousConnectionSelector(atom) => write!(
                 f,
-                "{atom} cannot be selected unambiguously by an mmCIF struct_conn partner"
+                "{} has no unique _struct_conn selector.",
+                Capitalized(atom)
             ),
-            Self::UnsupportedTextValue { item } => write!(
-                f,
-                "{item} contains a text value that cannot be emitted as a single mmCIF token"
-            ),
-            Self::EmptyEnsemble => f.write_str("cannot write an empty ensemble as mmCIF"),
+            Self::UnsupportedTextValue { item } => {
+                write!(f, "A value of {item} does not fit one mmCIF token.")
+            }
+            Self::EmptyEnsemble => f.write_str("The ensemble has no samples."),
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
-                "mmCIF writing requires {expected} interpretation reports, but received {actual}"
+                "There are {actual} interpretation reports for {expected} models."
             ),
             Self::IncompatibleEnsembleSample { sample, field } => write!(
                 f,
-                "ensemble sample {sample} has incompatible mmCIF {field}"
+                "Ensemble sample {sample} has a different {field} from the first sample."
             ),
             Self::UnrepresentableEnsembleSample { sample, field } => write!(
                 f,
-                "mmCIF cannot represent the {field} of ensemble sample {sample}"
+                "The {field} of ensemble sample {sample} has no mmCIF representation."
             ),
-            Self::UnrepresentableCell { reason } => {
-                write!(f, "mmCIF cannot represent the periodic cell: {reason}")
-            }
+            Self::UnrepresentableCell { reason } => reason.fmt(f),
         }
+    }
+}
+
+/// Names entity kinds in a sentence, such as `polymer and water`.
+fn entity_kinds(kinds: &[EntityKind]) -> String {
+    let names = kinds
+        .iter()
+        .map(|kind| match kind {
+            EntityKind::Polymer => "polymer".to_owned(),
+            EntityKind::Branched => "branched".to_owned(),
+            EntityKind::NonPolymer => "non-polymer".to_owned(),
+            EntityKind::Water => "water".to_owned(),
+            EntityKind::Other(name) => format!("{name:?}"),
+        })
+        .collect::<Vec<_>>();
+    and_list(&names)
+}
+
+/// Quotes values in a sentence, such as `"1" and "2"`.
+fn quoted_list(values: &[String]) -> String {
+    and_list(
+        &values
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// Joins items as `a`, `a and b`, or `a, b and c`.
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The name of a molecule class in a sentence.
+fn class_name(class: MoleculeClass) -> &'static str {
+    match class {
+        MoleculeClass::Protein => "protein",
+        MoleculeClass::Dna => "DNA",
+        MoleculeClass::Rna => "RNA",
+        MoleculeClass::Carbohydrate => "carbohydrate",
+        MoleculeClass::Water => "water",
+        MoleculeClass::Ion => "ion",
+        MoleculeClass::SmallMolecule => "small-molecule",
+        MoleculeClass::Other => "other",
+    }
+}
+
+/// The name of a bond order in a sentence, such as `double` in `the double
+/// order of bond 3`.
+pub(super) fn bond_order_name(order: BondOrder) -> &'static str {
+    match order {
+        BondOrder::Zero => "zero",
+        BondOrder::Single => "single",
+        BondOrder::Double => "double",
+        BondOrder::Triple => "triple",
+        BondOrder::Quadruple => "quadruple",
+        BondOrder::Dative => "dative",
     }
 }
 
