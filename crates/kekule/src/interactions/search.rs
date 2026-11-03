@@ -90,11 +90,13 @@ impl<'a> InteractionSide<'a> {
 ///
 /// Hydrophobic contacts are reduced as PLIP reduces them (Salentin et al.
 /// 2015). Contacts between the atoms of two rings that π-stack are dropped,
-/// since the stacking covers them. Then each atom of a first end keeps only
-/// its closest contact with each residue, and each atom of a second end
-/// keeps only its closest remaining contact with each residue. An atom
-/// outside any residue counts its molecule as its residue. Equal distances
-/// keep the contact with the lower atoms. Every other qualifying pair is
+/// since the stacking covers them. Then each atom of `first` keeps only its
+/// closest contact with each residue, and each atom of `second` keeps only
+/// its closest remaining contact with each residue. An atom of both sets
+/// keeps one contact with each residue whichever end it is, so the result
+/// does not depend on atom order. An atom outside any residue counts its
+/// molecule as its residue. Equal distances keep the contact with the lower
+/// atoms. Every other qualifying pair is
 /// reported. No criterion has a lower distance bound, so clashes within a
 /// distance count.
 ///
@@ -772,14 +774,36 @@ impl<'a> Search<'a> {
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        // Each first atom's closest contact with each residue, then each
-        // second atom's closest remaining contact with each residue. The
-        // sorted order puts lower atoms first, so they win ties.
-        let closest =
-            |candidates: &[usize], key: &dyn Fn(&Interaction) -> (TopologyAtomIndex, Unit)| {
-                let mut best = HashMap::<_, usize>::new();
-                for &index in candidates {
-                    best.entry(key(&found[index]))
+        // Each atom of the first set keeps its closest contact with each
+        // residue, then each atom of the second set its closest remaining
+        // one. Within one structure an atom of both sets may be either end,
+        // so each pass groups a contact under every end whose atom is in
+        // that pass's set, and keeps it only if it is closest in each group.
+        // Across structures, the ends are the sides. The sorted order puts
+        // lower atoms first, so they win ties.
+        let ends = |interaction: &Interaction, of_first: bool| {
+            let (first, second) = atoms(interaction);
+            let first_key = (first, Unit::of(self.second.topology, second));
+            let second_key = (second, Unit::of(self.first.topology, first));
+            let side = if of_first { &self.first } else { &self.second };
+            let mut keys = Vec::with_capacity(2);
+            if self.within {
+                if side.selected(first) {
+                    keys.push(first_key);
+                }
+                if side.selected(second) {
+                    keys.push(second_key);
+                }
+            } else {
+                keys.push(if of_first { first_key } else { second_key });
+            }
+            keys
+        };
+        let closest = |candidates: &[usize], of_first: bool| {
+            let mut best = HashMap::<_, usize>::new();
+            for &index in candidates {
+                for key in ends(&found[index], of_first) {
+                    best.entry(key)
                         .and_modify(|kept| {
                             if found[index].distance < found[*kept].distance {
                                 *kept = index;
@@ -787,20 +811,21 @@ impl<'a> Search<'a> {
                         })
                         .or_insert(index);
                 }
-                let mut kept = best.into_values().collect::<Vec<_>>();
-                kept.sort_unstable();
-                kept
-            };
-        let candidates = closest(&candidates, &|interaction| {
-            let (first, second) = atoms(interaction);
-            (first, Unit::of(self.second.topology, second))
-        });
-        let kept = closest(&candidates, &|interaction| {
-            let (first, second) = atoms(interaction);
-            (second, Unit::of(self.first.topology, first))
-        })
-        .into_iter()
-        .collect::<HashSet<_>>();
+            }
+            candidates
+                .iter()
+                .copied()
+                .filter(|&index| {
+                    ends(&found[index], of_first)
+                        .iter()
+                        .all(|key| best[key] == index)
+                })
+                .collect::<Vec<_>>()
+        };
+        let candidates = closest(&candidates, true);
+        let kept = closest(&candidates, false)
+            .into_iter()
+            .collect::<HashSet<_>>();
         found
             .into_iter()
             .enumerate()

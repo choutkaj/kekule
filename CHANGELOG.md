@@ -762,9 +762,9 @@ are marked **Breaking:**.
 - **Breaking:** hydrophobic contacts are reduced as PLIP reduces them
   (SeekDelta K63). Before, every pair of hydrophobic atoms within the cutoff
   was a contact. Now contacts between two rings that π-stack are dropped,
-  since the stacking covers them. Then each atom of a first end keeps only
-  its closest contact with each residue, and each atom of a second end its
-  closest remaining contact with each residue. An atom outside any residue
+  since the stacking covers them. Then each atom of the first set keeps only
+  its closest contact with each residue, and each atom of the second set its
+  closest remaining contact with each residue, whichever end it is. An atom outside any residue
   counts its molecule as its residue. Both `find_interactions_within` and
   `find_interactions_between` reduce. KRas G12C's inhibitor (PDB 9UOH) has 11
   hydrophobic contacts instead of 20.

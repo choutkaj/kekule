@@ -930,6 +930,38 @@ fn hydrophobic_contacts_keep_the_closest_per_atom_and_residue() {
 }
 
 #[test]
+fn hydrophobic_reduction_ignores_atom_order_and_end_order() {
+    // A methane 3.6 Å from one ethane carbon and 3.5 Å from the other keeps
+    // only the closer contact, whether the sets overlap or not and whatever
+    // the atom order. Atom order: ethane A, methane, ethane B; then ethane
+    // A, ethane B, methane.
+    for (smiles, methane, closer) in [("C1.C.C1", 1, 2), ("CC.C", 2, 1)] {
+        let mut points = vec![p(3.6, 0.0, 0.0), p(0.0, 3.5, 0.0)];
+        points.insert(methane, p(0.0, 0.0, 0.0));
+        let all = || 0..3;
+        let expected = [(methane.min(closer), methane.max(closer))];
+        for (first, second) in [
+            (all().collect::<Vec<_>>(), all().collect::<Vec<_>>()),
+            (vec![methane], all().collect()),
+            (all().collect(), vec![methane]),
+        ] {
+            let found = find_with(
+                smiles,
+                &points,
+                first,
+                second,
+                &InteractionCriteria::default(),
+            );
+            let unordered = contacts(&found)
+                .into_iter()
+                .map(|(a, b)| (a.min(b), a.max(b)))
+                .collect::<Vec<_>>();
+            assert_eq!(unordered, expected, "{smiles}");
+        }
+    }
+}
+
+#[test]
 fn stacked_rings_have_no_hydrophobic_contacts_between_them() {
     // Two eclipsed benzenes 3.5 Å apart: the stacking covers their contacts.
     let points = two_benzenes(tilted(p(0.0, 0.0, 3.5), 0.0));
