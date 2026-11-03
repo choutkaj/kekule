@@ -171,6 +171,8 @@ fn cip_resonance_and_fixed_hydrogens_survive() {
     let mut molecule = perceived("N[C@@H](C)C(=O)[O-]");
     kekule::stereo::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
     assert!(molecule.perception().cip().is_some());
+    let resonance = molecule.perception().resonance().unwrap();
+    assert_eq!(resonance.bonds().len(), 2);
     let decoded = round_trip(&molecule).into_molecule().unwrap();
     assert_same_molecule(&decoded, &molecule);
 }
@@ -755,6 +757,18 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
         })
     );
     assert_eq!(error.byte_offset(), Some(12));
+
+    let mut older = bytes.clone();
+    older[8..12].copy_from_slice(&2u32.to_le_bytes());
+    let error = native::read(older.as_slice(), NativeReadOptions::default()).unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::NativeVersion {
+            found: 2,
+            supported: NATIVE_FORMAT_VERSION,
+        })
+    );
+    assert!(error.to_string().contains("version 2"), "{error}");
 
     let mut flagged = bytes;
     flagged[13] |= 0b10;

@@ -1502,7 +1502,8 @@ pub mod native {
     }
 }
 
-/// Derived valence, rings, aromaticity, conjugation and explicit resonance work.
+/// Derived valence, rings, aromaticity, conjugation, resonance and explicit
+/// resonance enumeration.
 ///
 /// [`crate::molecule::Molecule::perceive`] installs Kekule's default transactional perception
 /// profile. The nested modules expose the individual expert algorithms.
@@ -1529,13 +1530,16 @@ pub mod native {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub mod perception {
-    /// Connected conjugated groups and explicit RDKit-like contributor enumeration.
+    /// Resonance delocalization perception, installed by default perception,
+    /// and explicit RDKit-like contributor enumeration.
     pub mod resonance {
         pub use crate::algorithms::{
             enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError,
-            ResonanceFlags, ResonanceOptions, ResonanceStructures,
+            ResonanceFlags, ResonanceOptions, ResonancePerceptionError, ResonanceStructures,
         };
-        pub use crate::molecule::delocalization::{ResonanceGroup, ResonancePerception};
+        pub use crate::molecule::delocalization::{
+            ResonanceGroup, ResonanceModel, ResonancePerception,
+        };
     }
     /// Bond conjugation, including aromatic bonds, without contributor enumeration.
     pub mod conjugation {

@@ -5,7 +5,9 @@ use super::{
     checked_fixed_id_collection_len, AtomId, BondId, Molecule, StereoDescriptor, StereoElementId,
     StereoElementKind,
 };
-use super::{ConjugationModel, ConjugationPerception, ResonanceGroup, ResonancePerception};
+use super::{
+    ConjugationModel, ConjugationPerception, ResonanceGroup, ResonanceModel, ResonancePerception,
+};
 
 /// The valence model used to produce installed valence state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,16 +466,18 @@ impl PerceptionBuilder {
         });
         Ok(self)
     }
-    /// Adds connected groups, ordered by their smallest bond ID.
-    /// Installation checks the complete partition, including empty or duplicate members.
+    /// Adds resonance delocalization: connected groups of delocalized bonds,
+    /// ordered by their smallest bond ID. Installation checks the groups
+    /// against the graph and the installed aromaticity.
     ///
     /// # Errors
     ///
     /// [`PerceptionBuildError::ComponentCapacityExceeded`] when the groups or a
     /// group's members exceed ID capacity.
-    pub fn with_resonance_groups(
+    pub fn with_resonance(
         mut self,
-        mut groups: Vec<ResonanceGroup>,
+        model: ResonanceModel,
+        groups: Vec<ResonanceGroup>,
     ) -> Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(groups.len(), PerceptionComponent::Conjugation)?;
         for group in &groups {
@@ -486,8 +490,7 @@ impl PerceptionBuilder {
                 PerceptionComponent::Conjugation,
             )?;
         }
-        groups.sort_by_key(|group| group.bonds.iter().min().copied());
-        self.state.resonance = Some(ResonancePerception { groups });
+        self.state.resonance = Some(ResonancePerception::new(model, groups));
         Ok(self)
     }
     /// Installs exact inferred counts with the model and validation policy
@@ -726,8 +729,8 @@ impl fmt::Display for MalformedRingReason {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DelocalizationIssue {
-    /// Resonance groups are installed without conjugation.
-    GroupsWithoutConjugation,
+    /// Resonance delocalization is installed without aromaticity.
+    ResonanceWithoutAromaticity,
     /// Conjugation is installed without aromaticity.
     ConjugationWithoutAromaticity,
     /// The conjugated atoms are not exactly the endpoints of the conjugated
@@ -740,9 +743,14 @@ pub enum DelocalizationIssue {
         /// The group position.
         group: usize,
     },
-    /// A bond of group `group` is not conjugated or belongs to an earlier
-    /// group.
-    GroupBondsNotPartition {
+    /// A bond of group `group` repeats or belongs to an earlier group.
+    RepeatedGroupBond {
+        /// The group position.
+        group: usize,
+    },
+    /// A bond of group `group` is aromatic; aromaticity, not resonance,
+    /// delocalizes aromatic bonds.
+    AromaticGroupBond {
         /// The group position.
         group: usize,
     },
@@ -761,14 +769,14 @@ pub enum DelocalizationIssue {
         /// The group position.
         group: usize,
     },
-    /// The groups do not cover every conjugated atom and bond.
-    IncompleteGroupPartition,
 }
 
 impl fmt::Display for DelocalizationIssue {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::GroupsWithoutConjugation => formatter.write_str("groups require conjugation"),
+            Self::ResonanceWithoutAromaticity => {
+                formatter.write_str("resonance requires aromaticity")
+            }
             Self::ConjugationWithoutAromaticity => {
                 formatter.write_str("conjugation requires aromaticity")
             }
@@ -779,10 +787,13 @@ impl fmt::Display for DelocalizationIssue {
                 formatter.write_str("aromatic bonds must be conjugated")
             }
             Self::EmptyGroup { group } => write!(formatter, "group {group} is empty"),
-            Self::GroupBondsNotPartition { group } => write!(
+            Self::RepeatedGroupBond { group } => write!(
                 formatter,
-                "group {group} bonds do not partition conjugation"
+                "group {group} repeats a bond or shares one with an earlier group"
             ),
+            Self::AromaticGroupBond { group } => {
+                write!(formatter, "group {group} has an aromatic bond")
+            }
             Self::OverlappingGroupAtom { group } => {
                 write!(
                     formatter,
@@ -794,9 +805,6 @@ impl fmt::Display for DelocalizationIssue {
                 "group {group} atoms are not exactly its bond endpoints"
             ),
             Self::DisconnectedGroup { group } => write!(formatter, "group {group} is disconnected"),
-            Self::IncompleteGroupPartition => {
-                formatter.write_str("incomplete conjugated-group partition")
-            }
         }
     }
 }
@@ -1033,83 +1041,81 @@ fn validate_delocalization(
     state: &Perception,
 ) -> Result<(), PerceptionInstallError> {
     let bad = PerceptionInstallError::InvalidDelocalization;
-    let Some(conjugation) = &state.conjugation else {
-        return if state.resonance.is_some() {
-            Err(bad(DelocalizationIssue::GroupsWithoutConjugation))
-        } else {
-            Ok(())
-        };
+    if let Some(conjugation) = &state.conjugation {
+        let aromaticity = state
+            .aromaticity
+            .as_ref()
+            .ok_or(bad(DelocalizationIssue::ConjugationWithoutAromaticity))?;
+        let mut endpoints = BTreeSet::new();
+        for &atom in &conjugation.atoms {
+            mol.atom(atom)
+                .ok_or(PerceptionInstallError::InvalidAtomId(atom))?;
+        }
+        for &id in &conjugation.bonds {
+            let bond = mol
+                .bond(id)
+                .ok_or(PerceptionInstallError::InvalidBondId(id))?;
+            endpoints.extend([bond.a(), bond.b()]);
+        }
+        if endpoints != conjugation.atoms {
+            return Err(bad(DelocalizationIssue::ConjugatedAtomsNotBondEndpoints));
+        }
+        if !aromaticity.bonds.is_subset(&conjugation.bonds) {
+            return Err(bad(DelocalizationIssue::AromaticBondNotConjugated));
+        }
+    }
+    let Some(resonance) = &state.resonance else {
+        return Ok(());
     };
     let aromaticity = state
         .aromaticity
         .as_ref()
-        .ok_or(bad(DelocalizationIssue::ConjugationWithoutAromaticity))?;
-    let mut endpoints = BTreeSet::new();
-    for &atom in &conjugation.atoms {
-        mol.atom(atom)
-            .ok_or(PerceptionInstallError::InvalidAtomId(atom))?;
-    }
-    for &id in &conjugation.bonds {
-        let bond = mol
-            .bond(id)
-            .ok_or(PerceptionInstallError::InvalidBondId(id))?;
-        endpoints.extend([bond.a(), bond.b()]);
-    }
-    if endpoints != conjugation.atoms {
-        return Err(bad(DelocalizationIssue::ConjugatedAtomsNotBondEndpoints));
-    }
-    if !aromaticity.bonds.is_subset(&conjugation.bonds) {
-        return Err(bad(DelocalizationIssue::AromaticBondNotConjugated));
-    }
-    if let Some(resonance) = &state.resonance {
-        let mut atoms = BTreeSet::new();
-        let mut bonds = BTreeSet::new();
-        for (index, group) in resonance.groups.iter().enumerate() {
-            if group.bonds.is_empty() {
-                return Err(bad(DelocalizationIssue::EmptyGroup { group: index }));
+        .ok_or(bad(DelocalizationIssue::ResonanceWithoutAromaticity))?;
+    let mut atoms = BTreeSet::new();
+    let mut bonds = BTreeSet::new();
+    for (index, group) in resonance.groups.iter().enumerate() {
+        if group.bonds.is_empty() {
+            return Err(bad(DelocalizationIssue::EmptyGroup { group: index }));
+        }
+        let mut group_ends = BTreeSet::new();
+        for &id in &group.bonds {
+            let bond = mol
+                .bond(id)
+                .ok_or(PerceptionInstallError::InvalidBondId(id))?;
+            if !bonds.insert(id) {
+                return Err(bad(DelocalizationIssue::RepeatedGroupBond { group: index }));
             }
-            let mut group_ends = BTreeSet::new();
-            for &id in &group.bonds {
-                if !conjugation.bonds.contains(&id) || !bonds.insert(id) {
-                    return Err(bad(DelocalizationIssue::GroupBondsNotPartition {
-                        group: index,
-                    }));
-                }
-                let bond = mol
-                    .bond(id)
-                    .ok_or(PerceptionInstallError::InvalidBondId(id))?;
-                group_ends.extend([bond.a(), bond.b()]);
+            if aromaticity.bonds.contains(&id) {
+                return Err(bad(DelocalizationIssue::AromaticGroupBond { group: index }));
             }
-            for &id in &group.atoms {
-                if !atoms.insert(id) {
-                    return Err(bad(DelocalizationIssue::OverlappingGroupAtom {
-                        group: index,
-                    }));
-                }
-            }
-            if group_ends != group.atoms.iter().copied().collect() {
-                return Err(bad(DelocalizationIssue::GroupAtomsNotBondEndpoints {
+            group_ends.extend([bond.a(), bond.b()]);
+        }
+        for &id in &group.atoms {
+            if !atoms.insert(id) {
+                return Err(bad(DelocalizationIssue::OverlappingGroupAtom {
                     group: index,
                 }));
             }
-            let member_bonds: BTreeSet<_> = group.bonds.iter().copied().collect();
-            let mut reached = BTreeSet::new();
-            let mut todo = vec![group.atoms[0]];
-            while let Some(atom) = todo.pop() {
-                if reached.insert(atom) {
-                    for (id, bond) in mol.incident_bonds(atom).expect("validated atom") {
-                        if member_bonds.contains(&id) {
-                            todo.push(bond.other_atom(atom));
-                        }
+        }
+        if group_ends != group.atoms.iter().copied().collect() {
+            return Err(bad(DelocalizationIssue::GroupAtomsNotBondEndpoints {
+                group: index,
+            }));
+        }
+        let member_bonds: BTreeSet<_> = group.bonds.iter().copied().collect();
+        let mut reached = BTreeSet::new();
+        let mut todo = vec![group.atoms[0]];
+        while let Some(atom) = todo.pop() {
+            if reached.insert(atom) {
+                for (id, bond) in mol.incident_bonds(atom).expect("validated atom") {
+                    if member_bonds.contains(&id) {
+                        todo.push(bond.other_atom(atom));
                     }
                 }
             }
-            if reached != group_ends {
-                return Err(bad(DelocalizationIssue::DisconnectedGroup { group: index }));
-            }
         }
-        if atoms != conjugation.atoms || bonds != conjugation.bonds {
-            return Err(bad(DelocalizationIssue::IncompleteGroupPartition));
+        if reached != group_ends {
+            return Err(bad(DelocalizationIssue::DisconnectedGroup { group: index }));
         }
     }
     Ok(())

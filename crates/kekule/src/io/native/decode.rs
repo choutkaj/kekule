@@ -25,7 +25,7 @@ use crate::molecule::{
 use crate::perception::{
     aromaticity::AromaticityModel,
     conjugation::ConjugationModel,
-    resonance::ResonanceGroup,
+    resonance::{ResonanceGroup, ResonanceModel},
     rings::{Ring, RingBasisModel, RingBasisState, RingMembership, RingSet},
     valence::{ValenceModel, ValenceValidation},
     Perception,
@@ -757,6 +757,10 @@ impl<R: Read> Decoder<'_, R> {
                 .map_err(|error| built(self, error))?;
         }
         if sections & 16 != 0 {
+            let model = match self.u8()? {
+                0 => ResonanceModel::ChargeMoves,
+                other => return Err(self.invalid(format!("unknown resonance model {other}"))),
+            };
             let group_count = self.count(bond_count, Resource::Values)?;
             let mut groups = Vec::with_capacity(group_count.min(CHUNK_BYTES));
             for _ in 0..group_count {
@@ -765,7 +769,7 @@ impl<R: Read> Decoder<'_, R> {
                 groups.push(ResonanceGroup { atoms, bonds });
             }
             builder = builder
-                .with_resonance_groups(groups)
+                .with_resonance(model, groups)
                 .map_err(|error| built(self, error))?;
         }
         if sections & 32 != 0 {

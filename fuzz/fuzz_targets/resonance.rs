@@ -17,8 +17,10 @@ fuzz_target!(|data: &[u8]| {
             continue;
         }
         let source = mol.clone();
-        perceive_resonance(&mut mol).expect("default perception supplies conjugation");
         let before = mol.perception().clone();
+        perceive_resonance(&mut mol, ResonanceModel::ChargeMoves)
+            .expect("default perception supplies aromaticity and hydrogens");
+        assert_eq!(mol.perception(), &before);
         let options = ResonanceOptions::default()
             .with_flags(ResonanceFlags::from_bits(mask).unwrap())
             .with_max_structures(16)

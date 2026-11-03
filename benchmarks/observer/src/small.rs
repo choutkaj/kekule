@@ -56,7 +56,7 @@ pub(crate) fn observe(
         "rings" => ring_facts(&mut components, &mut facts)?,
         "aromaticity" => aromaticity_facts(&mut components, options, &mut facts)?,
         "conjugation" => conjugation(&components, &mut facts)?,
-        "resonance" => resonance_facts(&mut components, &mut facts)?,
+        "resonance" => resonance_facts(&components, &mut facts)?,
         "stereo.candidates" => candidates(&components, &mut facts)?,
         "stereo.cip" => cip(&mut components, &mut facts)?,
         "symmetry" => symmetry(&components, &mut facts),
@@ -407,17 +407,12 @@ fn conjugation(components: &[Component], facts: &mut Facts) -> Result<(), Failur
 
 /// Conjugated groups and default-option contributors, per component. A
 /// contributor is identified by its nonzero charges and non-single bonds.
-fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<(), Failure> {
-    for component in components.iter_mut() {
-        resonance::perceive_resonance(&mut component.molecule)
-            .map_err(|e| Failure::new("resonance", e))?;
-        let component = &*component;
+fn resonance_facts(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
+    for component in components.iter() {
         let molecule = &component.molecule;
-        let state = molecule
-            .perception()
-            .resonance()
-            .ok_or_else(|| Failure::new("resonance", "no resonance state after perception"))?;
-        for group in state.groups() {
+        let structures = resonance::enumerate_resonance(molecule, Default::default())
+            .map_err(|e| Failure::new("resonance", e))?;
+        for group in structures.groups() {
             let mut atoms = group
                 .atoms
                 .iter()
@@ -434,8 +429,6 @@ fn resonance_facts(components: &mut [Component], facts: &mut Facts) -> Result<()
             facts.push(json!(["resonance", "group", atoms[0], "atoms", atoms]));
             facts.push(json!(["resonance", "group", atoms[0], "bonds", bonds]));
         }
-        let structures = resonance::enumerate_resonance(molecule, Default::default())
-            .map_err(|e| Failure::new("resonance", e))?;
         let mut contributors = BTreeSet::new();
         for contributor in structures.contributors() {
             let mut charges = contributor

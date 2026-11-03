@@ -35,7 +35,6 @@ fn conjugation_matches_pinned_rdkit_local_rules() {
             expected,
             "{smi}"
         );
-        assert!(m.perception().resonance().is_none());
     }
 }
 
@@ -71,11 +70,14 @@ fn default_contributors_and_all_kekule_forms() {
 }
 
 #[test]
-fn group_preparation_is_separate_and_transactional() {
+fn resonance_perception_is_default_and_follows_aromaticity() {
     let mut m = molecule("CC(=O)NCC(=O)[O-]");
     let original = m.clone();
-    perceive_resonance(&mut m).unwrap();
-    assert_eq!(m.perception().resonance().unwrap().groups().len(), 2);
+    let installed = m.perception().resonance().unwrap().clone();
+    assert_eq!(installed.model(), ResonanceModel::ChargeMoves);
+    assert_eq!(installed.groups().len(), 1);
+    perceive_resonance(&mut m, ResonanceModel::ChargeMoves).unwrap();
+    assert_eq!(m.perception().resonance(), Some(&installed));
     assert_eq!(m, original);
     let before = m.perception().clone();
     assert!(matches!(
@@ -93,6 +95,11 @@ fn group_preparation_is_separate_and_transactional() {
     assert!(m.perception().resonance().is_none());
     perceive_conjugation(&mut m, ConjugationModel::RdkitLike).unwrap();
     assert!(m.perception().conjugation().is_some());
+    assert!(m.perception().resonance().is_none());
+    perceive_resonance(&mut m, ResonanceModel::ChargeMoves).unwrap();
+    assert_eq!(m.perception().resonance(), Some(&installed));
+    perceive_conjugation(&mut m, ConjugationModel::RdkitLike).unwrap();
+    assert_eq!(m.perception().resonance(), Some(&installed));
 }
 
 #[test]
@@ -104,9 +111,13 @@ fn missing_prerequisites_do_not_install_empty_state() {
         Err(ConjugationError::MissingAromaticity)
     );
     assert_eq!(
-        perceive_resonance(&mut m),
-        Err(ResonanceError::MissingConjugation)
+        perceive_resonance(&mut m, ResonanceModel::ChargeMoves),
+        Err(ResonancePerceptionError::MissingAromaticity)
     );
+    assert!(matches!(
+        enumerate_resonance(&m, Default::default()),
+        Err(ResonanceError::MissingConjugation)
+    ));
     assert_eq!(m.perception(), &before);
 }
 
@@ -245,7 +256,7 @@ fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
         let before = m.perception().clone();
         let text = smiles::write(&m, smiles::SmilesWriteOptions::canonical()).unwrap();
         perceive_conjugation(&mut m, ConjugationModel::RdkitLike).unwrap();
-        perceive_resonance(&mut m).unwrap();
+        perceive_resonance(&mut m, ResonanceModel::ChargeMoves).unwrap();
         enumerate_resonance(&m, Default::default()).unwrap();
         assert_eq!(m, chemistry);
         assert_eq!(m.perception().aromaticity(), before.aromaticity());
@@ -258,7 +269,7 @@ fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
         m.clear_perception();
         m.install_perception(state.clone()).unwrap();
         assert_eq!(m.perception(), &state);
-        perceive_resonance(&mut m).unwrap();
+        perceive_resonance(&mut m, ResonanceModel::ChargeMoves).unwrap();
         assert_eq!(m.perception(), &state);
     }
 }
@@ -267,7 +278,7 @@ fn explicit_preparation_preserves_chemistry_aromaticity_cip_and_output() {
 fn present_empty_sections_and_prerequisite_invalidation() {
     let mut m = molecule("CC");
     assert!(m.perception().conjugation().is_some());
-    assert!(m.perception().resonance().is_none());
+    assert!(m.perception().resonance().unwrap().groups().is_empty());
     let a = m.atom_ids().next().unwrap();
     let conjugation = m.perception().conjugation().unwrap();
     assert!(!conjugation.atom_is_conjugated(a));
@@ -276,14 +287,15 @@ fn present_empty_sections_and_prerequisite_invalidation() {
     let bond = m.bond_ids().next().unwrap();
     assert!(!conjugation.bond_is_conjugated(bond));
     assert!(!conjugation.bond_is_conjugated(BondId::new(999)));
-    perceive_resonance(&mut m).unwrap();
-    assert!(m.perception().resonance().unwrap().groups().is_empty());
+    let resonance = m.perception().resonance().unwrap();
+    assert!(!resonance.bond_is_delocalized(bond));
+    assert!(!resonance.bond_is_delocalized(BondId::new(999)));
+    assert_eq!(resonance.atom_group(a), None);
     perception::valence::perceive_valence(&mut m, ValenceModel::RdkitLike, Default::default())
         .unwrap();
     assert!(m.perception().conjugation().is_none());
     assert!(m.perception().resonance().is_none());
     m.perceive().unwrap();
-    perceive_resonance(&mut m).unwrap();
     let mut edit = m.to_editor();
     edit.atom_mut(a).unwrap().set_isotope(NonZeroU16::new(13));
     let edited = edit.finish().unwrap();
@@ -299,15 +311,14 @@ fn detached(m: &Molecule, groups: Vec<ResonanceGroup>) -> Perception {
         .unwrap()
         .with_conjugation(c.model(), c.atoms().collect(), c.bonds().collect())
         .unwrap()
-        .with_resonance_groups(groups)
+        .with_resonance(ResonanceModel::ChargeMoves, groups)
         .unwrap()
         .build()
 }
 
 #[test]
 fn detached_group_order_is_canonical_before_and_after_installation() {
-    let mut m = molecule("CC(=O)NCC(=O)[O-]");
-    perceive_resonance(&mut m).unwrap();
+    let mut m = molecule("[O-]C(=O)CCC(=O)[O-]");
     let expected = m.perception().resonance().unwrap().clone();
     let mut groups = expected.groups().to_vec();
     assert_eq!(groups.len(), 2);
@@ -329,12 +340,10 @@ fn detached_group_order_is_canonical_before_and_after_installation() {
 
 #[test]
 fn detached_group_validation_is_structural_and_atomic() {
-    let mut m = molecule("CC(=O)NCC(=O)[O-]");
-    perceive_resonance(&mut m).unwrap();
+    let mut m = molecule("[O-]C(=O)CCC(=O)[O-]");
     let before = m.perception().clone();
     let groups = before.resonance().unwrap().groups().to_vec();
     let mut malformed = Vec::new();
-    malformed.push(vec![]); // incomplete partition
     let mut empty = groups.clone();
     empty.push(ResonanceGroup {
         atoms: vec![],
@@ -367,8 +376,30 @@ fn detached_group_validation_is_structural_and_atomic() {
         assert!(m.install_perception(detached(&m, groups)).is_err());
         assert_eq!(m.perception(), &before);
     }
+    let without_aromaticity = Perception::builder()
+        .with_resonance(ResonanceModel::ChargeMoves, groups.clone())
+        .unwrap()
+        .build();
+    assert!(m.install_perception(without_aromaticity).is_err());
+    m.install_perception(detached(&m, vec![])).unwrap();
+    assert!(m.perception().resonance().unwrap().groups().is_empty());
     m.install_perception(detached(&m, groups)).unwrap();
-    assert!(m.perception().resonance().is_some());
+    assert_eq!(m.perception().resonance(), before.resonance());
+    let mut phenolate = molecule("[O-]c1ccccc1");
+    let ring = phenolate
+        .perception()
+        .aromaticity()
+        .unwrap()
+        .bonds()
+        .next()
+        .unwrap();
+    let bond = phenolate.bond(ring).unwrap();
+    let aromatic = vec![ResonanceGroup {
+        atoms: vec![bond.a().min(bond.b()), bond.a().max(bond.b())],
+        bonds: vec![ring],
+    }];
+    let state = detached(&phenolate, aromatic);
+    assert!(phenolate.install_perception(state).is_err());
 }
 
 #[test]
@@ -439,10 +470,12 @@ fn saturated_and_unsupported_parts_do_not_hide_supported_groups() {
         ("CC(=S)N", 1, 2),
         ("C=Cc1ccccc1", 1, 8),
     ] {
-        let mut m = molecule(smi);
-        perceive_resonance(&mut m).unwrap();
+        let m = molecule(smi);
         assert_eq!(
-            m.perception().resonance().unwrap().groups().len(),
+            enumerate_resonance(&m, Default::default())
+                .unwrap()
+                .groups()
+                .len(),
             groups,
             "{smi}"
         );
@@ -478,7 +511,6 @@ fn edited_ids_compact_before_reconstruction_and_enumeration() {
         [0, 1, 2, 3].map(kekule::molecule::AtomId::new)
     );
     m.perceive().unwrap();
-    perceive_resonance(&mut m).unwrap();
     let state = m.perception().clone();
     m.clear_perception();
     m.install_perception(state.clone()).unwrap();
@@ -541,4 +573,134 @@ fn structure_caps_and_unknown_hydrogens_are_explicit() {
         Err(ConjugationError::UnknownHydrogens(_))
     ));
     assert_eq!(m.perception(), &before);
+    // Neutral molecules need no hydrogen counts; a charge's path does.
+    perceive_resonance(&mut m, ResonanceModel::ChargeMoves).unwrap();
+    assert!(m.perception().resonance().unwrap().groups().is_empty());
+    let mut m = smiles::to_molecules("CC(=O)[O-]").unwrap().remove(0);
+    m.install_perception(
+        Perception::builder()
+            .with_aromaticity(AromaticityModel::RdkitLike, vec![], vec![])
+            .unwrap()
+            .build(),
+    )
+    .unwrap();
+    let before = m.perception().clone();
+    assert!(matches!(
+        perceive_resonance(&mut m, ResonanceModel::ChargeMoves),
+        Err(ResonancePerceptionError::UnknownHydrogens(_))
+    ));
+    assert_eq!(m.perception(), &before);
+}
+
+/// Delocalized bonds as sorted pairs of atom-map numbers.
+fn delocalized(smi: &str) -> Vec<[u32; 2]> {
+    let m = molecule(smi);
+    let resonance = m.perception().resonance().unwrap();
+    let map = |atom| m.atom(atom).unwrap().atom_map().map_or(0, |n| n.get());
+    let mut pairs: Vec<_> = resonance
+        .bonds()
+        .map(|id| {
+            let bond = m.bond(id).unwrap();
+            let mut pair = [map(bond.a()), map(bond.b())];
+            pair.sort_unstable();
+            pair
+        })
+        .collect();
+    pairs.sort_unstable();
+    pairs
+}
+
+#[test]
+fn moving_charges_delocalize_their_paths() {
+    for (smi, groups, bonds) in [
+        ("CC(=O)[O-]", 1, 2),
+        ("C=CC(=O)[O-]", 1, 2),
+        ("[O-]C(=O)C(=O)[O-]", 2, 4),
+        ("NC(N)=[NH2+]", 1, 3),
+        ("CCCNC(N)=[NH2+]", 1, 3),
+        ("CC(N)=[NH2+]", 1, 2),
+        ("C[N+](=O)[O-]", 1, 2),
+        ("[O-][N+](=O)[O-]", 1, 3),
+        ("COP(=O)([O-])[O-]", 1, 3),
+        ("COP(=O)([O-])OC", 1, 2),
+        ("COP(=S)([O-])[O-]", 1, 3),
+        ("CS(=O)(=O)[O-]", 1, 3),
+        ("CC(=O)[CH-]C(C)=O", 1, 4),
+        ("CC(=O)[N-]C", 1, 2),
+        ("CN=[N+]=[N-]", 1, 2),
+        ("C=C[O-]", 1, 2),
+        ("[CH2+]C=C", 1, 2),
+        ("[CH2-]C=C", 1, 2),
+        ("[O-]c1ccc(cc1)[N+](=O)[O-]", 1, 2),
+    ] {
+        let m = molecule(smi);
+        let resonance = m.perception().resonance().unwrap();
+        assert_eq!(resonance.groups().len(), groups, "{smi}");
+        assert_eq!(resonance.bonds().len(), bonds, "{smi}");
+        for (index, group) in resonance.groups().iter().enumerate() {
+            for &bond in &group.bonds {
+                assert!(resonance.bond_is_delocalized(bond));
+                assert_eq!(resonance.bond_group(bond), Some(index));
+            }
+            for &atom in &group.atoms {
+                assert_eq!(resonance.atom_group(atom), Some(index));
+            }
+        }
+    }
+}
+
+#[test]
+fn neutral_push_pull_aromatic_and_trapped_charges_stay_localized() {
+    for smi in [
+        "CC(=O)N",
+        "CC([O-])=[NH2+]",
+        "CC(=O)O",
+        "COP(=O)(O)O",
+        "CS(C)=O",
+        "C[S+](C)[O-]",
+        "C[N+](C)(C)[O-]",
+        "C[NH3+]",
+        "C=[N+](C)C",
+        "C=CC=C",
+        "C=CC=O",
+        "C=Cc1ccccc1",
+        "[O-]c1ccccc1",
+        "Cc1c[nH+]c[nH]1",
+        "c1ccccc1",
+    ] {
+        let m = molecule(smi);
+        assert!(
+            m.perception().resonance().unwrap().groups().is_empty(),
+            "{smi}"
+        );
+    }
+}
+
+#[test]
+fn ylidic_and_double_bonded_drawings_delocalize_alike() {
+    for (ylidic, double) in [
+        (
+            "[CH3:1][O:2][P+:3]([O-:4])([O-:5])[O-:6]",
+            "[CH3:1][O:2][P:3](=[O:4])([O-:5])[O-:6]",
+        ),
+        (
+            "[CH3:1][S++:2]([O-:3])([O-:4])[O-:5]",
+            "[CH3:1][S:2](=[O:3])(=[O:4])[O-:5]",
+        ),
+        (
+            "[CH3:1][O:2][P+:3]([O-:4])([O-:5])[O:6][CH3:7]",
+            "[CH3:1][O:2][P:3](=[O:4])([O-:5])[O:6][CH3:7]",
+        ),
+    ] {
+        assert_eq!(delocalized(ylidic), delocalized(double), "{ylidic}");
+        assert!(!delocalized(double).is_empty(), "{double}");
+    }
+    assert_eq!(
+        delocalized("[CH3:1][N+:2](=[O:3])[O-:4]"),
+        vec![[2, 3], [2, 4]]
+    );
+    assert_eq!(
+        delocalized("[O-:1][C:2](=[O:3])[CH2:4][C:5](=[O:6])[NH2:7]"),
+        vec![[1, 2], [2, 3]]
+    );
 }

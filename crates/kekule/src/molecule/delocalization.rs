@@ -1,5 +1,5 @@
-//! Reconstructible conjugation flags and connected resonance groups.
-use std::collections::BTreeSet;
+//! Reconstructible conjugation flags and resonance delocalization.
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{AtomId, BondId};
 
@@ -42,10 +42,19 @@ impl ConjugationPerception {
     }
 }
 
-/// One connected component of conjugated bonds, including aromatic bonds.
-///
-/// Membership does not imply equivalent bond orders, equal contributor weights,
-/// or more than one contributor under a particular enumeration policy.
+/// Rules used to perceive resonance delocalization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResonanceModel {
+    /// Contributors that move one formal charge along an alternating path of
+    /// non-aromatic bonds, keep every octet as it is, and add no charge; see
+    /// [`perceive_resonance`](crate::perception::resonance::perceive_resonance).
+    ChargeMoves,
+}
+
+/// Connected atoms and bonds: one delocalized group of installed resonance
+/// perception, or one connected component of conjugated bonds that
+/// contributor enumeration varies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResonanceGroup {
     /// The endpoints of the group's bonds, in ascending ID order.
@@ -54,23 +63,60 @@ pub struct ResonanceGroup {
     pub bonds: Vec<BondId>,
 }
 
-/// Installed conjugated-group partition. This contains no enumerated structures.
+/// Installed resonance delocalization: the bonds whose order differs between
+/// the contributors of their group, partitioned into connected groups.
+///
+/// Contributors are never enumerated or stored. Aromatic bonds are left to
+/// aromaticity and never belong to a group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResonancePerception {
+    pub(crate) model: ResonanceModel,
     pub(crate) groups: Vec<ResonanceGroup>,
+    pub(crate) atom_groups: BTreeMap<AtomId, usize>,
+    pub(crate) bond_groups: BTreeMap<BondId, usize>,
 }
 
 impl ResonancePerception {
-    /// Returns groups ordered by their smallest bond ID.
+    /// Orders `groups` by smallest bond ID and indexes their members.
+    pub(crate) fn new(model: ResonanceModel, mut groups: Vec<ResonanceGroup>) -> Self {
+        groups.sort_by_key(|group| group.bonds.first().copied());
+        let mut atom_groups = BTreeMap::new();
+        let mut bond_groups = BTreeMap::new();
+        for (index, group) in groups.iter().enumerate() {
+            atom_groups.extend(group.atoms.iter().map(|&atom| (atom, index)));
+            bond_groups.extend(group.bonds.iter().map(|&bond| (bond, index)));
+        }
+        Self {
+            model,
+            groups,
+            atom_groups,
+            bond_groups,
+        }
+    }
+    /// Returns the resonance model.
+    pub const fn model(&self) -> ResonanceModel {
+        self.model
+    }
+    /// Returns the delocalized groups, ordered by their smallest bond ID.
     pub fn groups(&self) -> &[ResonanceGroup] {
         &self.groups
     }
-    /// Returns the group containing an atom, or `None` outside conjugation.
-    pub fn atom_group(&self, atom: AtomId) -> Option<usize> {
-        self.groups.iter().position(|g| g.atoms.contains(&atom))
+    /// Whether resonance delocalizes one bond.
+    pub fn bond_is_delocalized(&self, bond: BondId) -> bool {
+        self.bond_groups.contains_key(&bond)
     }
-    /// Returns the group containing a bond, or `None` outside conjugation.
+    /// Iterates the delocalized bonds in ascending ID order.
+    pub fn bonds(&self) -> impl ExactSizeIterator<Item = BondId> + DoubleEndedIterator + '_ {
+        self.bond_groups.keys().copied()
+    }
+    /// Returns the index of the group containing an atom, or `None` when no
+    /// delocalized bond ends at it.
+    pub fn atom_group(&self, atom: AtomId) -> Option<usize> {
+        self.atom_groups.get(&atom).copied()
+    }
+    /// Returns the index of the group containing a bond, or `None` when the
+    /// bond is not delocalized.
     pub fn bond_group(&self, bond: BondId) -> Option<usize> {
-        self.groups.iter().position(|g| g.bonds.contains(&bond))
+        self.bond_groups.get(&bond).copied()
     }
 }

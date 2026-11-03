@@ -15,8 +15,8 @@ use crate::molecule::{
     StereoCarrier, StereoDescriptor, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
 };
 use crate::perception::{
-    aromaticity::AromaticityModel, conjugation::ConjugationModel, rings::RingBasisModel,
-    valence::ValenceModel, valence::ValenceValidation, Perception,
+    aromaticity::AromaticityModel, conjugation::ConjugationModel, resonance::ResonanceModel,
+    rings::RingBasisModel, valence::ValenceModel, valence::ValenceValidation, Perception,
 };
 use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue, StructureProperties,
@@ -410,6 +410,9 @@ impl<W: Write> Encoder<'_, W> {
             self.ids(conjugation.bonds().map(|bond| bond.raw()))?;
         }
         if let Some(resonance) = perception.resonance() {
+            self.u8(match resonance.model() {
+                ResonanceModel::ChargeMoves => 0,
+            })?;
             self.count(resonance.groups().len())?;
             for group in resonance.groups() {
                 self.ids(group.atoms.iter().map(|atom| atom.raw()))?;
