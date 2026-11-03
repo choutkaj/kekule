@@ -2,7 +2,8 @@
 //! about 100,000 atoms: 66 copies of KRas G12C with its inhibitor (PDB
 //! 9UOH) packed 45 Å apart, searched from one copy's inhibitor, from it and
 //! its pocket, and from a whole copy, within the structure and against the
-//! inhibitor as a separate structure.
+//! inhibitor as a separate structure. Two cases search without π stacking,
+//! whose stacked rings the hydrophobic reduction still finds.
 
 use std::error::Error;
 use std::hint::black_box;
@@ -72,16 +73,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
     let all = AtomSelection::all(Arc::clone(&topology));
     let criteria = InteractionCriteria::default();
-    let within = |first: &AtomSelection| {
+    let unstacked = criteria.with_pi_stacking(criteria.pi_stacking().with_enabled(false));
+    let within_by = |first: &AtomSelection, criteria: &InteractionCriteria| {
         let mut found = None;
         let time = median(|| {
             found = Some(
-                find_interactions_within(&features, &model, first, &all, &criteria)
+                find_interactions_within(&features, &model, first, &all, criteria)
                     .expect("valid search"),
             );
         });
         (time, found.expect("searched"))
     };
+    let within = |first: &AtomSelection| within_by(first, &criteria);
     let row = |case: &str, first: usize, second: usize, (time, found): (Duration, Interactions)| {
         println!(
             "| {case} | {first} | {second} | {} | {} | {:.0} |",
@@ -96,6 +99,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         ligand.len(),
         all.len(),
         within(&ligand),
+    );
+    row(
+        "inhibitor × every atom, no π stacking",
+        ligand.len(),
+        all.len(),
+        within_by(&ligand, &unstacked),
     );
     let pocket = ligand.expand_to_residues();
     let marked = AtomSelection::from_predicate(Arc::clone(&topology), |atom| {
@@ -121,6 +130,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         copy.len(),
         all.len(),
         within(&copy),
+    );
+    row(
+        "one copy × every atom, no π stacking",
+        copy.len(),
+        all.len(),
+        within_by(&copy, &unstacked),
     );
 
     // The inhibitor as its own structure against the block.
