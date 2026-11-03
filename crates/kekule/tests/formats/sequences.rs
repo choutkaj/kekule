@@ -223,6 +223,32 @@ fn stated_components_and_derived_monomers() {
 }
 
 #[test]
+fn atom_sites_name_instances_a_partial_struct_asym_omits() {
+    let text = TOY.replace(
+        "1 3 XSR n
+",
+        "1 3 XSR n
+2 5 ZZZ n
+2 6 GLY n
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+",
+    );
+    let interpretation = interpret(&text);
+    let entities = interpretation.report().polymer_entities();
+    assert_eq!(entities[1].monomers_source(), SequenceSource::Stated);
+    let instance = &entities[1].instances()[0];
+    assert_eq!(instance.asym_id(), "B");
+    assert!(instance.chain().is_some());
+    assert!(instance
+        .positions()
+        .iter()
+        .all(|position| position.residue().is_some()));
+}
+
+#[test]
 fn chain_sequences_of_a_pdb_entry() {
     let text = "\
 ATOM      1  CA  GLY A   1       0.000   0.000   0.000  1.00  0.00           C

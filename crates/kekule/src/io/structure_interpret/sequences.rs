@@ -299,9 +299,7 @@ pub(super) fn read_polymer_entities(
     // atom sites name, and monomers of entities `_entity_poly_seq` omits.
     let mut instances = Vec::<(usize, String)>::new();
     let mut listed = HashSet::<String>::new();
-    let struct_asym = block.category("_struct_asym")?;
-    let asyms_listed = struct_asym.is_some();
-    if let Some(table) = struct_asym {
+    if let Some(table) = block.category("_struct_asym")? {
         for row in 0..table.row_count() {
             let entity = required(&table, row, "_struct_asym.entity_id")?;
             if let Some(&index) = indices.get(entity) {
@@ -318,22 +316,18 @@ pub(super) fn read_polymer_entities(
     }
     let mut derived_monomers = BTreeMap::<String, BTreeMap<i32, Vec<String>>>::new();
     let mut previous = None::<(&str, Option<i32>, &str)>;
-    // `_struct_asym` lists every instance, so the atom sites are read only
-    // without it or for entities `_entity_poly_seq` omits.
-    let rows = if asyms_listed && derived.is_empty() {
-        &[][..]
-    } else {
-        rows
-    };
     for row in rows {
+        // Rows run residue by residue, so most repeat the previous residue.
+        if previous.is_some_and(|(asym, number, component)| {
+            asym == row.asym_id
+                && (derived.is_empty() || (number == row.label_seq_id && component == row.comp_id))
+        }) {
+            continue;
+        }
+        previous = Some((&row.asym_id, row.label_seq_id, &row.comp_id));
         let Some(entity) = row.entity_id.as_deref() else {
             continue;
         };
-        let current = (row.asym_id.as_str(), row.label_seq_id, row.comp_id.as_str());
-        if previous == Some(current) {
-            continue;
-        }
-        previous = Some(current);
         let Some(&index) = indices.get(entity) else {
             continue;
         };
