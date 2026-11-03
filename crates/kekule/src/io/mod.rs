@@ -3,6 +3,7 @@
 //! `pdb`, `xyz`, `components`, `macromolecular`); this module only organizes them.
 
 mod components;
+mod definition_reuse;
 mod element_symbol;
 mod lines;
 mod mmcif_category;

@@ -180,9 +180,11 @@ See [graph storage](crates/kekule/src/molecule/graph.rs),
 
 A published topology is nonempty and contains only complete connected molecule
 instances and used definitions. Definition reuse is explicit; ordinary molecular
-construction does not intern chemically equal inputs. Public system traversal is
-instance-first. A definition is a storage and reuse mechanism, not another
-chemical owner.
+construction does not intern chemically equal inputs. Structure-file
+interpretation reuses definitions by an explicit rule (see
+[parsing and interpretation](#parsing-interpretation-and-export)). Public
+system traversal is instance-first. A definition is a storage and reuse
+mechanism, not another chemical owner.
 
 `Topology` is one flat owner. Definitions and instances are peers: a definition
 holds reusable chemistry and an instance is one occurrence of it, and neither
@@ -633,6 +635,18 @@ owner plus a report; it does not run general perception, standardization,
 tautomerization, or protonation. Geometry may inform source stereo even when the
 caller ultimately requests topology only. Format convenience functions compose
 this pipeline without reimplementing it.
+
+mmCIF, PDB, and XYZ interpretation gives identical molecules one definition, so
+instances map atom for atom and perception runs once per distinct molecule: a
+crystal's waters share one definition. Two molecules are identical when, in
+local atom order, their atoms (element, isotope, formal charge, radical,
+implicit hydrogens, atom map), bonds, represented stereo, and properties are
+equal, and so are the labels the format gives each atom: component and atom
+name for mmCIF and PDB, none for XYZ. Classification reads those labels, so
+requiring them equal keeps one class valid for every instance. Hierarchy stays
+per instance, and editors clone a shared definition when an edit touches one
+instance, so the others keep it unchanged. See
+[definition reuse](crates/kekule/src/io/definition_reuse.rs).
 
 Interpretation never silently discards source content. Content the interpreter
 does not support is rejected by default; an explicit option downgrades it to typed

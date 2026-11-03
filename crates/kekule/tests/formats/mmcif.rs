@@ -655,3 +655,141 @@ fn metal_coordination_between_residues_is_recorded_not_bonded() {
     .unwrap();
     assert!(!model_only.contains("metalc"));
 }
+
+#[test]
+fn identical_molecules_share_one_definition_and_edit_alone() {
+    use kekule::molecule::Atom;
+    use kekule::topology::MoleculeDefinitionId;
+    use std::collections::BTreeMap;
+
+    // 9UOH: one protein, GDP, Mg2+, the inhibitor, a sulfate, and waters.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mmcif/9UOH.cif");
+    let text = std::fs::read_to_string(path).unwrap();
+    let interpreted = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let report = interpreted.report();
+    let topology = interpreted.topology();
+    let component = |instance: kekule::topology::MoleculeInstanceId| {
+        report
+            .instances()
+            .iter()
+            .find(|candidate| candidate.instance() == instance)
+            .unwrap()
+            .atoms()[0]
+            .component_id()
+            .to_owned()
+    };
+    let mut counts = BTreeMap::<MoleculeDefinitionId, (String, usize)>::new();
+    for instance in topology.instances() {
+        counts
+            .entry(instance.definition_id())
+            .or_insert_with(|| (component(instance.id()), 0))
+            .1 += 1;
+    }
+    let waters = topology
+        .instances()
+        .filter(|instance| component(instance.id()) == "HOH")
+        .count();
+    assert!(waters > 50);
+    let mut listed = counts.into_values().collect::<Vec<_>>();
+    listed.sort();
+    assert_eq!(
+        listed,
+        [
+            ("A1L9E", 1),
+            ("GDP", 1),
+            ("HOH", waters),
+            ("MET", 1),
+            ("MG", 1),
+            ("SO4", 1),
+        ]
+        .map(|(component, count)| (component.to_owned(), count))
+    );
+    assert_eq!(topology.definition_count(), 6);
+    assert_eq!(topology.instance_count(), waters + 5);
+
+    // Instances of one definition map atom for atom: each water's local
+    // atom 0 is its oxygen, named in its own atom site.
+    let water_instances = topology
+        .instances()
+        .filter(|instance| component(instance.id()) == "HOH")
+        .map(|instance| instance.id())
+        .collect::<Vec<_>>();
+    for instance in report
+        .instances()
+        .iter()
+        .filter(|instance| water_instances.contains(&instance.instance()))
+    {
+        let [oxygen] = instance.atoms() else {
+            panic!("a crystallographic water lists its oxygen alone");
+        };
+        assert_eq!((oxygen.atom().atom().index(), oxygen.atom_name()), (0, "O"));
+    }
+
+    // Default perception runs once per definition and serves every water.
+    let mut perceived = interpreted.model().clone();
+    perceived.perceive().unwrap();
+    let hydrogens = |model: &kekule::structure::Model, instance| {
+        model
+            .topology()
+            .instance(instance)
+            .unwrap()
+            .molecule()
+            .total_hydrogens(kekule::molecule::AtomId::new(0))
+            .unwrap()
+    };
+    assert!(water_instances
+        .iter()
+        .all(|&water| hydrogens(&perceived, water) == 2));
+
+    // Editing one water copies its definition; the others keep theirs.
+    let [edited, untouched, ..] = water_instances[..] else {
+        panic!("several waters");
+    };
+    let mut editor = perceived.to_editor();
+    let [oxygen, other_oxygen] = [edited, untouched].map(|instance| {
+        editor
+            .topology()
+            .atom_handle(kekule::topology::InstanceAtomId::new(
+                instance,
+                kekule::molecule::AtomId::new(0),
+            ))
+            .unwrap()
+    });
+    let element = perceived
+        .topology()
+        .instance(edited)
+        .unwrap()
+        .molecule()
+        .atom(kekule::molecule::AtomId::new(0))
+        .unwrap()
+        .element();
+    editor
+        .replace_atom(oxygen, Atom::new(element).with_formal_charge(-1))
+        .unwrap();
+    let (edited_model, correspondence) = editor.finish_with_correspondence().unwrap();
+    let topology = edited_model.topology();
+    assert_eq!(topology.definition_count(), 7);
+    let charge = |instance| {
+        topology
+            .instance(instance)
+            .unwrap()
+            .molecule()
+            .atom(kekule::molecule::AtomId::new(0))
+            .unwrap()
+            .formal_charge()
+    };
+    let published = |handle| correspondence.atom(handle).unwrap().0.instance();
+    assert_eq!(charge(published(oxygen)), -1);
+    assert_eq!(charge(published(other_oxygen)), 0);
+    let untouched_definition = topology
+        .instance(published(other_oxygen))
+        .unwrap()
+        .definition_id();
+    assert_eq!(
+        topology.instances_of(untouched_definition).count(),
+        waters - 1
+    );
+}

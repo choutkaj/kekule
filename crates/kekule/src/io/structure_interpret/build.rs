@@ -143,6 +143,16 @@ struct BuiltAtomProvenance {
 pub(super) type QualifiedAtomProperties = Vec<(InstanceAtomId, Option<f64>, Option<f64>)>;
 
 impl BuiltMoleculeProvenance {
+    /// Each atom's component and atom name, by local atom ID: what a shared
+    /// definition's instances must agree on besides chemistry.
+    pub(super) fn atom_labels(&self, atom_count: usize) -> Vec<(String, String)> {
+        let mut labels = vec![(String::new(), String::new()); atom_count];
+        for atom in &self.atoms {
+            labels[atom.atom.index()] = (atom.component_id.clone(), atom.atom_name.clone());
+        }
+        labels
+    }
+
     pub(super) fn qualify(
         self,
         molecule: MoleculeInstanceId,
