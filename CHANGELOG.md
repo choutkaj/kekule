@@ -11,6 +11,13 @@ are marked **Breaking:**.
 
 ### Added
 
+- Interpretation issues as sentences (SeekDelta K62b).
+  `StructureInterpretIssue` implements `Display`, one or two sentences per
+  issue, such as `Residue 5 of chain "A" in model "1" (component "7MG") has
+  no template charges. Atom "N7" (+1) takes charges from its bonds.`
+  `CellOmissionReason` writes a sentence and `EntityKind` its
+  `_entity.type` value. `MolfileUnsupported` writes its content and line,
+  such as `The V3000 option "HCOUNT" of atom 3 at line 12 is not read.`
 - Error chains as one message (SeekDelta K62).
   `kekule::diagnostics::ErrorChain` writes an error and every error of its
   `source()` chain as consecutive sentences, such as `Cannot build the

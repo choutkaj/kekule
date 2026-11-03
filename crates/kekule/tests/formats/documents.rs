@@ -724,6 +724,10 @@ fn molfile_unsupported_content_is_rejected_by_default_and_reported_on_request() 
 
         let interpretation = document.interpret(report).expect("reported on request");
         assert_eq!(interpretation.omitted(), expected, "{content}");
+        assert_eq!(
+            expected[0].to_string(),
+            format!("The {content} at line {line} is not read.")
+        );
         assert_eq!(interpretation.model().atom_count(), 2, "{content}");
         assert_eq!(interpretation.topology().instance_count(), 1, "{content}");
     }

@@ -460,6 +460,18 @@ impl MolfileUnsupported {
     }
 }
 
+/// Writes a sentence, such as `The V3000 option "HCOUNT" of atom 3 at line
+/// 12 is not read.`
+impl fmt::Display for MolfileUnsupported {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "The {} at {} is not read.",
+            self.content, self.location
+        )
+    }
+}
+
 /// The decoded connection table of one Molfile.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct MolfileCtab {
