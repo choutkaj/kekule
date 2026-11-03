@@ -63,6 +63,24 @@ pub(super) struct DeclaredConnection {
     pub(super) supplements_template: bool,
 }
 
+/// Metal coordination a record states between atoms of different residues:
+/// source connection metadata, never a bond, so it does not join molecules.
+#[derive(Debug, Clone)]
+pub(super) struct DeclaredCoordination {
+    /// The atom keys of the partners, in record order.
+    pub(super) atoms: [String; 2],
+    pub(super) connection_id: Option<String>,
+    pub(super) connection_type: String,
+    pub(super) line: Option<usize>,
+}
+
+/// The resolved records of one coordinate model.
+#[derive(Debug, Default)]
+pub(super) struct ResolvedConnections {
+    pub(super) bonds: Vec<DeclaredConnection>,
+    pub(super) coordination: Vec<DeclaredCoordination>,
+}
+
 /// Resolves every record against the selected rows of one coordinate model,
 /// uniting the instances that resolved bonds join.
 pub(super) fn resolve_connections(
@@ -73,7 +91,7 @@ pub(super) fn resolve_connections(
     union: &mut InstanceUnion,
     report: &mut StructureInterpretationReport,
     cancellation: Option<&Cancellation>,
-) -> Result<Vec<DeclaredConnection>, FormatError> {
+) -> Result<ResolvedConnections, FormatError> {
     let sites = records
         .iter()
         .any(|record| {
@@ -85,7 +103,7 @@ pub(super) fn resolve_connections(
         })
         .then(|| SiteIndex::new(rows, all_rows, selected_model));
     let names = (!records.is_empty()).then(|| NameIndex::new(rows));
-    let mut connections = Vec::new();
+    let mut resolved = ResolvedConnections::default();
     let mut declared = BTreeSet::new();
     for record in records {
         // Resolving a partner can scan every row of the model.
@@ -140,14 +158,26 @@ pub(super) fn resolve_connections(
             }
             DeclaredOrder::ByElements(order) => order,
         };
-        let supplements_template = bond.connectivity_only
-            && left.asym_id == right.asym_id
+        let same_residue = left.asym_id == right.asym_id
             && left.residue_key == right.residue_key
             && left.comp_id == right.comp_id;
+        report.applied_connections += 1;
+        // Coordination between residues is recorded, not bonded: covalent
+        // connectedness alone decides molecule boundaries.
+        if order == BondOrder::Dative && !same_residue {
+            resolved.coordination.push(DeclaredCoordination {
+                atoms: [left_atom, right_atom],
+                connection_id: bond.connection_id.clone(),
+                connection_type: bond.connection_type.clone(),
+                line: bond.line,
+            });
+            continue;
+        }
+        let supplements_template = bond.connectivity_only && same_residue;
         if !supplements_template {
             union.union(&left.instance_key, &right.instance_key);
         }
-        connections.push(DeclaredConnection {
+        resolved.bonds.push(DeclaredConnection {
             left_atom,
             right_atom,
             instance_key: left.instance_key.clone(),
@@ -156,9 +186,8 @@ pub(super) fn resolve_connections(
             connection_type: bond.connection_type.clone(),
             supplements_template,
         });
-        report.applied_connections += 1;
     }
-    Ok(connections)
+    Ok(resolved)
 }
 
 /// Alkali, alkaline-earth, transition, post-transition, lanthanide, and

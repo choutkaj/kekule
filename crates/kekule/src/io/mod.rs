@@ -95,8 +95,8 @@ pub use structure_documents::{
 pub use structure_interpret::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
-    ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
-    EntityMetadataPolicy, InstanceProvenance, ModelSelection, SourceResidueId,
+    ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
+    EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection, SourceResidueId,
     SourceResiduePosition, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
     StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
     StructureInterpretationReport,

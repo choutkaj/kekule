@@ -142,6 +142,19 @@ pub enum WriteOmission {
         /// The bonds left out.
         bonds: usize,
     },
+    /// Metal coordination records of an interpretation report, of this
+    /// many records, that name an atom the written model does not have.
+    Coordination {
+        /// The records left out.
+        records: usize,
+    },
+    /// Dative bonds between residues, of this many bonds, written as metal
+    /// coordination (mmCIF `metalc`, PDB `CONECT`), which macromolecular
+    /// readers record in their report rather than as bonds.
+    CoordinationBonds {
+        /// The bonds written so.
+        bonds: usize,
+    },
     /// Residues whose bonds differ from the component dictionary that
     /// readers apply to them, so readers will see the dictionary's bonds.
     DictionaryBonds {
@@ -220,6 +233,8 @@ impl Omissions {
             | O::AtomSites { atoms } => atoms,
             O::Stereo { molecules } => molecules,
             O::Bonds { bonds } => bonds,
+            O::Coordination { records } => records,
+            O::CoordinationBonds { bonds } => bonds,
             O::DictionaryBonds { residues } => residues,
             O::ChainIds { chains } => chains,
             O::Cell { structures }
@@ -248,6 +263,8 @@ impl Omissions {
             | O::AtomSites { atoms } => *atoms += added,
             O::Stereo { molecules } => *molecules += added,
             O::Bonds { bonds } => *bonds += added,
+            O::Coordination { records } => *records += added,
+            O::CoordinationBonds { bonds } => *bonds += added,
             O::DictionaryBonds { residues } => *residues += added,
             O::ChainIds { chains } => *chains += added,
             O::Cell { structures }

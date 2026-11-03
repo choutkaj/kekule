@@ -322,7 +322,8 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, FormatE
             }
             continue;
         }
-        // Metal coordination is covalent; the dative order keeps it from
+        // Metal coordination: between residues it is recorded rather than
+        // bonded, and within one residue the dative order keeps it from
         // counting toward the valence of the ligand atom.
         let order = if is_metal_coordination(&kind) {
             BondOrder::Dative

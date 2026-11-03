@@ -14,7 +14,7 @@ use crate::molecule::{BondOrder, Element};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The reader's identity of a residue: rows that share it are one residue.
-type ResidueKey<'a> = (
+pub(super) type ResidueKey<'a> = (
     &'a str,
     &'a str,
     Option<i32>,
@@ -23,7 +23,7 @@ type ResidueKey<'a> = (
     &'a str,
 );
 
-fn residue_key(row: &AtomRow) -> ResidueKey<'_> {
+pub(super) fn residue_key(row: &AtomRow) -> ResidueKey<'_> {
     (
         &row.asym_id,
         &row.entity_id,

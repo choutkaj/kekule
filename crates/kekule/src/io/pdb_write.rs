@@ -1034,7 +1034,11 @@ impl Plan {
         }
 
         let conflicting = check_dictionary_bonds(topology, &records, &residues, strict)?;
-        let (conect, unstated) = Self::conect(topology, &records, &residues, strict)?;
+        let ConectPlan {
+            listings: conect,
+            unstated,
+            coordination_bonds,
+        } = Self::conect(topology, &records, &residues, strict)?;
         omissions.record(WriteOmission::ChainIds {
             chains: segments.len(),
         });
@@ -1048,6 +1052,9 @@ impl Plan {
             molecules: stereo.len(),
         });
         omissions.record(WriteOmission::Bonds { bonds: unstated });
+        omissions.record(WriteOmission::CoordinationBonds {
+            bonds: coordination_bonds,
+        });
         omissions.record(WriteOmission::DictionaryBonds {
             residues: conflicting,
         });
@@ -1144,10 +1151,11 @@ impl Plan {
         records: &[AtomRecord],
         residues: &[AtomResidue],
         strict: bool,
-    ) -> Result<(BTreeMap<usize, Vec<usize>>, usize), FormatError> {
+    ) -> Result<ConectPlan, FormatError> {
         let chain_positions = residue_chain_positions(topology);
         let mut conect = BTreeMap::<usize, Vec<usize>>::new();
         let mut unstated = 0;
+        let mut coordination_bonds = 0;
         for bond in topology.bonds() {
             let [left, right] = bond.atoms().map(|atom| atom.index().index());
             let standard = !records[left].hetatm && !records[right].hetatm;
@@ -1168,6 +1176,10 @@ impl Plan {
             }
             let elements = bond.atoms().map(|atom| atom.atom().element);
             let coordination = is_metal(elements[0]) != is_metal(elements[1]);
+            if bond.order == BondOrder::Dative && coordination && !same_residue {
+                // Readers record this listing as coordination, not a bond.
+                coordination_bonds += 1;
+            }
             let listings = match (bond.order, coordination) {
                 (BondOrder::Dative, true) | (BondOrder::Single, false) => 1,
                 (BondOrder::Double, false) => 2,
@@ -1195,7 +1207,11 @@ impl Plan {
         for partners in conect.values_mut() {
             partners.sort_unstable();
         }
-        Ok((conect, unstated))
+        Ok(ConectPlan {
+            listings: conect,
+            unstated,
+            coordination_bonds,
+        })
     }
 
     fn write_atoms(&self, writer: &mut impl Write, values: &[SiteValues]) -> std::io::Result<()> {
@@ -1261,6 +1277,19 @@ impl Plan {
 /// order (an extra bond is listed instead). Coordination is dative, aromatic
 /// and delocalized template bonds accept either localized order, and
 /// hydrogens, whose names variants change, are not compared.
+/// The `CONECT` listings of an entry and the bonds they do not carry as
+/// bonds.
+struct ConectPlan {
+    /// Each atom's listed partners by dense index, a partner once per
+    /// listing.
+    listings: BTreeMap<usize, Vec<usize>>,
+    /// Bonds `CONECT` cannot state, left out.
+    unstated: usize,
+    /// Dative bonds between residues, listed as coordination that readers
+    /// record rather than bond.
+    coordination_bonds: usize,
+}
+
 fn check_dictionary_bonds(
     topology: &Topology,
     records: &[AtomRecord],

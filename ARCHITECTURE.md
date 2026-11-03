@@ -696,8 +696,8 @@ Macromolecular formats (mmCIF and PDB) do not carry complete bonds, and molecule
 boundaries follow bonds, so one resolver shared by these formats derives connectivity
 from ranked evidence:
 
-1. Explicit source bonds: component bond tables in the source, and covalent,
-   disulfide, and metal-coordination links between residues. Records that list
+1. Explicit source bonds: component bond tables in the source, and covalent
+   and disulfide links between residues. Records that list
    connectivity without bond types, such as PDB `CONECT`, supplement a
    residue's template and replace distance inference for residues without one.
 2. Component templates supplied as interpretation context, keyed by component
@@ -729,14 +729,20 @@ elements and positions builds the same document from them and has it
 interpreted the same way; its atoms and frames are located by their position
 rather than by a line.
 
-Coordination is covalent: metal-ligand links become `Dative` bonds, so a metal
-complex or a metalloprotein site is one connected molecule. Links whose records
-state no type, such as PDB `LINK`, are coordination between a metal and a
-non-metal. A source component bond table states coordination with its own
-flag; where the source leaves the flag unstated, as wwPDB entry files do, the
-flag comes from the component template, as charges do, and without one a
-bond between a metal and a non-metal is coordination. An mmCIF block and its
-PDB rendering therefore give the same bonds. Hydrogen bonds, salt bridges, and links to symmetry mates are never
+Metal coordination between residues is not a bond. A metal ion, the ligand
+it holds, and the protein that coordinates it are separate molecules, since
+covalent connectedness alone decides molecule boundaries; the report keeps
+each such link as source connection metadata, and consumers perceive
+coordination geometrically as an interaction. mmCIF `metalc` links are
+coordination, and so are links whose records state no type, PDB `LINK` and
+`CONECT`, between a metal and a non-metal. Within one residue, coordination
+is a `Dative` bond, so a metal complex that is one component, such as heme,
+stays one molecule. A source component bond table states coordination with
+its own flag; where the source leaves the flag unstated, as wwPDB entry files
+do, the flag comes from the component template, as charges do, and without
+one a bond between a metal and a non-metal is coordination. An mmCIF block
+and its PDB rendering therefore give the same bonds. XYZ, Molfile, SDF, and
+SMILES have no residues: their dative bonds are bonds. Hydrogen bonds, salt bridges, and links to symmetry mates are never
 bonds; unresolvable links are reported. The hydrogen bonds and salt bridges a
 file lists are annotations, often thousands of them, so the report counts them
 once per connection type. A heavy atom whose name does not match
@@ -834,11 +840,18 @@ export.
   template, after the protonation variant its hydrogens select, gives
   exactly its bonds, and peptide and phosphodiester links within bonding
   distance in the written coordinates, are left out; links between residues,
-  metal coordination, and the bonds of residues without such a template are
+  dative bonds, and the bonds of residues without such a template are
   `_struct_conn` rows. A residue is either derived or stated whole, since a
   stated internal bond makes the reader take the residue's bonds from the
   source alone. Bond order within a molecule follows the reader's evidence,
-  which mmCIF does not carry.
+  which mmCIF does not carry. Metal coordination between residues lives in
+  the interpretation report, not the model, so the writer states it as
+  `metalc` rows only when it is given the report, which must still match the
+  model atom for atom; an edited model is written without it, and a record
+  whose partner the model lacks is left out and reported. A model's own
+  dative bond between residues is written as coordination (`metalc`, or
+  PDB `CONECT`), which reads back as a record rather than a bond, and the
+  write report counts it.
   Every entity instance is its own label asym: a chain the source names as
   one asym stays one, while a chain without a source asym that holds a
   polymer, ligands, and water, as a PDB author chain does, is written as
