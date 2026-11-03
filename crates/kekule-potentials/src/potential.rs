@@ -463,38 +463,40 @@ impl fmt::Display for EvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::IncompatibleTopology => {
-                f.write_str("model view belongs to a different topology layout than the potential")
+                f.write_str("The model view has a different topology layout from the potential.")
             }
             Self::UnsupportedPeriodicCell => {
-                f.write_str("potential does not support periodic-cell configurations")
+                f.write_str("The potential does not support periodic cells.")
             }
             Self::InvalidGeometry {
                 interaction,
                 atoms,
                 kind,
             } => {
-                write!(f, "{interaction} has {kind} for atoms [")?;
+                write!(f, "The {interaction} of ")?;
                 for (index, atom) in atoms.iter().enumerate() {
-                    if index != 0 {
+                    if index + 1 == atoms.len() && index != 0 {
+                        f.write_str(" and ")?;
+                    } else if index != 0 {
                         f.write_str(", ")?;
                     }
                     write!(f, "{atom}")?;
                 }
-                f.write_str("]")
+                write!(f, " has {kind}.")
             }
-            Self::NonFiniteEnergy => f.write_str("potential produced a non-finite energy"),
+            Self::NonFiniteEnergy => f.write_str("The potential energy is not finite."),
             Self::DuplicateComponent(kind) => {
-                write!(f, "energy decomposition repeats the {kind} component")
+                write!(f, "The energy decomposition repeats the {kind} component.")
             }
             Self::GradientLengthMismatch { expected, actual } => write!(
                 f,
-                "potential produced {actual} gradients for a model with {expected} atoms"
+                "The potential produced {actual} gradients for a model with {expected} atoms."
             ),
             Self::NonFiniteGradient { atom } => {
-                write!(f, "potential produced a non-finite gradient for {atom}")
+                write!(f, "The gradient on {atom} is not finite.")
             }
-            Self::Unit(_) => f.write_str("invalid potential quantity unit"),
-            Self::Backend(_) => f.write_str("potential backend evaluation failed"),
+            Self::Unit(_) => f.write_str("Cannot convert a quantity to its canonical unit."),
+            Self::Backend(_) => f.write_str("The potential backend failed."),
         }
     }
 }
@@ -523,7 +525,7 @@ mod tests {
     fn backend_failures_keep_their_cause_as_the_source() {
         let cause = std::io::Error::other("model server unavailable");
         let error = EvaluationError::backend(cause);
-        assert_eq!(error.to_string(), "potential backend evaluation failed");
+        assert_eq!(error.to_string(), "The potential backend failed.");
         let source = std::error::Error::source(&error).unwrap();
         assert_eq!(source.to_string(), "model server unavailable");
         assert!(source.downcast_ref::<std::io::Error>().is_some());

@@ -992,10 +992,10 @@ pub enum MinimizeOption {
 impl fmt::Display for MinimizeOption {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::GradientTolerance => "gradient tolerance must be finite and positive",
-            Self::MaxStep => "maximum step must be finite and positive",
-            Self::Memory => "L-BFGS memory must be at least one",
-            Self::MaxLineSearchEvaluations => "line searches need at least one evaluation",
+            Self::GradientTolerance => "The gradient tolerance is not finite and positive.",
+            Self::MaxStep => "The maximum step is not finite and positive.",
+            Self::Memory => "The L-BFGS memory is zero.",
+            Self::MaxLineSearchEvaluations => "The line-search evaluation limit is zero.",
         })
     }
 }
@@ -1015,9 +1015,9 @@ pub enum RestraintProblem {
 impl fmt::Display for RestraintProblem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::UnknownAtom => "atom is not in the topology",
-            Self::NonFiniteReference => "reference position must be finite",
-            Self::ForceConstant => "force constant must be finite and non-negative",
+            Self::UnknownAtom => "The atom is not in the topology.",
+            Self::NonFiniteReference => "The reference position is not finite.",
+            Self::ForceConstant => "The force constant is negative or not finite.",
         })
     }
 }
@@ -1037,9 +1037,9 @@ pub enum NumericalFailure {
 impl fmt::Display for NumericalFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::MaxGradientNorm => "maximum gradient norm is not representable",
-            Self::SteepestDescentSlope => "steepest-descent slope is not finite and negative",
-            Self::StepLengthBound => "step length bound is not representable",
+            Self::MaxGradientNorm => "The largest atom gradient is not finite.",
+            Self::SteepestDescentSlope => "The steepest-descent slope is not finite and negative.",
+            Self::StepLengthBound => "The step length bound is not finite and positive.",
         })
     }
 }
@@ -1077,20 +1077,22 @@ pub enum MinimizationError {
 impl fmt::Display for MinimizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidOptions(message) => write!(f, "invalid minimization options: {message}"),
+            Self::InvalidOptions(option) => write!(f, "{option}"),
             Self::InvalidRestraint { atom, problem } => {
-                write!(f, "invalid position restraint on atom {atom}: {problem}")
+                write!(f, "The position restraint on {atom} is unusable. {problem}")
             }
-            Self::NumericalFailure(message) => {
-                write!(f, "minimization numerical failure: {message}")
+            Self::NumericalFailure(failure) => {
+                write!(f, "Cannot continue the minimization. {failure}")
             }
-            Self::Evaluation(_) => f.write_str("potential evaluation failed"),
-            Self::IncompatibleTopology => f.write_str(
-                "model view belongs to a different topology layout than the minimization",
-            ),
-            Self::Structure(_) => f.write_str("cannot build the minimized structure"),
-            Self::Position(_) => f.write_str("cannot update positions"),
-            Self::Unit(_) => f.write_str("invalid minimization quantity unit"),
+            Self::Evaluation(_) => f.write_str("Cannot evaluate the potential."),
+            Self::IncompatibleTopology => {
+                f.write_str("The model view has a different topology layout from the minimization.")
+            }
+            Self::Structure(_) => f.write_str("Cannot build the minimized structure."),
+            Self::Position(_) => f.write_str("Cannot update the positions."),
+            Self::Unit(_) => {
+                f.write_str("Cannot convert a minimization quantity to its canonical unit.")
+            }
         }
     }
 }

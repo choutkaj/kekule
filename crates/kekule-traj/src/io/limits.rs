@@ -167,18 +167,18 @@ pub(super) fn reserve_scratch<T>(
     };
     if !fits(values.capacity().max(required_capacity)) {
         return Err(error(
-            "aggregate decode scratch exceeds the configured limit",
+            "Aggregate decode scratch exceeds the configured limit.",
         ));
     }
     if values.capacity() < required_capacity {
         values
             .try_reserve_exact(required_capacity - values.len())
-            .map_err(|_| error("could not reserve decode scratch"))?;
+            .map_err(|_| error("Cannot reserve decode scratch."))?;
         // Vec permits an allocator to provide more capacity than requested.
         if !fits(values.capacity()) {
             *values = Vec::new();
             return Err(error(
-                "allocated decode scratch exceeds the configured limit",
+                "Allocated decode scratch exceeds the configured limit.",
             ));
         }
     }
@@ -272,9 +272,7 @@ pub(crate) fn reserve_index_for_push(
         )
         .with_source_label(source_label)
         .with_frame(frame)
-        .with_detail(format!(
-            "{format} index reached its configured hard capacity"
-        )));
+        .with_detail(format!("The {format} index reached its hard capacity.")));
     };
     offsets
         .try_reserve_exact(target_capacity.saturating_sub(offsets.len()))
@@ -287,7 +285,7 @@ pub(crate) fn reserve_index_for_push(
             .with_source_label(source_label)
             .with_frame(frame)
             .with_detail(format!(
-                "could not grow {format} index toward its bounded capacity"
+                "Cannot grow {format} index toward its bounded capacity."
             ))
         })
 }

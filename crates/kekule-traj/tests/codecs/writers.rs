@@ -163,7 +163,7 @@ fn rejected_frame(
                 .unwrap();
             (
                 TrajectoryIoErrorKind::UnsupportedField,
-                "XYZ cannot preserve time",
+                "XYZ cannot preserve time.",
                 Some(1),
                 Some(TrajectoryField::Time),
             )
@@ -175,7 +175,7 @@ fn rejected_frame(
             )));
             (
                 TrajectoryIoErrorKind::UnsupportedVariant,
-                "DCD cells require a along positive x, b in the xy plane with positive y, and c with positive z",
+                "The DCD cell is not in standard orientation: a along positive x, b in the xy plane with positive y and c with positive z.",
                 None,
                 None,
             )
@@ -184,7 +184,7 @@ fn rejected_frame(
             frame_state.set_time(None).unwrap();
             (
                 TrajectoryIoErrorKind::InconsistentMetadata,
-                "TRR requires explicit frame time; FrameTimingPolicy::Number times frames without one",
+                "The frame has no time. TRR frames need one.",
                 None,
                 None,
             )
@@ -193,7 +193,7 @@ fn rejected_frame(
             frame_state.set_cell(None);
             (
                 TrajectoryIoErrorKind::InconsistentMetadata,
-                "XTC writer requires a periodic cell; XtcCellPolicy::ZeroMatrixAsAbsent writes a zero box instead",
+                "The frame has no periodic cell. XTC frames need one.",
                 None,
                 None,
             )
@@ -224,7 +224,7 @@ fn partial_stream_error(
         format,
         &label(format),
         None,
-        &format!("an earlier {format} write failed partway; the stream may be incomplete"),
+        &format!("An earlier {format} write failed partway. The stream is incomplete."),
     )
 }
 
@@ -241,7 +241,7 @@ fn every_codec_writer_refuses_to_finish_without_frames() {
                 format,
                 &label(format),
                 None,
-                &format!("{format} production trajectories must contain at least one frame"),
+                &format!("The {format} trajectory has no frame. It needs at least one."),
             )),
             "{format}"
         );

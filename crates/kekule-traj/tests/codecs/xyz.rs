@@ -556,7 +556,7 @@ fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
                 "frame-bytes.xyz",
                 Some(0),
                 &format!(
-                    "XYZ frame exceeds configured {}-byte limit",
+                    "XYZ frame exceeds configured {}-byte limit.",
                     frame_bytes - 1
                 ),
             )
@@ -606,7 +606,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
         TrajectoryFormat::Xyz,
         "scratch.xyz",
         Some(0),
-        "XYZ line buffer: aggregate decode scratch exceeds the configured limit",
+        "Cannot grow the XYZ line buffer. Aggregate decode scratch exceeds the configured limit.",
     );
     let untouched = support::buffer_snapshot(&FrameBuffer::new(Arc::clone(&topology)));
 

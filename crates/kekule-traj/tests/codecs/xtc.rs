@@ -144,16 +144,20 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
         .unwrap(),
     ));
     assert_eq!(
-            writer.write_frame(frame.frame_view()),
-            Err(codec_error(
-                TrajectoryIoErrorKind::InvalidFrame,
-                TrajectoryIoOperation::WriteFrame,
-                TrajectoryFormat::Xtc,
-                "box-rounding.xtc",
-                None,
-                "XTC cell is not representable as a valid f32 box: XTC periodic cell is invalid: periodic-cell vectors must have non-zero finite volume",
-            ))
-        );
+        writer.write_frame(frame.frame_view()),
+        Err(codec_error(
+            TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xtc,
+            "box-rounding.xtc",
+            None,
+            "The XTC cell cannot be represented as a float32 box.",
+        )
+        .with_source(
+            kekule_traj::TrajectoryIoError::new(TrajectoryIoErrorKind::InvalidFrame)
+                .with_detail("The XTC periodic cell is invalid."),
+        ))
+    );
     assert_eq!(writer.writer(), &before);
     frame.frame_mut().set_cell(valid_cell);
     frame.frame_mut().set_step(Some(1));
@@ -604,7 +608,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
             TrajectoryFormat::Xtc,
             "overflow-writer.xtc",
             None,
-            "XTC step exceeds nonnegative signed 32-bit XDR capacity",
+            "XTC step exceeds nonnegative signed 32-bit XDR capacity.",
         ))
     );
     assert!(writer.writer().get_ref().is_empty());
@@ -885,7 +889,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
                 TrajectoryFormat::Xtc,
                 "XTC writer options",
                 None,
-                "XTC precision must be finite and positive",
+                "XTC precision must be finite and positive.",
             )),
             "{precision}"
         );
@@ -900,16 +904,16 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     let mut frame = source_frame(&topology, 0.0, 0);
     frame.frame_mut().set_cell(None);
     assert_eq!(
-            writer.write_frame(frame.frame_view()),
-            Err(codec_error(
-                TrajectoryIoErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::WriteFrame,
-                TrajectoryFormat::Xtc,
-                "strict.xtc",
-                None,
-                "XTC writer requires a periodic cell; XtcCellPolicy::ZeroMatrixAsAbsent writes a zero box instead",
-            ))
-        );
+        writer.write_frame(frame.frame_view()),
+        Err(codec_error(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xtc,
+            "strict.xtc",
+            None,
+            "The frame has no periodic cell. XTC frames need one.",
+        ))
+    );
     frame
         .frame_mut()
         .set_cell(source_frame(&topology, 0.0, 0).cell().copied());
@@ -930,7 +934,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
             TrajectoryFormat::Xtc,
             "strict.xtc",
             Some(0),
-            "XTC cannot preserve frame properties",
+            "XTC cannot preserve frame properties.",
         )
         .with_field(TrajectoryField::Properties))
     );
@@ -955,7 +959,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
             TrajectoryFormat::Xtc,
             "strict.xtc",
             Some(0),
-            "XTC cannot preserve bond properties",
+            "XTC cannot preserve bond properties.",
         )
         .with_field(TrajectoryField::BondProperties))
     );
@@ -967,8 +971,8 @@ fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
     // from -1500 to 1500 nm (3e9) does not. GROMACS bounds both by
     // i32::MAX - 2; an unchecked span wrapped into a corrupt frame.
     const SPAN: &str =
-        "XTC coordinate span along an axis exceeds the selected precision's integer range";
-    const MAGNITUDE: &str = "XTC coordinate exceeds the selected precision's integer range";
+        "XTC coordinate span along an axis exceeds the selected precision's integer range.";
+    const MAGNITUDE: &str = "XTC coordinate exceeds the selected precision's integer range.";
     let topology = topology(10);
     let options = XtcWriteOptions::default()
         .with_precision(Quantity::new(1.0e6, PER_NANOMETER))
@@ -1061,7 +1065,7 @@ fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
             TrajectoryFormat::Xtc,
             "vacuum.xtc",
             None,
-            "XTC writer requires a periodic cell; XtcCellPolicy::ZeroMatrixAsAbsent writes a zero box instead",
+            "The frame has no periodic cell. XTC frames need one.",
         ))
     );
 

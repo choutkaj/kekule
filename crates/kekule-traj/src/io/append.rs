@@ -278,7 +278,7 @@ pub fn append_trajectory(
             TrajectoryIoOperation::Open,
             Some(format),
             &label,
-            "XYZ frames record no step; keep frames by count with KeepFrames::First",
+            "XYZ frames record no step. Keep frames by count.",
         ));
     }
     // The scan reads frames as the writer writes them: an XTC zero box is no
@@ -327,7 +327,7 @@ pub fn append_trajectory(
                 TrajectoryIoOperation::Open,
                 format,
                 &label,
-                "the file changed before it was cut",
+                "The file changed before it was cut.",
             ));
         }
     }
@@ -444,7 +444,7 @@ fn too_few_frames(
         TrajectoryIoOperation::Open,
         Some(format),
         label,
-        format!("cannot keep {frames} frames of a file that holds {count} complete frames"),
+        format!("Cannot keep {frames} frames. The file holds {count} complete frames."),
     )
     .with_counts(frames as u64, count as u64)
 }

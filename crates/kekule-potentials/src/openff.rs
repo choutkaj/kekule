@@ -545,6 +545,23 @@ impl fmt::Display for OpenFfParameter {
     }
 }
 
+impl OpenFfParameter {
+    /// The canonical unit's symbol, or `None` for a dimensionless parameter.
+    const fn unit(self) -> Option<&'static str> {
+        match self {
+            Self::BondK => Some("kJ/(mol nm²)"),
+            Self::BondLength | Self::Sigma => Some("nm"),
+            Self::AngleK => Some("kJ/(mol rad²)"),
+            Self::Angle | Self::TorsionPhase => Some("rad"),
+            Self::TorsionK | Self::Epsilon => Some("kJ/mol"),
+            Self::Charge => Some("e"),
+            Self::TorsionIdivf | Self::VdwExceptionScale | Self::ElectrostaticsExceptionScale => {
+                None
+            }
+        }
+    }
+}
+
 /// A per-atom parameter array that must cover the bound topology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -608,39 +625,52 @@ impl fmt::Display for OpenFfPotentialError {
         match self {
             Self::UnsupportedVdwMethod(method) => write!(
                 f,
-                "unsupported nonperiodic vdW method {:?}; only no-cutoff vdW and Coulomb electrostatics are implemented",
-                method.smirnoff_name()
+                "The potential does not support the nonperiodic vdW method {:?}. It supports only {:?}.",
+                method.smirnoff_name(),
+                VdwMethod::NoCutoff.smirnoff_name()
             ),
             Self::UnsupportedElectrostaticsMethod(method) => write!(
                 f,
-                "unsupported nonperiodic Electrostatics method {:?}; only no-cutoff vdW and Coulomb electrostatics are implemented",
-                method.smirnoff_name()
+                "The potential does not support the nonperiodic electrostatics method {:?}. It supports only {:?}.",
+                method.smirnoff_name(),
+                ElectrostaticsMethod::Coulomb.smirnoff_name()
             ),
-            Self::InvalidAtom(atom) => write!(f, "interaction refers to unknown {atom}"),
+            Self::InvalidAtom(atom) => write!(
+                f,
+                "An interaction names {atom}. The topology has no such atom."
+            ),
             Self::AtomCountMismatch {
                 array,
                 expected,
                 actual,
             } => write!(
                 f,
-                "{array} cover {actual} atoms, but the topology has {expected}"
+                "The {array} cover {actual} atoms, but the topology has {expected}."
             ),
-            Self::InvalidParameter { parameter, value } if value.is_finite() => {
-                write!(f, "invalid {parameter}: {value} is negative")
-            }
             Self::InvalidParameter { parameter, value } => {
-                write!(f, "invalid {parameter}: {value} is not finite")
+                let article = if parameter.to_string().starts_with(['a', 'e', 'i', 'o', 'u']) {
+                    "An"
+                } else {
+                    "A"
+                };
+                let problem = if value.is_finite() {
+                    "negative"
+                } else {
+                    "not finite"
+                };
+                match parameter.unit() {
+                    Some(unit) => {
+                        write!(f, "{article} {parameter} of {value} {unit} is {problem}.")
+                    }
+                    None => write!(f, "{article} {parameter} of {value} is {problem}."),
+                }
             }
-            Self::ZeroTorsionDivisor => {
-                f.write_str("invalid torsion idivf: the divisor must be nonzero")
-            }
-            Self::SelfPairException => {
-                f.write_str("invalid pair exception: an exception must name two distinct atoms")
-            }
+            Self::ZeroTorsionDivisor => f.write_str("A torsion's idivf divisor is zero."),
+            Self::SelfPairException => f.write_str("A pair exception names the same atom twice."),
             Self::DuplicatePairException => {
-                f.write_str("invalid pair exception: an atom pair has more than one exception")
+                f.write_str("An atom pair has more than one pair exception.")
             }
-            Self::Unit(_) => f.write_str("invalid parameter unit"),
+            Self::Unit(_) => f.write_str("Cannot convert a parameter to its canonical unit."),
         }
     }
 }

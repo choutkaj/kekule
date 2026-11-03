@@ -493,7 +493,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     assert_eq!(error.kind(), crate::ErrorKind::Model);
     assert!(error
         .to_string()
-        .contains("weights must be little-endian float32"));
+        .contains("not a whole number of float32 values"));
     assert_eq!(error.path(), Some(scratch.0.as_path()));
     std::fs::remove_file(scratch.0.join("weights.bin")).unwrap();
     let missing = NaglModel::load(&scratch.0).unwrap_err();
@@ -505,7 +505,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     assert_eq!(
         missing.to_string(),
         format!(
-            "{}: reading a file failed",
+            "Cannot read \"{}\".",
             scratch.0.join("weights.bin").display()
         )
     );
@@ -519,5 +519,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
         .unwrap();
     let error = NaglModel::load(&scratch.0).unwrap_err();
     assert_eq!(error.kind(), crate::ErrorKind::Model);
-    assert!(error.to_string().contains("size limit"));
+    assert!(error
+        .to_string()
+        .contains("not a regular file of at most 64 MiB"));
 }

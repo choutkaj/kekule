@@ -246,7 +246,7 @@ pub(super) fn encode_coordinates(
     match magic {
         XtcMagic::Xtc1995 => output.extend_from_slice(
             &i32::try_from(stream.len())
-                .map_err(|_| "XTC 1995 compressed byte count exceeds a signed 32-bit integer")?
+                .map_err(|_| "XTC 1995 compressed byte count exceeds a signed 32-bit integer.")?
                 .to_be_bytes(),
         ),
         XtcMagic::Xtc2023 => output.extend_from_slice(&(stream.len() as u64).to_be_bytes()),

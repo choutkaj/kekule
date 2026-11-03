@@ -449,7 +449,8 @@ fn nonperiodic_vdw_cutoff_is_rejected_at_preparation() {
     );
     assert_eq!(
         error.to_string(),
-        "unsupported nonperiodic vdW method \"cutoff\"; only no-cutoff vdW and Coulomb electrostatics are implemented"
+        "The potential does not support the nonperiodic vdW method \"cutoff\". \
+         It supports only \"no-cutoff\"."
     );
 }
 

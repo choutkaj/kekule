@@ -1,6 +1,6 @@
 //! Configurable atom features using the versioned NAGL normalization/resonance profile.
 use super::config::Feature;
-use crate::error::atom_list;
+use crate::error::{atom_list, capitalized};
 use crate::{Error, ErrorKind, Result};
 
 use kekule::{
@@ -17,8 +17,13 @@ use std::{
     sync::OnceLock,
 };
 
-fn limit(detail: impl std::fmt::Display, limit: LimitExceeded) -> Error {
-    Error::limit(detail, limit)
+/// `operation` exceeded `limit`, such as `Resonance enumeration exceeded its
+/// resonance structure limit: 4,097 structures of 4,096.`
+fn limit(operation: &str, limit: LimitExceeded) -> Error {
+    Error::limit(
+        format!("{operation} exceeded its {}.", limit.describe()),
+        limit,
+    )
 }
 
 /// The bound a resonance enumeration exceeded: its structure count, or else
@@ -63,12 +68,16 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
             serde_json::from_str::<Vec<NormalizationData>>(include_str!(
                 "../../data/normalizations.json"
             ))
-            .map_err(Error::chemistry)?
+            .map_err(|e| Error::chemistry("Cannot read the NAGL normalization rules.", e))?
             .into_iter()
             .map(|data| {
                 Ok(Normalization {
-                    query: smarts::parse_str(&data.query, Default::default())
-                        .map_err(Error::chemistry)?,
+                    query: smarts::parse_str(&data.query, Default::default()).map_err(|e| {
+                        Error::chemistry(
+                            format!("Cannot parse the normalization pattern {:?}.", data.query),
+                            e,
+                        )
+                    })?,
                     data,
                 })
             })
@@ -77,9 +86,13 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
         .as_ref()
         .map_err(Clone::clone)?;
     let mut molecule = input.clone();
-    molecule.perceive().map_err(Error::chemistry)?;
+    molecule
+        .perceive()
+        .map_err(|e| Error::chemistry("Cannot perceive the molecule.", e))?;
     for rule in rules {
-        let query = TaggedQuery::new(&rule.query).map_err(Error::chemistry)?;
+        let pattern = format!("the normalization rule {:?}", rule.data.query);
+        let query = TaggedQuery::new(&rule.query)
+            .map_err(|e| Error::chemistry(format!("Cannot tag {pattern}."), e))?;
         let tags: Vec<_> = query.tags().iter().map(|(t, _)| *t).collect();
         // Upstream NAGL stops after 200 applications per rule, which large
         // molecules with many matching groups (arginines, for example) exceed.
@@ -94,7 +107,7 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                     crate::assignment::options(molecule.atom_count()),
                     TupleMode::Distinct,
                 )
-                .map_err(crate::assignment::matching)?;
+                .map_err(|e| crate::assignment::matching(&pattern, e))?;
             let Some(first) = matches.first() else {
                 converged = true;
                 break;
@@ -123,12 +136,22 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 };
                 let id = editor
                     .bond_between(mapping[&a], mapping[&b])
-                    .ok_or_else(|| invariant("normalization changed connectivity"))?;
+                    .ok_or_else(|| {
+                        invariant(format!(
+                            "The normalization rule {:?} sets the order of a missing bond.",
+                            rule.data.query
+                        ))
+                    })?;
                 let order = match order {
                     1 => BondOrder::Single,
                     2 => BondOrder::Double,
                     3 => BondOrder::Triple,
-                    _ => return Err(invariant("unsupported normalization bond order")),
+                    _ => {
+                        return Err(invariant(format!(
+                            "The normalization rule {:?} sets the unsupported bond order {order}.",
+                            rule.data.query
+                        )))
+                    }
                 };
                 if editor
                     .bond(id)
@@ -147,12 +170,16 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 converged = true;
                 break;
             }
-            molecule = editor.finish().map_err(Error::chemistry)?;
-            molecule.perceive().map_err(Error::chemistry)?;
+            molecule = editor
+                .finish()
+                .map_err(|e| Error::chemistry(format!("Cannot apply {pattern}."), e))?;
+            molecule
+                .perceive()
+                .map_err(|e| Error::chemistry("Cannot perceive the normalized molecule.", e))?;
         }
         if !converged {
             return Err(limit(
-                format!("NAGL normalization did not converge within {applications} applications"),
+                &format!("Normalization by {pattern}"),
                 LimitExceeded::first_beyond(Resource::Work, applications),
             ));
         }
@@ -229,7 +256,7 @@ impl ResonanceGraph {
         *work += 1;
         if *work > MAX_RESONANCE_TRANSFER_WORK {
             return Err(limit(
-                "resonance transfer path limit exceeded",
+                "The resonance transfer path search",
                 LimitExceeded::new(Resource::Work, MAX_RESONANCE_TRANSFER_WORK, *work),
             ));
         }
@@ -241,7 +268,7 @@ impl ResonanceGraph {
                     || output.len().saturating_mul(state_size) > MAX_RESONANCE_VALUES
                 {
                     return Err(limit(
-                        "resonance product limit exceeded",
+                        "Resonance enumeration",
                         if output.len() >= MAX_RESONANCE_STRUCTURES {
                             LimitExceeded::first_beyond(
                                 Resource::Structures,
@@ -319,7 +346,7 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
         return Err(Error::new(
             ErrorKind::UnsupportedMolecule,
             format!(
-                "NAGL features require localized single, double, or triple bonds;                  bonds of {} are not",
+                "The bonds of {} are not single, double or triple bonds.",
                 atom_list(&delocalized)
             ),
         )
@@ -335,7 +362,11 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
             _ => {
                 return Err(Error::new(
                     ErrorKind::UnsupportedMolecule,
-                    "NAGL features require localized single, double, or triple bonds",
+                    format!(
+                        "The bond between {} and {} is not a single, double or triple bond.",
+                        b.a(),
+                        b.b()
+                    ),
                 ))
             }
         };
@@ -427,7 +458,7 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
                 || visited.len().saturating_mul(state_size) > MAX_RESONANCE_VALUES
             {
                 return Err(limit(
-                    "resonance state limit exceeded",
+                    "Resonance enumeration",
                     structure_limit(visited.len(), state_size),
                 ));
             }
@@ -450,7 +481,7 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
                         || count.saturating_mul(state_size) > MAX_RESONANCE_VALUES
                     {
                         return Err(limit(
-                            "resonance queue limit exceeded",
+                            "Resonance enumeration",
                             structure_limit(count, state_size),
                         ));
                     }
@@ -500,16 +531,18 @@ fn check_categories(molecule: &Molecule, specifications: &[Feature]) -> Result<(
         let atoms: Vec<_> = elements.iter().map(|(id, _)| *id).collect();
         return Err(Error::new(
             ErrorKind::UnsupportedMolecule,
-            format!(
-                "{} {} absent from NAGL feature categories: {}",
-                if symbols.len() == 1 {
-                    "element"
-                } else {
-                    "elements"
-                },
-                symbols.join(", "),
-                atom_list(&atoms)
-            ),
+            match symbols.as_slice() {
+                [symbol] => format!(
+                    "The NAGL model has no element feature for {symbol} of {}.",
+                    atom_list(&atoms)
+                ),
+                [rest @ .., last] => format!(
+                    "The NAGL model has no element features for {} and {last} of {}.",
+                    rest.join(", "),
+                    atom_list(&atoms)
+                ),
+                [] => unreachable!("unsupported atoms have elements"),
+            },
         )
         .with_atoms(atoms));
     }
@@ -531,9 +564,11 @@ fn check_categories(molecule: &Molecule, specifications: &[Feature]) -> Result<(
             return Err(Error::new(
                 ErrorKind::UnsupportedMolecule,
                 format!(
-                    "connectivity {} absent from NAGL feature categories: {}",
-                    degree(first),
-                    atom_list(&atoms)
+                    "{} {} a number of bonded neighbors the NAGL model has no feature for. \
+                     The first has {} neighbors.",
+                    capitalized(&atom_list(&atoms)),
+                    if atoms.len() == 1 { "has" } else { "have" },
+                    degree(first)
                 ),
             )
             .with_atoms(atoms));
@@ -553,7 +588,9 @@ pub(super) fn features(
     if !basis.is_some_and(|basis| {
         basis.model() == RingBasisModel::FiguerasSssrLike && !basis.used_depth_first_fallback()
     }) {
-        return Err(invariant("NAGL requires the selected SSSR ring basis"));
+        return Err(invariant(
+            "Ring perception did not select the SSSR ring basis the NAGL model needs.",
+        ));
     }
     check_categories(molecule, specifications)?;
     let averages = if specifications
@@ -573,7 +610,7 @@ pub(super) fn features(
             .perception()
             .rings()
             .and_then(|rings| rings.ring_set())
-            .ok_or_else(|| invariant("NAGL ring features require perceived rings"))?;
+            .ok_or_else(|| invariant("The molecule has no perceived rings."))?;
         for ring in rings.rings() {
             for &atom in &ring.atoms {
                 sizes.entry(atom).or_default().insert(ring.atoms.len());
@@ -601,7 +638,7 @@ pub(super) fn features(
                             Error::new(
                                 ErrorKind::UnsupportedMolecule,
                                 format!(
-                                    "element {} absent from NAGL feature categories",
+                                    "The NAGL model has no element feature for {} of {id}.",
                                     atom.element()
                                 ),
                             )
@@ -620,7 +657,9 @@ pub(super) fn features(
                             Error::new(
                                 ErrorKind::UnsupportedMolecule,
                                 format!(
-                                    "connectivity {degree} absent from NAGL feature categories"
+                                    "{} has {degree} bonded neighbors. The NAGL model has no \
+                                     feature for that connectivity.",
+                                    capitalized(&id.to_string())
                                 ),
                             )
                         })?;

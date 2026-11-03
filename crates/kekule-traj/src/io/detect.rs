@@ -33,7 +33,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "detection requires at least one configured prefix byte",
+            "Detection requires at least one configured prefix byte.",
         ));
     }
     if max > limits.max_scratch_bytes() {
@@ -42,7 +42,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "detection prefix exceeds the configured scratch limit",
+            "Detection prefix exceeds the configured scratch limit.",
         ));
     }
     let mut prefix = Vec::new();
@@ -52,7 +52,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "could not reserve bounded detection scratch",
+            "Cannot reserve bounded detection scratch.",
         )
     })?;
     let read_result = Read::by_ref(reader)
@@ -71,7 +71,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "compressed trajectory wrappers are not supported",
+            "Compressed trajectory wrappers are not supported.",
         ));
     }
 
@@ -96,7 +96,7 @@ pub(crate) fn select_format<R: Read + Seek>(
                 TrajectoryIoOperation::Detect,
                 Some(signature),
                 source_label,
-                format!("signature selects {signature}, but extension selects {extension}"),
+                format!("The content is {signature} but the extension names {extension}."),
             )),
             (Some(signature), None) => Ok(DetectionResult {
                 format: signature,
@@ -110,21 +110,21 @@ pub(crate) fn select_format<R: Read + Seek>(
                 TrajectoryIoOperation::Detect,
                 Some(extension),
                 source_label,
-                "the file does not yet hold its format's signature",
+                "The file does not yet hold its format's signature.",
             )),
             (None, Some(extension)) => Err(codec_context(
                 TrajectoryIoErrorKind::UnknownFormat,
                 TrajectoryIoOperation::Detect,
                 Some(extension),
                 source_label,
-                "known extension has no conclusive matching signature",
+                "Known extension has no conclusive matching signature.",
             )),
             (None, None) => Err(codec_context(
                 TrajectoryIoErrorKind::UnknownFormat,
                 TrajectoryIoOperation::Detect,
                 None,
                 source_label,
-                "bounded prefix does not identify a supported trajectory format",
+                "Bounded prefix does not identify a supported trajectory format.",
             )),
         },
     }

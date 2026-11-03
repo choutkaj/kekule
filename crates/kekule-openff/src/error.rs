@@ -63,13 +63,16 @@ impl fmt::Display for ErrorKind {
 
 /// A parameterization, loading, or composition failure.
 ///
-/// [`Self::kind`] classifies the failure; the display text adds the specific
-/// detail and context. Failures inside one molecule of a system name its
-/// definition through [`Self::definition`], failures caused by particular
-/// atoms name all of them through [`Self::atoms`], and file failures name the
-/// file through [`Self::path`]. A failure caused by a lower-level error, such as a
-/// Kekule perception or I/O error, returns it from
-/// [`source`](std::error::Error::source) and does not repeat its message.
+/// [`Self::kind`] classifies the failure. The display text is one or two
+/// sentences: the file or molecule definition that failed, such as `Cannot
+/// parameterize molecule definition 2.`, then the [detail](Self::detail),
+/// such as `Atoms 3 and 5 have no vdW parameter.` Failures inside one
+/// molecule of a system name its definition through [`Self::definition`],
+/// failures caused by particular atoms name all of them through
+/// [`Self::atoms`], and file failures name the file through [`Self::path`]. A
+/// failure caused by a lower-level error, such as a Kekule perception or I/O
+/// error, returns it from [`source`](std::error::Error::source) and does not
+/// repeat its message; `kekule::diagnostics::ErrorChain` writes both.
 #[derive(Debug, Clone)]
 pub struct Error {
     kind: ErrorKind,
@@ -94,13 +97,14 @@ impl Error {
         }
     }
 
-    /// Wraps an underlying error, keeping it as the source; the detail is the
-    /// kind's description.
-    pub(crate) fn wrap(
+    /// Wraps an underlying error, keeping it as the source; the detail says
+    /// what failed at this level, and the source says why.
+    pub(crate) fn caused(
         kind: ErrorKind,
+        detail: impl fmt::Display,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
-        Self::new(kind, kind).with_source(source)
+        Self::new(kind, detail).with_source(source)
     }
 
     /// A [`ErrorKind::ResourceLimit`] failure with the exceeded bound.
@@ -126,12 +130,19 @@ impl Error {
         self
     }
 
-    pub(crate) fn chemistry(source: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self::wrap(ErrorKind::Chemistry, source)
+    /// A failed Kekule operation; the detail says what failed.
+    pub(crate) fn chemistry(
+        detail: impl fmt::Display,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::caused(ErrorKind::Chemistry, detail, source)
     }
 
+    /// A file that cannot be read; the path names it and the source says why.
     pub(crate) fn io(path: &Path, source: std::io::Error) -> Self {
-        Self::wrap(ErrorKind::Io, source).at_path(path)
+        Self::new(ErrorKind::Io, "")
+            .with_source(source)
+            .at_path(path)
     }
 
     /// Adds the file this failure concerns, keeping a more specific path.
@@ -161,8 +172,10 @@ impl Error {
         self.kind
     }
 
-    /// The specific failure, without path or definition context or the
-    /// message of the [`source`](std::error::Error::source).
+    /// The specific failure in one or two sentences, without path or
+    /// definition context or the message of the
+    /// [`source`](std::error::Error::source); empty when the path and the
+    /// source say it all.
     pub fn detail(&self) -> &str {
         &self.detail
     }
@@ -209,13 +222,31 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut context = true;
         if let Some(path) = &self.path {
-            write!(f, "{}: ", path.display())?;
+            let path = path.display();
+            match self.kind {
+                ErrorKind::Io => write!(f, "Cannot read \"{path}\".")?,
+                ErrorKind::ForceField => write!(f, "Cannot load the force field \"{path}\".")?,
+                ErrorKind::Model => write!(f, "Cannot load the NAGL model \"{path}\".")?,
+                _ => write!(f, "Cannot load \"{path}\".")?,
+            }
+        } else if let Some(definition) = self.definition {
+            write!(
+                f,
+                "Cannot parameterize molecule definition {}.",
+                definition.index()
+            )?;
+        } else {
+            context = false;
         }
-        if let Some(definition) = self.definition {
-            write!(f, "molecule definition {}: ", definition.index())?;
+        if !self.detail.is_empty() {
+            if context {
+                f.write_str(" ")?;
+            }
+            f.write_str(&self.detail)?;
         }
-        f.write_str(&self.detail)
+        Ok(())
     }
 }
 
@@ -227,16 +258,23 @@ impl std::error::Error for Error {
     }
 }
 
-/// Names atoms in a failure's detail, such as `atoms 3, 5`.
+/// Names atoms in a failure's detail, such as `atoms 3, 5 and 7`.
 pub(crate) fn atom_list(atoms: &[AtomId]) -> String {
-    let ids = atoms
-        .iter()
-        .map(|atom| atom.index().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    match atoms.len() {
-        1 => format!("atom {ids}"),
-        _ => format!("atoms {ids}"),
+    let ids: Vec<_> = atoms.iter().map(|atom| atom.index().to_string()).collect();
+    match ids.as_slice() {
+        [] => "no atoms".to_owned(),
+        [one] => format!("atom {one}"),
+        [rest @ .., last] => format!("atoms {} and {last}", rest.join(", ")),
+    }
+}
+
+/// `text` with an upper-case first letter, for a phrase such as
+/// [`atom_list`]'s that starts a sentence.
+pub(crate) fn capitalized(text: &str) -> String {
+    let mut characters = text.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().chain(characters).collect(),
+        None => String::new(),
     }
 }
 

@@ -557,7 +557,7 @@ fn invalid_scopes_and_restraints_are_rejected() {
     assert_eq!(
         error.to_string(),
         format!(
-            "invalid position restraint on atom {atom}: force constant must be finite and non-negative"
+            "The position restraint on {atom} is unusable. The force constant is negative or not finite."
         )
     );
     // A zero force constant is allowed and changes nothing.

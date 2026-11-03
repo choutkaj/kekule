@@ -410,6 +410,19 @@ impl TrajectoryIoError {
         self
     }
 
+    /// The error without its operation, format, source label, frame, and
+    /// byte offset, for a reused validation failure whose context would
+    /// misdescribe the operation that reuses it.
+    pub(crate) fn without_context(mut self) -> Self {
+        let data = &mut self.0;
+        data.operation = None;
+        data.format = None;
+        data.source_label = None;
+        data.frame = None;
+        data.byte_offset = None;
+        self
+    }
+
     /// The stable classification of the failure.
     pub fn kind(&self) -> TrajectoryIoErrorKind {
         self.0.kind
@@ -477,37 +490,117 @@ impl TrajectoryIoError {
     }
 }
 
+/// Writes the operation that failed and its place, such as `Cannot read frame
+/// 3 of the XTC trajectory "run.xtc" at byte 1200.`, then what went wrong:
+/// the exceeded limit, the detail, or a sentence for the kind.
 impl fmt::Display for TrajectoryIoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use TrajectoryIoErrorKind as Kind;
         let data = &self.0;
-        match (data.kind, data.field) {
-            (TrajectoryIoErrorKind::UnsupportedField, Some(field)) => {
-                write!(formatter, "trajectory writer does not support {field}")?;
-            }
-            (kind, _) => write!(formatter, "{kind}")?,
-        }
-        if let Some(format) = data.format {
-            write!(formatter, " for {format}")?;
-        }
+        let indexed = data.kind == Kind::FrameIndexOutOfRange;
+        let mut frame_named = indexed;
+        let head = data.operation.is_some();
         if let Some(operation) = data.operation {
-            write!(formatter, " while attempting to {operation}")?;
+            formatter.write_str(match operation {
+                TrajectoryIoOperation::Detect => "Cannot detect the format of",
+                TrajectoryIoOperation::Open => "Cannot open",
+                TrajectoryIoOperation::Index => "Cannot index",
+                TrajectoryIoOperation::ReadHeader => "Cannot read the header of",
+                TrajectoryIoOperation::ReadFrame => "Cannot read",
+                TrajectoryIoOperation::WriteFrame => "Cannot write",
+                TrajectoryIoOperation::Finish => "Cannot finish",
+            })?;
+            let frame_object = matches!(
+                operation,
+                TrajectoryIoOperation::ReadFrame | TrajectoryIoOperation::WriteFrame
+            );
+            if let (true, false, Some(frame)) = (frame_object, frame_named, data.frame) {
+                write!(formatter, " frame {frame} of")?;
+                frame_named = true;
+            }
+            formatter.write_str(" the")?;
+            if let Some(format) = data.format {
+                write!(formatter, " {format}")?;
+            }
+            formatter.write_str(" trajectory")?;
+            if let Some(label) = &data.source_label {
+                write!(formatter, " \"{label}\"")?;
+            }
+            if let (false, Some(frame)) = (frame_named, data.frame) {
+                write!(formatter, " in frame {frame}")?;
+                frame_named = true;
+            }
+            if let Some(offset) = data.byte_offset {
+                write!(formatter, " at byte {offset}")?;
+            }
+            formatter.write_str(".")?;
         }
-        if let Some(source) = &data.source_label {
-            write!(formatter, " at {source}")?;
-        }
-        if let Some(frame) = data.frame {
-            write!(formatter, " in frame {frame}")?;
-        }
-        if let Some(offset) = data.byte_offset {
-            write!(formatter, " at byte {offset}")?;
-        }
-        if let (Some(expected), Some(actual)) = (data.expected, data.actual) {
-            write!(formatter, " (expected {expected}, actual {actual})")?;
-        }
-        if let Some(limit) = data.limit {
-            write!(formatter, ": {limit}")?;
-        } else if let Some(detail) = &data.detail {
-            write!(formatter, ": {detail}")?;
+        let separator = if head { " " } else { "" };
+        let counts = (data.expected, data.actual);
+        let mut counted = false;
+        let frame = data.frame.filter(|_| !frame_named);
+        let body = match (data.limit, &data.detail, data.kind) {
+            (Some(limit), _, _) => limit.to_string(),
+            (None, Some(detail), _) => detail.clone(),
+            (None, None, kind) => match kind {
+                Kind::Io | Kind::Cancelled if head => return Ok(()),
+                Kind::Io => "Reading or writing the trajectory failed.".to_owned(),
+                Kind::Cancelled => "The trajectory operation was cancelled.".to_owned(),
+                Kind::UnknownFormat => {
+                    "The content matches no supported trajectory format.".to_owned()
+                }
+                Kind::FormatMismatch => "The content is not in the requested format.".to_owned(),
+                Kind::InvalidHeader => "The header is malformed.".to_owned(),
+                Kind::UnsupportedVariant => {
+                    "This variant of the format is not supported.".to_owned()
+                }
+                Kind::TruncatedRecord => "A record ends before its declared length.".to_owned(),
+                Kind::InvalidRecordLength => "A record declares an invalid length.".to_owned(),
+                Kind::RecordMarkerMismatch => {
+                    "A record's leading and trailing length markers differ.".to_owned()
+                }
+                Kind::InvalidFrame => "The frame is malformed.".to_owned(),
+                Kind::InconsistentAtomCount => match counts {
+                    (Some(expected), Some(actual)) => {
+                        counted = true;
+                        format!("The frame has {actual} atoms, not {expected}.")
+                    }
+                    _ => "The frame's atom count differs from the trajectory's.".to_owned(),
+                },
+                Kind::InconsistentMetadata => {
+                    "The header and frame metadata contradict each other.".to_owned()
+                }
+                Kind::InvalidPrecision => "The precision is invalid.".to_owned(),
+                Kind::LimitExceeded => "A format limit was exceeded.".to_owned(),
+                Kind::UnsupportedField => match (data.format, data.field) {
+                    (Some(format), Some(field)) => format!("{format} cannot store the {field}."),
+                    (None, Some(field)) => format!("The format cannot store the {field}."),
+                    _ => "The format cannot store a field of the frame.".to_owned(),
+                },
+                Kind::NegativeOrUnrepresentableStep => {
+                    "A step is negative or does not fit the format.".to_owned()
+                }
+                Kind::CorruptCompressedData => "The compressed coordinates are corrupt.".to_owned(),
+                Kind::TopologyMismatch => "The object belongs to a different topology.".to_owned(),
+                Kind::FrameIndexOutOfRange => match data.frame {
+                    Some(frame) => format!("Frame {frame} does not exist."),
+                    None => "The frame does not exist.".to_owned(),
+                },
+                Kind::InvalidStructure => match frame {
+                    Some(frame) => format!("Frame {frame} is invalid for its topology."),
+                    None => "The frame is invalid for its topology.".to_owned(),
+                },
+                Kind::InvalidTrajectory => "The frames cannot form a trajectory.".to_owned(),
+                Kind::InvalidIndex => {
+                    "The frame index is malformed or of an unsupported version.".to_owned()
+                }
+                Kind::IndexMismatch => "The frame index does not match the file.".to_owned(),
+                Kind::Incomplete => "The file holds no complete frame yet.".to_owned(),
+            },
+        };
+        write!(formatter, "{separator}{body}")?;
+        if let (false, Some(expected), Some(actual)) = (counted, counts.0, counts.1) {
+            write!(formatter, " Expected {expected}, found {actual}.")?;
         }
         Ok(())
     }

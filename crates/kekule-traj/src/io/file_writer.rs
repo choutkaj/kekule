@@ -334,7 +334,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
                 TrajectoryIoOperation::Finish,
                 Some(self.format),
                 &self.source_label,
-                "cannot finish a trajectory after an earlier frame-write failure",
+                "Cannot finish a trajectory after an earlier frame-write failure.",
             ));
         }
         self.inner.finish()
@@ -364,7 +364,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
             operation,
             Some(self.format),
             &self.source_label,
-            "trajectory writer is poisoned by an earlier frame-write failure",
+            "Trajectory writer is poisoned by an earlier frame-write failure.",
         )
     }
 }
@@ -447,7 +447,7 @@ impl FileTrajectoryWriter {
                 TrajectoryIoOperation::Finish,
                 Some(self.format),
                 &label,
-                "cannot publish a trajectory after an earlier frame-write failure",
+                "Cannot publish a trajectory after an earlier frame-write failure.",
             ));
         }
         if let Some(inner) = self.inner.take() {
@@ -689,7 +689,7 @@ pub fn create_trajectory_stream_writer<W: Write + Seek>(
             TrajectoryIoOperation::Open,
             None,
             &source_label,
-            "a stream writer needs an explicit format; use TrajectoryWriteOptions::new",
+            "A stream writer needs an explicit format.",
         )
     })?;
     stream_writer(format, writer, topology.into(), options, source_label)
@@ -763,7 +763,7 @@ pub(super) fn resolve_format(
         Some(format) => Ok(format),
         None => detect::extension_format(path).ok_or_else(|| codec_context(
             TrajectoryIoErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
-            &path.display().to_string(), "destination extension does not identify a supported format; supply explicit write options",
+            &path.display().to_string(), "The destination's extension names no supported format. Choose the format explicitly.",
         )),
     }
 }
@@ -796,7 +796,7 @@ pub fn create_trajectory_writer(
             TrajectoryIoOperation::Open,
             Some(format),
             &label,
-            io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists"),
+            io::Error::new(io::ErrorKind::AlreadyExists, "Destination already exists."),
         ));
     }
     let temporary = create_temporary_sibling(&destination, format)?;
@@ -814,10 +814,9 @@ pub fn create_trajectory_writer(
                 TrajectoryIoOperation::Open,
                 Some(format),
                 &label,
-                format!(
-                    "OverwritePolicy::Forbid publishes through a hard link, which this destination cannot use ({error}); OverwritePolicy::Replace publishes by rename"
-                ),
-            ));
+                "The destination does not support the hard link that publishing without                  overwriting needs.",
+            )
+            .with_source(error));
         }
     }
     let overwrite = options.overwrite;
@@ -859,7 +858,7 @@ fn create_temporary_sibling(
         TrajectoryIoOperation::Open,
         Some(format),
         &destination.display().to_string(),
-        "could not reserve a unique temporary sibling name",
+        "Cannot reserve a unique temporary sibling name.",
     ))
 }
 

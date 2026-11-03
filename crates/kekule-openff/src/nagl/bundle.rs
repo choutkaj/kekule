@@ -55,16 +55,22 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let file = std::fs::File::open(path).map_err(|e| Error::io(path, e))?;
     let metadata = file.metadata().map_err(|e| Error::io(path, e))?;
     if !metadata.is_file() || metadata.len() > limit {
-        return Err(
-            error("NAGL bundle file is not a regular file within the size limit").at_path(path),
-        );
+        return Err(error(format!(
+            "The file is not a regular file of at most {} MiB.",
+            limit / (1024 * 1024)
+        ))
+        .at_path(path));
     }
     let mut bytes = Vec::new();
     file.take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| Error::io(path, e))?;
     if bytes.len() as u64 > limit {
-        return Err(error("NAGL bundle file size exceeds limit").at_path(path));
+        return Err(error(format!(
+            "The file is larger than {} MiB.",
+            limit / (1024 * 1024)
+        ))
+        .at_path(path));
     }
     Ok(bytes)
 }
@@ -79,19 +85,21 @@ pub(super) fn load(directory: &Path) -> Result<Bundle> {
 /// Validates one complete schema-2 bundle held in memory.
 pub(super) fn parse(metadata: &[u8], weights: &[u8]) -> Result<Bundle> {
     if metadata.len() as u64 > METADATA_LIMIT || weights.len() as u64 > WEIGHTS_LIMIT {
-        return Err(error("NAGL bundle size exceeds limit"));
-    }
-    let manifest: Manifest =
-        serde_json::from_slice(metadata).map_err(|e| Error::wrap(ErrorKind::Model, e))?;
-    if manifest.schema != 2 || manifest.preparation.as_deref() != Some(PREPARATION) {
         return Err(error(format!(
-            "unsupported NAGL bundle: expected schema 2 with preparation profile {PREPARATION}"
+            "The bundle is larger than {} MiB of metadata or {} MiB of weights.",
+            METADATA_LIMIT / (1024 * 1024),
+            WEIGHTS_LIMIT / (1024 * 1024)
         )));
     }
-    let identity =
-        ModelIdentity::new(manifest.model, manifest.checkpoint_sha256).ok_or_else(|| {
-            error("NAGL bundle requires a nonempty model and a 64-digit checkpoint SHA-256")
-        })?;
+    let manifest: Manifest = serde_json::from_slice(metadata)
+        .map_err(|e| Error::caused(ErrorKind::Model, "Cannot read the bundle manifest.", e))?;
+    if manifest.schema != 2 || manifest.preparation.as_deref() != Some(PREPARATION) {
+        return Err(error(format!(
+            "The bundle is not schema 2 with preparation profile {PREPARATION:?}."
+        )));
+    }
+    let identity = ModelIdentity::new(manifest.model, manifest.checkpoint_sha256)
+        .ok_or_else(|| error("The bundle names no model or no 64-digit checkpoint SHA-256."))?;
     manifest.config.validate()?;
     if manifest
         .domain
@@ -101,17 +109,23 @@ pub(super) fn parse(metadata: &[u8], weights: &[u8]) -> Result<Bundle> {
         || manifest.domain.allowed_elements.len() > 118
         || manifest.domain.forbidden_patterns.len() > 1024
     {
-        return Err(error("invalid NAGL chemical domain"));
+        return Err(error(
+            "The bundle's chemical domain has an invalid element or more than 1,024 patterns.",
+        ));
     }
     if format!("{:x}", Sha256::digest(weights)) != manifest.weights_sha256 {
-        return Err(error("NAGL weights checksum mismatch"));
+        return Err(error(
+            "The weights do not match the SHA-256 checksum of the manifest.",
+        ));
     }
     let network = Network::load(&manifest.config, manifest.tensors, weights)?;
     let readout = manifest.config.readouts.keys().next().unwrap();
     let mut lookup = BTreeMap::new();
     for (name, entries) in manifest.lookup_tables {
         if &name != readout {
-            return Err(error("NAGL lookup table has no matching charge readout"));
+            return Err(error(format!(
+                "The lookup table {name:?} matches no charge readout."
+            )));
         }
         for entry in entries {
             // Upstream Ash includes one entry with an empty InChI. Retain it
@@ -120,10 +134,16 @@ pub(super) fn parse(metadata: &[u8], weights: &[u8]) -> Result<Bundle> {
                 || entry.charges.is_empty()
                 || entry.charges.iter().any(|q| !q.is_finite())
             {
-                return Err(error("invalid NAGL lookup entry"));
+                return Err(error(format!(
+                    "The lookup entry {:?} has no SMILES, no charges or a nonfinite charge.",
+                    entry.inchi
+                )));
             }
-            if lookup.insert(entry.inchi.clone(), entry).is_some() {
-                return Err(error("duplicate NAGL lookup identifier"));
+            let identifier = entry.inchi.clone();
+            if lookup.insert(identifier.clone(), entry).is_some() {
+                return Err(error(format!(
+                    "The lookup table has the identifier {identifier:?} twice."
+                )));
             }
         }
     }

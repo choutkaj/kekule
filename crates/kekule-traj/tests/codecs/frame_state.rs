@@ -236,7 +236,7 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
             TrajectoryFormat::Xyz,
             "state.xyz",
             Some(0),
-            "XYZ cannot preserve velocities",
+            "XYZ cannot preserve velocities.",
         )
         .with_field(TrajectoryField::Velocities))
     );
@@ -297,7 +297,7 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
             TrajectoryFormat::Dcd,
             "state.dcd",
             Some(0),
-            "DCD cannot preserve time",
+            "DCD cannot preserve time.",
         )
         .with_field(TrajectoryField::Time))
     );
@@ -360,7 +360,7 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
                 TrajectoryFormat::Xtc,
                 "state.xtc",
                 Some(0),
-                &format!("XTC cannot preserve {field}"),
+                &format!("XTC cannot preserve {field}."),
             )
             .with_field(field))
         );
@@ -433,7 +433,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
             TrajectoryFormat::Trr,
             "state.trr",
             None,
-            "TRR FrameProperty policy requires exactly gromacs.trr.lambda",
+            "The TRR lambda policy names a property other than gromacs.trr.lambda.",
         ))
     );
     let zero = TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
@@ -503,7 +503,7 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
             TrajectoryFormat::Xtc,
             "state.xtc",
             None,
-            "XTC requires explicit frame step; FrameTimingPolicy::Number numbers frames without one",
+            "The frame has no step. XTC frames need one.",
         ))
     );
 }
@@ -676,7 +676,7 @@ fn frame_numbering_needs_a_finite_nonnegative_time_interval() {
                 format,
                 "state",
                 None,
-                &format!("{format} frame numbering interval must be a finite, nonnegative time"),
+                &format!("{format} frame numbering interval must be a finite, nonnegative time."),
             )
         };
         let xtc = XtcWriteOptions::default().with_frame_timing(timing);
