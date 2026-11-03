@@ -1026,3 +1026,53 @@ fn appended_copies_share_identical_definitions() {
     assert_eq!(&molecule(instances + gdp_instance), original);
     assert_ne!(&molecule(2 * instances + gdp_instance), original);
 }
+
+#[test]
+fn appended_molecules_do_not_share_a_definition_an_edit_reclassifies() {
+    let water = kekule::smiles::to_molecules("O").unwrap().pop().unwrap();
+    let mut builder = TopologyBuilder::new();
+    let instance = builder.add_molecule(water.clone()).unwrap();
+    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+    let residue = builder
+        .hierarchy_mut()
+        .add_residue(chain, "UNL", None, None, None)
+        .unwrap();
+    builder
+        .hierarchy_mut()
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(instance, AtomId::new(0)),
+            AtomSiteMetadata::default(),
+        )
+        .unwrap();
+    builder
+        .hierarchy_mut()
+        .set_residue_class(residue, ResidueClass::Water)
+        .unwrap();
+    let source = Model::new(builder.build().unwrap(), positions(1)).unwrap();
+    let classes = |model: &Model| {
+        model
+            .topology()
+            .instances()
+            .map(|instance| instance.class())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(classes(&source), [MoleculeClass::Water]);
+
+    let mut editor = source.to_editor();
+    let handle = editor.topology().residue_handle(residue).unwrap();
+    editor
+        .topology_mut()
+        .set_residue_class(handle, ResidueClass::Ion)
+        .unwrap();
+    assert_eq!(
+        classes(&editor.clone().finish().unwrap()),
+        [MoleculeClass::Ion]
+    );
+    // The edited occurrence's definition is classified again, so the
+    // appended original keeps a definition and a class of its own.
+    editor.append_model(&source).unwrap();
+    let merged = editor.finish().unwrap();
+    assert_eq!(merged.topology().definition_count(), 2);
+    assert_eq!(classes(&merged), [MoleculeClass::Ion, MoleculeClass::Water]);
+}

@@ -764,7 +764,8 @@ are marked **Breaking:**.
   definition the draft already holds for an identical one, from the draft's
   source or an earlier append, by the identity interpretation uses (K23):
   equal graph in local atom order, properties, and per-atom component and
-  atom names, and also equal perception and class. A 9UOH model with two
+  atom names, and also equal perception and class. A definition whose
+  class an edit of the draft cleared is not shared. A 9UOH model with two
   copies of itself appended has 6 definitions instead of 18, and each
   definition three times the instances. Editing one instance still copies
   its definition and leaves the others unchanged. Consumers that counted

@@ -31,6 +31,7 @@ impl TopologyEditor {
         // once per import, so occurrences of one source definition share the
         // copy. The copy keeps the definition's perception, and so its profile.
         let mut copies = BTreeMap::<MoleculeDefinitionId, Arc<Molecule>>::new();
+        let reclassified = sharing::Reclassified::of(&self.groups);
         let instance_start = self.properties.molecule_instances().len();
         self.properties
             .molecule_instances_mut()
@@ -53,7 +54,10 @@ impl TopologyEditor {
                     .molecule_class_overrides
                     .contains_key(&definition.id()),
             };
-            let chemistry = match self.shared.find(self.source.as_deref(), &appended) {
+            let chemistry = match self
+                .shared
+                .find(self.source.as_deref(), &reclassified, &appended)
+            {
                 Some(shared) => shared,
                 None => {
                     let copy = Arc::clone(

@@ -662,7 +662,9 @@ per instance, and editors clone a shared definition when an edit touches one
 instance, so the others keep it unchanged. Appending a model or topology to a
 draft shares the same way: an appended molecule identical to a definition the
 draft holds, from its source or an earlier append, becomes an instance of it,
-when its perception and class are equal too. Appending is where copies enter a
+when its perception and class are equal too. A definition an edit left to be
+classified again is not shared, so the appended molecule keeps its own class.
+Appending is where copies enter a
 draft; publication does not search for identical definitions, so it still
 costs what an edit changes. See
 [definition reuse](crates/kekule/src/io/definition_reuse.rs) and
