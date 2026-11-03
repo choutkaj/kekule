@@ -761,7 +761,7 @@ are marked **Breaking:**.
   residues and chains are looked up once per run of their rows, molecules
   split into components in one pass, and close contacts come from a sorted
   cell grid. PDB 6SPB (90,351 atoms) interprets in 0.6 s instead of
-  1.6 s, and 7K00 (149,338 atoms) in 1.1 s instead of 3.5 s
+  1.7 s, and 7K00 (149,338 atoms) in 1.1 s instead of 3.2 s
   (medians, release, one thread).
 - **Breaking:** error messages are sentences (SeekDelta K62). The `Display`
   text of every public error and issue in `kekule`, `kekule-traj`,
