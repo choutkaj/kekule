@@ -332,6 +332,8 @@ fn water_boxes_partition_into_molecules() {
     let topology = interpretation.topology();
     assert_eq!(topology.instance_count(), 1000);
     assert_eq!(topology.bond_count(), 2000);
+    // Identical waters share one definition.
+    assert_eq!(topology.definition_count(), 1);
 }
 
 #[test]

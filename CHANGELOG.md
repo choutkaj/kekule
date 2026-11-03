@@ -740,6 +740,15 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** mmCIF, PDB, and XYZ interpretation gives identical molecules
+  one definition (SeekDelta K23), so instances map atom for atom and default
+  perception runs once per distinct molecule. Molecules are identical when,
+  in local atom order, their atoms, bonds, represented stereo, properties,
+  and per-atom labels (component and atom name; none for XYZ) are equal.
+  Each instance keeps its own hierarchy, and an edit of one instance leaves
+  the others unchanged. PDB 9UOH's 98 molecules now have 6 definitions
+  (93 waters share one) and 7K00's 7,640 molecules 69. Consumers that
+  counted definitions as molecules count instances instead.
 - **Breaking:** metal coordination between residues no longer joins
   molecules (SeekDelta K22). Covalent connectedness alone decides molecule
   boundaries, so in a metalloprotein the protein, a metal ion, and a

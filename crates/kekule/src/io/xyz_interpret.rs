@@ -718,6 +718,7 @@ impl Frame {
         };
         let components = components(self.elements.len(), &self.report.bonds);
         let mut builder = ModelBuilder::new();
+        let mut definitions = super::definition_reuse::DefinitionReuse::new();
         let chain = builder
             .hierarchy_mut()
             .add_chain("A", None)
@@ -757,8 +758,13 @@ impl Frame {
             ))
             .map_err(|error| chemistry(&error))?;
             let atom_ids: Vec<AtomId> = rows.iter().map(|row| local[row]).collect();
+            // Atoms carry no names, so chemistry alone decides reuse.
+            let labels = vec![(); molecule.atom_count()];
+            let definition = definitions
+                .definition(&mut builder, molecule, labels)
+                .map_err(|error| chemistry(&error))?;
             let instance = builder
-                .add_molecule(molecule, &positions)
+                .add_instance(definition, &positions)
                 .map_err(|error| chemistry(&error))?;
             let sequence = i32::try_from(component + 1).map_err(|error| chemistry(&error))?;
             let hierarchy = builder.hierarchy_mut();
