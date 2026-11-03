@@ -766,7 +766,7 @@ are marked **Breaking:**.
   its closest contact with each residue, and each atom of the second set its
   closest remaining contact with each residue, whichever end it is. An atom outside any residue
   counts its molecule as its residue. Both `find_interactions_within` and
-  `find_interactions_between` reduce. KRas G12C's inhibitor (PDB 9UOH) has 11
+  `find_interactions_between` reduce. KRas G12C's inhibitor (PDB 9UOH) has 10
   hydrophobic contacts instead of 20.
 - **Breaking:** appending a model shares identical definitions (SeekDelta
   K23b). `ModelEditor::append_model` gives an appended molecule the
