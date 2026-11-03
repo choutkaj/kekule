@@ -123,7 +123,7 @@ pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, Fo
         structure_error(
             DiagnosticKind::Inconsistent,
             None,
-            "data block has no atom-site category",
+            "The data block has no _atom_site category.",
         )
     })?;
     let table = &table;
@@ -156,7 +156,7 @@ pub(super) fn read_entity_types(
                     table,
                     row,
                     DiagnosticKind::Inconsistent,
-                    format!("duplicate entity `{id}`"),
+                    format!("Entity {id:?} appears twice."),
                 ));
             }
         }
@@ -178,7 +178,7 @@ pub(super) fn read_asym_entities(
                     table,
                     row,
                     DiagnosticKind::Inconsistent,
-                    format!("duplicate structural instance `{id}`"),
+                    format!("Structural instance {id:?} appears twice."),
                 ));
             }
         }
@@ -262,7 +262,7 @@ pub(super) fn read_atom_rows(
             structure_error(
                 DiagnosticKind::InvalidValue,
                 Some(type_value.line()),
-                format!("unknown atom-site element `{type_symbol}`"),
+                format!("The element symbol {type_symbol:?} is unknown."),
             )
         })?;
         let label_asym_id = optional(table, row, fields.label_asym_id).map(str::to_owned);
@@ -274,7 +274,7 @@ pub(super) fn read_atom_rows(
                     table,
                     row,
                     DiagnosticKind::InvalidValue,
-                    "missing atom-site chain identifier",
+                    "The atom site has no chain identifier.",
                 )
             })?
             .to_owned();
@@ -288,7 +288,7 @@ pub(super) fn read_atom_rows(
                     table,
                     row,
                     DiagnosticKind::InvalidValue,
-                    "missing atom-site component identifier",
+                    "The atom site has no component identifier.",
                 )
             })?
             .to_owned();
@@ -301,7 +301,7 @@ pub(super) fn read_atom_rows(
                     table,
                     row,
                     DiagnosticKind::InvalidValue,
-                    "missing atom-site atom identifier",
+                    "The atom site has no atom name.",
                 )
             })?
             .to_owned();
@@ -327,7 +327,7 @@ pub(super) fn read_atom_rows(
                     table,
                     row,
                     DiagnosticKind::InvalidValue,
-                    format!("missing entity type for structural instance `{asym_id}`"),
+                    format!("Structural instance {asym_id:?} has no entity type."),
                 ));
             }
             if inferred.insert(asym_id.clone()) {
@@ -451,14 +451,14 @@ pub(super) fn required<'a>(
             table,
             row,
             DiagnosticKind::InvalidValue,
-            format!("missing required {tag}"),
+            format!("The required {tag} is missing."),
         )
     })?;
     value.optional_text().ok_or_else(|| {
         structure_error(
             DiagnosticKind::InvalidValue,
             Some(value.line()),
-            format!("missing required {tag}"),
+            format!("The required {tag} is missing."),
         )
     })
 }
@@ -485,7 +485,7 @@ fn optional_f64(
                     table,
                     row,
                     DiagnosticKind::InvalidValue,
-                    format!("invalid float {tag}"),
+                    format!("The {tag} value {value:?} is not a number."),
                 )
             })?;
             if !parsed.is_finite() {
@@ -493,7 +493,7 @@ fn optional_f64(
                     table,
                     row,
                     DiagnosticKind::InvalidValue,
-                    format!("non-finite float {tag}"),
+                    format!("The {tag} value {value:?} is not finite."),
                 ));
             }
             Ok(parsed)
@@ -514,7 +514,7 @@ pub(super) fn optional_i32(
                     table,
                     row,
                     DiagnosticKind::InvalidValue,
-                    format!("invalid integer {tag}"),
+                    format!("The {tag} value {value:?} is not a whole number."),
                 )
             })
         })
@@ -534,7 +534,7 @@ fn optional_i8(
                     table,
                     row,
                     DiagnosticKind::InvalidValue,
-                    format!("invalid integer {tag}"),
+                    format!("The {tag} value {value:?} is not a whole number from -128 to 127."),
                 )
             })
         })
@@ -556,7 +556,7 @@ fn optional_point(
             table,
             row,
             DiagnosticKind::InvalidValue,
-            "partial atom-site coordinate triplet",
+            "The atom site has only some of its three coordinates.",
         )),
     }
 }

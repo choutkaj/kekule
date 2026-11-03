@@ -520,7 +520,7 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
     let model_error = block
         .interpret(Default::default())
         .expect_err("metadata block has no model");
-    assert!(model_error.message().contains("no atom-site category"));
+    assert!(model_error.message().contains("no _atom_site category"));
     assert_eq!(
         error_detail(block.interpret_ensemble(Default::default())),
         Some(FormatErrorDetail::NoCoordinateModels)
@@ -906,7 +906,7 @@ ATOM 2 C CA GLY GLC A X 1 7 101 10.0 0.0 0.0
     let error = (parse(input)).interpret(Default::default()).unwrap_err();
     assert!(error
         .message()
-        .contains("conflicting _atom_site.auth_seq_id"));
+        .contains("have two _atom_site.auth_seq_id values"));
 
     let conflicting_label_component = input.replace(
         "ATOM 2 C CA GLY GLC A X 1 7 101",
@@ -915,7 +915,7 @@ ATOM 2 C CA GLY GLC A X 1 7 101 10.0 0.0 0.0
     let error = (parse(&conflicting_label_component))
         .interpret(Default::default())
         .unwrap_err();
-    assert!(error.message().contains("canonical residue identity"));
+    assert!(error.message().contains("different components"));
 
     let conflicting_author_component = input.replace(
         "ATOM 2 C CA GLY GLC A X 1 7 101",
@@ -926,7 +926,7 @@ ATOM 2 C CA GLY GLC A X 1 7 101 10.0 0.0 0.0
         .unwrap_err();
     assert!(error
         .message()
-        .contains("conflicting _atom_site.auth_comp_id"));
+        .contains("two _atom_site.auth_comp_id values"));
 
     let conflicting_chain_alias = input.replace(
         "ATOM 2 C CA GLY GLC A X 1 7 101",
@@ -937,7 +937,7 @@ ATOM 2 C CA GLY GLC A X 1 7 101 10.0 0.0 0.0
         .unwrap_err();
     assert!(error
         .message()
-        .contains("conflicting _atom_site.auth_asym_id"));
+        .contains("two _atom_site.auth_asym_id values"));
 }
 
 #[test]
@@ -1121,9 +1121,7 @@ fn connectivity_diagnostic_cell_boundaries_are_finite_and_panic_free() {
             .expect("out-of-range finite coordinate must not panic")
             .expect_err("out-of-range finite coordinate must be rejected");
         assert!(error.location().is_some());
-        assert!(error
-            .message()
-            .contains("supported covalent-connectivity diagnostic cell range"));
+        assert!(error.message().contains("is too large to search for bonds"));
     }
 }
 
@@ -1135,7 +1133,7 @@ fn multiple_coordinate_models_require_explicit_selection() {
     );
     let document = parse(&input);
     let error = document.interpret(Default::default()).unwrap_err();
-    assert!(error.message().contains("select one explicitly"));
+    assert!(error.message().contains("Select one."));
 
     let selected = document
         .interpret(
@@ -1172,7 +1170,7 @@ fn document_interpreters_reject_multiple_atom_site_blocks() {
         .expect_err("ambiguous blocks");
     assert!(single_error
         .message()
-        .contains("atom-site data in more than one data block"));
+        .contains("More than one data block has _atom_site data."));
     assert_eq!(
         error_detail(document.interpret_ensemble(Default::default())),
         Some(FormatErrorDetail::MultipleAtomSiteBlocks)
@@ -1334,7 +1332,7 @@ fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
             model_id: "1".to_owned()
         })
     );
-    assert!(error.message().contains("unknown atom-site element"));
+    assert!(error.message().contains("is unknown"));
 }
 
 #[test]
@@ -2017,7 +2015,7 @@ covale A N 1 A CA 1 doub
     assert!(error.location().is_some());
     assert!(error
         .message()
-        .contains("unsupported struct_conn bond order `arom`"));
+        .contains("The _struct_conn bond order \"arom\" is not supported."));
 }
 
 #[test]

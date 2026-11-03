@@ -305,7 +305,7 @@ impl BuiltMolecule {
             return Err(structure_error(
                 DiagnosticKind::Chemistry,
                 None,
-                "mmCIF molecule group has no atoms",
+                "A molecule group has no atoms.",
             ));
         }
         // Each source atom's component and its ID there.
@@ -377,7 +377,7 @@ impl BuiltMolecule {
                         structure_error(
                             DiagnosticKind::Chemistry,
                             None,
-                            "an mmCIF bond has no recorded evidence",
+                            "A bond has no source record.",
                         )
                     })?;
                 bonds.push((atoms, evidence));
@@ -482,7 +482,7 @@ pub(super) fn build_molecule(
                     DiagnosticKind::Inconsistent,
                     Some(row.line),
                     format!(
-                        "atom `{}` has inconsistent topology payload across coordinate models",
+                        "Atom {:?} differs in its chemistry or identity between coordinate models.",
                         row.atom_name
                     ),
                 ));
@@ -511,7 +511,13 @@ pub(super) fn build_molecule(
     let model_id = rows
         .first()
         .map(|row| row.model_id.clone())
-        .ok_or_else(|| structure_error(DiagnosticKind::Chemistry, None, "empty molecule group"))?;
+        .ok_or_else(|| {
+            structure_error(
+                DiagnosticKind::Chemistry,
+                None,
+                "A molecule group has no atoms.",
+            )
+        })?;
     let mut coordinates =
         StagedCoordinates::with_atom_capacity(atoms.len(), ANGSTROM).map_err(graph_error)?;
     for (step, (row, &atom)) in rows.iter().zip(&row_atoms).enumerate() {
@@ -521,7 +527,7 @@ pub(super) fn build_molecule(
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
-                    "missing selected-model position for atom `{}`",
+                    "Atom {:?} has no position in the selected model.",
                     row.atom_name
                 ),
             )
@@ -576,7 +582,7 @@ pub(super) fn build_molecule(
                 return Err(structure_error(
                     DiagnosticKind::Inconsistent,
                     None,
-                    "duplicate connection records assign conflicting bond orders",
+                    "Two connection records give one bond different orders.",
                 ));
             }
         }
@@ -802,7 +808,7 @@ fn covalent_bond_cell_axis(coordinate: f64, axis: &str, line: usize) -> Result<i
         return Err(structure_error(DiagnosticKind::Limit,
             Some(line),
             format!(
-                "_atom_site.Cartn_{axis} coordinate is outside the supported covalent-connectivity diagnostic cell range"
+                "The _atom_site.Cartn_{axis} coordinate {coordinate} Å is too large to search for bonds."
             ),
         ));
     }
@@ -889,7 +895,7 @@ pub(super) fn build_topology_hierarchy(
             {
                 return Err(inconsistent_residue_metadata(
                     atom,
-                    "canonical residue identity",
+                    "component, sequence number or insertion code",
                 ));
             }
             merge_optional_source_value(
@@ -1013,7 +1019,7 @@ fn merge_optional_source_value(
             return Err(structure_error(DiagnosticKind::Inconsistent,
                 Some(source_line),
                 format!(
-                    "canonical hierarchy identity `{identity}` has conflicting _atom_site.{field} values `{current}` and `{incoming}`"
+                    "The atom sites of {identity:?} have two _atom_site.{field} values: {current:?} and {incoming:?}."
                 ),
             ));
         }
@@ -1028,7 +1034,7 @@ fn inconsistent_residue_metadata(atom: &AtomProvenance, field: &'static str) -> 
         DiagnosticKind::Inconsistent,
         Some(atom.source_line),
         format!(
-            "canonical residue `{}` in asymmetry `{}` has inconsistent {field}",
+            "Residue {:?} of structural instance {:?} has different {field} values.",
             atom.residue_key, atom.asym_id
         ),
     )
@@ -1039,7 +1045,7 @@ pub(super) fn graph_error(source: impl std::error::Error + Send + Sync + 'static
     structure_error(
         DiagnosticKind::Chemistry,
         None,
-        "molecule construction failed",
+        "Cannot build the molecule.",
     )
     .with_source(source)
 }
@@ -1048,7 +1054,7 @@ fn hierarchy_error(source: impl std::error::Error + Send + Sync + 'static) -> Fo
     structure_error(
         DiagnosticKind::Inconsistent,
         None,
-        "invalid source hierarchy",
+        "Cannot build the chains and residues.",
     )
     .with_source(source)
 }

@@ -93,7 +93,7 @@ fn interpret_source(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
-                    "coordinate data contains {} models; select one explicitly",
+                    "The input has {} coordinate models. Select one.",
                     prepared.model_sizes.len(),
                 ),
             ))
@@ -228,7 +228,7 @@ impl PreparedSource {
             structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
-                format!("coordinate model `{model_id}` is unavailable"),
+                format!("Coordinate model {model_id:?} does not exist."),
             )
         })?;
         if let Some(row) = rows
@@ -241,7 +241,7 @@ impl PreparedSource {
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
-                    "selected coordinate model `{model_id}` has no complete position for atom `{}`",
+                    "Atom {:?} has no complete position in coordinate model {model_id:?}.",
                     row.atom_name,
                 ),
             ));
@@ -444,7 +444,7 @@ fn publish_model(
             structure_error(
                 DiagnosticKind::Chemistry,
                 None,
-                format!("invalid qualified mmCIF atom: {atom}"),
+                format!("The topology has no {atom}."),
             )
         })?;
         occupancies[index.index()] = occupancy;

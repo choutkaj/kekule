@@ -128,7 +128,10 @@ fn mmcif_cell_is_the_model_cell_only_for_a_whole_unit_cell() {
         .unwrap()
         .interpret(Default::default())
         .unwrap_err();
-    assert_eq!(error.message(), "invalid _cell.length_b `abc`");
+    assert_eq!(
+        error.message(),
+        "The _cell.length_b value \"abc\" is not a number."
+    );
 }
 
 fn with_struct_conn(order: &str) -> String {
@@ -350,7 +353,7 @@ fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
     assert_eq!(error.location(), None);
     assert_eq!(
         error.message(),
-        "conflicting authoritative bond evidence for one atom pair: Double versus Single"
+        "The bond records give one atom pair two orders: double and single."
     );
 }
 
