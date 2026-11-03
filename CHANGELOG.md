@@ -759,6 +759,15 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** hydrophobic contacts are reduced as PLIP reduces them
+  (SeekDelta K63). Before, every pair of hydrophobic atoms within the cutoff
+  was a contact. Now contacts between two rings that π-stack are dropped,
+  since the stacking covers them. Then each atom of a first end keeps only
+  its closest contact with each residue, and each atom of a second end its
+  closest remaining contact with each residue. An atom outside any residue
+  counts its molecule as its residue. Both `find_interactions_within` and
+  `find_interactions_between` reduce. KRas G12C's inhibitor (PDB 9UOH) has 11
+  hydrophobic contacts instead of 20.
 - **Breaking:** only monomers of a polymer have one-letter codes (SeekDelta
   K21b). `residue_code` and `chain_sequences` give a code to a residue whose
   component links into a polymer, or an amino-acid or nucleotide residue,

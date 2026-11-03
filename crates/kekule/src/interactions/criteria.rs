@@ -457,7 +457,10 @@ impl MetalCoordinationCriteria {
 /// Hydrophobic-contact criteria: two hydrophobic atoms, carbons bonded only
 /// to carbon and hydrogen, within [`Self::distance`].
 ///
-/// Default 4.0 Å, as PLIP's (Salentin et al. 2015).
+/// Default 4.0 Å, as PLIP's (Salentin et al. 2015). Contacts are then
+/// reduced as PLIP reduces them; see [`find_interactions_within`].
+///
+/// [`find_interactions_within`]: super::find_interactions_within
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HydrophobicCriteria {
     enabled: bool,

@@ -1,12 +1,15 @@
 //! The geometric search of one structure, or two.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::geometry::{Point3, PointGrid, Vector3};
 use crate::io::is_metal;
 use crate::molecule::{AtomId, Element};
 use crate::structure::{AsModelView, ModelView};
-use crate::topology::{AtomSelection, InstanceAtomId, Topology, TopologyAtomIndex};
+use crate::topology::{
+    AtomSelection, InstanceAtomId, MoleculeInstanceId, ResidueId, Topology, TopologyAtomIndex,
+};
 
 use super::criteria::Canonical;
 use super::features::{centroid, ring_geometry, InteractionFeatures};
@@ -85,10 +88,15 @@ impl<'a> InteractionSide<'a> {
 /// forms hydrogen bonds in both directions is reported once: by its explicit
 /// hydrogen when one qualifies, otherwise with the first end donating.
 ///
-/// Every qualifying pair is reported: hydrophobic contacts are not reduced
-/// to one per atom or residue, as PLIP reduces them, and no criterion has a
-/// lower distance bound, so clashes within a distance count. A host that
-/// shows fewer contacts filters them by their atoms and distances.
+/// Hydrophobic contacts are reduced as PLIP reduces them (Salentin et al.
+/// 2015). Contacts between the atoms of two rings that π-stack are dropped,
+/// since the stacking covers them. Then each atom of a first end keeps only
+/// its closest contact with each residue, and each atom of a second end
+/// keeps only its closest remaining contact with each residue. An atom
+/// outside any residue counts its molecule as its residue. Equal distances
+/// keep the contact with the lower atoms. Every other qualifying pair is
+/// reported. No criterion has a lower distance bound, so clashes within a
+/// distance count.
 ///
 /// # Errors
 ///
@@ -116,7 +124,9 @@ pub fn find_interactions_within(
 /// end belongs to `first`. Bonds never join the sides, so no pair is
 /// excluded by bond separation; searching one structure split into two
 /// gives the interactions [`find_interactions_within`] gives between the
-/// parts, when no bond joins them.
+/// parts, when no bond joins them. Hydrophobic contacts are reduced as
+/// [`find_interactions_within`] reduces them, with residues of each side's
+/// own topology.
 ///
 /// # Errors
 ///
@@ -137,6 +147,28 @@ struct Candidate {
     feature: u32,
     /// A ring's normal; zero for other features.
     normal: Vector3,
+}
+
+/// What an atom counts as its residue when hydrophobic contacts are
+/// reduced: its residue, or its molecule when it has none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Unit {
+    Residue(ResidueId),
+    Molecule(MoleculeInstanceId),
+}
+
+impl Unit {
+    fn of(topology: &Topology, atom: TopologyAtomIndex) -> Self {
+        match topology.atom_site_at(atom) {
+            Some(site) => Self::Residue(site.residue().id()),
+            None => Self::Molecule(
+                topology
+                    .atom_id(atom)
+                    .expect("interaction atoms are topology atoms")
+                    .instance(),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -672,7 +704,7 @@ impl<'a> Search<'a> {
             };
             (!explicit, !first_donates, donor)
         };
-        let mut best = std::collections::HashMap::new();
+        let mut best = HashMap::new();
         for (index, interaction) in found.iter().enumerate() {
             if interaction.kind == InteractionKind::HydrogenBond {
                 best.entry(pair(interaction))
@@ -693,6 +725,7 @@ impl<'a> Search<'a> {
             })
             .map(|(_, interaction)| interaction)
             .collect::<Vec<_>>();
+        let kept = self.reduce_hydrophobic_contacts(kept);
         Interactions {
             first: self.first_topology,
             second: self.second_topology,
@@ -701,6 +734,79 @@ impl<'a> Search<'a> {
             min_bond_separation: criteria.min_bond_separation(),
             interactions: kept,
         }
+    }
+
+    /// Reduces sorted interactions' hydrophobic contacts as
+    /// [`find_interactions_within`] describes, keeping their order.
+    fn reduce_hydrophobic_contacts(&self, found: Vec<Interaction>) -> Vec<Interaction> {
+        let hydrophobic =
+            |interaction: &Interaction| interaction.kind == InteractionKind::HydrophobicContact;
+        if !found.iter().any(hydrophobic) {
+            return found;
+        }
+        // Atom pairs of rings that π-stack. Within one structure, the
+        // contact's lower atom comes first, so either ring may hold it.
+        let mut stacked = HashSet::new();
+        for stacking in found.iter().filter(|interaction| {
+            matches!(
+                interaction.kind,
+                InteractionKind::PiStackingParallel | InteractionKind::PiStackingTShaped
+            )
+        }) {
+            for &first in &stacking.first.atoms {
+                for &second in &stacking.second.atoms {
+                    stacked.insert((first, second));
+                    if self.within {
+                        stacked.insert((second, first));
+                    }
+                }
+            }
+        }
+        let atoms =
+            |interaction: &Interaction| (interaction.first.atoms[0], interaction.second.atoms[0]);
+        let candidates = found
+            .iter()
+            .enumerate()
+            .filter(|(_, interaction)| {
+                hydrophobic(interaction) && !stacked.contains(&atoms(interaction))
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        // Each first atom's closest contact with each residue, then each
+        // second atom's closest remaining contact with each residue. The
+        // sorted order puts lower atoms first, so they win ties.
+        let closest =
+            |candidates: &[usize], key: &dyn Fn(&Interaction) -> (TopologyAtomIndex, Unit)| {
+                let mut best = HashMap::<_, usize>::new();
+                for &index in candidates {
+                    best.entry(key(&found[index]))
+                        .and_modify(|kept| {
+                            if found[index].distance < found[*kept].distance {
+                                *kept = index;
+                            }
+                        })
+                        .or_insert(index);
+                }
+                let mut kept = best.into_values().collect::<Vec<_>>();
+                kept.sort_unstable();
+                kept
+            };
+        let candidates = closest(&candidates, &|interaction| {
+            let (first, second) = atoms(interaction);
+            (first, Unit::of(self.second.topology, second))
+        });
+        let kept = closest(&candidates, &|interaction| {
+            let (first, second) = atoms(interaction);
+            (second, Unit::of(self.first.topology, first))
+        })
+        .into_iter()
+        .collect::<HashSet<_>>();
+        found
+            .into_iter()
+            .enumerate()
+            .filter(|(index, interaction)| !hydrophobic(interaction) || kept.contains(index))
+            .map(|(_, interaction)| interaction)
+            .collect()
     }
 
     /// Searches pairs of a `p` feature and a `q` feature within `cutoff`, in

@@ -880,3 +880,87 @@ fn reperceives_other_installed_models() {
     assert_eq!(features.aromatic_rings().len(), 1);
     assert!(features.unperceived_definitions().is_empty());
 }
+
+/// The hydrophobic contacts found, as atom index pairs.
+fn contacts(found: &Interactions) -> Vec<(usize, usize)> {
+    found
+        .of_kind(InteractionKind::HydrophobicContact)
+        .map(|contact| {
+            (
+                contact.first().atoms()[0].index(),
+                contact.second().atoms()[0].index(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn hydrophobic_contacts_keep_the_closest_per_atom_and_residue() {
+    // A methane carbon within 4 Å of all three propane carbons and of both
+    // ethane carbons; a molecule without residues is its own residue. Atom
+    // order: methane, propane, ethane.
+    let points = [
+        p(0.0, 0.0, 0.0),
+        p(3.6, 0.0, 0.0),
+        p(0.0, 3.7, 0.0),
+        p(0.0, 0.0, 3.9),
+        p(-3.8, 0.0, 0.0),
+        p(0.0, -3.5, 0.0),
+    ];
+    let smiles = "C.CCC.CC";
+    let criteria = InteractionCriteria::default();
+    // From the methane: its closest contact with each molecule.
+    let found = find_with(smiles, &points, [0], 1..6, &criteria);
+    assert_eq!(contacts(&found), [(0, 1), (0, 5)]);
+    // Towards the methane: each other carbon has one contact with it, and
+    // the methane keeps only the closest of each molecule.
+    let found = find_with(smiles, &points, 1..6, [0], &criteria);
+    assert_eq!(contacts(&found), [(1, 0), (5, 0)]);
+    // Across two structures, the same.
+    let (topology, model) = model(smiles, &points);
+    let features = InteractionFeatures::new(Arc::clone(&topology));
+    let (methane, rest) = (select(&topology, [0]), select(&topology, 1..6));
+    let found = find_interactions_between(
+        &InteractionSide::new(&features, &model, &methane).unwrap(),
+        &InteractionSide::new(&features, &model, &rest).unwrap(),
+        &criteria,
+    )
+    .unwrap();
+    assert_eq!(contacts(&found), [(0, 1), (0, 5)]);
+}
+
+#[test]
+fn stacked_rings_have_no_hydrophobic_contacts_between_them() {
+    // Two eclipsed benzenes 3.5 Å apart: the stacking covers their contacts.
+    let points = two_benzenes(tilted(p(0.0, 0.0, 3.5), 0.0));
+    let benzenes = "c1ccccc1.c1ccccc1";
+    let found = find_with(
+        benzenes,
+        &points,
+        0..6,
+        6..12,
+        &InteractionCriteria::default(),
+    );
+    assert_eq!(
+        found.of_kind(InteractionKind::PiStackingParallel).count(),
+        1
+    );
+    assert!(contacts(&found).is_empty());
+    // Without stacking, each carbon keeps its contact with the one above it.
+    let criteria = InteractionCriteria::default()
+        .with_pi_stacking(PiStackingCriteria::default().with_enabled(false));
+    let found = find_with(benzenes, &points, 0..6, 6..12, &criteria);
+    assert_eq!(
+        contacts(&found),
+        (0..6).map(|atom| (atom, atom + 6)).collect::<Vec<_>>()
+    );
+    // Within one set, the lower atom comes first and the same holds.
+    let found = find_with(
+        benzenes,
+        &points,
+        0..12,
+        0..12,
+        &InteractionCriteria::default(),
+    );
+    assert!(contacts(&found).is_empty());
+}

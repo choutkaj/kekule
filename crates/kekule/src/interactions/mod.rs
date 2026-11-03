@@ -7,7 +7,8 @@
 //! hydrophobic atoms. A search then measures one structure, or two, with the
 //! [`InteractionCriteria`] and reports each [`Interaction`] with its type,
 //! the atoms of both ends, the points to draw it between, and its distance,
-//! angles, and offset.
+//! angles, and offset. Hydrophobic contacts are reduced as PLIP reduces
+//! them, to the closest per atom and residue.
 //!
 //! - [`find_interactions_within`] searches one structure between two atom
 //!   sets, such as a ligand and its pocket, or marked atoms and every

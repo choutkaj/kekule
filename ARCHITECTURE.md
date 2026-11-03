@@ -592,7 +592,9 @@ of its own topology, and returns a snapshot of interactions addressed by dense
 indices of each side's topology. Criteria are a plain options value in
 `Quantity` units with literature defaults. Within one structure, bond separation
 excludes ends of one molecule; across structures no bond joins the sides, so
-the two searches agree on the parts of a structure no bond joins. The side with
+the two searches agree on the parts of a structure no bond joins. Both reduce
+hydrophobic contacts as PLIP does, after every pair is found: none between
+π-stacked rings, then the closest per atom and residue in each direction. The side with
 fewer atoms lists its features; the other reads only atoms within reach of
 them, and pairs are found on the uniform point grid that group contact
 occupancy also uses. Hydrogen-bond occupancy is a weighted, mergeable
