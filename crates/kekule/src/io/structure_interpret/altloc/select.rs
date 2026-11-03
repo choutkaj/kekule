@@ -413,15 +413,13 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
     // alternatives are their sites' only rows.
     let mut site_orders = BTreeMap::new();
     for residue in residues.iter().filter(|residue| !residue.labels.is_empty()) {
+        poll(cancellation)?;
+        let mut first = BTreeMap::<(&str, &str), usize>::new();
         for row in &residue.rows {
-            site_orders.entry(row.row_index).or_insert_with(|| {
-                residue
-                    .rows
-                    .iter()
-                    .find(|first| first.comp_id == row.comp_id && first.atom_name == row.atom_name)
-                    .expect("a row is its own site's candidate")
-                    .row_index
-            });
+            let order = *first
+                .entry((row.comp_id.as_str(), row.atom_name.as_str()))
+                .or_insert(row.row_index);
+            site_orders.insert(row.row_index, order);
         }
     }
     let mut selected = selected
