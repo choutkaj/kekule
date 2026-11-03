@@ -3,7 +3,7 @@
 //!
 //! The enumeration search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
-use crate::diagnostics::LimitExceeded;
+use crate::diagnostics::{Cancellation, Cancelled, LimitExceeded};
 use crate::molecule::{
     AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, MoleculeError,
     MoleculePublicationError, ResonanceGroup, ResonanceModel, ResonancePerception,
@@ -139,6 +139,12 @@ pub enum ResonancePerceptionError {
     UnknownHydrogens(AtomId),
     /// The path search exceeded its work bound, which grows with the graph.
     LimitExceeded(LimitExceeded),
+    /// The caller's [`Cancellation`] stopped the path search. Only
+    /// cancellable perception, such as
+    /// [`Model::perceive_cancellable`](crate::structure::Model::perceive_cancellable),
+    /// reports it, as [`PerceptionError::Cancelled`](crate::perception::PerceptionError::Cancelled);
+    /// [`perceive_resonance`] never does.
+    Cancelled(Cancelled),
 }
 impl fmt::Display for ResonancePerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -146,10 +152,18 @@ impl fmt::Display for ResonancePerceptionError {
             Self::MissingAromaticity => f.write_str("resonance requires installed aromaticity"),
             Self::UnknownHydrogens(a) => write!(f, "resonance requires known hydrogens at {a}"),
             Self::LimitExceeded(limit) => write!(f, "resonance {limit}"),
+            Self::Cancelled(_) => f.write_str("resonance perception cancelled"),
         }
     }
 }
-impl std::error::Error for ResonancePerceptionError {}
+impl std::error::Error for ResonancePerceptionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Cancelled(cancelled) => Some(cancelled),
+            _ => None,
+        }
+    }
+}
 
 /// Why resonance enumeration failed.
 #[derive(Debug, Clone, PartialEq)]
@@ -247,8 +261,17 @@ pub fn perceive_resonance(
     mol: &mut Molecule,
     model: ResonanceModel,
 ) -> Result<(), ResonancePerceptionError> {
+    perceive_resonance_cancellable(mol, model, None)
+}
+
+/// [`perceive_resonance`], polling `cancellation` as the path search works.
+pub(crate) fn perceive_resonance_cancellable(
+    mol: &mut Molecule,
+    model: ResonanceModel,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), ResonancePerceptionError> {
     let groups = match model {
-        ResonanceModel::ChargeMoves => delocalization::delocalized_groups(mol)?,
+        ResonanceModel::ChargeMoves => delocalization::delocalized_groups(mol, cancellation)?,
     };
     mol.perception.resonance = Some(ResonancePerception::new(model, groups));
     Ok(())

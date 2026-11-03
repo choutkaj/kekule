@@ -5,7 +5,8 @@ use crate::algorithms::{
     RingPerceptionError, RingPerceptionOptions, ValenceError, ValenceOptions,
 };
 use crate::algorithms::{
-    perceive_conjugation, perceive_resonance, ConjugationError, ResonancePerceptionError,
+    perceive_conjugation, perceive_resonance_cancellable, ConjugationError,
+    ResonancePerceptionError,
 };
 use crate::diagnostics::{Cancellation, Cancelled};
 use crate::molecule::{AromaticityModel, Molecule, ValenceModel};
@@ -106,5 +107,11 @@ fn perceive_molecule_in_place(
     poll()?;
     perceive_conjugation(molecule, ConjugationModel::RdkitLike)
         .map_err(PerceptionError::Conjugation)?;
-    perceive_resonance(molecule, ResonanceModel::ChargeMoves).map_err(PerceptionError::Resonance)
+    poll()?;
+    perceive_resonance_cancellable(molecule, ResonanceModel::ChargeMoves, cancellation).map_err(
+        |error| match error {
+            ResonancePerceptionError::Cancelled(cancelled) => PerceptionError::Cancelled(cancelled),
+            error => PerceptionError::Resonance(error),
+        },
+    )
 }

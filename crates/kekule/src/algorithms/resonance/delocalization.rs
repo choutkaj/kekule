@@ -6,7 +6,7 @@
 use super::super::rings::compute_ring_membership;
 use super::super::valence::{allowed_valences_with_charge, explicit_valence};
 use super::ResonancePerceptionError;
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{Cancellation, LimitExceeded, Resource};
 use crate::molecule::{
     AromaticityPerception, AtomId, BondId, BondOrder, Molecule, ResonanceGroup, RingMembership,
 };
@@ -85,12 +85,14 @@ struct Search<'a> {
     orders: Vec<u8>,
     left: usize,
     limit: usize,
+    cancellation: Option<&'a Cancellation>,
 }
 
 /// Groups of resonance-delocalized bonds, as installed by
 /// [`perceive_resonance`](super::perceive_resonance).
-pub(super) fn delocalized_groups(
-    mol: &Molecule,
+pub(super) fn delocalized_groups<'a>(
+    mol: &'a Molecule,
+    cancellation: Option<&'a Cancellation>,
 ) -> Result<Vec<ResonanceGroup>, ResonancePerceptionError> {
     let aromaticity = mol
         .perception()
@@ -118,6 +120,7 @@ pub(super) fn delocalized_groups(
         orders: vec![UNREAD; mol.graph.bond_slot_count()],
         left: limit,
         limit,
+        cancellation,
     };
     for &atom in &charged {
         search.normalize_ylides(atom)?;
@@ -289,7 +292,8 @@ impl Search<'_> {
                 self.limit,
             ))
         })?;
-        Ok(())
+        Cancellation::poll_every(self.cancellation, self.left)
+            .map_err(ResonancePerceptionError::Cancelled)
     }
 
     /// Marks every bond of every simple alternating path that moves the
@@ -305,12 +309,16 @@ impl Search<'_> {
         visited[carrier] = true;
         let mut frames = vec![(carrier, charge.first(), 0_usize)];
         let mut path: Vec<usize> = Vec::new();
+        // The path's first `marked` bonds are already delocalized, so each
+        // push is marked at most once.
+        let mut marked = 0;
         while let Some(frame) = frames.last_mut() {
             let (atom, step, cursor) = *frame;
             let Some(&bond) = mol.graph.adjacency[atom].get(cursor) else {
                 visited[atom] = false;
                 frames.pop();
                 path.pop();
+                marked = marked.min(path.len());
                 continue;
             };
             frame.2 += 1;
@@ -326,9 +334,10 @@ impl Search<'_> {
             }
             path.push(bond);
             if Self::accepts(state, charge, step) {
-                for &member in &path {
+                for &member in &path[marked..] {
                     delocalized[member] = true;
                 }
+                marked = path.len();
             }
             visited[next] = true;
             frames.push((next, step.other(), 0));
@@ -386,4 +395,24 @@ fn index_atom(index: usize) -> AtomId {
 
 fn index_bond(index: usize) -> BondId {
     BondId::new(u32::try_from(index).expect("bond slot within ID capacity"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_paths_mark_each_bond_once_and_poll_cancellation() {
+        let text = format!("[CH2-]{}", "C=C".repeat(5_000));
+        let mut mol = crate::smiles::to_molecules(&text).unwrap().remove(0);
+        mol.perceive().unwrap();
+        let groups = delocalized_groups(&mol, None).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].bonds.len(), mol.bond_count());
+        let cancelled = Cancellation::new(|| true);
+        assert!(matches!(
+            delocalized_groups(&mol, Some(&cancelled)),
+            Err(ResonancePerceptionError::Cancelled(_))
+        ));
+    }
 }

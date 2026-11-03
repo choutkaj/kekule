@@ -48,7 +48,7 @@ Charges drive delocalization, so the result follows the represented protonation 
 
 ### Cost
 
-Only charged atoms start a search, and the search reads only the atoms and bonds its paths reach. A neutral molecule costs one scan of its formal charges. The path search is bounded by work that grows with the graph; exhaustion returns `ResonancePerceptionError::LimitExceeded` and leaves all state intact.
+Only charged atoms start a search, and the search reads only the atoms and bonds its paths reach. A neutral molecule costs one scan of its formal charges. The path search is bounded by work that grows with the graph; exhaustion returns `ResonancePerceptionError::LimitExceeded` and leaves all state intact. Cancellable owner perception polls its cancellation during the search.
 
 ## Installed state
 
