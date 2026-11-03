@@ -1192,7 +1192,7 @@ are marked **Breaking:**.
   each root, so the work grew with rings times molecule size. Ribosomes such
   as PDB 6SPB and 7K00 exceeded the work limit. Recovery now trims and
   restores the roots in place. The rings of 6SPB's largest molecule
-  (32,657 atoms) take about 30 ms and 0.3 % of the limit.
+  (32,657 atoms) now take 0.3 % of the limit.
 - A residue without template charges takes the charges its bonds imply
   (SeekDelta K25). wwPDB entry files state component bond orders but no
   charges, so the methylated N7 of 7-methylguanosine (`G7M`) was a neutral
