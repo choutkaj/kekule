@@ -226,8 +226,14 @@ pub(super) struct AtomRow {
 
 impl AtomRow {
     pub(super) fn atom_key(&self) -> String {
-        format!("{}|{}|{}", self.asym_id, self.residue_key, self.atom_name)
+        atom_key(&self.asym_id, &self.residue_key, &self.atom_name)
     }
+}
+
+/// The key that identifies one atom of a coordinate model: its structural
+/// instance, residue, and atom name.
+pub(super) fn atom_key(asym_id: &str, residue_key: &str, atom_name: &str) -> String {
+    format!("{asym_id}|{residue_key}|{atom_name}")
 }
 
 #[derive(Debug, Default)]

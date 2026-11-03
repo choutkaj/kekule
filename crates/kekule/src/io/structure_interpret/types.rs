@@ -452,7 +452,9 @@ pub enum BondEvidence {
     BranchLink,
     /// A connection record: an mmCIF `_struct_conn` row, whose type
     /// `connection_type` names, or a PDB `LINK`, `SSBOND`, or `CONECT` record,
-    /// named by its record type. Metal coordination yields a dative bond.
+    /// named by its record type. Metal coordination within one residue
+    /// yields a dative bond; between residues it is no bond but a
+    /// [`CoordinationProvenance`].
     Connection {
         /// The source connection ID, if the record has one.
         connection_id: Option<String>,
@@ -482,6 +484,47 @@ impl BondProvenance {
     /// The evidence the bond was resolved from.
     pub fn evidence(&self) -> &BondEvidence {
         &self.evidence
+    }
+}
+
+/// Metal coordination a connection record states between atoms of different
+/// residues, such as an mmCIF `metalc` row or a PDB `LINK` from a metal to a
+/// non-metal.
+///
+/// Coordination between residues is source connection metadata, not a bond:
+/// covalent connectedness alone decides molecule boundaries, so a metal ion,
+/// its ligands, and the protein that coordinates it stay separate molecules.
+/// The mmCIF writer states these records again as `metalc` rows when it is
+/// given the report. Coordination within one residue, such as heme's Fe-N
+/// bonds, stays a dative bond.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoordinationProvenance {
+    pub(crate) atoms: [InstanceAtomId; 2],
+    pub(crate) connection_id: Option<String>,
+    pub(crate) connection_type: String,
+    pub(crate) source_line: Option<usize>,
+}
+
+impl CoordinationProvenance {
+    /// The two partners, in the order the record names them.
+    pub const fn atoms(&self) -> [InstanceAtomId; 2] {
+        self.atoms
+    }
+
+    /// The source connection ID, if the record has one.
+    pub fn connection_id(&self) -> Option<&str> {
+        self.connection_id.as_deref()
+    }
+
+    /// The source connection type, such as `metalc`, or the record name, such
+    /// as `LINK` or `CONECT`.
+    pub fn connection_type(&self) -> &str {
+        &self.connection_type
+    }
+
+    /// The 1-based source line of the record, if known.
+    pub const fn source_line(&self) -> Option<usize> {
+        self.source_line
     }
 }
 
@@ -772,6 +815,7 @@ pub struct StructureInterpretationReport {
     pub(crate) applied_connections: usize,
     pub(crate) connectivity_candidates: usize,
     pub(crate) instances: Vec<InstanceProvenance>,
+    pub(crate) coordination: Vec<CoordinationProvenance>,
     pub(crate) alternate_locations: Vec<AltLocDecision>,
     pub(crate) issues: Vec<StructureInterpretIssue>,
 }
@@ -819,7 +863,8 @@ impl StructureInterpretationReport {
         self.solvent_molecules
     }
 
-    /// Returns the number of uniquely resolved covalent connection records.
+    /// Returns the number of uniquely resolved covalent and
+    /// metal-coordination connection records.
     pub const fn applied_connections(&self) -> usize {
         self.applied_connections
     }
@@ -834,6 +879,12 @@ impl StructureInterpretationReport {
     /// order.
     pub fn instances(&self) -> &[InstanceProvenance] {
         &self.instances
+    }
+
+    /// Metal coordination the source states between residues, in record
+    /// order; see [`CoordinationProvenance`].
+    pub fn coordination(&self) -> &[CoordinationProvenance] {
+        &self.coordination
     }
 
     /// Decisions for the selected source coordinate model only. The source

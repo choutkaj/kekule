@@ -77,6 +77,12 @@ pub(super) struct EntityPlan {
     pub(super) entities: Vec<EntityRow>,
     pub(super) asyms: Vec<AsymRow>,
     pub(super) atoms: BTreeMap<InstanceAtomId, AtomEntityAssignment>,
+    /// The report's metal coordination between residues, written as
+    /// `metalc` rows: the records whose partners are both model atoms.
+    pub(super) coordination: Vec<[InstanceAtomId; 2]>,
+    /// The report's coordination records left out because the model lacks
+    /// a partner.
+    pub(super) omitted_coordination: usize,
 }
 
 pub(super) fn ensemble_entity_plan(
@@ -279,6 +285,8 @@ pub(super) fn generic_entity_plan(
         entities,
         asyms,
         atoms,
+        coordination: Vec::new(),
+        omitted_coordination: 0,
     })
 }
 
@@ -420,10 +428,22 @@ fn report_entity_plan(
         }
     }
 
+    let (coordination, dangling): (Vec<_>, Vec<_>) = report
+        .coordination()
+        .iter()
+        .map(|record| record.atoms())
+        .partition(|partners| {
+            partners
+                .iter()
+                .all(|&atom| model.topology().atom(atom).is_some())
+        });
+
     Ok(EntityPlan {
         entities,
         asyms,
         atoms,
+        coordination,
+        omitted_coordination: dangling.len(),
     })
 }
 
