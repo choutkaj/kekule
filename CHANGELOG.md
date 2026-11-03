@@ -44,6 +44,11 @@ are marked **Breaking:**.
   the model's residue and the author numbering of `_pdbx_poly_seq_scheme`,
   unobserved monomers included. `Component::one_letter_code` and
   `Component::parent_ids` read the dictionary items.
+- Parents of modified residues (SeekDelta K21b). `ResidueCode::parents`
+  names the components a residue's component derives from, such as `MET`
+  for selenomethionine (`MSE`) or `THR`, `TYR` and `GLY` for the chromophore
+  `CRO`, and `ResidueCode::is_modified` says whether it has any, so a
+  sequence view can mark modified residues.
 - Continuing a trajectory file after a restart (SeekDelta K60), as a
   simulation restarted from a checkpoint does.
   `kekule_traj::io::append_trajectory` verifies and indexes the frames a
@@ -754,6 +759,14 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** only monomers of a polymer have one-letter codes (SeekDelta
+  K21b). `residue_code` and `chain_sequences` give a code to a residue whose
+  component links into a polymer, or an amino-acid or nucleotide residue,
+  only when its molecule holds another such residue, the file numbers it in
+  a polymer sequence (`label_seq_id`), or its atoms have no bonds, as in a
+  Cα trace. A free nucleotide or amino acid bound as a ligand, such as the
+  `GDP` of KRas, has no code, so it no longer adds a one-letter sequence to
+  its chain. `component_code` is unchanged.
 - mmCIF and PDB interpretation of large entries is faster, with unchanged
   results (SeekDelta K24). Rows pass through interpretation by index
   instead of being copied at each stage, connection partners are found

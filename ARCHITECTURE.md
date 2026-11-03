@@ -244,7 +244,11 @@ The exact inference and override rules live with
 One-letter codes and sequences are derived, not hierarchy state. A residue's
 code follows from its component identity: the code a component library or the
 bundled dictionary codes state, else its parents' codes, else the unknown (`X`
-or `N`). A chain's sequence joins the codes of the residues it holds. The
+or `N`). Only a monomer of a polymer has a code: its molecule holds another
+monomer, the file numbers it in a polymer sequence, or it has no bonds, as in
+a Cα trace. A free nucleotide or amino acid bound as a ligand has none. A code
+names its component's parents, so a modified residue is told from a standard
+one. A chain's sequence joins the codes of the monomers it holds. The
 sequence a file states for a polymer entity, with monomers the model does not
 observe, is format metadata: the mmCIF interpretation report owns it and
 places it on the interpreted model's chains and residues. See
