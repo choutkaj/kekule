@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use kekule::geometry::{Matrix3, RigidTransform, Vector3};
 use kekule::interactions::{
     find_interactions_between, find_interactions_within, InteractionCriteria, InteractionFeatures,
-    InteractionSide, Interactions,
+    InteractionKind, InteractionSide, Interactions,
 };
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, ANGSTROM};
@@ -56,8 +56,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         "features perceived once in {:.1} ms",
         perceived.as_secs_f64() * 1e3
     );
-    println!("| case | first atoms | second atoms | interactions | µs per search |");
-    println!("|---|---:|---:|---:|---:|");
+    println!(
+        "| case | first atoms | second atoms | interactions | hydrophobic contacts | µs per search |"
+    );
+    println!("|---|---:|---:|---:|---:|---:|");
 
     // The inhibitor of a copy in the middle of the block, by atom order.
     let middle = (2 + 5 * 2 + 25) as usize * kras.atom_count();
@@ -82,8 +84,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let row = |case: &str, first: usize, second: usize, (time, found): (Duration, Interactions)| {
         println!(
-            "| {case} | {first} | {second} | {} | {:.0} |",
+            "| {case} | {first} | {second} | {} | {} | {:.0} |",
             found.interactions().len(),
+            found.of_kind(InteractionKind::HydrophobicContact).count(),
             time.as_secs_f64() * 1e6
         );
     };

@@ -227,6 +227,51 @@ fn acetylcholinesterase_tacrine_1acj() {
 }
 
 #[test]
+fn hydrophobic_contacts_are_reduced_as_plip_reduces_them() {
+    // Tacrine stacks between Trp84 and Phe330, and its carbons touch the
+    // gorge's apolar side chains.
+    let found = of_ligand(&load("1ACJ"), "THA");
+    let residue = |label: &str| label.split(':').next().unwrap().to_owned();
+    let contacts = found
+        .iter()
+        .filter(|(kind, ..)| *kind == InteractionKind::HydrophobicContact)
+        .map(|(_, ligand, site, _)| (ligand.clone(), site.clone()))
+        .collect::<Vec<_>>();
+    assert!(contacts.len() > 1, "{contacts:?}");
+    // One contact per ligand atom and residue, and per site atom and residue.
+    let mut per_ligand_atom = std::collections::BTreeSet::new();
+    let mut per_site_atom = std::collections::BTreeSet::new();
+    for (ligand, site) in &contacts {
+        assert!(
+            per_ligand_atom.insert((ligand, residue(site))),
+            "{ligand} -- {site}"
+        );
+        assert!(
+            per_site_atom.insert((site, residue(ligand))),
+            "{ligand} -- {site}"
+        );
+    }
+    // None between the atoms of two stacked rings.
+    let stacked = found
+        .iter()
+        .filter(|(kind, ..)| {
+            matches!(
+                kind,
+                InteractionKind::PiStackingParallel | InteractionKind::PiStackingTShaped
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(!stacked.is_empty());
+    for (_, first, second, _) in stacked {
+        let first = first.split(',').collect::<Vec<_>>();
+        let second = second.split(',').collect::<Vec<_>>();
+        assert!(!contacts.iter().any(|(ligand, site)| {
+            first.contains(&ligand.as_str()) && second.contains(&site.as_str())
+        }));
+    }
+}
+
+#[test]
 fn acetylcholinesterase_decamethonium_1acl() {
     // Decamethonium's quaternary ammoniums sit over Trp84 and Trp279. The
     // entry states no charges, so its four-bonded nitrogens take the +1
@@ -379,6 +424,6 @@ fn split_structures_give_the_same_interactions() {
     )| { (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)) };
     expected.sort_by(order);
     actual.sort_by(order);
-    assert!(expected.len() > 20, "{}", expected.len());
+    assert!(expected.len() > 10, "{}", expected.len());
     assert_eq!(expected, actual);
 }

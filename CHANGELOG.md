@@ -759,6 +759,15 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** hydrophobic contacts are reduced as PLIP reduces them
+  (SeekDelta K63). Before, every pair of hydrophobic atoms within the cutoff
+  was a contact. Now contacts between two rings that π-stack are dropped,
+  since the stacking covers them. Then each atom of the first set keeps only
+  its closest contact with each residue, and each atom of the second set its
+  closest remaining contact with each residue, whichever end it is. An atom outside any residue
+  counts its molecule as its residue. Both `find_interactions_within` and
+  `find_interactions_between` reduce. KRas G12C's inhibitor (PDB 9UOH) has 10
+  hydrophobic contacts instead of 20.
 - **Breaking:** appending a model shares identical definitions (SeekDelta
   K23b). `ModelEditor::append_model` gives an appended molecule the
   definition the draft already holds for an identical one, from the draft's
