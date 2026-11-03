@@ -1642,9 +1642,9 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
     );
 }
 
-/// Chain A, a Gly-Gly polymer, and chain B, a zinc ion coordinated by the
-/// first glycine's oxygen, both in author chain P.
-const COORDINATED_DIPEPTIDE: &str = r#"data_dipeptide
+/// Chain A, a Gly-Gly polymer, and chain B, an ethylene glycol esterified
+/// by the second glycine's carboxyl, both in author chain P.
+const LINKED_DIPEPTIDE: &str = r#"data_dipeptide
 loop_
 _entity.id
 _entity.type
@@ -1661,7 +1661,7 @@ _struct_conn.ptnr2_label_asym_id
 _struct_conn.ptnr2_label_comp_id
 _struct_conn.ptnr2_label_seq_id
 _struct_conn.ptnr2_label_atom_id
-metalc1 metalc A GLY 1 O B ZN . ZN
+covale1 covale A GLY 2 C B EDO . O1
 loop_
 _atom_site.group_PDB
 _atom_site.id
@@ -1684,19 +1684,23 @@ ATOM 5 N N GLY A 1 2 3.332 1.536 0.000 2 P
 ATOM 6 C CA GLY A 1 2 3.988 2.839 0.000 2 P
 ATOM 7 C C GLY A 1 2 5.504 2.693 0.000 2 P
 ATOM 8 O O GLY A 1 2 6.030 1.580 0.000 2 P
-HETATM 9 Zn ZN ZN B 2 . 0.000 3.800 0.000 101 P
+HETATM 9 O O1 EDO B 2 . 6.275 3.789 0.000 101 P
+HETATM 10 C C1 EDO B 2 . 7.725 3.789 0.000 101 P
+HETATM 11 C C2 EDO B 2 . 8.485 5.105 0.000 101 P
+HETATM 12 O O2 EDO B 2 . 9.915 5.105 0.000 101 P
 "#;
 
 #[test]
 fn mmcif_writes_appended_copies_as_chains_of_their_own_that_keep_author_names() {
-    let source = mmcif::parse_str(COORDINATED_DIPEPTIDE, Default::default())
+    let source = mmcif::parse_str(LINKED_DIPEPTIDE, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
         .model()
         .clone();
-    // Three bonds in each glycine, the peptide bond, and the coordination.
-    assert_eq!(source.topology().bond_count(), 8);
+    // Three bonds in each glycine and in the glycol, the peptide bond, and
+    // the ester link.
+    assert_eq!(source.topology().bond_count(), 11);
     // Three copies, 20 Å apart, as SeekDelta merges copies of one structure
     // or a crystal's symmetry mates: chains A and B, three times.
     let mut editor = source.to_editor();
@@ -1751,7 +1755,7 @@ fn mmcif_writes_appended_copies_as_chains_of_their_own_that_keep_author_names() 
             .collect::<Vec<_>>(),
         ["A", "B", "A-2", "B-2", "A-3", "B-3"]
     );
-    // Each copy's coordination bond names its own copy's asyms.
+    // Each copy's ester link names its own copy's asyms.
     let connections = block.loop_with_tag("_struct_conn.id").unwrap();
     assert_eq!(
         (0..connections.row_count())
@@ -1779,7 +1783,7 @@ fn mmcif_writes_appended_copies_as_chains_of_their_own_that_keep_author_names() 
         reread.topology().bond_count(),
         merged.topology().bond_count()
     );
-    assert_eq!(reread.topology().bond_count(), 24);
+    assert_eq!(reread.topology().bond_count(), 33);
     for (written, read) in merged
         .positions()
         .values()

@@ -517,3 +517,141 @@ fn mmcif_connectivity_matches_an_independent_reference() {
         }
     }
 }
+
+/// The atom name and component of an interpreted atom.
+fn atom_label(
+    report: &kekule::macromolecular::StructureInterpretationReport,
+    atom: kekule::topology::InstanceAtomId,
+) -> (String, String) {
+    let provenance = report
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .find(|candidate| candidate.atom() == atom)
+        .expect("every interpreted atom has provenance");
+    (
+        provenance.component_id().to_owned(),
+        provenance.atom_name().to_owned(),
+    )
+}
+
+/// The coordination records of a report as their partners' components and
+/// atom names.
+fn coordination_labels(
+    report: &kekule::macromolecular::StructureInterpretationReport,
+) -> Vec<[(String, String); 2]> {
+    report
+        .coordination()
+        .iter()
+        .map(|record| record.atoms().map(|atom| atom_label(report, atom)))
+        .collect()
+}
+
+#[test]
+fn metal_coordination_between_residues_is_recorded_not_bonded() {
+    use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+    use kekule::topology::MoleculeClass;
+
+    // KRas G12C with GDP, Mg2+, and the non-covalent inhibitor ASP2453
+    // (A1L9E): the file lists Ser17 OG-Mg and GDP O2B-Mg as `metalc`.
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mmcif/9UOH.cif");
+    let text = std::fs::read_to_string(path).unwrap();
+    let interpreted = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let report = interpreted.report();
+    let expected = [
+        [
+            ("SER".to_owned(), "OG".to_owned()),
+            ("MG".to_owned(), "MG".to_owned()),
+        ],
+        [
+            ("GDP".to_owned(), "O2B".to_owned()),
+            ("MG".to_owned(), "MG".to_owned()),
+        ],
+    ];
+    assert_eq!(coordination_labels(report), expected);
+    assert_eq!(
+        report
+            .coordination()
+            .iter()
+            .map(|record| (record.connection_id(), record.connection_type()))
+            .collect::<Vec<_>>(),
+        [(Some("metalc1"), "metalc"), (Some("metalc2"), "metalc")]
+    );
+
+    // The protein, GDP, the ion, and the inhibitor are separate molecules.
+    let mut model = interpreted.model().clone();
+    model.perceive().unwrap();
+    let molecule_of = |component: &str| {
+        let instances = report
+            .instances()
+            .iter()
+            .filter(|instance| {
+                instance
+                    .atoms()
+                    .iter()
+                    .any(|atom| atom.component_id() == component)
+            })
+            .map(|instance| instance.instance())
+            .collect::<Vec<_>>();
+        let [instance] = instances[..] else {
+            panic!("{component} is in {} molecules", instances.len());
+        };
+        model.topology().instance(instance).unwrap()
+    };
+    let formula = |component: &str| {
+        molecular_formula(
+            molecule_of(component).molecule(),
+            HydrogenCountPolicy::IncludePerceived,
+        )
+        .unwrap()
+        .to_string()
+    };
+    let protein = molecule_of("SER");
+    assert_eq!(protein.class(), MoleculeClass::Protein);
+    assert_ne!(protein.id(), molecule_of("GDP").id());
+    assert_ne!(protein.id(), molecule_of("MG").id());
+    assert_eq!(molecule_of("GDP").class(), MoleculeClass::SmallMolecule);
+    assert_eq!(formula("GDP"), "C10H15N5O11P2");
+    assert_eq!(molecule_of("MG").class(), MoleculeClass::Ion);
+    assert_eq!(formula("MG"), "Mg+2");
+    assert_eq!(molecule_of("A1L9E").class(), MoleculeClass::SmallMolecule);
+    assert_eq!(formula("A1L9E"), "C40H48F3N7O4");
+    assert!(protein
+        .molecule()
+        .atoms()
+        .all(|(_, atom)| atom.element().symbol() != "Mg"));
+
+    // Written with its report, the block states the coordination as
+    // `metalc` again, and reading it back records the same partners.
+    let (written, write_report) = mmcif::write(
+        [mmcif::MmcifBlockSource::from(&interpreted)],
+        Default::default(),
+    )
+    .unwrap();
+    assert!(write_report.omissions().is_empty());
+    assert_eq!(written.matches(" metalc ").count(), 2);
+    let reread = mmcif::parse_str(&written, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(coordination_labels(reread.report()), expected);
+    assert_eq!(
+        reread.topology().instance_count(),
+        interpreted.topology().instance_count()
+    );
+    assert_eq!(
+        reread.topology().bond_count(),
+        interpreted.topology().bond_count()
+    );
+
+    // The model alone carries no coordination.
+    let (model_only, _) = mmcif::write(
+        [mmcif::MmcifBlockSource::model(interpreted.model())],
+        Default::default(),
+    )
+    .unwrap();
+    assert!(!model_only.contains("metalc"));
+}

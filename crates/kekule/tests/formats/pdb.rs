@@ -235,6 +235,29 @@ fn bonds(result: &StructureInterpretation) -> Vec<(String, String, BondOrder, Bo
     bonds
 }
 
+/// Coordination records by their partners' atom names and connection type.
+fn coordination(result: &StructureInterpretation) -> Vec<(&str, &str, &str)> {
+    let name = |atom| {
+        result
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .find(|candidate| candidate.atom() == atom)
+            .unwrap()
+            .atom_name()
+    };
+    result
+        .report()
+        .coordination()
+        .iter()
+        .map(|record| {
+            let [a, b] = record.atoms().map(name);
+            (a, b, record.connection_type())
+        })
+        .collect()
+}
+
 /// Charged atoms by name, in instance order.
 fn charges(result: &StructureInterpretation) -> Vec<(String, i8)> {
     result
@@ -770,7 +793,8 @@ fn link_and_ssbond_records_bond_their_partners() {
         )
     };
     let cases = [
-        // A link to a metal is coordination; a CONECT record repeating it,
+        // A link to a metal is coordination, recorded rather than bonded,
+        // so the ion is a molecule of its own; a CONECT record repeating it,
         // as wwPDB files write, adds nothing.
         (
             [
@@ -783,8 +807,26 @@ fn link_and_ssbond_records_bond_their_partners() {
                 ],
             ]
             .concat(),
-            Some(("SG", "ZN", BondOrder::Dative, connection(None, "LINK"))),
-            1,
+            None,
+            Some(("SG", "ZN", "LINK")),
+            2,
+            vec![],
+        ),
+        // CONECT alone, between a metal and a non-metal of different
+        // residues, is coordination too.
+        (
+            [
+                cysteine_a(),
+                vec![
+                    zinc.clone(),
+                    "CONECT    6    7".to_owned(),
+                    "CONECT    7    6".to_owned(),
+                ],
+            ]
+            .concat(),
+            None,
+            Some(("SG", "ZN", "CONECT")),
+            2,
             vec![],
         ),
         (
@@ -800,12 +842,14 @@ fn link_and_ssbond_records_bond_their_partners() {
                 BondOrder::Single,
                 connection(Some("1"), "SSBOND"),
             )),
+            None,
             1,
             vec![],
         ),
         // Links to symmetry mates are never bonds.
         (
             [cysteine_a(), vec![zinc.clone(), zinc_link("2555")]].concat(),
+            None,
             None,
             2,
             vec![StructureInterpretIssue::ConnectionUnresolved {
@@ -819,7 +863,7 @@ fn link_and_ssbond_records_bond_their_partners() {
             }],
         ),
     ];
-    for (lines, linked, molecules, issues) in cases {
+    for (lines, linked, coordinated, molecules, issues) in cases {
         let interpreted = interpret(&entry(&lines));
         let connections = bonds(&interpreted)
             .into_iter()
@@ -831,13 +875,64 @@ fn link_and_ssbond_records_bond_their_partners() {
             .into_iter()
             .collect::<Vec<_>>();
         assert_eq!(connections, expected);
+        assert_eq!(coordination(&interpreted), Vec::from_iter(coordinated));
         assert_eq!(interpreted.topology().instance_count(), molecules);
         assert_eq!(
             interpreted.report().applied_connections(),
-            usize::from(linked.is_some())
+            usize::from(linked.is_some() || coordinated.is_some())
         );
         assert_eq!(interpreted.report().issues(), issues);
     }
+}
+
+#[test]
+fn dative_bonds_between_residues_write_as_coordination() {
+    let zinc = site(
+        "HETATM",
+        "7",
+        "ZN  ",
+        "ZN",
+        'A',
+        "2",
+        [6.1, -0.8, 1.2],
+        "ZN",
+    )
+    .line();
+    let interpreted = interpret(&entry(
+        &[
+            cysteine('A', ["1", "2", "3", "4", "5", "6"], 0.0, 1.0),
+            vec![zinc],
+        ]
+        .concat(),
+    ));
+    assert_eq!(interpreted.topology().instance_count(), 2);
+    let atom = |name: &str| {
+        interpreted
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .find(|atom| atom.atom_name() == name)
+            .unwrap()
+            .atom()
+    };
+    let mut editor = interpreted.model().to_editor();
+    let [sulfur, ion] =
+        [atom("SG"), atom("ZN")].map(|atom| editor.topology().atom_handle(atom).unwrap());
+    editor.add_bond(sulfur, ion, BondOrder::Dative).unwrap();
+    let bonded = editor.finish().unwrap();
+    assert_eq!(bonded.topology().instance_count(), 1);
+
+    // CONECT states the bond, which readers record as coordination, and the
+    // report says so.
+    let (text, report) = pdb::write(&bonded, Default::default()).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [kekule::diagnostics::WriteOmission::CoordinationBonds { bonds: 1 }]
+    );
+    let reread = interpret(&text);
+    assert_eq!(reread.topology().instance_count(), 2);
+    assert_eq!(coordination(&reread), [("SG", "ZN", "CONECT")]);
 }
 
 #[test]
@@ -1288,7 +1383,9 @@ fn author_chains_holding_ligands_and_water_write_as_separate_mmcif_asyms() {
         .into_iter()
         .map(|(a, b, order, _)| (a, b, order))
         .collect::<Vec<_>>();
-    assert!(source_bonds.contains(&("O".to_owned(), "ZN".to_owned(), BondOrder::Dative)));
+    // The zinc's coordination is recorded, not bonded.
+    assert!(source_bonds.iter().all(|(a, b, _)| a != "ZN" && b != "ZN"));
+    assert_eq!(coordination(&interpreted), [("O", "ZN", "LINK")]);
 
     // Residues by component, label asym, author asym, entity, and kind.
     let residues = |result: &StructureInterpretation| {
@@ -1336,11 +1433,13 @@ fn author_chains_holding_ligands_and_water_write_as_separate_mmcif_asyms() {
     };
     // Source provenance and canonical classification plan the same asyms;
     // entities without source identifiers are numbered by each plan.
-    for (written, entities) in [
+    // Only the report carries the coordination, written as `metalc`.
+    for (written, entities, coordinated) in [
         (
             kekule::mmcif::write([&interpreted], kekule::mmcif::MmcifWriteOptions::default())
                 .map(|(text, _)| text),
             ["K1", "K2", "K3", "K4"],
+            vec![("O", "ZN", "metalc")],
         ),
         (
             kekule::mmcif::write(
@@ -1349,6 +1448,7 @@ fn author_chains_holding_ligands_and_water_write_as_separate_mmcif_asyms() {
             )
             .map(|(text, _)| text),
             ["1", "2", "3", "4"],
+            vec![],
         ),
     ] {
         let reread = kekule::mmcif::parse_str(&written.unwrap(), Default::default())
@@ -1361,6 +1461,7 @@ fn author_chains_holding_ligands_and_water_write_as_separate_mmcif_asyms() {
             .map(|(a, b, order, _)| (a, b, order))
             .collect::<Vec<_>>();
         assert_eq!(reread_bonds, source_bonds);
+        assert_eq!(coordination(&reread), coordinated);
     }
 }
 

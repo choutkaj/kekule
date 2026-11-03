@@ -96,12 +96,12 @@ pub use structure_documents::{
 pub use structure_interpret::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
-    ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
-    EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection, PolymerEntity,
-    PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource, SourceResidueId,
-    SourceResiduePosition, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
-    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
-    StructureInterpretationReport,
+    ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
+    EntityKind, EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection,
+    PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource,
+    SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretOptions,
+    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
+    StructureInterpretation, StructureInterpretationReport,
 };
 pub use write_error::{
     check_multi_model_ensemble, UnrepresentablePolicy, UnrepresentableSampleState, WriteOmission,

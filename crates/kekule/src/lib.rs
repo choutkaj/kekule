@@ -968,10 +968,11 @@ pub mod macromolecular {
     pub use crate::io::{
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
         AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
-        ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, EntityKind,
-        EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection, PolymerEntity,
-        PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource, SourceResidueId,
-        SourceResiduePosition, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+        ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions,
+        CoordinationProvenance, EntityKind, EntityMetadataPolicy, EntityMonomer,
+        InstanceProvenance, ModelSelection, PolymerEntity, PolymerEntityInstance, PolymerType,
+        SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
+        StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
         StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
         StructureInterpretationReport,
     };
@@ -1084,11 +1085,19 @@ pub mod mmcif {
     /// phosphodiester link between residues adjacent in sequence is left to
     /// polymer linkage when it lies within bonding distance in the written
     /// coordinates. Every other bond is stated: links between residues,
-    /// metal coordination, and all bonds of a residue without such a template,
+    /// dative bonds, and all bonds of a residue without such a template,
     /// such as a ligand or a structure read from XYZ. Reading the block back
     /// gives every bond with its order, though bonds may come back in another
     /// order within a molecule. Each partner is selected by label and author
     /// sequence numbers, so that waters of one asym are told apart.
+    ///
+    /// Metal coordination between residues is no bond of the model: an
+    /// interpretation report keeps it
+    /// ([`StructureInterpretationReport::coordination`](crate::macromolecular::StructureInterpretationReport::coordination)).
+    /// A block written with its report states it as `metalc` rows; a block
+    /// written from a model alone has none. A record that names an atom the
+    /// model lacks is left out and counted as
+    /// [`WriteOmission::Coordination`](crate::diagnostics::WriteOmission::Coordination).
     ///
     /// # Errors
     ///
@@ -1151,11 +1160,13 @@ pub mod mmcif {
 /// residues its `TER` record ends, or, without one, the residues from its first
 /// to its last `ATOM` record; water and single residues are never polymer.
 /// Residues in such a run are adjacent in sequence. `LINK` and `SSBOND`
-/// records are covalent connections; a `LINK` to a metal is coordination and
-/// becomes a dative bond. `CONECT` records list connectivity without bond
-/// types: within a residue they supplement its template and stand in for
-/// distance inference, a partner listed two or three times has a double or
-/// triple bond, and a bond between a metal and a non-metal is dative. Atoms
+/// records are covalent connections. `CONECT` records list connectivity
+/// without bond types: within a residue they supplement its template and
+/// stand in for distance inference, and a partner listed two or three times
+/// has a double or triple bond. A `LINK` or `CONECT` between a metal and a
+/// non-metal is coordination: within a residue a dative bond, between
+/// residues no bond but a record of the report
+/// ([`StructureInterpretationReport::coordination`](crate::macromolecular::StructureInterpretationReport::coordination)). Atoms
 /// without an element symbol take the one their name's alignment implies,
 /// and the report lists them. A `CRYST1` cell is the model's periodic cell
 /// under the rule mmCIF `_cell` follows; otherwise the report says why not.

@@ -740,6 +740,26 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** metal coordination between residues no longer joins
+  molecules (SeekDelta K22). Covalent connectedness alone decides molecule
+  boundaries, so in a metalloprotein the protein, a metal ion, and a
+  nucleotide it holds are separate molecules with their own formulas and
+  classes: in PDB 9UOH, KRas, GDP, and Mg²⁺ were one molecule and are now
+  three. mmCIF `metalc` links, and PDB `LINK` and `CONECT` records between a
+  metal and a non-metal, are recorded instead as the new
+  `CoordinationProvenance` (partners, connection ID and type, source line)
+  in `StructureInterpretationReport::coordination`, and consumers perceive
+  coordination geometrically through `kekule::interactions`. Coordination
+  within one residue, such as heme's or an iron-sulfur cluster's, stays a
+  dative bond, and XYZ, Molfile, SDF, and SMILES keep their dative bonds.
+  The mmCIF writer states the report's coordination as `metalc` rows when it
+  is given the report (writing an interpretation does), so mmCIF reads,
+  writes, and reads back with the same records; a model written alone, such
+  as an edited one, has none. A record that names an atom the model lacks
+  is left out and counted as the new `WriteOmission::Coordination`. A
+  model's own dative bond between residues, as an editor can add, is still
+  written as `metalc` or PDB `CONECT` but reads back as coordination, and
+  both writers count it as the new `WriteOmission::CoordinationBonds`.
 - **Breaking:** default aromaticity perception (`AromaticityModel::RdkitLike`)
   marks fused aromatic systems whole (SeekDelta K20). A fusion bond is
   aromatic when the rings it joins are aromatic together, as azulene's,

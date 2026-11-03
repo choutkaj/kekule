@@ -12,7 +12,7 @@ mod pdb;
 mod sequences;
 mod types;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::geometry::PeriodicCell;
@@ -22,9 +22,11 @@ use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
 use super::structure_connectivity::ConnectivityCatalog;
 use altloc::select_alt_locations;
-use atom_site::AtomRow;
+use atom_site::{atom_key, AtomRow};
 use build::{build_molecule, build_topology_hierarchy, graph_error, group_rows};
-use connections::{resolve_connections, ConnectionRecord, DeclaredConnection, InstanceUnion};
+use connections::{
+    resolve_connections, ConnectionRecord, DeclaredConnection, InstanceUnion, ResolvedConnections,
+};
 
 pub use altloc::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
@@ -45,8 +47,8 @@ pub use sequences::{
 pub(in crate::io) use types::{poll, poll_every, structure_error};
 pub use types::{
     AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConflictingSelector,
-    ConnectionResolutionReason, ConnectivityOptions, EntityKind, EntityMetadataPolicy,
-    InstanceProvenance, ModelSelection, StructureEnsembleInterpretOptions,
+    ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance, EntityKind,
+    EntityMetadataPolicy, InstanceProvenance, ModelSelection, StructureEnsembleInterpretOptions,
     StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
     StructureInterpretation, StructureInterpretationReport,
 };
@@ -276,7 +278,10 @@ fn publish_model(
         .expect("selected model is recorded")
         .to_owned();
     let mut union = InstanceUnion::new(selected.iter().map(|row| row.instance_key.clone()));
-    let connections = resolve_connections(
+    let ResolvedConnections {
+        bonds: connections,
+        coordination,
+    } = resolve_connections(
         connections,
         &selected,
         &rows,
@@ -310,6 +315,33 @@ fn publish_model(
             report.instances.push(provenance);
             qualified_atom_data.extend(atom_data);
         }
+    }
+    poll(cancellation)?;
+    if !coordination.is_empty() {
+        let atoms = report
+            .instances
+            .iter()
+            .flat_map(|instance| instance.atoms.iter())
+            .map(|atom| {
+                (
+                    atom_key(&atom.asym_id, &atom.residue_key, &atom.atom_name),
+                    atom.atom,
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        report.coordination = coordination
+            .into_iter()
+            .map(|record| CoordinationProvenance {
+                atoms: record.atoms.map(|key| {
+                    *atoms
+                        .get(&key)
+                        .expect("every selected row is an interpreted atom")
+                }),
+                connection_id: record.connection_id,
+                connection_type: record.connection_type,
+                source_line: record.line,
+            })
+            .collect();
     }
     poll(cancellation)?;
     // Dense atom order follows the selected atom-site rows, so coordinate
