@@ -1,4 +1,5 @@
 use crate::{TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation};
+use kekule::diagnostics::{LimitExceeded, Resource};
 
 /// Limits applied before attacker-controlled allocation, scanning, or seeking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,20 +167,20 @@ pub(super) fn reserve_scratch<T>(
             .is_some_and(|bytes| bytes <= limit)
     };
     if !fits(values.capacity().max(required_capacity)) {
-        return Err(error(
-            "aggregate decode scratch exceeds the configured limit",
-        ));
+        return Err(error(&format!(
+            "The buffers would exceed their limit of {limit} bytes."
+        )));
     }
     if values.capacity() < required_capacity {
         values
             .try_reserve_exact(required_capacity - values.len())
-            .map_err(|_| error("could not reserve decode scratch"))?;
+            .map_err(|_| error("Cannot allocate the buffers."))?;
         // Vec permits an allocator to provide more capacity than requested.
         if !fits(values.capacity()) {
             *values = Vec::new();
-            return Err(error(
-                "allocated decode scratch exceeds the configured limit",
-            ));
+            return Err(error(&format!(
+                "The allocated buffers exceed their limit of {limit} bytes."
+            )));
         }
     }
     Ok(())
@@ -202,26 +203,44 @@ impl Default for TrajectoryIoLimits {
     }
 }
 
+/// The limit a frame index of `current_entries` frames exceeds by indexing
+/// one more frame: the frame limit, the index entry limit, or the frames the
+/// index byte limit holds.
 pub(crate) fn projected_index_limit(
     current_entries: usize,
     limits: &TrajectoryIoLimits,
-) -> Option<&'static str> {
+) -> Option<LimitExceeded> {
+    let projected_entries = current_entries.saturating_add(1);
     if current_entries >= limits.max_frames {
-        return Some("frame count");
+        return Some(LimitExceeded::new(
+            Resource::Frames,
+            limits.max_frames,
+            projected_entries,
+        ));
     }
-    let Some(projected_entries) = current_entries.checked_add(1) else {
-        return Some("entry count");
-    };
-    if projected_entries > limits.max_index_entries {
-        return Some("entry count");
+    if projected_entries > limits.max_index_entries || current_entries == usize::MAX {
+        return Some(LimitExceeded::new(
+            Resource::Frames,
+            limits.max_index_entries,
+            projected_entries,
+        ));
     }
-    if projected_entries
-        .checked_mul(std::mem::size_of::<u64>())
-        .is_none_or(|bytes| bytes > limits.max_index_bytes)
-    {
-        return Some("byte count");
+    let byte_capacity = limits.max_index_bytes / std::mem::size_of::<u64>();
+    if projected_entries > byte_capacity {
+        return Some(LimitExceeded::new(
+            Resource::Frames,
+            byte_capacity,
+            projected_entries,
+        ));
     }
     None
+}
+
+/// A byte limit of `limit` exceeded by `observed` bytes, saturating where
+/// the platform's address range is smaller.
+pub(crate) fn exceeded_bytes(limit: u64, observed: u64) -> LimitExceeded {
+    let size = |bytes: u64| usize::try_from(bytes).unwrap_or(usize::MAX);
+    LimitExceeded::new(Resource::RecordBytes, size(limit), size(observed))
 }
 
 pub(super) fn index_hard_capacity(limits: &TrajectoryIoLimits) -> usize {
@@ -273,7 +292,7 @@ pub(crate) fn reserve_index_for_push(
         .with_source_label(source_label)
         .with_frame(frame)
         .with_detail(format!(
-            "{format} index reached its configured hard capacity"
+            "The frame index is full at {hard_capacity} frames."
         )));
     };
     offsets
@@ -286,9 +305,7 @@ pub(crate) fn reserve_index_for_push(
             )
             .with_source_label(source_label)
             .with_frame(frame)
-            .with_detail(format!(
-                "could not grow {format} index toward its bounded capacity"
-            ))
+            .with_detail("Cannot allocate the frame index.")
         })
 }
 

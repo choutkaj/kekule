@@ -51,41 +51,54 @@ pub enum TopologyEditError {
 
 impl fmt::Display for TopologyEditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::diagnostics::Capitalized;
         match self {
-            Self::EmptyTopology => f.write_str("cannot publish an empty topology"),
-            Self::InvalidAtom(id) => write!(f, "deleted or foreign atom handle: {id}"),
-            Self::InvalidBond(id) => write!(f, "deleted or foreign bond handle: {id}"),
-            Self::InvalidChain(id) => write!(f, "deleted or foreign chain handle: {id}"),
-            Self::InvalidResidue(id) => write!(f, "deleted or foreign residue handle: {id}"),
-            Self::InvalidAtomSite(id) => write!(f, "deleted or foreign atom-site handle: {id}"),
-            Self::InvalidSourceAtom(id) => {
-                write!(f, "source atom has no live editing handle: {id}")
-            }
-            Self::InvalidSourceBond(id) => {
-                write!(f, "source bond has no live editing handle: {id}")
-            }
-            Self::InvalidSourceInstance(id) => write!(f, "invalid source molecule instance: {id}"),
-            Self::InvalidSourceChain(id) => {
-                write!(f, "source chain has no live editing handle: {id}")
-            }
-            Self::InvalidSourceResidue(id) => {
-                write!(f, "source residue has no live editing handle: {id}")
-            }
-            Self::InvalidSourceAtomSite(id) => {
-                write!(f, "source site has no live editing handle: {id}")
-            }
+            Self::EmptyTopology => f.write_str("The edited topology has no atoms."),
+            Self::InvalidAtom(id) => deleted_or_foreign(f, id),
+            Self::InvalidBond(id) => deleted_or_foreign(f, id),
+            Self::InvalidChain(id) => deleted_or_foreign(f, id),
+            Self::InvalidResidue(id) => deleted_or_foreign(f, id),
+            Self::InvalidAtomSite(id) => deleted_or_foreign(f, id),
+            Self::InvalidSourceAtom(id) => no_live_handle(f, id),
+            Self::InvalidSourceBond(id) => no_live_handle(f, id),
+            Self::InvalidSourceInstance(id) => write!(
+                f,
+                "Molecule {id} is not in the editor or no longer matches its edited atoms."
+            ),
+            Self::InvalidSourceChain(id) => no_live_handle(f, id),
+            Self::InvalidSourceResidue(id) => no_live_handle(f, id),
+            Self::InvalidSourceAtomSite(id) => no_live_handle(f, id),
             Self::DuplicateAtomPlacement(id) => {
-                write!(f, "atom already has a hierarchy site: {id}")
+                write!(f, "{} already has a hierarchy site.", Capitalized(id))
             }
-            Self::Molecule(_) => f.write_str("cannot edit molecule"),
-            Self::Publication(_) => f.write_str("cannot publish edited molecule"),
-            Self::Topology(_) => f.write_str("cannot publish edited topology"),
-            Self::Hierarchy(_) => f.write_str("cannot edit hierarchy"),
-            Self::Property(_) => f.write_str("cannot edit properties"),
-            Self::AppendProperty { domain, .. } => write!(f, "cannot append {domain} properties"),
+            Self::Molecule(_) => f.write_str("Cannot edit the molecule."),
+            Self::Publication(_) => f.write_str("Cannot publish the edited molecule."),
+            Self::Topology(_) => f.write_str("Cannot publish the edited topology."),
+            Self::Hierarchy(_) => f.write_str("Cannot edit the hierarchy."),
+            Self::Property(error) => error.fmt(f),
+            Self::AppendProperty { domain, .. } => {
+                write!(f, "Cannot append the {domain} properties.")
+            }
         }
     }
 }
+
+fn deleted_or_foreign(f: &mut fmt::Formatter<'_>, id: &dyn fmt::Display) -> fmt::Result {
+    write!(
+        f,
+        "{} is deleted or belongs to another editor.",
+        crate::diagnostics::Capitalized(id)
+    )
+}
+
+fn no_live_handle(f: &mut fmt::Formatter<'_>, id: &dyn fmt::Display) -> fmt::Result {
+    write!(
+        f,
+        "{} of the source topology is deleted in the editor.",
+        crate::diagnostics::Capitalized(id)
+    )
+}
+
 impl std::error::Error for TopologyEditError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -93,7 +106,7 @@ impl std::error::Error for TopologyEditError {
             Self::Publication(e) => Some(e),
             Self::Topology(e) => Some(e),
             Self::Hierarchy(e) => Some(e),
-            Self::Property(e) => Some(e),
+            Self::Property(e) => e.source(),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
             _ => None,
         }

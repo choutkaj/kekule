@@ -56,7 +56,7 @@ pub(crate) mod stereo;
 
 pub use atom_bond::{Atom, AtomRadical, Bond, BondOrder, ImplicitHydrogens};
 pub(crate) use delocalization::{
-    ConjugationModel, ConjugationPerception, ResonanceGroup, ResonancePerception,
+    ConjugationModel, ConjugationPerception, ResonanceGroup, ResonanceModel, ResonancePerception,
 };
 pub use element::{Element, ElementError};
 pub use element_reference::VanDerWaalsRadiusSource;

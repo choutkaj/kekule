@@ -151,7 +151,7 @@ fn molfile_rejects_asserted_stereo_its_coordinates_contradict() {
             (error.kind(), error.message()),
             (
                 DiagnosticKind::Unsupported,
-                "specified tetrahedral stereo at atom 1 contradicts the emitted coordinates, which readers take as the configuration"
+                "The specified tetrahedral stereo at atom 1 contradicts the written coordinates."
             ),
             "{version:?}"
         );
@@ -651,7 +651,7 @@ fn sdf_ensemble_samples_carry_their_weight_state_and_energy_through_data_fields(
         sdf::ensemble(&interpret_records(&malformed))
             .unwrap_err()
             .to_string(),
-        "SDF interpretation error in record 2: data field `kekule.weight` is not a number: `heavy`"
+        "Cannot interpret the SDF input in record 2. The data field \"kekule.weight\" holds \"heavy\", not a number."
     );
     let fields = [SdfDataField::new(sdf::STATE_FIELD, "2")];
     let sample = sdf::SdfRecordSource::from(ensemble.get(0).unwrap()).with_data_fields(&fields);
@@ -662,7 +662,8 @@ fn sdf_ensemble_samples_carry_their_weight_state_and_energy_through_data_fields(
             Some(FormatErrorDetail::DataField {
                 name: sdf::STATE_FIELD.to_owned(),
             }),
-            "this field carries the ensemble sample's own metadata".to_owned(),
+            "The data field \"kekule.state\" is reserved for the data of the ensemble sample."
+                .to_owned(),
         )
     );
     // So does a field the sample does not write, such as a second
@@ -729,13 +730,13 @@ fn sdf_round_trips_ensembles_of_one_state_and_of_clustered_states() {
     };
     assert_eq!(
         error(&text.replacen(">  <kekule.representative>\ntrue\n\n", "", 1)),
-        "SDF interpretation error in record 1: data field `kekule.representative` marks no \
-         record of state 1"
+        "Cannot interpret the SDF input in record 1. The data field \"kekule.representative\" \
+         marks no record of state 1."
     );
     assert_eq!(
         error(&text.replacen(">  <kekule.state>\n1\n\n", "", 1)),
-        "SDF interpretation error in record 1: data field `kekule.state` is missing, but other \
-         records of the ensemble have it"
+        "Cannot interpret the SDF input in record 1. The data field \"kekule.state\" is \
+         missing. Other records of the ensemble have it."
     );
     assert_eq!(
         error(&text.replacen(
@@ -743,8 +744,8 @@ fn sdf_round_trips_ensembles_of_one_state_and_of_clustered_states() {
             ">  <kekule.weight>\n1\n\n>  <kekule.energy.kJ_per_mol>\n4\n\n",
             1
         )),
-        "SDF interpretation error in record 1: data field `kekule.energy.kJ_per_mol` belongs to \
-         the record of a state's representative"
+        "Cannot interpret the SDF input in record 1. The data field \
+         \"kekule.energy.kJ_per_mol\" is on a record that does not represent its state."
     );
     assert_eq!(
         error(&text.replacen(
@@ -752,8 +753,8 @@ fn sdf_round_trips_ensembles_of_one_state_and_of_clustered_states() {
             ">  <kekule.temperature.K>\n310\n",
             1
         )),
-        "SDF interpretation error in record 2: data field `kekule.temperature.K` differs from the \
-         first record's"
+        "Cannot interpret the SDF input in record 2. The data field \"kekule.temperature.K\" \
+         differs from that of the first record."
     );
 }
 
@@ -766,7 +767,7 @@ fn mmcif_rejects_ensemble_weights_states_energies_and_temperatures_it_cannot_car
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "mmCIF write error: mmCIF cannot represent the state energy of ensemble sample 1"
+        "Cannot write the mmCIF output. The state energy of ensemble sample 1 has no mmCIF representation."
     );
     for index in 0..2 {
         ensemble.state_mut(index).unwrap().set_energy(None).unwrap();
@@ -776,7 +777,7 @@ fn mmcif_rejects_ensemble_weights_states_energies_and_temperatures_it_cannot_car
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "mmCIF write error: mmCIF cannot represent the weight of ensemble sample 2"
+        "Cannot write the mmCIF output. The weight of ensemble sample 2 has no mmCIF representation."
     );
     ensemble.get_mut(1).unwrap().set_weight(1.0).unwrap();
     let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
@@ -784,7 +785,7 @@ fn mmcif_rejects_ensemble_weights_states_energies_and_temperatures_it_cannot_car
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "mmCIF write error: mmCIF cannot represent the state of ensemble sample 2"
+        "Cannot write the mmCIF output. The state of ensemble sample 2 has no mmCIF representation."
     );
     ensemble.regroup(EnsemblePartition::one_state(2)).unwrap();
     ensemble
@@ -795,7 +796,7 @@ fn mmcif_rejects_ensemble_weights_states_energies_and_temperatures_it_cannot_car
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "mmCIF write error: mmCIF cannot represent the temperature of ensemble sample 1"
+        "Cannot write the mmCIF output. The temperature of ensemble sample 1 has no mmCIF representation."
     );
     ensemble.set_temperature(None).unwrap();
     let (omitted, report) = mmcif::write(
@@ -970,8 +971,7 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
     let error = sdf::write(&trajectory, SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "SDF write error in record 2: SDF cannot represent the trajectory frame time; \
-         choose to omit it explicitly"
+        "Cannot write the SDF output in record 2. SDF cannot represent the trajectory frame time."
     );
 }
 
@@ -1045,7 +1045,7 @@ fn sdf_series_items_carry_their_step_or_coordinate_through_data_fields() {
                 Some(FormatErrorDetail::DataField {
                     name: name.to_owned()
                 }),
-                "this field carries the series item's own metadata".to_owned(),
+                format!("The data field {name:?} is reserved for the data of the series item."),
             )
         );
     }
@@ -1131,7 +1131,7 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     let boxed = boxed_model([true; 3]);
     let mut open = boxed.clone();
     open.set_cell(None);
-    let message = "a Molfile cannot represent a periodic cell; set the cell option to omit it";
+    let message = "A Molfile cannot hold a periodic cell.";
     for version in [
         MolfileWriteVersion::Auto,
         MolfileWriteVersion::V2000,
@@ -1152,7 +1152,7 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     let error = sdf::write([&boxed], SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        format!("SDF write error in record 1: {message}")
+        format!("Cannot write the SDF output in record 1. {message}")
     );
     let omitted = SdfWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
     assert_eq!(
@@ -1193,10 +1193,11 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
 
     let slab = boxed_model([true, true, false]);
     assert_eq!(
-        mmcif::write([&slab], MmcifWriteOptions::default()).map(|(text, _)| text)
+        mmcif::write([&slab], MmcifWriteOptions::default())
+            .map(|(text, _)| text)
             .unwrap_err()
             .to_string(),
-        "mmCIF write error: mmCIF cannot represent the periodic cell: an mmCIF cell is periodic along all three axes"
+        "Cannot write the mmCIF output. The cell is not periodic along all three axes."
     );
     let omit = MmcifWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
     assert_eq!(
@@ -1224,10 +1225,11 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
     assert_eq!(members, [true, true]);
     ensemble.get_mut(1).unwrap().set_cell(None);
     assert_eq!(
-        mmcif::write([&ensemble], MmcifWriteOptions::default()).map(|(text, _)| text)
+        mmcif::write([&ensemble], MmcifWriteOptions::default())
+            .map(|(text, _)| text)
             .unwrap_err()
             .to_string(),
-        "mmCIF write error: mmCIF cannot represent the periodic cell: ensemble samples have different cells"
+        "Cannot write the mmCIF output. The ensemble samples have different cells."
     );
     mmcif::write([&ensemble], omit)
         .map(|(text, _)| text)
@@ -1253,49 +1255,55 @@ fn sdf_rejects_titles_and_data_fields_that_would_break_record_framing() {
             message.to_owned(),
         )
     };
-    const NAME: &str =
-        "SDF data field names must be nonempty, trimmed, and exclude angle brackets or line breaks";
+    let name = |name: &str| {
+        format!(
+            "The data field name {name:?} is empty, padded, or holds angle brackets or line breaks."
+        )
+    };
     for (record_title, fields, expected) in [
         (
             "two\nlines",
             vec![],
-            title("SDF record titles cannot contain line breaks"),
+            title("The title contains a line break."),
         ),
+        (" $$$$ ", vec![], title("The title is \"$$$$\".")),
         (
-            " $$$$ ",
-            vec![],
-            title("SDF record titles cannot be a record delimiter"),
+            "",
+            vec![SdfDataField::new("", "value")],
+            field("", &name("")),
         ),
-        ("", vec![SdfDataField::new("", "value")], field("", NAME)),
         (
             "",
             vec![SdfDataField::new(" ID", "value")],
-            field(" ID", NAME),
+            field(" ID", &name(" ID")),
         ),
         (
             "",
             vec![SdfDataField::new("A<B", "value")],
-            field("A<B", NAME),
+            field("A<B", &name("A<B")),
         ),
         (
             "",
             vec![SdfDataField::new("ID", "one\r\ntwo")],
             field(
                 "ID",
-                "SDF data field values cannot contain carriage returns",
+                "The value of data field \"ID\" contains a carriage return.",
             ),
         ),
         (
             "",
             vec![SdfDataField::new("ID", "one\n\ntwo")],
-            field("ID", "SDF data field values cannot contain blank lines"),
+            field(
+                "ID",
+                "The value of data field \"ID\" contains a blank line.",
+            ),
         ),
         (
             "",
             vec![SdfDataField::new("ID", "one\n$$$$")],
             field(
                 "ID",
-                "SDF data field values cannot contain a record delimiter line",
+                "The value of data field \"ID\" contains a \"$$$$\" line.",
             ),
         ),
     ] {
@@ -1945,7 +1953,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     );
     assert_eq!(
         model_error.to_string(),
-        "mmCIF write error: mmCIF writing requires 1 interpretation reports, but received 0"
+        "Cannot write the mmCIF output. There are 0 interpretation reports for 1 models."
     );
 
     let ensemble = Ensemble::from_models([first, second], EnsemblePartition::one_state(2)).unwrap();
@@ -1966,7 +1974,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     );
     assert_eq!(
         ensemble_error.to_string(),
-        "mmCIF write error: mmCIF writing requires 2 interpretation reports, but received 0"
+        "Cannot write the mmCIF output. There are 0 interpretation reports for 2 models."
     );
 }
 
@@ -2074,7 +2082,7 @@ fn molfile_titles_and_smiles_names_round_trip_and_reject_unreadable_text() {
             (
                 DiagnosticKind::Unsupported,
                 Some(FormatErrorDetail::Title),
-                "Molfile titles cannot contain line breaks".to_owned(),
+                "The title contains a line break.".to_owned(),
             )
         );
     }
@@ -2105,7 +2113,7 @@ fn molfile_titles_and_smiles_names_round_trip_and_reject_unreadable_text() {
             (
                 DiagnosticKind::Unsupported,
                 Some(FormatErrorDetail::Title),
-                "SMILES record names must be nonempty, trimmed, and on one line".to_owned(),
+                "The record name is empty, has surrounding spaces or spans lines.".to_owned(),
             ),
             "{name:?}"
         );

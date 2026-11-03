@@ -88,7 +88,10 @@ fn molfile_document_reports_nonempty_content_after_m_end_as_unsupported() {
         .expect_err("trailing content is not discarded");
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
-    assert_eq!(error.message(), "unsupported content after `M  END`");
+    assert_eq!(
+        error.message(),
+        "The content after \"M  END\" is not supported."
+    );
 }
 
 #[test]
@@ -124,14 +127,14 @@ fn molfile_document_parser_validates_declared_atom_and_bond_records() {
         .expect_err("invalid atom syntax must fail parsing");
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
     assert_eq!(error.location(), Some(SourceLocation::at_line(5)));
-    assert_eq!(error.message(), "invalid V2000 atom line");
+    assert_eq!(error.message(), "The line of atom 1 is malformed.");
 
     let invalid_bond = "Bad\nprogram\ncomment\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 C   0  0  0  0  0  0\nbond record\nM  END\n";
     let error = molfile::parse_str(invalid_bond, Default::default())
         .expect_err("invalid bond syntax must fail parsing");
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
     assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
-    assert_eq!(error.message(), "invalid V2000 bond line");
+    assert_eq!(error.message(), "The line of bond 1 is malformed.");
 }
 
 #[test]
@@ -251,7 +254,7 @@ M  END
     let error = sdf::parse_str(&input, Default::default())
         .expect_err("a previous delimiter must not waive the final delimiter");
     assert_eq!(error.record(), Some(2));
-    assert!(error.message().contains("missing final"));
+    assert!(error.message().contains("does not end with"));
 
     let document = sdf::parse_str(
         &input,
@@ -274,7 +277,7 @@ M  END
     let stray = format!("{molfile}orphan text\n$$$$\n");
     let error = sdf::parse_str(&stray, Default::default())
         .expect_err("unstructured post-CTAB content must not be discarded");
-    assert!(error.message().contains("unexpected content"));
+    assert!(error.message().contains("outside a data field"));
 
     let delimited_field = format!("{molfile}>  <FIELD>\nvalue\n$$$$\n");
     let document = sdf::parse_str(&delimited_field, Default::default())
@@ -287,7 +290,7 @@ M  END
         SdfParseOptions::default().with_allow_missing_final_delimiter(true),
     )
     .expect_err("a field at bare end-of-input still requires a blank terminator");
-    assert!(error.message().contains("terminating blank line"));
+    assert!(error.message().contains("does not end with a blank line"));
 }
 
 #[test]
@@ -314,13 +317,13 @@ $$$$
         sdf::parse_str(&two_records, SdfParseOptions::default().with_max_records(1))
             .expect_err("record count limit should reject the second record");
     assert_eq!(record_count_error.record(), Some(2));
-    assert!(record_count_error.message().contains("record count"));
+    assert!(record_count_error.message().contains("record limit"));
 
     let record_size_error =
         sdf::parse_str(record, SdfParseOptions::default().with_max_record_bytes(1))
             .expect_err("record byte limit should apply while scanning");
     assert_eq!(record_size_error.record(), Some(1));
-    assert!(record_size_error.message().contains("record exceeds"));
+    assert!(record_size_error.message().contains("record size limit"));
 }
 
 #[test]
@@ -347,7 +350,7 @@ M  END
 $$$$
 ";
     let err = read_sdf_molecules(bad_endpoint).expect_err("bad endpoint should fail");
-    assert!(err.to_string().contains("outside atom block"));
+    assert!(err.to_string().contains("but the atom block has"));
 }
 
 #[test]
@@ -541,18 +544,18 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
         (
             "unsafe\ntitle",
             SdfDataField::new("FIELD", "value"),
-            "titles",
+            "title contains a line break",
         ),
-        ("safe", SdfDataField::new(" BAD ", "value"), "field names"),
+        ("safe", SdfDataField::new(" BAD ", "value"), "field name"),
         (
             "safe",
             SdfDataField::new("FIELD", "first\n\nthird"),
-            "blank lines",
+            "blank line",
         ),
         (
             "safe",
             SdfDataField::new("FIELD", "first\n$$$$\nthird"),
-            "record delimiter",
+            "\"$$$$\" line",
         ),
     ] {
         let record = SdfRecordInterpretation::new(title, test_model(&molecule), vec![field]);
@@ -612,7 +615,8 @@ fn v2000_bond_stereo_requires_enough_source_context_to_canonicalize() {
             .expect_err("under-specified stereo must not publish a molecule");
         assert_eq!(error.kind(), DiagnosticKind::Chemistry);
         assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
-        assert!(chain_text(&error).contains("source-stereo canonicalization"));
+        let text = chain_text(&error);
+        assert!(text.contains("on bond 0"), "{text}");
     }
 }
 
@@ -646,7 +650,7 @@ fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
         } else {
             let error = read_molfile(&input)
                 .expect_err("wedge without a declared fourth carrier must fail");
-            assert!(chain_text(&*error).contains("UnassembledTetrahedralBondMark"));
+            assert!(chain_text(&*error).contains("marks no stereo center"));
         }
     }
 }
@@ -731,7 +735,7 @@ fn molfile_and_sdf_parse_supported_syntax_before_chemistry_interpretation() {
         .interpret(Default::default())
         .expect_err("unsupported core elements belong to interpretation")
         .message()
-        .contains("unsupported element"));
+        .contains("is unknown"));
 
     let sdf_source = format!("{molfile_source}$$$$\n");
     let document = sdf::parse_str(&sdf_source, Default::default())
@@ -742,7 +746,7 @@ fn molfile_and_sdf_parse_supported_syntax_before_chemistry_interpretation() {
     assert_eq!(error.record(), Some(1));
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     assert_eq!(error.location(), Some(SourceLocation::at_line(5)));
-    assert_eq!(error.message(), "unsupported element symbol `Xx`");
+    assert_eq!(error.message(), "Element symbol \"Xx\" is unknown.");
 }
 
 #[test]
@@ -792,7 +796,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
     )
     .expect_err("specified double-bond stereo should be rejected")
     .message()
-    .contains("requires a Model"));
+    .contains("Molfile stereo needs coordinates"));
 
     let element = molecule
         .stereo_element_ids()
@@ -1020,31 +1024,31 @@ fn v2000_present_numeric_fields_must_be_numbers() {
             ["C   0  0  0  X  0  0  0  0  0  0  0  0"].as_slice(),
             [].as_slice(),
             5,
-            "invalid V2000 atom hydrogen-count code field",
+            "The hydrogen-count code field of atom 1 is not a number.",
         ),
         (
             &["C   0  0  0  0  0  X  0  0  0  0  0  0"],
             &[],
             5,
-            "invalid V2000 atom valence code field",
+            "The valence code field of atom 1 is not a number.",
         ),
         (
             &["C   0  X  0  0  0  0  0  0  0  0  0  0"],
             &[],
             5,
-            "invalid V2000 atom charge code field",
+            "The charge code field of atom 1 is not a number.",
         ),
         (
             &["C   0  0  0  0  0  0  0  0  0 1x  0  0"],
             &[],
             5,
-            "invalid V2000 atom map field",
+            "The atom map field of atom 1 is not a number.",
         ),
         (
             &["C   0  0", "C   0  0"],
             &["  1  2  1  X  0  0  0"],
             7,
-            "invalid V2000 bond stereo field",
+            "The stereo field of bond 1 is not a number.",
         ),
     ] {
         let error =
@@ -1202,7 +1206,7 @@ fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
             &[],
             Err((
                 DiagnosticKind::Unsupported,
-                "V2000 mass difference on Tc has no reference mass, since the element has no naturally abundant isotope; declare the mass number with `M  ISO`",
+                "Element Tc has no reference mass for a V2000 mass difference. Declare the mass number with an \"M  ISO\" line.",
             )),
         ),
         (
@@ -1210,7 +1214,7 @@ fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
             &[],
             Err((
                 DiagnosticKind::InvalidValue,
-                "V2000 mass difference -1 gives no mass number for H",
+                "Mass difference -1 gives no valid mass number for H.",
             )),
         ),
     ] {
@@ -1239,7 +1243,7 @@ fn v2000_mass_difference_sets_the_isotope_unless_m_iso_replaces_it() {
         (error.kind(), error.message()),
         (
             DiagnosticKind::InvalidValue,
-            "V2000 mass difference 5 is outside -3 to 4"
+            "The mass difference 5 of atom 1 is outside -3 to 4."
         )
     );
 }

@@ -9,6 +9,7 @@ pub(crate) use connections::is_metal;
 mod ensemble;
 mod mmcif;
 mod pdb;
+mod sequences;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -40,6 +41,10 @@ pub(crate) use mmcif::{
 pub(crate) use pdb::{
     interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
 };
+pub use sequences::{
+    EntityMonomer, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
+    SequenceSource,
+};
 pub(in crate::io) use types::{poll, poll_every, structure_error};
 pub use types::{
     AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConflictingSelector,
@@ -66,6 +71,8 @@ struct StructureSource {
     cell: Option<PeriodicCell>,
     /// Issues found while reading the source.
     issues: Vec<StructureInterpretIssue>,
+    /// The polymer entities the source states, not yet placed in a model.
+    polymer_entities: Vec<PolymerEntity>,
 }
 
 fn interpret_source(
@@ -114,6 +121,7 @@ struct PreparedSource {
     connections: Vec<ConnectionRecord>,
     catalog: ConnectivityCatalog,
     cell: Option<PeriodicCell>,
+    polymer_entities: Vec<PolymerEntity>,
     cancellation: Option<Cancellation>,
 }
 
@@ -133,6 +141,7 @@ impl PreparedSource {
             catalog,
             cell,
             issues,
+            polymer_entities,
         } = source;
         let mut report = StructureInterpretationReport {
             block_name: name,
@@ -208,6 +217,7 @@ impl PreparedSource {
             connections,
             catalog,
             cell,
+            polymer_entities,
             cancellation,
         })
     }
@@ -273,6 +283,13 @@ impl PreparedSource {
             report,
             self.cancellation.as_ref(),
         )
+        .map(|mut interpretation| {
+            interpretation.report.polymer_entities = sequences::place_polymer_entities(
+                &self.polymer_entities,
+                interpretation.model.topology(),
+            );
+            interpretation
+        })
     }
 }
 

@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::altloc::{AltLocDecision, AltLocPolicy, SourceResidueId};
+use super::sequences::PolymerEntity;
 use crate::components::ComponentLibrary;
 use crate::diagnostics::{
     Cancellation, Cancelled, DiagnosticKind, Format, FormatError, FormatErrorDetail, SourceLocation,
@@ -818,6 +819,7 @@ pub struct StructureInterpretationReport {
     pub(crate) coordination: Vec<CoordinationProvenance>,
     pub(crate) alternate_locations: Vec<AltLocDecision>,
     pub(crate) issues: Vec<StructureInterpretIssue>,
+    pub(crate) polymer_entities: Vec<PolymerEntity>,
 }
 
 impl StructureInterpretationReport {
@@ -891,6 +893,16 @@ impl StructureInterpretationReport {
     /// document retains every alternative, including omitted rows and metadata.
     pub fn alternate_locations(&self) -> &[AltLocDecision] {
         &self.alternate_locations
+    }
+
+    /// The polymer entities the block states, in the block's order, with
+    /// their canonical sequences and the model's residues at each position;
+    /// empty for PDB entries, which state no entities. Entities whose
+    /// monomers neither `_entity_poly_seq` nor the atom sites give are left
+    /// out. [`crate::sequence`] gives the sequences of the chains of any
+    /// topology.
+    pub fn polymer_entities(&self) -> &[PolymerEntity] {
+        &self.polymer_entities
     }
 
     /// Returns source-aware non-fatal interpretation issues.

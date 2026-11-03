@@ -76,7 +76,7 @@ impl BondParser<'_> {
         }
         let byte = self
             .peek()
-            .ok_or_else(|| syntax_error(start..self.cursor, "missing bond primitive"))?;
+            .ok_or_else(|| syntax_error(start..self.cursor, "A bond primitive is missing."))?;
         self.cursor += 1;
         let expression = match byte {
             b'-' => non_aromatic_bond_expression(BondOrder::Single),
@@ -98,7 +98,7 @@ impl BondParser<'_> {
                 if self.peek() == Some(b'?') {
                     return Err(unsupported_error(
                         start..self.cursor + 1,
-                        "unspecified directional syntax is outside this dialect",
+                        "Unspecified directional bonds are not supported.",
                     ));
                 }
                 if self.direction.is_none() {
@@ -112,7 +112,7 @@ impl BondParser<'_> {
             _ => {
                 return Err(syntax_error(
                     start..self.cursor,
-                    "missing or invalid bond primitive",
+                    "A bond primitive is missing or invalid.",
                 ))
             }
         }

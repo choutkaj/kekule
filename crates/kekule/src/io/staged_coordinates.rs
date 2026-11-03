@@ -93,16 +93,19 @@ pub(crate) enum StagedCoordinateError {
 
 impl fmt::Display for StagedCoordinateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::diagnostics::Capitalized;
         match self {
-            Self::CapacityOverflow => formatter.write_str("source coordinate capacity exceeded"),
+            Self::CapacityOverflow => {
+                formatter.write_str("The coordinates exceed the addressable number of atoms.")
+            }
             Self::MissingPosition { atom } => {
-                write!(formatter, "missing source position for {atom}")
+                write!(formatter, "{} has no position.", Capitalized(atom))
             }
             Self::NonFinitePosition { atom } => {
-                write!(formatter, "source position for {atom} is not finite")
+                write!(formatter, "The position of {atom} is not finite.")
             }
-            Self::Unit(_) => formatter.write_str("invalid coordinate unit"),
-            Self::Position(_) => formatter.write_str("invalid position"),
+            Self::Unit(error) => error.fmt(formatter),
+            Self::Position(error) => error.fmt(formatter),
         }
     }
 }
@@ -110,8 +113,8 @@ impl fmt::Display for StagedCoordinateError {
 impl std::error::Error for StagedCoordinateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Unit(error) => Some(error),
-            Self::Position(error) => Some(error),
+            Self::Unit(error) => error.source(),
+            Self::Position(error) => error.source(),
             _ => None,
         }
     }

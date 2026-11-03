@@ -1,3 +1,4 @@
+use crate::diagnostics::Capitalized;
 use crate::molecule::*;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -73,13 +74,55 @@ pub struct ValenceError {
     pub issues: Vec<ValenceIssue>,
 }
 
+impl fmt::Display for ValenceIssue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFormalCharge {
+                atom,
+                formal_charge,
+            } => write!(
+                formatter,
+                "{} is an unbonded hydrogen with formal charge {formal_charge:+}.",
+                Capitalized(atom)
+            ),
+            Self::ValenceExceeded {
+                atom,
+                explicit_valence,
+                max_allowed,
+            } => write!(
+                formatter,
+                "{} has valence {explicit_valence}, more than the allowed {max_allowed}.",
+                Capitalized(atom)
+            ),
+            Self::ValenceOccupancyExceeded {
+                atom,
+                explicit_valence,
+                radical_electrons,
+                charge_offset,
+                max_allowed,
+            } => write!(
+                formatter,
+                "{} has valence {explicit_valence} plus {} for its radical electrons and charge, more than the allowed {max_allowed}.",
+                Capitalized(atom),
+                radical_electrons + charge_offset
+            ),
+        }
+    }
+}
+
+/// Writes the first issue, then the number of atoms with issues when there
+/// are several.
 impl fmt::Display for ValenceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "valence perception reported {} issue(s)",
-            self.issues.len()
-        )
+        match self.issues.as_slice() {
+            [] => formatter.write_str("The valence state is invalid."),
+            [issue] => write!(formatter, "{issue}"),
+            [issue, ..] => write!(
+                formatter,
+                "{issue} In all, {} atoms have an invalid valence state.",
+                self.issues.len()
+            ),
+        }
     }
 }
 
@@ -367,7 +410,11 @@ impl AllowedValenceRule {
 }
 
 fn rdkit_effective_atomic_number(atom: &Atom) -> u8 {
-    let effective = i16::from(atom.element.atomic_number()) - i16::from(atom.formal_charge);
+    effective_atomic_number(atom.element.atomic_number(), atom.formal_charge)
+}
+
+fn effective_atomic_number(atomic_number: u8, charge: i8) -> u8 {
+    let effective = i16::from(atomic_number) - i16::from(charge);
     // Atom::UpdatePropertyCache clamps charge adjustment even in strict mode.
     u8::try_from(effective.clamp(0, 118)).expect("clamped to periodic-table range")
 }
@@ -414,11 +461,16 @@ fn bond_order_valence(order: BondOrder) -> usize {
 }
 
 pub(crate) fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
-    let original = rdkit_neutral_valence_rule(atom.element.atomic_number())?;
+    allowed_valences_with_charge(atom.element.atomic_number(), atom.formal_charge)
+}
+
+/// [`allowed_valences`] of an atom of `atomic_number` carrying `charge`.
+pub(crate) fn allowed_valences_with_charge(atomic_number: u8, charge: i8) -> Option<&'static [u8]> {
+    let original = rdkit_neutral_valence_rule(atomic_number)?;
     let rule = if original.is_only_unrestricted() {
         original
     } else {
-        rdkit_neutral_valence_rule(rdkit_effective_atomic_number(atom))?
+        rdkit_neutral_valence_rule(effective_atomic_number(atomic_number, charge))?
     };
     Some(rule.fixed)
 }

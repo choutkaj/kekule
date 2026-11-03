@@ -257,6 +257,24 @@ class ErrorKinds(unittest.TestCase):
         self.assertEqual(errors.refine("kekule", "parse", "unsupported element symbol `R`"), "parse:query-atom")
         self.assertEqual(errors.refine("kekule", "parse", "unsupported element symbol `X`"), "parse:query-atom")
         self.assertEqual(
+            errors.refine("kekule", "parse", 'Cannot interpret the Molfile input at line 5. Element symbol "CL" is unknown.'),
+            "parse:uppercase-element",
+        )
+        self.assertEqual(
+            errors.refine("kekule", "parse", 'Cannot interpret the Molfile input at line 5. Element symbol "R1" is unknown.'),
+            "parse:query-atom",
+        )
+        self.assertEqual(
+            errors.refine("kekule", "parse", "Cannot parse the mmCIF input at line 9. "
+                          "The input exceeds its value limit: 101 values of 100."),
+            "parse:token-limit",
+        )
+        self.assertEqual(
+            errors.refine("kekule", "write", "Cannot write the PDB output. "
+                          "The isotope of atom 0 of instance 0 has no PDB representation."),
+            "write:unsupported",
+        )
+        self.assertEqual(
             errors.refine("kekule", "parse", "source-stereo canonicalization reported 1 issue(s): "
                           "[UnassembledTetrahedralBondMark { bond: BondId(5), kind: WedgeDown }]"),
             "parse:unassembled-wedge",

@@ -22,6 +22,7 @@ include = [
     "/examples/**",
     "/benches/**",
     "/data/components/*.cif",
+    "/data/components/codes.tsv",
     "/data/components/PROVENANCE.md",
     "/LICENSE-APACHE",
     "/LICENSE-MIT",

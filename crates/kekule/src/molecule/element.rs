@@ -446,9 +446,9 @@ pub enum ElementError {
 impl fmt::Display for ElementError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownSymbol(symbol) => write!(f, "unknown element symbol {symbol:?}"),
+            Self::UnknownSymbol(symbol) => write!(f, "The symbol {symbol:?} is not an element."),
             Self::InvalidAtomicNumber(number) => {
-                write!(f, "atomic number {number} is outside 1 to 118")
+                write!(f, "Atomic number {number} is outside 1 to 118.")
             }
         }
     }

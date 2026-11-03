@@ -4,7 +4,7 @@ use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityP
 use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
 use super::{fail, invalid_model, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
-use crate::diagnostics::FormatError;
+use crate::diagnostics::{Capitalized, FormatError};
 use crate::geometry::Point3;
 use crate::io::UnrepresentablePolicy;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
@@ -153,7 +153,7 @@ pub(super) fn prepare_model(
                 .topology()
                 .atom(row.atom)
                 .map(|atom| atom.atom().element)
-                .ok_or_else(|| invalid_model(format!("invalid topology atom: {}", row.atom)))
+                .ok_or_else(|| invalid_model(format!("The topology has no {}.", row.atom)))
         })
         .collect::<Result<Vec<_>, _>>()?;
     mark_implied(
@@ -273,10 +273,10 @@ fn collect_macro_rows(
             .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
         let residue = hierarchy
             .require_residue(site.residue())
-            .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
+            .map_err(|error| invalid_hierarchy(qualified).with_source(error))?;
         let chain = hierarchy
             .require_chain(residue.chain())
-            .map_err(|error| invalid_hierarchy("invalid topology hierarchy").with_source(error))?;
+            .map_err(|error| invalid_hierarchy(qualified).with_source(error))?;
         let assignment = assignments
             .get(&qualified)
             .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
@@ -325,15 +325,15 @@ fn collect_macro_rows(
             insertion_code: residue.insertion_code().map(str::to_owned),
             position: model
                 .position(qualified)
-                .ok_or_else(|| invalid_model("inconsistent source model"))?
+                .ok_or_else(|| missing_position(qualified))?
                 .value_in(ANGSTROM)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
+                .map_err(|error| invalid_position(qualified).with_source(error))?,
             occupancy: model.occupancy(dense_index(model, qualified)?),
             b_factor: model
                 .b_factor(dense_index(model, qualified)?)
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
+                .map_err(|error| invalid_b_factor(qualified).with_source(error))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: residue
                 .author_seq_id()
@@ -395,15 +395,15 @@ fn collect_small_rows(
             insertion_code: None,
             position: model
                 .position(qualified)
-                .ok_or_else(|| invalid_model("inconsistent source model"))?
+                .ok_or_else(|| missing_position(qualified))?
                 .value_in(ANGSTROM)
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
+                .map_err(|error| invalid_position(qualified).with_source(error))?,
             occupancy: model.occupancy(dense_index(model, qualified)?),
             b_factor: model
                 .b_factor(dense_index(model, qualified)?)
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
-                .map_err(|error| invalid_model("inconsistent source model").with_source(error))?,
+                .map_err(|error| invalid_b_factor(qualified).with_source(error))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: None,
             auth_comp_id: component_id.to_owned(),
@@ -476,7 +476,7 @@ impl<'a> ConnectionSelectors<'a> {
     ) -> Result<(), FormatError> {
         let row = &rows[*indexes
             .get(&atom)
-            .ok_or_else(|| invalid_model(format!("missing atom row for {atom}")))?];
+            .ok_or_else(|| invalid_model(format!("{} has no atom row.", Capitalized(atom))))?];
         let stated = |field: &Option<String>, candidate: &Option<String>| {
             field.is_none() || field == candidate
         };
@@ -581,8 +581,20 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {
     Ok(())
 }
 
-fn invalid_hierarchy(message: impl Into<String>) -> FormatError {
-    invalid_model(message)
+fn invalid_hierarchy(atom: InstanceAtomId) -> FormatError {
+    invalid_model(format!("The residue or chain of {atom} is invalid."))
+}
+
+fn missing_position(atom: InstanceAtomId) -> FormatError {
+    invalid_model(format!("{} has no position.", Capitalized(atom)))
+}
+
+fn invalid_position(atom: InstanceAtomId) -> FormatError {
+    invalid_model(format!("The position of {atom} is invalid."))
+}
+
+fn invalid_b_factor(atom: InstanceAtomId) -> FormatError {
+    invalid_model(format!("The B factor of {atom} is invalid."))
 }
 
 pub(super) fn validate_ensemble_sample(
@@ -656,7 +668,7 @@ fn dense_index(
     model
         .topology()
         .atom_index(atom)
-        .ok_or_else(|| invalid_model(format!("invalid topology atom: {atom}")))
+        .ok_or_else(|| invalid_model(format!("The topology has no {atom}.")))
 }
 
 #[cfg(test)]

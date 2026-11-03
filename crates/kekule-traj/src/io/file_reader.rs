@@ -365,7 +365,7 @@ impl IndexedFileTrajectoryReader {
                 TrajectoryIoOperation::Index,
                 format,
                 &label,
-                "the file's indexed bytes changed since they were indexed",
+                "The file's indexed bytes changed since they were indexed.",
             )
         };
         if !self
@@ -856,7 +856,7 @@ fn open_indexed(
                     TrajectoryIoOperation::Open,
                     format,
                     &label,
-                    format!("the index was built for a {} file", index.format()),
+                    format!("The index was built for a {} file.", index.format()),
                 ));
             }
             // Detection left the reader at the start with an empty buffer.
@@ -868,7 +868,7 @@ fn open_indexed(
                     TrajectoryIoOperation::Open,
                     format,
                     &label,
-                    "the file does not begin with the bytes the index covers",
+                    "The file does not begin with the bytes the index covers.",
                 ));
             }
             if index.frame_count() > index_hard_capacity(&options.limits) {
@@ -878,12 +878,14 @@ fn open_indexed(
                     Some(format),
                 )
                 .with_source_label(&label)
-                .with_detail("the index frame count exceeds the configured index limits")
-                .with_limit(LimitExceeded::new(
-                    Resource::Frames,
-                    index_hard_capacity(&options.limits),
-                    index.frame_count(),
-                )));
+                .exceeding(
+                    "The index",
+                    LimitExceeded::new(
+                        Resource::Frames,
+                        index_hard_capacity(&options.limits),
+                        index.frame_count(),
+                    ),
+                ));
             }
             Some(index)
         }
@@ -963,9 +965,12 @@ fn open_indexed(
                                 TrajectoryIoOperation::Open,
                                 TrajectoryFormat::Dcd,
                                 &label,
-                                "DCD index frame count differs from the header NSET count",
+                                "The index's frame count differs from the frame count NSET in the header.",
                             )
-                            .with_counts(error.expected().unwrap_or(0), error.actual().unwrap_or(0))
+                            .with_written_counts(
+                                error.expected().unwrap_or(0),
+                                error.actual().unwrap_or(0),
+                            )
                             .with_source(error)
                         } else {
                             error
@@ -1070,7 +1075,7 @@ fn open_indexed(
                     TrajectoryIoOperation::Index,
                     format,
                     &label,
-                    "the file changed while it was indexed",
+                    "The file changed while it was indexed.",
                 ));
             }
             if end == opened.byte_count() {
@@ -1113,5 +1118,5 @@ fn incomplete(format: Option<TrajectoryFormat>, source_label: &str) -> Trajector
         format,
     )
     .with_source_label(source_label)
-    .with_detail("the file does not yet hold a complete frame; open it again once more is written")
+    .with_detail("The file does not yet hold a complete frame. Open it again once more is written.")
 }

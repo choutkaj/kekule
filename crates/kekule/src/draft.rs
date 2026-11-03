@@ -9,8 +9,9 @@ use std::fmt;
 /// [`TopologyEditor`](crate::topology::edit::TopologyEditor),
 /// [`ModelBuilder`](crate::structure::ModelBuilder) and
 /// [`ModelEditor`](crate::structure::ModelEditor) fail with it, so a caller can
-/// repair the draft and retry. [`error`](Self::error) is also the
-/// [`source`](std::error::Error::source); `Display` does not repeat it.
+/// repair the draft and retry. It is transparent: it displays as its
+/// [`error`](Self::error) and returns that error's
+/// [`source`](std::error::Error::source).
 #[derive(Debug)]
 pub struct DraftError<D, E> {
     parts: Box<(E, D)>,
@@ -44,15 +45,15 @@ impl<D, E> DraftError<D, E> {
     }
 }
 
-impl<D, E> fmt::Display for DraftError<D, E> {
+impl<D, E: fmt::Display> fmt::Display for DraftError<D, E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("draft could not be published; it is returned for repair")
+        self.error().fmt(formatter)
     }
 }
 
 impl<D: fmt::Debug, E: std::error::Error + 'static> std::error::Error for DraftError<D, E> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.error())
+        self.error().source()
     }
 }
 
@@ -61,17 +62,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn drafts_return_with_their_error_as_the_only_source() {
+    fn drafts_return_with_their_error_displayed_transparently() {
         let error = DraftError::new(std::fmt::Error, vec![1, 2]);
         assert_eq!(error.draft(), &[1, 2]);
-        assert_eq!(
-            error.to_string(),
-            "draft could not be published; it is returned for repair"
-        );
-        assert_eq!(
-            std::error::Error::source(&error).map(ToString::to_string),
-            Some(std::fmt::Error.to_string())
-        );
+        assert_eq!(error.to_string(), std::fmt::Error.to_string());
+        assert!(std::error::Error::source(&error).is_none());
         let (cause, draft) = error.into_parts();
         assert_eq!((cause, draft), (std::fmt::Error, vec![1, 2]));
     }

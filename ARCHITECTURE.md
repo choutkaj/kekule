@@ -125,10 +125,13 @@ split independently. Formats that cannot encode a relationship fail explicitly.
 
 `Perception` is reconstructible state derived from the exact represented graph
 under an explicit model or policy. It contains fundamental chemistry such as
-valence, rings, aromaticity, conjugation, explicitly prepared resonance groups,
-and installed CIP descriptors. Resonance contributors are separately requested
-results borrowing the exact source molecule; default perception never enumerates
-them or rewrites represented bond orders and charges. Task-specific
+valence, rings, aromaticity, conjugation, resonance delocalization, and
+installed CIP descriptors. Resonance delocalization marks, per bond, whether
+moving a formal charge changes its order, with the bond's connected group; it
+reads the graph locally and enumerates no contributor. Resonance contributors
+are separately requested results borrowing the exact source molecule; default
+perception never enumerates them or rewrites represented bond orders and
+charges. Task-specific
 descriptors, force-field typing, scoring, and analyses belong in separate result
 objects; attaching selected values as properties is deliberate.
 
@@ -237,6 +240,16 @@ The exact inference and override rules live with
 [classification](crates/kekule/src/topology/classification.rs),
 [builder publication](crates/kekule/src/topology/builder.rs), and
 [component editing](crates/kekule/src/topology/editor.rs).
+
+One-letter codes and sequences are derived, not hierarchy state. A residue's
+code follows from its component identity: the code a component library or the
+bundled dictionary codes state, else its parents' codes, else the unknown (`X`
+or `N`). A chain's sequence joins the codes of the residues it holds. The
+sequence a file states for a polymer entity, with monomers the model does not
+observe, is format metadata: the mmCIF interpretation report owns it and
+places it on the interpreted model's chains and residues. See
+[sequences](crates/kekule/src/sequence.rs) and
+[entity sequences](crates/kekule/src/io/structure_interpret/sequences.rs).
 
 See also [hierarchy](crates/kekule/src/topology/hierarchy.rs) and
 [qualified lookups](crates/kekule/src/topology/lookup.rs).
@@ -1071,21 +1084,49 @@ Every operation has exactly one home.
 - Each functional area has one error type with typed payloads, never
   `&'static str` reasons or stringified causes.
 - `source()` returns the underlying cause, and `Display` does not repeat it.
+  A wrapper keeps its cause as a typed value, never as text. A variant that
+  adds nothing to its cause is transparent: it displays the cause and returns
+  the cause's own source.
+- `diagnostics::ErrorChain` writes an error and its source chain as
+  consecutive sentences: `Cannot build the solvated model. Atom 12 overlaps
+  atom 3.`
 - Every format's parse, interpretation, and write failures, SMARTS included,
   are one `diagnostics::FormatError`. It carries the stage, a
   `DiagnosticKind`, the format, the source location, and the record.
 - Resource exhaustion is reported everywhere as
   `diagnostics::LimitExceeded`, naming the resource, the limit, and the
-  observed value. Default limits are exported as constants.
+  observed value. The error of the operation names it in its own sentence:
+  `Ring perception exceeded its work limit: 69,400,898 steps of 69,248,000.`
+  Default limits are exported as constants.
 - Cancellation is cooperative. A long-running operation accepts an optional
   `diagnostics::Cancellation`, through its options or a `*_cancellable`
   lifecycle method when it has none. It polls the cancellation between
   stages and inside long loops, and fails with `diagnostics::Cancelled`, or
-  `DiagnosticKind::Cancelled` in a `FormatError`. It never returns a partial
-  result. Without a cancellation, it does not poll.
+  `DiagnosticKind::Cancelled` in a `FormatError`. The error keeps `Cancelled`
+  as its source: `Resonance perception stopped. The operation was
+  cancelled.` It never returns a partial result. Without a cancellation, it
+  does not poll.
 - A recoverable draft (`try_build`, `try_finish`) fails with
   `DraftError<D, E>`, which returns the draft with the error. It is the only
   generic error wrapper.
+
+**Error messages.** Applications show `Display` texts to their users.
+- A message is one or two short plain sentences, each with a capital letter
+  and a full stop. The fact comes first: what failed and why, then the one
+  action if there is an obvious one. `Atom 7 has no coordinates. Add them
+  before measuring.`
+- It names its objects: atoms, bonds, residues, records, lines, files, and
+  numbers with their units. Text taken from the input is in double quotes.
+- It states facts, not mechanisms. No relative clause explains how Kekule
+  works, no rule follows the fact, nothing hedges, and no Rust API is named.
+  The variant's documentation explains the cause and names the API that
+  avoids it.
+- A wrapper's sentence says what failed at its level, `Cannot build the
+  solvated model.`, so that its cause reads as the next sentence.
+- A `FormatError`'s first sentence names the stage, the format, and the
+  place, `Cannot parse the PDB input at line 12.`, and its message follows.
+- Identifiers display as lowercase noun phrases, such as `atom 3`, for use
+  inside sentences.
 
 **Panics.** Public functions do not panic on any input their types allow.
 Internal invariants may use `expect`, and the message names the invariant.

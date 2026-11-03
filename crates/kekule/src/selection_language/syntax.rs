@@ -144,13 +144,11 @@ fn lex(input: &str) -> Result<Vec<Token>, FormatError> {
                     ('>', true) => CompareOp::GreaterEqual,
                     ('=', _) => CompareOp::Equal,
                     ('!', true) => CompareOp::NotEqual,
-                    _ => {
-                        return Err(syntax(
-                            input,
-                            start..start + 1,
-                            "`!` must be followed by `=`; write `not` for negation",
-                        ))
-                    }
+                    _ => return Err(syntax(
+                        input,
+                        start..start + 1,
+                        "The character \"!\" stands alone. Write \"!=\", or \"not\" for negation.",
+                    )),
                 };
                 tokens.push(Token {
                     kind: TokenKind::Op(op),
@@ -179,7 +177,7 @@ fn lex(input: &str) -> Result<Vec<Token>, FormatError> {
                     return Err(syntax(
                         input,
                         start..input.len(),
-                        "unterminated quoted value",
+                        "The quoted value is not closed.",
                     ));
                 };
                 tokens.push(Token {
@@ -215,7 +213,11 @@ pub(crate) fn parse(input: &str, options: &SelectParseOptions) -> Result<Node, F
             input,
             DiagnosticKind::Limit,
             0..0,
-            "selection text exceeds the configured byte limit",
+            format!(
+                "The selection exceeds its {}.",
+                LimitExceeded::new(Resource::InputBytes, options.max_input_bytes(), input.len())
+                    .describe()
+            ),
         )
         .exceeding(LimitExceeded::new(
             Resource::InputBytes,
@@ -232,13 +234,15 @@ pub(crate) fn parse(input: &str, options: &SelectParseOptions) -> Result<Node, F
         options,
     };
     if parser.tokens.is_empty() {
-        return Err(syntax(input, 0..input.len(), "empty selection"));
+        return Err(syntax(input, 0..input.len(), "The selection is empty."));
     }
     let node = parser.or()?;
     if let Some(token) = parser.tokens.get(parser.position) {
         let message = match &token.kind {
-            TokenKind::Close => "unmatched `)`".to_owned(),
-            _ => "expected `and`, `or`, or the end; terms are never joined implicitly".to_owned(),
+            TokenKind::Close => "This \")\" closes no \"(\".".to_owned(),
+            _ => {
+                "Expected \"and\", \"or\" or the end. Join terms with \"and\" or \"or\".".to_owned()
+            }
         };
         return Err(syntax(input, token.span.clone(), message));
     }
@@ -419,12 +423,12 @@ impl Parser<'_> {
             Some(token) => Err(syntax(
                 self.input,
                 token.span.clone(),
-                format!("expected `{keyword}`"),
+                format!("Expected \"{keyword}\"."),
             )),
             None => Err(syntax(
                 self.input,
                 self.end_span(),
-                format!("expected `{keyword}` before the end"),
+                format!("Expected \"{keyword}\" before the end."),
             )),
         }
     }
@@ -436,7 +440,15 @@ impl Parser<'_> {
                 self.input,
                 DiagnosticKind::Limit,
                 span,
-                "selection nesting exceeds the configured depth limit",
+                format!(
+                    "The selection exceeds its {}.",
+                    LimitExceeded::new(
+                        Resource::ExpressionDepth,
+                        self.options.max_depth(),
+                        self.depth
+                    )
+                    .describe()
+                ),
             )
             .exceeding(LimitExceeded::new(
                 Resource::ExpressionDepth,
@@ -492,7 +504,7 @@ impl Parser<'_> {
             return Err(syntax(
                 self.input,
                 self.end_span(),
-                "expected a term before the end",
+                "Expected a term before the end.",
             ));
         };
         self.enter(token.span.clone())?;
@@ -544,7 +556,7 @@ impl Parser<'_> {
                         return Err(syntax(
                             self.input,
                             span,
-                            "expected `residue`, `chain`, or `molecule` after `same`",
+                            "Expected \"residue\", \"chain\" or \"molecule\" after \"same\".",
                         ));
                     }
                 };
@@ -585,7 +597,7 @@ impl Parser<'_> {
             return Err(syntax(
                 self.input,
                 self.end_span(),
-                "expected a distance after `within`",
+                "Expected a distance after \"within\".",
             ));
         };
         let TokenKind::Word {
@@ -596,7 +608,7 @@ impl Parser<'_> {
             return Err(syntax(
                 self.input,
                 token.span,
-                "expected a distance after `within`",
+                "Expected a distance after \"within\".",
             ));
         };
         let distance = text
@@ -607,7 +619,7 @@ impl Parser<'_> {
                 invalid(
                     self.input,
                     token.span.clone(),
-                    "a distance is a finite non-negative number, separated from its unit",
+                    "The distance is not a non-negative number. Separate it from its unit.",
                 )
             })?;
         self.position += 1;
@@ -660,7 +672,7 @@ impl Parser<'_> {
             syntax(
                 self.input,
                 self.end_span(),
-                "expected a term before the end",
+                "Expected a term before the end.",
             )
         })?;
         let start = token.span.start;
@@ -680,21 +692,29 @@ impl Parser<'_> {
                     Some(other) => Err(syntax(
                         self.input,
                         other.span.clone(),
-                        "expected `)`, `and`, or `or`",
+                        "Expected \")\", \"and\" or \"or\".",
                     )),
-                    None => Err(syntax(self.input, start..start + 1, "unclosed `(`")),
+                    None => Err(syntax(
+                        self.input,
+                        start..start + 1,
+                        "This \"(\" is not closed.",
+                    )),
                 }
             }
-            TokenKind::Close => Err(syntax(self.input, token.span, "expected a term before `)`")),
+            TokenKind::Close => Err(syntax(
+                self.input,
+                token.span,
+                "Expected a term before \")\".",
+            )),
             TokenKind::Op(_) => Err(syntax(
                 self.input,
                 token.span,
-                "a comparison needs a keyword before it, such as `bfactor > 50`",
+                "The comparison has no keyword before it, as in \"bfactor > 50\".",
             )),
             TokenKind::Word { text, quoted: true } => Err(syntax(
                 self.input,
                 token.span.clone(),
-                format!("expected a keyword, not the value {text:?}"),
+                format!("Expected a keyword, not the value {text:?}."),
             )),
             TokenKind::Word {
                 text,
@@ -717,7 +737,7 @@ impl Parser<'_> {
                 }
                 if let Some(reference) = text.strip_prefix('#') {
                     if reference.is_empty() {
-                        return Err(syntax(self.input, token.span, "`#` needs a reference"));
+                        return Err(syntax(self.input, token.span, "\"#\" needs a reference."));
                     }
                     return Ok(leaf(NodeKind::Host(
                         HostTermKind::Reference,
@@ -726,7 +746,7 @@ impl Parser<'_> {
                 }
                 if let Some(name) = text.strip_prefix('$') {
                     if name.is_empty() {
-                        return Err(syntax(self.input, token.span, "`$` needs a name"));
+                        return Err(syntax(self.input, token.span, "\"$\" needs a name."));
                     }
                     return Ok(leaf(NodeKind::Host(HostTermKind::Named, name.to_owned())));
                 }
@@ -742,7 +762,7 @@ impl Parser<'_> {
                     return Err(syntax(
                         self.input,
                         token.span,
-                        format!("unknown keyword `{text}`"),
+                        format!("The word {text:?} is not a keyword."),
                     ));
                 };
                 self.field(start, field)
@@ -760,11 +780,11 @@ impl Parser<'_> {
                 self.position += 1;
                 Ok((text, quoted, span))
             }
-            Some(token) => Err(syntax(self.input, token.span, format!("expected {what}"))),
+            Some(token) => Err(syntax(self.input, token.span, format!("Expected {what}."))),
             None => Err(syntax(
                 self.input,
                 self.end_span(),
-                format!("expected {what} before the end"),
+                format!("Expected {what} before the end."),
             )),
         }
     }
@@ -775,7 +795,7 @@ impl Parser<'_> {
             return Err(invalid(
                 self.input,
                 span.clone(),
-                format!("invalid SMARTS pattern: {}", error.message()),
+                format!("The SMARTS pattern {text:?} is invalid."),
             )
             .with_source(error));
         }
@@ -788,7 +808,7 @@ impl Parser<'_> {
     fn property(&mut self, start: usize) -> Result<Node, FormatError> {
         let (text, _, span) = self.word("a property key")?;
         let key = PropertyKey::new(text).map_err(|error| {
-            invalid(self.input, span.clone(), "invalid property key").with_source(error)
+            invalid(self.input, span.clone(), "The property key is invalid.").with_source(error)
         })?;
         let field = Field::Property(key.clone());
         if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Op(_))) || self.at_value()
@@ -812,7 +832,7 @@ impl Parser<'_> {
                 return Err(syntax(
                     self.input,
                     span,
-                    "ordering comparisons apply only to numeric keywords",
+                    "Ordering comparisons apply only to numeric keywords.",
                 ));
             }
             let (text, quoted, value_span) = self.word("a value after the comparison")?;
@@ -859,7 +879,7 @@ impl Parser<'_> {
                     return Err(syntax(
                         self.input,
                         self.peek().map_or(span, |token| token.span.clone()),
-                        "ranges apply only to numeric keywords",
+                        "Ranges apply only to numeric keywords.",
                     ));
                 }
                 self.position += 1;
@@ -874,7 +894,7 @@ impl Parser<'_> {
             let span = self
                 .peek()
                 .map_or(self.end_span(), |token| token.span.clone());
-            return Err(syntax(self.input, span, "expected a value"));
+            return Err(syntax(self.input, span, "Expected a value."));
         }
         Ok(Node {
             kind: NodeKind::Match { field, values },
@@ -896,8 +916,13 @@ impl Parser<'_> {
         quoted: bool,
         span: Range<usize>,
     ) -> Result<Literal, FormatError> {
-        let fail =
-            |what: &str| invalid(self.input, span.clone(), format!("`{text}` is not {what}"));
+        let fail = |what: &str| {
+            invalid(
+                self.input,
+                span.clone(),
+                format!("The value {text:?} is not {what}."),
+            )
+        };
         Ok(match field.value_type() {
             FieldType::Integer => Literal::Integer(text.parse().map_err(|_| fail("an integer"))?),
             FieldType::Real => Literal::Real {

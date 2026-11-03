@@ -12,8 +12,37 @@ fn error(detail: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::ForceField, detail)
 }
 
-fn invalid(source: impl std::error::Error + Send + Sync + 'static) -> Error {
-    Error::wrap(ErrorKind::ForceField, source)
+fn invalid(
+    detail: impl std::fmt::Display,
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> Error {
+    Error::caused(ErrorKind::ForceField, detail, source)
+}
+
+/// Names an OFFXML element in a failure, such as `bond parameter "b1"` or
+/// `element "Bonds"`.
+fn describe(n: Node<'_, '_>) -> String {
+    let tag = n.tag_name().name();
+    let kind = match tag {
+        "Bond" => "bond parameter",
+        "Angle" => "angle parameter",
+        "Proper" => "proper torsion parameter",
+        "Improper" => "improper torsion parameter",
+        "Atom" => "vdW parameter",
+        "Constraint" => "constraint",
+        "LibraryCharge" => "library charge",
+        _ => return format!("element {tag:?}"),
+    };
+    match (n.attribute("id"), n.attribute("smirks")) {
+        (Some(id), _) if !id.is_empty() => format!("{kind} {id:?}"),
+        (_, Some(smirks)) => format!("the {kind} with SMIRKS {smirks:?}"),
+        _ => format!("the {kind} without an ID"),
+    }
+}
+
+/// [`describe`] at the start of a sentence.
+fn subject(n: Node<'_, '_>) -> String {
+    crate::error::capitalized(&describe(n))
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +54,42 @@ pub(crate) struct Rule<P> {
 pub(crate) struct LibraryCharge {
     pub source: ParameterIdentity,
     pub charges: Vec<f64>,
+}
+
+/// The OFFXML rule a parameter came from, to name it in failures.
+pub(crate) trait Sourced {
+    fn identity(&self) -> &ParameterIdentity;
+}
+macro_rules! sourced {
+    ($($parameter:ty),*) => {$(
+        impl Sourced for $parameter {
+            fn identity(&self) -> &ParameterIdentity {
+                &self.source
+            }
+        }
+    )*};
+}
+sourced!(
+    BondParameter,
+    AngleParameter,
+    TorsionParameter,
+    VdwParameter,
+    LibraryCharge
+);
+impl Sourced for (ParameterIdentity, Option<Quantity<f64>>) {
+    fn identity(&self) -> &ParameterIdentity {
+        &self.0
+    }
+}
+
+/// Names a parameter in a failure: `parameter "b1"`, or by its SMIRKS
+/// pattern when the rule has no ID.
+pub(crate) fn parameter_name(identity: &ParameterIdentity) -> String {
+    if identity.id.is_empty() {
+        format!("the parameter with SMIRKS {:?}", identity.smirks)
+    } else {
+        format!("parameter {:?}", identity.id)
+    }
 }
 /// A compiled SMIRNOFF force field supporting the functional forms in Rosemary.
 ///
@@ -65,14 +130,14 @@ impl ForceField {
         if !compatible_settings(&self.settings, &other.settings) {
             return Err(Error::new(
                 ErrorKind::Composition,
-                "cannot combine force fields with different nonbonded settings",
+                "Cannot combine the force fields. Their nonbonded settings differ.",
             ));
         }
         if let (Some(a), Some(b)) = (self.charge_model(), other.charge_model()) {
             if a != b {
                 return Err(Error::new(
                     ErrorKind::Composition,
-                    "cannot combine force fields with different NAGL models",
+                    "Cannot combine the force fields. They declare different NAGL models.",
                 ));
             }
         }
@@ -131,7 +196,8 @@ impl ForceField {
     /// [`ErrorKind::ForceField`] if the XML is malformed, a SMIRKS pattern or
     /// quantity is invalid, or the document is outside the supported subset.
     pub fn from_offxml(xml: &str) -> Result<Self> {
-        let document = roxmltree::Document::parse(xml).map_err(invalid)?;
+        let document = roxmltree::Document::parse(xml)
+            .map_err(|e| invalid("The force field is not well-formed XML.", e))?;
         let root = document.root_element();
         check_document(root)?;
         let sections = Sections::find(root)?;
@@ -163,7 +229,7 @@ impl ForceField {
 /// attributes, and child policy.
 fn check_document(root: Node<'_, '_>) -> Result<()> {
     if root.tag_name().name() != "SMIRNOFF" || root.tag_name().namespace().is_some() {
-        return Err(error("expected SMIRNOFF root"));
+        return Err(error("The root element is not SMIRNOFF."));
     }
     require(root, "version", "0.3")?;
     require(root, "aromaticity_model", "OEAroModel_MDL")?;
@@ -185,10 +251,12 @@ fn check_document(root: Node<'_, '_>) -> Result<()> {
                 | "LibraryCharges"
                 | "NAGLCharges"
         ) {
-            return Err(error(format!("unsupported SMIRNOFF handler {tag}")));
+            return Err(error(format!(
+                "The SMIRNOFF section {tag:?} is not supported."
+            )));
         }
         if !seen.insert(tag) {
-            return Err(error(format!("duplicate section {tag}")));
+            return Err(error(format!("Section {tag:?} appears twice.")));
         }
         let extra: &[&str] = match tag {
             "Author" | "Date" => &[],
@@ -241,7 +309,9 @@ fn check_document(root: Node<'_, '_>) -> Result<()> {
         if matches!(tag, "Electrostatics" | "NAGLCharges" | "Author" | "Date")
             && node.children().any(|n| n.is_element())
         {
-            return Err(error(format!("unexpected child in {tag}")));
+            return Err(error(format!(
+                "Section {tag:?} has an unexpected child element."
+            )));
         }
     }
     Ok(())
@@ -268,7 +338,7 @@ impl<'a, 'input> Sections<'a, 'input> {
                 .find(|n: &Node<'_, '_>| n.has_tag_name(name))
         };
         let required =
-            |name| optional(name).ok_or_else(|| error(format!("missing handler {name}")));
+            |name| optional(name).ok_or_else(|| error(format!("Section {name:?} is missing.")));
         Ok(Self {
             bonds: required("Bonds")?,
             angles: required("Angles")?,
@@ -297,7 +367,10 @@ impl<'a, 'input> Sections<'a, 'input> {
                     attr(nagl, "model_file_hash")?.to_owned(),
                 )
                 .ok_or_else(|| {
-                    error("NAGL requires a nonempty model_file and a 64-digit SHA-256 model_file_hash")
+                    error(
+                        "Section \"NAGLCharges\" lacks the attribute \"model_file\" or a \
+                         64-digit SHA-256 \"model_file_hash\".",
+                    )
                 })
             })
             .transpose()
@@ -326,7 +399,10 @@ fn check_headers(sections: &Sections<'_, '_>) -> Result<()> {
         )?;
         let divisor = n.attribute("default_idivf").unwrap_or("auto");
         if divisor != "auto" && number(divisor)? <= 0.0 {
-            return Err(error("default_idivf must be positive or auto"));
+            return Err(error(format!(
+                "The attribute \"default_idivf\" {divisor:?} of section {:?} is neither positive nor \"auto\".",
+                n.tag_name().name()
+            )));
         }
     }
     choice(
@@ -405,7 +481,7 @@ fn nonbonded_settings(
         electrostatics_nonperiodic_method: ElectrostaticsMethod::Coulomb,
     };
     if settings.vdw_scales[3] != 1.0 || settings.electrostatics_scales[3] != 1.0 {
-        return Err(error("only scale15=1 is supported"));
+        return Err(error("A \"scale15\" other than 1 is not supported."));
     }
     for (cutoff, width) in [
         (&settings.vdw_cutoff, &settings.vdw_switch_width),
@@ -414,8 +490,18 @@ fn nonbonded_settings(
             &settings.electrostatics_switch_width,
         ),
     ] {
-        if *cutoff.value() <= 0.0 || *width.value() < 0.0 || width.value() > cutoff.value() {
-            return Err(error("invalid cutoff/switch width"));
+        if *cutoff.value() <= 0.0 {
+            return Err(error(format!(
+                "The cutoff {} nm is not positive.",
+                cutoff.value()
+            )));
+        }
+        if *width.value() < 0.0 || width.value() > cutoff.value() {
+            return Err(error(format!(
+                "The switch width {} nm is outside 0 to the cutoff {} nm.",
+                width.value(),
+                cutoff.value()
+            )));
         }
     }
     Ok(settings)
@@ -431,13 +517,16 @@ impl ForceField {
                 k: quantity(n, "k", CANONICAL_FORCE_CONSTANT_UNIT)?,
             };
             if *p.length.value() <= 0.0 || *p.k.value() < 0.0 {
-                return Err(error("invalid harmonic bond parameter"));
+                return Err(error(format!(
+                    "{} has a nonpositive length or a negative force constant.",
+                    subject(n)
+                )));
             }
             self.bonds.push(rule(n, 2, p)?);
         }
         let angle_k = KILOJOULE_PER_MOLE
-            .try_div(RADIAN.try_powi(2).map_err(invalid)?)
-            .map_err(invalid)?;
+            .try_div(RADIAN.try_powi(2).expect("rad^2 is a unit"))
+            .expect("kJ/(mol rad^2) is a unit");
         for n in children(sections.angles, "Angle")? {
             let p = AngleParameter {
                 source: identity(n)?,
@@ -445,7 +534,10 @@ impl ForceField {
                 k: quantity(n, "k", angle_k)?,
             };
             if !(0.0..=std::f64::consts::PI).contains(p.angle.value()) || *p.k.value() < 0.0 {
-                return Err(error("invalid harmonic angle parameter"));
+                return Err(error(format!(
+                    "{} has an angle outside 0 to \u{3c0} rad or a negative force constant.",
+                    subject(n)
+                )));
             }
             self.angles.push(rule(n, 3, p)?);
         }
@@ -455,7 +547,7 @@ impl ForceField {
                 .map(|_| quantity(n, "distance", NANOMETER))
                 .transpose()?;
             if distance.as_ref().is_some_and(|x| *x.value() <= 0.0) {
-                return Err(error("constraint distance must be positive"));
+                return Err(error(format!("{} has a nonpositive distance.", subject(n))));
             }
             self.constraints.push(rule(n, 2, (identity(n)?, distance))?);
         }
@@ -474,7 +566,16 @@ impl ForceField {
                     if n.attribute(name.as_str()).is_none() {
                         break;
                     }
-                    let periodicity = attr(n, &name)?.parse::<u32>().map_err(invalid)?;
+                    let value = attr(n, &name)?;
+                    let periodicity = value.parse::<u32>().map_err(|e| {
+                        invalid(
+                            format!(
+                                "The {name} {value:?} of {} is not a whole number.",
+                                describe(n)
+                            ),
+                            e,
+                        )
+                    })?;
                     let divisor = n.attribute(format!("idivf{i}").as_str()).unwrap_or(default);
                     let idivf = if divisor == "auto" {
                         if improper {
@@ -486,14 +587,20 @@ impl ForceField {
                         number(divisor)?
                     };
                     if periodicity == 0 || idivf < 0.0 || (idivf == 0.0 && divisor != "auto") {
-                        return Err(error("invalid torsion periodicity or divisor"));
+                        return Err(error(format!(
+                            "{} has a zero periodicity{i} or an invalid idivf{i}.",
+                            subject(n)
+                        )));
                     }
                     let phase = quantity(n, &format!("phase{i}"), RADIAN)?;
                     // The outer-atom orientation is immaterial only for phases
                     // that are integer multiples of pi. Rosemary uses pi.
                     let turns = *phase.value() / std::f64::consts::PI;
                     if improper && (turns - turns.round()).abs() > 1e-12 {
-                        return Err(error("improper phase must be an integer multiple of pi"));
+                        return Err(error(format!(
+                            "The phase{i} of {} is not a multiple of \u{3c0}.",
+                            describe(n)
+                        )));
                     }
                     terms.push(TorsionTerm {
                         periodicity,
@@ -503,14 +610,17 @@ impl ForceField {
                     });
                 }
                 if terms.is_empty() {
-                    return Err(error("torsion has no Fourier terms"));
+                    return Err(error(format!("{} has no torsion terms.", subject(n))));
                 }
                 let count = n
                     .attributes()
                     .filter(|a| a.name().starts_with("periodicity"))
                     .count();
                 if count != terms.len() {
-                    return Err(error("torsion term indices must be contiguous"));
+                    return Err(error(format!(
+                        "{} skips a torsion term number.",
+                        subject(n)
+                    )));
                 }
                 for a in n.attributes() {
                     for prefix in ["phase", "k", "idivf"] {
@@ -520,7 +630,11 @@ impl ForceField {
                             .and_then(|s| s.parse::<usize>().ok())
                         {
                             if index == 0 || index > terms.len() {
-                                return Err(error("orphaned torsion attribute"));
+                                return Err(error(format!(
+                                    "{} has {:?} without a matching periodicity.",
+                                    subject(n),
+                                    a.name()
+                                )));
                             }
                         }
                     }
@@ -552,11 +666,19 @@ impl ForceField {
                     *quantity(n, "rmin_half", NANOMETER)?.value() * 2.0 / 2f64.powf(1.0 / 6.0),
                     NANOMETER,
                 ),
-                _ => return Err(error("vdW requires exactly one of sigma and rmin_half")),
+                _ => {
+                    return Err(error(format!(
+                        "{} needs exactly one of sigma and rmin_half.",
+                        subject(n)
+                    )))
+                }
             };
             let epsilon = quantity(n, "epsilon", KILOJOULE_PER_MOLE)?;
             if *sigma.value() <= 0.0 || *epsilon.value() < 0.0 {
-                return Err(error("invalid vdW parameter"));
+                return Err(error(format!(
+                    "{} has a nonpositive sigma or a negative epsilon.",
+                    subject(n)
+                )));
             }
             self.vdw.push(rule(
                 n,
@@ -569,16 +691,26 @@ impl ForceField {
             )?);
         }
         for n in optional_children(sections.library, "LibraryCharge")? {
-            let query =
-                smarts::parse_str(attr(n, "smirks")?, Default::default()).map_err(invalid)?;
-            let size = TaggedQuery::new(&query).map_err(invalid)?.tags().len();
+            let query = smirks(n)?;
+            let size = TaggedQuery::new(&query)
+                .map_err(|e| {
+                    invalid(
+                        format!("Cannot tag the SMIRKS pattern of {}.", describe(n)),
+                        e,
+                    )
+                })?
+                .tags()
+                .len();
             if size == 0
                 || n.attributes()
                     .filter(|a| a.name().starts_with("charge"))
                     .count()
                     != size
             {
-                return Err(error("library charge count must equal tag count"));
+                return Err(error(format!(
+                    "{} does not have one charge per tagged atom.",
+                    subject(n)
+                )));
             }
             let charges = (1..=size)
                 .map(|i| {
@@ -692,7 +824,7 @@ fn absent(node: Node<'_, '_>, names: &[&str]) -> Result<()> {
     for name in names {
         if node.attribute(*name).is_some() {
             return Err(error(format!(
-                "{name} is not valid on {} version {}",
+                "Attribute {name:?} is not valid in section {:?} version {}.",
                 node.tag_name().name(),
                 attr(node, "version")?
             )));
@@ -712,9 +844,13 @@ fn choice<'a>(
         Ok(value)
     } else {
         Err(error(format!(
-            "unsupported {name}={value:?} on {}; supported: {}",
+            "The {name} {value:?} of section {:?} is not supported. Supported values are {}.",
             node.tag_name().name(),
-            supported.join(", ")
+            supported
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         )))
     }
 }
@@ -725,18 +861,19 @@ fn children<'a, 'input>(node: Node<'a, 'input>, name: &str) -> Result<Vec<Node<'
         .map(|n| {
             if !n.has_tag_name(name) || n.tag_name().namespace().is_some() {
                 return Err(error(format!(
-                    "unexpected {} in {}",
-                    n.tag_name().name(),
-                    node.tag_name().name()
+                    "Section {:?} has an unexpected element {:?}.",
+                    node.tag_name().name(),
+                    n.tag_name().name()
                 )));
             }
             if n.children().any(|child| child.is_element()) {
-                return Err(error(format!("unexpected child element in {name}")));
+                return Err(error(format!("{} has a child element.", subject(n))));
             }
             if n.attributes().any(|a| a.name().contains("bondorder")) {
-                return Err(error(
-                    "fractional-bond-order interpolation is not supported",
-                ));
+                return Err(error(format!(
+                    "{} uses fractional bond order interpolation. It is not supported.",
+                    subject(n)
+                )));
             }
             for a in n.attributes() {
                 let key = a.name();
@@ -757,7 +894,10 @@ fn children<'a, 'input>(node: Node<'a, 'input>, name: &str) -> Result<Vec<Node<'
                     _ => false,
                 };
                 if a.namespace().is_some() || (!common && !supported) {
-                    return Err(error(format!("unsupported {name} attribute {key}")));
+                    return Err(error(format!(
+                        "{} has the unsupported attribute {key:?}.",
+                        subject(n)
+                    )));
                 }
             }
             Ok(n)
@@ -766,17 +906,20 @@ fn children<'a, 'input>(node: Node<'a, 'input>, name: &str) -> Result<Vec<Node<'
 }
 fn attr<'a>(n: Node<'a, '_>, key: &str) -> Result<&'a str> {
     n.attribute(key)
-        .ok_or_else(|| error(format!("missing {key} on {}", n.tag_name().name())))
+        .ok_or_else(|| error(format!("{} has no {key:?} attribute.", subject(n))))
 }
 fn allowed_attributes(node: Node<'_, '_>, allowed: &[&str]) -> Result<()> {
     if node.tag_name().namespace().is_some() {
-        return Err(error("XML namespaces are not supported in OFFXML"));
+        return Err(error(format!(
+            "{} has an XML namespace. Namespaces are not supported.",
+            subject(node)
+        )));
     }
     for a in node.attributes() {
         if a.namespace().is_some() || !allowed.contains(&a.name()) {
             return Err(error(format!(
-                "unsupported {} attribute {}",
-                node.tag_name().name(),
+                "{} has the unsupported attribute {:?}.",
+                subject(node),
                 a.name()
             )));
         }
@@ -788,9 +931,9 @@ fn require(n: Node<'_, '_>, key: &str, expected: &str) -> Result<()> {
         Ok(())
     } else {
         Err(error(format!(
-            "unsupported {key}={:?} on {}; expected {expected:?}",
-            attr(n, key)?,
-            n.tag_name().name()
+            "{} has {key} {:?}. Only {expected:?} is supported.",
+            subject(n),
+            attr(n, key)?
         )))
     }
 }
@@ -801,19 +944,37 @@ fn identity(n: Node<'_, '_>) -> Result<ParameterIdentity> {
     })
 }
 fn rule<P>(n: Node<'_, '_>, size: usize, parameter: P) -> Result<Rule<P>> {
-    let query = smarts::parse_str(attr(n, "smirks")?, Default::default()).map_err(invalid)?;
-    let tagged = TaggedQuery::new(&query).map_err(invalid)?;
+    let query = smirks(n)?;
+    let tagged = TaggedQuery::new(&query).map_err(|e| {
+        invalid(
+            format!("Cannot tag the SMIRKS pattern of {}.", describe(n)),
+            e,
+        )
+    })?;
     if tagged.tags().iter().map(|(t, _)| *t).ne(1..=size as u32) {
-        return Err(error("SMIRKS tags must be exactly 1..N"));
+        return Err(error(format!(
+            "The SMIRKS pattern of {} does not tag atoms 1 to {size}.",
+            describe(n)
+        )));
     }
     Ok(Rule { query, parameter })
 }
+fn smirks(n: Node<'_, '_>) -> Result<QueryGraph> {
+    smarts::parse_str(attr(n, "smirks")?, Default::default()).map_err(|e| {
+        invalid(
+            format!("Cannot parse the SMIRKS pattern of {}.", describe(n)),
+            e,
+        )
+    })
+}
 fn number(s: &str) -> Result<f64> {
-    let x = s.parse::<f64>().map_err(invalid)?;
+    let x = s
+        .parse::<f64>()
+        .map_err(|e| invalid(format!("The value {s:?} is not a number."), e))?;
     if x.is_finite() {
         Ok(x)
     } else {
-        Err(error("nonfinite numeric parameter"))
+        Err(error(format!("The value {s:?} is not finite.")))
     }
 }
 fn scales(n: Node<'_, '_>, scale14: &str) -> Result<[f64; 4]> {
@@ -824,7 +985,11 @@ fn scales(n: Node<'_, '_>, scale14: &str) -> Result<[f64; 4]> {
                 .unwrap_or(["0", "0", scale14, "1"][i]),
         )?;
         if !(0.0..=1.0).contains(x) {
-            return Err(error("invalid nonbonded scale"));
+            return Err(error(format!(
+                "The scale1{} {x} of section {:?} is outside 0 to 1.",
+                i + 2,
+                n.tag_name().name()
+            )));
         }
     }
     Ok(values)
@@ -839,11 +1004,11 @@ fn quantity_default(
     target: Unit,
 ) -> Result<Quantity<f64>> {
     parse_quantity(n.attribute(key).unwrap_or(default), target).map_err(|e| {
-        error(format!(
-            "{} id={:?} attribute {key}: {e}",
-            n.tag_name().name(),
-            n.attribute("id").unwrap_or("")
-        ))
+        Error::caused(
+            ErrorKind::ForceField,
+            format!("The {key} of {} is invalid.", describe(n)),
+            e,
+        )
     })
 }
 

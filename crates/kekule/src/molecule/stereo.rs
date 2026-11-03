@@ -190,6 +190,17 @@ pub enum StereoCarrier {
     ImplicitLonePair,
 }
 
+/// Writes `atom 3`, `the implicit hydrogen` or `the lone pair`.
+impl std::fmt::Display for StereoCarrier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Atom(atom) => write!(f, "{atom}"),
+            Self::ImplicitHydrogen => f.write_str("the implicit hydrogen"),
+            Self::ImplicitLonePair => f.write_str("the lone pair"),
+        }
+    }
+}
+
 impl StereoCarrier {
     pub(crate) const fn canonical_order_key(self) -> (u8, u32) {
         match self {
@@ -322,6 +333,26 @@ pub enum StereoDescriptor {
     LowerM,
     /// `p` at a pseudoasymmetric axis.
     LowerP,
+}
+
+/// Writes the descriptor in CIP notation: `R`, `r`, `seqCis`, `E`, `M`, `p`.
+impl std::fmt::Display for StereoDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::R => "R",
+            Self::S => "S",
+            Self::LowerR => "r",
+            Self::LowerS => "s",
+            Self::SeqTrans => "seqTrans",
+            Self::SeqCis => "seqCis",
+            Self::E => "E",
+            Self::Z => "Z",
+            Self::M => "M",
+            Self::P => "P",
+            Self::LowerM => "m",
+            Self::LowerP => "p",
+        })
+    }
 }
 
 /// An enhanced stereo group: stereo elements whose specified configurations

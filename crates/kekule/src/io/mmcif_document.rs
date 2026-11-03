@@ -115,6 +115,17 @@ fn mmcif_parse_error(kind: DiagnosticKind, line: usize, message: impl Into<Strin
     FormatError::parse(Format::Mmcif, kind, message).at(SourceLocation::at_line(line))
 }
 
+/// `subject` exceeds `limit`, such as `A value exceeds its value size limit:
+/// 70 bytes of 64.`
+fn limit_error(line: usize, subject: &str, limit: LimitExceeded) -> FormatError {
+    mmcif_parse_error(
+        DiagnosticKind::Limit,
+        line,
+        format!("{subject} exceeds its {}.", limit.describe()),
+    )
+    .exceeding(limit)
+}
+
 /// One parsed tag or value: a byte span of the shared source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Span {
@@ -552,28 +563,18 @@ pub(crate) fn parse_mmcif_str(
     options: MmcifParseOptions,
 ) -> Result<MmcifDocument, FormatError> {
     if input.len() > options.max_input_bytes {
-        return Err(mmcif_parse_error(
-            DiagnosticKind::Limit,
+        return Err(limit_error(
             1,
-            "input exceeds configured byte limit",
-        )
-        .exceeding(LimitExceeded::new(
-            Resource::InputBytes,
-            options.max_input_bytes,
-            input.len(),
-        )));
+            "The input",
+            LimitExceeded::new(Resource::InputBytes, options.max_input_bytes, input.len()),
+        ));
     }
     if u32::try_from(input.len()).is_err() {
-        return Err(mmcif_parse_error(
-            DiagnosticKind::Limit,
+        return Err(limit_error(
             1,
-            "input exceeds the 4 GiB addressable mmCIF limit",
-        )
-        .exceeding(LimitExceeded::new(
-            Resource::InputBytes,
-            u32::MAX as usize,
-            input.len(),
-        )));
+            "The input",
+            LimitExceeded::new(Resource::InputBytes, u32::MAX as usize, input.len()),
+        ));
     }
     let source: Arc<str> = normalize_line_endings(input).into();
     let mut tokens = Tokens {
@@ -595,18 +596,18 @@ fn parse_blocks(
         if !has_bare_prefix(token, text(token), "data_") {
             return Err(syntax_error(
                 token,
-                "content appears before the first data block",
+                "Content appears before the first data block.",
             ));
         }
         let name = text(token)[5..].to_owned();
         if name.is_empty() {
-            return Err(syntax_error(token, "data block has no name"));
+            return Err(syntax_error(token, "A data block has no name."));
         }
         if !block_names.insert(name.to_ascii_lowercase()) {
             return Err(mmcif_parse_error(
                 DiagnosticKind::Inconsistent,
                 token.line as usize,
-                format!("duplicate data block {name}"),
+                format!("Data block {name:?} appears twice."),
             ));
         }
         let mut entries = Vec::new();
@@ -623,7 +624,7 @@ fn parse_blocks(
                         return Err(mmcif_parse_error(
                             DiagnosticKind::Inconsistent,
                             token.line as usize,
-                            format!("duplicate data name {tag}"),
+                            format!("Data name {tag} appears twice in block {name:?}."),
                         ));
                     }
                 }
@@ -634,20 +635,26 @@ fn parse_blocks(
                     return Err(mmcif_parse_error(
                         DiagnosticKind::Inconsistent,
                         token.line as usize,
-                        format!("duplicate data name {tag}"),
+                        format!("Data name {tag} appears twice in block {name:?}."),
                     ));
                 }
                 let value = tokens
                     .next()?
-                    .ok_or_else(|| syntax_error(token, format!("missing value for {tag}")))?;
+                    .ok_or_else(|| syntax_error(token, format!("Data name {tag} has no value.")))?;
                 if is_control(value, text(value)) {
-                    return Err(syntax_error(value, format!("missing value for {tag}")));
+                    return Err(syntax_error(
+                        value,
+                        format!("Data name {tag} has no value."),
+                    ));
                 }
                 entries.push(EntryData::Item(ItemData { tag, value }));
             } else {
                 return Err(syntax_error(
                     token,
-                    format!("unexpected token `{}` in data block", text(token)),
+                    format!(
+                        "Data block {name:?} has an unexpected token {:?}.",
+                        text(token)
+                    ),
                 ));
             }
         }
@@ -662,12 +669,11 @@ fn parse_blocks(
                 }
                 _ => None,
             }) {
-                return Err(mmcif_parse_error(
-                    DiagnosticKind::Limit,
+                return Err(limit_error(
                     item.value.line as usize,
-                    "atom-site row count exceeds configured limit",
-                )
-                .exceeding(LimitExceeded::first_beyond(Resource::Rows, 0)));
+                    "The _atom_site table",
+                    LimitExceeded::first_beyond(Resource::Rows, 0),
+                ));
             }
         }
         blocks.push(MmcifBlock {
@@ -680,7 +686,7 @@ fn parse_blocks(
         return Err(mmcif_parse_error(
             DiagnosticKind::Syntax,
             1,
-            "missing data block",
+            "The input has no data block.",
         ));
     }
     Ok(MmcifDocument { blocks })
@@ -707,13 +713,13 @@ fn parse_loop(
             return Err(mmcif_parse_error(
                 DiagnosticKind::Inconsistent,
                 token.line as usize,
-                format!("duplicate loop tag {}", text(token)),
+                format!("Loop tag {} appears twice.", text(token)),
             ));
         }
         tags.push(text(token).to_owned());
     }
     if tags.is_empty() {
-        return Err(syntax_error(keyword, "loop has no tags"));
+        return Err(syntax_error(keyword, "A loop has no tags."));
     }
     let max_values = tags
         .iter()
@@ -725,15 +731,11 @@ fn parse_loop(
             break;
         }
         if max_values == Some(values.len()) {
-            return Err(mmcif_parse_error(
-                DiagnosticKind::Limit,
+            return Err(limit_error(
                 token.line as usize,
-                "atom-site row count exceeds configured limit",
-            )
-            .exceeding(LimitExceeded::first_beyond(
-                Resource::Rows,
-                max_atom_site_rows,
-            )));
+                "The _atom_site table",
+                LimitExceeded::first_beyond(Resource::Rows, max_atom_site_rows),
+            ));
         }
         tokens.next()?;
         values.push(token);
@@ -743,7 +745,12 @@ fn parse_loop(
         return Err(mmcif_parse_error(
             DiagnosticKind::Syntax,
             line as usize,
-            "loop has ragged rows",
+            format!(
+                "The loop of {} has an incomplete row: {} values for {} columns.",
+                tags[0],
+                values.len(),
+                tags.len()
+            ),
         ));
     }
     if let Some(token) = tokens.peek()? {
@@ -887,7 +894,7 @@ impl<'a> Tokenizer<'a> {
                         return Err(mmcif_parse_error(
                             DiagnosticKind::Syntax,
                             self.line,
-                            "unterminated quoted value",
+                            "A quoted value is not closed.",
                         ));
                     }
                     let value_end = self.column;
@@ -923,7 +930,7 @@ impl<'a> Tokenizer<'a> {
                 return Err(mmcif_parse_error(
                     DiagnosticKind::Syntax,
                     opening_line,
-                    "unterminated semicolon text",
+                    "A semicolon text field is not closed.",
                 ));
             }
             if self.source[next..].starts_with(';') {
@@ -931,32 +938,30 @@ impl<'a> Tokenizer<'a> {
             }
             let end = self.line_end(next);
             if end - text_start > self.options.max_token_bytes {
-                return Err(mmcif_parse_error(
-                    DiagnosticKind::Limit,
+                return Err(limit_error(
                     opening_line,
-                    "semicolon value exceeds configured token limit",
-                )
-                .exceeding(LimitExceeded::new(
-                    Resource::ValueBytes,
-                    self.options.max_token_bytes,
-                    end - text_start,
-                )));
+                    "A semicolon text field",
+                    LimitExceeded::new(
+                        Resource::ValueBytes,
+                        self.options.max_token_bytes,
+                        end - text_start,
+                    ),
+                ));
             }
             next = end + 1;
             line += 1;
         };
         let text_end = closing - 1;
         if text_end - text_start > self.options.max_token_bytes {
-            return Err(mmcif_parse_error(
-                DiagnosticKind::Limit,
+            return Err(limit_error(
                 opening_line,
-                "semicolon value exceeds configured token limit",
-            )
-            .exceeding(LimitExceeded::new(
-                Resource::ValueBytes,
-                self.options.max_token_bytes,
-                text_end - text_start,
-            )));
+                "A semicolon text field",
+                LimitExceeded::new(
+                    Resource::ValueBytes,
+                    self.options.max_token_bytes,
+                    text_end - text_start,
+                ),
+            ));
         }
         // A closing delimiter can be followed by more tokens on its line.
         if self
@@ -968,7 +973,7 @@ impl<'a> Tokenizer<'a> {
             return Err(mmcif_parse_error(
                 DiagnosticKind::Syntax,
                 line,
-                "closing semicolon must be followed by whitespace or end of line",
+                "Text follows a closing semicolon on its line.",
             ));
         }
         self.enter_line(closing);
@@ -995,27 +1000,22 @@ impl<'a> Tokenizer<'a> {
         bare: bool,
     ) -> Result<Span, FormatError> {
         if end - start > self.options.max_token_bytes {
-            return Err(mmcif_parse_error(
-                DiagnosticKind::Limit,
+            return Err(limit_error(
                 line,
-                "value exceeds configured token limit",
-            )
-            .exceeding(LimitExceeded::new(
-                Resource::ValueBytes,
-                self.options.max_token_bytes,
-                end - start,
-            )));
+                "A value",
+                LimitExceeded::new(
+                    Resource::ValueBytes,
+                    self.options.max_token_bytes,
+                    end - start,
+                ),
+            ));
         }
         if self.count >= self.options.max_tokens {
-            return Err(mmcif_parse_error(
-                DiagnosticKind::Limit,
+            return Err(limit_error(
                 line,
-                "input exceeds configured token count",
-            )
-            .exceeding(LimitExceeded::first_beyond(
-                Resource::Values,
-                self.options.max_tokens,
-            )));
+                "The input",
+                LimitExceeded::first_beyond(Resource::Values, self.options.max_tokens),
+            ));
         }
         self.count += 1;
         let narrow = |value: usize| u32::try_from(value).expect("input length fits u32");

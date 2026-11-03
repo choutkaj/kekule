@@ -258,15 +258,16 @@ pub enum AtomCorrespondenceError {
 impl fmt::Display for AtomCorrespondenceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LayoutMismatch => formatter
-                .write_str("topology layouts differ; supply explicit moving/reference atom pairs"),
+            Self::LayoutMismatch => formatter.write_str(
+                "The moving and reference topologies have different layouts. Give explicit atom pairs.",
+            ),
             Self::InvalidAtom {
                 side,
                 pair_index,
                 atom,
             } => write!(
                 formatter,
-                "correspondence pair {pair_index} has invalid {side} atom {atom:?}",
+                "Atom pair {pair_index} names {atom}. The {side} topology has no such atom.",
             ),
             Self::DuplicateAtom {
                 side,
@@ -274,25 +275,31 @@ impl fmt::Display for AtomCorrespondenceError {
                 atom,
             } => write!(
                 formatter,
-                "correspondence pair {pair_index} repeats {side} atom {atom:?}",
+                "Atom pair {pair_index} repeats the {side} {atom}.",
             ),
             Self::TopologyMismatch { side } => write!(
                 formatter,
-                "correspondence belongs to a different {side} topology allocation",
+                "The {side} topology has a different layout from the atom correspondence.",
             ),
             Self::AmbiguousLabels { side, labels } => {
-                write!(
-                    formatter,
-                    "{} {side} label(s) name more than one selected atom",
-                    labels.len(),
-                )?;
-                for label in labels.iter().take(3) {
-                    write!(formatter, "; {label}")?;
+                match labels.len() {
+                    1 => write!(
+                        formatter,
+                        "A {side} label names more than one selected atom:"
+                    )?,
+                    count => write!(
+                        formatter,
+                        "{count} {side} labels name more than one selected atom:"
+                    )?,
+                }
+                for (position, label) in labels.iter().take(3).enumerate() {
+                    let separator = if position == 0 { " " } else { "; " };
+                    write!(formatter, "{separator}{label}")?;
                 }
                 if labels.len() > 3 {
                     write!(formatter, "; and {} more", labels.len() - 3)?;
                 }
-                Ok(())
+                formatter.write_str(".")
             }
         }
     }

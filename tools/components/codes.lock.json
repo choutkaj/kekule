@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "source": "wwPDB Chemical Component Dictionary (components.cif.gz)",
+  "license": "CC0 1.0 (wwPDB archive data)",
+  "url": "https://files.wwpdb.org/pub/pdb/data/monomers/components.cif.gz",
+  "sha256": "d5be0434a719108e2dd50708b17b0af26b088c1ce7d751a668aeecf9bdc26949",
+  "latest_modified": "2026-10-23",
+  "output": "crates/kekule/data/components/codes.tsv",
+  "output_sha256": "c9284acd91965bfead2ef7be74061ebe7783749eb7c88d17a8e55a3e473f1734"
+}

@@ -15,8 +15,8 @@ use crate::molecule::{
     StereoCarrier, StereoDescriptor, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
 };
 use crate::perception::{
-    aromaticity::AromaticityModel, conjugation::ConjugationModel, rings::RingBasisModel,
-    valence::ValenceModel, valence::ValenceValidation, Perception,
+    aromaticity::AromaticityModel, conjugation::ConjugationModel, resonance::ResonanceModel,
+    rings::RingBasisModel, valence::ValenceModel, valence::ValenceValidation, Perception,
 };
 use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue, StructureProperties,
@@ -135,14 +135,19 @@ impl<W: Write> Encoder<'_, W> {
     }
 
     fn count(&mut self, count: usize) -> Result {
-        let count = u32::try_from(count)
-            .map_err(|_| unrepresentable(format!("{count} entries exceed a native count")))?;
+        let count = u32::try_from(count).map_err(|_| {
+            unrepresentable(format!(
+                "The count {count} exceeds the native maximum of 4,294,967,295."
+            ))
+        })?;
         self.u32(count)
     }
 
     fn str(&mut self, value: &str) -> Result {
         if u32::try_from(value.len()).map_or(true, |len| len == ABSENT_STRING) {
-            return Err(unrepresentable("a string exceeds the native length range"));
+            return Err(unrepresentable(
+                "A string is too long for the native format.",
+            ));
         }
         self.count(value.len())?;
         self.bytes(value.as_bytes())
@@ -183,7 +188,9 @@ impl<W: Write> Encoder<'_, W> {
             match value {
                 Some(value) => {
                     if u32::try_from(value.len()).map_or(true, |len| len == ABSENT_STRING) {
-                        return Err(unrepresentable("a string exceeds the native length range"));
+                        return Err(unrepresentable(
+                            "A string is too long for the native format.",
+                        ));
                     }
                     self.count(value.len())?;
                 }
@@ -410,6 +417,9 @@ impl<W: Write> Encoder<'_, W> {
             self.ids(conjugation.bonds().map(|bond| bond.raw()))?;
         }
         if let Some(resonance) = perception.resonance() {
+            self.u8(match resonance.model() {
+                ResonanceModel::ChargeMoves => 0,
+            })?;
             self.count(resonance.groups().len())?;
             for group in resonance.groups() {
                 self.ids(group.atoms.iter().map(|atom| atom.raw()))?;

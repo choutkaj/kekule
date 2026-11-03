@@ -46,7 +46,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_input_bytes", max_input_bytes)?;
+        nonzero_option("input size limit", max_input_bytes)?;
         self.max_input_bytes = max_input_bytes;
         Ok(self)
     }
@@ -62,7 +62,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_atoms(mut self, max_atoms: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_atoms", max_atoms)?;
+        nonzero_option("atom limit", max_atoms)?;
         self.max_atoms = max_atoms;
         Ok(self)
     }
@@ -78,7 +78,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_bonds(mut self, max_bonds: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_bonds", max_bonds)?;
+        nonzero_option("bond limit", max_bonds)?;
         self.max_bonds = max_bonds;
         Ok(self)
     }
@@ -94,7 +94,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_branch_depth(mut self, max_branch_depth: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_branch_depth", max_branch_depth)?;
+        nonzero_option("branch depth limit", max_branch_depth)?;
         self.max_branch_depth = max_branch_depth;
         Ok(self)
     }
@@ -110,7 +110,7 @@ impl SmartsParseOptions {
     ///
     /// [`DiagnosticKind::Limit`] when the bound is zero.
     pub fn with_max_ring_closures(mut self, max_ring_closures: usize) -> Result<Self, FormatError> {
-        nonzero_option("max_ring_closures", max_ring_closures)?;
+        nonzero_option("ring closure limit", max_ring_closures)?;
         self.max_ring_closures = max_ring_closures;
         Ok(self)
     }
@@ -129,7 +129,7 @@ impl SmartsParseOptions {
         mut self,
         max_expression_nodes: usize,
     ) -> Result<Self, FormatError> {
-        nonzero_option("max_expression_nodes", max_expression_nodes)?;
+        nonzero_option("expression node limit", max_expression_nodes)?;
         self.max_expression_nodes = max_expression_nodes;
         Ok(self)
     }
@@ -148,7 +148,7 @@ impl SmartsParseOptions {
         mut self,
         max_expression_depth: usize,
     ) -> Result<Self, FormatError> {
-        nonzero_option("max_expression_depth", max_expression_depth)?;
+        nonzero_option("expression depth limit", max_expression_depth)?;
         self.max_expression_depth = max_expression_depth;
         Ok(self)
     }
@@ -167,7 +167,7 @@ impl SmartsParseOptions {
         mut self,
         max_recursive_depth: usize,
     ) -> Result<Self, FormatError> {
-        nonzero_option("max_recursive_depth", max_recursive_depth)?;
+        nonzero_option("recursion depth limit", max_recursive_depth)?;
         self.max_recursive_depth = max_recursive_depth;
         Ok(self)
     }
@@ -186,7 +186,7 @@ impl SmartsParseOptions {
         mut self,
         max_total_expression_nodes: usize,
     ) -> Result<Self, FormatError> {
-        nonzero_option("max_total_expression_nodes", max_total_expression_nodes)?;
+        nonzero_option("total expression node limit", max_total_expression_nodes)?;
         self.max_total_expression_nodes = max_total_expression_nodes;
         Ok(self)
     }
@@ -254,7 +254,12 @@ fn limit_error(
     limit: usize,
 ) -> FormatError {
     let exceeded = LimitExceeded::new(resource, limit, observed);
-    smarts_error(DiagnosticKind::Limit, span, exceeded.to_string()).exceeding(exceeded)
+    smarts_error(
+        DiagnosticKind::Limit,
+        span,
+        format!("The query exceeds its {}.", exceeded.describe()),
+    )
+    .exceeding(exceeded)
 }
 
 /// Parses one SMARTS pattern into a syntax-independent [`QueryGraph`].
@@ -287,7 +292,7 @@ pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph,
         return Err(smarts_error(
             DiagnosticKind::Syntax,
             0..0,
-            "empty SMARTS query",
+            "The query is empty.",
         ));
     }
     if input.len() > options.max_input_bytes {
@@ -301,7 +306,7 @@ pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph,
     if let Some((offset, ch)) = input.char_indices().find(|(_, ch)| !ch.is_ascii()) {
         return Err(unsupported_error(
             offset..offset + ch.len_utf8(),
-            "non-ASCII query syntax is outside the bounded SMARTS subset",
+            "The query contains a non-ASCII character.",
         ));
     }
     if let Some(start) = input.find('|') {
@@ -312,7 +317,7 @@ pub fn parse_str(input: &str, options: SmartsParseOptions) -> Result<QueryGraph,
         {
             return Err(syntax_error(
                 start..input.len(),
-                "CXSMARTS requires a separated, terminated extension",
+                "The CXSMARTS extension does not follow a space or does not end with \"|\".",
             ));
         }
         let query = Parser::new(
@@ -347,7 +352,7 @@ fn install_cx_groups(
     for part in fields.split(',').map(str::trim) {
         if part == "r" {
             if relative {
-                return Err(fail("duplicate CXSMARTS relative flag"));
+                return Err(fail("The CXSMARTS relative flag appears twice."));
             }
             relative = true;
             current = None;
@@ -358,17 +363,17 @@ fn install_cx_groups(
                 (b'a', 0, K::Absolute)
             } else if header.starts_with('o') || header.starts_with('&') {
                 if header.len() == 1 || !header[1..].bytes().all(|b| b.is_ascii_digit()) {
-                    return Err(fail("invalid CXSMARTS stereo group number"));
+                    return Err(fail("A CXSMARTS stereo group number is invalid."));
                 }
                 let number = header[1..]
                     .parse::<usize>()
-                    .map_err(|_| fail("invalid CXSMARTS stereo group number"))?;
+                    .map_err(|_| fail("A CXSMARTS stereo group number is invalid."))?;
                 let tag = header.as_bytes()[0];
                 (tag, number, if tag == b'o' { K::Or } else { K::And })
             } else {
                 return Err(unsupported_error(
                     span.clone(),
-                    "unsupported CXSMARTS field",
+                    format!("The CXSMARTS field {header:?} is not supported."),
                 ));
             };
             current = Some((tag, number));
@@ -379,13 +384,13 @@ fn install_cx_groups(
         } else {
             part
         };
-        let key = current.ok_or_else(|| fail("expected CXSMARTS stereo group field"))?;
+        let key = current.ok_or_else(|| fail("A CXSMARTS stereo group field is missing."))?;
         if atom.is_empty() || !atom.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(fail("invalid CXSMARTS member index"));
+            return Err(fail("A CXSMARTS member index is invalid."));
         }
         let index = atom
             .parse::<u32>()
-            .map_err(|_| fail("CXSMARTS member index out of range"))?;
+            .map_err(|_| fail("A CXSMARTS member index is out of range."))?;
         groups
             .get_mut(&key)
             .unwrap()
@@ -409,19 +414,20 @@ fn install_cx_groups(
     for (_, (kind, members)) in groups {
         builder
             .add_stereo_group(super::QueryStereoGroup { kind, members })
-            .map_err(|e| syntax_error(span.clone(), "invalid query").with_source(e))?;
+            .map_err(|e| syntax_error(span.clone(), "").with_source(e))?;
     }
     builder
         .build()
-        .map_err(|e| syntax_error(span.clone(), "invalid query").with_source(e))
+        .map_err(|e| syntax_error(span.clone(), "").with_source(e))
 }
 
-fn nonzero_option(name: &str, value: usize) -> Result<(), FormatError> {
+/// Fails when the limit named `limit`, such as `atom limit`, is zero.
+fn nonzero_option(limit: &str, value: usize) -> Result<(), FormatError> {
     if value == 0 {
         return Err(smarts_error(
             DiagnosticKind::Limit,
             0..0,
-            format!("SMARTS option {name} must be greater than zero"),
+            format!("The {limit} is 0. Set a positive limit."),
         ));
     }
     Ok(())
@@ -535,14 +541,20 @@ impl<'a> Parser<'a> {
         ) {
             return Err(syntax_error(
                 self.input.len()..self.input.len(),
-                "incomplete SMARTS query",
+                "The query is incomplete.",
             ));
         }
         if let Some((_, offset)) = self.branches.last() {
-            return Err(syntax_error(*offset..(*offset + 1), "unclosed branch"));
+            return Err(syntax_error(
+                *offset..(*offset + 1),
+                "The branch is not closed.",
+            ));
         }
         if let Some(open) = self.rings.values().next() {
-            return Err(syntax_error(open.span.clone(), "unclosed ring label"));
+            return Err(syntax_error(
+                open.span.clone(),
+                "The ring label is not closed.",
+            ));
         }
         self.stereo.install(&mut self.builder)?;
         self.builder.build().map_err(|error| {
@@ -554,8 +566,7 @@ impl<'a> Parser<'a> {
                     exceeded.observed(),
                     exceeded.limit(),
                 ),
-                error => smarts_error(DiagnosticKind::Syntax, span, "invalid query graph")
-                    .with_source(error),
+                error => smarts_error(DiagnosticKind::Syntax, span, "").with_source(error),
             }
         })
     }
@@ -565,13 +576,13 @@ impl<'a> Parser<'a> {
         if matches!(self.previous, PreviousToken::Start | PreviousToken::Dot) {
             return Err(unsupported_error(
                 offset..offset + 1,
-                "component-level SMARTS grouping is not supported",
+                "Component-level grouping is not supported.",
             ));
         }
         if !self.previous.can_end_atom() || self.pending_bond.is_some() {
             return Err(syntax_error(
                 offset..offset + 1,
-                "branch must follow an atom",
+                "The branch does not follow an atom.",
             ));
         }
         let parent = self
@@ -597,13 +608,13 @@ impl<'a> Parser<'a> {
         if !self.previous.can_end_atom() || self.pending_bond.is_some() {
             return Err(syntax_error(
                 offset..offset + 1,
-                "empty or incomplete branch",
+                "The branch is empty or incomplete.",
             ));
         }
         let (parent, _) = self
             .branches
             .pop()
-            .ok_or_else(|| syntax_error(offset..offset + 1, "unmatched branch close"))?;
+            .ok_or_else(|| syntax_error(offset..offset + 1, "This \")\" closes no branch."))?;
         self.current = Some(parent);
         self.previous = PreviousToken::BranchClose;
         self.cursor += 1;
@@ -619,7 +630,7 @@ impl<'a> Parser<'a> {
         {
             return Err(syntax_error(
                 offset..offset + 1,
-                "component separator must follow a complete top-level component",
+                "The \".\" does not follow a complete component.",
             ));
         }
         self.current = None;
@@ -635,7 +646,7 @@ impl<'a> Parser<'a> {
         {
             return Err(syntax_error(
                 start..start + 1,
-                "bond expression must follow an atom or ring label",
+                "The bond does not follow an atom or ring label.",
             ));
         }
         let (expression, direction, end) = bond::parse(self.input, self.cursor, self.options)?;
@@ -661,7 +672,7 @@ impl<'a> Parser<'a> {
         if !self.previous.can_end_atom() && self.previous != PreviousToken::Bond {
             return Err(syntax_error(
                 start..start + 1,
-                "ring label must follow an atom",
+                "The ring label does not follow an atom.",
             ));
         }
         let current = self
@@ -671,7 +682,10 @@ impl<'a> Parser<'a> {
         let span = start..self.cursor;
         if let Some(open) = self.rings.remove(&label) {
             if open.atom == current {
-                return Err(syntax_error(span, "ring label cannot create a self-bond"));
+                return Err(syntax_error(
+                    span,
+                    "The ring label bonds an atom to itself.",
+                ));
             }
             let closing = self.pending_bond.take();
             let bond = BondSyntax::ring(open.bond, closing, span.clone())?;
@@ -718,7 +732,7 @@ impl<'a> Parser<'a> {
             {
                 return Err(syntax_error(
                     start..(start + 1).min(self.bytes.len()),
-                    "percent ring labels require exactly two digits",
+                    "A % ring label needs exactly two digits.",
                 ));
             }
             let label = u16::from(self.bytes[self.cursor + 1] - b'0') * 10
@@ -751,13 +765,13 @@ impl<'a> Parser<'a> {
                 close += 1;
             }
             if close == self.bytes.len() {
-                return Err(syntax_error(start..close, "unclosed bracket atom"));
+                return Err(syntax_error(
+                    start..close,
+                    "The bracket atom is not closed.",
+                ));
             }
             if close == self.cursor + 1 {
-                return Err(syntax_error(
-                    start..close + 1,
-                    "empty bracket atom expression",
-                ));
+                return Err(syntax_error(start..close + 1, "The bracket atom is empty."));
             }
             let expression = BracketParser::new(
                 &self.input[self.cursor + 1..close],
@@ -787,9 +801,10 @@ impl<'a> Parser<'a> {
             Resource::ExpressionNodes,
             start..self.cursor,
         )?;
-        let atom = self.builder.add_atom(expression).map_err(|error| {
-            syntax_error(start..self.cursor, "invalid query atom").with_source(error)
-        })?;
+        let atom = self
+            .builder
+            .add_atom(expression)
+            .map_err(|error| syntax_error(start..self.cursor, "").with_source(error))?;
         self.builder
             .set_atom_tag(atom, tag)
             .expect("new query atom");
@@ -804,7 +819,7 @@ impl<'a> Parser<'a> {
         } else if self.pending_bond.is_some() {
             return Err(syntax_error(
                 start..self.cursor,
-                "bond expression has no preceding atom",
+                "The bond has no preceding atom.",
             ));
         }
         self.current = Some(atom);
@@ -843,7 +858,7 @@ impl<'a> Parser<'a> {
                 ) {
                     return Err(unsupported_error(
                         start..end,
-                        "elements outside the organic subset must be bracketed",
+                        "This element is outside the organic subset. Write it in brackets.",
                     ));
                 }
                 let element = Element::from_symbol(symbol).expect("organic subset element");
@@ -871,17 +886,14 @@ impl<'a> Parser<'a> {
                 self.cursor += 1;
                 Err(unsupported_error(
                     start..self.cursor,
-                    "stereochemical SMARTS is not supported",
+                    "This stereo syntax is not supported.",
                 ))
             }
             _ => {
                 self.cursor += 1;
                 Err(syntax_error(
                     start..self.cursor,
-                    format!(
-                        "unexpected SMARTS character `{}`",
-                        self.bytes[start] as char
-                    ),
+                    format!("Unexpected character \"{}\".", self.bytes[start] as char),
                 ))
             }
         }
@@ -907,7 +919,7 @@ impl<'a> Parser<'a> {
         let id = self
             .builder
             .add_bond(a, b, syntax.expression)
-            .map_err(|error| syntax_error(span, "invalid query bond").with_source(error))?;
+            .map_err(|error| syntax_error(span, "").with_source(error))?;
         self.stereo
             .add_bond(id, a, b, is_double, syntax.direction, syntax.span);
         Ok(())
@@ -1030,11 +1042,11 @@ impl<'a> BracketParser<'a> {
             self.cursor += 1;
             self.tag = Some(
                 u32::try_from(self.read_number("atom tag")?)
-                    .map_err(|_| self.syntax_here("atom tag exceeds u32"))?,
+                    .map_err(|_| self.syntax_here("The atom tag is too large."))?,
             );
         }
         if self.cursor != self.bytes.len() {
-            return Err(self.syntax_here("unexpected atom-expression syntax"));
+            return Err(self.syntax_here("The atom expression has unexpected syntax."));
         }
         if expression.node_count() > self.options.max_expression_nodes {
             return Err(limit_error(
@@ -1060,7 +1072,7 @@ impl<'a> BracketParser<'a> {
         while self.peek() == Some(b';') {
             self.cursor += 1;
             if self.at_expression_end() {
-                return Err(self.syntax_here("missing expression after `;`"));
+                return Err(self.syntax_here("An expression is missing after \";\"."));
             }
             terms.push(self.parse_or()?);
         }
@@ -1072,7 +1084,7 @@ impl<'a> BracketParser<'a> {
         while self.peek() == Some(b',') {
             self.cursor += 1;
             if self.at_expression_end() {
-                return Err(self.syntax_here("missing expression after `,`"));
+                return Err(self.syntax_here("An expression is missing after \",\"."));
             }
             terms.push(self.parse_high_and()?);
         }
@@ -1085,7 +1097,7 @@ impl<'a> BracketParser<'a> {
             if self.peek() == Some(b'&') {
                 self.cursor += 1;
                 if self.at_expression_end() {
-                    return Err(self.syntax_here("missing expression after `&`"));
+                    return Err(self.syntax_here("An expression is missing after \"&\"."));
                 }
                 terms.push(self.parse_unary()?);
             } else if self.peek().is_some_and(is_primitive_start) {
@@ -1105,7 +1117,7 @@ impl<'a> BracketParser<'a> {
             self.cursor += 1;
         }
         if self.at_expression_end() {
-            return Err(self.syntax_here("negation must precede an atom primitive"));
+            return Err(self.syntax_here("The negation does not precede an atom primitive."));
         }
         let mut expression = self.parse_primitive()?;
         for _ in 0..negations {
@@ -1120,7 +1132,7 @@ impl<'a> BracketParser<'a> {
         let start = self.cursor;
         let byte = self
             .peek()
-            .ok_or_else(|| self.syntax_here("missing atom primitive"))?;
+            .ok_or_else(|| self.syntax_here("An atom primitive is missing."))?;
         if byte.is_ascii_uppercase()
             && self
                 .bytes
@@ -1161,7 +1173,7 @@ impl<'a> BracketParser<'a> {
                     .ok_or_else(|| {
                         syntax_error(
                             self.absolute(start..self.cursor),
-                            "atomic number must be in 1..=118",
+                            "The atomic number is outside 1 to 118.",
                         )
                     })?;
                 Ok(AtomExpression::predicate(AtomPredicate::Element(
@@ -1173,7 +1185,7 @@ impl<'a> BracketParser<'a> {
                 let isotope = u16::try_from(isotope).map_err(|_| {
                     syntax_error(
                         self.absolute(start..self.cursor),
-                        "isotope exceeds u16 range",
+                        "The isotope is too large.",
                     )
                 })?;
                 Ok(AtomExpression::predicate(AtomPredicate::Isotope(isotope)))
@@ -1279,7 +1291,15 @@ impl<'a> BracketParser<'a> {
                 let absolute_start = self.base + self.cursor;
                 let (element, absolute_end) =
                     parse_element_symbol_at_bytes(self.source, self.base, self.cursor).ok_or_else(
-                        || syntax_error(self.absolute(start..start + 1), "unknown element symbol"),
+                        || {
+                            syntax_error(
+                                self.absolute(start..start + 1),
+                                format!(
+                                    "The symbol starting with \"{}\" is not an element.",
+                                    char::from(byte)
+                                ),
+                            )
+                        },
                     )?;
                 self.cursor = absolute_end - self.base;
                 atom_element_expression(element, false, absolute_start..absolute_end)
@@ -1287,7 +1307,7 @@ impl<'a> BracketParser<'a> {
             b'$' => {
                 self.cursor += 1;
                 if self.peek() != Some(b'(') {
-                    return Err(self.syntax_here("recursive query requires $(...)"));
+                    return Err(self.syntax_here("The recursive query is not written as $(...)."));
                 }
                 let depth = self.recursive_depth + 1;
                 let limit = self
@@ -1319,7 +1339,7 @@ impl<'a> BracketParser<'a> {
                     self.cursor += 1;
                 }
                 if self.peek() != Some(b')') {
-                    return Err(self.syntax_here("unclosed recursive query"));
+                    return Err(self.syntax_here("The recursive query is not closed."));
                 }
                 let query = Parser::new(
                     &self.source[begin..self.cursor],
@@ -1340,7 +1360,9 @@ impl<'a> BracketParser<'a> {
                 stereo.orientation = crate::stereo::TetrahedralOrientation::Clockwise;
                 if let Some(existing) = &self.stereo {
                     if existing.inline_hydrogen != stereo.inline_hydrogen {
-                        return Err(self.syntax_here("inconsistent inline hydrogen stereo frames"));
+                        return Err(
+                            self.syntax_here("The inline hydrogen stereo frames are inconsistent.")
+                        );
                     }
                 } else {
                     self.stereo = Some(stereo);
@@ -1355,14 +1377,14 @@ impl<'a> BracketParser<'a> {
                 }
                 Err(unsupported_error(
                     self.absolute(start..self.cursor),
-                    "valence and hybridization primitives are outside the bounded SMARTS subset",
+                    "Valence and hybridization primitives are not supported.",
                 ))
             }
             _ => {
                 self.cursor += 1;
                 Err(syntax_error(
                     self.absolute(start..self.cursor),
-                    format!("unexpected atom primitive `{}`", byte as char),
+                    format!("Unexpected atom primitive \"{}\".", byte as char),
                 ))
             }
         }
@@ -1385,7 +1407,7 @@ impl<'a> BracketParser<'a> {
         let magnitude = i8::try_from(magnitude).map_err(|_| {
             syntax_error(
                 self.absolute(start..self.cursor),
-                "formal charge exceeds i8 range",
+                "The formal charge is too large.",
             )
         })?;
         let charge = if sign == b'+' { magnitude } else { -magnitude };
@@ -1405,7 +1427,7 @@ impl<'a> BracketParser<'a> {
             Some(value) => u8::try_from(value).map_err(|_| {
                 syntax_error(
                     self.absolute(start..self.cursor),
-                    format!("{description} exceeds u8 range"),
+                    format!("The {description} is too large."),
                 )
             }),
         }
@@ -1416,7 +1438,7 @@ impl<'a> BracketParser<'a> {
         self.read_optional_number().ok_or_else(|| {
             syntax_error(
                 self.absolute(start..self.cursor),
-                format!("missing {description}"),
+                format!("The {description} is missing."),
             )
         })
     }

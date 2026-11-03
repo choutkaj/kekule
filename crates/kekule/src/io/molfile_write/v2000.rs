@@ -28,13 +28,13 @@ pub(super) fn check_capacity(
 ) -> Result<(), FormatError> {
     if has_stereo_groups {
         return Err(
-            MOLFILE_WRITE.unsupported("V2000 cannot encode enhanced stereo groups; use V3000")
+            MOLFILE_WRITE.unsupported("V2000 cannot hold stereo groups. Write V3000 instead.")
         );
     }
     if atoms > V2000_MAX_ATOMS || bonds > V2000_MAX_BONDS {
-        return Err(
-            MOLFILE_WRITE.unsupported("V2000 writer supports at most 999 atoms and 999 bonds")
-        );
+        return Err(MOLFILE_WRITE.unsupported(format!(
+            "The molecule has {atoms} atoms and {bonds} bonds. V2000 holds at most 999 of each."
+        )));
     }
     Ok(())
 }
@@ -60,7 +60,7 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
         let point = record_atom.position;
         if atom.atom_map.is_some_and(|atom_map| atom_map.get() > 999) {
             return Err(MOLFILE_WRITE.unsupported(format!(
-                "V2000 cannot encode atom-map number {} above 999",
+                "The atom map {} exceeds the V2000 maximum of 999.",
                 atom.atom_map.expect("atom map was checked")
             )));
         }
@@ -68,8 +68,9 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
             .into_iter()
             .any(|coordinate| format!("{coordinate:.COORDINATE_DECIMALS$}").len() > 10)
         {
-            return Err(MOLFILE_WRITE
-                .unsupported("V2000 cannot encode a coordinate in its fixed-width atom field"));
+            return Err(MOLFILE_WRITE.unsupported(
+                "A coordinate does not fit the V2000 coordinate field. Write V3000 instead.",
+            ));
         }
         let valence_code =
             v2000_valence_code(record_atom.molecule, record_atom.id, record_atom.atom)?;
@@ -159,8 +160,7 @@ fn v2000_valence_code(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> Result<u8
         0 => Ok(15),
         1..=14 => Ok(u8::try_from(valence).expect("range checked")),
         _ => Err(MOLFILE_WRITE.unsupported(format!(
-            "V2000 cannot encode explicit valence {valence} for atom {}",
-            atom_id.index()
+            "V2000 cannot state the valence {valence} of {atom_id}."
         ))),
     }
 }
@@ -173,7 +173,7 @@ fn v2000_bond_code(order: BondOrder) -> Result<u8, FormatError> {
         BondOrder::Triple => Ok(3),
         BondOrder::Dative => Ok(9),
         BondOrder::Quadruple => {
-            Err(MOLFILE_WRITE.unsupported("V2000 writer does not support quadruple bonds"))
+            Err(MOLFILE_WRITE.unsupported("V2000 cannot state quadruple bonds."))
         }
     }
 }
@@ -189,9 +189,7 @@ fn v2000_bond_stereo_code(
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(4),
         (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeDown)) => Ok(6),
         (BondOrder::Double, Some(SourceStereoBondMarkKind::DoubleBondEither)) => Ok(3),
-        _ => {
-            Err(MOLFILE_WRITE.unsupported("V2000 bond stereo is incompatible with the bond order"))
-        }
+        _ => Err(MOLFILE_WRITE.unsupported("A bond stereo mark does not apply to its bond order.")),
     }
 }
 
@@ -200,9 +198,8 @@ fn v2000_radical_code(radical: AtomRadical) -> Result<i32, FormatError> {
         (2, Some(1)) => Ok(1),
         (1, Some(2)) => Ok(2),
         (2, Some(3)) => Ok(3),
-        _ => Err(MOLFILE_WRITE.unsupported(
-            "V2000 writer requires an encodable radical electron count and explicit spin multiplicity",
-        )),
+        _ => Err(MOLFILE_WRITE
+            .unsupported("V2000 cannot state a radical other than a singlet, doublet or triplet.")),
     }
 }
 

@@ -48,7 +48,9 @@ impl Feature {
             Self::AverageFormalCharge => true,
         };
         if !valid {
-            return Err(error("unsupported NAGL feature categories or ring size"));
+            return Err(error(
+                "The model has unsupported feature categories or ring sizes.",
+            ));
         }
         Ok(())
     }
@@ -92,7 +94,8 @@ impl Layer {
             || (!convolution && self.aggregator_type.is_some())
         {
             return Err(error(
-                "unsupported NAGL layer: expected width 1..2048, dropout 0..1 and mean aggregation",
+                "The model has a layer with a width outside 1 to 2,048, a dropout outside 0 to 1 \
+                 or an aggregation other than mean.",
             ));
         }
         // Dropout is disabled in evaluation mode, including models trained with nonzero dropout.
@@ -129,13 +132,18 @@ impl Config {
             || !(1..=16).contains(&self.convolution.layers.len())
             || self.readouts.len() != 1
         {
-            return Err(error("unsupported NAGL configuration: expected version 0.1, SAGEConv, no bond features and one charge readout"));
+            return Err(error(
+                "The model configuration is not version 0.1 with SAGEConv layers, no bond \
+                 features and one charge readout.",
+            ));
         }
         if self.atom_features.is_empty()
             || self.atom_features.len() > 64
             || self.atom_features.iter().map(Feature::width).sum::<usize>() > 256
         {
-            return Err(error("NAGL feature count exceeds supported limits"));
+            return Err(error(
+                "The model has no atom features, more than 64, or more than 256 feature values.",
+            ));
         }
         for feature in &self.atom_features {
             feature.validate()?;
@@ -149,7 +157,10 @@ impl Config {
             || readout.postprocess != "regularized_compute_partial_charges"
             || readout.layers.len() > 16
         {
-            return Err(error("unsupported NAGL readout: expected atom pooling and regularized_compute_partial_charges"));
+            return Err(error(
+                "The model readout is not \"atoms\" pooling with the postprocess \
+                 \"regularized_compute_partial_charges\".",
+            ));
         }
         for layer in &readout.layers {
             layer.validate(false)?;

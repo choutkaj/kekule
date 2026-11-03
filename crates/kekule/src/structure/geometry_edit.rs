@@ -15,6 +15,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::diagnostics::Capitalized;
 use crate::geometry::{Point3, RigidTransform, Vector3};
 use crate::topology::{AtomSelection, InstanceAtomId, Topology};
 use crate::units::{Quantity, Unit, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
@@ -60,26 +61,30 @@ pub enum GeometryEditError {
 impl fmt::Display for GeometryEditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidAtomId(atom) => write!(f, "invalid geometry-edit atom: {atom}"),
-            Self::RepeatedAtom(atom) => write!(f, "repeated geometry-edit reference: {atom}"),
-            Self::TopologyMismatch => f.write_str("geometry edit belongs to a different topology"),
-            Self::MissingBond { a, b } => {
-                write!(f, "geometry edit requires a bond between {a} and {b}")
+            Self::InvalidAtomId(atom) => write!(f, "{} is not in the topology.", Capitalized(atom)),
+            Self::RepeatedAtom(atom) => {
+                write!(f, "{} appears twice among the reference atoms.", Capitalized(atom))
             }
-            Self::InseparableFragment => f.write_str("moving fragment reaches a fixed reference"),
-            Self::InvalidMovingSelection => {
-                f.write_str("select the last reference and exclude the first reference")
+            Self::TopologyMismatch => {
+                f.write_str("The geometry edit belongs to a different topology.")
             }
-            Self::Unit(_) => f.write_str("invalid geometry-edit unit"),
-            Self::InvalidTarget => {
-                f.write_str("target must be finite, with distance > 0 or angle in [0, pi]")
+            Self::MissingBond { a, b } => write!(f, "{} and {b} are not bonded.", Capitalized(a)),
+            Self::InseparableFragment => {
+                f.write_str("The moving fragment reaches a fixed reference atom.")
             }
-            Self::NonFiniteInput => f.write_str("rigid-motion arguments must be finite"),
+            Self::InvalidMovingSelection => f.write_str(
+                "The moving selection lacks the last reference atom or contains the first.",
+            ),
+            Self::Unit(error) => error.fmt(f),
+            Self::InvalidTarget => f.write_str(
+                "The target is not finite, or its distance is not positive, or its angle is outside 0 to 180 degrees.",
+            ),
+            Self::NonFiniteInput => f.write_str("The origin, axis or displacement is not finite."),
             Self::DegenerateGeometry => {
-                f.write_str("geometry edit has an undefined direction or plane")
+                f.write_str("The atoms define no direction, plane or dihedral.")
             }
             Self::NumericalFailure => {
-                f.write_str("geometry edit exceeds numerical range or precision")
+                f.write_str("The edit exceeds the numerical range or precision.")
             }
         }
     }
@@ -88,7 +93,7 @@ impl fmt::Display for GeometryEditError {
 impl std::error::Error for GeometryEditError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Unit(error) => Some(error),
+            Self::Unit(error) => error.source(),
             _ => None,
         }
     }

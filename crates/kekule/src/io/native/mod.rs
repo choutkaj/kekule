@@ -29,7 +29,7 @@ pub const NATIVE_MAGIC: [u8; 8] = [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0
 /// Before Kekule 1.0 the format may change incompatibly, but every
 /// incompatible change increments this version, and readers reject versions
 /// they do not implement.
-pub const NATIVE_FORMAT_VERSION: u32 = 2;
+pub const NATIVE_FORMAT_VERSION: u32 = 3;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;
@@ -199,10 +199,18 @@ impl NativeObject {
 
     fn kind_error(&self, expected: NativeKind) -> FormatError {
         let found = self.kind();
+        let article = |kind| match kind {
+            NativeKind::Ensemble => "an",
+            _ => "a",
+        };
         FormatError::interpret(
             Format::Native,
             DiagnosticKind::Inconsistent,
-            format!("native input holds a {found}, not a {expected}"),
+            format!(
+                "The input holds {} {found}, not {} {expected}.",
+                article(found),
+                article(expected)
+            ),
         )
         .with_detail(FormatErrorDetail::NativeKind { expected, found })
     }
@@ -311,7 +319,17 @@ fn nonzero_option(name: &str, value: usize) -> Result<(), FormatError> {
         return Err(FormatError::parse(
             Format::Native,
             DiagnosticKind::Limit,
-            format!("native option {name} must be greater than zero"),
+            format!(
+                "The {} is 0. Set a positive limit.",
+                match name {
+                    "max_input_bytes" => "input size limit",
+                    "max_atoms" => "atom limit",
+                    "max_bonds" => "bond limit",
+                    "max_items" => "item limit",
+                    "max_string_bytes" => "string size limit",
+                    _ => "limit",
+                }
+            ),
         ));
     }
     Ok(())

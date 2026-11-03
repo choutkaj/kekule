@@ -741,33 +741,37 @@ pub enum ModelEditError {
 impl fmt::Display for ModelEditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Topology(_) => f.write_str("cannot edit the topology"),
-            Self::Position(_) => f.write_str("invalid positions"),
+            Self::Topology(error) => error.fmt(f),
+            Self::Position(error) => error.fmt(f),
             Self::NonFinitePosition { atom: Some(atom) } => {
-                write!(f, "position of {atom:?} is not finite")
+                write!(f, "The position of {atom} is not finite.")
             }
             Self::NonFinitePosition { atom: None } => {
-                f.write_str("position of the added atom is not finite")
+                f.write_str("The position of the added atom is not finite.")
             }
-            Self::Property(_) => f.write_str("invalid property"),
-            Self::Structure(_) => f.write_str("invalid structure"),
-            Self::Model(_) => f.write_str("invalid model"),
-            Self::CapacityOverflow => f.write_str("model editing exceeds coordinate capacity"),
+            Self::Property(error) => error.fmt(f),
+            Self::Structure(error) => error.fmt(f),
+            Self::Model(error) => error.fmt(f),
+            Self::CapacityOverflow => {
+                f.write_str("The edit exceeds the addressable number of atoms.")
+            }
             Self::IncompatibleAppendCell => f.write_str(
-                "appended model has a different periodic cell; set the intended destination cell or explicitly remove the source cell before appending",
+                "The appended model has a different periodic cell. Set the destination cell or remove the source cell first.",
             ),
-            Self::AppendProperty { domain, .. } => write!(f, "cannot append {domain} properties"),
+            Self::AppendProperty { domain, .. } => {
+                write!(f, "Cannot append the {domain} properties.")
+            }
         }
     }
 }
 impl std::error::Error for ModelEditError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Topology(e) => Some(e),
-            Self::Position(e) => Some(e),
-            Self::Property(e) => Some(e),
-            Self::Structure(e) => Some(e),
-            Self::Model(e) => Some(e.as_ref()),
+            Self::Topology(e) => e.source(),
+            Self::Position(e) => e.source(),
+            Self::Property(e) => e.source(),
+            Self::Structure(e) => e.source(),
+            Self::Model(e) => e.source(),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
             Self::CapacityOverflow
             | Self::IncompatibleAppendCell

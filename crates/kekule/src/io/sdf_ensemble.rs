@@ -13,18 +13,23 @@ fn ensemble_error(error: EnsembleError) -> FormatError {
     FormatError::interpret(
         Format::Sdf,
         DiagnosticKind::Inconsistent,
-        "SDF records form no ensemble",
+        "The records do not form an ensemble.",
     )
     .with_source(error)
 }
 
-/// A data field failure of the 1-based record `record`.
-fn invalid(kind: DiagnosticKind, record: usize, name: &str, message: &str) -> FormatError {
-    FormatError::interpret(Format::Sdf, kind, format!("data field `{name}` {message}"))
-        .in_record(record)
-        .with_detail(FormatErrorDetail::DataField {
-            name: name.to_owned(),
-        })
+/// A data field failure of the 1-based record `record`; `predicate` follows
+/// the field's name in a sentence, such as `appears twice.`
+fn invalid(kind: DiagnosticKind, record: usize, name: &str, predicate: &str) -> FormatError {
+    FormatError::interpret(
+        Format::Sdf,
+        kind,
+        format!("The data field {name:?} {predicate}"),
+    )
+    .in_record(record)
+    .with_detail(FormatErrorDetail::DataField {
+        name: name.to_owned(),
+    })
 }
 
 /// The ensemble data fields of one record.
@@ -51,7 +56,7 @@ impl RecordFields {
                     DiagnosticKind::Inconsistent,
                     number,
                     name,
-                    "is repeated",
+                    "appears twice.",
                 ));
             }
             Ok(Some(field.value().trim()))
@@ -64,7 +69,7 @@ impl RecordFields {
                             DiagnosticKind::InvalidValue,
                             number,
                             name,
-                            &format!("is not a number: `{value}`"),
+                            &format!("holds {value:?}, not a number."),
                         )
                     })
                 })
@@ -77,7 +82,7 @@ impl RecordFields {
                         DiagnosticKind::InvalidValue,
                         number,
                         SDF_STATE_FIELD,
-                        &format!("is not a state index: `{value}`"),
+                        &format!("holds {value:?}, not a state index."),
                     )
                 })
             })
@@ -90,7 +95,7 @@ impl RecordFields {
                     DiagnosticKind::InvalidValue,
                     number,
                     SDF_REPRESENTATIVE_FIELD,
-                    &format!("is not `true`: `{value}`"),
+                    &format!("holds {value:?}, not \"true\"."),
                 ))
             }
         };
@@ -141,7 +146,7 @@ pub(crate) fn sdf_ensemble<'a>(
                     DiagnosticKind::InvalidValue,
                     number,
                     SDF_WEIGHT_FIELD,
-                    "is not a valid weight",
+                    "holds an invalid weight.",
                 )
                 .with_source(error)
             },
@@ -164,7 +169,7 @@ pub(crate) fn sdf_ensemble<'a>(
                 DiagnosticKind::Inconsistent,
                 number,
                 SDF_ENERGY_FIELD,
-                "belongs to the record of a state's representative",
+                "is on a record that does not represent its state.",
             ));
         }
         ensemble
@@ -176,7 +181,7 @@ pub(crate) fn sdf_ensemble<'a>(
                     DiagnosticKind::InvalidValue,
                     number,
                     SDF_ENERGY_FIELD,
-                    "is not a valid energy",
+                    "holds an invalid energy.",
                 )
                 .with_source(error)
             })?;
@@ -188,7 +193,7 @@ pub(crate) fn sdf_ensemble<'a>(
                 DiagnosticKind::InvalidValue,
                 1,
                 SDF_TEMPERATURE_FIELD,
-                "is not a valid temperature",
+                "holds an invalid temperature.",
             )
             .with_source(error)
         })?;
@@ -207,7 +212,7 @@ fn partition(fields: &[RecordFields]) -> Result<EnsemblePartition, FormatError> 
             DiagnosticKind::Inconsistent,
             missing + 1,
             SDF_STATE_FIELD,
-            "is missing, but other records of the ensemble have it",
+            "is missing. Other records of the ensemble have it.",
         ));
     }
     let mut values = fields
@@ -229,7 +234,7 @@ fn partition(fields: &[RecordFields]) -> Result<EnsemblePartition, FormatError> 
                 DiagnosticKind::Inconsistent,
                 index + 1,
                 SDF_REPRESENTATIVE_FIELD,
-                &format!("marks a second representative of state {value}"),
+                &format!("marks a second representative of state {value}."),
             ));
         }
     }
@@ -246,7 +251,7 @@ fn partition(fields: &[RecordFields]) -> Result<EnsemblePartition, FormatError> 
                     DiagnosticKind::Inconsistent,
                     first + 1,
                     SDF_REPRESENTATIVE_FIELD,
-                    &format!("marks no record of state {}", values[state]),
+                    &format!("marks no record of state {}.", values[state]),
                 )
             })
         })
@@ -267,7 +272,7 @@ fn temperature(fields: &[RecordFields]) -> Result<Option<f64>, FormatError> {
             DiagnosticKind::Inconsistent,
             index + 1,
             SDF_TEMPERATURE_FIELD,
-            "differs from the first record's",
+            "differs from that of the first record.",
         ));
     }
     Ok(first)

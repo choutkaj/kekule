@@ -337,7 +337,7 @@ fn invalid_aromatic_localization_fails_during_interpretation() {
     let error = read_smiles("c1cccc1")
         .expect_err("unlocalizable aromatic source must not publish a molecule");
 
-    assert!(chain_text(&*error).contains("invalid imported aromatic representation"));
+    assert!(chain_text(&*error).contains("cannot be localized"));
 }
 
 #[test]

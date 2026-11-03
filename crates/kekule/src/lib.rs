@@ -40,7 +40,7 @@
 //! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
-//! | Structure analysis and preparation | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`solvation`] |
+//! | Structure analysis and preparation | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`sequence`], [`solvation`] |
 //!
 //! # Typical workflow
 //!
@@ -163,6 +163,7 @@ pub mod parallel;
 pub mod properties;
 pub mod query;
 mod selection_language;
+pub mod sequence;
 pub mod solvation;
 pub mod statistics;
 pub mod structure;
@@ -422,7 +423,7 @@ pub mod smiles {
                 FormatError::interpret(
                     Format::Smiles,
                     DiagnosticKind::Chemistry,
-                    "cannot assemble topology",
+                    "Cannot build the topology.",
                 )
                 .with_source(error)
             })?;
@@ -551,7 +552,7 @@ pub mod smiles {
                 return Err(FormatError::write(
                     Format::Smiles,
                     DiagnosticKind::Unsupported,
-                    "SMILES record names must be nonempty, trimmed, and on one line",
+                    "The record name is empty, has surrounding spaces or spans lines.",
                 )
                 .with_detail(crate::diagnostics::FormatErrorDetail::Title));
             }
@@ -968,10 +969,12 @@ pub mod macromolecular {
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
         AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
         ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions,
-        CoordinationProvenance, EntityKind, EntityMetadataPolicy, InstanceProvenance,
-        ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretOptions,
-        StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
-        StructureInterpretation, StructureInterpretationReport,
+        CoordinationProvenance, EntityKind, EntityMetadataPolicy, EntityMonomer,
+        InstanceProvenance, ModelSelection, PolymerEntity, PolymerEntityInstance, PolymerType,
+        SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
+        StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+        StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+        StructureInterpretationReport,
     };
 }
 
@@ -1512,7 +1515,8 @@ pub mod native {
     }
 }
 
-/// Derived valence, rings, aromaticity, conjugation and explicit resonance work.
+/// Derived valence, rings, aromaticity, conjugation, resonance and explicit
+/// resonance enumeration.
 ///
 /// [`crate::molecule::Molecule::perceive`] installs Kekule's default transactional perception
 /// profile. The nested modules expose the individual expert algorithms.
@@ -1539,13 +1543,16 @@ pub mod native {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub mod perception {
-    /// Connected conjugated groups and explicit RDKit-like contributor enumeration.
+    /// Resonance delocalization perception, installed by default perception,
+    /// and explicit RDKit-like contributor enumeration.
     pub mod resonance {
         pub use crate::algorithms::{
             enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError,
-            ResonanceFlags, ResonanceOptions, ResonanceStructures,
+            ResonanceFlags, ResonanceOptions, ResonancePerceptionError, ResonanceStructures,
         };
-        pub use crate::molecule::delocalization::{ResonanceGroup, ResonancePerception};
+        pub use crate::molecule::delocalization::{
+            ResonanceGroup, ResonanceModel, ResonancePerception,
+        };
     }
     /// Bond conjugation, including aromatic bonds, without contributor enumeration.
     pub mod conjugation {

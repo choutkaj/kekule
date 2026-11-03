@@ -139,11 +139,12 @@ struct AsymIds {
 impl AsymIds {
     fn new(model: ModelView<'_>) -> Result<Self, FormatError> {
         let mut reserved = BTreeSet::new();
-        for (_, chain) in model.topology().hierarchy().chains() {
+        for (chain_id, chain) in model.topology().hierarchy().chains() {
             if chain.label_id().is_empty() {
-                return Err(invalid_model(
-                    "topology hierarchy chain label ID is empty".to_owned(),
-                ));
+                return Err(invalid_model(format!(
+                    "{} has an empty label ID.",
+                    crate::diagnostics::Capitalized(chain_id)
+                )));
             }
             reserved.insert(chain.label_id().to_owned());
         }
@@ -738,7 +739,7 @@ fn carbohydrate_entity_kind(
 }
 
 fn invalid_molecule(molecule: MoleculeInstanceId) -> FormatError {
-    invalid_model(format!("invalid molecule instance: {molecule}"))
+    invalid_model(format!("The model has no {molecule}."))
 }
 
 #[cfg(test)]

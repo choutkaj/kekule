@@ -96,12 +96,17 @@ pub enum StereoSearchError {
 impl fmt::Display for StereoSearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidLimit { resource, limit } => {
-                write!(f, "invalid stereo search {resource} limit {limit}")
+            Self::InvalidLimit { resource, limit } => write!(
+                f,
+                "The stereo search limit on {resource} is {limit}. Set a positive limit."
+            ),
+            Self::Perception(_) => {
+                f.write_str("Cannot perceive the molecule for the stereo search.")
             }
-            Self::Perception(_) => f.write_str("cannot perceive the molecule for stereo search"),
-            Self::InvalidStereo(_) => f.write_str("represented stereo is invalid"),
-            Self::LimitExceeded(limit) => write!(f, "stereo search {limit}"),
+            Self::InvalidStereo(_) => f.write_str("The represented stereo is invalid."),
+            Self::LimitExceeded(limit) => {
+                write!(f, "The stereo search exceeded its {}.", limit.describe())
+            }
         }
     }
 }

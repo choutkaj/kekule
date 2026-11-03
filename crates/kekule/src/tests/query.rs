@@ -454,11 +454,11 @@ fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
 #[test]
 fn bounded_smarts_rejects_unsupported_semantics_instead_of_approximating() {
     for (input, expected_fragment) in [
-        ("[C@AL1]", "stereochemical atom"),
-        ("[C@?]", "stereochemical atom"),
-        ("C/?C=C\\C", "unspecified directional"),
+        ("[C@AL1]", "tetrahedral stereo queries"),
+        ("[C@?]", "tetrahedral stereo queries"),
+        ("C/?C=C\\C", "Unspecified directional"),
         ("[^2]", "hybridization"),
-        ("(C.C)", "component-level"),
+        ("(C.C)", "Component-level"),
     ] {
         let error = smarts::parse_str(input, Default::default()).expect_err(input);
         assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{input}");

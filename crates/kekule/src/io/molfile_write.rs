@@ -186,7 +186,7 @@ pub(crate) fn write_molfile<'a>(
     let source = source.into();
     if source.title.contains(['\r', '\n']) {
         return Err(MOLFILE_WRITE
-            .unsupported("Molfile titles cannot contain line breaks")
+            .unsupported("The title contains a line break.")
             .with_detail(crate::diagnostics::FormatErrorDetail::Title));
     }
     match source.content {
@@ -243,9 +243,7 @@ pub(super) fn check_cell(
     policy: UnrepresentablePolicy,
 ) -> Result<(), FormatError> {
     if model.cell().is_some() && policy == UnrepresentablePolicy::Fail {
-        return Err(MOLFILE_WRITE.unsupported(
-            "a Molfile cannot represent a periodic cell; set the cell option to omit it",
-        ));
+        return Err(MOLFILE_WRITE.unsupported("A Molfile cannot hold a periodic cell."));
     }
     Ok(())
 }

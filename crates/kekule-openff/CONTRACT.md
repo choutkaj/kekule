@@ -120,8 +120,10 @@ compiled force field and model can serve concurrent parameterizations.
 ## Errors
 
 Every failure is a `kekule_openff::Error`. `Error::kind()` returns a stable
-`ErrorKind` for programmatic handling; the display text adds the specific
-detail. Failures inside one molecule of a system name its definition through
+`ErrorKind` for programmatic handling. The display text is one or two
+sentences: the file or molecule definition that failed, such as `Cannot
+parameterize molecule definition 2.`, then the detail, such as `Atoms 3 and 5
+have no vdW parameter.` Failures inside one molecule of a system name its definition through
 `Error::definition()`, and file failures name the file through `Error::path()`.
 Failures caused by particular atoms name every such atom through
 `Error::atoms()`, as IDs of that definition's molecule or of the molecule passed
@@ -134,8 +136,10 @@ failures name no atom. `NaglModel::elements()` and
 host can refuse a molecule before parameterizing it; a force field's rules can
 still leave atoms of those elements unparameterized.
 A wrapped lower-level error (I/O, XML, JSON, or a Kekule perception error) is
-available through `Error::get_ref()` for downcasting; as with `std::io::Error`,
-the wrapper is transparent and its source chain never repeats a message.
+the source and is available through `Error::get_ref()` for downcasting. The
+wrapper's own sentence says what failed at its level, such as `Cannot parse the
+SMIRKS pattern of bond parameter "b1".`, and does not repeat the source;
+`kekule::diagnostics::ErrorChain` writes the whole chain.
 
 | Kind | Meaning |
 | --- | --- |

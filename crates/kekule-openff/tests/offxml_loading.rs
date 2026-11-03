@@ -82,7 +82,7 @@ fn malformed_model_identity_and_unsupported_semantics_fail() {
         ),
         (
             ROSEMARY.replace("length=\"", "length_bondorder1=\""),
-            "fractional-bond-order",
+            "fractional bond order",
         ),
     ] {
         assert_ne!(changed, ROSEMARY, "test must modify its fixture");
