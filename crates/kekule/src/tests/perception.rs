@@ -1061,7 +1061,7 @@ fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
 }
 
 #[test]
-fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
+fn aromaticity_marks_azulene_whole_including_its_fusion_bond() {
     let mut mol = crate::molecule::MoleculeEditor::new();
     let atoms = (0..10)
         .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
@@ -1109,7 +1109,9 @@ fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
     assert!(perimeter_bonds
         .iter()
         .all(|bond| aromatic_bond(mol.working(), *bond)));
-    assert!(!aromatic_bond(mol.working(), shared));
+    // The rings are aromatic only together; their fusion bond is aromatic
+    // with them (RDKit leaves it out).
+    assert!(aromatic_bond(mol.working(), shared));
 }
 
 #[test]

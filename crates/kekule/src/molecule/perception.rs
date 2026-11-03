@@ -19,13 +19,24 @@ pub enum ValenceModel {
 }
 
 /// The aromaticity model used to produce installed aromaticity state.
+///
+/// Both models count electrons as RDKit 2026.03.3 does, over single rings and
+/// connected fused subsets of up to six rings (components above 300 rings
+/// only up to pairs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AromaticityModel {
-    /// RDKit's default aromaticity model (RDKit 2026.03.3), in which fused
-    /// rings are searched only as single rings and pairs.
+    /// RDKit's default aromaticity model, with fused systems aromatic whole:
+    /// a ring subset that passes Hückel's rule makes every bond of its rings
+    /// aromatic, fusion bonds included, with the endpoints of its single and
+    /// double bonds. RDKit marks only the subset's perimeter, so a fusion bond
+    /// whose rings are aromatic only together, such as azulene's, is aromatic
+    /// here and not in RDKit. Aromatic atoms agree, except an atom in three or
+    /// more rings of such a subset, which RDKit can leave out.
     RdkitLike,
-    /// MDL model as implemented by RDKit (the OpenFF OEAroModel_MDL profile).
+    /// MDL model exactly as RDKit implements it (the OpenFF OEAroModel_MDL
+    /// profile), perimeters only, so that force-field typing matches the
+    /// reference toolkit.
     Mdl,
 }
 

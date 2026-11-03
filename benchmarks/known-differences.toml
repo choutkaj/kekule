@@ -219,6 +219,15 @@ examples = ["chembl:CHEMBL436008"]
 max_cases = { curated = 0, full = 3 }
 
 [[known]]
+id = "small-fused-aromatic-systems-whole"
+task = "small.aromaticity.rdkit"
+match = ["bond.aromatic|*|false→true"]
+verdict = "intended-policy"
+reason = "Kekule's default model marks a fused aromatic system whole: a fusion bond whose rings are aromatic only together (azulenes, xanthene dyes, phenoxazinones, pyrazoloquinolinones) is aromatic. RDKit marks only the fused perimeter and leaves the fusion bond non-aromatic between aromatic atoms."
+examples = ["chembl:CHEMBL508813", "chembl:CHEMBL98208"]
+max_cases = { curated = 2, full = 42 }
+
+[[known]]
 id = "small-symmetric-macrocycle-rings"
 task = "small.rings"
 match = ["rings.count|size=*|fewer"]
