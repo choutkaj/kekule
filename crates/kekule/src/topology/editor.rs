@@ -7,6 +7,7 @@ mod overlay;
 mod placement;
 mod properties;
 mod publication;
+mod sharing;
 pub use publication::{DenseCorrespondence, EditCorrespondence};
 
 use super::dense_map::{DenseKey, DenseMap};
@@ -196,6 +197,8 @@ pub struct TopologyEditor {
     // Slots of deleted atoms and bonds in deletion order, so coordinated
     // state clears exactly the rows one edit freed.
     deleted_slots: (Vec<usize>, Vec<usize>),
+    // Definitions an appended molecule shares when it is identical to one.
+    shared: sharing::SharedDefinitions,
 }
 
 /// The unchanged location of the source atom at dense index `index`.
@@ -254,6 +257,7 @@ impl TopologyEditor {
         self.properties = TopologyProperties::default();
         self.dead_atom_slots.clear();
         self.deleted_slots = Default::default();
+        self.shared.clear();
         self.cleared = true;
         self.changed();
     }

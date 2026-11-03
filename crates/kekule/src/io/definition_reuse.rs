@@ -69,23 +69,7 @@ impl<L: Hash + Eq> DefinitionReuse<L> {
     /// and properties, which only the full comparison reads.
     fn fingerprint(&self, molecule: &Molecule, labels: &[L]) -> u64 {
         let mut hasher = self.hasher.build_hasher();
-        let graph = &molecule.graph;
-        graph.atoms.len().hash(&mut hasher);
-        for atom in graph.atoms.iter().flatten() {
-            atom.element.hash(&mut hasher);
-            atom.isotope.hash(&mut hasher);
-            atom.formal_charge.hash(&mut hasher);
-            atom.radical.hash(&mut hasher);
-            atom.hydrogens.hash(&mut hasher);
-            atom.atom_map.hash(&mut hasher);
-        }
-        graph.bonds.len().hash(&mut hasher);
-        for bond in graph.bonds.iter().flatten() {
-            bond.a.hash(&mut hasher);
-            bond.b.hash(&mut hasher);
-            bond.order.hash(&mut hasher);
-        }
-        graph.stereo_elements.len().hash(&mut hasher);
+        molecule.hash_graph(&mut hasher);
         labels.hash(&mut hasher);
         hasher.finish()
     }
