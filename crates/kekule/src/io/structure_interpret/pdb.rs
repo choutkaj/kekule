@@ -150,6 +150,7 @@ fn pdb_source(
         catalog: ConnectivityCatalog::new(connectivity),
         cell,
         issues,
+        polymer_entities: Vec::new(),
     })
 }
 

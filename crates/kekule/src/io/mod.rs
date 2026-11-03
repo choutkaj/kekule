@@ -30,6 +30,7 @@ pub(crate) mod write_error;
 mod xyz_document;
 mod xyz_interpret;
 
+pub(crate) use components::dictionary_code;
 pub use components::{
     Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary, ComponentLinking,
 };
@@ -97,10 +98,11 @@ pub use structure_interpret::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
-    EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection, SourceResidueId,
-    SourceResiduePosition, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
-    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
-    StructureInterpretationReport,
+    EntityKind, EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection,
+    PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource,
+    SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretOptions,
+    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
+    StructureInterpretation, StructureInterpretationReport,
 };
 pub use write_error::{
     check_multi_model_ensemble, UnrepresentablePolicy, UnrepresentableSampleState, WriteOmission,

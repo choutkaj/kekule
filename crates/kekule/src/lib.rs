@@ -40,7 +40,7 @@
 //! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
-//! | Structure analysis and preparation | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`solvation`] |
+//! | Structure analysis and preparation | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`sequence`], [`solvation`] |
 //!
 //! # Typical workflow
 //!
@@ -163,6 +163,7 @@ pub mod parallel;
 pub mod properties;
 pub mod query;
 mod selection_language;
+pub mod sequence;
 pub mod solvation;
 pub mod statistics;
 pub mod structure;
@@ -968,10 +969,12 @@ pub mod macromolecular {
         AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
         AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
         ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions,
-        CoordinationProvenance, EntityKind, EntityMetadataPolicy, InstanceProvenance,
-        ModelSelection, SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretOptions,
-        StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
-        StructureInterpretation, StructureInterpretationReport,
+        CoordinationProvenance, EntityKind, EntityMetadataPolicy, EntityMonomer,
+        InstanceProvenance, ModelSelection, PolymerEntity, PolymerEntityInstance, PolymerType,
+        SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
+        StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
+        StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+        StructureInterpretationReport,
     };
 }
 

@@ -7,7 +7,11 @@
 
 mod bundled;
 mod ccd;
+mod codes;
 mod force_field;
+
+pub(crate) use ccd::parent_ids;
+pub(crate) use codes::dictionary_code;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
@@ -32,7 +36,7 @@ pub enum ComponentLinking {
 }
 
 impl ComponentLinking {
-    fn from_type(kind: &str) -> Self {
+    pub(crate) fn from_type(kind: &str) -> Self {
         let kind = kind.to_ascii_uppercase();
         if kind.contains("PEPTIDE")
             && (kind.contains("LINKING") || kind.contains("TERMINUS"))
@@ -166,6 +170,8 @@ pub struct Component {
     pub(crate) name: String,
     pub(crate) kind: String,
     pub(crate) variant: Option<String>,
+    pub(crate) one_letter_code: Option<String>,
+    pub(crate) parents: Vec<String>,
     pub(crate) atoms: Vec<ComponentAtom>,
     pub(crate) bonds: Vec<ComponentBond>,
 }
@@ -185,6 +191,21 @@ impl Component {
     /// The dictionary type, such as `L-PEPTIDE LINKING` or `NON-POLYMER`.
     pub fn kind(&self) -> &str {
         &self.kind
+    }
+
+    /// The one-letter code the dictionary states (`_chem_comp.one_letter_code`),
+    /// such as `A` for alanine or `T` for phosphothreonine; `None` when it
+    /// states none. A few components that stand for several monomers, such as
+    /// fluorescent-protein chromophores, have several letters.
+    pub fn one_letter_code(&self) -> Option<&str> {
+        self.one_letter_code.as_deref()
+    }
+
+    /// The identifiers of the standard components a modified one derives
+    /// from (`_chem_comp.mon_nstd_parent_comp_id`), such as `THR` for
+    /// phosphothreonine; empty for a standard component.
+    pub fn parent_ids(&self) -> &[String] {
+        &self.parents
     }
 
     /// The polymer linkage implied by [`Self::kind`].

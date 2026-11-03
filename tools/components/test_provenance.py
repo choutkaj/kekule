@@ -31,5 +31,21 @@ class BundledComponentProvenance(unittest.TestCase):
         self.assertEqual(rust, identifiers())
 
 
+class DictionaryCodeProvenance(unittest.TestCase):
+    def setUp(self):
+        self.lock = json.loads((HERE / "codes.lock.json").read_text(encoding="utf-8"))
+
+    def test_shipped_table_matches_its_lock(self):
+        path = ROOT / self.lock["output"]
+        self.assertEqual(digest(path), self.lock["output_sha256"])
+
+    def test_bundled_polymer_entries_are_in_the_table(self):
+        table = (ROOT / self.lock["output"]).read_text(encoding="utf-8")
+        identifiers = {line.split("	")[0] for line in table.splitlines() if not line.startswith("#")}
+        lock = json.loads((HERE / "sources.lock.json").read_text(encoding="utf-8"))
+        for identifier in lock["groups"]["amino acids"] + lock["groups"]["nucleotides"]:
+            self.assertIn(identifier, identifiers)
+
+
 if __name__ == "__main__":
     unittest.main()
