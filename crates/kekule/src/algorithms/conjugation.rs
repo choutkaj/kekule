@@ -33,8 +33,7 @@ impl std::error::Error for ConjugationError {}
 /// Requires aromaticity and known implicit hydrogen counts. All aromatic bonds
 /// are conjugated; additional flags follow RDKit's local electronic rules,
 /// including its element restrictions and treatment of cumulenes and radicals.
-/// Success replaces conjugation and invalidates prepared resonance groups.
-/// Failure leaves all state untouched. No resonance structures are enumerated.
+/// Success replaces conjugation; failure leaves all state untouched.
 ///
 /// # Errors
 ///
@@ -106,6 +105,5 @@ pub fn perceive_conjugation(
         atoms,
         bonds,
     });
-    mol.perception.resonance = None;
     Ok(())
 }

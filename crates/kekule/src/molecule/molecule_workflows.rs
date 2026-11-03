@@ -7,7 +7,8 @@ use crate::chemistry::{perceive_molecule, PerceptionError};
 use super::Molecule;
 
 impl Molecule {
-    /// Install default valence, rings, aromaticity and conjugation transactionally.
+    /// Install default valence, rings, aromaticity, conjugation and resonance
+    /// delocalization transactionally.
     ///
     /// This derives perception from the canonical represented chemistry and
     /// never rewrites atoms, bonds, or represented stereochemistry.
