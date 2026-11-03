@@ -364,6 +364,18 @@ struct ResidueKey {
 }
 
 impl ResidueKey {
+    /// Whether `atom` belongs to the residue this key names.
+    fn matches(&self, atom: &StagedAtomProvenance<'_>) -> bool {
+        self.label_sequence_id == atom.label_sequence_id
+            && self.polymer_position == atom.polymer_position
+            && self.occurrence == atom.occurrence
+            && self.asym_id == atom.asym_id
+            && self.component_id == atom.component_id
+            && self.entity_id.as_deref() == atom.entity_id
+            && self.author_sequence_id.as_deref() == atom.author_sequence_id
+            && self.insertion_code.as_deref() == atom.insertion_code
+    }
+
     fn id(&self, model_id: &str) -> raw::SourceResidueId {
         raw::SourceResidueId::new(
             model_id,
@@ -414,23 +426,34 @@ fn residue_atoms<'a>(
     cancellation: Option<&Cancellation>,
 ) -> Result<BTreeMap<ResidueKey, ResidueAtoms>, FormatError> {
     let mut residues = BTreeMap::new();
+    // A residue's atoms usually follow each other, so the residue receiving
+    // atoms is looked up once per run of them.
+    let mut current: Option<ResidueAtoms> = None;
     for (step, atom) in atoms.into_iter().enumerate() {
         raw::poll_every(cancellation, step)?;
-        let key = ResidueKey {
-            asym_id: atom.asym_id.to_owned(),
-            entity_id: atom.entity_id.map(str::to_owned),
-            label_sequence_id: atom.label_sequence_id,
-            author_sequence_id: atom.author_sequence_id.map(str::to_owned),
-            insertion_code: atom.insertion_code.map(str::to_owned),
-            occurrence: atom.occurrence,
-            component_id: atom.component_id.to_owned(),
-            polymer_position: atom.polymer_position,
+        let residue = match &mut current {
+            Some(residue) if residue.key.matches(&atom) => residue,
+            _ => {
+                if let Some(residue) = current.take() {
+                    residues.insert(residue.key.clone(), residue);
+                }
+                let key = ResidueKey {
+                    asym_id: atom.asym_id.to_owned(),
+                    entity_id: atom.entity_id.map(str::to_owned),
+                    label_sequence_id: atom.label_sequence_id,
+                    author_sequence_id: atom.author_sequence_id.map(str::to_owned),
+                    insertion_code: atom.insertion_code.map(str::to_owned),
+                    occurrence: atom.occurrence,
+                    component_id: atom.component_id.to_owned(),
+                    polymer_position: atom.polymer_position,
+                };
+                current.insert(residues.remove(&key).unwrap_or(ResidueAtoms {
+                    key,
+                    atoms: BTreeMap::new(),
+                    sites: Vec::new(),
+                }))
+            }
         };
-        let residue = residues.entry(key.clone()).or_insert_with(|| ResidueAtoms {
-            key,
-            atoms: BTreeMap::new(),
-            sites: Vec::new(),
-        });
         residue.atoms.insert(atom.atom_name.to_owned(), atom.atom);
         residue.sites.push(ResidueSite {
             name: atom.atom_name.to_owned(),
@@ -440,6 +463,9 @@ fn residue_atoms<'a>(
             line: atom.line,
             stated_charge: atom.stated_charge,
         });
+    }
+    if let Some(residue) = current {
+        residues.insert(residue.key.clone(), residue);
     }
     raw::poll(cancellation)?;
     Ok(residues)
@@ -1175,17 +1201,17 @@ impl<'r> Resolver<'r, '_> {
 
     fn report_fragmented_residues(&mut self, residues: &BTreeMap<ResidueKey, ResidueAtoms>) {
         let components = self.graph.connected_components();
-        let mut component_of = BTreeMap::new();
+        let mut component_of = vec![None; self.graph.graph.atom_slot_count()];
         for (index, component) in components.iter().enumerate() {
             for atom in component {
-                component_of.insert(*atom, index);
+                component_of[atom.index()] = Some(index);
             }
         }
         for residue in residues.values() {
             let fragments = residue
                 .sites
                 .iter()
-                .filter_map(|site| component_of.get(&site.atom))
+                .filter_map(|site| component_of.get(site.atom.index()).copied().flatten())
                 .collect::<BTreeSet<_>>()
                 .len();
             if fragments > 1 {

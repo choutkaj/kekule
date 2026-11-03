@@ -20,13 +20,24 @@ fn residues<'a>(
     rows: &'a [AtomRow],
     cancellation: Option<&Cancellation>,
 ) -> Result<Vec<Residue<'a>>, FormatError> {
+    // A residue's rows usually follow each other, so its identity is built
+    // once per run of rows rather than once per row.
     let mut grouped = BTreeMap::<SourceResidueId, Vec<&AtomRow>>::new();
+    let mut run: Option<(SourceResidueId, Vec<&AtomRow>)> = None;
     for (step, row) in rows.iter().enumerate() {
         poll_every(cancellation, step)?;
-        grouped
-            .entry(SourceResidueId::of(row))
-            .or_default()
-            .push(row);
+        match &mut run {
+            Some((id, rows)) if id.matches(row) => rows.push(row),
+            _ => {
+                if let Some((id, rows)) = run.take() {
+                    grouped.entry(id).or_default().extend(rows);
+                }
+                run = Some((SourceResidueId::of(row), vec![row]));
+            }
+        }
+    }
+    if let Some((id, rows)) = run {
+        grouped.entry(id).or_default().extend(rows);
     }
     grouped
         .into_iter()
@@ -114,7 +125,7 @@ fn candidate_rows<'a>(
         &labelled
     }
     .iter()
-    .map(|row| row.comp_id.clone())
+    .map(|row| row.comp_id.as_str())
     .collect::<BTreeSet<_>>();
     if components.len() != 1 {
         return Err(selection_error(
@@ -269,13 +280,19 @@ struct Candidate<'a> {
     preferred: usize,
 }
 
+/// The selected rows as their positions in `rows` (each row's `row_index`)
+/// with their sites' dense order, sorted by that order.
 pub(in crate::io::structure_interpret) fn select_alt_locations(
     rows: &[AtomRow],
     conformations: &BTreeMap<String, BTreeSet<String>>,
     policy: &AltLocPolicy,
     report: &mut StructureInterpretationReport,
     cancellation: Option<&Cancellation>,
-) -> Result<Vec<AtomRow>, FormatError> {
+) -> Result<Vec<(usize, usize)>, FormatError> {
+    debug_assert!(rows
+        .iter()
+        .enumerate()
+        .all(|(position, row)| row.row_index == position));
     let residues = residues(rows, cancellation)?;
     let selection = configuration(policy);
     if let Some(id) = &selection.source_conformation {
@@ -392,26 +409,35 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
         }
     }
     // Dense atom order follows each site's first source occurrence, independently
-    // of which alternative's row supplied its coordinates.
-    let mut order = BTreeMap::new();
-    for (step, row) in rows.iter().enumerate() {
-        poll_every(cancellation, step)?;
-        order
-            .entry((SourceResidueId::of(row), &row.comp_id, &row.atom_name))
-            .or_insert(row.row_index);
+    // of which alternative's row supplied its coordinates. Rows without
+    // alternatives are their sites' only rows.
+    let mut site_orders = BTreeMap::new();
+    for residue in residues.iter().filter(|residue| !residue.labels.is_empty()) {
+        for row in &residue.rows {
+            site_orders.entry(row.row_index).or_insert_with(|| {
+                residue
+                    .rows
+                    .iter()
+                    .find(|first| first.comp_id == row.comp_id && first.atom_name == row.atom_name)
+                    .expect("a row is its own site's candidate")
+                    .row_index
+            });
+        }
     }
     let mut selected = selected
         .into_iter()
         .enumerate()
         .map(|(step, row)| {
             poll_every(cancellation, step)?;
-            let mut chosen = row.clone();
-            chosen.site_order = order[&(SourceResidueId::of(row), &row.comp_id, &row.atom_name)];
-            Ok(chosen)
+            let order = site_orders
+                .get(&row.row_index)
+                .copied()
+                .unwrap_or(row.row_index);
+            Ok((row.row_index, order))
         })
         .collect::<Result<Vec<_>, FormatError>>()?;
     poll(cancellation)?;
-    selected.sort_by_key(|row| row.site_order);
+    selected.sort_by_key(|&(_, order)| order);
     Ok(selected)
 }
 

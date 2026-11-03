@@ -11,7 +11,7 @@ mod mmcif;
 mod pdb;
 mod types;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::geometry::PeriodicCell;
@@ -100,7 +100,9 @@ fn interpret_source(
 #[derive(Default)]
 struct ModelRows {
     all: Vec<AtomRow>,
-    selected: Vec<AtomRow>,
+    /// Selected rows as positions in `all` with their sites' dense order, in
+    /// that order.
+    selected: Vec<(usize, usize)>,
 }
 
 /// Shared interpretation of one source; each model's rows are consumed once.
@@ -147,30 +149,56 @@ impl PreparedSource {
             &mut report,
             cancellation.as_ref(),
         )?;
-        let mut models = BTreeMap::<String, ModelRows>::new();
-        let mut model_ids = Vec::new();
-        for (step, row) in rows.into_iter().enumerate() {
+        // Models in source order, each source row's model, and each model's
+        // row count.
+        let mut model_ids = Vec::<String>::new();
+        let mut model_sizes = Vec::<usize>::new();
+        let mut indices = BTreeMap::<&str, usize>::new();
+        let mut row_models = Vec::with_capacity(rows.len());
+        for (step, row) in rows.iter().enumerate() {
             poll_every(cancellation.as_ref(), step)?;
-            let model = models.entry(row.model_id.clone()).or_default();
-            if model.all.is_empty() {
-                model_ids.push(row.model_id.clone());
-            }
-            model.all.push(row);
+            let index = match row_models.last() {
+                Some(&index) if model_ids[index] == row.model_id => index,
+                _ => *indices.entry(&row.model_id).or_insert_with(|| {
+                    model_ids.push(row.model_id.clone());
+                    model_sizes.push(0);
+                    model_ids.len() - 1
+                }),
+            };
+            model_sizes[index] += 1;
+            row_models.push(index);
         }
-        for (step, row) in selected.into_iter().enumerate() {
-            poll_every(cancellation.as_ref(), step)?;
-            let model = models
-                .get_mut(&row.model_id)
-                .expect("selected row has a source model");
-            model.selected.push(row);
-        }
-        let model_sizes = model_ids
-            .into_iter()
-            .map(|id| {
-                let count = models[&id].all.len();
-                (id, count)
+        drop(indices);
+        let mut model_rows = model_sizes
+            .iter()
+            .map(|&size| ModelRows {
+                all: Vec::with_capacity(size),
+                selected: Vec::new(),
             })
             .collect::<Vec<_>>();
+        // Each source row's position in its model's rows.
+        let mut positions = Vec::with_capacity(rows.len());
+        for (step, (row, &model)) in rows.into_iter().zip(&row_models).enumerate() {
+            poll_every(cancellation.as_ref(), step)?;
+            let rows = &mut model_rows[model].all;
+            positions.push(rows.len());
+            rows.push(row);
+        }
+        for (step, (row, order)) in selected.into_iter().enumerate() {
+            poll_every(cancellation.as_ref(), step)?;
+            model_rows[row_models[row]]
+                .selected
+                .push((positions[row], order));
+        }
+        let model_sizes = model_ids
+            .iter()
+            .cloned()
+            .zip(model_sizes)
+            .collect::<Vec<_>>();
+        let models = model_ids
+            .into_iter()
+            .zip(model_rows)
+            .collect::<BTreeMap<_, _>>();
         report.coordinate_models = model_sizes.len();
         Ok(Self {
             models,
@@ -193,7 +221,12 @@ impl PreparedSource {
                 format!("coordinate model `{model_id}` is unavailable"),
             )
         })?;
-        if let Some(row) = rows.selected.iter().find(|row| row.point.is_none()) {
+        if let Some(row) = rows
+            .selected
+            .iter()
+            .map(|&(position, _)| &rows.all[position])
+            .find(|row| row.point.is_none())
+        {
             return Err(structure_error(
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
@@ -261,25 +294,41 @@ fn publish_model(
         .as_deref()
         .expect("selected model is recorded")
         .to_owned();
-    let mut union = InstanceUnion::new(selected.iter().map(|row| row.instance_key.clone()));
+    let selected_rows = selected
+        .iter()
+        .map(|&(position, _)| &rows[position])
+        .collect::<Vec<_>>();
+    let mut union = InstanceUnion::new(selected_rows.iter().map(|row| row.instance_key.as_str()));
     let ResolvedConnections {
         bonds: connections,
         coordination,
     } = resolve_connections(
         connections,
-        &selected,
+        &selected_rows,
         &rows,
         &selected_model,
         &mut union,
         &mut report,
         cancellation,
     )?;
-    let groups = group_rows(selected, &mut union, polymer_asym_order, cancellation)?;
+    drop(selected_rows);
+    // Selected rows move out of the model's rows, which are not needed again.
+    let mut rows = rows.into_iter().map(Some).collect::<Vec<_>>();
+    let mut selected = selected
+        .into_iter()
+        .map(|(position, order)| {
+            let mut row = rows[position].take().expect("a row is selected once");
+            row.site_order = order;
+            row
+        })
+        .collect::<Vec<_>>();
+    drop(rows);
+    let groups = group_rows(&selected, &mut union, polymer_asym_order, cancellation)?;
     let mut group_connections = BTreeMap::<String, Vec<&DeclaredConnection>>::new();
     for (step, connection) in connections.iter().enumerate() {
         poll_every(cancellation, step)?;
         group_connections
-            .entry(union.find(&connection.instance_key))
+            .entry(union.find(&connection.instance_key).to_owned())
             .or_default()
             .push(connection);
     }
@@ -289,7 +338,7 @@ fn publish_model(
     for group in groups {
         poll(cancellation)?;
         let declared = group_connections.remove(group.root()).unwrap_or_default();
-        let mut built = build_molecule(group, &declared, cancellation)?;
+        let mut built = build_molecule(group, &mut selected, &declared, cancellation)?;
         built.complete_connectivity(catalog, &mut report, cancellation)?;
         for built in built.publish_components(cancellation)? {
             let labels = built.provenance.atom_labels(built.molecule.atom_count());
@@ -307,10 +356,23 @@ fn publish_model(
     }
     poll(cancellation)?;
     if !coordination.is_empty() {
+        // An atom's key ends in its name, so only atoms whose name ends as a
+        // partner's key does can be partners.
+        let suffixes = coordination
+            .iter()
+            .flat_map(|record| &record.atoms)
+            .filter_map(|key| key.rsplit('|').next())
+            .collect::<HashSet<_>>();
         let atoms = report
             .instances
             .iter()
             .flat_map(|instance| instance.atoms.iter())
+            .filter(|atom| {
+                atom.atom_name
+                    .rsplit('|')
+                    .next()
+                    .is_some_and(|suffix| suffixes.contains(suffix))
+            })
             .map(|atom| {
                 (
                     atom_key(&atom.asym_id, &atom.residue_key, &atom.atom_name),

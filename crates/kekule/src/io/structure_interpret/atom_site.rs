@@ -311,12 +311,12 @@ pub(super) fn read_atom_rows(
         let entity_id = optional(table, row, fields.label_entity_id)
             .map(str::to_owned)
             .or_else(|| asym_entities.get(&asym_id).cloned());
-        let group_pdb = optional(table, row, fields.group_pdb).map(str::to_owned);
+        let group_pdb = optional(table, row, fields.group_pdb);
         let kind = entity_id
             .as_ref()
             .and_then(|entity| entities.get(entity))
             .cloned()
-            .unwrap_or_else(|| infer_entity_kind(group_pdb.as_deref(), &comp_id));
+            .unwrap_or_else(|| infer_entity_kind(group_pdb, &comp_id));
         if entity_id
             .as_ref()
             .and_then(|entity| entities.get(entity))
