@@ -41,49 +41,6 @@ enum Chemistry {
     Added(Arc<Molecule>, bool),
 }
 
-/// The definitions an edit has left to be classified again: some draft
-/// occurrence of each lost its class, so publication infers the class of the
-/// whole definition anew. An appended molecule does not share them, so its
-/// occurrences keep their own class.
-#[derive(Default)]
-pub(super) struct Reclassified {
-    source: BTreeSet<MoleculeDefinitionId>,
-    added: BTreeSet<*const Molecule>,
-}
-
-impl Reclassified {
-    /// The definitions of the draft's `groups` that publication classifies
-    /// again.
-    pub(super) fn of(groups: &[GroupSlot]) -> Self {
-        let mut reclassified = Self::default();
-        for slot in groups {
-            let GroupSlot::Live(group) = slot else {
-                continue;
-            };
-            if group.class.is_some() {
-                continue;
-            }
-            match &group.chemistry {
-                GroupChemistry::Source(id) => {
-                    reclassified.source.insert(*id);
-                }
-                GroupChemistry::Added(molecule, _) => {
-                    reclassified.added.insert(Arc::as_ptr(molecule));
-                }
-                GroupChemistry::Draft(_) => {}
-            }
-        }
-        reclassified
-    }
-
-    fn contains(&self, chemistry: &Chemistry) -> bool {
-        match chemistry {
-            Chemistry::Source(id, _) => self.source.contains(id),
-            Chemistry::Added(molecule, _) => self.added.contains(&Arc::as_ptr(molecule)),
-        }
-    }
-}
-
 /// One definition of an appended topology and an instance of it.
 pub(super) struct Appended<'a> {
     pub(super) molecule: &'a Molecule,
@@ -129,12 +86,10 @@ pub(super) fn instance_labels(
 
 impl SharedDefinitions {
     /// The chemistry of an identical definition the draft holds, from its
-    /// `source` snapshot or an earlier append, if any, unless it is
-    /// `reclassified`.
+    /// `source` snapshot or an earlier append, if any.
     pub(super) fn find(
         &mut self,
         source: Option<&Topology>,
-        reclassified: &Reclassified,
         appended: &Appended<'_>,
     ) -> Option<GroupChemistry> {
         if !self.source_indexed {
@@ -147,7 +102,6 @@ impl SharedDefinitions {
         for candidate in candidates {
             if candidate.class != appended.class
                 || candidate.class_explicit != appended.class_explicit
-                || reclassified.contains(&candidate.chemistry)
             {
                 continue;
             }

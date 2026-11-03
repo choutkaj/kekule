@@ -659,14 +659,15 @@ equal, and so are the labels the format gives each atom: component and atom
 name for mmCIF and PDB, none for XYZ. Classification reads those labels, so
 requiring them equal keeps one class valid for every instance. Hierarchy stays
 per instance, and editors clone a shared definition when an edit touches one
-instance, so the others keep it unchanged. Appending a model or topology to a
-draft shares the same way: an appended molecule identical to a definition the
-draft holds, from its source or an earlier append, becomes an instance of it,
-when its perception and class are equal too. A definition an edit left to be
-classified again is not shared, so the appended molecule keeps its own class.
-Appending is where copies enter a
-draft; publication does not search for identical definitions, so it still
-costs what an edit changes. See
+instance, so the others keep it unchanged. Classes are per instance too: an
+instance whose class a hierarchy edit cleared is published in a definition of
+its own, which shares the molecule, and classified alone, so the other
+instances keep their class. Appending a model or topology to a draft shares
+the same way: an appended molecule identical to a definition the draft holds,
+from its source or an earlier append, becomes an instance of it, when its
+perception and class are equal too. Appending is where copies enter a draft;
+publication does not search for identical definitions, so it still costs what
+an edit changes. See
 [definition reuse](crates/kekule/src/io/definition_reuse.rs) and
 [sharing on append](crates/kekule/src/topology/editor/sharing.rs).
 

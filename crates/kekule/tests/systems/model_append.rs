@@ -1028,7 +1028,7 @@ fn appended_copies_share_identical_definitions() {
 }
 
 #[test]
-fn appended_molecules_do_not_share_a_definition_an_edit_reclassifies() {
+fn a_class_edit_stays_with_its_occurrence_around_appends() {
     let water = kekule::smiles::to_molecules("O").unwrap().pop().unwrap();
     let mut builder = TopologyBuilder::new();
     let instance = builder.add_molecule(water.clone()).unwrap();
@@ -1058,21 +1058,81 @@ fn appended_molecules_do_not_share_a_definition_an_edit_reclassifies() {
             .collect::<Vec<_>>()
     };
     assert_eq!(classes(&source), [MoleculeClass::Water]);
+    let to_ion = |editor: &mut ModelEditor| {
+        let handle = editor.topology().residue_handle(residue).unwrap();
+        editor
+            .topology_mut()
+            .set_residue_class(handle, ResidueClass::Ion)
+            .unwrap();
+    };
 
+    // Edit, then append: the appended original keeps its class.
     let mut editor = source.to_editor();
+    to_ion(&mut editor);
+    assert_eq!(
+        classes(&editor.clone().finish().unwrap()),
+        [MoleculeClass::Ion]
+    );
+    editor.append_model(&source).unwrap();
+    let merged = editor.finish().unwrap();
+    assert_eq!(merged.topology().definition_count(), 2);
+    assert_eq!(classes(&merged), [MoleculeClass::Ion, MoleculeClass::Water]);
+
+    // Append, then edit: the occurrences share a definition until the edit
+    // gives the edited one its own.
+    let mut editor = source.to_editor();
+    editor.append_model(&source).unwrap();
+    assert_eq!(
+        editor
+            .clone()
+            .finish()
+            .unwrap()
+            .topology()
+            .definition_count(),
+        1
+    );
+    to_ion(&mut editor);
+    let merged = editor.finish().unwrap();
+    assert_eq!(merged.topology().definition_count(), 2);
+    assert_eq!(classes(&merged), [MoleculeClass::Ion, MoleculeClass::Water]);
+}
+
+#[test]
+fn a_class_edit_of_one_water_leaves_the_others() {
+    let model = kras();
+    let water = model
+        .topology()
+        .definitions()
+        .find(|definition| definition.class() == MoleculeClass::Water)
+        .unwrap()
+        .id();
+    let waters = model
+        .topology()
+        .instances()
+        .filter(|instance| instance.definition_id() == water)
+        .collect::<Vec<_>>();
+    assert_eq!(waters.len(), 93);
+    let residue = waters[0].residues().next().unwrap().id();
+    let mut editor = model.to_editor();
     let handle = editor.topology().residue_handle(residue).unwrap();
     editor
         .topology_mut()
         .set_residue_class(handle, ResidueClass::Ion)
         .unwrap();
-    assert_eq!(
-        classes(&editor.clone().finish().unwrap()),
-        [MoleculeClass::Ion]
-    );
-    // The edited occurrence's definition is classified again, so the
-    // appended original keeps a definition and a class of its own.
-    editor.append_model(&source).unwrap();
-    let merged = editor.finish().unwrap();
-    assert_eq!(merged.topology().definition_count(), 2);
-    assert_eq!(classes(&merged), [MoleculeClass::Ion, MoleculeClass::Water]);
+    let edited = editor.finish().unwrap();
+    let topology = edited.topology();
+    assert_eq!(topology.definition_count(), 7);
+    let ion = topology.instance(waters[0].id()).unwrap();
+    assert_eq!(ion.class(), MoleculeClass::Ion);
+    let others = waters[1..]
+        .iter()
+        .map(|water| topology.instance(water.id()).unwrap())
+        .collect::<Vec<_>>();
+    assert!(others
+        .iter()
+        .all(|water| water.class() == MoleculeClass::Water));
+    assert!(others
+        .iter()
+        .all(|water| water.definition_id() == others[0].definition_id()));
+    assert_ne!(ion.definition_id(), others[0].definition_id());
 }

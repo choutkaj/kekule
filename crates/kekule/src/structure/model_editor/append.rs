@@ -17,11 +17,9 @@ impl ModelEditor {
     /// identical to a definition the draft already holds, from its source or an
     /// earlier append, becomes an instance of that definition: equal graph in
     /// local atom order, properties, perception, class, and component and atom
-    /// names of its atoms, as interpretation shares identical molecules. A
-    /// definition whose class an edit of the draft cleared is not shared.
+    /// names of its atoms, as interpretation shares identical molecules.
     /// Editing one instance later copies its definition and leaves the others.
-    /// Instances,
-    /// atoms, bonds and hierarchy receive distinct editing identities. Chains are
+    /// Instances, atoms, bonds and hierarchy receive distinct editing identities. Chains are
     /// kept separate even when their labels coincide; labels and author identifiers
     /// are preserved. All entity property columns at definition, topology and model
     /// scope are transferred, including occupancy, B factors and missing values.
