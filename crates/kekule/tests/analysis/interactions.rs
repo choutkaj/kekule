@@ -272,6 +272,48 @@ fn hydrophobic_contacts_are_reduced_as_plip_reduces_them() {
 }
 
 #[test]
+fn hydrophobic_contacts_do_not_depend_on_reporting_pi_stacking() {
+    // Tacrine's rings stack on Trp84 and Phe330. A search for hydrophobic
+    // contacts alone still drops the contacts between those rings.
+    let model = load("1ACJ");
+    let topology = model.shared_topology();
+    let features = InteractionFeatures::new(Arc::clone(&topology));
+    let tacrine = AtomSelection::from_predicate(Arc::clone(&topology), |atom| {
+        atom.residue()
+            .is_some_and(|residue| residue.name() == "THA")
+    });
+    let all = AtomSelection::all(Arc::clone(&topology));
+    let defaults = InteractionCriteria::default();
+    let alone = defaults
+        .with_hydrogen_bond(defaults.hydrogen_bond().with_enabled(false))
+        .with_salt_bridge(defaults.salt_bridge().with_enabled(false))
+        .with_pi_stacking(defaults.pi_stacking().with_enabled(false))
+        .with_cation_pi(defaults.cation_pi().with_enabled(false))
+        .with_halogen_bond(defaults.halogen_bond().with_enabled(false))
+        .with_metal_coordination(defaults.metal_coordination().with_enabled(false));
+    for (first, second) in [(&tacrine, &all), (&all, &tacrine), (&all, &all)] {
+        let search = |criteria: &InteractionCriteria| {
+            find_interactions_within(&features, &model, first, second, criteria).unwrap()
+        };
+        let reported = search(&defaults);
+        assert!(reported.interactions().iter().any(|interaction| matches!(
+            interaction.kind(),
+            InteractionKind::PiStackingParallel | InteractionKind::PiStackingTShaped
+        )));
+        let contacts = |found: &kekule::interactions::Interactions| {
+            found
+                .of_kind(InteractionKind::HydrophobicContact)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let found = search(&alone);
+        assert!(!contacts(&reported).is_empty());
+        assert_eq!(contacts(&found), contacts(&reported));
+        assert_eq!(found.interactions(), contacts(&reported).as_slice());
+    }
+}
+
+#[test]
 fn acetylcholinesterase_decamethonium_1acl() {
     // Decamethonium's quaternary ammoniums sit over Trp84 and Trp279. The
     // entry states no charges, so its four-bonded nitrogens take the +1

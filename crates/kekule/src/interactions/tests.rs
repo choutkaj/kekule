@@ -978,10 +978,18 @@ fn stacked_rings_have_no_hydrophobic_contacts_between_them() {
         1
     );
     assert!(contacts(&found).is_empty());
-    // Without stacking, each carbon keeps its contact with the one above it.
-    let criteria = InteractionCriteria::default()
+    // Rings that stack drop their contacts when stacking is not reported.
+    let unreported = InteractionCriteria::default()
         .with_pi_stacking(PiStackingCriteria::default().with_enabled(false));
-    let found = find_with(benzenes, &points, 0..6, 6..12, &criteria);
+    let found = find_with(benzenes, &points, 0..6, 6..12, &unreported);
+    assert_eq!(found.interactions().len(), 0);
+    // Rings too far apart to stack keep one contact per carbon.
+    let tight = unreported.with_pi_stacking(
+        PiStackingCriteria::default()
+            .with_enabled(false)
+            .with_distance(Quantity::new(3.0, ANGSTROM)),
+    );
+    let found = find_with(benzenes, &points, 0..6, 6..12, &tight);
     assert_eq!(
         contacts(&found),
         (0..6).map(|atom| (atom, atom + 6)).collect::<Vec<_>>()
