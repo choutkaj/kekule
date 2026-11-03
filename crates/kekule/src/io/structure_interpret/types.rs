@@ -7,7 +7,8 @@ use super::altloc::{AltLocDecision, AltLocPolicy, SourceResidueId};
 use super::sequences::PolymerEntity;
 use crate::components::ComponentLibrary;
 use crate::diagnostics::{
-    Cancellation, Cancelled, DiagnosticKind, Format, FormatError, FormatErrorDetail, SourceLocation,
+    counted, listed, Cancellation, Cancelled, Capitalized, Count, DiagnosticKind, Format,
+    FormatError, FormatErrorDetail, SourceLocation,
 };
 use crate::molecule::Molecule;
 use crate::structure::{Ensemble, Model};
@@ -236,6 +237,19 @@ impl EntityKind {
     }
 }
 
+/// Writes the `_entity.type` value, such as `non-polymer`.
+impl fmt::Display for EntityKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Polymer => "polymer",
+            Self::Branched => "branched",
+            Self::NonPolymer => "non-polymer",
+            Self::Water => "water",
+            Self::Other(value) => value,
+        })
+    }
+}
+
 /// Non-fatal scientific interpretation issues retained in the report.
 ///
 /// Connection issues preserve source identity and distinguish unresolved
@@ -428,6 +442,323 @@ pub enum StructureInterpretIssue {
     },
 }
 
+/// Writes the issue as one or two sentences, such as `Residue 12 of chain
+/// "A" in model "1" (component "7MG") has no template charges. Atom "N7"
+/// (+1) takes charges from its bonds.`
+impl fmt::Display for StructureInterpretIssue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EntityTypeInferred { asym_id, kind } => write!(
+                formatter,
+                "Chain {asym_id:?} has no entity type. Its residues give it type \"{kind}\"."
+            ),
+            Self::ElementsInferredFromAtomNames { source_lines } => match source_lines.as_slice()
+            {
+                [line] => write!(
+                    formatter,
+                    "The atom record at line {line} has no element symbol. Its element comes \
+                     from its atom name."
+                ),
+                lines => write!(
+                    formatter,
+                    "{}{} have no element symbol. Their elements come from their atom names.",
+                    counted(lines.len(), "atom record", "atom records"),
+                    FirstLine(lines),
+                ),
+            },
+            Self::ConnectionsIgnored {
+                connection_type,
+                count,
+            } => {
+                let (records, verb) = if *count == 1 {
+                    ("connection record", "is not read as a bond")
+                } else {
+                    ("connection records", "are not read as bonds")
+                };
+                write!(
+                    formatter,
+                    "{} {records} of type {connection_type:?} {verb}.",
+                    Count(*count)
+                )
+            }
+            Self::ConnectionUnresolved {
+                connection_id,
+                connection_type,
+                partner,
+                source_line,
+                reason,
+            } => write!(
+                formatter,
+                "Partner {partner} of {} is not found. {reason}",
+                Connection {
+                    id: connection_id.as_deref(),
+                    kind: connection_type,
+                    line: *source_line,
+                }
+            ),
+            Self::ConnectionAmbiguous {
+                connection_id,
+                connection_type,
+                partner,
+                source_line,
+                candidates,
+                reason,
+            } => {
+                write!(
+                    formatter,
+                    "Partner {partner} of {} matches {} atoms, not one.",
+                    Connection {
+                        id: connection_id.as_deref(),
+                        kind: connection_type,
+                        line: *source_line,
+                    },
+                    Count(*candidates)
+                )?;
+                if *reason != ConnectionResolutionReason::MultipleMatchingAtoms {
+                    write!(formatter, " {reason}")?;
+                }
+                Ok(())
+            }
+            Self::CoordinateModelIgnored {
+                model_id,
+                atom_site_rows,
+            } => write!(
+                formatter,
+                "Coordinate model {model_id:?} with {} is not read.",
+                counted(*atom_site_rows, "atom site", "atom sites")
+            ),
+            Self::AlternateLocationOmitted {
+                atom_name,
+                alt_id,
+                residue,
+                source_line,
+            } => {
+                match alt_id {
+                    Some(alt_id) => write!(
+                        formatter,
+                        "Alternate location {alt_id:?} of atom {atom_name:?}"
+                    )?,
+                    None => write!(
+                        formatter,
+                        "Atom {atom_name:?} without an alternate location"
+                    )?,
+                }
+                write!(
+                    formatter,
+                    " at line {source_line} is not read. The atom is in {residue}."
+                )
+            }
+            Self::AlternateLocationIncomplete {
+                residue,
+                alternative,
+                missing_atoms,
+            } => write!(
+                formatter,
+                "Alternate location {alternative:?} of {residue} lacks {} {}. It is not read.",
+                if missing_atoms.len() == 1 {
+                    "atom"
+                } else {
+                    "atoms"
+                },
+                listed(&Quoted::all(missing_atoms))
+            ),
+            Self::AlternateLocationOccupancyMissing {
+                residue,
+                source_lines,
+            } => write!(
+                formatter,
+                "{} has {} without occupancy{}.",
+                Capitalized(residue),
+                counted(
+                    source_lines.len(),
+                    "alternate-location atom site",
+                    "alternate-location atom sites"
+                ),
+                FirstLine(source_lines),
+            ),
+            Self::AlternateLocationCombinationRejected {
+                residue,
+                alternative,
+                reason,
+            } => write!(
+                formatter,
+                "The alternate-location combination {alternative:?} of {residue} is not read. {reason}"
+            ),
+            Self::AlternateLocationOccupancyTie {
+                residues,
+                alternatives,
+            } => write!(
+                formatter,
+                "Alternate locations {} of {} have equal occupancy. The first by label is kept.",
+                listed(&Quoted::all(alternatives)),
+                listed(residues)
+            ),
+            Self::ConnectivityCandidatesInferred {
+                atom_count,
+                candidate_count,
+            } => write!(
+                formatter,
+                "A molecule of {} has {} within bonding distance.",
+                counted(*atom_count, "atom", "atoms"),
+                counted(
+                    *candidate_count,
+                    "unbonded atom pair",
+                    "unbonded atom pairs"
+                )
+            ),
+            Self::ResidueBondsInferred {
+                residue,
+                component_id,
+                bonds,
+            } => write!(
+                formatter,
+                "{} (component {component_id:?}) has no template or bond table. Its bonds come \
+                 from atom distances: {}.",
+                Capitalized(residue),
+                counted(*bonds, "single bond", "single bonds")
+            ),
+            Self::HydrogenAttachedByDistance {
+                residue,
+                atom_name,
+                heavy_atom_name,
+            } => write!(
+                formatter,
+                "Hydrogen {atom_name:?} of {residue} has no stated bond. It is bonded to \
+                 {heavy_atom_name:?}, the nearest heavy atom."
+            ),
+            Self::ChainBreak { residue, next } => write!(
+                formatter,
+                "{} and {next} are not bonded. Their linking atoms are too far apart.",
+                Capitalized(residue)
+            ),
+            Self::ChargesFromBonds {
+                residue,
+                component_id,
+                charged_atoms,
+            } => {
+                let (atoms, verb) = if charged_atoms.len() == 1 {
+                    ("Atom", "takes charges from its bonds")
+                } else {
+                    ("Atoms", "take charges from their bonds")
+                };
+                write!(
+                    formatter,
+                    "{} (component {component_id:?}) has no template charges. {atoms} {} {verb}.",
+                    Capitalized(residue),
+                    listed(&Charged::all(charged_atoms))
+                )
+            }
+            Self::ProtonationFromHydrogens {
+                residue,
+                component_id,
+                variant,
+                charged_atoms,
+            } => {
+                write!(
+                    formatter,
+                    "The hydrogens of {residue} (component {component_id:?}) differ from its \
+                     template."
+                )?;
+                if let Some(variant) = variant {
+                    write!(formatter, " It is read as variant {variant:?}.")?;
+                }
+                if !charged_atoms.is_empty() {
+                    let (atoms, verb) = if charged_atoms.len() == 1 {
+                        ("Atom", "takes its charge")
+                    } else {
+                        ("Atoms", "take their charges")
+                    };
+                    write!(
+                        formatter,
+                        " {atoms} {} {verb} from the hydrogens.",
+                        listed(&Charged::all(charged_atoms))
+                    )?;
+                }
+                Ok(())
+            }
+            Self::ResidueFragmented { residue, fragments } => write!(
+                formatter,
+                "The atoms of {residue} lie in {}.",
+                counted(*fragments, "molecule", "molecules")
+            ),
+            Self::CellOmitted { reason, location } => {
+                write!(formatter, "The unit cell at {location} is not read. {reason}")
+            }
+        }
+    }
+}
+
+/// A connection record as a noun phrase, such as `connection "covale1" of
+/// type "covale" at line 40`.
+struct Connection<'a> {
+    id: Option<&'a str>,
+    kind: &'a str,
+    line: Option<usize>,
+}
+
+impl fmt::Display for Connection<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.id {
+            Some(id) => write!(formatter, "connection {id:?} of type {:?}", self.kind)?,
+            None => write!(formatter, "a connection of type {:?}", self.kind)?,
+        }
+        if let Some(line) = self.line {
+            write!(formatter, " at line {line}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Where several source lines start, such as ` from line 12`, or the one
+/// line, ` at line 12`.
+struct FirstLine<'a>(&'a [usize]);
+
+impl fmt::Display for FirstLine<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            [] => Ok(()),
+            [line] => write!(formatter, " at line {line}"),
+            [first, ..] => write!(formatter, " from line {first}"),
+        }
+    }
+}
+
+/// Text from the input in double quotes.
+struct Quoted<'a>(&'a str);
+
+impl<'a> Quoted<'a> {
+    fn all(texts: &'a [String]) -> Vec<Self> {
+        texts.iter().map(|text| Self(text)).collect()
+    }
+}
+
+impl fmt::Display for Quoted<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{:?}", self.0)
+    }
+}
+
+/// An atom name with its formal charge, such as `"N7" (+1)`.
+struct Charged<'a>(&'a str, i8);
+
+impl<'a> Charged<'a> {
+    fn all(atoms: &'a [(String, i8)]) -> Vec<Self> {
+        atoms
+            .iter()
+            .map(|(name, charge)| Self(name, *charge))
+            .collect()
+    }
+}
+
+impl fmt::Display for Charged<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.1 {
+            0 => write!(formatter, "{:?} (0)", self.0),
+            charge => write!(formatter, "{:?} ({charge:+})", self.0),
+        }
+    }
+}
+
 /// Why stated unit-cell parameters are not a model's periodic cell.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -443,6 +774,21 @@ pub enum CellOmissionReason {
     /// PDB's 1 Å cube, recorded for structures without a crystal lattice
     /// such as NMR and EM models.
     Placeholder,
+}
+
+/// Writes the reason as a sentence, such as `Some cell lengths and angles
+/// are missing.`
+impl fmt::Display for CellOmissionReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Incomplete => formatter.write_str("Some cell lengths and angles are missing."),
+            Self::SpaceGroup { name } => write!(
+                formatter,
+                "The coordinates are the asymmetric unit of space group {name:?}."
+            ),
+            Self::Placeholder => formatter.write_str("The cell is the 1 Å placeholder cube."),
+        }
+    }
 }
 
 /// The evidence a bond was resolved from.
@@ -1160,5 +1506,211 @@ impl StructureEnsembleInterpretation {
     /// The ensemble and its per-member reports.
     pub fn into_parts(self) -> (Ensemble, Vec<StructureInterpretationReport>) {
         (self.ensemble, self.reports)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::altloc::SourceResiduePosition;
+    use super::*;
+
+    fn residue(sequence: i32) -> SourceResidueId {
+        SourceResidueId::from_parts("1", "A", SourceResiduePosition::Label(sequence), None)
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn issues_read_as_sentences() {
+        use StructureInterpretIssue as Issue;
+        let cases = [
+            (
+                Issue::EntityTypeInferred {
+                    asym_id: "B".into(),
+                    kind: EntityKind::NonPolymer,
+                },
+                r#"Chain "B" has no entity type. Its residues give it type "non-polymer"."#,
+            ),
+            (
+                Issue::ElementsInferredFromAtomNames {
+                    source_lines: vec![12],
+                },
+                "The atom record at line 12 has no element symbol. Its element comes from its \
+                 atom name.",
+            ),
+            (
+                Issue::ElementsInferredFromAtomNames {
+                    source_lines: vec![12, 13, 1500],
+                },
+                "3 atom records from line 12 have no element symbol. Their elements come from \
+                 their atom names.",
+            ),
+            (
+                Issue::ConnectionsIgnored {
+                    connection_type: "hydrog".into(),
+                    count: 1_204,
+                },
+                r#"1,204 connection records of type "hydrog" are not read as bonds."#,
+            ),
+            (
+                Issue::ConnectionsIgnored {
+                    connection_type: "hydrog".into(),
+                    count: 1,
+                },
+                r#"1 connection record of type "hydrog" is not read as a bond."#,
+            ),
+            (
+                Issue::ConnectionUnresolved {
+                    connection_id: Some("covale1".into()),
+                    connection_type: "covale".into(),
+                    partner: 2,
+                    source_line: Some(40),
+                    reason: ConnectionResolutionReason::NoMatchingAtom,
+                },
+                r#"Partner 2 of connection "covale1" of type "covale" at line 40 is not found. No atom matches the partner selector."#,
+            ),
+            (
+                Issue::ConnectionAmbiguous {
+                    connection_id: None,
+                    connection_type: "LINK".into(),
+                    partner: 1,
+                    source_line: None,
+                    candidates: 2,
+                    reason: ConnectionResolutionReason::MultipleMatchingAtoms,
+                },
+                r#"Partner 1 of a connection of type "LINK" matches 2 atoms, not one."#,
+            ),
+            (
+                Issue::CoordinateModelIgnored {
+                    model_id: "2".into(),
+                    atom_site_rows: 1_632,
+                },
+                r#"Coordinate model "2" with 1,632 atom sites is not read."#,
+            ),
+            (
+                Issue::AlternateLocationOmitted {
+                    atom_name: "CG".into(),
+                    alt_id: Some("B".into()),
+                    residue: residue(12),
+                    source_line: 300,
+                },
+                r#"Alternate location "B" of atom "CG" at line 300 is not read. The atom is in residue 12 of chain "A" in model "1"."#,
+            ),
+            (
+                Issue::AlternateLocationIncomplete {
+                    residue: residue(12),
+                    alternative: "B".into(),
+                    missing_atoms: names(&["CD", "NE"]),
+                },
+                r#"Alternate location "B" of residue 12 of chain "A" in model "1" lacks atoms "CD" and "NE". It is not read."#,
+            ),
+            (
+                Issue::AlternateLocationOccupancyMissing {
+                    residue: residue(12),
+                    source_lines: vec![300],
+                },
+                r#"Residue 12 of chain "A" in model "1" has 1 alternate-location atom site without occupancy at line 300."#,
+            ),
+            (
+                Issue::AlternateLocationCombinationRejected {
+                    residue: residue(12),
+                    alternative: "1".into(),
+                    reason: "The combination has no alternate location of this residue.".into(),
+                },
+                r#"The alternate-location combination "1" of residue 12 of chain "A" in model "1" is not read. The combination has no alternate location of this residue."#,
+            ),
+            (
+                Issue::AlternateLocationOccupancyTie {
+                    residues: vec![residue(12), residue(13)],
+                    alternatives: names(&["A", "B"]),
+                },
+                r#"Alternate locations "A" and "B" of residue 12 of chain "A" in model "1" and residue 13 of chain "A" in model "1" have equal occupancy. The first by label is kept."#,
+            ),
+            (
+                Issue::ConnectivityCandidatesInferred {
+                    atom_count: 2_410,
+                    candidate_count: 3,
+                },
+                "A molecule of 2,410 atoms has 3 unbonded atom pairs within bonding distance.",
+            ),
+            (
+                Issue::ResidueBondsInferred {
+                    residue: residue(401),
+                    component_id: "LIG".into(),
+                    bonds: 24,
+                },
+                r#"Residue 401 of chain "A" in model "1" (component "LIG") has no template or bond table. Its bonds come from atom distances: 24 single bonds."#,
+            ),
+            (
+                Issue::HydrogenAttachedByDistance {
+                    residue: residue(401),
+                    atom_name: "H12".into(),
+                    heavy_atom_name: "C5".into(),
+                },
+                r#"Hydrogen "H12" of residue 401 of chain "A" in model "1" has no stated bond. It is bonded to "C5", the nearest heavy atom."#,
+            ),
+            (
+                Issue::ChainBreak {
+                    residue: residue(12),
+                    next: residue(13),
+                },
+                r#"Residue 12 of chain "A" in model "1" and residue 13 of chain "A" in model "1" are not bonded. Their linking atoms are too far apart."#,
+            ),
+            (
+                Issue::ChargesFromBonds {
+                    residue: residue(5),
+                    component_id: "7MG".into(),
+                    charged_atoms: vec![("N7".into(), 1)],
+                },
+                r#"Residue 5 of chain "A" in model "1" (component "7MG") has no template charges. Atom "N7" (+1) takes charges from its bonds."#,
+            ),
+            (
+                Issue::ChargesFromBonds {
+                    residue: residue(5),
+                    component_id: "XYZ".into(),
+                    charged_atoms: vec![("N1".into(), 1), ("B2".into(), -1)],
+                },
+                r#"Residue 5 of chain "A" in model "1" (component "XYZ") has no template charges. Atoms "N1" (+1) and "B2" (-1) take charges from their bonds."#,
+            ),
+            (
+                Issue::ProtonationFromHydrogens {
+                    residue: residue(57),
+                    component_id: "HIS".into(),
+                    variant: Some("HIS_LSN".into()),
+                    charged_atoms: Vec::new(),
+                },
+                r#"The hydrogens of residue 57 of chain "A" in model "1" (component "HIS") differ from its template. It is read as variant "HIS_LSN"."#,
+            ),
+            (
+                Issue::ProtonationFromHydrogens {
+                    residue: residue(15),
+                    component_id: "LYS".into(),
+                    variant: None,
+                    charged_atoms: vec![("NZ".into(), 0)],
+                },
+                r#"The hydrogens of residue 15 of chain "A" in model "1" (component "LYS") differ from its template. Atom "NZ" (0) takes its charge from the hydrogens."#,
+            ),
+            (
+                Issue::ResidueFragmented {
+                    residue: residue(7),
+                    fragments: 2,
+                },
+                r#"The atoms of residue 7 of chain "A" in model "1" lie in 2 molecules."#,
+            ),
+            (
+                Issue::CellOmitted {
+                    reason: CellOmissionReason::SpaceGroup {
+                        name: "P 21 21 21".into(),
+                    },
+                    location: SourceLocation::at_line(8),
+                },
+                r#"The unit cell at line 8 is not read. The coordinates are the asymmetric unit of space group "P 21 21 21"."#,
+            ),
+        ];
+        for (issue, text) in cases {
+            assert_eq!(issue.to_string(), text, "{issue:?}");
+        }
     }
 }

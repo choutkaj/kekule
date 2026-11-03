@@ -498,6 +498,18 @@ impl fmt::Display for Counted<'_> {
     }
 }
 
+/// Items joined as a list in a sentence, such as `"CG", "CD" and "NE"`.
+pub(crate) fn listed<T: fmt::Display>(items: &[T]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.to_string(),
+        [rest @ .., last] => {
+            let rest = rest.iter().map(ToString::to_string).collect::<Vec<_>>();
+            format!("{} and {last}", rest.join(", "))
+        }
+    }
+}
+
 /// Writes a value's display text with its first letter in upper case, for a
 /// noun phrase such as an identifier (`atom 3`) that starts a sentence.
 #[derive(Debug, Clone, Copy)]
@@ -1372,6 +1384,14 @@ mod tests {
                 .to_string(),
             "matrix entry limit: 1 entry of 0"
         );
+    }
+
+    #[test]
+    fn lists_join_with_and() {
+        assert_eq!(listed::<&str>(&[]), "");
+        assert_eq!(listed(&["a"]), "a");
+        assert_eq!(listed(&["a", "b"]), "a and b");
+        assert_eq!(listed(&["a", "b", "c"]), "a, b and c");
     }
 
     #[test]
