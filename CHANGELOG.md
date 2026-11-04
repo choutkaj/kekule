@@ -23,9 +23,10 @@ are marked **Breaking:**.
   ensemble or series states the coordination every report states.
   `WriteOmission::Coordination` counts the records left out: those that no
   longer match the structure, those another sample does not state, those
-  that name a chain written as a segment identifier, and those whose
-  partners are not one metal and one non-metal, which readers would take
-  for a bond. A report count
+  that name a chain written as a segment identifier, those whose partners
+  are not one metal and one non-metal, which readers would take for a
+  bond, and those whose partner identifiers also name another atom, as a
+  blank insertion code names residue `10A` beside `10`. A report count
   that does not match the structures fails with
   `PdbWriteIssue::ReportCountMismatch`. Without reports the output is
   unchanged.

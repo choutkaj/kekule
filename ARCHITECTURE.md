@@ -928,8 +928,9 @@ export.
   identifiers and the symmetry operator `1555`. `LINK` records belong to
   the entry, not to a model, so an ensemble states the coordination every
   sample's report states. The rest are left out and reported, and so are
-  records naming a chain written as a segment identifier and records
-  between two metals, which readers would take for a bond.
+  records naming a chain written as a segment identifier, records between
+  two metals, which readers would take for a bond, and records whose
+  partner identifiers also name another atom.
   Solvation names its waters and ions as the Chemical Component Dictionary
   does, which PDB and mmCIF readers check, and leaves their (zero)
   implicit-hydrogen counts to valence inference, as those readers do, so a

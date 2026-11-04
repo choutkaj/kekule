@@ -1000,6 +1000,49 @@ metalc1 metalc A ZN ZN B ZN ZN
 }
 
 #[test]
+fn coordination_link_records_would_not_select_is_reported() {
+    // CONECT names atoms by serial number, so it can state coordination to
+    // water 10 beside water 10A. A LINK with a blank insertion code names
+    // both, so readers would resolve neither.
+    let record = |serial: u32, name: &str, residue: &str, sequence: &str, x: f64, element: &str| {
+        format!(
+            "HETATM{serial:>5} {name:<4} {residue:>3} A{sequence:>5}   {x:>8.3}{:>8.3}{:>8.3}  1.00  0.00          {element:>2}\n",
+            0.0, 0.0
+        )
+    };
+    let text = [
+        record(1, "ZN", "ZN", "1 ", 0.0, "ZN"),
+        record(2, " O", "HOH", "10 ", 2.1, "O"),
+        record(3, " O", "HOH", "10A", 9.0, "O"),
+        "CONECT    1    2\nCONECT    2    1\nEND\n".to_owned(),
+    ]
+    .concat();
+    let source = interpretation(&text);
+    assert_eq!(source.report().coordination().len(), 1);
+    let (written, report) = pdb::write(&source, Default::default()).unwrap();
+    assert!(records(&written, "LINK").is_empty());
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::Coordination { records: 1 }]
+    );
+
+    // Without water 10A the record selects its water alone.
+    let text = text
+        .lines()
+        .filter(|line| !line.contains("10A"))
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    let source = interpretation(&text);
+    let (written, report) = pdb::write(&source, Default::default()).unwrap();
+    assert_eq!(records(&written, "LINK").len(), 1);
+    assert!(report.omissions().is_empty());
+    assert_eq!(
+        coordination(interpretation(&written).report()),
+        coordination(source.report())
+    );
+}
+
+#[test]
 fn ensembles_state_the_coordination_every_sample_states() {
     // The same entry without its first LINK record and its CONECT records,
     // which list the coordination again, states three of the four

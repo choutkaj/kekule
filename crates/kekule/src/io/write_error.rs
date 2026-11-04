@@ -150,8 +150,9 @@ pub enum WriteOmission {
     /// records, that the output does not state: records that no longer
     /// match the written structure, and, in PDB, records that not every
     /// sample or item states, that name a chain written as a segment
-    /// identifier, or whose partners are not one metal and one non-metal. A
-    /// record that several reports state counts once.
+    /// identifier, whose partners are not one metal and one non-metal, or
+    /// whose partner identifiers also name another atom. A record that
+    /// several reports state counts once.
     Coordination {
         /// The records left out.
         records: usize,

@@ -15,7 +15,7 @@
 //! A chain identifier longer than the one-character chain column, such as
 //! the `SOL1` and `ION1` chains [`crate::solvation::solvate`] adds, is
 //! written as a segment identifier under [`PdbChainIdPolicy::SegmentId`].
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;
 
@@ -638,7 +638,10 @@ impl<'a> PdbSource<'a> {
     ///   `LINK` chain column cannot hold;
     /// - the partners are not one metal and one non-metal, such as two metal
     ///   ions an mmCIF `metalc` row joins: readers take such a `LINK` for a
-    ///   bond.
+    ///   bond;
+    /// - a partner's identifiers also name another atom: readers take a blank
+    ///   chain or insertion code in a `LINK` for any, so residue `10` also
+    ///   names residue `10A`.
     #[must_use]
     pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
         self.reports = Some(reports);
@@ -886,6 +889,10 @@ struct Identity {
     sequence: Option<String>,
     insertion_code: Option<String>,
 }
+
+/// Atom records by dense index, grouped by atom name, residue name, and
+/// residue number.
+type RecordIdentities<'a> = HashMap<(&'a str, &'a str, &'a str), Vec<usize>>;
 
 /// Everything about the entry that every structure shares: atom records and
 /// `CONECT` listings.
@@ -1399,6 +1406,7 @@ impl Plan {
             .map(|records| records.into_iter().map(pair).collect::<BTreeSet<_>>())
             .collect::<Vec<_>>();
         let topology = views[0].topology();
+        let mut identities = None;
         let mut written = BTreeSet::new();
         let mut links = Vec::new();
         for atoms in first {
@@ -1429,6 +1437,12 @@ impl Plan {
             if metals[0] == metals[1] {
                 continue;
             }
+            if !indices
+                .iter()
+                .all(|&index| self.selects_one(index, &mut identities))
+            {
+                continue;
+            }
             written.insert(key);
             links.push(indices);
         }
@@ -1436,6 +1450,43 @@ impl Plan {
             records: stated.len() - written.len(),
         });
         links
+    }
+
+    /// Whether a `LINK` partner naming the atom record at `index` selects it
+    /// alone. Readers take a blank chain or insertion code in a `LINK` for
+    /// any, so a residue `10` also matches residue `10A`. `identities` groups
+    /// the records by atom name, residue name, and number, built on first
+    /// use.
+    fn selects_one<'a>(
+        &'a self,
+        index: usize,
+        identities: &mut Option<RecordIdentities<'a>>,
+    ) -> bool {
+        let identity = |record: &'a AtomRecord| {
+            (
+                record.name.trim(),
+                record.residue_name.as_str(),
+                record.sequence.as_str(),
+            )
+        };
+        let identities = identities.get_or_insert_with(|| {
+            let mut groups = HashMap::<_, Vec<usize>>::new();
+            for (index, record) in self.records.iter().enumerate() {
+                groups.entry(identity(record)).or_default().push(index);
+            }
+            groups
+        });
+        let partner = &self.records[index];
+        identities[&identity(partner)]
+            .iter()
+            .filter(|&&other| {
+                let candidate = &self.records[other];
+                (partner.chain == ' ' || candidate.chain == partner.chain)
+                    && (partner.insertion_code == ' '
+                        || candidate.insertion_code == partner.insertion_code)
+            })
+            .count()
+            == 1
     }
 
     /// One `LINK` record in the columns of PDB format version 3.3, with the
