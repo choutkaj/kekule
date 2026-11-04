@@ -19,3 +19,13 @@ sha256 = "42199a30a0701864a2a5cc76cd7f35cc544cd0e65fbcf63e03c166543249b811"
 license = "CC0 1.0 (wwPDB archive data)"
 preprocessing = "None; original downloaded bytes"
 purpose = "Independent-reference regression for PDB connectivity and disulfide records"
+
+[[fixture]]
+path = "1IRO.pdb"
+source = "RCSB PDB / wwPDB entry 1IRO"
+url = "https://files.rcsb.org/download/1IRO.pdb"
+retrieved = "2026-11-04"
+sha256 = "95069c12563c2fee9b7793d3fbc3c3209bfff7eee5424a7277aa956287787bcc"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; original downloaded bytes"
+purpose = "Independent-reference regression for metal coordination LINK records"

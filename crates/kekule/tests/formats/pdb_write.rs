@@ -5,10 +5,13 @@ use kekule::diagnostics::{
     DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy, WriteOmission,
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
+use kekule::macromolecular::{
+    ModelSelection, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport,
+};
 use kekule::molecule::{AtomId, BondOrder};
 use kekule::pdb::{
-    self, PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbWriteIssue, PdbWriteOptions,
+    self, PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteIssue, PdbWriteOptions,
 };
 use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
@@ -21,6 +24,8 @@ use kekule::{mmcif, smiles};
 
 const CRAMBIN: &str = include_str!("../fixtures/pdb/1CRN.pdb");
 const ADENYLATE_KINASE: &str = include_str!("../fixtures/pdb/1AKE.pdb");
+const RUBREDOXIN: &str = include_str!("../fixtures/pdb/1IRO.pdb");
+const KRAS: &str = include_str!("../fixtures/mmcif/9UOH.cif");
 
 fn interpret(text: &str) -> Model {
     pdb::parse_str(text, Default::default())
@@ -697,5 +702,346 @@ fn sink_failures_are_io_errors_after_validation() {
         pdb::write(&model, Default::default())
             .map(|(text, _)| text)
             .unwrap()
+    );
+}
+
+/// One partner of a coordination record: its author chain, residue number,
+/// component, and atom name.
+type Partner = (String, String, String, String);
+
+/// The coordination a report states, each pair of partners once and in
+/// sorted order.
+fn coordination(report: &StructureInterpretationReport) -> BTreeSet<[Partner; 2]> {
+    let partner = |atom| {
+        let source = report
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .find(|candidate| candidate.atom() == atom)
+            .unwrap();
+        (
+            source.auth_asym_id().unwrap_or(source.asym_id()).to_owned(),
+            source.author_sequence_id().unwrap_or_default().to_owned(),
+            source
+                .auth_component_id()
+                .unwrap_or(source.component_id())
+                .to_owned(),
+            source
+                .auth_atom_name()
+                .unwrap_or(source.atom_name())
+                .to_owned(),
+        )
+    };
+    report
+        .coordination()
+        .iter()
+        .map(|record| {
+            let mut pair = record.atoms().map(partner);
+            pair.sort();
+            pair
+        })
+        .collect()
+}
+
+fn interpretation(text: &str) -> StructureInterpretation {
+    pdb::parse_str(text, Default::default())
+        .unwrap()
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
+        .unwrap()
+}
+
+fn records<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
+    text.lines()
+        .filter(|line| line.split_whitespace().next() == Some(name))
+        .collect()
+}
+
+#[test]
+fn metal_coordination_round_trips_as_link_records() {
+    // Rubredoxin's iron is bound to four cysteines by LINK records.
+    let source = interpretation(RUBREDOXIN);
+    let iron = coordination(source.report());
+    assert_eq!(iron.len(), 4);
+    // The reader records each pair once, though LINK and CONECT both list it.
+    assert_eq!(source.report().coordination().len(), 4);
+    assert!(iron.iter().all(|pair| {
+        pair.iter().any(|partner| partner.3 == "SG") && pair.iter().any(|partner| partner.2 == "FE")
+    }));
+
+    let (written, report) = pdb::write(&source, Default::default()).unwrap();
+    assert!(report.omissions().is_empty());
+    // The written records are the deposited ones, in the format's columns.
+    let deposited = records(RUBREDOXIN, "LINK")
+        .into_iter()
+        .map(str::trim_end)
+        .collect::<Vec<_>>();
+    assert_eq!(records(&written, "LINK"), deposited);
+    // They come before the coordinates.
+    assert!(written.starts_with("LINK"));
+    let reread = interpretation(&written);
+    assert_eq!(coordination(reread.report()), iron);
+    // PDB -> interpretation -> PDB is a fixed point.
+    assert_eq!(pdb::write(&reread, Default::default()).unwrap().0, written);
+
+    // Without reports the entry states no coordination, as before.
+    let (bare, report) = pdb::write(source.model(), Default::default()).unwrap();
+    assert!(report.omissions().is_empty());
+    assert!(records(&bare, "LINK").is_empty());
+    assert!(coordination(interpretation(&bare).report()).is_empty());
+    assert_eq!(
+        written
+            .lines()
+            .filter(|line| !line.starts_with("LINK"))
+            .collect::<Vec<_>>(),
+        bare.lines().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn mmcif_metal_coordination_round_trips_through_pdb() {
+    // KRas G12C: Ser17 OG and GDP O2B coordinate Mg2+ (`metalc`).
+    let source = mmcif::parse_str(KRAS, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let stated = coordination(source.report());
+    assert_eq!(stated.len(), 2);
+    // PDB's three residue-name columns cannot hold the inhibitor's code,
+    // A1L9E, so it is written as the unknown ligand UNL.
+    let inhibitor = source
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .find(|atom| atom.component_id() == "A1L9E")
+        .unwrap()
+        .atom();
+    let mut editor = source.model().to_editor();
+    let handle = editor.topology().atom_handle(inhibitor).unwrap();
+    let site = editor
+        .topology()
+        .atom_site_for_atom(handle)
+        .unwrap()
+        .unwrap();
+    let residue = editor.topology().atom_site(site).unwrap().residue();
+    let label = editor
+        .topology()
+        .residue(residue)
+        .unwrap()
+        .label_comp_id()
+        .map(str::to_owned);
+    editor
+        .set_residue_component_ids(residue, label, Some("UNL".to_owned()))
+        .unwrap();
+    let model = editor.finish().unwrap();
+    let source = PdbSource::structure(&model).with_reports(std::slice::from_ref(source.report()));
+    let (written, report) = pdb::write(source, Default::default()).unwrap();
+    assert!(report.omissions().is_empty(), "{:?}", report.omissions());
+    assert_eq!(records(&written, "LINK").len(), 2);
+    assert_eq!(coordination(interpretation(&written).report()), stated);
+}
+
+#[test]
+fn coordination_the_entry_cannot_state_is_reported() {
+    let source = interpretation(RUBREDOXIN);
+    let reports = std::slice::from_ref(source.report());
+    let iron = source
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .find(|atom| atom.atom_name() == "FE")
+        .unwrap()
+        .atom();
+    let cysteine_6 = source
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .find(|atom| atom.atom_name() == "SG" && atom.author_sequence_id() == Some("6"))
+        .unwrap()
+        .atom();
+
+    // A partner the structure no longer has.
+    let mut editor = source.model().to_editor();
+    let handle = editor.topology().atom_handle(iron).unwrap();
+    editor.delete_atom(handle).unwrap();
+    let without_iron = editor.finish().unwrap();
+    let (written, report) = pdb::write(
+        PdbSource::structure(&without_iron).with_reports(reports),
+        Default::default(),
+    )
+    .unwrap();
+    assert!(records(&written, "LINK").is_empty());
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::Coordination { records: 4 }]
+    );
+
+    // A partner whose atom site the report does not name so.
+    let mut editor = source.model().to_editor();
+    let site = editor
+        .topology()
+        .atom_site_for_atom(editor.topology().atom_handle(cysteine_6).unwrap())
+        .unwrap()
+        .unwrap();
+    let metadata = editor
+        .topology()
+        .atom_site(site)
+        .unwrap()
+        .metadata()
+        .clone()
+        .with_auth_atom_id(Some("SX".to_owned()));
+    editor.set_atom_site_metadata(site, metadata).unwrap();
+    let renamed = editor.finish().unwrap();
+    let (written, report) = pdb::write(
+        PdbSource::structure(&renamed).with_reports(reports),
+        Default::default(),
+    )
+    .unwrap();
+    assert_eq!(records(&written, "LINK").len(), 3);
+    assert!(!written.contains("LINK         SG  CYS A   6"));
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::Coordination { records: 1 }]
+    );
+
+    // A chain written as a segment identifier, which LINK cannot name.
+    let mut editor = source.model().to_editor();
+    let sites = editor
+        .topology()
+        .atom_sites()
+        .map(|(id, site)| (id, site.metadata().clone()))
+        .collect::<Vec<_>>();
+    for (id, metadata) in sites {
+        editor
+            .set_atom_site_metadata(id, metadata.with_auth_asym_id(Some("RUBR".to_owned())))
+            .unwrap();
+    }
+    let segmented = editor.finish().unwrap();
+    let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
+    let (written, report) = pdb::write(
+        PdbSource::structure(&segmented).with_reports(reports),
+        options,
+    )
+    .unwrap();
+    assert!(records(&written, "LINK").is_empty());
+    assert_eq!(
+        report.omissions(),
+        [
+            WriteOmission::ChainIds { chains: 1 },
+            WriteOmission::Coordination { records: 4 }
+        ]
+    );
+
+    // One report per structure.
+    let error = pdb::write(
+        PdbSource::structure(source.model()).with_reports(&[]),
+        Default::default(),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert_eq!(
+        issue(&error),
+        &PdbWriteIssue::ReportCountMismatch {
+            expected: 1,
+            actual: 0
+        }
+    );
+    assert_eq!(
+        error.message(),
+        "The entry has 1 structure and 0 interpretation reports."
+    );
+}
+
+#[test]
+fn ensembles_state_the_coordination_every_sample_states() {
+    // The same entry without its first LINK record and its CONECT records,
+    // which list the coordination again, states three of the four
+    // iron-sulfur records.
+    let full = interpretation(RUBREDOXIN);
+    let first_link = RUBREDOXIN
+        .lines()
+        .position(|line| line.starts_with("LINK"))
+        .unwrap();
+    let partial = interpretation(
+        &RUBREDOXIN
+            .lines()
+            .enumerate()
+            .filter(|&(index, line)| index != first_link && !line.starts_with("CONECT"))
+            .map(|(_, line)| format!("{line}\n"))
+            .collect::<String>(),
+    );
+    assert_eq!(coordination(partial.report()).len(), 3);
+    assert_eq!(partial.model().atom_count(), full.model().atom_count());
+
+    let sample = |model: &Model| {
+        EnsembleSample::new(model.as_model_view().positions().clone(), 1.0).unwrap()
+    };
+    let mut ensemble = Ensemble::new(full.model().shared_topology());
+    ensemble
+        .push_state(sample(full.model()), EnsembleState::new())
+        .unwrap();
+    ensemble.push_sample(sample(partial.model()), 0).unwrap();
+    let options = PdbWriteOptions::default();
+
+    // LINK records belong to the entry, so samples that agree keep them all.
+    let agreeing = [full.report().clone(), full.report().clone()];
+    let (written, report) = pdb::write(
+        PdbSource::ensemble(&ensemble).with_reports(&agreeing),
+        options,
+    )
+    .unwrap();
+    assert_eq!(records(&written, "LINK").len(), 4);
+    assert!(written.starts_with("LINK"));
+    assert!(!report
+        .omissions()
+        .iter()
+        .any(|omission| matches!(omission, WriteOmission::Coordination { .. })));
+
+    // A record one sample does not state is left out of the entry.
+    let differing = [full.report().clone(), partial.report().clone()];
+    let (written, report) = pdb::write(
+        PdbSource::ensemble(&ensemble).with_reports(&differing),
+        options,
+    )
+    .unwrap();
+    assert_eq!(records(&written, "LINK").len(), 3);
+    assert!(report
+        .omissions()
+        .contains(&WriteOmission::Coordination { records: 1 }));
+    let reread = pdb::parse_str(&written, Default::default())
+        .unwrap()
+        .interpret_ensemble(Default::default())
+        .unwrap();
+    for report in reread.reports() {
+        assert_eq!(coordination(report), coordination(partial.report()));
+    }
+    // The order of the reports does not matter.
+    let reversed = [partial.report().clone(), full.report().clone()];
+    assert_eq!(
+        pdb::write(
+            PdbSource::ensemble(&ensemble).with_reports(&reversed),
+            options
+        )
+        .unwrap()
+        .0
+        .lines()
+        .filter(|line| line.starts_with("LINK"))
+        .count(),
+        3
+    );
+
+    let error = pdb::write(
+        PdbSource::ensemble(&ensemble).with_reports(std::slice::from_ref(full.report())),
+        options,
+    )
+    .unwrap_err();
+    assert_eq!(
+        issue(&error),
+        &PdbWriteIssue::ReportCountMismatch {
+            expected: 2,
+            actual: 1
+        }
     );
 }

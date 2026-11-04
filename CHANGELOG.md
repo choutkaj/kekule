@@ -11,6 +11,22 @@ are marked **Breaking:**.
 
 ### Added
 
+- PDB export of metal coordination (SeekDelta K65). The PDB writer takes
+  interpretation reports as the mmCIF writer does:
+  `PdbSource::with_reports` takes one report for a structure and one per
+  sample or item for an ensemble or series, and `PdbSource` converts from
+  `&StructureInterpretation` and `&StructureEnsembleInterpretation`. The
+  writer states the reports' coordination as `LINK` records before the
+  coordinates, in the columns of PDB format version 3.3: each partner as
+  its atom record names it, the symmetry operator `1555`, and the distance
+  in the first structure. `LINK` records belong to the entry, so an
+  ensemble or series states the coordination every report states.
+  `WriteOmission::Coordination` counts the records left out: those that no
+  longer match the structure, those another sample does not state, and
+  those that name a chain written as a segment identifier. A report count
+  that does not match the structures fails with
+  `PdbWriteIssue::ReportCountMismatch`. Without reports the output is
+  unchanged.
 - Interpretation issues as sentences (SeekDelta K62b).
   `StructureInterpretIssue` implements `Display`, one or two sentences per
   issue, such as `Residue 5 of chain "A" in model "1" (component "7MG") has
@@ -766,6 +782,10 @@ are marked **Breaking:**.
 
 ### Changed
 
+- The mmCIF writer leaves out a coordination record whose partner no
+  longer has the atom names, type symbol, or component the report recorded,
+  as the PDB writer does, and counts it as `WriteOmission::Coordination`.
+  It left out only records whose partner was missing.
 - **Breaking:** hydrophobic contacts are reduced as PLIP reduces them
   (SeekDelta K63). Before, every pair of hydrophobic atoms within the cutoff
   was a contact. Now contacts between two rings that π-stack are dropped,

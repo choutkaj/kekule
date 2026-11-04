@@ -1,5 +1,6 @@
 //! Public options, reports, issues, and source provenance of macromolecular
 //! structure interpretation.
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -852,9 +853,9 @@ impl BondProvenance {
 /// Coordination between residues is source connection metadata, not a bond:
 /// covalent connectedness alone decides molecule boundaries, so a metal ion,
 /// its ligands, and the protein that coordinates it stay separate molecules.
-/// The mmCIF writer states these records again as `metalc` rows when it is
-/// given the report. Coordination within one residue, such as heme's Fe-N
-/// bonds, stays a dative bond.
+/// The mmCIF and PDB writers state these records again, as `metalc` rows
+/// and `LINK` records, when they are given the report. Coordination within
+/// one residue, such as heme's Fe-N bonds, stays a dative bond.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordinationProvenance {
     pub(crate) atoms: [InstanceAtomId; 2],
@@ -884,6 +885,16 @@ impl CoordinationProvenance {
     pub const fn source_line(&self) -> Option<usize> {
         self.source_line
     }
+}
+
+/// The coordination records of a report that match a topology; see
+/// [`StructureInterpretationReport::coordination_in`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CoordinationMatch {
+    /// The partners of each matching record, in record order.
+    pub(crate) records: Vec<[InstanceAtomId; 2]>,
+    /// The records that do not match.
+    pub(crate) unmatched: usize,
 }
 
 /// A connection-partner selector whose alias fields disagree.
@@ -1245,6 +1256,49 @@ impl StructureInterpretationReport {
     /// order; see [`CoordinationProvenance`].
     pub fn coordination(&self) -> &[CoordinationProvenance] {
         &self.coordination
+    }
+
+    /// The coordination records that still match `topology`, as writers
+    /// state them again. A record matches when each partner is a topology
+    /// atom whose atom site keeps the atom names, type symbol, and component
+    /// the report recorded for it; a model edited since it was read can hold
+    /// other atoms under the recorded IDs, or none.
+    pub(crate) fn coordination_in(&self, topology: &Topology) -> CoordinationMatch {
+        let partners = self
+            .coordination
+            .iter()
+            .flat_map(|record| record.atoms)
+            .collect::<HashSet<_>>();
+        let sources = self
+            .instances
+            .iter()
+            .flat_map(|instance| &instance.atoms)
+            .filter(|atom| partners.contains(&atom.atom))
+            .map(|atom| (atom.atom, atom))
+            .collect::<HashMap<_, _>>();
+        let hierarchy = topology.hierarchy();
+        let matches = |atom: InstanceAtomId| {
+            let (Some(source), Some(site)) = (sources.get(&atom), topology.atom_site_of(atom))
+            else {
+                return false;
+            };
+            let metadata = site.metadata();
+            metadata.label_atom_id() == source.label_atom_name.as_deref()
+                && metadata.auth_atom_id() == source.auth_atom_name.as_deref()
+                && metadata.type_symbol() == Some(source.type_symbol.as_str())
+                && hierarchy
+                    .residue(site.residue())
+                    .is_some_and(|residue| residue.name() == source.component_id)
+        };
+        let (records, unmatched): (Vec<_>, Vec<_>) = self
+            .coordination
+            .iter()
+            .map(|record| record.atoms)
+            .partition(|atoms| atoms.iter().all(|&atom| matches(atom)));
+        CoordinationMatch {
+            records,
+            unmatched: unmatched.len(),
+        }
     }
 
     /// Decisions for the selected source coordinate model only. The source
