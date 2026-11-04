@@ -8,7 +8,7 @@ use super::{
     NativeContent, NativeKind, NativeSource, NativeWriteOptions, NATIVE_FORMAT_VERSION,
     NATIVE_MAGIC,
 };
-use crate::diagnostics::{DiagnosticKind, Format, FormatError};
+use crate::diagnostics::{counted, DiagnosticKind, Format, FormatError};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{
     AtomRadical, AxisOrientation, BondOrder, DoubleBondOrientation, ImplicitHydrogens, Molecule,
@@ -25,6 +25,8 @@ use crate::structure::{Ensemble, Model, Series, SeriesAxis, Trajectory};
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
 
+mod report;
+
 /// The staging buffer size: output reaches the sink in chunks of this size.
 const STAGE_BYTES: usize = 64 * 1024;
 
@@ -37,6 +39,23 @@ pub(crate) fn write_native_to<'a>(
     options: NativeWriteOptions,
 ) -> Result {
     let source = source.into();
+    if let NativeContent::InterpretedEnsemble(ensemble, reports) = source.content {
+        if reports.len() != ensemble.len() {
+            return Err(FormatError::write(
+                Format::Native,
+                DiagnosticKind::Inconsistent,
+                format!(
+                    "The ensemble has {} and {}. Give one report per sample.",
+                    counted(ensemble.len(), "sample", "samples"),
+                    counted(
+                        reports.len(),
+                        "interpretation report",
+                        "interpretation reports"
+                    ),
+                ),
+            ));
+        }
+    }
     let mut encoder = Encoder {
         sink: writer,
         buffer: Vec::with_capacity(STAGE_BYTES),
@@ -51,6 +70,16 @@ pub(crate) fn write_native_to<'a>(
         NativeContent::Ensemble(ensemble) => encoder.ensemble(ensemble)?,
         NativeContent::Trajectory(trajectory) => encoder.trajectory(trajectory)?,
         NativeContent::Series(series) => encoder.series(series)?,
+        NativeContent::InterpretedModel(model, report) => {
+            encoder.model(model)?;
+            encoder.report(report)?;
+        }
+        NativeContent::InterpretedEnsemble(ensemble, reports) => {
+            encoder.ensemble(ensemble)?;
+            for report in reports {
+                encoder.report(report)?;
+            }
+        }
     }
     encoder.finish()
 }

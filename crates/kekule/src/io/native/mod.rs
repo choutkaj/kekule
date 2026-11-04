@@ -1,5 +1,6 @@
 //! Kekule's native binary serialization: exact, versioned persistence of one
-//! molecule, topology, model, ensemble, trajectory, or series.
+//! molecule, topology, model, ensemble, trajectory, or series, and of a model
+//! or ensemble with its structure interpretation reports.
 //!
 //! The byte layout is specified in `docs/native-format.md`; the encoder and
 //! decoder here implement that specification and nothing else.
@@ -11,6 +12,9 @@ mod encode;
 use std::fmt;
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
+use crate::io::{
+    StructureEnsembleInterpretation, StructureInterpretation, StructureInterpretationReport,
+};
 use crate::molecule::Molecule;
 use crate::structure::{Ensemble, Model, Series, Trajectory};
 use crate::topology::Topology;
@@ -58,6 +62,12 @@ pub enum NativeKind {
     Trajectory,
     /// A [`Series`].
     Series,
+    /// A [`Model`] with the report of its interpretation, a
+    /// [`StructureInterpretation`].
+    StructureInterpretation,
+    /// An [`Ensemble`] with one interpretation report per sample, a
+    /// [`StructureEnsembleInterpretation`].
+    StructureEnsembleInterpretation,
 }
 
 impl NativeKind {
@@ -69,6 +79,8 @@ impl NativeKind {
             Self::Ensemble => 4,
             Self::Trajectory => 5,
             Self::Series => 6,
+            Self::StructureInterpretation => 7,
+            Self::StructureEnsembleInterpretation => 8,
         }
     }
 
@@ -80,6 +92,8 @@ impl NativeKind {
             4 => Self::Ensemble,
             5 => Self::Trajectory,
             6 => Self::Series,
+            7 => Self::StructureInterpretation,
+            8 => Self::StructureEnsembleInterpretation,
             _ => return None,
         })
     }
@@ -94,6 +108,8 @@ impl fmt::Display for NativeKind {
             Self::Ensemble => "ensemble",
             Self::Trajectory => "trajectory",
             Self::Series => "series",
+            Self::StructureInterpretation => "interpreted model",
+            Self::StructureEnsembleInterpretation => "interpreted ensemble",
         })
     }
 }
@@ -101,7 +117,10 @@ impl fmt::Display for NativeKind {
 /// The object a native writer encodes, borrowed from its owner.
 ///
 /// Converts from a borrowed [`Molecule`], [`Topology`], [`Model`],
-/// [`Ensemble`], [`Trajectory`], or [`Series`].
+/// [`Ensemble`], [`Trajectory`], [`Series`], [`StructureInterpretation`], or
+/// [`StructureEnsembleInterpretation`].
+/// [`Self::interpreted_model`] and [`Self::interpreted_ensemble`] pair a
+/// model or ensemble with reports held apart from it.
 #[derive(Debug, Clone, Copy)]
 pub struct NativeSource<'a> {
     pub(super) content: NativeContent<'a>,
@@ -115,9 +134,38 @@ pub(super) enum NativeContent<'a> {
     Ensemble(&'a Ensemble),
     Trajectory(&'a Trajectory),
     Series(&'a Series),
+    InterpretedModel(&'a Model, &'a StructureInterpretationReport),
+    InterpretedEnsemble(&'a Ensemble, &'a [StructureInterpretationReport]),
 }
 
-impl NativeSource<'_> {
+impl<'a> NativeSource<'a> {
+    /// A model with the report of its interpretation.
+    ///
+    /// The report is stored as it is. Its IDs name atoms, chains, and
+    /// residues of the model it was interpreted with.
+    pub const fn interpreted_model(
+        model: &'a Model,
+        report: &'a StructureInterpretationReport,
+    ) -> Self {
+        Self {
+            content: NativeContent::InterpretedModel(model, report),
+        }
+    }
+
+    /// An ensemble with one interpretation report per sample, in sample
+    /// order, as [`StructureEnsembleInterpretation::reports`] gives them.
+    ///
+    /// Writing fails with [`DiagnosticKind::Inconsistent`] unless there is
+    /// one report per sample.
+    pub const fn interpreted_ensemble(
+        ensemble: &'a Ensemble,
+        reports: &'a [StructureInterpretationReport],
+    ) -> Self {
+        Self {
+            content: NativeContent::InterpretedEnsemble(ensemble, reports),
+        }
+    }
+
     /// The kind of object this source encodes.
     pub const fn kind(&self) -> NativeKind {
         match self.content {
@@ -127,6 +175,8 @@ impl NativeSource<'_> {
             NativeContent::Ensemble(_) => NativeKind::Ensemble,
             NativeContent::Trajectory(_) => NativeKind::Trajectory,
             NativeContent::Series(_) => NativeKind::Series,
+            NativeContent::InterpretedModel(..) => NativeKind::StructureInterpretation,
+            NativeContent::InterpretedEnsemble(..) => NativeKind::StructureEnsembleInterpretation,
         }
     }
 }
@@ -144,6 +194,18 @@ macro_rules! native_source_from {
 }
 
 native_source_from!(Molecule, Topology, Model, Ensemble, Trajectory, Series);
+
+impl<'a> From<&'a StructureInterpretation> for NativeSource<'a> {
+    fn from(value: &'a StructureInterpretation) -> Self {
+        Self::interpreted_model(value.model(), value.report())
+    }
+}
+
+impl<'a> From<&'a StructureEnsembleInterpretation> for NativeSource<'a> {
+    fn from(value: &'a StructureEnsembleInterpretation) -> Self {
+        Self::interpreted_ensemble(value.ensemble(), value.reports())
+    }
+}
 
 /// One object decoded from native input.
 ///
@@ -164,6 +226,11 @@ pub enum NativeObject {
     Trajectory(Trajectory),
     /// A series with its topology.
     Series(Series),
+    /// A model with its topology and the report of its interpretation.
+    StructureInterpretation(Box<StructureInterpretation>),
+    /// An ensemble with its topology and one interpretation report per
+    /// sample.
+    StructureEnsembleInterpretation(Box<StructureEnsembleInterpretation>),
 }
 
 macro_rules! native_projection {
@@ -194,13 +261,17 @@ impl NativeObject {
             Self::Ensemble(_) => NativeKind::Ensemble,
             Self::Trajectory(_) => NativeKind::Trajectory,
             Self::Series(_) => NativeKind::Series,
+            Self::StructureInterpretation(_) => NativeKind::StructureInterpretation,
+            Self::StructureEnsembleInterpretation(_) => NativeKind::StructureEnsembleInterpretation,
         }
     }
 
     fn kind_error(&self, expected: NativeKind) -> FormatError {
         let found = self.kind();
         let article = |kind| match kind {
-            NativeKind::Ensemble => "an",
+            NativeKind::Ensemble
+            | NativeKind::StructureInterpretation
+            | NativeKind::StructureEnsembleInterpretation => "an",
             _ => "a",
         };
         FormatError::interpret(
@@ -233,16 +304,65 @@ impl NativeObject {
         into_topology,
         Topology
     );
-    native_projection!(
-        /// The decoded model.
-        into_model,
-        Model
-    );
-    native_projection!(
-        /// The decoded ensemble.
-        into_ensemble,
-        Ensemble
-    );
+    /// The decoded model, of a model or of an interpreted model, whose
+    /// report it drops.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
+    /// [`FormatErrorDetail::NativeKind`] when the object is of another kind.
+    pub fn into_model(self) -> Result<Model, FormatError> {
+        match self {
+            Self::Model(value) => Ok(value),
+            Self::StructureInterpretation(value) => Ok(value.into_model()),
+            other => Err(other.kind_error(NativeKind::Model)),
+        }
+    }
+
+    /// The decoded ensemble, of an ensemble or of an interpreted ensemble,
+    /// whose reports it drops.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
+    /// [`FormatErrorDetail::NativeKind`] when the object is of another kind.
+    pub fn into_ensemble(self) -> Result<Ensemble, FormatError> {
+        match self {
+            Self::Ensemble(value) => Ok(value),
+            Self::StructureEnsembleInterpretation(value) => Ok(value.into_ensemble()),
+            other => Err(other.kind_error(NativeKind::Ensemble)),
+        }
+    }
+
+    /// The decoded model with the report of its interpretation.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
+    /// [`FormatErrorDetail::NativeKind`] when the object is of another kind,
+    /// such as a model stored without a report.
+    pub fn into_interpretation(self) -> Result<StructureInterpretation, FormatError> {
+        match self {
+            Self::StructureInterpretation(value) => Ok(*value),
+            other => Err(other.kind_error(NativeKind::StructureInterpretation)),
+        }
+    }
+
+    /// The decoded ensemble with one interpretation report per sample.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
+    /// [`FormatErrorDetail::NativeKind`] when the object is of another kind,
+    /// such as an ensemble stored without reports.
+    pub fn into_ensemble_interpretation(
+        self,
+    ) -> Result<StructureEnsembleInterpretation, FormatError> {
+        match self {
+            Self::StructureEnsembleInterpretation(value) => Ok(*value),
+            other => Err(other.kind_error(NativeKind::StructureEnsembleInterpretation)),
+        }
+    }
     native_projection!(
         /// The decoded trajectory.
         into_trajectory,

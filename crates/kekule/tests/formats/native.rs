@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use kekule::diagnostics::{DiagnosticKind, Format, FormatErrorDetail, Resource};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::macromolecular::{AltLocPolicy, StructureInterpretOptions};
+use kekule::mmcif::MmcifWriteOptions;
 use kekule::molecule::{AtomId, Molecule};
 use kekule::native::{
     self, NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
@@ -45,6 +47,12 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
         NativeObject::Ensemble(value) => native::write(value, NativeWriteOptions::default()),
         NativeObject::Trajectory(value) => native::write(value, NativeWriteOptions::default()),
         NativeObject::Series(value) => native::write(value, NativeWriteOptions::default()),
+        NativeObject::StructureInterpretation(value) => {
+            native::write(value.as_ref(), NativeWriteOptions::default())
+        }
+        NativeObject::StructureEnsembleInterpretation(value) => {
+            native::write(value.as_ref(), NativeWriteOptions::default())
+        }
         _ => unreachable!("every kind is listed"),
     }
     .unwrap();
@@ -351,6 +359,141 @@ fn macromolecular_models_round_trip_bitwise() {
         let decoded = round_trip(&model).into_model().unwrap();
         assert_same_model(&decoded, &model);
     }
+}
+
+#[test]
+fn interpreted_models_keep_their_reports() {
+    let mut unobserved = 0;
+    for name in ["mmcif/9UOH.cif", "mmcif/1AKE.cif"] {
+        let text = std::fs::read_to_string(fixture(name)).unwrap();
+        let interpretation = mmcif::parse_str(&text, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap();
+        let report = interpretation.report();
+        assert!(!report.instances().is_empty(), "{name}");
+        assert!(!report.polymer_entities().is_empty(), "{name}");
+        if name.contains("9UOH") {
+            assert!(!report.coordination().is_empty());
+        }
+        unobserved += report
+            .polymer_entities()
+            .iter()
+            .flat_map(|entity| entity.instances())
+            .flat_map(|instance| instance.positions())
+            .filter(|position| position.residue().is_none())
+            .count();
+
+        let decoded = round_trip(&interpretation).into_interpretation().unwrap();
+        assert_eq!(decoded.report(), report, "{name}");
+        assert_same_model(decoded.model(), interpretation.model());
+        // The mmCIF writer states the same records, metal coordination and
+        // entities included, from the decoded report.
+        let written = |source| {
+            mmcif::write([source], MmcifWriteOptions::default())
+                .unwrap()
+                .0
+        };
+        assert_eq!(written(&decoded), written(&interpretation), "{name}");
+
+        // A model and its report held apart write the same bytes.
+        let (model, report) = interpretation.clone().into_parts();
+        let apart = native::write(
+            NativeSource::interpreted_model(&model, &report),
+            NativeWriteOptions::default(),
+        )
+        .unwrap();
+        assert!(apart == native::write(&interpretation, NativeWriteOptions::default()).unwrap());
+        // A reader that wants the model alone drops the report.
+        let model = native::read(apart.as_slice(), NativeReadOptions::default())
+            .unwrap()
+            .into_model()
+            .unwrap();
+        assert_same_model(&model, interpretation.model());
+    }
+    // The canonical sequences show residues the models lack.
+    assert!(unobserved > 0);
+}
+
+#[test]
+fn interpreted_ensembles_keep_one_report_per_sample() {
+    let text = std::fs::read_to_string(fixture("mmcif/1AKE.cif")).unwrap();
+    let document = mmcif::parse_str(&text, Default::default()).unwrap();
+    let selections = ["A", "B"].map(|label| {
+        StructureInterpretOptions::default()
+            .with_altloc_policy(AltLocPolicy::SelectLabel(label.into()))
+    });
+    let interpretation = document.interpret_conformations(&selections).unwrap();
+    assert_eq!(interpretation.reports().len(), 2);
+    assert!(interpretation
+        .reports()
+        .iter()
+        .all(|report| !report.alternate_locations().is_empty()));
+    assert_ne!(interpretation.reports()[0], interpretation.reports()[1]);
+
+    let decoded = round_trip(&interpretation)
+        .into_ensemble_interpretation()
+        .unwrap();
+    assert_eq!(decoded.reports(), interpretation.reports());
+    assert_same_ensemble(decoded.ensemble(), interpretation.ensemble());
+    let written = |source| {
+        mmcif::write([source], MmcifWriteOptions::default())
+            .unwrap()
+            .0
+    };
+    assert_eq!(written(&decoded), written(&interpretation));
+
+    let bytes = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
+    let ensemble = native::read(bytes.as_slice(), NativeReadOptions::default())
+        .unwrap()
+        .into_ensemble()
+        .unwrap();
+    assert_same_ensemble(&ensemble, interpretation.ensemble());
+}
+
+#[test]
+fn reports_are_stored_only_when_given() {
+    let text = std::fs::read_to_string(fixture("mmcif/1CRN.cif")).unwrap();
+    let interpretation = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let plain = native::write(interpretation.model(), NativeWriteOptions::default()).unwrap();
+    let interpreted = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
+    // Both are format version 3: a model with its report is kind 7.
+    assert_eq!(NATIVE_FORMAT_VERSION, 3);
+    for bytes in [&plain, &interpreted] {
+        assert_eq!(bytes[8..12], NATIVE_FORMAT_VERSION.to_le_bytes());
+    }
+    assert_eq!((plain[12], interpreted[12]), (3, 7));
+    assert!(interpreted.len() > plain.len());
+
+    let error = native::read(plain.as_slice(), NativeReadOptions::default())
+        .unwrap()
+        .into_interpretation()
+        .unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::NativeKind {
+            expected: NativeKind::StructureInterpretation,
+            found: NativeKind::Model,
+        })
+    );
+    assert_eq!(
+        error.to_string(),
+        "Cannot interpret the native input. The input holds a model, not an interpreted model."
+    );
+
+    // A reader that knows only kinds 1 to 6 rejects kind 7 as unknown, as
+    // this reader rejects kind 9.
+    let mut unknown = interpreted;
+    unknown[12] = 9;
+    let error = native::read(unknown.as_slice(), NativeReadOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert!(
+        error.to_string().contains("The object kind 9 is unknown."),
+        "{error}"
+    );
 }
 
 fn water_topology() -> Arc<Topology> {

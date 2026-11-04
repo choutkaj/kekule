@@ -11,6 +11,26 @@ are marked **Breaking:**.
 
 ### Added
 
+- Interpretation reports in native files. A model or ensemble keeps its
+  structure interpretation reports through native write and read, so an
+  application that saves structures in native files keeps what the source
+  stated beyond the structure: metal coordination, which the mmCIF writer
+  states again, polymer entities with their canonical sequences, provenance,
+  alternate-location decisions, and issues. `native::write` takes a
+  `StructureInterpretation` or `StructureEnsembleInterpretation`, or
+  `NativeSource::interpreted_model` and `NativeSource::interpreted_ensemble`
+  pair a model or ensemble with reports held apart from it.
+  `NativeObject::into_interpretation` and
+  `NativeObject::into_ensemble_interpretation` read them back, and the
+  reports compare equal to those written. `into_model` and `into_ensemble`
+  also read these files and drop the reports. They are the new
+  `NativeKind`s `StructureInterpretation` (kind 7) and
+  `StructureEnsembleInterpretation` (kind 8) of native format version 3.
+  Files of the other kinds are unchanged, and readers that predate the new
+  kinds reject them as unknown kinds. Report columns store each repeated
+  string once. The report of PDB 7K00 (149,338 atoms) adds half to the size
+  of its model, 8.1 MB to 15.8 MB, and about 70 ms to writing and 130 ms to
+  reading it; the `native_interpretation` benchmark measures an entry.
 - Interpretation issues as sentences (SeekDelta K62b).
   `StructureInterpretIssue` implements `Display`, one or two sentences per
   issue, such as `Residue 5 of chain "A" in model "1" (component "7MG") has

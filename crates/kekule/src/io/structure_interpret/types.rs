@@ -1275,8 +1275,8 @@ impl StructureInterpretationReport {
 #[derive(Debug, Clone, PartialEq)]
 /// One final canonical model and its interpretation report.
 pub struct StructureInterpretation {
-    pub(super) model: Model,
-    pub(super) report: StructureInterpretationReport,
+    pub(crate) model: Model,
+    pub(crate) report: StructureInterpretationReport,
 }
 
 impl StructureInterpretation {
@@ -1478,8 +1478,8 @@ impl Default for StructureEnsembleInterpretOptions {
 #[derive(Debug, Clone)]
 /// One shared-topology ensemble and one report per selected conformation.
 pub struct StructureEnsembleInterpretation {
-    pub(super) ensemble: Ensemble,
-    pub(super) reports: Vec<StructureInterpretationReport>,
+    pub(crate) ensemble: Ensemble,
+    pub(crate) reports: Vec<StructureInterpretationReport>,
 }
 
 impl StructureEnsembleInterpretation {

@@ -16,6 +16,7 @@ use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
 };
 use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::io::{StructureEnsembleInterpretation, StructureInterpretation};
 use crate::molecule::{
     Atom, AtomId, AtomRadical, AxisOrientation, AxisStereo, BondId, BondOrder,
     DoubleBondOrientation, DoubleBondStereo, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
@@ -49,6 +50,8 @@ use crate::units::{
     CANONICAL_VELOCITY_UNIT, SQUARE_NANOMETER,
 };
 
+mod report;
+
 /// Bytes read per chunk of a large array; a multiple of 24 and 8.
 const CHUNK_BYTES: usize = 24 * 2730;
 
@@ -74,6 +77,24 @@ pub(crate) fn read_native(
         NativeKind::Ensemble => NativeObject::Ensemble(decoder.ensemble()?),
         NativeKind::Trajectory => NativeObject::Trajectory(decoder.trajectory()?),
         NativeKind::Series => NativeObject::Series(decoder.series()?),
+        NativeKind::StructureInterpretation => {
+            let model = decoder.model()?;
+            let report = decoder.report()?;
+            NativeObject::StructureInterpretation(Box::new(StructureInterpretation {
+                model,
+                report,
+            }))
+        }
+        NativeKind::StructureEnsembleInterpretation => {
+            let ensemble = decoder.ensemble()?;
+            let mut reports = Vec::with_capacity(ensemble.len());
+            for _ in 0..ensemble.len() {
+                reports.push(decoder.report()?);
+            }
+            NativeObject::StructureEnsembleInterpretation(Box::new(
+                StructureEnsembleInterpretation { ensemble, reports },
+            ))
+        }
     };
     decoder.trailer()?;
     Ok(object)

@@ -1424,8 +1424,17 @@ pub mod xyz {
 /// chemistry, definitions and instances, semantic IDs, dense order,
 /// hierarchy, classifications with their explicit or inferred assignment,
 /// properties at every scope with units, coordinates as exact bits, and every
-/// structure and collection field. Installed perception is stored with its
-/// provenance unless
+/// structure and collection field. A model or ensemble may carry its
+/// structure interpretation reports: write a
+/// [`StructureInterpretation`](crate::macromolecular::StructureInterpretation)
+/// or [`StructureEnsembleInterpretation`](crate::macromolecular::StructureEnsembleInterpretation),
+/// or pair a model or ensemble with reports held apart through
+/// [`NativeSource::interpreted_model`](native::NativeSource::interpreted_model)
+/// and [`NativeSource::interpreted_ensemble`](native::NativeSource::interpreted_ensemble),
+/// and read them back with
+/// [`NativeObject::into_interpretation`](native::NativeObject::into_interpretation)
+/// or [`NativeObject::into_ensemble_interpretation`](native::NativeObject::into_ensemble_interpretation).
+/// Installed perception is stored with its provenance unless
 /// [`NativeWriteOptions::with_perception`](native::NativeWriteOptions::with_perception)
 /// omits it.
 ///
