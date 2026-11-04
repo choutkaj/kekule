@@ -82,9 +82,9 @@ pub enum CodeOrigin {
 /// components it derives from.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ResidueCode {
-    code: Box<str>,
-    origin: CodeOrigin,
-    parents: Box<[Box<str>]>,
+    pub(crate) code: Box<str>,
+    pub(crate) origin: CodeOrigin,
+    pub(crate) parents: Box<[Box<str>]>,
 }
 
 impl ResidueCode {

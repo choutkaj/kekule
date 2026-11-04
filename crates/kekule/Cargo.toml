@@ -66,3 +66,7 @@ harness = false
 [[bench]]
 name = "structure_interpretation"
 harness = false
+
+[[bench]]
+name = "native_interpretation"
+harness = false

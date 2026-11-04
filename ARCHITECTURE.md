@@ -997,7 +997,10 @@ native persistence and must not weaken these boundaries. See
 
 Exact persistence is the `native` format module, the one owner of Kekule's
 binary encoding of molecules, topologies, models, ensembles, trajectories,
-and series. It stores each owner's authoritative state, including
+and series. A model or ensemble may carry its structure interpretation
+reports, stored as they are, so that an application that saves structures in
+native files keeps what the source stated beyond the structure. It stores
+each owner's authoritative state, including
 explicit or inferred class assignments and adjacency order, and reconstructs
 it only through those owners' validating paths: molecule publication,
 topology publication with stored classes restored instead of inferred, and

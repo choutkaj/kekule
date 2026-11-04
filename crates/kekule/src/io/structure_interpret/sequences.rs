@@ -88,13 +88,13 @@ pub enum SequenceSource {
 /// its line breaks, or else the monomers' codes joined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolymerEntity {
-    id: String,
-    polymer_type: Option<PolymerType>,
-    monomers: Vec<EntityMonomer>,
-    monomers_source: SequenceSource,
-    sequence: String,
-    sequence_source: SequenceSource,
-    instances: Vec<PolymerEntityInstance>,
+    pub(crate) id: String,
+    pub(crate) polymer_type: Option<PolymerType>,
+    pub(crate) monomers: Vec<EntityMonomer>,
+    pub(crate) monomers_source: SequenceSource,
+    pub(crate) sequence: String,
+    pub(crate) sequence_source: SequenceSource,
+    pub(crate) instances: Vec<PolymerEntityInstance>,
 }
 
 impl PolymerEntity {
@@ -138,10 +138,10 @@ impl PolymerEntity {
 /// One monomer of a polymer entity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityMonomer {
-    number: i32,
-    component_id: String,
-    alternatives: Vec<String>,
-    code: ResidueCode,
+    pub(crate) number: i32,
+    pub(crate) component_id: String,
+    pub(crate) alternatives: Vec<String>,
+    pub(crate) code: ResidueCode,
 }
 
 impl EntityMonomer {
@@ -173,10 +173,10 @@ impl EntityMonomer {
 /// One instance of a polymer entity, a `label_asym_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolymerEntityInstance {
-    asym_id: String,
-    author_chain_id: Option<String>,
-    chain: Option<ChainId>,
-    positions: Vec<SequencePosition>,
+    pub(crate) asym_id: String,
+    pub(crate) author_chain_id: Option<String>,
+    pub(crate) chain: Option<ChainId>,
+    pub(crate) positions: Vec<SequencePosition>,
 }
 
 impl PolymerEntityInstance {
@@ -208,9 +208,9 @@ impl PolymerEntityInstance {
 /// author numbering.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SequencePosition {
-    residue: Option<ResidueId>,
-    author_seq_id: Option<String>,
-    insertion_code: Option<String>,
+    pub(crate) residue: Option<ResidueId>,
+    pub(crate) author_seq_id: Option<String>,
+    pub(crate) insertion_code: Option<String>,
 }
 
 impl SequencePosition {

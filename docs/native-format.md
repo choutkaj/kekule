@@ -2,7 +2,9 @@
 
 Kekule's native format is the exact persistence of one canonical owner:
 a `Molecule`, `Topology`, `Model`, `Ensemble`, in-memory `Trajectory`, or
-`Series`.
+`Series`. A `Model` or `Ensemble` may carry its structure interpretation
+reports, as a `StructureInterpretation` or
+`StructureEnsembleInterpretation`.
 Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
 [Identity and reconstruction](../ARCHITECTURE.md#identity-and-reconstruction).
@@ -21,7 +23,8 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   states (each sample's state and each state's representative), state energies
   and owner properties, and temperature, frame time, step, velocities, and
   forces, series axes and item steps and coordinates, and collection owner
-  properties. Floating-point values are stored as their IEEE-754 bits, so
+  properties. Interpretation reports round-trip field by field and compare
+  equal. Floating-point values are stored as their IEEE-754 bits, so
   coordinates come back bitwise identical (`-0.0` stays `-0.0`).
 - **Identity.** Semantic IDs round-trip exactly. A decoded topology is a new
   publication and therefore gets a fresh layout identity; selections bound to
@@ -65,7 +68,10 @@ their own weights and energies. Series, kind 6, joined version 2 without
 changing the layout of any other kind, so every earlier version 2 file still
 reads the same; readers that predate them reject a series as an unknown
 kind. Version 3 stores resonance delocalization with its model; version 2
-stored conjugated groups without one.
+stored conjugated groups without one. Interpreted models and ensembles,
+kinds 7 and 8, joined version 3 in the same way: every earlier version 3 file
+still reads the same, and readers that predate them reject them as unknown
+kinds.
 
 ## Layout
 
@@ -91,6 +97,7 @@ file      := header payload trailer
 header    := magic[8] version:u32 kind:u8 flags:u8 reserved:u16
 magic     := 0x89 'K' 'E' 'K' 0x0D 0x0A 0x1A 0x0A
 kind      := 1 molecule | 2 topology | 3 model | 4 ensemble | 5 trajectory | 6 series
+           | 7 interpreted model | 8 interpreted ensemble
 flags     := bit 0: perception stored; all other bits zero
 reserved  := 0
 trailer   := end:u32 = 0x444E_454B ("KEND") crc:u32
@@ -283,13 +290,146 @@ axis: a step for an axis of steps, or a coordinate, in the axis unit, for a
 coordinate axis. The axis unit is stored as property units are, and every
 coordinate must be finite.
 
+### Interpretation reports
+
+An interpreted model is a model followed by its report; an interpreted
+ensemble is an ensemble followed by one report per sample, in sample order.
+Reports are stored as they are: their IDs name atoms, chains, residues, and
+molecule instances of the model they were interpreted with, and the reader
+does not resolve them.
+
+Report columns use two further encodings. `packed(n)` holds `n` unsigned
+integers in the narrowest width that holds the largest, and `dict(n)` holds
+a string column through a table of its distinct values, in order of first
+appearance.
+
+```text
+packed(n)  := width:u8 value[n]                  width 1, 2, 4, or 8 bytes,
+                                                 little-endian values
+dict(n)    := value_count:count strings(value_count) index:packed(n)
+                                                 value_count <= n; every index
+                                                 names a table value
+list(T)    := count T[count]
+usize      := u64
+```
+
+A `required` dictionary has no absent table values.
+
+```text
+report      := block_name:str selected_model:opt str
+               entity_definitions:usize coordinate_models:usize
+               macromolecules:usize small_molecules:usize
+               solvent_molecules:usize applied_connections:usize
+               connectivity_candidates:usize
+               ignored_coordinate_models:list(str)
+               instances
+               coordination:list(coordination)
+               alternate_locations:list(decision)
+               issues:list(issue)
+               polymer_entities:list(entity)
+instances   := n:count
+               molecule:packed(n)
+               coordinate_model:dict(n)          required
+               asym_count:packed(n) asym_id:dict(Σ)            required
+               entity_count:packed(n) entity_id:dict(Σ)        required
+               kind_count:packed(n) entity_kind:kinds(Σ)
+               atom_count:packed(n) bond_count:packed(n)
+               atoms(Σ atom_count) bonds(Σ bond_count)
+kinds(m)    := code:packed(m) other:dict(code 4 rows)       required
+atoms(m)    := atom:refs(m)
+               source_line:packed(m) source_order:packed(m)
+               atom_site_id:strings(m)
+               type_symbol:dict(m)               required
+               label_atom_name:dict(m) atom_name:dict(m) auth_atom_name:dict(m)
+               label_component_id:dict(m) component_id:dict(m)
+               auth_component_id:dict(m)
+               label_asym_id:dict(m) asym_id:dict(m) auth_asym_id:dict(m)
+               entity_id:dict(m)
+               residue_key:dict(m)               required
+               author_sequence_id:dict(m) insertion_code:dict(m)
+               selected_alternate_location:dict(m)
+               entity_kind:kinds(m)
+               has_label_sequence:bits(m) label_sequence:i32[present]
+               has_occurrence:bits(m) occurrence:packed(present)
+bonds(m)    := atoms:refs(2m) evidence:packed(m)
+               template_component:dict(evidence 1 rows)      required
+               template_variant:dict(evidence 1 rows)
+               connection_id:dict(evidence 4 rows)
+               connection_type:dict(evidence 4 rows)         required
+refs(m)     := 0 local:packed(m)                 atom IDs of each row's instance
+             | 1 id:packed(m)                    InstanceAtomId::to_bits
+```
+
+`atom_name`, `component_id`, and `asym_id` are required. The atoms and bonds
+of every instance are stored in instance order, each instance's in its own
+order. `refs` mode `0` holds local atom IDs when every reference is to the
+molecule instance of its provenance; mode `1` holds full IDs.
+Entity kinds: `0` polymer, `1` branched, `2` non-polymer, `3` water, `4`
+another value, stored in `other`. Bond evidence: `0` component table, `1`
+template, `2` polymer link, `3` branch link, `4` connection, `5` distance,
+`6` hydrogen distance.
+
+```text
+coordination := a:u64 b:u64 connection_id:opt str connection_type:str
+                source_line:opt usize
+decision     := residue available:list(str) selected:list(str) reason
+                selected_lines:count packed omitted_lines:count packed
+reason       := 0 highest occupancy | 1 exact selection | 2 preferred label
+              | 3 preferred label unavailable | 4 id:str (source conformation)
+residue      := model_id:str asym_id:str position insertion_code:opt str
+position     := 0 label:i32 | 1 author:str | 2 author:str repeat:usize
+              | 3 component_id:str index:usize
+entity       := id:str polymer_type:opt (code:u8 other:str when 9)
+                monomers_source:u8 sequence:str sequence_source:u8
+                list(monomer) list(entity_instance)
+monomer      := number:i32 component_id:str alternatives:list(str)
+                code:str origin:u8 parents:list(str)
+entity_instance := asym_id:str author_chain_id:opt str chain:opt u32
+                   list(sequence_position)
+sequence_position := residue:opt u32 author_seq_id:opt str insertion_code:opt str
+```
+
+Coordination atoms are `InstanceAtomId::to_bits`. Polymer types: `0`
+polypeptide(L), `1` polypeptide(D), `2` polydeoxyribonucleotide, `3`
+polyribonucleotide, `4` DNA/RNA hybrid, `5` peptide nucleic acid, `6`
+cyclic-pseudo-peptide, `7` polysaccharide(D), `8` polysaccharide(L), `9`
+another value. Sequence sources: `0` stated, `1` derived. Code origins: `0`
+component, `1` parent, `2` sequence, `3` unknown.
+
+An issue is its kind, then its fields in declaration order, with lists as
+`list`, line lists as `count packed`, residues as `residue`, entity kinds as
+`u8` (`str` follows `4`), charges as `i8`, and partners as `u8`.
+
+| Kind | Issue | Kind | Issue |
+| --- | --- | --- | --- |
+| 0 | `EntityTypeInferred` | 10 | `AlternateLocationOccupancyTie` |
+| 1 | `ElementsInferredFromAtomNames` | 11 | `ConnectivityCandidatesInferred` |
+| 2 | `ConnectionsIgnored` | 12 | `ResidueBondsInferred` |
+| 3 | `ConnectionUnresolved` | 13 | `HydrogenAttachedByDistance` |
+| 4 | `ConnectionAmbiguous` | 14 | `ChainBreak` |
+| 5 | `CoordinateModelIgnored` | 15 | `ChargesFromBonds` |
+| 6 | `AlternateLocationOmitted` | 16 | `ProtonationFromHydrogens` |
+| 7 | `AlternateLocationIncomplete` | 17 | `ResidueFragmented` |
+| 8 | `AlternateLocationOccupancyMissing` | 18 | `CellOmitted` |
+| 9 | `AlternateLocationCombinationRejected` | | |
+
+Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
+selector, `2` conflicting selector values (`u8`: `0` label alternate-location
+aliases, `1` label and author alternate locations), `3` conflicting label and
+author selectors, `4` alternate location omitted (`str`), `5` no matching
+atom, `6` multiple matching atoms. A cell omission is its reason (`0`
+incomplete, `1` space group with its `str` name, `2` placeholder), its line
+(`usize`), and its column (`opt usize`).
+
 ## Limits
 
 `NativeReadOptions` bounds the input bytes; the atoms and bonds of one
 molecule or topology (including the instance expansion of a topology), which
 also bound atom sites and residue site lists; the samples, states, frames, or items of one
 collection, hierarchy chains and residues, property columns and owner
-values; and the byte length of one string. The defaults are exported as
+values, and the entries of report lists; and the byte length of one string.
+The atoms and bonds of one report's instance provenance count against the
+atom and bond limits. The defaults are exported as
 `DEFAULT_NATIVE_MAX_*` constants. Exceeding a limit is a `FormatError` of
 kind `DiagnosticKind::Limit` carrying `LimitExceeded`. A topology can expand
 few input bytes into many atoms by instantiating a large definition many

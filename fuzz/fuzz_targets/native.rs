@@ -11,6 +11,10 @@ fn encode(object: &NativeObject) -> Vec<u8> {
         NativeObject::Ensemble(value) => native::write(value, options),
         NativeObject::Trajectory(value) => native::write(value, options),
         NativeObject::Series(value) => native::write(value, options),
+        NativeObject::StructureInterpretation(value) => native::write(value.as_ref(), options),
+        NativeObject::StructureEnsembleInterpretation(value) => {
+            native::write(value.as_ref(), options)
+        }
         _ => return Vec::new(),
     }
     .expect("a decoded object encodes")
