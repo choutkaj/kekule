@@ -146,8 +146,13 @@ pub enum WriteOmission {
         /// The bonds left out.
         bonds: usize,
     },
-    /// Metal coordination records of an interpretation report, of this
-    /// many records, that name an atom the written model does not have.
+    /// Metal coordination records of interpretation reports, of this many
+    /// records, that the output does not state: records that no longer
+    /// match the written structure, and, in PDB, records that not every
+    /// sample or item states, that name a chain written as a segment
+    /// identifier, whose partners are not one metal and one non-metal, or
+    /// whose partner identifiers also name another atom. A record that
+    /// several reports state counts once.
     Coordination {
         /// The records left out.
         records: usize,

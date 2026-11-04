@@ -1,25 +1,36 @@
 //! PDB writing of models, ensembles, series, and collection items.
 //!
-//! A written entry holds an optional `CRYST1` record, one `MODEL` per
-//! ensemble sample or series item (none for a single structure), `ATOM` and `HETATM`
-//! records in dense atom order with a `TER` record after each chain's
-//! polymer, `CONECT` records for the bonds a reader cannot derive from the
-//! Chemical Component Dictionary, and `END`. A chain identifier longer than
-//! the one-character chain column, such as the `SOL1` and `ION1` chains
-//! [`crate::solvation::solvate`] adds, is written as a segment identifier
-//! under [`PdbChainIdPolicy::SegmentId`].
-use std::collections::{BTreeMap, BTreeSet};
+//! A written entry holds these records, in this order:
+//! - `LINK` for the metal coordination of interpretation reports, when the
+//!   source has them ([`PdbSource::with_reports`]);
+//! - `CRYST1` for a representable cell;
+//! - `MODEL` and `ENDMDL` around each ensemble sample or series item, none
+//!   for a single structure;
+//! - `ATOM` and `HETATM` in dense atom order, with a `TER` after each
+//!   chain's polymer;
+//! - `CONECT` for the bonds a reader cannot derive from the Chemical
+//!   Component Dictionary;
+//! - `END`.
+//!
+//! A chain identifier longer than the one-character chain column, such as
+//! the `SOL1` and `ION1` chains [`crate::solvation::solvate`] adds, is
+//! written as a segment identifier under [`PdbChainIdPolicy::SegmentId`].
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;
 
 use crate::diagnostics::{
-    Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField,
+    counted, Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail,
+    StructureField,
 };
 use crate::geometry::{PeriodicCell, Point3};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::mmcif_write::bond_order_name;
-use crate::io::structure_interpret::is_metal;
+use crate::io::structure_interpret::{
+    is_metal, StructureEnsembleInterpretation, StructureInterpretation,
+    StructureInterpretationReport,
+};
 use crate::io::write_error::{
     check_structure_state, record_multi_model_ensemble, record_multi_model_series, Omissions,
     StatePolicies,
@@ -422,15 +433,26 @@ pub enum PdbWriteIssue {
     },
     /// The series has no items.
     EmptySeries,
+    /// The number of interpretation reports does not match the number of
+    /// structures: one for a structure, one per sample or item.
+    ReportCountMismatch {
+        /// The number of structures.
+        expected: usize,
+        /// The number of reports.
+        actual: usize,
+    },
 }
 
 impl PdbWriteIssue {
     /// The diagnostic kind of a write error with this detail:
     /// [`DiagnosticKind::Inconsistent`] for an empty ensemble or series and
+    /// for reports that do not match the structures, and
     /// [`DiagnosticKind::Unsupported`] otherwise.
     pub const fn kind(&self) -> DiagnosticKind {
         match self {
-            Self::EmptyEnsemble | Self::EmptySeries => DiagnosticKind::Inconsistent,
+            Self::EmptyEnsemble | Self::EmptySeries | Self::ReportCountMismatch { .. } => {
+                DiagnosticKind::Inconsistent
+            }
             _ => DiagnosticKind::Unsupported,
         }
     }
@@ -533,6 +555,12 @@ impl fmt::Display for PdbWriteIssue {
                 "The {field} of series item {item} has no PDB representation."
             ),
             Self::EmptySeries => f.write_str("The series has no items."),
+            Self::ReportCountMismatch { expected, actual } => write!(
+                f,
+                "The entry has {} and {}.",
+                counted(*expected, "structure", "structures"),
+                counted(*actual, "interpretation report", "interpretation reports")
+            ),
         }
     }
 }
@@ -542,15 +570,18 @@ fn fail(issue: PdbWriteIssue) -> FormatError {
         .with_detail(FormatErrorDetail::PdbWrite(issue))
 }
 
-/// One PDB entry to write: a structure, an ensemble, or a series.
+/// One PDB entry to write: a structure, an ensemble, or a series, and the
+/// interpretation reports whose metal coordination it states.
 ///
-/// Convert from `&Model`, `&Ensemble`, or `&Series`; [`Self::structure`]
-/// accepts any borrowed model view, such as an ensemble sample, a trajectory
-/// frame, or a series item, whose own state fails to write unless the write
-/// options omit it.
+/// Convert from `&Model`, `&Ensemble`, `&Series`, `&StructureInterpretation`,
+/// or `&StructureEnsembleInterpretation`; interpretations keep their source
+/// reports. [`Self::structure`] accepts any borrowed model view, such as an
+/// ensemble sample, a trajectory frame, or a series item, whose own state
+/// fails to write unless the write options omit it.
 #[derive(Debug, Clone, Copy)]
 pub struct PdbSource<'a> {
     content: Content<'a>,
+    reports: Option<&'a [StructureInterpretationReport]>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -565,6 +596,7 @@ impl<'a> PdbSource<'a> {
     pub fn structure(structure: &'a (impl AsModelView + ?Sized)) -> Self {
         Self {
             content: Content::Structure(structure.as_model_view()),
+            reports: None,
         }
     }
 
@@ -572,6 +604,7 @@ impl<'a> PdbSource<'a> {
     pub fn ensemble(ensemble: &'a Ensemble) -> Self {
         Self {
             content: Content::Ensemble(ensemble),
+            reports: None,
         }
     }
 
@@ -581,7 +614,38 @@ impl<'a> PdbSource<'a> {
     pub fn series(series: &'a Series) -> Self {
         Self {
             content: Content::Series(series),
+            reports: None,
         }
+    }
+
+    /// States the metal coordination of interpretation reports as `LINK`
+    /// records: one report for a structure, one per sample or item for an
+    /// ensemble or series. Coordination between residues is no bond of the
+    /// model, so without reports the entry has no `LINK` records.
+    ///
+    /// Each record names both partners as their atom records do, with blank
+    /// alternate locations, the identity symmetry operator `1555`, and the
+    /// partners' distance in the first structure. `LINK` records belong to
+    /// the entry rather than to a model, so an ensemble or series states the
+    /// coordination every report states. Each pair of atoms is stated once.
+    /// A record is left out and counted as [`WriteOmission::Coordination`]
+    /// when:
+    /// - the structure no longer matches the report: a partner is missing,
+    ///   or its atom site has other names or another component than the
+    ///   report recorded;
+    /// - another report of the ensemble or series does not state it;
+    /// - a partner's chain is written as a segment identifier, which the
+    ///   `LINK` chain column cannot hold;
+    /// - the partners are not one metal and one non-metal, such as two metal
+    ///   ions an mmCIF `metalc` row joins: readers take such a `LINK` for a
+    ///   bond;
+    /// - a partner's identifiers also name another atom: readers take a blank
+    ///   chain or insertion code in a `LINK` for any, so residue `10` also
+    ///   names residue `10A`.
+    #[must_use]
+    pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
+        self.reports = Some(reports);
+        self
     }
 }
 
@@ -600,6 +664,19 @@ impl<'a> From<&'a Ensemble> for PdbSource<'a> {
 impl<'a> From<&'a Series> for PdbSource<'a> {
     fn from(series: &'a Series) -> Self {
         Self::series(series)
+    }
+}
+
+impl<'a> From<&'a StructureInterpretation> for PdbSource<'a> {
+    fn from(interpretation: &'a StructureInterpretation) -> Self {
+        Self::structure(interpretation.model())
+            .with_reports(std::slice::from_ref(interpretation.report()))
+    }
+}
+
+impl<'a> From<&'a StructureEnsembleInterpretation> for PdbSource<'a> {
+    fn from(interpretation: &'a StructureEnsembleInterpretation) -> Self {
+        Self::ensemble(interpretation.ensemble()).with_reports(interpretation.reports())
     }
 }
 
@@ -623,7 +700,8 @@ pub(crate) fn write_pdb_to<'a>(
     options: PdbWriteOptions,
 ) -> Result<WriteReport, FormatError> {
     let mut omissions = Omissions::default();
-    let (views, models) = match source.into().content {
+    let source = source.into();
+    let (views, models) = match source.content {
         Content::Structure(view) => {
             check_structure_state(Format::Pdb, view.kind(), options.state_policies())?;
             omissions.record_structure_state(view.kind(), options.state_policies());
@@ -661,12 +739,25 @@ pub(crate) fn write_pdb_to<'a>(
         });
     }
     let plan = Plan::new(views[0].topology(), &options, &mut omissions)?;
+    let links = match source.reports {
+        Some(reports) if reports.len() != views.len() => {
+            return Err(fail(PdbWriteIssue::ReportCountMismatch {
+                expected: views.len(),
+                actual: reports.len(),
+            }));
+        }
+        Some(reports) => plan.links(&views, reports, &mut omissions),
+        None => Vec::new(),
+    };
     // Check every structure's values before the first byte is written.
     let rows = views
         .iter()
         .map(|view| structure_values(*view, &plan))
         .collect::<Result<Vec<_>, _>>()?;
     let io = |error: std::io::Error| FormatError::sink(Format::Pdb, error);
+    for link in &links {
+        plan.write_link(writer, *link, &rows[0]).map_err(io)?;
+    }
     if let Some([a, b, c, alpha, beta, gamma]) = cell {
         writeln!(
             writer,
@@ -798,6 +889,10 @@ struct Identity {
     sequence: Option<String>,
     insertion_code: Option<String>,
 }
+
+/// Atom records by dense index, grouped by atom name, residue name, and
+/// residue number.
+type RecordIdentities<'a> = HashMap<(&'a str, &'a str, &'a str), Vec<usize>>;
 
 /// Everything about the entry that every structure shares: atom records and
 /// `CONECT` listings.
@@ -1279,6 +1374,155 @@ impl Plan {
             }
         }
         Ok(())
+    }
+
+    /// The coordination of the reports that the entry states, as pairs of
+    /// dense indices in the first report's record order; see
+    /// [`PdbSource::with_reports`] for what is left out.
+    fn links(
+        &self,
+        views: &[ModelView<'_>],
+        reports: &[StructureInterpretationReport],
+        omissions: &mut Omissions,
+    ) -> Vec<[usize; 2]> {
+        let pair = |[left, right]: [InstanceAtomId; 2]| {
+            if left <= right {
+                [left, right]
+            } else {
+                [right, left]
+            }
+        };
+        let stated = reports
+            .iter()
+            .flat_map(|report| report.coordination())
+            .map(|record| pair(record.atoms()))
+            .collect::<BTreeSet<_>>();
+        let mut matched = views
+            .iter()
+            .zip(reports)
+            .map(|(view, report)| report.coordination_in(view.topology()).records);
+        let first = matched.next().unwrap_or_default();
+        let others = matched
+            .map(|records| records.into_iter().map(pair).collect::<BTreeSet<_>>())
+            .collect::<Vec<_>>();
+        let topology = views[0].topology();
+        let mut identities = None;
+        let mut written = BTreeSet::new();
+        let mut links = Vec::new();
+        for atoms in first {
+            let key = pair(atoms);
+            if written.contains(&key) || !others.iter().all(|records| records.contains(&key)) {
+                continue;
+            }
+            let indices = atoms.map(|atom| {
+                topology
+                    .atom_index(atom)
+                    .expect("matched partners are topology atoms")
+                    .index()
+            });
+            // The `LINK` chain column cannot hold a segment identifier.
+            if indices
+                .iter()
+                .any(|&index| !self.records[index].segment.is_empty())
+            {
+                continue;
+            }
+            // Readers take a `LINK` for coordination only between a metal and
+            // a non-metal; between other pairs it would read back as a bond.
+            let metals = atoms.map(|atom| {
+                topology
+                    .atom(atom)
+                    .is_some_and(|view| is_metal(view.atom().element))
+            });
+            if metals[0] == metals[1] {
+                continue;
+            }
+            if !indices
+                .iter()
+                .all(|&index| self.selects_one(index, &mut identities))
+            {
+                continue;
+            }
+            written.insert(key);
+            links.push(indices);
+        }
+        omissions.record(WriteOmission::Coordination {
+            records: stated.len() - written.len(),
+        });
+        links
+    }
+
+    /// Whether a `LINK` partner naming the atom record at `index` selects it
+    /// alone. Readers take a blank chain or insertion code in a `LINK` for
+    /// any, so a residue `10` also matches residue `10A`. `identities` groups
+    /// the records by atom name, residue name, and number, built on first
+    /// use.
+    fn selects_one<'a>(
+        &'a self,
+        index: usize,
+        identities: &mut Option<RecordIdentities<'a>>,
+    ) -> bool {
+        let identity = |record: &'a AtomRecord| {
+            (
+                record.name.trim(),
+                record.residue_name.as_str(),
+                record.sequence.as_str(),
+            )
+        };
+        let identities = identities.get_or_insert_with(|| {
+            let mut groups = HashMap::<_, Vec<usize>>::new();
+            for (index, record) in self.records.iter().enumerate() {
+                groups.entry(identity(record)).or_default().push(index);
+            }
+            groups
+        });
+        let partner = &self.records[index];
+        identities[&identity(partner)]
+            .iter()
+            .filter(|&&other| {
+                let candidate = &self.records[other];
+                (partner.chain == ' ' || candidate.chain == partner.chain)
+                    && (partner.insertion_code == ' '
+                        || candidate.insertion_code == partner.insertion_code)
+            })
+            .count()
+            == 1
+    }
+
+    /// One `LINK` record in the columns of PDB format version 3.3, with the
+    /// partners' distance in `values`.
+    fn write_link(
+        &self,
+        writer: &mut impl Write,
+        [left, right]: [usize; 2],
+        values: &[SiteValues],
+    ) -> std::io::Result<()> {
+        let partner = |index: usize| {
+            let record = &self.records[index];
+            format!(
+                "{} {:>3} {}{:>4}{}",
+                record.name,
+                record.residue_name,
+                record.chain,
+                record.sequence,
+                record.insertion_code
+            )
+        };
+        let distance = (values[left].position - values[right].position).norm();
+        // Columns 74-78 hold distances up to 99.99 Å.
+        let distance = if rounded(distance, 2) <= 99.99 {
+            format!("{distance:>5.2}")
+        } else {
+            String::new()
+        };
+        let line = format!(
+            "LINK        {}               {}  {:>6} {:>6} {distance}",
+            partner(left),
+            partner(right),
+            "1555",
+            "1555",
+        );
+        writeln!(writer, "{}", line.trim_end())
     }
 
     fn write_conect(&self, writer: &mut impl Write) -> std::io::Result<()> {

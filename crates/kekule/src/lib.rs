@@ -1095,8 +1095,9 @@ pub mod mmcif {
     /// interpretation report keeps it
     /// ([`StructureInterpretationReport::coordination`](crate::macromolecular::StructureInterpretationReport::coordination)).
     /// A block written with its report states it as `metalc` rows; a block
-    /// written from a model alone has none. A record that names an atom the
-    /// model lacks is left out and counted as
+    /// written from a model alone has none. A record whose partners the
+    /// model no longer has as the report recorded them is left out and
+    /// counted as
     /// [`WriteOmission::Coordination`](crate::diagnostics::WriteOmission::Coordination).
     ///
     /// # Errors
@@ -1260,11 +1261,22 @@ pub mod pdb {
     /// Bonds within standard residues the dictionary covers, polymer
     /// linkage, and bonds within water are derived by readers and not listed.
     ///
+    /// Metal coordination between residues is no bond of the model: an
+    /// interpretation report keeps it
+    /// ([`StructureInterpretationReport::coordination`](crate::macromolecular::StructureInterpretationReport::coordination)).
+    /// An entry written with its reports states it as `LINK` records before
+    /// the coordinates ([`PdbSource::with_reports`]); an entry written from
+    /// a structure alone has none. Records the entry cannot state are
+    /// counted as
+    /// [`WriteOmission::Coordination`](crate::diagnostics::WriteOmission::Coordination).
+    ///
     /// # Errors
     ///
     /// A write-stage [`FormatError`] of kind
     /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
-    /// with a [`PdbWriteIssue`] when PDB cannot hold the content. Identifiers
+    /// with a [`PdbWriteIssue`] when PDB cannot hold the content, and
+    /// `Inconsistent` for an empty ensemble or series or a report count that
+    /// does not match the structures. Identifiers
     /// that do not fit their columns always fail: chain identifiers longer
     /// than one character, residue names longer than three, atom names longer
     /// than four, insertion codes longer than one, residue numbers outside
@@ -1292,6 +1304,24 @@ pub mod pdb {
     /// assert_eq!(written, text);
     /// assert!(report.omissions().is_empty());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// An interpretation keeps its report, and so its coordination; a model
+    /// or an ensemble takes reports from [`PdbSource::with_reports`]:
+    ///
+    /// ```no_run
+    /// use kekule::pdb::{self, PdbSource};
+    /// # fn example(interpretation: &kekule::macromolecular::StructureInterpretation,
+    /// #     ensemble: &kekule::macromolecular::StructureEnsembleInterpretation)
+    /// #     -> Result<(), kekule::diagnostics::FormatError> {
+    /// let (entry, _) = pdb::write(interpretation, Default::default())?;
+    /// let (models, _) = pdb::write(
+    ///     PdbSource::ensemble(ensemble.ensemble()).with_reports(ensemble.reports()),
+    ///     Default::default(),
+    /// )?;
+    /// # let _ = (entry, models);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn write<'a>(
         source: impl Into<PdbSource<'a>>,

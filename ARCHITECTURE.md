@@ -896,7 +896,9 @@ export.
   whose partner the model lacks is left out and reported. A model's own
   dative bond between residues is written as coordination (`metalc`, or
   PDB `CONECT`), which reads back as a record rather than a bond, and the
-  write report counts it.
+  write report counts it. Both writers take the coordination records that
+  still match the model from one shared step: each partner must keep the
+  atom names, type symbol, and component the report recorded.
   Every entity instance is its own label asym: a chain the source names as
   one asym stays one, while a chain without a source asym that holds a
   polymer, ligands, and water, as a PDB author chain does, is written as
@@ -921,6 +923,14 @@ export.
   CHARMM and NAMD name segments; the PDB reader takes such a segment for the
   chain, so the identifier survives. Hybrid-36 extends serial and residue
   numbers. A cell is written as `CRYST1` under the rule its reader applies.
+  Given interpretation reports, the writer states their metal coordination
+  as `LINK` records before the coordinates, with the atom records'
+  identifiers and the symmetry operator `1555`. `LINK` records belong to
+  the entry, not to a model, so an ensemble states the coordination every
+  sample's report states. The rest are left out and reported, and so are
+  records naming a chain written as a segment identifier, records between
+  two metals, which readers would take for a bond, and records whose
+  partner identifiers also name another atom.
   Solvation names its waters and ions as the Chemical Component Dictionary
   does, which PDB and mmCIF readers check, and leaves their (zero)
   implicit-hydrogen counts to valence inference, as those readers do, so a
