@@ -68,8 +68,8 @@ pub(super) struct PreparedModel {
     pub(super) connections: Vec<ConnectionRow>,
     /// Atoms whose fixed implicit-hydrogen counts the rows leave out.
     pub(super) omitted_hydrogens: usize,
-    /// Interpretation-report coordination records left out because the
-    /// model lacks a partner.
+    /// Interpretation-report coordination records left out because they no
+    /// longer match the model.
     pub(super) omitted_coordination: usize,
     /// Dative bonds between residues, stated as `metalc` rows that readers
     /// record as coordination rather than bonds.

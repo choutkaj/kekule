@@ -78,10 +78,10 @@ pub(super) struct EntityPlan {
     pub(super) asyms: Vec<AsymRow>,
     pub(super) atoms: BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     /// The report's metal coordination between residues, written as
-    /// `metalc` rows: the records whose partners are both model atoms.
+    /// `metalc` rows: the records that still match the model.
     pub(super) coordination: Vec<[InstanceAtomId; 2]>,
-    /// The report's coordination records left out because the model lacks
-    /// a partner.
+    /// The report's coordination records left out because they no longer
+    /// match the model.
     pub(super) omitted_coordination: usize,
 }
 
@@ -429,22 +429,14 @@ fn report_entity_plan(
         }
     }
 
-    let (coordination, dangling): (Vec<_>, Vec<_>) = report
-        .coordination()
-        .iter()
-        .map(|record| record.atoms())
-        .partition(|partners| {
-            partners
-                .iter()
-                .all(|&atom| model.topology().atom(atom).is_some())
-        });
+    let coordination = report.coordination_in(model.topology());
 
     Ok(EntityPlan {
         entities,
         asyms,
         atoms,
-        coordination,
-        omitted_coordination: dangling.len(),
+        coordination: coordination.records,
+        omitted_coordination: coordination.unmatched,
     })
 }
 
