@@ -13,6 +13,7 @@ use kekule::native::{
     self, NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
     NATIVE_FORMAT_VERSION,
 };
+use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
     Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Forces, Model, Positions, Series,
@@ -25,7 +26,7 @@ use kekule::units::{
     Quantity, ANGSTROM, DALTON, DEGREE, ELEMENTARY_CHARGE, KILOJOULE_PER_MOLE, NANOMETER,
     PICOSECOND,
 };
-use kekule::{mmcif, smiles};
+use kekule::{mmcif, pdb, smiles};
 
 use super::support::{fixture, hierarchy_record};
 
@@ -364,7 +365,7 @@ fn macromolecular_models_round_trip_bitwise() {
 #[test]
 fn interpreted_models_keep_their_reports() {
     let mut unobserved = 0;
-    for name in ["mmcif/9UOH.cif", "mmcif/1AKE.cif"] {
+    for name in ["mmcif/9UOH.cif", "mmcif/1IRO.cif", "mmcif/1AKE.cif"] {
         let text = std::fs::read_to_string(fixture(name)).unwrap();
         let interpretation = mmcif::parse_str(&text, Default::default())
             .unwrap()
@@ -373,9 +374,8 @@ fn interpreted_models_keep_their_reports() {
         let report = interpretation.report();
         assert!(!report.instances().is_empty(), "{name}");
         assert!(!report.polymer_entities().is_empty(), "{name}");
-        if name.contains("9UOH") {
-            assert!(!report.coordination().is_empty());
-        }
+        let coordinated = !name.contains("1AKE");
+        assert_eq!(!report.coordination().is_empty(), coordinated, "{name}");
         unobserved += report
             .polymer_entities()
             .iter()
@@ -387,14 +387,24 @@ fn interpreted_models_keep_their_reports() {
         let decoded = round_trip(&interpretation).into_interpretation().unwrap();
         assert_eq!(decoded.report(), report, "{name}");
         assert_same_model(decoded.model(), interpretation.model());
-        // The mmCIF writer states the same records, metal coordination and
-        // entities included, from the decoded report.
+        // The mmCIF and PDB writers state the same records, metal
+        // coordination and entities included, from the decoded report.
         let written = |source| {
             mmcif::write([source], MmcifWriteOptions::default())
                 .unwrap()
                 .0
         };
         assert_eq!(written(&decoded), written(&interpretation), "{name}");
+        // 9UOH has a five-character component, which PDB cannot hold.
+        if !name.contains("9UOH") {
+            let written = |source| pdb::write(source, PdbWriteOptions::default()).unwrap().0;
+            assert_eq!(written(&decoded), written(&interpretation), "{name}");
+            assert_eq!(
+                written(&decoded).contains("\nLINK  "),
+                coordinated,
+                "{name}"
+            );
+        }
 
         // A model and its report held apart write the same bytes.
         let (model, report) = interpretation.clone().into_parts();
