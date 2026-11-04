@@ -22,8 +22,10 @@ are marked **Breaking:**.
   in the first structure. `LINK` records belong to the entry, so an
   ensemble or series states the coordination every report states.
   `WriteOmission::Coordination` counts the records left out: those that no
-  longer match the structure, those another sample does not state, and
-  those that name a chain written as a segment identifier. A report count
+  longer match the structure, those another sample does not state, those
+  that name a chain written as a segment identifier, and those whose
+  partners are not one metal and one non-metal, which readers would take
+  for a bond. A report count
   that does not match the structures fails with
   `PdbWriteIssue::ReportCountMismatch`. Without reports the output is
   unchanged.

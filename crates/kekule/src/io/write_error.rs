@@ -149,8 +149,9 @@ pub enum WriteOmission {
     /// Metal coordination records of interpretation reports, of this many
     /// records, that the output does not state: records that no longer
     /// match the written structure, and, in PDB, records that not every
-    /// sample or item states or that name a chain written as a segment
-    /// identifier. A record that several reports state counts once.
+    /// sample or item states, that name a chain written as a segment
+    /// identifier, or whose partners are not one metal and one non-metal. A
+    /// record that several reports state counts once.
     Coordination {
         /// The records left out.
         records: usize,

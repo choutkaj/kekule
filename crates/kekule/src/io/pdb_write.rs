@@ -635,7 +635,10 @@ impl<'a> PdbSource<'a> {
     ///   report recorded;
     /// - another report of the ensemble or series does not state it;
     /// - a partner's chain is written as a segment identifier, which the
-    ///   `LINK` chain column cannot hold.
+    ///   `LINK` chain column cannot hold;
+    /// - the partners are not one metal and one non-metal, such as two metal
+    ///   ions an mmCIF `metalc` row joins: readers take such a `LINK` for a
+    ///   bond.
     #[must_use]
     pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
         self.reports = Some(reports);
@@ -1414,6 +1417,16 @@ impl Plan {
                 .iter()
                 .any(|&index| !self.records[index].segment.is_empty())
             {
+                continue;
+            }
+            // Readers take a `LINK` for coordination only between a metal and
+            // a non-metal; between other pairs it would read back as a bond.
+            let metals = atoms.map(|atom| {
+                topology
+                    .atom(atom)
+                    .is_some_and(|view| is_metal(view.atom().element))
+            });
+            if metals[0] == metals[1] {
                 continue;
             }
             written.insert(key);

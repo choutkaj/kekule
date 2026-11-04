@@ -934,6 +934,51 @@ fn coordination_the_entry_cannot_state_is_reported() {
         ]
     );
 
+    // Coordination between two metal ions, which a LINK would make a bond.
+    let ions = mmcif::parse_str(
+        "data_ions
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+_atom_site.pdbx_PDB_model_num
+HETATM 1 ZN ZN ZN A 1 . 0.000 0.000 0.000 1 A 1
+HETATM 2 ZN ZN ZN B 1 . 2.600 0.000 0.000 2 A 1
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_atom_id
+metalc1 metalc A ZN ZN B ZN ZN
+",
+        Default::default(),
+    )
+    .unwrap()
+    .interpret(Default::default())
+    .unwrap();
+    assert_eq!(ions.report().coordination().len(), 1);
+    let (written, report) = pdb::write(&ions, Default::default()).unwrap();
+    assert!(records(&written, "LINK").is_empty());
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::Coordination { records: 1 }]
+    );
+    assert_eq!(interpretation(&written).topology().instance_count(), 2);
+
     // One report per structure.
     let error = pdb::write(
         PdbSource::structure(source.model()).with_reports(&[]),
