@@ -847,6 +847,9 @@ pub enum AssemblyOmissionReason {
         /// The operator's identifier.
         operator: String,
     },
+    /// With it, the source's assemblies would use their operators more
+    /// than 100,000 times, counting each operator of a product.
+    TooManyOperations,
 }
 
 /// Writes the reason as a sentence, such as `Operator "61" is not stated.`
@@ -871,6 +874,9 @@ impl fmt::Display for AssemblyOmissionReason {
             Self::NotRotation { operator } => {
                 write!(formatter, "Operator {operator:?} is not a rotation.")
             }
+            Self::TooManyOperations => formatter.write_str(
+                "With it, the file's assemblies would apply more than 100,000 operators.",
+            ),
         }
     }
 }

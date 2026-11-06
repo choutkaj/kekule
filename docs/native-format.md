@@ -431,7 +431,8 @@ incomplete, `1` space group with its `str` name, `2` placeholder), its line
 (`usize`), and its column (`opt usize`). An assembly omission is its
 assembly (`opt str`), its reason (`0` unidentified, `1` no generators, `2`
 expression, `3` unknown operator, `4` unreadable operator, `5` not a
-rotation; `2` to `5` with a `str`), and its line (`opt usize`).
+rotation, `6` too many operations; `2` to `5` with a `str`), and its line
+(`opt usize`).
 
 ## Limits
 

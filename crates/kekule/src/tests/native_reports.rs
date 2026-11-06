@@ -316,6 +316,11 @@ fn report(foreign: bool) -> StructureInterpretationReport {
             },
             line: Some(34),
         },
+        Issue::AssemblyOmitted {
+            assembly: Some("6".into()),
+            reason: AssemblyOmissionReason::TooManyOperations,
+            line: None,
+        },
     ];
     for (index, reason) in reasons.into_iter().enumerate() {
         issues.push(if index % 2 == 0 {
@@ -602,6 +607,31 @@ fn find(bytes: &[u8], needle: &[u8]) -> usize {
         .windows(needle.len())
         .position(|window| window == needle)
         .expect("the needle is in the encoding")
+}
+
+#[test]
+fn decoded_assembly_operations_are_rigid() {
+    let (model, _) = parts();
+    let mut report = report(false);
+    // A mirror, as no reader would have read it.
+    report.assemblies[0].generators[0].operations[1].rotation = Matrix3::from_columns(
+        Vector3::new(-1.0, 0.0, 0.0),
+        Vector3::new(0.0, 1.0, 0.0),
+        Vector3::new(0.0, 0.0, 1.0),
+    );
+    let bytes = native::write(
+        NativeSource::interpreted_model(&model, &report),
+        NativeWriteOptions::default(),
+    )
+    .unwrap();
+    let error = read(&bytes).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue, "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("Assembly operation \"2-61\" is not a rotation and a translation."),
+        "{error}"
+    );
 }
 
 #[test]

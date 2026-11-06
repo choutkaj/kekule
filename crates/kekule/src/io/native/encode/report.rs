@@ -602,6 +602,7 @@ impl<W: Write> Encoder<'_, W> {
                         self.u8(5)?;
                         self.str(operator)?;
                     }
+                    AssemblyOmissionReason::TooManyOperations => self.u8(6)?,
                 }
                 self.opt_usize(*line)
             }

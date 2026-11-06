@@ -162,6 +162,47 @@ fn copies_keep_identity_chains_and_name_the_others_by_operation() {
     );
 }
 
+/// The chains of a model, sorted.
+fn sorted_chains(model: &kekule::structure::Model) -> Vec<(String, Option<String>)> {
+    let mut chains = chain_labels(model);
+    chains.sort();
+    chains
+}
+
+#[test]
+fn written_assemblies_name_every_copy() {
+    // mmCIF: the trimer's copies keep their names through writing, label and
+    // author, so it reads back as built.
+    let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
+    let built = interpretation.report().assemblies()[0]
+        .to_model(interpretation.model(), None)
+        .unwrap();
+    let (text, _) = mmcif::write(
+        [mmcif::MmcifBlockSource::model(&built)],
+        mmcif::MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    let read = from_mmcif(&text);
+    assert_eq!(sorted_chains(read.model()), sorted_chains(&built));
+
+    // PDB: the copies' chains, `A-2` and `A-3`, as segment identifiers,
+    // which read back as chains.
+    let interpretation = from_pdb(INSULIN_RECEPTOR_KINASE_PDB);
+    let built = interpretation.report().assemblies()[0]
+        .to_model(interpretation.model(), None)
+        .unwrap();
+    let options = pdb::PdbWriteOptions::default().with_chain_ids(pdb::PdbChainIdPolicy::SegmentId);
+    let (text, _) = pdb::write(&built, options).unwrap();
+    let read = from_pdb(&text);
+    let mut labels = chain_labels(read.model())
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect::<Vec<_>>();
+    labels.dedup();
+    assert_eq!(labels, ["A", "A-2", "A-3"]);
+    assert_eq!(read.model().atom_count(), built.atom_count());
+}
+
 #[test]
 fn assemblies_pick_their_chains() {
     let interpretation = from_mmcif(ADENYLATE_KINASE);

@@ -286,11 +286,20 @@ impl<R: Read> Decoder<'_, R> {
                     *vector = Vector3::new(self.f64()?, self.f64()?, self.f64()?);
                 }
                 let [a, b, c, translation] = vectors;
-                operations.push(AssemblyOperation {
+                let operation = AssemblyOperation {
                     operators,
                     rotation: Matrix3::from_columns(a, b, c),
                     translation,
-                });
+                };
+                // Reading refuses what is not a rigid motion, and so does
+                // decoding, so a model built from it keeps its geometry.
+                if !operation.is_rigid() {
+                    return Err(self.invalid(format!(
+                        "Assembly operation {:?} is not a rotation and a translation.",
+                        operation.name()
+                    )));
+                }
+                operations.push(operation);
             }
             generators.push(AssemblyGenerator { chains, operations });
         }
@@ -697,6 +706,7 @@ impl<R: Read> Decoder<'_, R> {
                     5 => AssemblyOmissionReason::NotRotation {
                         operator: self.str()?,
                     },
+                    6 => AssemblyOmissionReason::TooManyOperations,
                     other => {
                         return Err(self
                             .invalid(format!("The assembly omission reason {other} is unknown.")))

@@ -22,11 +22,14 @@ are marked **Breaking:**.
   rightmost operator first. An assembly whose expression, operators, or
   chains cannot be read is left out with the new issue
   `StructureInterpretIssue::AssemblyOmitted` and its
-  `AssemblyOmissionReason`; a mirror or scaling is not a rotation.
+  `AssemblyOmissionReason`; a mirror or scaling is not a rotation. A
+  source's assemblies use at most 100,000 operators together, counted
+  before anything expands; those beyond are left out.
   `Assembly::to_model` builds the assembly from the interpreted model as one
   new model, with cancellation: a copy under the identity keeps its chains'
   identifiers, and other copies append the operation's name, label and
-  author alike (`A-2`, `A-12-60`). Copies share their molecules'
+  author alike, on chains and atom sites (`A-2`, `A-12-60`), so the mmCIF
+  and PDB writers name each copy. Copies share their molecules'
   definitions. `Assembly::atom_count` gives the size before building.
   Reports keep their assemblies in native files.
 - **Breaking:** native format version 4. Interpretation reports store their

@@ -100,8 +100,20 @@ impl TopologyEditor {
         }
         // Hierarchy is imported independently of molecular connectedness. Even
         // equal source labels remain distinct chains, residues and atom sites.
+        // A renamed chain's sites take its new identifiers where they named
+        // the old ones, so writers name the chain as it is now.
+        let mut renamed = std::collections::HashMap::new();
         for (id, chain) in source.hierarchy().chains() {
             let (label, author) = chain_ids(chain.label_id(), chain.author_id());
+            if label != chain.label_id() || author.as_deref() != chain.author_id() {
+                renamed.insert(
+                    id,
+                    (
+                        (chain.label_id().to_owned(), label.clone()),
+                        (chain.author_id().map(str::to_owned), author.clone()),
+                    ),
+                );
+            }
             let handle = self.add_chain(label, author)?;
             mapping.chains.insert(id, handle);
         }
@@ -121,10 +133,25 @@ impl TopologyEditor {
             mapping.residues.insert(id, handle);
         }
         for (id, site) in source.hierarchy().atom_sites() {
+            let mut metadata = site.metadata().clone();
+            let chain = source
+                .hierarchy()
+                .residue(site.residue())
+                .map(|r| r.chain());
+            if let Some(((old_label, new_label), (old_author, new_author))) =
+                chain.and_then(|chain| renamed.get(&chain))
+            {
+                if metadata.label_asym_id.as_ref() == Some(old_label) {
+                    metadata.label_asym_id = Some(new_label.clone());
+                }
+                if metadata.auth_asym_id.is_some() && metadata.auth_asym_id == *old_author {
+                    metadata.auth_asym_id = new_author.clone();
+                }
+            }
             let handle = self.add_atom_site(
                 mapping.residues[&site.residue()],
                 mapping.atoms[&site.atom()],
-                site.metadata().clone(),
+                metadata,
             )?;
             mapping.sites.insert(id, handle);
         }

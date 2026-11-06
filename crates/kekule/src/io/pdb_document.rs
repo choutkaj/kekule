@@ -937,7 +937,9 @@ fn remark_350(
         let Some(serial) = tokens.next() else {
             return;
         };
+        // The matrix row and the shift; columns 69-80 may hold other text.
         let numbers = tokens
+            .take(4)
             .map(|token| token.parse::<f64>().ok())
             .collect::<Option<Vec<_>>>()
             .and_then(|numbers| <[f64; 4]>::try_from(numbers).ok());

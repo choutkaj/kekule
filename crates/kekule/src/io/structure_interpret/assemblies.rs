@@ -5,8 +5,9 @@
 //! An assembly is copies of chains, each placed by an operation: one stated
 //! operator, or the product of several (`(1-60)(61-88)`). Operations apply
 //! to the coordinates as they were read. An assembly the source states
-//! incompletely, or whose operators are not rotations, is left out of the
-//! report with an issue.
+//! incompletely, whose operators are not rotations, or that would take the
+//! source's operator uses past 100,000 is left out of the report with an
+//! issue.
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -23,14 +24,29 @@ use super::super::MmcifBlock;
 use super::atom_site::optional;
 use super::types::{AssemblyOmissionReason, StructureInterpretIssue};
 
-/// The most operations one generator's operator expression may give, so a
-/// damaged expression cannot ask for an unbounded product.
-const MAX_OPERATIONS: usize = 100_000;
+/// The most operator uses the assemblies of one source hold together: an
+/// operation that is the product of three operators uses three. Sizes are
+/// counted before anything expands, so a damaged expression cannot ask for
+/// an unbounded product. Real entries use a few thousand.
+pub(super) const MAX_OPERATOR_USES: usize = 100_000;
 
 /// How far a stated operator's rotation part may be from orthonormal, per
-/// entry, and its determinant from 1. Sources state matrices to five or six
-/// decimals.
+/// entry, and its determinant from 1. Sources state matrices to four to six
+/// decimals; mirrors and scalings are far further off.
 const ROTATION_TOLERANCE: f64 = 1.0e-3;
+
+/// Whether `rotation` is a proper rotation: RᵀR the identity and the
+/// determinant 1, each entry within `tolerance`.
+fn is_rotation(rotation: Matrix3, tolerance: f64) -> bool {
+    let gram = rotation.transpose().multiply(rotation).columns();
+    let identity = Matrix3::identity().columns();
+    let orthonormal = gram.iter().zip(&identity).all(|(column, unit)| {
+        (column.x - unit.x).abs() <= tolerance
+            && (column.y - unit.y).abs() <= tolerance
+            && (column.z - unit.z).abs() <= tolerance
+    });
+    orthonormal && (rotation.determinant() - 1.0).abs() <= tolerance
+}
 
 /// One biological assembly a source states: copies of its chains, each
 /// placed by an operation, such as a virus capsid from 60 point-symmetry
@@ -108,14 +124,15 @@ impl Assembly {
     /// Builds the assembly from `model`, the model the report was interpreted
     /// with or one with the same chains and coordinates: for each generator,
     /// a copy of the model's chains whose label identifiers it lists, moved by
-    /// each operation.
+    /// each operation. Listed chains the model lacks are skipped.
     ///
     /// A copy keeps the chemistry, perception, hierarchy, occupancies, B
     /// factors and entity properties of its atoms; copies of one molecule share
     /// its definition. A copy under the identity keeps its chains'
     /// identifiers. Any other copy appends its operation's name to them, label
-    /// and author alike, as wwPDB assembly files name copies: chain `A` under
-    /// operator `2` becomes `A-2`, under the product of `12` and `60` `A-12-60`.
+    /// and author alike, on its chains and atom sites, as wwPDB assembly files
+    /// name copies: chain `A` under operator `2` becomes `A-2`, under the
+    /// product of `12` and `60` `A-12-60`.
     /// Atoms come in generator, operation and source dense order. A generator's
     /// chains that are bonded to chains it does not list lose those bonds. The
     /// model has no cell, since copies are not a lattice's content.
@@ -287,20 +304,29 @@ impl AssemblyOperation {
         self.rotation == Matrix3::identity() && self.translation == Vector3::zero()
     }
 
-    /// `self` after `first`: `first` applies first.
-    fn after(&self, first: &Self) -> Self {
-        let mut operators = self.operators.clone();
-        operators.extend(first.operators.iter().cloned());
-        let moved = self.rotation.transform_vector(first.translation);
-        Self {
-            operators,
-            rotation: self.rotation.multiply(first.rotation),
-            translation: Vector3::new(
-                moved.x + self.translation.x,
-                moved.y + self.translation.y,
-                moved.z + self.translation.z,
-            ),
-        }
+    /// Whether it is finite and its rotation proper, as reading checks each
+    /// operator: a product within the tolerance of each of its operators.
+    pub(crate) fn is_rigid(&self) -> bool {
+        let columns = self.rotation.columns();
+        columns
+            .iter()
+            .chain([&self.translation])
+            .all(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite())
+            && is_rotation(
+                self.rotation,
+                ROTATION_TOLERANCE * self.operators.len().max(1) as f64,
+            )
+    }
+
+    /// Applies `self` after the rotation and translation given, in place.
+    fn apply_after(&self, rotation: &mut Matrix3, translation: &mut Vector3) {
+        let moved = self.rotation.transform_vector(*translation);
+        *rotation = self.rotation.multiply(*rotation);
+        *translation = Vector3::new(
+            moved.x + self.translation.x,
+            moved.y + self.translation.y,
+            moved.z + self.translation.z,
+        );
     }
 }
 
@@ -426,14 +452,7 @@ pub(super) fn operator(
         Vector3::new(matrix[0][1], matrix[1][1], matrix[2][1]),
         Vector3::new(matrix[0][2], matrix[1][2], matrix[2][2]),
     );
-    let gram = rotation.transpose().multiply(rotation).columns();
-    let identity = Matrix3::identity().columns();
-    let orthonormal = gram.iter().zip(&identity).all(|(column, unit)| {
-        (column.x - unit.x).abs() <= ROTATION_TOLERANCE
-            && (column.y - unit.y).abs() <= ROTATION_TOLERANCE
-            && (column.z - unit.z).abs() <= ROTATION_TOLERANCE
-    });
-    if !orthonormal || (rotation.determinant() - 1.0).abs() > ROTATION_TOLERANCE {
+    if !is_rotation(rotation, ROTATION_TOLERANCE) {
         return Err(AssemblyOmissionReason::NotRotation {
             operator: id.to_owned(),
         });
@@ -448,11 +467,35 @@ pub(super) fn operator(
     })
 }
 
+/// One group of an operator expression, its numeric ranges not yet
+/// expanded.
+#[derive(Debug)]
+struct Group<'a> {
+    /// Identifiers, and ranges such as `1-60` as their first and last.
+    items: Vec<Result<&'a str, (usize, usize)>>,
+    /// The identifiers it names.
+    len: usize,
+}
+
+impl Group<'_> {
+    /// The identifiers, ranges expanded.
+    fn ids(&self) -> Vec<String> {
+        let mut ids = Vec::with_capacity(self.len);
+        for item in &self.items {
+            match *item {
+                Ok(id) => ids.push(id.to_owned()),
+                Err((first, last)) => ids.extend((first..=last).map(|n| n.to_string())),
+            }
+        }
+        ids
+    }
+}
+
 /// The groups of operator identifiers an mmCIF operator expression names,
 /// left to right: `1` or `1,2,5` is one group, `(1-60)` one group of 60, and
 /// `(1-60)(61-88)` two groups whose product it names. `None` when the
 /// expression cannot be read.
-fn expression_groups(expression: &str) -> Option<Vec<Vec<String>>> {
+fn expression_groups(expression: &str) -> Option<Vec<Group<'_>>> {
     let text = expression.trim();
     if text.is_empty() {
         return None;
@@ -473,10 +516,11 @@ fn expression_groups(expression: &str) -> Option<Vec<Vec<String>>> {
     }
 }
 
-/// The identifiers of one comma-separated group; numeric ranges such as
-/// `1-60` expand.
-fn group_items(group: &str) -> Option<Vec<String>> {
+/// One comma-separated group; numeric ranges such as `1-60` stay
+/// unexpanded.
+fn group_items(group: &str) -> Option<Group<'_>> {
     let mut items = Vec::new();
+    let mut len = 0_usize;
     for item in group.split(',') {
         let item = item.trim();
         if item.is_empty() || item.contains(|c: char| c.is_whitespace() || "()".contains(c)) {
@@ -487,32 +531,47 @@ fn group_items(group: &str) -> Option<Vec<String>> {
         });
         match range {
             Some((first, last)) => {
-                if first > last || last - first >= MAX_OPERATIONS {
+                if first > last {
                     return None;
                 }
-                items.extend((first..=last).map(|n| n.to_string()));
+                len = len.checked_add(last - first)?.checked_add(1)?;
+                items.push(Err((first, last)));
             }
-            None => items.push(item.to_owned()),
+            None => {
+                len = len.checked_add(1)?;
+                items.push(Ok(item));
+            }
         }
     }
-    Some(items)
+    Some(Group { items, len })
 }
 
 /// The operations an expression names, as products of the operators in
-/// `operators`: the rightmost group's operator applies first.
+/// `operators`: the rightmost group's operator applies first. `budget` is
+/// the operator uses left for the source, and they are taken from it.
 fn expression_operations(
     expression: &str,
     operators: &BTreeMap<String, OperatorEntries>,
+    budget: &mut usize,
 ) -> Result<Vec<AssemblyOperation>, AssemblyOmissionReason> {
-    let unreadable = || AssemblyOmissionReason::Expression {
-        expression: expression.to_owned(),
-    };
-    let groups = expression_groups(expression).ok_or_else(unreadable)?;
+    let groups =
+        expression_groups(expression).ok_or_else(|| AssemblyOmissionReason::Expression {
+            expression: expression.to_owned(),
+        })?;
+    // Every group names at least one identifier, so the expanded groups hold
+    // no more identifiers than the uses counted here.
     let count = groups
         .iter()
-        .try_fold(1_usize, |count, group| count.checked_mul(group.len()))
-        .filter(|&count| count <= MAX_OPERATIONS)
-        .ok_or_else(unreadable)?;
+        .try_fold(1_usize, |count, group| count.checked_mul(group.len));
+    let uses = count.and_then(|count| count.checked_mul(groups.len()));
+    let (Some(count), Some(uses)) = (count, uses) else {
+        return Err(AssemblyOmissionReason::TooManyOperations);
+    };
+    if uses > *budget {
+        return Err(AssemblyOmissionReason::TooManyOperations);
+    }
+    *budget -= uses;
+    let groups = groups.iter().map(Group::ids).collect::<Vec<_>>();
     let mut resolved = BTreeMap::<&str, AssemblyOperation>::new();
     for id in groups.iter().flatten() {
         if resolved.contains_key(id.as_str()) {
@@ -528,12 +587,25 @@ fn expression_operations(
     let mut operations = Vec::with_capacity(count);
     let mut picks = vec![0_usize; groups.len()];
     for _ in 0..count {
-        let mut operation =
-            resolved[groups[groups.len() - 1][picks[groups.len() - 1]].as_str()].clone();
-        for (group, &pick) in groups.iter().zip(&picks).rev().skip(1) {
-            operation = resolved[group[pick].as_str()].after(&operation);
+        let mut picked = groups
+            .iter()
+            .zip(&picks)
+            .map(|(group, &pick)| &resolved[group[pick].as_str()])
+            .rev();
+        let first = picked.next().expect("an expression has a group");
+        let (mut rotation, mut translation) = (first.rotation, first.translation);
+        for outer in picked {
+            outer.apply_after(&mut rotation, &mut translation);
         }
-        operations.push(operation);
+        operations.push(AssemblyOperation {
+            operators: groups
+                .iter()
+                .zip(&picks)
+                .map(|(group, &pick)| group[pick].clone())
+                .collect(),
+            rotation,
+            translation,
+        });
         // The next pick, the last group fastest.
         for (pick, group) in picks.iter_mut().zip(&groups).rev() {
             *pick += 1;
@@ -645,6 +717,7 @@ pub(super) fn read_mmcif_assemblies(
         }
     }
     let mut assemblies = Vec::new();
+    let mut budget = MAX_OPERATOR_USES;
     for assembly in stated {
         let omitted = |reason| StructureInterpretIssue::AssemblyOmitted {
             assembly: assembly.id.clone(),
@@ -670,7 +743,7 @@ pub(super) fn read_mmcif_assemblies(
             .map(|(chains, expression)| {
                 Ok(AssemblyGenerator {
                     chains: chains.clone(),
-                    operations: expression_operations(expression, &operators)?,
+                    operations: expression_operations(expression, &operators, &mut budget)?,
                 })
             })
             .collect::<Result<Vec<_>, AssemblyOmissionReason>>();
@@ -699,6 +772,7 @@ pub(super) fn read_pdb_assemblies(
     issues: &mut Vec<StructureInterpretIssue>,
 ) -> Vec<Assembly> {
     let mut assemblies = Vec::new();
+    let mut budget = MAX_OPERATOR_USES;
     for biomolecule in biomolecules {
         let id = Some(biomolecule.id.clone()).filter(|id| !id.is_empty());
         let omitted = |reason| StructureInterpretIssue::AssemblyOmitted {
@@ -719,6 +793,16 @@ pub(super) fn read_pdb_assemblies(
             issues.push(omitted(AssemblyOmissionReason::NoGenerators));
             continue;
         }
+        let uses = biomolecule
+            .generators
+            .iter()
+            .map(|generator| generator.operators.len())
+            .sum::<usize>();
+        if uses > budget {
+            issues.push(omitted(AssemblyOmissionReason::TooManyOperations));
+            continue;
+        }
+        budget -= uses;
         let generators = biomolecule
             .generators
             .iter()
@@ -779,12 +863,46 @@ mod tests {
     const TURN: [[f64; 3]; 3] = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
 
     #[test]
+    fn oversized_expressions_are_refused_before_they_expand() {
+        let operators = BTreeMap::from([("1".to_owned(), entries(IDENTITY, [0.0; 3]))]);
+        let refused = |expression: &str, budget: usize| {
+            let mut left = budget;
+            let result = expression_operations(expression, &operators, &mut left);
+            (result.err(), left)
+        };
+        // A product of ranges that would be 10^10 operations, and a list of a
+        // hundred million identifiers, refused by their counts alone.
+        let too_many = Some(AssemblyOmissionReason::TooManyOperations);
+        assert_eq!(
+            refused("(1-99999)(1-99999)", MAX_OPERATOR_USES),
+            (too_many.clone(), MAX_OPERATOR_USES)
+        );
+        let list = "1-99999,".repeat(1_000);
+        assert_eq!(
+            refused(list.trim_end_matches(','), MAX_OPERATOR_USES).0,
+            too_many
+        );
+        // One operation of 30,000 operators uses 30,000.
+        let long = "(1)".repeat(30_000);
+        assert_eq!(refused(&long, 29_999).0, too_many);
+        assert_eq!(refused(&long, 30_000), (None, 0));
+        // The budget is shared: what one expression takes, the next lacks.
+        let mut budget = 5;
+        assert!(expression_operations("(1,1,1)", &operators, &mut budget).is_ok());
+        assert_eq!(budget, 2);
+        assert_eq!(
+            expression_operations("(1,1,1)", &operators, &mut budget).err(),
+            too_many
+        );
+    }
+
+    #[test]
     fn expressions_name_lists_ranges_and_products() {
         let names = |expression| {
             expression_groups(expression).map(|groups| {
                 groups
                     .into_iter()
-                    .map(|group| group.join(" "))
+                    .map(|group| group.ids().join(" "))
                     .collect::<Vec<_>>()
             })
         };
@@ -811,7 +929,9 @@ mod tests {
             ("T".to_owned(), entries(IDENTITY, [10.0, 0.0, 0.0])),
             ("R".to_owned(), entries(TURN, [0.0; 3])),
         ]);
-        let operations = expression_operations("(R)(T)", &operators).expect("readable");
+        let operations =
+            expression_operations("(R)(T)", &operators, &mut MAX_OPERATOR_USES.clone())
+                .expect("readable");
         assert_eq!(operations.len(), 1);
         let operation = &operations[0];
         assert_eq!(operation.operators(), ["R", "T"]);
@@ -823,7 +943,9 @@ mod tests {
             .expect("a length")
             .into_value();
         assert!((moved.x - 0.0).abs() < 1e-12 && (moved.y - 10.0).abs() < 1e-12);
-        let product = expression_operations("(1,R)(1,T)", &operators).expect("readable");
+        let product =
+            expression_operations("(1,R)(1,T)", &operators, &mut MAX_OPERATOR_USES.clone())
+                .expect("readable");
         let names = product
             .iter()
             .map(AssemblyOperation::name)
@@ -859,7 +981,7 @@ mod tests {
         assert!(operator("4", entries(rounded, [1.0, 2.0, 3.0])).is_ok());
         let operators = BTreeMap::from([("1".to_owned(), entries(IDENTITY, [0.0; 3]))]);
         assert_eq!(
-            expression_operations("(1-2)", &operators),
+            expression_operations("(1-2)", &operators, &mut MAX_OPERATOR_USES.clone()),
             Err(AssemblyOmissionReason::UnknownOperator {
                 operator: "2".to_owned()
             })
