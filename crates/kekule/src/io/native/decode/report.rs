@@ -4,11 +4,13 @@ use std::io::Read;
 
 use super::{Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
+use crate::geometry::{Matrix3, Vector3};
 use crate::io::{
-    AltLocDecision, AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
-    CellOmissionReason, ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance,
-    EntityKind, EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance,
-    PolymerType, SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
+    AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
+    AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
+    ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance, EntityKind,
+    EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance, PolymerType,
+    SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
     StructureInterpretIssue, StructureInterpretationReport,
 };
 use crate::molecule::AtomId;
@@ -241,6 +243,11 @@ impl<R: Read> Decoder<'_, R> {
         for _ in 0..count {
             polymer_entities.push(self.polymer_entity()?);
         }
+        let count = self.items()?;
+        let mut assemblies = Vec::with_capacity(count.min(super::CHUNK_BYTES));
+        for _ in 0..count {
+            assemblies.push(self.assembly()?);
+        }
         Ok(StructureInterpretationReport {
             block_name,
             entity_definitions,
@@ -257,6 +264,42 @@ impl<R: Read> Decoder<'_, R> {
             alternate_locations,
             issues,
             polymer_entities,
+            assemblies,
+        })
+    }
+
+    fn assembly(&mut self) -> Result<Assembly> {
+        let id = self.str()?;
+        let details = self.opt_str()?;
+        let oligomeric_details = self.opt_str()?;
+        let oligomeric_count = self.opt_usize()?;
+        let count = self.items()?;
+        let mut generators = Vec::with_capacity(count.min(super::CHUNK_BYTES));
+        for _ in 0..count {
+            let chains = self.str_list()?;
+            let count = self.items()?;
+            let mut operations = Vec::with_capacity(count.min(super::CHUNK_BYTES));
+            for _ in 0..count {
+                let operators = self.str_list()?;
+                let mut vectors = [Vector3::zero(); 4];
+                for vector in &mut vectors {
+                    *vector = Vector3::new(self.f64()?, self.f64()?, self.f64()?);
+                }
+                let [a, b, c, translation] = vectors;
+                operations.push(AssemblyOperation {
+                    operators,
+                    rotation: Matrix3::from_columns(a, b, c),
+                    translation,
+                });
+            }
+            generators.push(AssemblyGenerator { chains, operations });
+        }
+        Ok(Assembly {
+            id,
+            details,
+            oligomeric_details,
+            oligomeric_count,
+            generators,
         })
     }
 
@@ -636,6 +679,34 @@ impl<R: Read> Decoder<'_, R> {
                     None => SourceLocation::at_line(line),
                 };
                 Issue::CellOmitted { reason, location }
+            }
+            19 => {
+                let assembly = self.opt_str()?;
+                let reason = match self.u8()? {
+                    0 => AssemblyOmissionReason::Unidentified,
+                    1 => AssemblyOmissionReason::NoGenerators,
+                    2 => AssemblyOmissionReason::Expression {
+                        expression: self.str()?,
+                    },
+                    3 => AssemblyOmissionReason::UnknownOperator {
+                        operator: self.str()?,
+                    },
+                    4 => AssemblyOmissionReason::UnreadableOperator {
+                        operator: self.str()?,
+                    },
+                    5 => AssemblyOmissionReason::NotRotation {
+                        operator: self.str()?,
+                    },
+                    other => {
+                        return Err(self
+                            .invalid(format!("The assembly omission reason {other} is unknown.")))
+                    }
+                };
+                Issue::AssemblyOmitted {
+                    assembly,
+                    reason,
+                    line: self.opt_usize()?,
+                }
             }
             other => {
                 return Err(

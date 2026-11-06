@@ -11,6 +11,27 @@ are marked **Breaking:**.
 
 ### Added
 
+- Biological assemblies (SeekDelta K66, K67). Interpretation reports list
+  the assemblies an entry states: `StructureInterpretationReport::assemblies`
+  reads mmCIF `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
+  `_pdbx_struct_oper_list`, and PDB `REMARK 350` biomolecules. A
+  `macromolecular::Assembly` has its identifier, details, oligomeric state,
+  and `AssemblyGenerator`s: chains by label identifier and the
+  `AssemblyOperation`s that place their copies. Operator expressions such as
+  `1,2`, `(1-60)` and `(1-60)(61-88)` are expanded, products composed with the
+  rightmost operator first. An assembly whose expression, operators, or
+  chains cannot be read is left out with the new issue
+  `StructureInterpretIssue::AssemblyOmitted` and its
+  `AssemblyOmissionReason`; a mirror or scaling is not a rotation.
+  `Assembly::to_model` builds the assembly from the interpreted model as one
+  new model, with cancellation: a copy under the identity keeps its chains'
+  identifiers, and other copies append the operation's name, label and
+  author alike (`A-2`, `A-12-60`). Copies share their molecules'
+  definitions. `Assembly::atom_count` gives the size before building.
+  Reports keep their assemblies in native files.
+- **Breaking:** native format version 4. Interpretation reports store their
+  assemblies; readers reject version 3 files.
+
 - Interpretation reports in native files. A model or ensemble keeps its
   structure interpretation reports through native write and read, so an
   application that saves structures in native files keeps what the source

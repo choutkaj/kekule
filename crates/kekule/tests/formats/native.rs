@@ -470,8 +470,8 @@ fn reports_are_stored_only_when_given() {
         .unwrap();
     let plain = native::write(interpretation.model(), NativeWriteOptions::default()).unwrap();
     let interpreted = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
-    // Both are format version 3: a model with its report is kind 7.
-    assert_eq!(NATIVE_FORMAT_VERSION, 3);
+    // Both are format version 4: a model with its report is kind 7.
+    assert_eq!(NATIVE_FORMAT_VERSION, 4);
     for bytes in [&plain, &interpreted] {
         assert_eq!(bytes[8..12], NATIVE_FORMAT_VERSION.to_le_bytes());
     }

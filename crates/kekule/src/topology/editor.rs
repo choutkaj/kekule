@@ -25,7 +25,7 @@ use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyError, PropertyKey, PropertyValue, RawPropertyTable,
     TopologyProperties,
 };
-pub(crate) use append::AppendMapping;
+pub(crate) use append::{AppendMapping, ChainIds};
 pub use error::TopologyEditError;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 use hierarchy::{EditHierarchy, SourceHierarchy};

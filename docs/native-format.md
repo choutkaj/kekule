@@ -54,7 +54,7 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 
 ## Versioning
 
-The header carries one format version, currently **3**. A reader accepts only
+The header carries one format version, currently **4**. A reader accepts only
 the versions it implements and rejects any other with
 `FormatErrorDetail::NativeVersion { found, supported }` of kind
 `DiagnosticKind::Unsupported`. Before kekule 1.0 a version may change
@@ -71,7 +71,8 @@ kind. Version 3 stores resonance delocalization with its model; version 2
 stored conjugated groups without one. Interpreted models and ensembles,
 kinds 7 and 8, joined version 3 in the same way: every earlier version 3 file
 still reads the same, and readers that predate them reject them as unknown
-kinds.
+kinds. Version 4 stores the biological assemblies of each interpretation
+report; version 3 reports had none.
 
 ## Layout
 
@@ -327,6 +328,7 @@ report      := block_name:str selected_model:opt str
                alternate_locations:list(decision)
                issues:list(issue)
                polymer_entities:list(entity)
+               assemblies:list(assembly)
 instances   := n:count
                molecule:packed(n)
                coordinate_model:dict(n)          required
@@ -387,7 +389,14 @@ monomer      := number:i32 component_id:str alternatives:list(str)
 entity_instance := asym_id:str author_chain_id:opt str chain:opt u32
                    list(sequence_position)
 sequence_position := residue:opt u32 author_seq_id:opt str insertion_code:opt str
+assembly     := id:str details:opt str oligomeric_details:opt str
+                oligomeric_count:opt usize list(generator)
+generator    := chains:list(str) list(operation)
+operation    := operators:list(str) rotation:f64[9] translation:f64[3]
 ```
+
+An operation's rotation is its three columns, each `x y z`, and its
+translation is in the canonical length unit.
 
 Coordination atoms are `InstanceAtomId::to_bits`. Polymer types: `0`
 polypeptide(L), `1` polypeptide(D), `2` polydeoxyribonucleotide, `3`
@@ -411,7 +420,7 @@ An issue is its kind, then its fields in declaration order, with lists as
 | 6 | `AlternateLocationOmitted` | 16 | `ProtonationFromHydrogens` |
 | 7 | `AlternateLocationIncomplete` | 17 | `ResidueFragmented` |
 | 8 | `AlternateLocationOccupancyMissing` | 18 | `CellOmitted` |
-| 9 | `AlternateLocationCombinationRejected` | | |
+| 9 | `AlternateLocationCombinationRejected` | 19 | `AssemblyOmitted` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location
@@ -419,7 +428,10 @@ aliases, `1` label and author alternate locations), `3` conflicting label and
 author selectors, `4` alternate location omitted (`str`), `5` no matching
 atom, `6` multiple matching atoms. A cell omission is its reason (`0`
 incomplete, `1` space group with its `str` name, `2` placeholder), its line
-(`usize`), and its column (`opt usize`).
+(`usize`), and its column (`opt usize`). An assembly omission is its
+assembly (`opt str`), its reason (`0` unidentified, `1` no generators, `2`
+expression, `3` unknown operator, `4` unreadable operator, `5` not a
+rotation; `2` to `5` with a `str`), and its line (`opt usize`).
 
 ## Limits
 

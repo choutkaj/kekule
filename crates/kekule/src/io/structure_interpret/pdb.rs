@@ -18,6 +18,7 @@ use super::super::mmcif_cell::stated_cell;
 use super::super::structure_connectivity::ConnectivityCatalog;
 use super::super::{PdbAtom, PdbAtomKind, PdbDocument, PdbPartner};
 use super::altloc::inventory;
+use super::assemblies::read_pdb_assemblies;
 use super::atom_site::{is_water, AtomRow};
 use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
@@ -139,6 +140,7 @@ fn pdb_source(
     };
     poll(cancellation)?;
     let connections = connection_records(document)?;
+    let assemblies = read_pdb_assemblies(document.biomolecules(), &mut issues);
     poll(cancellation)?;
     Ok(StructureSource {
         name: document.id_code().unwrap_or_default().to_owned(),
@@ -151,6 +153,7 @@ fn pdb_source(
         cell,
         issues,
         polymer_entities: Vec::new(),
+        assemblies,
     })
 }
 

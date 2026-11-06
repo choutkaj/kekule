@@ -1,6 +1,9 @@
 //! Import one complete topology into an already staged model edit.
 use super::*;
 
+/// The label and author identifiers an appended chain takes from its own.
+pub(crate) type ChainIds<'a> = dyn Fn(&str, Option<&str>) -> (String, Option<String>) + 'a;
+
 #[derive(Debug, Clone)]
 pub(crate) struct AppendMapping {
     pub source: Arc<Topology>,
@@ -14,9 +17,12 @@ pub(crate) struct AppendMapping {
 impl TopologyEditor {
     /// The coordinating model operation owns rollback. Source identity is local
     /// to this import, separate from the editor's original source correspondence.
+    /// `chain_ids` gives each source chain's label and author identifiers in
+    /// the draft from its own.
     pub(crate) fn append_topology(
         &mut self,
         source: Arc<Topology>,
+        chain_ids: &ChainIds<'_>,
     ) -> Result<AppendMapping, TopologyEditError> {
         let mut mapping = AppendMapping {
             source: Arc::clone(&source),
@@ -95,7 +101,8 @@ impl TopologyEditor {
         // Hierarchy is imported independently of molecular connectedness. Even
         // equal source labels remain distinct chains, residues and atom sites.
         for (id, chain) in source.hierarchy().chains() {
-            let handle = self.add_chain(chain.label_id(), chain.author_id().map(str::to_owned))?;
+            let (label, author) = chain_ids(chain.label_id(), chain.author_id());
+            let handle = self.add_chain(label, author)?;
             mapping.chains.insert(id, handle);
         }
         for (id, residue) in source.hierarchy().residues() {

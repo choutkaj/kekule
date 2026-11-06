@@ -96,7 +96,8 @@ pub use structure_documents::{
 };
 pub use structure_interpret::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
-    AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
+    AltLocSelectionReason, Assembly, AssemblyError, AssemblyGenerator, AssemblyOmissionReason,
+    AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
     EntityKind, EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection,
     PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource,

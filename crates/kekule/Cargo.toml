@@ -70,3 +70,7 @@ harness = false
 [[bench]]
 name = "native_interpretation"
 harness = false
+
+[[bench]]
+name = "assembly_build"
+harness = false

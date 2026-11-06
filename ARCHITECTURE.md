@@ -877,7 +877,18 @@ export.
   and reads `_cell` as the model's cell only in P 1 (or with no space group),
   where the coordinates are a whole unit cell; PDB reads `CRYST1` by the same
   rule. PDB's 1 Å placeholder cube is no cell, and stated cell parameters that
-  are not the model's cell are reported as omitted. Canonical classification informs entity
+  are not the model's cell are reported as omitted. Biological assemblies are
+  report data: mmCIF `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
+  `_pdbx_struct_oper_list`, and PDB `REMARK 350` biomolecules, which the PDB
+  parser types while keeping their lines verbatim. Each assembly lists its
+  chains by label and the rigid operations that place their copies, products
+  of operators already composed; one that cannot be read is reported as
+  omitted. Interpretation keeps the deposited coordinates, and
+  `Assembly::to_model` builds the copies on request: identity copies keep
+  their chain identifiers, others take the operation's name after a dash, as
+  wwPDB assembly files name them, and copies share their molecules'
+  definitions. See [assemblies](crates/kekule/src/io/structure_interpret/assemblies.rs).
+  Canonical classification informs entity
   kinds; hierarchy alone does not establish polymer status or contextual roles.
   Expert overrides and source provenance handle finer format distinctions.
   The mmCIF writer, like the PDB writer, states only the bonds its reader

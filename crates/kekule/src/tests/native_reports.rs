@@ -2,11 +2,13 @@
 //! every report field, and rejection of corrupt report sections.
 
 use crate::diagnostics::{DiagnosticKind, Format, SourceLocation};
+use crate::geometry::{Matrix3, Vector3};
 use crate::io::{
-    AltLocDecision, AltLocSelectionReason, AtomProvenance, BondEvidence, BondProvenance,
-    CellOmissionReason, ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance,
-    EntityKind, EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance,
-    PolymerType, SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
+    AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
+    AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
+    ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance, EntityKind,
+    EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance, PolymerType,
+    SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
     StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretationReport,
 };
 use crate::molecule::AtomId;
@@ -276,6 +278,44 @@ fn report(foreign: bool) -> StructureInterpretationReport {
             reason: CellOmissionReason::Placeholder,
             location: SourceLocation::at_line(9),
         },
+        Issue::AssemblyOmitted {
+            assembly: None,
+            reason: AssemblyOmissionReason::Unidentified,
+            line: Some(30),
+        },
+        Issue::AssemblyOmitted {
+            assembly: Some("1".into()),
+            reason: AssemblyOmissionReason::NoGenerators,
+            line: None,
+        },
+        Issue::AssemblyOmitted {
+            assembly: Some("2".into()),
+            reason: AssemblyOmissionReason::Expression {
+                expression: "(1-".into(),
+            },
+            line: Some(31),
+        },
+        Issue::AssemblyOmitted {
+            assembly: Some("3".into()),
+            reason: AssemblyOmissionReason::UnknownOperator {
+                operator: "61".into(),
+            },
+            line: Some(32),
+        },
+        Issue::AssemblyOmitted {
+            assembly: Some("4".into()),
+            reason: AssemblyOmissionReason::UnreadableOperator {
+                operator: "P".into(),
+            },
+            line: Some(33),
+        },
+        Issue::AssemblyOmitted {
+            assembly: Some("5".into()),
+            reason: AssemblyOmissionReason::NotRotation {
+                operator: "X0".into(),
+            },
+            line: Some(34),
+        },
     ];
     for (index, reason) in reasons.into_iter().enumerate() {
         issues.push(if index % 2 == 0 {
@@ -432,6 +472,46 @@ fn report(foreign: bool) -> StructureInterpretationReport {
         alternate_locations,
         issues,
         polymer_entities,
+        assemblies: vec![
+            Assembly {
+                id: "1".into(),
+                details: Some("complete icosahedral assembly".into()),
+                oligomeric_details: Some("60-meric".into()),
+                oligomeric_count: Some(60),
+                generators: vec![
+                    AssemblyGenerator {
+                        chains: strings(&["A", "B"]),
+                        operations: vec![
+                            AssemblyOperation {
+                                operators: strings(&["1"]),
+                                rotation: Matrix3::identity(),
+                                translation: Vector3::zero(),
+                            },
+                            AssemblyOperation {
+                                operators: strings(&["2", "61"]),
+                                rotation: Matrix3::from_columns(
+                                    Vector3::new(0.0, 1.0, 0.0),
+                                    Vector3::new(-1.0, 0.0, 0.0),
+                                    Vector3::new(0.0, 0.0, 1.0),
+                                ),
+                                translation: Vector3::new(-0.1, 1.0 / 3.0, f64::MIN_POSITIVE),
+                            },
+                        ],
+                    },
+                    AssemblyGenerator {
+                        chains: strings(&["C"]),
+                        operations: Vec::new(),
+                    },
+                ],
+            },
+            Assembly {
+                id: "2".into(),
+                details: None,
+                oligomeric_details: None,
+                oligomeric_count: None,
+                generators: Vec::new(),
+            },
+        ],
     }
 }
 
