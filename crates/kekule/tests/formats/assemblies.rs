@@ -258,6 +258,41 @@ fn pdb_biomolecules_read_as_assemblies() {
 }
 
 #[test]
+fn pdb_generators_stated_in_addition_copy_their_own_chains() {
+    let text = "\
+REMARK 350 BIOMOLECULE: 1
+REMARK 350 APPLY THE FOLLOWING TO CHAINS: A
+REMARK 350   BIOMT1   1  1.000000  0.000000  0.000000        0.00000
+REMARK 350   BIOMT2   1  0.000000  1.000000  0.000000        0.00000
+REMARK 350   BIOMT3   1  0.000000  0.000000  1.000000        0.00000
+REMARK 350 IN ADDITION APPLY THE FOLLOWING TO CHAINS: B
+REMARK 350   BIOMT1   2  1.000000  0.000000  0.000000       10.00000
+REMARK 350   BIOMT2   2  0.000000  1.000000  0.000000        0.00000
+REMARK 350   BIOMT3   2  0.000000  0.000000  1.000000        0.00000
+ATOM      1  CA  GLY A   1       0.000   0.000   0.000  1.00  0.00           C
+ATOM      2  CA  GLY B   1       5.000   0.000   0.000  1.00  0.00           C
+END
+";
+    let interpretation = from_pdb(text);
+    assert!(assembly_issues(&interpretation).is_empty());
+    let [assembly] = interpretation.report().assemblies() else {
+        panic!("the file states one biomolecule");
+    };
+    let chains = assembly
+        .generators()
+        .iter()
+        .map(|generator| generator.chains().to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(chains, [["A"], ["B"]]);
+    let built = assembly.to_model(interpretation.model(), None).unwrap();
+    let labels = chain_labels(&built)
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["A", "B-2"]);
+}
+
+#[test]
 fn pdb_biomolecules_stay_in_the_verbatim_records() {
     let document = pdb::parse_str(INSULIN_RECEPTOR_KINASE_PDB, Default::default()).unwrap();
     let remarks = document

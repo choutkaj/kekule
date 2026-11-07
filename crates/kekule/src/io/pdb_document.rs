@@ -885,8 +885,9 @@ impl Parser {
 }
 
 /// Adds one `REMARK 350` line to the biomolecules: a `BIOMOLECULE` line
-/// starts one, an `APPLY THE FOLLOWING TO CHAINS` line starts a generator in
-/// it, and `BIOMT` rows add to the generator's operators. Other lines, and
+/// starts one, an `APPLY THE FOLLOWING TO CHAINS` line, or `IN ADDITION
+/// APPLY THE FOLLOWING TO CHAINS`, starts a generator in it, and `BIOMT`
+/// rows add to the generator's operators. Other lines, and
 /// lines before the first `BIOMOLECULE`, describe nothing read here.
 fn remark_350(
     biomolecules: &mut Vec<PdbBiomolecule>,
@@ -919,7 +920,10 @@ fn remark_350(
         biomolecule.author_unit = stated(unit);
     } else if let Some(unit) = text.strip_prefix("SOFTWARE DETERMINED QUATERNARY STRUCTURE:") {
         biomolecule.software_unit = stated(unit);
-    } else if let Some(list) = text.strip_prefix("APPLY THE FOLLOWING TO CHAINS:") {
+    } else if let Some(list) = text
+        .strip_prefix("APPLY THE FOLLOWING TO CHAINS:")
+        .or_else(|| text.strip_prefix("IN ADDITION APPLY THE FOLLOWING TO CHAINS:"))
+    {
         biomolecule.generators.push(PdbBiomoleculeGenerator {
             chains: chains(list),
             operators: Vec::new(),
