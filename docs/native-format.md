@@ -395,8 +395,9 @@ generator    := chains:list(str) list(operation)
 operation    := operators:list(str) rotation:f64[9] translation:f64[3]
 ```
 
-An operation's rotation is its three columns, each `x y z`, and its
-translation is in the canonical length unit.
+An operation's rotation is its three columns, each `x y z`: a proper
+rotation, each entry of RᵀR and its determinant within 10⁻³ of the
+identity's. Its translation is in the canonical length unit.
 
 Coordination atoms are `InstanceAtomId::to_bits`. Polymer types: `0`
 polypeptide(L), `1` polypeptide(D), `2` polydeoxyribonucleotide, `3`

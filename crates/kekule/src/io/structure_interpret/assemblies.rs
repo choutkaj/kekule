@@ -32,7 +32,8 @@ pub(super) const MAX_OPERATOR_USES: usize = 100_000;
 
 /// How far a stated operator's rotation part may be from orthonormal, per
 /// entry, and its determinant from 1. Sources state matrices to four to six
-/// decimals; mirrors and scalings are far further off.
+/// decimals; mirrors and scalings are far further off. An accepted rotation
+/// is made exactly orthonormal, so products of many stay rigid.
 const ROTATION_TOLERANCE: f64 = 1.0e-3;
 
 /// Whether `rotation` is a proper rotation: RᵀR the identity and the
@@ -46,6 +47,20 @@ fn is_rotation(rotation: Matrix3, tolerance: f64) -> bool {
             && (column.z - unit.z).abs() <= tolerance
     });
     orthonormal && (rotation.determinant() - 1.0).abs() <= tolerance
+}
+
+/// The rotation nearest `rotation`, one that [`is_rotation`] accepted: its
+/// orthogonal polar factor, by Newton-Schulz steps X <- X(3I - XᵀX)/2. Four
+/// steps take a matrix within the tolerance to machine precision, and the
+/// identity stays exactly the identity.
+fn orthonormalized(mut rotation: Matrix3) -> Matrix3 {
+    let identity = Matrix3::identity().columns();
+    for _ in 0..4 {
+        let gram = rotation.transpose().multiply(rotation).columns();
+        let [a, b, c] = [0, 1, 2].map(|i| (identity[i] * 3.0 - gram[i]) / 2.0);
+        rotation = rotation.multiply(Matrix3::from_columns(a, b, c));
+    }
+    rotation
 }
 
 /// One biological assembly a source states: copies of its chains, each
@@ -288,7 +303,8 @@ impl AssemblyOperation {
         self.operators.join("-")
     }
 
-    /// The rotation, applied before the translation.
+    /// The rotation, applied before the translation. Each stated operator's
+    /// matrix is made exactly orthonormal.
     pub const fn rotation(&self) -> Matrix3 {
         self.rotation
     }
@@ -304,18 +320,15 @@ impl AssemblyOperation {
         self.rotation == Matrix3::identity() && self.translation == Vector3::zero()
     }
 
-    /// Whether it is finite and its rotation proper, as reading checks each
-    /// operator: a product within the tolerance of each of its operators.
+    /// Whether it is finite and its rotation proper, within the tolerance
+    /// reading allows a stated operator.
     pub(crate) fn is_rigid(&self) -> bool {
         let columns = self.rotation.columns();
         columns
             .iter()
             .chain([&self.translation])
             .all(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite())
-            && is_rotation(
-                self.rotation,
-                ROTATION_TOLERANCE * self.operators.len().max(1) as f64,
-            )
+            && is_rotation(self.rotation, ROTATION_TOLERANCE)
     }
 
     /// Applies `self` after the rotation and translation given, in place.
@@ -431,7 +444,8 @@ impl std::error::Error for AssemblyError {
 /// vector, or `None` when any is missing or not a number.
 pub(super) type OperatorEntries = Option<([[f64; 3]; 3], [f64; 3])>;
 
-/// The operation one stated operator gives, checked to be a rotation.
+/// The operation one stated operator gives, checked to be a rotation and
+/// made exactly one.
 pub(super) fn operator(
     id: &str,
     entries: OperatorEntries,
@@ -462,7 +476,7 @@ pub(super) fn operator(
         .expect("lengths convert");
     Ok(AssemblyOperation {
         operators: vec![id.to_owned()],
-        rotation,
+        rotation: orthonormalized(rotation),
         translation: Vector3::new(vector[0], vector[1], vector[2]) * scale,
     })
 }
@@ -955,6 +969,26 @@ mod tests {
     }
 
     #[test]
+    fn rounded_rotations_compose_without_drift() {
+        // Within the tolerance, yet the product of 1,000 as stated would
+        // stretch x by half.
+        let stretched = [[1.0004, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let operators = BTreeMap::from([("S".to_owned(), entries(stretched, [0.0; 3]))]);
+        let product = expression_operations(
+            &"(S)".repeat(1000),
+            &operators,
+            &mut MAX_OPERATOR_USES.clone(),
+        )
+        .unwrap();
+        assert_eq!(product.len(), 1);
+        assert!(is_rotation(product[0].rotation, 1.0e-12));
+        assert!(product[0].is_rigid());
+        assert!(operator("I", entries(IDENTITY, [0.0; 3]))
+            .unwrap()
+            .is_identity());
+    }
+
+    #[test]
     fn operators_that_are_not_rotations_are_refused() {
         let mirror = [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let scaled = [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -978,7 +1012,8 @@ mod tests {
             [0.809017, 0.5, 0.309017],
             [-0.5, 0.309017, 0.809017],
         ];
-        assert!(operator("4", entries(rounded, [1.0, 2.0, 3.0])).is_ok());
+        let operation = operator("4", entries(rounded, [1.0, 2.0, 3.0])).unwrap();
+        assert!(is_rotation(operation.rotation, 1.0e-12));
         let operators = BTreeMap::from([("1".to_owned(), entries(IDENTITY, [0.0; 3]))]);
         assert_eq!(
             expression_operations("(1-2)", &operators, &mut MAX_OPERATOR_USES.clone()),

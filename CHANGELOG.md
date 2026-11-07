@@ -22,9 +22,10 @@ are marked **Breaking:**.
   rightmost operator first. An assembly whose expression, operators, or
   chains cannot be read is left out with the new issue
   `StructureInterpretIssue::AssemblyOmitted` and its
-  `AssemblyOmissionReason`; a mirror or scaling is not a rotation. A
-  source's assemblies use at most 100,000 operators together, counted
-  before anything expands; those beyond are left out.
+  `AssemblyOmissionReason`; a mirror or scaling is not a rotation. A stated
+  rotation within the tolerance is made exactly orthonormal, so products of
+  many stay rigid. A source's assemblies use at most 100,000 operators
+  together, counted before anything expands; those beyond are left out.
   `Assembly::to_model` builds the assembly from the interpreted model as one
   new model, with cancellation: a copy under the identity keeps its chains'
   identifiers, and other copies append the operation's name, label and
