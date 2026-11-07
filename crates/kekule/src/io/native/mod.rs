@@ -33,7 +33,7 @@ pub const NATIVE_MAGIC: [u8; 8] = [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0
 /// Before Kekule 1.0 the format may change incompatibly, but every
 /// incompatible change increments this version, and readers reject versions
 /// they do not implement.
-pub const NATIVE_FORMAT_VERSION: u32 = 3;
+pub const NATIVE_FORMAT_VERSION: u32 = 4;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;

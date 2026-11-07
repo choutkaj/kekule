@@ -11,6 +11,7 @@ use super::super::mmcif_cell::stated_cell;
 use super::super::structure_connectivity::ConnectivityCatalog;
 use super::super::{MmcifBlock, MmcifDocument};
 use super::altloc::{inventory, source::conformations};
+use super::assemblies::read_mmcif_assemblies;
 use super::atom_site::{
     coordinate_model_ids, optional, optional_i32, read_asym_entities, read_atom_rows,
     read_entity_types, required, row_error,
@@ -207,6 +208,7 @@ fn mmcif_source(
         connections,
         catalog,
         cell: read_cell(block, &mut report.issues)?,
+        assemblies: read_mmcif_assemblies(block, &mut report.issues)?,
         issues: report.issues,
         polymer_entities,
     })

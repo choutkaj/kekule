@@ -1,7 +1,8 @@
 use super::*;
+use crate::geometry::{Matrix3, Point3, Vector3};
 use crate::properties::PropertyKey;
-use crate::structure::AsModelView;
-use crate::topology::{AppendMapping, Topology};
+use crate::structure::{AsModelView, Model, ModelView};
+use crate::topology::{AppendMapping, ChainIds, Topology};
 use crate::topology::{AtomSiteId, ChainId, InstanceAtomId, InstanceBondId, ResidueId};
 
 impl ModelEditor {
@@ -82,26 +83,78 @@ impl ModelEditor {
             omitted_model_properties: source.properties().owner().keys().cloned().collect(),
         };
         let mut staged = self.clone();
-        staged.slots.try_reserve_atoms(source.atom_count())?;
-        let mapping = staged.topology.append_topology(source.shared_topology())?;
-        staged.slots.resize_slots(
-            staged.topology.atom_slot_count(),
-            staged.topology.bond_slot_count(),
+        let (mapping, _) = staged.append_unstaged(source, &|label, author| {
+            (label.to_owned(), author.map(str::to_owned))
+        })?;
+        staged.slots.cell = cell;
+        *self = staged;
+        Ok(ModelAppend { mapping, report })
+    }
+
+    /// Appends a copy of `source` whose positions are moved by `rotation`,
+    /// then `translation` in the canonical length unit, and whose chains take
+    /// the identifiers `chain_ids` gives them, as [`Self::append_model`]
+    /// appends but without its cell or staging. A failure leaves the draft
+    /// part-way, so only an owner that discards a failed draft calls it; it
+    /// costs the copy, not the draft.
+    pub(crate) fn append_moved_copy(
+        &mut self,
+        source: &Model,
+        rotation: Matrix3,
+        translation: Vector3,
+        chain_ids: &ChainIds<'_>,
+    ) -> Result<(), ModelEditError> {
+        let (_, atom_rows) = self.append_unstaged(source.as_model_view(), chain_ids)?;
+        let moved = atom_rows
+            .iter()
+            .copied()
+            .zip(source.positions.values().value().iter())
+            .map(|(row, point)| {
+                let turned = rotation.transform_vector(Vector3::new(point.x, point.y, point.z));
+                (
+                    row,
+                    Point3::new(
+                        turned.x + translation.x,
+                        turned.y + translation.y,
+                        turned.z + translation.z,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.slots.positions.set_canonical_batch(&moved)?;
+        Ok(())
+    }
+
+    /// The append both entry points share, in place: the source's topology,
+    /// positions, site values and entity properties, with its rows in the
+    /// draft.
+    fn append_unstaged(
+        &mut self,
+        source: ModelView<'_>,
+        chain_ids: &ChainIds<'_>,
+    ) -> Result<(AppendMapping, Vec<usize>), ModelEditError> {
+        self.slots.try_reserve_atoms(source.atom_count())?;
+        let mapping = self
+            .topology
+            .append_topology(source.shared_topology(), chain_ids)?;
+        self.slots.resize_slots(
+            self.topology.atom_slot_count(),
+            self.topology.bond_slot_count(),
         );
         let atom_rows = source
             .topology()
             .atom_ids()
             .iter()
-            .map(|id| staged.topology.atom_slot(mapping.atoms[id]))
+            .map(|id| self.topology.atom_slot(mapping.atoms[id]))
             .collect::<Result<Vec<_>, _>>()?;
         let bond_rows = source
             .topology()
             .bond_ids()
             .iter()
-            .map(|id| staged.topology.bond_slot(mapping.bonds[id]))
+            .map(|id| self.topology.bond_slot(mapping.bonds[id]))
             .collect::<Result<Vec<_>, _>>()?;
-        staged.slots.copy_atom_state_from(source, &atom_rows);
-        let properties = &mut staged.slots.properties;
+        self.slots.copy_atom_state_from(source, &atom_rows);
+        let properties = &mut self.slots.properties;
         properties
             .atoms_raw_mut()
             .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
@@ -117,9 +170,7 @@ impl ModelEditor {
                 error: Box::new(error),
             })?;
         properties.owner_mut().clear();
-        staged.slots.cell = cell;
-        *self = staged;
-        Ok(ModelAppend { mapping, report })
+        Ok((mapping, atom_rows))
     }
 }
 

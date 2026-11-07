@@ -32,13 +32,12 @@ fn distance(editor: &ModelEditor, a: EditAtomId, b: EditAtomId) -> f64 {
     (point(editor, a) - point(editor, b)).norm()
 }
 
+/// The angle at `center`, in degrees. `atan2` keeps it exact near 0° and
+/// 180°, where `acos` of the cosine loses half its digits.
 fn angle(editor: &ModelEditor, a: EditAtomId, center: EditAtomId, b: EditAtomId) -> f64 {
     let u = point(editor, a) - point(editor, center);
     let v = point(editor, b) - point(editor, center);
-    (u.dot(v) / (u.norm() * v.norm()))
-        .clamp(-1.0, 1.0)
-        .acos()
-        .to_degrees()
+    u.cross(v).norm().atan2(u.dot(v)).to_degrees()
 }
 
 fn ideal(a: Element, b: Element, order: BondOrder) -> f64 {

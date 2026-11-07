@@ -2,6 +2,7 @@
 //! PDB entries, through one pipeline: atom sites, alternate locations,
 //! coordinate models, connection records, and connectivity resolution.
 mod altloc;
+mod assemblies;
 mod atom_site;
 mod build;
 mod connections;
@@ -33,6 +34,7 @@ pub use altloc::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, SourceResidueId, SourceResiduePosition,
 };
+pub use assemblies::{Assembly, AssemblyError, AssemblyGenerator, AssemblyOperation};
 pub(crate) use mmcif::{
     alternate_location_inventory, interpret_mmcif, interpret_mmcif_block,
     interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_ensemble,
@@ -47,11 +49,11 @@ pub use sequences::{
 };
 pub(in crate::io) use types::{poll, poll_every, structure_error};
 pub use types::{
-    AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason, ConflictingSelector,
-    ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance, EntityKind,
-    EntityMetadataPolicy, InstanceProvenance, ModelSelection, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation, StructureInterpretationReport,
+    AssemblyOmissionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
+    ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
+    EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection,
+    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretIssue,
+    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a
@@ -73,6 +75,8 @@ struct StructureSource {
     issues: Vec<StructureInterpretIssue>,
     /// The polymer entities the source states, not yet placed in a model.
     polymer_entities: Vec<PolymerEntity>,
+    /// The biological assemblies the source states.
+    assemblies: Vec<Assembly>,
 }
 
 fn interpret_source(
@@ -142,11 +146,13 @@ impl PreparedSource {
             cell,
             issues,
             polymer_entities,
+            assemblies,
         } = source;
         let mut report = StructureInterpretationReport {
             block_name: name,
             entity_definitions,
             issues,
+            assemblies,
             ..StructureInterpretationReport::default()
         };
         // Alternate-location validation still covers the complete source,

@@ -5,6 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::altloc::{AltLocDecision, AltLocPolicy, SourceResidueId};
+use super::assemblies::Assembly;
 use super::sequences::PolymerEntity;
 use crate::components::ComponentLibrary;
 use crate::diagnostics::{
@@ -441,6 +442,16 @@ pub enum StructureInterpretIssue {
         /// The source location of the cell parameters.
         location: SourceLocation,
     },
+    /// The source states a biological assembly that cannot be read, so the
+    /// report does not list it.
+    AssemblyOmitted {
+        /// The assembly's identifier, or `None` when the source gives none.
+        assembly: Option<String>,
+        /// Why the assembly was omitted.
+        reason: AssemblyOmissionReason,
+        /// The 1-based line of the assembly's first record, when known.
+        line: Option<usize>,
+    },
 }
 
 /// Writes the issue as one or two sentences, such as `Residue 12 of chain
@@ -685,6 +696,20 @@ impl fmt::Display for StructureInterpretIssue {
             Self::CellOmitted { reason, location } => {
                 write!(formatter, "The unit cell at {location} is not read. {reason}")
             }
+            Self::AssemblyOmitted {
+                assembly,
+                reason,
+                line,
+            } => {
+                match assembly {
+                    Some(id) => write!(formatter, "Assembly {id:?}")?,
+                    None => formatter.write_str("An assembly")?,
+                }
+                if let Some(line) = line {
+                    write!(formatter, " at line {line}")?;
+                }
+                write!(formatter, " is not read. {reason}")
+            }
         }
     }
 }
@@ -788,6 +813,70 @@ impl fmt::Display for CellOmissionReason {
                 "The coordinates are the asymmetric unit of space group {name:?}."
             ),
             Self::Placeholder => formatter.write_str("The cell is the 1 Å placeholder cube."),
+        }
+    }
+}
+
+/// Why a stated biological assembly is not listed.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssemblyOmissionReason {
+    /// The assembly has no identifier.
+    Unidentified,
+    /// It states no chains, or chains without operators.
+    NoGenerators,
+    /// An operator expression cannot be read, or names more than 100,000
+    /// operations.
+    Expression {
+        /// The expression as stated.
+        expression: String,
+    },
+    /// An expression names an operator the source does not state.
+    UnknownOperator {
+        /// The operator's identifier.
+        operator: String,
+    },
+    /// An operator's matrix or vector is incomplete or not numbers.
+    UnreadableOperator {
+        /// The operator's identifier.
+        operator: String,
+    },
+    /// An operator's matrix is not a rotation, as a mirror or a scaling is
+    /// not.
+    NotRotation {
+        /// The operator's identifier.
+        operator: String,
+    },
+    /// With it, the source's assemblies would use their operators more
+    /// than 100,000 times, counting each operator of a product.
+    TooManyOperations,
+}
+
+/// Writes the reason as a sentence, such as `Operator "61" is not stated.`
+impl fmt::Display for AssemblyOmissionReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unidentified => formatter.write_str("It has no identifier."),
+            Self::NoGenerators => formatter.write_str("Its chains or operators are not stated."),
+            Self::Expression { expression } => {
+                write!(
+                    formatter,
+                    "Operator expression {expression:?} cannot be read."
+                )
+            }
+            Self::UnknownOperator { operator } => {
+                write!(formatter, "Operator {operator:?} is not stated.")
+            }
+            Self::UnreadableOperator { operator } => write!(
+                formatter,
+                "Operator {operator:?} has missing or unreadable numbers."
+            ),
+            Self::NotRotation { operator } => {
+                write!(formatter, "Operator {operator:?} is not a rotation.")
+            }
+            Self::TooManyOperations => formatter.write_str(
+                "With it, the file's assemblies would apply more than 100,000 operators.",
+            ),
         }
     }
 }
@@ -1189,6 +1278,7 @@ pub struct StructureInterpretationReport {
     pub(crate) alternate_locations: Vec<AltLocDecision>,
     pub(crate) issues: Vec<StructureInterpretIssue>,
     pub(crate) polymer_entities: Vec<PolymerEntity>,
+    pub(crate) assemblies: Vec<Assembly>,
 }
 
 impl StructureInterpretationReport {
@@ -1315,6 +1405,15 @@ impl StructureInterpretationReport {
     /// topology.
     pub fn polymer_entities(&self) -> &[PolymerEntity] {
         &self.polymer_entities
+    }
+
+    /// The biological assemblies the source states, in source order: mmCIF
+    /// `_pdbx_struct_assembly`, PDB `REMARK 350` biomolecules. Assemblies
+    /// that cannot be read are left out with
+    /// [`StructureInterpretIssue::AssemblyOmitted`].
+    /// [`Assembly::to_model`] builds one.
+    pub fn assemblies(&self) -> &[Assembly] {
+        &self.assemblies
     }
 
     /// Returns source-aware non-fatal interpretation issues.

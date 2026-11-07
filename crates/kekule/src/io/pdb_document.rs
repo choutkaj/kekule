@@ -471,6 +471,32 @@ impl PdbRecord {
     }
 }
 
+/// One `REMARK 350` biomolecule: the chains and `BIOMT` operators of one
+/// stated biological assembly. Its lines stay in
+/// [`PdbDocument::other_records`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PdbBiomolecule {
+    pub(crate) id: String,
+    /// `AUTHOR DETERMINED BIOLOGICAL UNIT`, as stated.
+    pub(crate) author_unit: Option<String>,
+    /// `SOFTWARE DETERMINED QUATERNARY STRUCTURE`, as stated.
+    pub(crate) software_unit: Option<String>,
+    pub(crate) generators: Vec<PdbBiomoleculeGenerator>,
+    /// The `BIOMOLECULE` line.
+    pub(crate) location: SourceLocation,
+}
+
+/// The chains one `APPLY THE FOLLOWING TO CHAINS` statement lists, with its
+/// `AND CHAINS` lines, and the `BIOMT` operators that follow it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PdbBiomoleculeGenerator {
+    pub(crate) chains: Vec<String>,
+    /// Operators by serial, in source order: each `BIOMT1` to `BIOMT3` row's
+    /// matrix entries and translation, or `None` for a row that is missing
+    /// or not four numbers.
+    pub(crate) operators: Vec<(String, [Option<[f64; 4]>; 3])>,
+}
+
 /// One parsed PDB entry: its records, typed where interpretation reads them.
 ///
 /// ```
@@ -506,6 +532,7 @@ pub struct PdbDocument {
     link_records: Vec<PdbLink>,
     ssbond_records: Vec<PdbSsbond>,
     other_records: Vec<PdbRecord>,
+    biomolecules: Vec<PdbBiomolecule>,
 }
 
 impl PdbDocument {
@@ -552,6 +579,11 @@ impl PdbDocument {
     /// Every other record, verbatim and in source order.
     pub fn other_records(&self) -> &[PdbRecord] {
         &self.other_records
+    }
+
+    /// The biomolecules of the `REMARK 350` records, in source order.
+    pub(crate) fn biomolecules(&self) -> &[PdbBiomolecule] {
+        &self.biomolecules
     }
 
     /// Interprets one selected coordinate model under the model,
@@ -679,6 +711,7 @@ impl Parser {
             link_records: Vec::new(),
             ssbond_records: Vec::new(),
             other_records: Vec::new(),
+            biomolecules: Vec::new(),
         })
     }
 
@@ -837,6 +870,9 @@ impl Parser {
                         document.id_code = Some(code.to_owned());
                     }
                 }
+                if name == "REMARK" && fields.text(8, 10).trim() == "350" {
+                    remark_350(&mut document.biomolecules, &fields, at_line);
+                }
                 document.other_records.push(PdbRecord {
                     name: name.to_owned(),
                     text: line.to_owned(),
@@ -845,6 +881,91 @@ impl Parser {
             }
         }
         Ok(())
+    }
+}
+
+/// Adds one `REMARK 350` line to the biomolecules: a `BIOMOLECULE` line
+/// starts one, an `APPLY THE FOLLOWING TO CHAINS` line, or `IN ADDITION
+/// APPLY THE FOLLOWING TO CHAINS`, starts a generator in it, and `BIOMT`
+/// rows add to the generator's operators. Other lines, and
+/// lines before the first `BIOMOLECULE`, describe nothing read here.
+fn remark_350(
+    biomolecules: &mut Vec<PdbBiomolecule>,
+    fields: &Fields<'_>,
+    location: SourceLocation,
+) {
+    let text = fields.text(11, fields.line.len()).trim();
+    if let Some(id) = text.strip_prefix("BIOMOLECULE:") {
+        biomolecules.push(PdbBiomolecule {
+            id: id.trim().to_owned(),
+            author_unit: None,
+            software_unit: None,
+            generators: Vec::new(),
+            location,
+        });
+        return;
+    }
+    let Some(biomolecule) = biomolecules.last_mut() else {
+        return;
+    };
+    let stated = |value: &str| Some(value.trim().to_owned()).filter(|value| !value.is_empty());
+    let chains = |list: &str| {
+        list.split(',')
+            .map(str::trim)
+            .filter(|chain| !chain.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    if let Some(unit) = text.strip_prefix("AUTHOR DETERMINED BIOLOGICAL UNIT:") {
+        biomolecule.author_unit = stated(unit);
+    } else if let Some(unit) = text.strip_prefix("SOFTWARE DETERMINED QUATERNARY STRUCTURE:") {
+        biomolecule.software_unit = stated(unit);
+    } else if let Some(list) = text
+        .strip_prefix("APPLY THE FOLLOWING TO CHAINS:")
+        .or_else(|| text.strip_prefix("IN ADDITION APPLY THE FOLLOWING TO CHAINS:"))
+    {
+        biomolecule.generators.push(PdbBiomoleculeGenerator {
+            chains: chains(list),
+            operators: Vec::new(),
+        });
+    } else if let Some(list) = text.strip_prefix("AND CHAINS:") {
+        if let Some(generator) = biomolecule.generators.last_mut() {
+            generator.chains.extend(chains(list));
+        }
+    } else if let Some((row, rest)) = ["BIOMT1", "BIOMT2", "BIOMT3"]
+        .iter()
+        .enumerate()
+        .find_map(|(row, name)| Some((row, text.strip_prefix(name)?)))
+    {
+        let mut tokens = rest.split_whitespace();
+        let Some(serial) = tokens.next() else {
+            return;
+        };
+        // The matrix row and the shift; columns 69-80 may hold other text.
+        let numbers = tokens
+            .take(4)
+            .map(|token| token.parse::<f64>().ok())
+            .collect::<Option<Vec<_>>>()
+            .and_then(|numbers| <[f64; 4]>::try_from(numbers).ok());
+        if biomolecule.generators.is_empty() {
+            biomolecule.generators.push(PdbBiomoleculeGenerator {
+                chains: Vec::new(),
+                operators: Vec::new(),
+            });
+        }
+        let operators = &mut biomolecule
+            .generators
+            .last_mut()
+            .expect("a generator exists")
+            .operators;
+        match operators.last_mut() {
+            Some((last, rows)) if last == serial => rows[row] = numbers,
+            _ => {
+                let mut rows = [None; 3];
+                rows[row] = numbers;
+                operators.push((serial.to_owned(), rows));
+            }
+        }
     }
 }
 

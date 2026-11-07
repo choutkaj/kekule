@@ -5,11 +5,12 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::io::Write;
 
 use super::{Encoder, Result};
+use crate::geometry::Vector3;
 use crate::io::{
-    AltLocDecision, AltLocSelectionReason, AtomProvenance, BondEvidence, CellOmissionReason,
-    ConflictingSelector, ConnectionResolutionReason, EntityKind, PolymerEntity, PolymerType,
-    SequenceSource, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
-    StructureInterpretationReport,
+    AltLocDecision, AltLocSelectionReason, Assembly, AssemblyOmissionReason, AtomProvenance,
+    BondEvidence, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason, EntityKind,
+    PolymerEntity, PolymerType, SequenceSource, SourceResidueId, SourceResiduePosition,
+    StructureInterpretIssue, StructureInterpretationReport,
 };
 use crate::sequence::CodeOrigin;
 use crate::topology::InstanceAtomId;
@@ -149,6 +150,33 @@ impl<W: Write> Encoder<'_, W> {
         self.count(report.polymer_entities.len())?;
         for entity in &report.polymer_entities {
             self.polymer_entity(entity)?;
+        }
+        self.count(report.assemblies.len())?;
+        for assembly in &report.assemblies {
+            self.assembly(assembly)?;
+        }
+        Ok(())
+    }
+
+    fn assembly(&mut self, assembly: &Assembly) -> Result {
+        self.str(&assembly.id)?;
+        self.opt_str(assembly.details.as_deref())?;
+        self.opt_str(assembly.oligomeric_details.as_deref())?;
+        self.opt_usize(assembly.oligomeric_count)?;
+        self.count(assembly.generators.len())?;
+        for generator in &assembly.generators {
+            self.str_list(&generator.chains)?;
+            self.count(generator.operations.len())?;
+            for operation in &generator.operations {
+                self.str_list(&operation.operators)?;
+                let [a, b, c] = operation.rotation.columns();
+                for vector in [a, b, c, operation.translation] {
+                    let Vector3 { x, y, z } = vector;
+                    for value in [x, y, z] {
+                        self.f64(value)?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -547,6 +575,36 @@ impl<W: Write> Encoder<'_, W> {
                 }
                 self.usize(location.line())?;
                 self.opt_usize(location.column())
+            }
+            Issue::AssemblyOmitted {
+                assembly,
+                reason,
+                line,
+            } => {
+                self.u8(19)?;
+                self.opt_str(assembly.as_deref())?;
+                match reason {
+                    AssemblyOmissionReason::Unidentified => self.u8(0)?,
+                    AssemblyOmissionReason::NoGenerators => self.u8(1)?,
+                    AssemblyOmissionReason::Expression { expression } => {
+                        self.u8(2)?;
+                        self.str(expression)?;
+                    }
+                    AssemblyOmissionReason::UnknownOperator { operator } => {
+                        self.u8(3)?;
+                        self.str(operator)?;
+                    }
+                    AssemblyOmissionReason::UnreadableOperator { operator } => {
+                        self.u8(4)?;
+                        self.str(operator)?;
+                    }
+                    AssemblyOmissionReason::NotRotation { operator } => {
+                        self.u8(5)?;
+                        self.str(operator)?;
+                    }
+                    AssemblyOmissionReason::TooManyOperations => self.u8(6)?,
+                }
+                self.opt_usize(*line)
             }
         }
     }
