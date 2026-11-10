@@ -14,68 +14,72 @@ Rustdoc beside their implementations. The links below point to those sources;
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
 | `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
 | `Model` | One shared `Topology` and one structure of it: dense positions, optional cell, occupancies, B factors, and `StructureProperties`, addressed by dense topology index | A second chemical or hierarchy model; temporal state |
+| `SampleSet` | One shared topology, collection owner properties, `Sample` structures in a stable order (positions, optional cell, occupancies, B factors, velocities, forces, and properties, each shared and copied on write), an optional `Order` with one value per sample (a `TimeAxis` of times and steps, steps, or one coordinate in a unit), and an optional `Distribution` over all samples or a subset (weights, one `EnsemblePartition`, one `EnsembleState` per state, and a temperature) | An order value, weight, or state on a sample; an energy on a sample; a stored population |
 | `Ensemble` | One shared topology, collection owner properties, an optional temperature, `EnsembleSample` payloads in a stable order (positions, optional cell, occupancies, B factors, properties, and a finite positive relative weight), their grouping into states as one `EnsemblePartition`, and one `EnsembleState` per state (an optional energy and owner properties) | An owned `Model` or topology in each sample; an energy on a sample; a stored population; temporal meaning |
 | `Trajectory` | One shared topology, collection owner properties, and time-ordered `TrajectoryFrame` payloads (positions, optional cell, properties, and optional velocities, forces, time, and step) | Implicit topology changes between frames; statistical weights; crystallographic site parameters |
 | `Series` | One shared topology, collection owner properties, a `SeriesAxis` (steps, or one coordinate in a unit), and `SeriesItem` payloads in series order (positions, optional cell, properties, and a step or a finite coordinate in the axis unit) | Time; statistical weights; crystallographic site parameters; an owned `Model` in each item |
 
-`Ensemble` and `Trajectory` are distinct scientific concepts and distinct
-types. An ensemble is a distribution of conformations on two levels. A sample
-is one structure with a weight, the share of probability it carries; sample
-order carries no meaning, and statistics over samples must be weighted. A
-state is a distinct conformation: a group of samples, one of them its
-representative. Every sample is in exactly one state and every state has at
-least one sample; a state's population is the total weight of its samples,
-derived and never stored. Only states have energies, on one scale per
-ensemble: a conformer's minimized energy or a computed free energy, never a
-snapshot's instantaneous energy. Populations derive from them only through an
-explicit Boltzmann assignment, which scales each state's samples together and
-records the temperature; samples drawn from a simulation form a state without
-an energy and are never weighted twice. Samples are stored flat, each with its
-state, so regrouping, weighting, and editing states never reorder them and
-hosts may keep sample indices. A
-trajectory is a path produced by dynamics: frame order and spacing are
-physical. A trajectory samples an ensemble only under ergodicity, so
-`Trajectory::into_ensemble` is an explicit, lossy projection to one state of
-equally weighted samples, and `Trajectory::to_ensemble` one of chosen frames,
-in requested order, with explicit weights and an optional atom subset;
-nothing converts the other way. Each type owns its topology,
-collection properties, and items and implements its own operations, including
-those whose meaning is currently the same for both, such as item access,
-selection, subsetting, perception, superposition, and RMSD; the two types are
-expected to diverge. They may share private per-item helpers, such as row
-validation and rigid transforms, and the borrowed `ModelView` kernels, but no
-collection storage or generic collection type. Weight- or time-dependent
-behavior belongs to one type only; do not add a public abstraction that erases
-the difference.
+A `SampleSet` is the one container for many structures of one topology. Its
+samples are flat structures; what makes the set a path, a scan, or a
+distribution is stated beside them. An order, when present, places every
+sample: a time axis for a path produced by dynamics, steps for an
+optimization, or values of one coordinate in a unit for a scan or a reaction
+path (values need not increase, as a scan swept back and forth shows). A time
+axis has times, steps, both, or neither, and each column covers every
+sample or none.
+Order values belong to the order, not to the samples: selecting keeps each
+selected sample's value, a removed sample takes its value with it, and
+collapsing to states drops the order.
 
-A `Series` is the third collection, an ordered sequence that is neither a
-distribution nor a path in time: the steps of a geometry optimization, the
-points of a relaxed scan, or the images of a reaction path. Its order is the
-order a computation produced, and every item lies on the series' axis, at a
-step or at a value of one coordinate whose unit the axis names (stored in
-that unit; values need not increase, as a scan swept back and forth shows).
-An item's scalar results, such as its energy or gradient norm, are owner
-properties of its structure properties, keyed and united as the host
-chooses. A series has no time and no weights, so it converts to neither a
-trajectory nor an ensemble; `Series::from_models` builds one from models of
-one layout, and `SeriesItemView::to_model` copies an item out. Like the other
-two, it owns its topology, collection properties, and items, implements its
-own operations, and shares only private per-item helpers and the `ModelView`
-kernels.
+A distribution, when present, covers every sample or a sorted subset, its
+members. Weights, when present, are finite and positive, one per member;
+without them the members weigh equally. Weights and the partition are indexed
+by member position. Every member is in exactly one state and every state has a
+representative member; a state's population is the total weight of its
+members, derived and never stored. Only states have energies, on one scale
+per distribution: a conformer's minimized energy or a computed free energy,
+never a snapshot's instantaneous energy, which stays a property of its
+sample. Selecting and removing samples remap the members; a selection keeps
+the energy and properties of the states it keeps whole. Order and
+distribution are independent, so a trajectory clustered into states is one
+set. A sample's structure is shared through `Arc` and copied on write, so
+regrouping, reweighting, selecting, and collapsing copy no coordinates, and
+editing one sample copies that sample alone. The operations of the set and
+its distribution fail with one `SampleSetError`, whose `Missing` variant
+names the `Requirement` an operation lacks, such as a time order or an
+energy for every state; a sample's own edits fail with `StructureError`, and
+perception with `TopologyPerceptionError`. Statistics over a set walk
+`SampleSet::weighted_samples`: the members with their weights, or every
+sample with weight 1 without a distribution.
+
+`Ensemble`, `Trajectory`, and `Series` remain beside `SampleSet`. An ensemble
+is a distribution over all its samples without an order; a trajectory is a
+time order without a distribution, its frames without site fields; a series
+is a step or coordinate order of samples without site fields or dynamics.
+Each implements its own operations; `Trajectory::into_ensemble` and
+`Trajectory::to_ensemble` project a trajectory to one state of equally
+weighted frames or to chosen frames with explicit weights. `SampleSet`
+converts from each (`from_ensemble`, `from_trajectory`, `from_series`) and
+back (`to_ensemble`, `into_ensemble`, and likewise for the others), sharing
+every structure, and every conversion that succeeds loses nothing.
+`from_trajectory` refuses frames that record a time or a step only in part,
+and a conversion back fails with `SampleSetError::NotConvertible` when the
+set holds what the target cannot, such as an order in an ensemble or a
+distribution in a trajectory. An ensemble always stores weights, so a set
+without weights comes back from one with weight 1 on every member.
 
 Structures are flat. A structure is one set of coordinates and per-atom state
-of a topology: a `Model`, an `EnsembleSample`, a `TrajectoryFrame`, or a
-`SeriesItem`. Each owns exactly the fields that are meaningful for it; there
-is no shared payload type. Positions, cell, and structure properties are
-common to all four. Occupancies and B factors are crystallographic per-atom
-fields of a model or ensemble sample and never belong to a trajectory frame
-or series item. Velocities, forces, time, and step belong only to frames, a
-place on a series axis only to a series item, and a weight only to an
-ensemble sample; an energy belongs to an ensemble state, not to any
-structure, except as a series item's own property. Coordinate kernels share
-code through the borrowed `ModelView`, not through a common owned payload.
+of a topology: a `Model`, a `Sample`, an `EnsembleSample`, a
+`TrajectoryFrame`, or a `SeriesItem`. Positions, cell, and structure
+properties are common to all. Occupancies and B factors are crystallographic
+per-atom fields of models, samples, and ensemble samples; velocities and
+forces belong to samples and trajectory frames. A place in an order and a
+membership in a distribution belong to the collection, never to a structure;
+an energy belongs to a state, not to any structure, except as a structure's
+own property. Coordinate kernels share code through the borrowed `ModelView`,
+not through a common owned payload.
 
-Both live in `kekule::structure`. `kekule::traj` owns file codecs, streaming
+All four live in `kekule::structure`. `kekule::traj` owns file codecs, streaming
 reader and writer contracts, the reusable `FrameBuffer`, periodic
 preprocessing, and streaming superposition; it owns no second in-memory
 trajectory type.
@@ -364,9 +368,9 @@ repeated entity.
 | --- | --- | --- |
 | Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
-| Structure (model, ensemble sample, trajectory frame, series item) | `StructureProperties` | Dense atoms and bonds |
-| Ensemble, trajectory, or series collection | `OwnerProperties` | Owner values only |
-| Ensemble state | `OwnerProperties` | Owner values only |
+| Structure (model, sample, ensemble sample, trajectory frame, series item) | `StructureProperties` | Dense atoms and bonds |
+| Sample set, ensemble, trajectory, or series collection | `OwnerProperties` | Owner values only |
+| State of a distribution or an ensemble | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
 take the table's row type. Writes go through length-preserving
@@ -391,7 +395,7 @@ perception does; only builders, editors, and transformations publish a new
 layout. Transformations transfer entity values explicitly and do not infer annotation
 validity or recompute arbitrary properties. Arbitrary source fields stay in
 format sidecars unless canonical semantics, scope, and domain justify promotion.
-Occupancy and B factors are typed site fields of models and ensemble samples,
+Occupancy and B factors are typed site fields of models, samples, and ensemble samples,
 with checked semantics independent of any generic property with the same name. Positions, cells,
 weights, energies, time, steps, velocities, and forces retain their dedicated APIs.
 
@@ -406,20 +410,20 @@ values. Exact units, tolerances, and conversion policies belong with
 
 ## Geometry and structure ownership
 
-A model, ensemble, trajectory, or series owns its shared topology once.
-Samples, frames, and items store flat payloads, not nested models; a
-detached payload has
-atom rows only and acquires bond rows when its collection binds it. An
-ensemble sample's structure is shared storage, copied on write per sample,
-and its weight is its own, so copies of an ensemble that differ only in
-weights or grouping share every coordinate. Borrowed
+A model, sample set, ensemble, trajectory, or series owns its shared
+topology once. Samples, frames, and items store flat payloads, not nested
+models; a detached payload has atom rows only and acquires bond rows when its
+collection binds it. The structure of a sample or an ensemble sample is
+shared storage, copied on write per sample, so copies of a collection that
+differ only in order, weights, or grouping share every coordinate. Borrowed
 `ModelView` access, obtained through the sealed `AsModelView` (or a frame
 buffer's `as_model_view`), lets coordinate algorithms and writers share
-kernels across models, samples, frames, and buffers. A view's `kind()`
-says which structure it borrows and carries that structure's own state (a
-sample's weight and state with its state's energy and the ensemble's
-temperature, a frame's time, step, velocities, and forces, an item's step
-or coordinate), so writers and reductions never lose it silently. Owned
+kernels across models, samples, frames, and buffers. A view's `kind()` is
+`StructureKind::Model` or `StructureKind::Sample` with a `SampleContext`: the
+sample's place in its order, its membership (weight, state, whether it
+represents the state, the state's energy, and the temperature), and its
+velocities and forces. Views of ensemble samples, frames, and items report
+the same context, so writers and reductions never lose that state silently. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
 equal layouts (`same_layout`), keeping the first model's topology, and a

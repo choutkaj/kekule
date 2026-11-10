@@ -1,0 +1,976 @@
+//! The distribution of a [`super::SampleSet`]: which samples are members,
+//! their weights, and their grouping into states.
+
+use crate::properties::OwnerProperties;
+use crate::structure::{EnsemblePartition, EnsembleState};
+use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
+
+use super::{Membership, Requirement, SampleSetError};
+
+/// Which samples of a set a [`Distribution`] covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Members {
+    /// Every sample of the set.
+    All,
+    /// The listed samples, by strictly increasing index; the others have no
+    /// membership.
+    Subset(Vec<usize>),
+}
+
+/// Members covering samples `members` of a set of `len`, as [`Members::All`]
+/// when they are every sample.
+fn normalized(members: Vec<usize>, len: usize) -> Members {
+    if members.len() == len {
+        Members::All
+    } else {
+        Members::Subset(members)
+    }
+}
+
+/// A distribution over some or all samples of a set: weighted members
+/// grouped into states.
+///
+/// It has two levels, as a distribution of conformations does.
+///
+/// - A *member* is a sample with a finite, positive, relative *weight*: the
+///   share of probability it carries. Only ratios of weights are
+///   meaningful; without weights, every member weighs the same.
+/// - A *state* ([`EnsembleState`]) is a distinct conformation: a group of
+///   members, one of them its representative. Its *population* is the total
+///   weight of its members, derived and never stored. A state may carry an
+///   *energy* on one scale for the whole distribution, such as a
+///   conformer's minimized energy or a computed free energy. It is not a
+///   sample's instantaneous energy, which stays a property of the sample.
+///
+/// Every member is in exactly one state, and every state has at least one
+/// member, its representative among them ([`EnsemblePartition`]). The
+/// distribution may record the *temperature* its populations describe.
+///
+/// Two index spaces meet here. Methods that take or return a `sample` use
+/// sample indices of the set. [`Self::weights`], [`Self::partition`], and
+/// [`Self::probabilities`] are in member order, by member position: the
+/// `i`th member is the `i`th sample [`Members`] lists.
+/// [`Self::weighted_members`] joins the two, giving each member's sample
+/// index with its weight.
+///
+/// A conformer set is one state per conformer; an NMR bundle or the frames
+/// of a trajectory are one state of many members, and clustering makes
+/// several. A distribution installed in a set is edited through the
+/// [`DistributionMut`] guard of [`super::SampleSet::distribution_mut`],
+/// which never changes which samples are members; the set's own editing,
+/// selecting, and removing do, and remap the members.
+///
+/// ```
+/// use kekule::structure::{Distribution, EnsemblePartition, Members};
+/// // Frames 1 and 2 of a three-frame trajectory, as one state.
+/// let distribution = Distribution::new(
+///     Members::Subset(vec![1, 2]),
+///     EnsemblePartition::one_state(2),
+/// )?
+/// .with_weights(vec![3.0, 1.0])?;
+/// assert_eq!(distribution.weight(1), Some(3.0));
+/// assert_eq!(distribution.weight(0), None);
+/// assert_eq!(distribution.probabilities()?, [0.75, 0.25]);
+/// assert_eq!(
+///     distribution.weighted_members().collect::<Vec<_>>(),
+///     [(1, 3.0), (2, 1.0)],
+/// );
+/// assert_eq!(distribution.ranked_by_weight(), [1, 2]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct Distribution {
+    pub(super) members: Members,
+    pub(super) weights: Option<Vec<f64>>,
+    pub(super) partition: EnsemblePartition,
+    pub(super) states: Vec<EnsembleState>,
+    pub(super) temperature: Option<Quantity<f64>>,
+}
+
+impl Distribution {
+    /// A distribution of `members` grouped by `partition`, without weights,
+    /// state energies, state properties, or a temperature.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::UnsortedMembers`] when a subset's indices do not
+    /// increase, and [`SampleSetError::PartitionMismatch`] when the partition
+    /// covers another number of samples than the subset lists. A
+    /// distribution of [`Members::All`] is checked against its set when it
+    /// is installed.
+    pub fn new(members: Members, partition: EnsemblePartition) -> Result<Self, SampleSetError> {
+        if let Members::Subset(indices) = &members {
+            if indices.windows(2).any(|pair| pair[0] >= pair[1]) {
+                return Err(SampleSetError::UnsortedMembers);
+            }
+            if indices.len() != partition.sample_count() {
+                return Err(SampleSetError::PartitionMismatch {
+                    expected: indices.len(),
+                    actual: partition.sample_count(),
+                });
+            }
+        }
+        Ok(Self {
+            members,
+            weights: None,
+            states: vec![EnsembleState::new(); partition.state_count()],
+            partition,
+            temperature: None,
+        })
+    }
+
+    /// Returns this distribution with one finite, positive weight per
+    /// member, in member order; see [`DistributionMut::set_weights`].
+    pub fn with_weights(mut self, weights: Vec<f64>) -> Result<Self, SampleSetError> {
+        self.set_weights(Some(weights))?;
+        Ok(self)
+    }
+
+    /// Returns this distribution with one state payload (energy and
+    /// properties) per state of its partition, in state order.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::StateCountMismatch`] for another number of states.
+    pub fn with_states(mut self, states: Vec<EnsembleState>) -> Result<Self, SampleSetError> {
+        if states.len() != self.states.len() {
+            return Err(SampleSetError::StateCountMismatch {
+                expected: self.states.len(),
+                actual: states.len(),
+            });
+        }
+        self.states = states;
+        Ok(self)
+    }
+
+    /// Returns this distribution with a temperature; see
+    /// [`DistributionMut::set_temperature`].
+    pub fn with_temperature(mut self, temperature: Quantity<f64>) -> Result<Self, SampleSetError> {
+        self.set_temperature(Some(temperature))?;
+        Ok(self)
+    }
+
+    /// Which samples are members.
+    pub fn members(&self) -> &Members {
+        &self.members
+    }
+
+    /// Number of members.
+    pub fn member_count(&self) -> usize {
+        self.partition.sample_count()
+    }
+
+    /// The position of sample `sample` among the members, which indexes the
+    /// weights and the partition, or `None` when it is not a member.
+    pub fn member_position(&self, sample: usize) -> Option<usize> {
+        match &self.members {
+            Members::All => (sample < self.member_count()).then_some(sample),
+            Members::Subset(indices) => indices.binary_search(&sample).ok(),
+        }
+    }
+
+    /// Each member's sample index with its relative weight, in member
+    /// order, so the `i`th item belongs to the `i`th weight, probability,
+    /// and partition entry. Every weight is `1.0` when the members weigh the
+    /// same. This is what weighted statistics over the distribution see;
+    /// non-members are left out.
+    pub fn weighted_members(&self) -> impl ExactSizeIterator<Item = (usize, f64)> + '_ {
+        (0..self.member_count())
+            .map(move |position| (self.member(position), self.member_weight(position)))
+    }
+
+    /// The sample index of the member at `position`.
+    pub(crate) fn member(&self, position: usize) -> usize {
+        match &self.members {
+            Members::All => position,
+            Members::Subset(indices) => indices[position],
+        }
+    }
+
+    /// The weights in member order, or `None` when every member weighs the
+    /// same.
+    pub fn weights(&self) -> Option<&[f64]> {
+        self.weights.as_deref()
+    }
+
+    /// The relative weight of sample `sample`: its own, `1.0` when every
+    /// member weighs the same, or `None` when it is not a member.
+    pub fn weight(&self, sample: usize) -> Option<f64> {
+        self.member_position(sample)
+            .map(|position| self.member_weight(position))
+    }
+
+    /// The grouping of the members into states, by member position.
+    pub fn partition(&self) -> &EnsemblePartition {
+        &self.partition
+    }
+
+    /// Number of states.
+    pub fn state_count(&self) -> usize {
+        self.states.len()
+    }
+
+    /// The state of sample `sample`, or `None` when it is not a member.
+    pub fn state_of(&self, sample: usize) -> Option<usize> {
+        self.member_position(sample)
+            .map(|position| self.partition.assignments()[position])
+    }
+
+    /// The temperature the populations describe, in
+    /// [`CANONICAL_TEMPERATURE_UNIT`], if recorded. Changing weights does
+    /// not clear it; the caller states what its populations describe.
+    pub const fn temperature(&self) -> Option<Quantity<f64>> {
+        self.temperature
+    }
+
+    /// The probability of each member, in member order: its weight divided
+    /// by the total weight.
+    ///
+    /// Fails without members or when a probability would underflow to zero.
+    pub fn probabilities(&self) -> Result<Vec<f64>, SampleSetError> {
+        if self.member_count() == 0 {
+            return Err(SampleSetError::EmptyDistribution);
+        }
+        let scaled = self.scaled_weights();
+        let total = scaled.iter().sum::<f64>();
+        scaled
+            .into_iter()
+            .enumerate()
+            .map(|(position, weight)| self.checked_weight(weight / total, position))
+            .collect()
+    }
+
+    /// The population share of each state, in state order: the total weight
+    /// of its members divided by the total weight. The shares sum to one.
+    ///
+    /// Fails without members or when a share would underflow to zero.
+    pub fn state_probabilities(&self) -> Result<Vec<f64>, SampleSetError> {
+        if self.member_count() == 0 {
+            return Err(SampleSetError::EmptyDistribution);
+        }
+        let scaled = self.scaled_state_populations();
+        let total = scaled.iter().sum::<f64>();
+        scaled
+            .into_iter()
+            .enumerate()
+            .map(|(state, population)| {
+                let representative = self.member(self.partition.representatives()[state]);
+                checked_weight(population / total).ok_or(SampleSetError::InvalidWeight {
+                    sample: representative,
+                })
+            })
+            .collect()
+    }
+
+    /// Kish's effective sample size over members, `(Σw)² / Σw²`: the number
+    /// of equally weighted members that would give the same statistical
+    /// precision.
+    ///
+    /// It is the member count for equal weights and approaches one when a
+    /// single member dominates. Fails without members.
+    pub fn effective_sample_size(&self) -> Result<f64, SampleSetError> {
+        if self.member_count() == 0 {
+            return Err(SampleSetError::EmptyDistribution);
+        }
+        let scaled = self.scaled_weights();
+        let total = scaled.iter().sum::<f64>();
+        let squares = scaled.iter().map(|weight| weight * weight).sum::<f64>();
+        Ok(total * total / squares)
+    }
+
+    /// Member sample indices, not member positions, by descending weight;
+    /// equal weights keep sample order.
+    ///
+    /// Keep the ten most probable members with
+    /// `set.select(distribution.ranked_by_weight().into_iter().take(10))`.
+    pub fn ranked_by_weight(&self) -> Vec<usize> {
+        let mut positions = (0..self.member_count()).collect::<Vec<_>>();
+        positions.sort_by(|&a, &b| self.member_weight(b).total_cmp(&self.member_weight(a)));
+        positions
+            .into_iter()
+            .map(|position| self.member(position))
+            .collect()
+    }
+
+    /// State indices by descending population; equal populations keep
+    /// state order.
+    ///
+    /// Keep the ten most populated states with
+    /// `set.select_states(distribution.ranked_by_population().into_iter().take(10))`.
+    pub fn ranked_by_population(&self) -> Vec<usize> {
+        let populations = self.scaled_state_populations();
+        let mut indices = (0..populations.len()).collect::<Vec<_>>();
+        indices.sort_by(|&a, &b| populations[b].total_cmp(&populations[a]));
+        indices
+    }
+
+    /// The fewest states, by descending population, whose populations
+    /// together reach `fraction` of the total, in
+    /// [`Self::ranked_by_population`] order.
+    ///
+    /// `fraction` must lie in `(0, 1]`; `1` selects every state, including
+    /// those too light to change a floating-point total. Pass the result to
+    /// [`super::SampleSet::select_states`] to keep, for example, 95% of a
+    /// Boltzmann population. Fails without members.
+    pub fn covering_population(&self, fraction: f64) -> Result<Vec<usize>, SampleSetError> {
+        if !(fraction > 0.0 && fraction <= 1.0) {
+            return Err(SampleSetError::InvalidFraction);
+        }
+        if self.member_count() == 0 {
+            return Err(SampleSetError::EmptyDistribution);
+        }
+        let ranked = self.ranked_by_population();
+        if fraction == 1.0 {
+            return Ok(ranked);
+        }
+        let scaled = self.scaled_state_populations();
+        // Sum in ranked order so the running total ends exactly at the total.
+        let total = ranked.iter().map(|&index| scaled[index]).sum::<f64>();
+        let target = fraction * total;
+        let mut covered = 0.0;
+        let count = ranked
+            .iter()
+            .position(|&index| {
+                covered += scaled[index];
+                covered >= target
+            })
+            .map_or(ranked.len(), |position| position + 1);
+        Ok(ranked[..count].to_vec())
+    }
+
+    /// State indices by ascending energy; equal energies keep state order.
+    ///
+    /// Fails with `Missing(StateEnergies)` if any state has no energy.
+    pub fn ranked_by_energy(&self) -> Result<Vec<usize>, SampleSetError> {
+        let energies = self.state_energies()?;
+        let mut indices = (0..energies.len()).collect::<Vec<_>>();
+        indices.sort_by(|&a, &b| {
+            energies[a]
+                .partial_cmp(&energies[b])
+                .expect("state energies are finite")
+        });
+        Ok(indices)
+    }
+
+    /// Indices, in state order, of the states whose energy lies at most
+    /// `window` above the lowest state energy.
+    ///
+    /// `window` is a finite, nonnegative energy, such as the 6 kcal/mol
+    /// window common in conformer searches. Fails with
+    /// `Missing(StateEnergies)` if any state has no energy.
+    pub fn within_energy_window(
+        &self,
+        window: Quantity<f64>,
+    ) -> Result<Vec<usize>, SampleSetError> {
+        let window = window.value_in(CANONICAL_ENERGY_UNIT)?;
+        if !(window.is_finite() && window >= 0.0) {
+            return Err(SampleSetError::InvalidEnergyWindow);
+        }
+        let energies = self.state_energies()?;
+        let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
+        Ok(energies
+            .iter()
+            .enumerate()
+            .filter(|(_, energy)| *energy - minimum <= window)
+            .map(|(index, _)| index)
+            .collect())
+    }
+
+    fn set_temperature(
+        &mut self,
+        temperature: Option<Quantity<f64>>,
+    ) -> Result<(), SampleSetError> {
+        self.temperature = temperature
+            .map(|temperature| {
+                let kelvin = checked_temperature(temperature)?;
+                Ok::<_, SampleSetError>(Quantity::new(kelvin, CANONICAL_TEMPERATURE_UNIT))
+            })
+            .transpose()?;
+        Ok(())
+    }
+
+    fn set_weights(&mut self, weights: Option<Vec<f64>>) -> Result<(), SampleSetError> {
+        if let Some(weights) = &weights {
+            if weights.len() != self.member_count() {
+                return Err(SampleSetError::WeightCountMismatch {
+                    expected: self.member_count(),
+                    actual: weights.len(),
+                });
+            }
+            for (position, weight) in weights.iter().enumerate() {
+                self.checked_weight(*weight, position)?;
+            }
+        }
+        self.weights = weights;
+        Ok(())
+    }
+
+    /// Every state energy in [`CANONICAL_ENERGY_UNIT`].
+    pub(crate) fn state_energies(&self) -> Result<Vec<f64>, SampleSetError> {
+        self.states
+            .iter()
+            .map(|state| {
+                state
+                    .energy()
+                    .map(Quantity::into_value)
+                    .ok_or(SampleSetError::Missing(Requirement::StateEnergies))
+            })
+            .collect()
+    }
+
+    /// The weight of the member at `position`.
+    pub(super) fn member_weight(&self, position: usize) -> f64 {
+        self.weights
+            .as_ref()
+            .map_or(1.0, |weights| weights[position])
+    }
+
+    /// Weights divided by the largest one, so sums cannot overflow.
+    pub(crate) fn scaled_weights(&self) -> Vec<f64> {
+        let maximum = self.largest_weight();
+        (0..self.member_count())
+            .map(|position| self.member_weight(position) / maximum)
+            .collect()
+    }
+
+    /// The summed [`Self::scaled_weights`] of each state.
+    fn scaled_state_populations(&self) -> Vec<f64> {
+        let mut populations = vec![0.0; self.states.len()];
+        for (weight, state) in self
+            .scaled_weights()
+            .into_iter()
+            .zip(self.partition.assignments())
+        {
+            populations[*state] += weight;
+        }
+        populations
+    }
+
+    /// The population of one state, which must exist, relative to the
+    /// largest member weight, so that it cannot overflow.
+    pub(crate) fn population(&self, state: usize) -> f64 {
+        let maximum = self.largest_weight();
+        self.partition
+            .samples(state)
+            .map(|position| self.member_weight(position) / maximum)
+            .sum()
+    }
+
+    /// The largest member weight, `1.0` when the members weigh the same or
+    /// there are none.
+    fn largest_weight(&self) -> f64 {
+        self.weights
+            .as_ref()
+            .and_then(|weights| weights.iter().copied().reduce(f64::max))
+            .unwrap_or(1.0)
+    }
+
+    /// The payload of one state, which must exist.
+    pub(crate) fn state(&self, state: usize) -> &EnsembleState {
+        &self.states[state]
+    }
+
+    /// What a view of sample `sample` reports, or `None` for a non-member.
+    pub(crate) fn membership(&self, sample: usize) -> Option<Membership> {
+        let position = self.member_position(sample)?;
+        let state = self.partition.assignments()[position];
+        Some(Membership::new(
+            self.member_weight(position),
+            state,
+            self.partition.representatives()[state] == position,
+            self.states[state].energy(),
+            self.temperature,
+        ))
+    }
+
+    /// `weight` when it is finite and positive; the error names the member
+    /// at `position`.
+    fn checked_weight(&self, weight: f64, position: usize) -> Result<f64, SampleSetError> {
+        checked_weight(weight).ok_or(SampleSetError::InvalidWeight {
+            sample: self.member(position),
+        })
+    }
+
+    /// Checks this distribution against a set of `len` samples, and lists
+    /// every sample as [`Members::All`].
+    pub(crate) fn bind(&mut self, len: usize) -> Result<(), SampleSetError> {
+        match &self.members {
+            Members::All => {
+                if self.member_count() != len {
+                    return Err(SampleSetError::CoverageMismatch {
+                        covered: self.member_count(),
+                        samples: len,
+                    });
+                }
+            }
+            Members::Subset(indices) => {
+                if let Some(&last) = indices.last() {
+                    if last >= len {
+                        return Err(SampleSetError::IndexOutOfRange { index: last, len });
+                    }
+                }
+                if indices.len() == len {
+                    self.members = Members::All;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks a new member's weight before [`Self::push_member`] or
+    /// [`Self::push_state`].
+    pub(crate) fn check_new_weight(
+        &self,
+        weight: Option<f64>,
+        sample: usize,
+    ) -> Result<(), SampleSetError> {
+        match (weight, &self.weights) {
+            (None, Some(_)) => Err(SampleSetError::WeightRequired),
+            (Some(weight), _) => checked_weight(weight)
+                .map(|_| ())
+                .ok_or(SampleSetError::InvalidWeight { sample }),
+            (None, None) => Ok(()),
+        }
+    }
+
+    /// Checks that `state` exists.
+    pub(crate) fn check_state(&self, state: usize) -> Result<(), SampleSetError> {
+        if state >= self.states.len() {
+            return Err(SampleSetError::StateOutOfRange {
+                state,
+                states: self.states.len(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Records that sample `sample`, the new last sample of the set, is not
+    /// a member.
+    pub(crate) fn push_non_member(&mut self, sample: usize) {
+        if self.members == Members::All {
+            self.members = Members::Subset((0..sample).collect());
+        }
+    }
+
+    /// Adds sample `sample`, the new last sample of the set, to an existing
+    /// state, after [`Self::check_state`] and [`Self::check_new_weight`].
+    pub(crate) fn push_member(&mut self, sample: usize, state: usize, weight: Option<f64>) {
+        self.push_weight(weight);
+        self.push_position(sample);
+        let (mut assignments, representatives) = self.take_partition();
+        assignments.push(state);
+        self.partition = EnsemblePartition::from_parts_unchecked(assignments, representatives);
+    }
+
+    /// Adds sample `sample`, the new last sample of the set, as the
+    /// representative of a new state, after [`Self::check_new_weight`];
+    /// returns the state's index.
+    pub(crate) fn push_state(
+        &mut self,
+        sample: usize,
+        state: EnsembleState,
+        weight: Option<f64>,
+    ) -> usize {
+        let index = self.states.len();
+        let position = self.member_count();
+        self.push_weight(weight);
+        self.push_position(sample);
+        let (mut assignments, mut representatives) = self.take_partition();
+        assignments.push(index);
+        representatives.push(position);
+        self.partition = EnsemblePartition::from_parts_unchecked(assignments, representatives);
+        self.states.push(state);
+        index
+    }
+
+    fn push_weight(&mut self, weight: Option<f64>) {
+        match (weight, &mut self.weights) {
+            (Some(weight), Some(weights)) => weights.push(weight),
+            (Some(weight), None) => {
+                let mut weights = vec![1.0; self.partition.sample_count()];
+                weights.push(weight);
+                self.weights = Some(weights);
+            }
+            (None, None) => {}
+            (None, Some(_)) => unreachable!("new weights are checked first"),
+        }
+    }
+
+    fn push_position(&mut self, sample: usize) {
+        if let Members::Subset(indices) = &mut self.members {
+            indices.push(sample);
+        }
+    }
+
+    /// Checks that sample `sample` can be removed: it is not the
+    /// representative of a state with other members.
+    pub(crate) fn check_remove(&self, sample: usize) -> Result<(), SampleSetError> {
+        let Some(position) = self.member_position(sample) else {
+            return Ok(());
+        };
+        let state = self.partition.assignments()[position];
+        let representative = self.partition.representatives()[state] == position;
+        let alone = self.partition.samples(state).nth(1).is_none();
+        if representative && !alone {
+            return Err(SampleSetError::RepresentativeRemoval { sample, state });
+        }
+        Ok(())
+    }
+
+    /// Removes sample `sample` from a set that keeps `len` samples after
+    /// [`Self::check_remove`], shifting later members down. A member alone
+    /// in its state removes the state.
+    pub(crate) fn remove(&mut self, sample: usize, len: usize) {
+        if let Some(position) = self.member_position(sample) {
+            let state = self.partition.assignments()[position];
+            let alone = self.partition.samples(state).nth(1).is_none();
+            let (mut assignments, mut representatives) = self.take_partition();
+            assignments.remove(position);
+            if alone {
+                representatives.remove(state);
+                self.states.remove(state);
+                for assigned in &mut assignments {
+                    if *assigned > state {
+                        *assigned -= 1;
+                    }
+                }
+            }
+            for represented in &mut representatives {
+                if *represented > position {
+                    *represented -= 1;
+                }
+            }
+            self.partition = EnsemblePartition::from_parts_unchecked(assignments, representatives);
+            if let Some(weights) = &mut self.weights {
+                weights.remove(position);
+            }
+        }
+        if let Members::Subset(indices) = &self.members {
+            let members = indices
+                .iter()
+                .filter(|index| **index != sample)
+                .map(|index| if *index > sample { index - 1 } else { *index })
+                .collect();
+            self.members = normalized(members, len);
+        }
+    }
+
+    /// The distribution of a set of the samples `indices` (checked), in
+    /// order: the selected members, with their weights. Every state with a
+    /// selected member becomes a state of the copy, in state order,
+    /// represented by the first copy of its representative or, when that is
+    /// not selected, by its first selected member. A state whose members are
+    /// all selected keeps its energy and properties; one selected only in
+    /// part has neither.
+    pub(crate) fn select(&self, indices: &[usize]) -> Self {
+        // (sample index in the copy, member position here)
+        let picked = indices
+            .iter()
+            .enumerate()
+            .filter_map(|(copy, sample)| {
+                self.member_position(*sample)
+                    .map(|position| (copy, position))
+            })
+            .collect::<Vec<_>>();
+        let old = self.partition.assignments();
+        let mut selected = vec![0; self.states.len()];
+        let mut chosen = vec![false; self.member_count()];
+        for (_, position) in &picked {
+            if !std::mem::replace(&mut chosen[*position], true) {
+                selected[old[*position]] += 1;
+            }
+        }
+        let sizes = self.partition.sizes();
+        let mut renumbered = vec![usize::MAX; self.states.len()];
+        let mut states = Vec::new();
+        for (state, count) in selected.iter().enumerate() {
+            if *count > 0 {
+                renumbered[state] = states.len();
+                states.push(if *count == sizes[state] {
+                    self.states[state].clone()
+                } else {
+                    EnsembleState::new()
+                });
+            }
+        }
+        let mut assignments = Vec::with_capacity(picked.len());
+        let mut representatives = vec![None; states.len()];
+        let mut first = vec![None; states.len()];
+        for (member, (_, position)) in picked.iter().enumerate() {
+            let state = renumbered[old[*position]];
+            assignments.push(state);
+            first[state].get_or_insert(member);
+            if *position == self.partition.representatives()[old[*position]] {
+                representatives[state].get_or_insert(member);
+            }
+        }
+        let representatives = representatives
+            .into_iter()
+            .zip(first)
+            .map(|(representative, first)| {
+                representative
+                    .or(first)
+                    .expect("every renumbered state has a selected member")
+            })
+            .collect();
+        Self {
+            members: normalized(
+                picked.iter().map(|(copy, _)| *copy).collect(),
+                indices.len(),
+            ),
+            weights: self.weights.as_ref().map(|weights| {
+                picked
+                    .iter()
+                    .map(|(_, position)| weights[*position])
+                    .collect()
+            }),
+            partition: EnsemblePartition::from_parts_unchecked(assignments, representatives),
+            states,
+            temperature: self.temperature,
+        }
+    }
+
+    /// The members of whole states `indices` (checked), in the requested
+    /// order and each state's members in sample order, as their sample
+    /// indices, with the distribution of a set of just those samples.
+    pub(crate) fn select_states(&self, indices: &[usize]) -> (Vec<usize>, Self) {
+        let mut samples = Vec::new();
+        let mut weights = self.weights.as_ref().map(|_| Vec::new());
+        let mut assignments = Vec::new();
+        let mut representatives = Vec::with_capacity(indices.len());
+        let mut states = Vec::with_capacity(indices.len());
+        for (state, old) in indices.iter().enumerate() {
+            let representative = self.partition.representatives()[*old];
+            for position in self.partition.samples(*old) {
+                if position == representative {
+                    representatives.push(samples.len());
+                }
+                samples.push(self.member(position));
+                if let Some(weights) = &mut weights {
+                    weights.push(self.member_weight(position));
+                }
+                assignments.push(state);
+            }
+            states.push(self.states[*old].clone());
+        }
+        let distribution = Self {
+            members: Members::All,
+            weights,
+            partition: EnsemblePartition::from_parts_unchecked(assignments, representatives),
+            states,
+            temperature: self.temperature,
+        };
+        (samples, distribution)
+    }
+
+    /// Each state's representative, as a sample index, with the
+    /// distribution of a set of just those samples: one state each, weighted
+    /// by its population relative to the largest member weight.
+    pub(crate) fn collapse(&self) -> Result<(Vec<usize>, Self), SampleSetError> {
+        let representatives = self
+            .partition
+            .representatives()
+            .iter()
+            .map(|position| self.member(*position))
+            .collect::<Vec<_>>();
+        let weights = self
+            .scaled_state_populations()
+            .into_iter()
+            .zip(&representatives)
+            .map(|(population, sample)| {
+                checked_weight(population).ok_or(SampleSetError::InvalidWeight { sample: *sample })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let distribution = Self {
+            members: Members::All,
+            weights: Some(weights),
+            partition: EnsemblePartition::state_per_sample(representatives.len()),
+            states: self.states.clone(),
+            temperature: self.temperature,
+        };
+        Ok((representatives, distribution))
+    }
+
+    /// This distribution with the states' properties dropped, for a set
+    /// projected onto an atom subset.
+    pub(crate) fn without_state_properties(&self) -> Self {
+        let mut distribution = self.clone();
+        for state in &mut distribution.states {
+            *state.properties_mut() = OwnerProperties::new();
+        }
+        distribution
+    }
+
+    /// Moves the partition out as its assignments and representatives, to
+    /// be rebuilt and put back.
+    fn take_partition(&mut self) -> (Vec<usize>, Vec<usize>) {
+        std::mem::replace(&mut self.partition, EnsemblePartition::state_per_sample(0)).into_parts()
+    }
+}
+
+/// Mutable access to the distribution of a [`super::SampleSet`]
+/// ([`super::SampleSet::distribution_mut`]).
+///
+/// Reads use `Deref`. There is deliberately no `DerefMut`: the guard changes
+/// weights, the grouping into states, the states' energies and properties,
+/// and the temperature, but never which samples are members, so the
+/// distribution always fits its set. Replace or clear the whole
+/// distribution with [`super::SampleSet::set_distribution`], which checks
+/// it against the set.
+///
+/// ```compile_fail,E0594
+/// use kekule::structure::{Distribution, EnsemblePartition, Members, SampleSet};
+/// fn replace(set: &mut SampleSet) {
+///     let foreign = Distribution::new(Members::Subset(vec![7]), EnsemblePartition::one_state(1));
+///     *set.distribution_mut().unwrap() = foreign.unwrap();
+/// }
+/// ```
+#[derive(Debug)]
+pub struct DistributionMut<'a> {
+    distribution: &'a mut Distribution,
+}
+
+impl<'a> DistributionMut<'a> {
+    pub(crate) fn new(distribution: &'a mut Distribution) -> Self {
+        Self { distribution }
+    }
+}
+
+impl std::ops::Deref for DistributionMut<'_> {
+    type Target = Distribution;
+
+    fn deref(&self) -> &Self::Target {
+        self.distribution
+    }
+}
+
+impl DistributionMut<'_> {
+    /// Replaces every weight, in member order, or makes every member weigh
+    /// the same. Failure changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::WeightCountMismatch`] for another number of weights
+    /// than members, and [`SampleSetError::InvalidWeight`] for the first
+    /// weight that is not finite and positive.
+    pub fn set_weights(&mut self, weights: Option<Vec<f64>>) -> Result<(), SampleSetError> {
+        self.distribution.set_weights(weights)
+    }
+
+    /// Sets the weight of one member, a finite positive value. In a
+    /// distribution without weights, the other members keep weight `1.0`.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::NotMember`] when `sample` is not a member, and
+    /// [`SampleSetError::InvalidWeight`] for a weight that is not finite and
+    /// positive.
+    pub fn set_weight(&mut self, sample: usize, weight: f64) -> Result<(), SampleSetError> {
+        let distribution = &mut *self.distribution;
+        let position = distribution
+            .member_position(sample)
+            .ok_or(SampleSetError::NotMember { sample })?;
+        let weight = distribution.checked_weight(weight, position)?;
+        let count = distribution.member_count();
+        distribution.weights.get_or_insert_with(|| vec![1.0; count])[position] = weight;
+        Ok(())
+    }
+
+    /// Scales every weight so the weights sum to one, keeping their ratios
+    /// and therefore every probability and population share.
+    ///
+    /// Fails without members, or when a scaled weight would underflow to
+    /// zero. Failure changes nothing.
+    pub fn normalize_weights(&mut self) -> Result<(), SampleSetError> {
+        self.distribution.weights = Some(self.distribution.probabilities()?);
+        Ok(())
+    }
+
+    /// Records or clears the temperature the populations describe, which
+    /// must be finite and positive. No weight changes.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::InvalidTemperature`] and [`SampleSetError::Unit`];
+    /// failure changes nothing.
+    pub fn set_temperature(
+        &mut self,
+        temperature: Option<Quantity<f64>>,
+    ) -> Result<(), SampleSetError> {
+        self.distribution.set_temperature(temperature)
+    }
+
+    /// The energy and properties of one state. Its members and
+    /// representative change only through [`Self::regroup`].
+    pub fn state_mut(&mut self, state: usize) -> Option<&mut EnsembleState> {
+        self.distribution.states.get_mut(state)
+    }
+
+    /// Groups the members into the states of `partition`, by member
+    /// position, changing no weight and no member.
+    ///
+    /// The distribution stays the same; only its description changes, and
+    /// populations follow the members. A new state that contains every
+    /// member of an old state keeps the energy and properties of its
+    /// representative's old state, so merging whole states keeps the
+    /// representative's energy, and an unchanged grouping keeps everything.
+    /// A state whose old state is split apart has neither. The temperature
+    /// is kept.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::PartitionMismatch`] when `partition` covers another
+    /// number of samples than there are members; failure changes nothing.
+    pub fn regroup(&mut self, partition: EnsemblePartition) -> Result<(), SampleSetError> {
+        if partition.sample_count() != self.distribution.member_count() {
+            return Err(SampleSetError::PartitionMismatch {
+                expected: self.distribution.member_count(),
+                actual: partition.sample_count(),
+            });
+        }
+        let old = self.distribution.partition.assignments();
+        let new = partition.assignments();
+        // The one new state every member of an old state went to, if it
+        // stayed whole.
+        let mut target = vec![None; self.distribution.states.len()];
+        let mut split = vec![false; self.distribution.states.len()];
+        for (old, new) in old.iter().zip(new) {
+            match target[*old] {
+                None => target[*old] = Some(*new),
+                Some(existing) if existing != *new => split[*old] = true,
+                Some(_) => {}
+            }
+        }
+        let mut previous = std::mem::take(&mut self.distribution.states);
+        self.distribution.states = partition
+            .representatives()
+            .iter()
+            .map(|representative| {
+                let state = old[*representative];
+                if split[state] {
+                    EnsembleState::new()
+                } else {
+                    std::mem::take(&mut previous[state])
+                }
+            })
+            .collect();
+        self.distribution.partition = partition;
+        Ok(())
+    }
+}
+
+/// `weight` when it is finite and positive.
+fn checked_weight(weight: f64) -> Option<f64> {
+    (weight.is_finite() && weight > 0.0).then_some(weight)
+}
+
+/// A finite, positive temperature in [`CANONICAL_TEMPERATURE_UNIT`].
+fn checked_temperature(temperature: Quantity<f64>) -> Result<f64, SampleSetError> {
+    let temperature = temperature.value_in(CANONICAL_TEMPERATURE_UNIT)?;
+    if temperature.is_finite() && temperature > 0.0 {
+        Ok(temperature)
+    } else {
+        Err(SampleSetError::InvalidTemperature)
+    }
+}

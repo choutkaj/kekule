@@ -11,6 +11,31 @@ are marked **Breaking:**.
 
 ### Added
 
+- Sample sets (SeekDelta K72). `structure::SampleSet` holds many structures
+  of one topology as `Sample`s, each shared and copied on write, with an
+  optional `Order` and an optional `Distribution`. An order gives every
+  sample a place: a `TimeAxis` of times and steps, steps, or values of one
+  coordinate in a unit. A distribution covers all samples or a sorted
+  subset (`Members`), with optional finite positive weights, a partition
+  into states, one `EnsembleState` per state, and a temperature. Every
+  sample may carry occupancies, B factors, velocities, and forces.
+  Selecting keeps each sample's order value and remaps the members;
+  `select_states` keeps whole states, and `collapse` keeps one
+  representative per state and drops the order. Regrouping, reweighting,
+  selecting, and collapsing copy no coordinates. `SampleView`, `StateView`,
+  and the `SampleMut` and `DistributionMut` guards read and edit samples,
+  states, and the distribution; a sample's view implements `AsModelView`,
+  so writers and kernels take it as they take a model.
+  `SampleSet::weighted_samples` and `Distribution::weighted_members` give
+  the samples statistics see, with their weights. The set's operations fail
+  with one `SampleSetError`, and `SampleSetError::Missing` names the
+  `Requirement` that is absent, such as a time order.
+  `SampleSet::from_ensemble`, `from_trajectory`, and `from_series` convert,
+  sharing every structure, and `to_ensemble`, `to_trajectory`, and
+  `to_series` (and their `into_` forms) convert back; each refuses what the
+  other side cannot hold (`SampleSetError::NotConvertible`, or frames that
+  record a time or step only in part), so a conversion that succeeds loses
+  nothing.
 - Biological assemblies (SeekDelta K66, K67). Interpretation reports list
   the assemblies an entry states: `StructureInterpretationReport::assemblies`
   reads mmCIF `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
@@ -158,8 +183,8 @@ are marked **Breaking:**.
   the axis unit and finite; values need not increase, as a scan swept back
   and forth shows. An item's scalar results, such as its energy or gradient
   norm, are owner properties of its structure properties. As for
-  trajectories and ensembles, items borrow as `ModelView`s, whose new
-  `StructureKind::Item` carries the step or coordinate, copy out as models
+  trajectories and ensembles, items borrow as `ModelView`s, whose
+  `StructureKind` carries the step or coordinate, copy out as models
   (`SeriesItemView::to_model`), and a series is built from models of one
   layout (`Series::from_models`, on steps 0, 1, …); series select, subset,
   perceive, transform, superpose, and measure RMSD item by item. The native
@@ -830,6 +855,16 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** `StructureKind` has two variants (SeekDelta K72):
+  `StructureKind::Model`, and `StructureKind::Sample` with a
+  `SampleContext`. The context reports the sample's place in its order
+  (`Place`), its membership in a distribution (`Membership`: weight, state,
+  whether it represents the state, `state_energy`, and the temperature),
+  and its velocities and forces. Views of ensemble samples,
+  trajectory frames, and series items report their state through it, so
+  match `StructureKind::Sample(context)` where code matched
+  `StructureKind::Sample { .. }`, `Frame { .. }`, or `Item { .. }`. Every
+  writer writes byte for byte as before.
 - **Breaking:** the `kekule-traj` crate is now the `kekule::traj` module
   (SeekDelta K71), and the crate is gone. Every item keeps its name and
   signature under the new path: `kekule_traj::io::read_trajectory` is

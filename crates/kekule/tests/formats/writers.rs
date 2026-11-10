@@ -9,11 +9,13 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::EntityKind;
 use kekule::mmcif::{self, MmcifEntityClassifications, MmcifWriteIssue, MmcifWriteOptions};
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
+use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{
-    Ensemble, EnsemblePartition, Forces, Model, ModelView, Positions, Series, SeriesAxis,
-    SeriesItem, Trajectory, TrajectoryFrame, Velocities,
+    Distribution, Ensemble, EnsemblePartition, EnsembleState, Forces, Members, Model, ModelView,
+    Order, Positions, SampleSet, Series, SeriesAxis, SeriesItem, Trajectory, TrajectoryFrame,
+    Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{
@@ -2118,4 +2120,147 @@ fn molfile_titles_and_smiles_names_round_trip_and_reject_unreadable_text() {
             "{name:?}"
         );
     }
+}
+
+/// Every structure writer's output with its report, or its error, for one
+/// view with sample, frame, and series item state set to `policy`.
+fn write_with_reports(view: ModelView<'_>, policy: UnrepresentablePolicy) -> Vec<String> {
+    let mut written = write_structure(view, policy)
+        .iter()
+        .map(|result| format!("{result:?}"))
+        .collect::<Vec<_>>();
+    written.push(format!(
+        "{:?}",
+        molfile::write(
+            molfile::MolfileSource::model(&view),
+            MolfileWriteOptions::default()
+                .with_ensemble_metadata(policy)
+                .with_frame_metadata(policy)
+                .with_series_metadata(policy),
+        )
+    ));
+    written.push(format!(
+        "{:?}",
+        mmcif::write(
+            [mmcif::MmcifBlockSource::model(&view)],
+            MmcifWriteOptions::default()
+                .with_ensemble_metadata(policy)
+                .with_frame_metadata(policy),
+        )
+    ));
+    written.push(format!(
+        "{:?}",
+        pdb::write(
+            pdb::PdbSource::structure(&view),
+            PdbWriteOptions::default()
+                .with_ensemble_metadata(policy)
+                .with_frame_metadata(policy)
+                .with_series_metadata(policy),
+        )
+    ));
+    written
+}
+
+#[test]
+fn sample_set_views_write_as_the_views_they_come_from() {
+    let mut ensemble = weighted_ensemble();
+    ensemble.state_mut(1).unwrap().set_energy(None).unwrap();
+    let trajectory = stateful_trajectory();
+    let (history, scan) = methane_series();
+    // Its frames state times and steps only in part, which a time axis
+    // refuses, so each frame converts as a trajectory of its own.
+    let frames = trajectory.iter().map(|frame| {
+        let alone = Trajectory::from_items(trajectory.shared_topology(), [frame.payload().clone()])
+            .unwrap();
+        SampleSet::from_trajectory(alone).unwrap()
+    });
+    let sets = [SampleSet::from_ensemble(ensemble.clone())]
+        .into_iter()
+        .chain(frames)
+        .chain([
+            SampleSet::from_series(history.clone()),
+            SampleSet::from_series(scan.clone()),
+        ])
+        .collect::<Vec<_>>();
+    let old = ensemble
+        .iter()
+        .map(|sample| sample.as_model_view())
+        .chain(trajectory.iter().map(|frame| frame.as_model_view()))
+        .chain(history.iter().map(|item| item.as_model_view()))
+        .chain(scan.iter().map(|item| item.as_model_view()))
+        .collect::<Vec<_>>();
+    let new = sets
+        .iter()
+        .flat_map(|set| set.iter().map(|sample| sample.as_model_view()))
+        .collect::<Vec<_>>();
+    assert_eq!(old.len(), new.len());
+    let mut failures = 0;
+    for policy in [UnrepresentablePolicy::Fail, UnrepresentablePolicy::Omit] {
+        for (index, (old, new)) in old.iter().zip(&new).enumerate() {
+            let written = write_with_reports(*old, policy);
+            assert_eq!(
+                write_with_reports(*new, policy),
+                written,
+                "view {index}, {policy:?}"
+            );
+            failures += written
+                .iter()
+                .filter(|text| text.starts_with("Err"))
+                .count();
+        }
+    }
+    // The failure paths are compared too, not only the written text.
+    assert!(failures > 0);
+}
+
+#[test]
+fn a_sample_with_a_place_and_a_membership_writes_both_in_sdf() {
+    let mut set = SampleSet::from_models([model("C", &[[0.0; 3]])]).unwrap();
+    set.set_order(Some(Order::Step(vec![7]))).unwrap();
+    let state = EnsembleState::new()
+        .with_energy(Quantity::new(-1.5, KILOJOULE_PER_MOLE))
+        .unwrap();
+    let distribution = Distribution::new(Members::All, EnsemblePartition::one_state(1))
+        .unwrap()
+        .with_weights(vec![2.5])
+        .unwrap()
+        .with_states(vec![state])
+        .unwrap()
+        .with_temperature(Quantity::new(300.0, KELVIN))
+        .unwrap();
+    set.set_distribution(Some(distribution)).unwrap();
+    let view = set.get(0).unwrap();
+    let text = sdf::write(
+        [sdf::SdfRecordSource::model(&view)],
+        SdfWriteOptions::default(),
+    )
+    .unwrap();
+    // The membership's fields, then the place's.
+    let expected = "
+  kekule            2D
+
+  1  0  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+M  END
+>  <kekule.weight>
+2.5
+
+>  <kekule.state>
+0
+
+>  <kekule.representative>
+true
+
+>  <kekule.energy.kJ_per_mol>
+-1.5
+
+>  <kekule.temperature.K>
+300
+
+>  <kekule.step>
+7
+
+$$$$
+";
+    assert_eq!(text, expected);
 }

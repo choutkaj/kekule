@@ -14,8 +14,8 @@ use super::state::{
     transform_positions, validate_binding,
 };
 use super::{
-    AsModelView, Ensemble, EnsembleSample, Forces, Model, ModelView, Positions, StructureError,
-    StructureKind, TrajectorySampler, TrajectorySampling, Velocities,
+    AsModelView, Ensemble, EnsembleSample, Forces, Model, ModelView, Positions, SampleContext,
+    StructureError, StructureKind, TrajectorySampler, TrajectorySampling, Velocities,
 };
 
 /// Whether [`Trajectory::validate_monotonic_time`] accepts frames without time.
@@ -44,9 +44,9 @@ pub enum MissingTimePolicy {
 /// [`crate::traj`].
 #[derive(Debug, Clone)]
 pub struct Trajectory {
-    topology: Arc<Topology>,
-    properties: OwnerProperties,
-    frames: Vec<TrajectoryFrame>,
+    pub(super) topology: Arc<Topology>,
+    pub(super) properties: OwnerProperties,
+    pub(super) frames: Vec<TrajectoryFrame>,
 }
 
 impl Trajectory {
@@ -390,13 +390,13 @@ impl<'a> IntoIterator for &'a Trajectory {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrajectoryFrame {
-    positions: Positions,
-    cell: Option<PeriodicCell>,
-    properties: StructureProperties,
-    velocities: Option<Velocities>,
-    forces: Option<Forces>,
-    time: Option<Quantity<f64>>,
-    step: Option<u64>,
+    pub(super) positions: Positions,
+    pub(super) cell: Option<PeriodicCell>,
+    pub(super) properties: StructureProperties,
+    pub(super) velocities: Option<Velocities>,
+    pub(super) forces: Option<Forces>,
+    pub(super) time: Option<Quantity<f64>>,
+    pub(super) step: Option<u64>,
 }
 
 impl TrajectoryFrame {
@@ -522,12 +522,7 @@ impl TrajectoryFrame {
             &ABSENT,
             &ABSENT,
             &self.properties,
-            StructureKind::Frame {
-                time: self.time,
-                step: self.step,
-                velocities: self.velocities.as_ref(),
-                forces: self.forces.as_ref(),
-            },
+            StructureKind::Sample(SampleContext::of_frame(self)),
         )
     }
 
