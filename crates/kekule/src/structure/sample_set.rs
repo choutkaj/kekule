@@ -16,7 +16,7 @@ mod sample;
 mod views;
 
 pub use context::{Membership, SampleContext};
-pub use distribution::{Distribution, Members};
+pub use distribution::{Distribution, DistributionMut, Members};
 pub use error::{ConversionTarget, Requirement, SampleSetError, Unconvertible};
 pub use order::{Order, Place, TimeAxis};
 pub(crate) use sample::SampleStructure;
@@ -180,7 +180,7 @@ impl SampleSet {
 
     /// Mutable set-level annotations. Sample properties are edited through
     /// [`Self::get_mut`], state properties through
-    /// [`Distribution::state_mut`].
+    /// [`DistributionMut::state_mut`].
     pub fn properties_mut(&mut self) -> &mut OwnerProperties {
         &mut self.properties
     }
@@ -273,10 +273,27 @@ impl SampleSet {
         self.distribution.as_ref()
     }
 
-    /// The distribution for reweighting, regrouping, and editing states. Its
-    /// members stay the same.
-    pub fn distribution_mut(&mut self) -> Option<&mut Distribution> {
-        self.distribution.as_mut()
+    /// The distribution for reweighting, regrouping, and editing states,
+    /// through a guard that keeps its members ([`DistributionMut`]).
+    pub fn distribution_mut(&mut self) -> Option<DistributionMut<'_>> {
+        self.distribution.as_mut().map(DistributionMut::new)
+    }
+
+    /// Each sample statistics over the set must see, with its relative
+    /// weight: the distribution's members ([`Distribution::weighted_members`])
+    /// or, without a distribution, every sample with weight `1.0`. Items are
+    /// sample indices, in increasing order.
+    pub fn weighted_samples(&self) -> impl ExactSizeIterator<Item = (usize, f64)> + '_ {
+        let distribution = self.distribution.as_ref();
+        let count = distribution.map_or(self.samples.len(), Distribution::member_count);
+        (0..count).map(move |position| {
+            distribution.map_or((position, 1.0), |distribution| {
+                (
+                    distribution.member(position),
+                    distribution.member_weight(position),
+                )
+            })
+        })
     }
 
     /// Replaces or clears the distribution. A subset listing every sample
@@ -285,7 +302,7 @@ impl SampleSet {
     /// # Errors
     ///
     /// [`SampleSetError::IndexOutOfRange`] for a member outside the set, and
-    /// [`SampleSetError::PartitionMismatch`] when a distribution of every
+    /// [`SampleSetError::CoverageMismatch`] when a distribution of every
     /// sample covers another number of samples.
     pub fn set_distribution(
         &mut self,
@@ -416,7 +433,7 @@ impl SampleSet {
     /// Removing the only member of a state removes the state, shifting later
     /// states down. The representative of a state with other members cannot
     /// be removed ([`SampleSetError::RepresentativeRemoval`]); choose another
-    /// representative with [`Distribution::regroup`] first.
+    /// representative with [`DistributionMut::regroup`] first.
     pub fn remove(&mut self, index: usize) -> Result<Sample, SampleSetError> {
         self.check_index(index)?;
         if let Some(distribution) = &self.distribution {
@@ -472,7 +489,7 @@ impl SampleSet {
     /// copy of its representative or, when that is not selected, by its
     /// first selected member. A state whose members are all selected keeps
     /// its energy and properties; one selected only in part has neither, as
-    /// a split state in [`Distribution::regroup`]. Use [`Self::select_states`]
+    /// a split state in [`DistributionMut::regroup`]. Use [`Self::select_states`]
     /// to keep whole states.
     pub fn select(&self, indices: impl IntoIterator<Item = usize>) -> Result<Self, SampleSetError> {
         let indices = indices
@@ -523,7 +540,8 @@ impl SampleSet {
 
     /// A new set of one sample per state, in state order: each state's
     /// representative, sharing its structure, weighted by the state's
-    /// population, so populations are kept.
+    /// population relative to the largest member weight, so population
+    /// shares are kept.
     ///
     /// It coarse-grains, losing the spread within each state, and drops the
     /// order. Each state keeps its energy and properties; the topology, the
@@ -533,8 +551,8 @@ impl SampleSet {
     /// # Errors
     ///
     /// `Missing(Distribution)` without a distribution, and
-    /// [`SampleSetError::InvalidWeight`] when a population is not a finite
-    /// weight.
+    /// [`SampleSetError::InvalidWeight`] when a population underflows to
+    /// zero.
     pub fn collapse(&self) -> Result<Self, SampleSetError> {
         let distribution = self
             .distribution

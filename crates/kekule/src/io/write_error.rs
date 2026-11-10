@@ -300,7 +300,7 @@ impl Omissions {
             // A lone record cannot carry a weight relative to other
             // samples, so its weight is always left out.
             fields.push(StructureField::Weight);
-            if membership.energy().is_some() {
+            if membership.state_energy().is_some() {
                 fields.push(StructureField::Energy);
             }
             if membership.temperature().is_some() {
@@ -370,7 +370,7 @@ pub(crate) fn check_structure_state(
         .filter(|_| policies.sample == fail)
         .map(|membership| {
             // A lone record cannot carry a weight relative to other samples.
-            if membership.energy().is_some() {
+            if membership.state_energy().is_some() {
                 StructureField::Energy
             } else {
                 StructureField::Weight

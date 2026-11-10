@@ -41,7 +41,7 @@ Molecule  = Graph + Perception + Properties
 Topology  = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
-Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `SampleSet` holds many structures of one system as samples. An optional order places every sample: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An optional distribution groups all samples or some of them into states, with weights and state energies, as for a conformer ensemble. `Ensemble`, `Trajectory`, and `Series` are older collections for each of these cases; a sample set converts from and to each without loss.
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `SampleSet` holds many structures of one system as samples. An optional order places every sample: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An optional distribution groups all samples or some of them into states, with weights and state energies, as for a conformer ensemble. `Ensemble`, `Trajectory`, and `Series` are older collections for each of these cases; a sample set converts from and to each, refusing what the other side cannot hold.
 
 ```text
 Model        = Topology + positions, cell, occupancies, B-factors, properties

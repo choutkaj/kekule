@@ -312,7 +312,7 @@ fn sample_fields(membership: Membership) -> Vec<SdfDataField> {
     ];
     if membership.is_representative() {
         fields.push(SdfDataField::new(SDF_REPRESENTATIVE_FIELD, "true"));
-        if let Some(energy) = membership.energy() {
+        if let Some(energy) = membership.state_energy() {
             let kj_per_mol = energy
                 .value_in(KILOJOULE_PER_MOLE)
                 .expect("state energies have an energy-per-amount dimension");

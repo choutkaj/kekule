@@ -2,14 +2,15 @@
 
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, RigidTransform};
-use crate::properties::StructureProperties;
-use crate::topology::Topology;
+use crate::geometry::{PeriodicCell, Point3, RigidTransform};
+use crate::properties::{StructureProperties, StructurePropertiesMut};
+use crate::topology::{Topology, TopologyAtomIndex};
+use crate::units::Quantity;
 
 use crate::structure::model::ModelView;
-use crate::structure::scalars::AtomScalars;
+use crate::structure::scalars::{canonical_b_factor, canonical_b_factors, AtomScalars};
 use crate::structure::state::{
-    is_bound, site_mutators, site_readers, structure_mutators, structure_readers, transform_cell,
+    check_property_rows, is_bound, site_readers, structure_readers, transform_cell,
     transform_positions, validate_binding,
 };
 use crate::structure::{
@@ -194,9 +195,10 @@ fn recorded(column: &AtomScalars) -> bool {
 /// claims neither. The sample carries no topology; it is bound when inserted.
 ///
 /// The structure is shared storage: cloning a sample, and therefore a set,
-/// copies no coordinates. Editing a sample whose storage is shared first
-/// copies that one sample (copy on write), so the other holders are
-/// unaffected.
+/// copies no coordinates. Editing a sample whose storage is shared copies
+/// that one sample (copy on write), so the other holders are unaffected. An
+/// edit that fails, and one that changes nothing such as clearing absent
+/// velocities or setting the same cell, keeps the storage shared.
 ///
 /// ```
 /// use kekule::structure::{Positions, Sample};
@@ -246,7 +248,7 @@ impl Sample {
     /// Returns this sample with a periodic cell.
     #[must_use]
     pub fn with_cell(mut self, cell: PeriodicCell) -> Self {
-        self.storage().cell = Some(cell);
+        self.set_cell(Some(cell));
         self
     }
 
@@ -275,32 +277,134 @@ impl Sample {
 
     /// Sets or clears velocities; they must have one vector per atom.
     pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), StructureError> {
-        if let Some(values) = &velocities {
-            self.structure.check_len(values.len())?;
+        match &velocities {
+            Some(values) => self.structure.check_len(values.len())?,
+            None if self.structure.velocities.is_none() => return Ok(()),
+            None => {}
         }
-        self.storage().velocities = velocities;
+        Arc::make_mut(&mut self.structure).velocities = velocities;
         Ok(())
     }
 
     /// Sets or clears forces; they must have one vector per atom.
     pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), StructureError> {
-        if let Some(values) = &forces {
-            self.structure.check_len(values.len())?;
+        match &forces {
+            Some(values) => self.structure.check_len(values.len())?,
+            None if self.structure.forces.is_none() => return Ok(()),
+            None => {}
         }
-        self.storage().forces = forces;
+        Arc::make_mut(&mut self.structure).forces = forces;
         Ok(())
     }
 
     /// Removes velocities, returning them.
     pub fn take_velocities(&mut self) -> Option<Velocities> {
         self.structure.velocities.as_ref()?;
-        self.storage().velocities.take()
+        Arc::make_mut(&mut self.structure).velocities.take()
     }
 
     /// Removes forces, returning them.
     pub fn take_forces(&mut self) -> Option<Forces> {
         self.structure.forces.as_ref()?;
-        self.storage().forces.take()
+        Arc::make_mut(&mut self.structure).forces.take()
+    }
+
+    /// Replaces every position without changing the atom count. Units,
+    /// dimensions, and finite values are checked before mutation.
+    pub fn set_positions<T: AsRef<[Point3]>>(
+        &mut self,
+        positions: Quantity<T>,
+    ) -> Result<(), StructureError> {
+        self.structure.positions.validate_all(&positions)?;
+        self.edit(|structure| Ok(structure.positions.set_all(positions)?))
+    }
+
+    /// Sets one position by dense atom index.
+    pub fn set_position_at(
+        &mut self,
+        atom: TopologyAtomIndex,
+        position: Quantity<Point3>,
+    ) -> Result<(), StructureError> {
+        self.edit(|structure| Ok(structure.positions.set(atom.index(), position)?))
+    }
+
+    /// Replaces the periodic cell; `None` makes the sample non-periodic.
+    /// Positions are not wrapped or rescaled.
+    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
+        if self.structure.cell != cell {
+            Arc::make_mut(&mut self.structure).cell = cell;
+        }
+    }
+
+    /// Replaces every structure annotation with rows of the same
+    /// dimensions, for example ones copied from another structure of the
+    /// same topology. A sample not yet in a set accepts no bond rows.
+    pub fn set_properties(
+        &mut self,
+        properties: StructureProperties,
+    ) -> Result<(), StructureError> {
+        check_property_rows(
+            self.structure.positions.len(),
+            &self.structure.properties,
+            &properties,
+        )?;
+        Arc::make_mut(&mut self.structure).properties = properties;
+        Ok(())
+    }
+
+    /// Length-preserving mutable access to structure annotations. A shared
+    /// structure is copied when the guard is taken.
+    pub fn properties_mut(&mut self) -> StructurePropertiesMut<'_> {
+        StructurePropertiesMut::new(&mut Arc::make_mut(&mut self.structure).properties)
+    }
+
+    /// Sets or clears one occupancy. Values must be finite.
+    pub fn set_occupancy(
+        &mut self,
+        atom: TopologyAtomIndex,
+        value: Option<f64>,
+    ) -> Result<(), StructureError> {
+        self.edit(|structure| {
+            let len = structure.positions.len();
+            structure.occupancies.set(atom, len, value)
+        })
+    }
+
+    /// Replaces every occupancy in dense atom order, or clears them all.
+    pub fn set_occupancies(
+        &mut self,
+        values: Option<Vec<Option<f64>>>,
+    ) -> Result<(), StructureError> {
+        self.edit(|structure| {
+            let len = structure.positions.len();
+            structure.occupancies.replace(len, values)
+        })
+    }
+
+    /// Sets or clears one isotropic B-factor, converting it to square
+    /// nanometres.
+    pub fn set_b_factor(
+        &mut self,
+        atom: TopologyAtomIndex,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), StructureError> {
+        let value = canonical_b_factor(value)?;
+        self.edit(|structure| {
+            let len = structure.positions.len();
+            structure.b_factors.set(atom, len, value)
+        })
+    }
+
+    /// Replaces every B-factor in dense atom order, or clears them all.
+    pub fn set_b_factors(
+        &mut self,
+        values: Option<Quantity<Vec<Option<f64>>>>,
+    ) -> Result<(), StructureError> {
+        let values = canonical_b_factors(values)?;
+        self.edit(|structure| {
+            let len = structure.positions.len();
+            structure.b_factors.replace(len, values)
+        })
     }
 
     /// Applies a rigid transform transactionally: positions move; the cell,
@@ -317,15 +421,24 @@ impl Sample {
         &self.structure
     }
 
-    /// The structure for editing, copied first if it is shared.
-    fn storage(&mut self) -> &mut SampleStructure {
-        Arc::make_mut(&mut self.structure)
+    /// Runs an edit that changes nothing when it fails. A shared structure
+    /// is edited as a copy that replaces it only on success, so a failed
+    /// edit keeps the structure shared.
+    fn edit<R>(
+        &mut self,
+        edit: impl FnOnce(&mut SampleStructure) -> Result<R, StructureError>,
+    ) -> Result<R, StructureError> {
+        if let Some(owned) = Arc::get_mut(&mut self.structure) {
+            return edit(owned);
+        }
+        let mut copy = SampleStructure::clone(&self.structure);
+        let result = edit(&mut copy)?;
+        self.structure = Arc::new(copy);
+        Ok(result)
     }
 
     structure_readers!();
     site_readers!();
-    structure_mutators!();
-    site_mutators!();
 }
 
 /// Dimension-preserving mutable access to one sample of a
@@ -334,7 +447,7 @@ impl Sample {
 /// Reads use `Deref`. There is deliberately no `DerefMut`; replace a whole
 /// sample through [`super::SampleSet::replace`]. The sample's place and
 /// weight belong to the set ([`super::SampleSet::set_place`],
-/// [`super::Distribution::set_weight`]).
+/// [`super::DistributionMut::set_weight`]).
 #[derive(Debug)]
 pub struct SampleMut<'a> {
     sample: &'a mut Sample,
@@ -384,10 +497,73 @@ impl SampleMut<'_> {
         self.sample.apply_rigid_transform(transform)
     }
 
-    fn storage(&mut self) -> &mut SampleStructure {
-        self.sample.storage()
+    /// Replaces every position; see [`Sample::set_positions`].
+    pub fn set_positions<T: AsRef<[Point3]>>(
+        &mut self,
+        positions: Quantity<T>,
+    ) -> Result<(), StructureError> {
+        self.sample.set_positions(positions)
     }
 
-    structure_mutators!();
-    site_mutators!();
+    /// Sets one position; see [`Sample::set_position_at`].
+    pub fn set_position_at(
+        &mut self,
+        atom: TopologyAtomIndex,
+        position: Quantity<Point3>,
+    ) -> Result<(), StructureError> {
+        self.sample.set_position_at(atom, position)
+    }
+
+    /// Replaces the periodic cell; see [`Sample::set_cell`].
+    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
+        self.sample.set_cell(cell);
+    }
+
+    /// Replaces every structure annotation; see [`Sample::set_properties`].
+    pub fn set_properties(
+        &mut self,
+        properties: StructureProperties,
+    ) -> Result<(), StructureError> {
+        self.sample.set_properties(properties)
+    }
+
+    /// Length-preserving mutable access to structure annotations; see
+    /// [`Sample::properties_mut`].
+    pub fn properties_mut(&mut self) -> StructurePropertiesMut<'_> {
+        self.sample.properties_mut()
+    }
+
+    /// Sets or clears one occupancy; see [`Sample::set_occupancy`].
+    pub fn set_occupancy(
+        &mut self,
+        atom: TopologyAtomIndex,
+        value: Option<f64>,
+    ) -> Result<(), StructureError> {
+        self.sample.set_occupancy(atom, value)
+    }
+
+    /// Replaces or clears every occupancy; see [`Sample::set_occupancies`].
+    pub fn set_occupancies(
+        &mut self,
+        values: Option<Vec<Option<f64>>>,
+    ) -> Result<(), StructureError> {
+        self.sample.set_occupancies(values)
+    }
+
+    /// Sets or clears one B-factor; see [`Sample::set_b_factor`].
+    pub fn set_b_factor(
+        &mut self,
+        atom: TopologyAtomIndex,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), StructureError> {
+        self.sample.set_b_factor(atom, value)
+    }
+
+    /// Replaces or clears every B-factor; see [`Sample::set_b_factors`].
+    pub fn set_b_factors(
+        &mut self,
+        values: Option<Quantity<Vec<Option<f64>>>>,
+    ) -> Result<(), StructureError> {
+        self.sample.set_b_factors(values)
+    }
 }

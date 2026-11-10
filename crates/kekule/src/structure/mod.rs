@@ -18,9 +18,10 @@
 //!   every sample ([`TimeAxis`], steps, or coordinate values; [`Place`]) and
 //!   an optional [`Distribution`] over all samples or some of them
 //!   ([`Members`]) grouped into states. [`SampleView`], [`SampleMut`], and
-//!   [`StateView`] read and edit them; every failure is a
-//!   [`SampleSetError`]. It converts from and to the three older
-//!   collections without loss.
+//!   [`StateView`] read and edit them, and [`DistributionMut`] edits the
+//!   distribution; the set's operations fail with a [`SampleSetError`]. It
+//!   converts from and to the three older collections, refusing what the
+//!   other side cannot hold, so a conversion that succeeds loses nothing.
 //! - Older collections of one shared topology: [`Ensemble`] is a distribution of
 //!   weighted samples ([`EnsembleSample`]) grouped into states
 //!   ([`EnsembleState`]) by an [`EnsemblePartition`]; [`Trajectory`] is a time-ordered
@@ -154,9 +155,9 @@ pub use model_editor::{
 pub use partition::{EnsemblePartition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
 pub use sample_set::{
-    ConversionTarget, Distribution, Members, Membership, Order, Place, Requirement, Sample,
-    SampleContext, SampleIter, SampleMut, SampleSet, SampleSetError, SampleView, StateIter,
-    StateView, TimeAxis, Unconvertible,
+    ConversionTarget, Distribution, DistributionMut, Members, Membership, Order, Place,
+    Requirement, Sample, SampleContext, SampleIter, SampleMut, SampleSet, SampleSetError,
+    SampleView, StateIter, StateView, TimeAxis, Unconvertible,
 };
 pub use sampling::{TrajectorySampler, TrajectorySampling};
 pub use series::{

@@ -25,7 +25,8 @@ distribution is stated beside them. An order, when present, places every
 sample: a time axis for a path produced by dynamics, steps for an
 optimization, or values of one coordinate in a unit for a scan or a reaction
 path (values need not increase, as a scan swept back and forth shows). A time
-axis has times, steps, or both, and each column covers every sample or none.
+axis has times, steps, both, or neither, and each column covers every
+sample or none.
 Order values belong to the order, not to the samples: selecting keeps each
 selected sample's value, a removed sample takes its value with it, and
 collapsing to states drops the order.
@@ -43,9 +44,13 @@ the energy and properties of the states it keeps whole. Order and
 distribution are independent, so a trajectory clustered into states is one
 set. A sample's structure is shared through `Arc` and copied on write, so
 regrouping, reweighting, selecting, and collapsing copy no coordinates, and
-editing one sample copies that sample alone. Every failure is one
-`SampleSetError`; `SampleSetError::Missing` names the `Requirement` an
-operation lacks, such as a time order or an energy for every state.
+editing one sample copies that sample alone. The operations of the set and
+its distribution fail with one `SampleSetError`, whose `Missing` variant
+names the `Requirement` an operation lacks, such as a time order or an
+energy for every state; a sample's own edits fail with `StructureError`, and
+perception with `TopologyPerceptionError`. Statistics over a set walk
+`SampleSet::weighted_samples`: the members with their weights, or every
+sample with weight 1 without a distribution.
 
 `Ensemble`, `Trajectory`, and `Series` remain beside `SampleSet`. An ensemble
 is a distribution over all its samples without an order; a trajectory is a
@@ -54,11 +59,14 @@ is a step or coordinate order of samples without site fields or dynamics.
 Each implements its own operations; `Trajectory::into_ensemble` and
 `Trajectory::to_ensemble` project a trajectory to one state of equally
 weighted frames or to chosen frames with explicit weights. `SampleSet`
-converts from each losslessly (`from_ensemble`, `from_trajectory`,
-`from_series`) and back (`to_ensemble`, `into_ensemble`, and likewise for the
-others), sharing every structure. A conversion back fails with
-`SampleSetError::NotConvertible` when the set holds what the target cannot,
-such as an order in an ensemble or a distribution in a trajectory.
+converts from each (`from_ensemble`, `from_trajectory`, `from_series`) and
+back (`to_ensemble`, `into_ensemble`, and likewise for the others), sharing
+every structure, and every conversion that succeeds loses nothing.
+`from_trajectory` refuses frames that record a time or a step only in part,
+and a conversion back fails with `SampleSetError::NotConvertible` when the
+set holds what the target cannot, such as an order in an ensemble or a
+distribution in a trajectory. An ensemble always stores weights, so a set
+without weights comes back from one with weight 1 on every member.
 
 Structures are flat. A structure is one set of coordinates and per-atom state
 of a topology: a `Model`, a `Sample`, an `EnsembleSample`, a

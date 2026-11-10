@@ -180,8 +180,9 @@ impl Membership {
         self.representative
     }
 
-    /// The energy of the sample's state, when recorded.
-    pub const fn energy(self) -> Option<Quantity<f64>> {
+    /// The energy of the sample's state, when recorded. It is the state's
+    /// energy, never the sample's own.
+    pub const fn state_energy(self) -> Option<Quantity<f64>> {
         self.energy
     }
 

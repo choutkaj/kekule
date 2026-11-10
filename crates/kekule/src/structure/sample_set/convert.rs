@@ -158,7 +158,9 @@ impl SampleSet {
     }
 
     /// The ensemble of this set's distribution, sharing every sample's
-    /// structure; members without weights weigh `1.0`.
+    /// structure. An ensemble always stores weights, so members without
+    /// weights weigh `1.0`, and [`Self::from_ensemble`] of the result has
+    /// weights where this set had none.
     ///
     /// # Errors
     ///

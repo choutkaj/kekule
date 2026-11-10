@@ -44,7 +44,10 @@ impl<'a> SampleView<'a> {
     }
 
     /// The sample's relative weight in the set's distribution (`1.0` when
-    /// every member weighs the same), or `None` when it is not a member.
+    /// every member weighs the same), or `None` when the set has no
+    /// distribution or the sample is not a member. Weighted statistics walk
+    /// [`SampleSet::weighted_samples`] instead, which counts every sample of
+    /// a set without a distribution.
     pub fn weight(self) -> Option<f64> {
         self.set.distribution.as_ref()?.weight(self.index)
     }
@@ -156,9 +159,11 @@ impl<'a> StateView<'a> {
             .map(move |position| distribution.member(position))
     }
 
-    /// The population: the total weight of the state's members, relative
-    /// like the weights. [`super::Distribution::state_probabilities`] gives
-    /// every state's share of the total.
+    /// The population: the total weight of the state's members, divided by
+    /// the largest member weight so that it cannot overflow. Only its ratio
+    /// to other populations carries meaning;
+    /// [`super::Distribution::state_probabilities`] gives every state's share
+    /// of the total.
     pub fn population(self) -> f64 {
         self.distribution().population(self.index)
     }

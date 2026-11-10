@@ -210,8 +210,17 @@ pub enum SampleSetError {
     },
     /// The members of a distribution are not increasing sample indices.
     UnsortedMembers,
-    /// A partition covers a different number of samples than the
-    /// distribution has members.
+    /// A distribution of every sample ([`Members::All`](super::Members::All))
+    /// covers another number of samples than the set has.
+    CoverageMismatch {
+        /// The number of samples the distribution covers.
+        covered: usize,
+        /// The set's sample count.
+        samples: usize,
+    },
+    /// A partition groups another number of members than the distribution
+    /// lists ([`Distribution::new`](super::Distribution::new),
+    /// [`DistributionMut::regroup`](super::DistributionMut::regroup)).
     PartitionMismatch {
         /// The number of members.
         expected: usize,
@@ -243,7 +252,7 @@ pub enum SampleSetError {
     WeightRequired,
     /// The representative of a state with other members cannot be removed;
     /// choose another representative with
-    /// [`super::Distribution::regroup`] first.
+    /// [`super::DistributionMut::regroup`] first.
     RepresentativeRemoval {
         /// The representative sample.
         sample: usize,
@@ -296,8 +305,9 @@ impl fmt::Display for SampleSetError {
                 .write_str("The model has a different topology layout from the sample set."),
             Self::SampleCountMismatch { expected, actual } => write!(
                 formatter,
-                "The sample set has {}, but {actual} replacements were given.",
-                counted(*expected, "sample", "samples")
+                "The sample set has {}, but {} given.",
+                counted(*expected, "sample", "samples"),
+                given(*actual, "replacement", "replacements")
             ),
             Self::OrderLengthMismatch { expected, actual } => write!(
                 formatter,
@@ -344,6 +354,11 @@ impl fmt::Display for SampleSetError {
             Self::UnsortedMembers => {
                 formatter.write_str("The members of the distribution are not in increasing order.")
             }
+            Self::CoverageMismatch { covered, samples } => write!(
+                formatter,
+                "The distribution covers {}, but the sample set has {samples}.",
+                counted(*covered, "sample", "samples")
+            ),
             Self::PartitionMismatch { expected, actual } => write!(
                 formatter,
                 "The partition covers {}, but the distribution has {}.",
@@ -352,15 +367,15 @@ impl fmt::Display for SampleSetError {
             ),
             Self::WeightCountMismatch { expected, actual } => write!(
                 formatter,
-                "The distribution has {}, but {} were given.",
+                "The distribution has {}, but {} given.",
                 counted(*expected, "member", "members"),
-                counted(*actual, "weight", "weights")
+                given(*actual, "weight", "weights")
             ),
             Self::StateCountMismatch { expected, actual } => write!(
                 formatter,
-                "The partition has {}, but {} were given.",
+                "The partition has {}, but {} given.",
                 counted(*expected, "state", "states"),
-                counted(*actual, "state", "states")
+                given(*actual, "state", "states")
             ),
             Self::InvalidWeight { sample } => write!(
                 formatter,
@@ -394,6 +409,12 @@ impl fmt::Display for SampleSetError {
             Self::Unit(error) => error.fmt(formatter),
         }
     }
+}
+
+/// "1 weight was" or "2 weights were".
+fn given(count: usize, one: &str, many: &str) -> String {
+    let verb = if count == 1 { "was" } else { "were" };
+    format!("{} {verb}", crate::diagnostics::counted(count, one, many))
 }
 
 impl std::error::Error for SampleSetError {

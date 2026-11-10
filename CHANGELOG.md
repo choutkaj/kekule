@@ -23,15 +23,19 @@ are marked **Breaking:**.
   `select_states` keeps whole states, and `collapse` keeps one
   representative per state and drops the order. Regrouping, reweighting,
   selecting, and collapsing copy no coordinates. `SampleView`, `StateView`,
-  and the `SampleMut` guard read and edit samples and states; a sample's
-  view implements `AsModelView`, so writers and kernels take it as they
-  take a model. Every failure is one `SampleSetError`, and
-  `SampleSetError::Missing` names the `Requirement` that is absent, such as
-  a time order. `SampleSet::from_ensemble`, `from_trajectory`, and
-  `from_series` convert losslessly, sharing every structure, and
-  `to_ensemble`, `to_trajectory`, and `to_series` (and their `into_`
-  forms) convert back, failing with `SampleSetError::NotConvertible` when
-  the set holds what the target cannot.
+  and the `SampleMut` and `DistributionMut` guards read and edit samples,
+  states, and the distribution; a sample's view implements `AsModelView`,
+  so writers and kernels take it as they take a model.
+  `SampleSet::weighted_samples` and `Distribution::weighted_members` give
+  the samples statistics see, with their weights. The set's operations fail
+  with one `SampleSetError`, and `SampleSetError::Missing` names the
+  `Requirement` that is absent, such as a time order.
+  `SampleSet::from_ensemble`, `from_trajectory`, and `from_series` convert,
+  sharing every structure, and `to_ensemble`, `to_trajectory`, and
+  `to_series` (and their `into_` forms) convert back; each refuses what the
+  other side cannot hold (`SampleSetError::NotConvertible`, or frames that
+  record a time or step only in part), so a conversion that succeeds loses
+  nothing.
 - Biological assemblies (SeekDelta K66, K67). Interpretation reports list
   the assemblies an entry states: `StructureInterpretationReport::assemblies`
   reads mmCIF `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
@@ -855,8 +859,8 @@ are marked **Breaking:**.
   `StructureKind::Model`, and `StructureKind::Sample` with a
   `SampleContext`. The context reports the sample's place in its order
   (`Place`), its membership in a distribution (`Membership`: weight, state,
-  whether it represents the state, the state's energy, and the
-  temperature), and its velocities and forces. Views of ensemble samples,
+  whether it represents the state, `state_energy`, and the temperature),
+  and its velocities and forces. Views of ensemble samples,
   trajectory frames, and series items report their state through it, so
   match `StructureKind::Sample(context)` where code matched
   `StructureKind::Sample { .. }`, `Frame { .. }`, or `Item { .. }`. Every
