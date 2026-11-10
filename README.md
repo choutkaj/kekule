@@ -29,7 +29,6 @@ Sister crates add the rest of the workspace:
 
 | Crate | Provides |
 | --- | --- |
-| [`kekule-traj`](https://crates.io/crates/kekule-traj) | Trajectory streaming, periodic preprocessing, and XYZ, DCD, TRR, and XTC file I/O |
 | [`kekule-openff`](https://crates.io/crates/kekule-openff) | SMIRNOFF force-field parameterization with the bundled OpenFF Rosemary force field and native NAGL partial charges |
 | [`kekule-openff-ash`](https://crates.io/crates/kekule-openff-ash) | The OpenFF Ash charge model as data, a default dependency of `kekule-openff` |
 | [`kekule-potentials`](https://crates.io/crates/kekule-potentials) | OpenFF energies and gradients, and L-BFGS geometry minimization |

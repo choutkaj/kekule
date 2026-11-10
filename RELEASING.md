@@ -21,11 +21,11 @@ On a release branch based on current `main`:
 
 | Site | What changes |
 | --- | --- |
-| `Cargo.toml` `[workspace.package] version` | The shared version of `kekule`, `kekule-traj`, `kekule-openff`, `kekule-potentials` and the unpublished benchmark observer |
-| `Cargo.toml` `[workspace.dependencies]` | The `version` requirement of `kekule`, `kekule-traj` and `kekule-openff`, kept equal to the workspace version |
+| `Cargo.toml` `[workspace.package] version` | The shared version of `kekule`, `kekule-openff`, `kekule-potentials` and the unpublished benchmark observer |
+| `Cargo.toml` `[workspace.dependencies]` | The `version` requirement of `kekule` and `kekule-openff`, kept equal to the workspace version |
 | `crates/kekule-openff-ash/Cargo.toml` `version` | Only when the Ash model data changes |
 | `Cargo.toml` `[workspace.dependencies] kekule-openff-ash` | Only when a new Ash version is released |
-| `Cargo.lock` and `fuzz/Cargo.lock` | Regenerated: `cargo update -w` and `cargo update --manifest-path fuzz/Cargo.toml -p kekule -p kekule-traj` |
+| `Cargo.lock` and `fuzz/Cargo.lock` | Regenerated: `cargo update -w` and `cargo update --manifest-path fuzz/Cargo.toml -p kekule` |
 
 Members inherit their requirements with `kekule.workspace = true` and so on, so
 no member manifest names a version. Check that nothing else still names the
@@ -97,14 +97,12 @@ requirement, is visible on crates.io:
 1. `kekule`, and `kekule-openff-ash` only if its version changed. Publishing an
    unchanged Ash version fails, because crates.io does not accept a version
    twice; skip it.
-2. `kekule-openff` and `kekule-traj`.
-3. `kekule-potentials`, which depends on `kekule-openff` and has a
-   dev-dependency on `kekule-traj`.
+2. `kekule-openff`.
+3. `kekule-potentials`, which depends on `kekule-openff`.
 
 ```bash
 cargo publish -p kekule --locked
 cargo publish -p kekule-openff --locked
-cargo publish -p kekule-traj --locked
 cargo publish -p kekule-potentials --locked
 ```
 

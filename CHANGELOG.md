@@ -830,6 +830,14 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** the `kekule-traj` crate is now the `kekule::traj` module
+  (SeekDelta K71), and the crate is gone. Every item keeps its name and
+  signature under the new path: `kekule_traj::io::read_trajectory` is
+  `kekule::traj::io::read_trajectory`, and `kekule_traj::FrameBuffer` is
+  `kekule::traj::FrameBuffer`. The `io` (with `xyz`, `dcd`, `trr` and `xtc`),
+  `periodic` and `analysis` modules and the root items move together. Replace
+  the `kekule-traj` dependency with `kekule`. Files are written byte for byte
+  as before.
 - The mmCIF writer leaves out a coordination record whose partner no
   longer has the atom names, type symbol, or component the report recorded,
   as the PDB writer does, and counts it as `WriteOmission::Coordination`.

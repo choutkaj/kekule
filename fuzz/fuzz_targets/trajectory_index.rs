@@ -9,11 +9,11 @@ use std::sync::{Arc, OnceLock};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::structure::TrajectoryFrame;
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule_traj::io::{
+use kekule::traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, TrajectoryFileFingerprint,
     TrajectoryFrameIndex, TrajectoryIoLimits,
 };
-use kekule_traj::{SeekableTrajectoryReader, TrajectoryReader};
+use kekule::traj::{SeekableTrajectoryReader, TrajectoryReader};
 use libfuzzer_sys::fuzz_target;
 
 /// One indexed file: its path, topology, canonical index, and every frame.
@@ -53,27 +53,27 @@ fn cases() -> &'static [Case] {
         let fixtures: [(&str, &[u8], Arc<Topology>); 4] = [
             (
                 "xyz",
-                include_bytes!("../../crates/kekule-traj/tests/fixtures/ase-3.26.0-water.xyz"),
+                include_bytes!("../../crates/kekule/tests/fixtures/traj/ase-3.26.0-water.xyz"),
                 topology(&["O", "H", "H"]),
             ),
             (
                 "dcd",
                 include_bytes!(
-                    "../../crates/kekule-traj/tests/fixtures/mdanalysis-2.9.0-three-atoms.dcd"
+                    "../../crates/kekule/tests/fixtures/traj/mdanalysis-2.9.0-three-atoms.dcd"
                 ),
                 topology(&["C", "H", "O"]),
             ),
             (
                 "trr",
                 include_bytes!(
-                    "../../crates/kekule-traj/tests/fixtures/mdanalysis-2.9.0-three-atoms.trr"
+                    "../../crates/kekule/tests/fixtures/traj/mdanalysis-2.9.0-three-atoms.trr"
                 ),
                 topology(&["C", "H", "O"]),
             ),
             (
                 "xtc",
                 include_bytes!(
-                    "../../crates/kekule-traj/tests/fixtures/mdanalysis-2.9.0-twelve-atoms.xtc"
+                    "../../crates/kekule/tests/fixtures/traj/mdanalysis-2.9.0-twelve-atoms.xtc"
                 ),
                 topology(&["C"; 12]),
             ),

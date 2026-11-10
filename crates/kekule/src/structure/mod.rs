@@ -17,7 +17,7 @@
 //!   weighted samples ([`EnsembleSample`]) grouped into states
 //!   ([`EnsembleState`]) by an [`EnsemblePartition`]; [`Trajectory`] is a time-ordered
 //!   in-memory sequence of [`TrajectoryFrame`]s, which may carry time, step,
-//!   velocities and forces. File codecs and streaming live in `kekule-traj`.
+//!   velocities and forces. File codecs and streaming live in [`crate::traj`].
 //!   [`Trajectory::to_ensemble`] samples chosen frames into an ensemble of
 //!   one state ([`TrajectorySampling`]); [`TrajectorySampler`] does so for
 //!   frames that arrive one at a time. [`Series`] is an ordered sequence of

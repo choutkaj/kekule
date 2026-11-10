@@ -1,0 +1,1994 @@
+//! Strict bounded multi-frame XYZ trajectory I/O.
+//!
+//! [`XyzReader`] and [`IndexedXyzReader`] read constant-count
+//! element/x/y/z frames whose atom lines follow the topology's dense order and
+//! elements; [`XyzWriter`] writes them deterministically, from trajectory
+//! frames, one frame per sample from an ensemble
+//! ([`XyzWriter::write_ensemble`]), or one frame per item from a series
+//! ([`XyzWriter::write_series`]). XYZ stores positions only: the writer
+//! rejects a frame's velocities, forces, time, step and properties, its
+//! cell, ensemble sample state, and series item steps, coordinates, and
+//! properties unless its options omit them, and
+//! reports everything it leaves out, such as bonds, charges and omitted
+//! cells, in [`XyzWriter::report`]. To
+//! obtain a topology from an XYZ file itself, interpret one of its frames
+//! with `kekule::xyz`, which keeps atom-line order as dense order and infers
+//! bonds from distances. This reader accepts element symbols in their
+//! standard letter case only, while interpretation also accepts other cases
+//! and atomic numbers.
+//!
+//! # Examples
+//!
+//! ```
+//! use std::io::Cursor;
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::Point3;
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::units::{Quantity, ANGSTROM};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule::traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
+//! use kekule::traj::{TrajectoryReader, TrajectoryWriter};
+//!
+//! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let positions = Positions::from_vec(Quantity::new(vec![Point3::new(1.5, 0.0, 0.0)], ANGSTROM))?;
+//! let frame = TrajectoryFrame::new(positions);
+//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
+//!
+//! let options = XyzWriteOptions::default().with_decimal_places(3).with_comment("helium");
+//! let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
+//! writer.write_frame(trajectory.get(0).unwrap())?;
+//! let bytes = writer.finish()?;
+//! assert_eq!(String::from_utf8(bytes.clone())?, "1\nhelium\nHe 1.500 0.000 0.000\n");
+//!
+//! let mut reader = XyzReader::new(Cursor::new(bytes), topology, XyzReadOptions::default())?;
+//! let mut frame = reader.frame_buffer();
+//! assert!(reader.read_next(&mut frame)?);
+//! let position = frame.positions().get(0).unwrap().value_in(ANGSTROM)?;
+//! assert_eq!(position, Point3::new(1.5, 0.0, 0.0));
+//! assert!(!reader.read_next(&mut frame)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+
+use crate::diagnostics::{
+    check_multi_model_ensemble, LimitExceeded, Resource, StructureField, UnrepresentablePolicy,
+    WriteOmission, WriteReport,
+};
+use crate::traj::TrajectoryField;
+use std::fmt;
+use std::io::{self, BufRead, Seek, SeekFrom, Write};
+use std::sync::Arc;
+
+use crate::geometry::Point3;
+use crate::molecule::Element;
+use crate::structure::{Ensemble, ModelView, Positions, Series, SeriesAxis, TrajectoryFrameView};
+use crate::topology::Topology;
+use crate::traj::{
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+};
+use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
+
+use super::frame_state::{record, unrepresentable_frame_state};
+use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
+use super::{
+    codec_context, io_context, projected_index_limit, require_no_partial_frame,
+    require_nonempty_writer, FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
+};
+
+const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
+
+/// XYZ length-unit interpretation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct XyzReadOptions {
+    length_unit: Unit,
+    limits: TrajectoryIoLimits,
+    source_label: String,
+}
+
+impl Default for XyzReadOptions {
+    fn default() -> Self {
+        Self {
+            limits: TrajectoryIoLimits::default(),
+            source_label: "xyz stream".into(),
+            length_unit: ANGSTROM,
+        }
+    }
+}
+
+impl XyzReadOptions {
+    /// Sets limits applied before allocation, scanning, and seeking.
+    /// `max_scratch_bytes` bounds the combined capacities of the dense position
+    /// array and the reusable line buffer, which grows to hold the longest
+    /// line read so far, terminator included, in both sequential and indexed
+    /// modes. The frame index has its own `max_index_bytes` limit.
+    #[must_use]
+    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Sets the source label used in decoding errors.
+    #[must_use]
+    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
+        self.source_label = source_label.into();
+        self
+    }
+
+    /// Sets [`Self::length_unit`].
+    #[must_use]
+    pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
+        self.length_unit = length_unit;
+        self
+    }
+
+    /// The length unit of file coordinates; angstrom by default. Positions are
+    /// converted to the canonical length unit on publication.
+    pub const fn length_unit(&self) -> Unit {
+        self.length_unit
+    }
+
+    /// Limits applied before allocation, scanning, and seeking.
+    pub const fn limits(&self) -> &TrajectoryIoLimits {
+        &self.limits
+    }
+
+    /// The source label used in decoding errors.
+    pub fn source_label(&self) -> &str {
+        &self.source_label
+    }
+}
+
+/// Deterministic strict XYZ writer options.
+///
+/// The default fails on every cell, frame state, ensemble sample state, and
+/// series item state XYZ cannot carry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct XyzWriteOptions {
+    length_unit: Unit,
+    decimal_places: usize,
+    comment: String,
+    cell: UnrepresentablePolicy,
+    frame_metadata: UnrepresentablePolicy,
+    frame_properties: UnrepresentablePolicy,
+    ensemble_metadata: UnrepresentablePolicy,
+    series_metadata: UnrepresentablePolicy,
+}
+
+impl Default for XyzWriteOptions {
+    fn default() -> Self {
+        Self {
+            length_unit: ANGSTROM,
+            decimal_places: 8,
+            comment: "written by kekule-traj".into(),
+            cell: UnrepresentablePolicy::Fail,
+            frame_metadata: UnrepresentablePolicy::Fail,
+            frame_properties: UnrepresentablePolicy::Fail,
+            ensemble_metadata: UnrepresentablePolicy::Fail,
+            series_metadata: UnrepresentablePolicy::Fail,
+        }
+    }
+}
+
+impl XyzWriteOptions {
+    /// Sets [`Self::length_unit`].
+    #[must_use]
+    pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
+        self.length_unit = length_unit;
+        self
+    }
+
+    /// Sets [`Self::decimal_places`].
+    #[must_use]
+    pub const fn with_decimal_places(mut self, decimal_places: usize) -> Self {
+        self.decimal_places = decimal_places;
+        self
+    }
+
+    /// Sets [`Self::comment`].
+    #[must_use]
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = comment.into();
+        self
+    }
+
+    /// Sets [`Self::cell`].
+    #[must_use]
+    pub const fn with_cell(mut self, cell: UnrepresentablePolicy) -> Self {
+        self.cell = cell;
+        self
+    }
+
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
+        self
+    }
+
+    /// Sets [`Self::frame_properties`].
+    #[must_use]
+    pub const fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
+        self.frame_properties = frame_properties;
+        self
+    }
+
+    /// Sets [`Self::ensemble_metadata`].
+    #[must_use]
+    pub const fn with_ensemble_metadata(
+        mut self,
+        ensemble_metadata: UnrepresentablePolicy,
+    ) -> Self {
+        self.ensemble_metadata = ensemble_metadata;
+        self
+    }
+
+    /// Sets [`Self::series_metadata`].
+    #[must_use]
+    pub const fn with_series_metadata(mut self, series_metadata: UnrepresentablePolicy) -> Self {
+        self.series_metadata = series_metadata;
+        self
+    }
+
+    /// The length unit coordinates are written in; angstrom by default.
+    pub const fn length_unit(&self) -> Unit {
+        self.length_unit
+    }
+
+    /// Fixed decimal places per coordinate, at most 17; 8 by default.
+    pub const fn decimal_places(&self) -> usize {
+        self.decimal_places
+    }
+
+    /// The comment line written in every frame, without line breaks and at
+    /// most 1 MiB; `"written by kekule-traj"` by default.
+    pub fn comment(&self) -> &str {
+        &self.comment
+    }
+
+    /// The periodic cell of a frame, ensemble sample, or series item, which
+    /// XYZ cannot carry: by default a structure with a cell fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes its positions and reports
+    /// [`WriteOmission::Cell`].
+    pub const fn cell(&self) -> UnrepresentablePolicy {
+        self.cell
+    }
+
+    /// A trajectory frame's velocities, forces, time, and step, which XYZ
+    /// cannot carry: by default a frame with any of them fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes its positions and reports a
+    /// [`WriteOmission::StructureState`] for each kind left out.
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
+    }
+
+    /// A trajectory frame's or series item's atom, bond, and own properties,
+    /// which XYZ cannot carry: by default a frame or item with any of them
+    /// fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
+    /// and reports a [`WriteOmission::StructureState`] for each kind left
+    /// out.
+    pub const fn frame_properties(&self) -> UnrepresentablePolicy {
+        self.frame_properties
+    }
+
+    /// Ensemble sample weights, states, state energies, and the temperature,
+    /// under the rules of `kekule`'s PDB and mmCIF ensemble writers: an XYZ
+    /// file reads back as one state of equally weighted samples, so by
+    /// default [`XyzWriter::write_ensemble`] fails for an ensemble with
+    /// unequal weights, more than one state, any energy, or a temperature;
+    /// [`UnrepresentablePolicy::Omit`] writes it and reports each kind of
+    /// [`WriteOmission::StructureState`] left out (see
+    /// [`check_multi_model_ensemble`]).
+    pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
+        self.ensemble_metadata
+    }
+
+    /// The steps or coordinates of a series' items, which XYZ cannot carry:
+    /// by default [`XyzWriter::write_series`] fails, since every item has
+    /// one; [`UnrepresentablePolicy::Omit`] writes the items' positions and
+    /// reports a [`WriteOmission::StructureState`] for every item.
+    pub const fn series_metadata(&self) -> UnrepresentablePolicy {
+        self.series_metadata
+    }
+}
+
+/// Sequential XYZ reader over a caller-supplied buffered stream.
+pub struct XyzReader<R> {
+    reader: R,
+    topology: Arc<Topology>,
+    options: XyzReadOptions,
+    frame_cursor: usize,
+    line: Vec<u8>,
+    positions: Vec<Point3>,
+    /// Whether a line counts only once its line break is written, as in a
+    /// file still being written.
+    growing: bool,
+}
+
+impl<R> fmt::Debug for XyzReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("XyzReader")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("frame_cursor", &self.frame_cursor)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<R: BufRead> XyzReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order.
+    ///
+    /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
+    /// format metadata are checked automatically; matching counts alone cannot
+    /// establish atom identity. Limits and diagnostic labels are set in `options`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the length
+    /// unit is not a length, and [`TrajectoryIoErrorKind::LimitExceeded`] when
+    /// the atom count exceeds the limits or position scratch cannot be
+    /// reserved.
+    pub fn new(
+        reader: R,
+        topology: impl Into<Arc<Topology>>,
+        options: XyzReadOptions,
+    ) -> Result<Self, TrajectoryIoError> {
+        let topology = topology.into();
+        let source_label = &options.source_label;
+        let limits = &options.limits;
+        options
+            .length_unit
+            .conversion_factor_to(CANONICAL_LENGTH_UNIT)
+            .map_err(|error| {
+                codec_context(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::Open,
+                    Some(TrajectoryFormat::Xyz),
+                    source_label,
+                    "The XYZ length unit is not a length.",
+                )
+                .with_source(error)
+            })?;
+        let atom_count = topology.atom_count();
+        validate_atom_limit(atom_count, limits, source_label)?;
+        let mut positions = Vec::new();
+        positions.try_reserve_exact(atom_count).map_err(|_| {
+            codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                source_label,
+                "Cannot allocate the position buffer.",
+            )
+        })?;
+        Ok(Self {
+            reader,
+            topology,
+            options,
+            frame_cursor: 0,
+            line: Vec::new(),
+            positions,
+            growing: false,
+        })
+    }
+
+    /// The topology every frame belongs to.
+    pub fn topology(&self) -> &Topology {
+        self.topology.as_ref()
+    }
+
+    fn parse_next(&mut self, retain_positions: bool) -> Result<bool, TrajectoryIoError> {
+        let operation = if self.frame_cursor == 0 {
+            TrajectoryIoOperation::ReadHeader
+        } else {
+            TrajectoryIoOperation::ReadFrame
+        };
+        if self.frame_cursor >= self.options.limits.max_frames() {
+            if self
+                .reader
+                .fill_buf()
+                .map_err(|error| {
+                    io_context(
+                        operation,
+                        Some(TrajectoryFormat::Xyz),
+                        &self.options.source_label,
+                        error,
+                    )
+                })?
+                .is_empty()
+            {
+                return Ok(false);
+            }
+            return Err(frame_codec_error(
+                TrajectoryIoErrorKind::LimitExceeded,
+                operation,
+                &self.options.source_label,
+                self.frame_cursor,
+                "",
+            )
+            .exceeding(
+                "The trajectory",
+                LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+            ));
+        }
+        // The position array never grows after construction; the line buffer
+        // may grow only within what it leaves of the scratch budget.
+        let position_bytes = scratch_bytes(&self.positions);
+        let growing = self.growing;
+        let Some((count_line, consumed)) = read_line(
+            &mut self.reader,
+            &mut self.line,
+            self.options.limits.max_text_line_bytes(),
+            position_bytes,
+            &self.options.limits,
+            &self.options.source_label,
+            self.frame_cursor,
+            operation,
+            growing,
+        )?
+        else {
+            return Ok(false);
+        };
+        let mut frame_bytes = checked_frame_add(
+            0,
+            consumed,
+            &self.options.source_label,
+            self.frame_cursor,
+            operation,
+        )?;
+        validate_frame_bytes(
+            frame_bytes,
+            &self.options.limits,
+            &self.options.source_label,
+            self.frame_cursor,
+            operation,
+        )?;
+        let atom_count = count_line.trim().parse::<usize>().map_err(|_| {
+            frame_codec_error(
+                TrajectoryIoErrorKind::InvalidFrame,
+                operation,
+                &self.options.source_label,
+                self.frame_cursor,
+                "The atom-count line is not one nonnegative whole number.",
+            )
+        })?;
+        if atom_count == 0 {
+            return Err(frame_codec_error(
+                TrajectoryIoErrorKind::InvalidFrame,
+                operation,
+                &self.options.source_label,
+                self.frame_cursor,
+                "The frame has zero atoms.",
+            ));
+        }
+        validate_atom_limit(atom_count, &self.options.limits, &self.options.source_label)?;
+        if atom_count != self.topology().atom_count() {
+            return Err(TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentAtomCount,
+                operation,
+                Some(TrajectoryFormat::Xyz),
+            )
+            .with_source_label(&self.options.source_label)
+            .with_frame(self.frame_cursor)
+            .with_counts(self.topology().atom_count() as u64, atom_count as u64));
+        }
+        let Some((_, consumed)) = read_line(
+            &mut self.reader,
+            &mut self.line,
+            self.options.limits.max_comment_bytes(),
+            position_bytes,
+            &self.options.limits,
+            &self.options.source_label,
+            self.frame_cursor,
+            operation,
+            growing,
+        )?
+        else {
+            return Err(frame_codec_error(
+                TrajectoryIoErrorKind::TruncatedRecord,
+                operation,
+                &self.options.source_label,
+                self.frame_cursor,
+                "The frame has no comment line.",
+            ));
+        };
+        frame_bytes = checked_frame_add(
+            frame_bytes,
+            consumed,
+            &self.options.source_label,
+            self.frame_cursor,
+            operation,
+        )?;
+        validate_frame_bytes(
+            frame_bytes,
+            &self.options.limits,
+            &self.options.source_label,
+            self.frame_cursor,
+            operation,
+        )?;
+
+        self.positions.clear();
+        for atom_index in 0..atom_count {
+            let atom_id = self.topology().atom_ids()[atom_index];
+            let expected_element = self
+                .topology()
+                .atom(atom_id)
+                .expect("dense topology atom IDs name topology atoms")
+                .element();
+            let Some((line, consumed)) = read_line(
+                &mut self.reader,
+                &mut self.line,
+                self.options.limits.max_text_line_bytes(),
+                position_bytes,
+                &self.options.limits,
+                &self.options.source_label,
+                self.frame_cursor,
+                operation,
+                growing,
+            )?
+            else {
+                return Err(frame_codec_error(
+                    TrajectoryIoErrorKind::TruncatedRecord,
+                    operation,
+                    &self.options.source_label,
+                    self.frame_cursor,
+                    format!("The frame ends before atom line {atom_index}."),
+                ));
+            };
+            frame_bytes = checked_frame_add(
+                frame_bytes,
+                consumed,
+                &self.options.source_label,
+                self.frame_cursor,
+                operation,
+            )?;
+            validate_frame_bytes(
+                frame_bytes,
+                &self.options.limits,
+                &self.options.source_label,
+                self.frame_cursor,
+                operation,
+            )?;
+            let mut fields = line.split_whitespace();
+            let (Some(symbol), Some(x), Some(y), Some(z), None) = (
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+            ) else {
+                return Err(frame_codec_error(
+                    TrajectoryIoErrorKind::InvalidFrame,
+                    operation,
+                    &self.options.source_label,
+                    self.frame_cursor,
+                    format!("Atom line {atom_index} does not have four fields."),
+                ));
+            };
+            let element = Element::from_symbol(symbol).ok_or_else(|| {
+                frame_codec_error(
+                    TrajectoryIoErrorKind::InvalidFrame,
+                    operation,
+                    &self.options.source_label,
+                    self.frame_cursor,
+                    format!("Atom line {atom_index} has the unknown element symbol {symbol:?}."),
+                )
+            })?;
+            if element != expected_element {
+                return Err(frame_codec_error(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    operation,
+                    &self.options.source_label,
+                    self.frame_cursor,
+                    format!(
+                        "Atom {atom_index} is {}. The topology has {} there.",
+                        element.symbol(),
+                        expected_element.symbol()
+                    ),
+                ));
+            }
+            let parse_coordinate = |value: &str| {
+                value.parse::<f64>().map_err(|_| {
+                    frame_codec_error(
+                        TrajectoryIoErrorKind::InvalidFrame,
+                        operation,
+                        &self.options.source_label,
+                        self.frame_cursor,
+                        format!("Atom line {atom_index} has a coordinate that is not a number."),
+                    )
+                })
+            };
+            let x = parse_coordinate(x)?;
+            let y = parse_coordinate(y)?;
+            let z = parse_coordinate(z)?;
+            if ![x, y, z].into_iter().all(f64::is_finite) {
+                return Err(frame_codec_error(
+                    TrajectoryIoErrorKind::InvalidFrame,
+                    operation,
+                    &self.options.source_label,
+                    self.frame_cursor,
+                    format!("Atom line {atom_index} has a coordinate that is not finite."),
+                ));
+            }
+            if retain_positions {
+                self.positions.push(Point3::new(x, y, z));
+            }
+        }
+        Ok(true)
+    }
+
+    fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryIoError> {
+        destination
+            .replace_from_data(FrameData::new(Quantity::new(
+                self.positions.as_slice(),
+                self.options.length_unit,
+            )))
+            .map_err(Into::into)
+    }
+}
+
+impl<R: BufRead> TrajectoryReader for XyzReader<R> {
+    fn topology(&self) -> &Topology {
+        self.topology()
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
+        if !self.topology().shares_layout(destination.topology()) {
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
+        }
+        if !self.parse_next(true)? {
+            return Ok(false);
+        }
+        self.publish(destination)?;
+        self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
+            frame_codec_error(
+                TrajectoryIoErrorKind::LimitExceeded,
+                TrajectoryIoOperation::ReadFrame,
+                &self.options.source_label,
+                self.frame_cursor,
+                "The frame number exceeds this platform's address range.",
+            )
+        })?;
+        Ok(true)
+    }
+}
+
+impl<R: BufRead + Seek> XyzReader<R> {
+    /// Parses and validates the next frame without publishing it, then
+    /// restores the stream position and frame cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidHeader`] when the stream holds
+    /// no frame, the decoding or [`TrajectoryIoErrorKind::Io`] error of an
+    /// invalid frame, and an [`TrajectoryIoErrorKind::Io`] error when the
+    /// position cannot be restored.
+    pub fn validate_first_frame(&mut self) -> Result<(), TrajectoryIoError> {
+        let start = self.reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Xyz),
+                &self.options.source_label,
+                error,
+            )
+        })?;
+        let result = self.parse_next(false);
+        self.reader.seek(SeekFrom::Start(start)).map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Xyz),
+                &self.options.source_label,
+                error,
+            )
+        })?;
+        self.frame_cursor = 0;
+        if !result? {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidHeader,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Xyz),
+                &self.options.source_label,
+                "The file holds no frame.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Indexes a freshly opened reader, whose next frame is frame 0. A
+    /// `growing` stream may end in a partial frame and need not hold a
+    /// complete one yet (see [`IndexedXyzReader::extend`]).
+    fn index_frames(
+        self,
+        stream_start: u64,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<IndexedXyzReader<R>, TrajectoryIoError> {
+        let mut indexed = IndexedXyzReader {
+            reader: self,
+            offsets: FrameOffsets::empty(stream_start),
+            pending_bytes: 0,
+        };
+        indexed.extend(growing, control)?;
+        if indexed.offsets.is_empty() && !growing {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidHeader,
+                TrajectoryIoOperation::Index,
+                Some(TrajectoryFormat::Xyz),
+                &indexed.reader.options.source_label,
+                "The file holds no frame.",
+            ));
+        }
+        Ok(indexed)
+    }
+
+    fn position(&mut self, operation: TrajectoryIoOperation) -> Result<u64, TrajectoryIoError> {
+        self.reader.stream_position().map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Xyz),
+                &self.options.source_label,
+                error,
+            )
+        })
+    }
+
+    fn seek_to(
+        &mut self,
+        offset: SeekFrom,
+        operation: TrajectoryIoOperation,
+    ) -> Result<u64, TrajectoryIoError> {
+        self.reader.seek(offset).map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Xyz),
+                &self.options.source_label,
+                error,
+            )
+        })
+    }
+}
+
+/// Fully scanned XYZ reader with verified frame offsets.
+pub struct IndexedXyzReader<R> {
+    reader: XyzReader<R>,
+    offsets: FrameOffsets,
+    /// Bytes after the last indexed frame when the index last grew.
+    pending_bytes: u64,
+}
+
+impl<R> fmt::Debug for IndexedXyzReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IndexedXyzReader")
+            .field("reader", &self.reader)
+            .field("frame_count", &self.offsets.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<R: BufRead + Seek> IndexedXyzReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order
+    /// and indexes it for random access.
+    ///
+    /// The stream's position at construction is frame 0. Every frame from there to
+    /// the end is decoded and verified before the reader is returned, and both
+    /// sequential and indexed reads then address frames from that start. Topology,
+    /// limits, and diagnostic labels follow [`XyzReader::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`XyzReader::new`], the decoding error of the
+    /// first invalid frame, [`TrajectoryIoErrorKind::LimitExceeded`] when the
+    /// index outgrows the limits, and [`TrajectoryIoErrorKind::Io`] when
+    /// reading or seeking fails.
+    pub fn new(
+        reader: R,
+        topology: impl Into<Arc<Topology>>,
+        options: XyzReadOptions,
+    ) -> Result<Self, TrajectoryIoError> {
+        Self::build(
+            reader,
+            topology.into(),
+            options,
+            false,
+            &IndexBuildControl::default(),
+        )
+    }
+
+    /// Indexes the stream like [`Self::new`], reporting to `control`. A
+    /// `growing` stream may end in a partial frame, and only lines with a
+    /// line break count (see [`Self::extend`]).
+    pub(crate) fn build(
+        mut reader: R,
+        topology: Arc<Topology>,
+        options: XyzReadOptions,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<Self, TrajectoryIoError> {
+        let stream_start = reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &options.source_label,
+                error,
+            )
+        })?;
+        XyzReader::new(reader, topology, options)?.index_frames(stream_start, growing, control)
+    }
+
+    /// Opens the stream with previously verified `offsets` instead of
+    /// scanning it; frame 0 is verified here, and random reads verify each
+    /// frame against the offsets. A `growing` stream is extended as in
+    /// [`Self::build`].
+    pub(crate) fn from_offsets(
+        mut reader: R,
+        topology: Arc<Topology>,
+        options: XyzReadOptions,
+        offsets: FrameOffsets,
+        growing: bool,
+    ) -> Result<Self, TrajectoryIoError> {
+        let stream_start = reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &options.source_label,
+                error,
+            )
+        })?;
+        let mut reader = XyzReader::new(reader, topology, options)?;
+        reader.growing = growing;
+        offsets.verify_start(
+            stream_start,
+            TrajectoryFormat::Xyz,
+            &reader.options.source_label,
+        )?;
+        reader.validate_first_frame()?;
+        Ok(Self {
+            reader,
+            offsets,
+            pending_bytes: 0,
+        })
+    }
+
+    pub(crate) fn offsets(&self) -> &FrameOffsets {
+        &self.offsets
+    }
+
+    /// The stream every read goes through.
+    pub(crate) fn stream_mut(&mut self) -> &mut R {
+        &mut self.reader.reader
+    }
+
+    /// Bytes after the last indexed frame when the index last grew.
+    pub(crate) const fn pending_bytes(&self) -> u64 {
+        self.pending_bytes
+    }
+
+    /// Drops the frames indexed after `mark`; see [`FrameOffsets::mark`].
+    pub(crate) fn restore_index(&mut self, mark: (usize, u64), pending_bytes: u64) {
+        self.offsets.restore(mark);
+        self.pending_bytes = pending_bytes;
+    }
+
+    /// Verifies and indexes every complete frame after the last indexed one,
+    /// up to the end of the stream, and returns the bytes left after them.
+    ///
+    /// A growing stream (see [`Self::build`]) may end in a frame still being
+    /// written, such as one whose last line has no line break yet: the scan
+    /// stops before it, which is not yet an error. Otherwise such a frame is
+    /// an error, as is any frame that is invalid with all its lines present.
+    /// Failure leaves the index as it was; the sequential cursor is kept
+    /// either way.
+    pub(crate) fn extend(
+        &mut self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        self.reader.growing = growing;
+        let mark = self.offsets.mark();
+        let saved_offset = self.reader.position(TrajectoryIoOperation::Index)?;
+        let saved_cursor = self.reader.frame_cursor;
+        let scanned = self
+            .reader
+            .seek_to(
+                SeekFrom::Start(self.offsets.end()),
+                TrajectoryIoOperation::Index,
+            )
+            .and_then(|_| {
+                self.reader.frame_cursor = self.offsets.len();
+                self.scan(control)
+            });
+        let restored = self
+            .reader
+            .seek_to(SeekFrom::Start(saved_offset), TrajectoryIoOperation::Index);
+        self.reader.frame_cursor = saved_cursor;
+        match scanned.and_then(|pending| restored.map(|_| pending)) {
+            Ok(pending) => {
+                self.pending_bytes = pending;
+                Ok(pending)
+            }
+            Err(error) => {
+                self.offsets.restore(mark);
+                Err(error)
+            }
+        }
+    }
+
+    /// Indexes frames from the current position; see [`Self::extend`].
+    fn scan(&mut self, control: &IndexBuildControl<'_>) -> Result<u64, TrajectoryIoError> {
+        let label = self.reader.options.source_label.clone();
+        control.checkpoint(
+            self.offsets.len(),
+            self.offsets.end(),
+            TrajectoryFormat::Xyz,
+            &label,
+        )?;
+        loop {
+            if let Some(limit) =
+                projected_index_limit(self.offsets.len(), &self.reader.options.limits)
+            {
+                if self
+                    .reader
+                    .reader
+                    .fill_buf()
+                    .map_err(|error| {
+                        io_context(
+                            TrajectoryIoOperation::Index,
+                            Some(TrajectoryFormat::Xyz),
+                            &label,
+                            error,
+                        )
+                    })?
+                    .is_empty()
+                {
+                    return Ok(0);
+                }
+                return Err(codec_context(
+                    TrajectoryIoErrorKind::LimitExceeded,
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Xyz),
+                    &label,
+                    "",
+                )
+                .exceeding("The frame index", limit));
+            }
+            let offset = self.reader.position(TrajectoryIoOperation::Index)?;
+            match self.reader.parse_next(false) {
+                Ok(true) => {}
+                Ok(false) => return Ok(0),
+                Err(error)
+                    if self.reader.growing
+                        && error.kind() == TrajectoryIoErrorKind::TruncatedRecord =>
+                {
+                    let file_end = self
+                        .reader
+                        .seek_to(SeekFrom::End(0), TrajectoryIoOperation::Index)?;
+                    return Ok(file_end.saturating_sub(offset));
+                }
+                Err(error) => return Err(error),
+            }
+            let end = self.reader.position(TrajectoryIoOperation::Index)?;
+            self.offsets.push(
+                offset,
+                end,
+                FrameStamp::default(),
+                &self.reader.options.limits,
+                TrajectoryFormat::Xyz,
+                &label,
+            )?;
+            control.checkpoint(self.offsets.len(), end, TrajectoryFormat::Xyz, &label)?;
+            self.reader.frame_cursor =
+                self.reader.frame_cursor.checked_add(1).ok_or_else(|| {
+                    frame_codec_error(
+                        TrajectoryIoErrorKind::LimitExceeded,
+                        TrajectoryIoOperation::Index,
+                        &label,
+                        self.reader.frame_cursor,
+                        "The frame number exceeds this platform's address range.",
+                    )
+                })?;
+        }
+    }
+}
+
+impl<R: BufRead + Seek> TrajectoryReader for IndexedXyzReader<R> {
+    fn topology(&self) -> &Topology {
+        self.reader.topology()
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.reader.shared_topology()
+    }
+
+    /// Reads the indexed frames in order and ends after the last of them,
+    /// even when the stream holds more.
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
+        if self.topology().shares_layout(destination.topology())
+            && self.reader.frame_cursor >= self.offsets.len()
+        {
+            return Ok(false);
+        }
+        self.reader.read_next(destination)
+    }
+}
+
+impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
+    fn frame_count(&self) -> Option<usize> {
+        Some(self.offsets.len())
+    }
+
+    fn read_frame(
+        &mut self,
+        index: usize,
+        destination: &mut FrameBuffer,
+    ) -> Result<(), TrajectoryIoError> {
+        if !self.topology().shares_layout(destination.topology()) {
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
+        }
+        let (offset, _) = self
+            .offsets
+            .frame(index)
+            .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
+        let saved_offset = self.reader.reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadFrame,
+                Some(TrajectoryFormat::Xyz),
+                &self.reader.options.source_label,
+                error,
+            )
+        })?;
+        let saved_cursor = self.reader.frame_cursor;
+        self.reader
+            .reader
+            .seek(SeekFrom::Start(offset))
+            .map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::ReadFrame,
+                    Some(TrajectoryFormat::Xyz),
+                    &self.reader.options.source_label,
+                    error,
+                )
+            })?;
+        self.reader.frame_cursor = index;
+        let parsed = self.reader.parse_next(true).and_then(|parsed| {
+            if parsed {
+                self.offsets.verify_stream_frame_end(
+                    index,
+                    &mut self.reader.reader,
+                    TrajectoryFormat::Xyz,
+                    &self.reader.options.source_label,
+                )?;
+            }
+            Ok(parsed)
+        });
+        let restore = self
+            .reader
+            .reader
+            .seek(SeekFrom::Start(saved_offset))
+            .map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::ReadFrame,
+                    Some(TrajectoryFormat::Xyz),
+                    &self.reader.options.source_label,
+                    error,
+                )
+            });
+        self.reader.frame_cursor = saved_cursor;
+        if !parsed? {
+            return Err(TrajectoryIoError::frame_index_out_of_range(index));
+        }
+        restore?;
+        self.reader.publish(destination)
+    }
+}
+
+/// The topology content an XYZ file of `topology` leaves out; see
+/// [`XyzWriter::report`].
+fn topology_omissions(topology: &Topology) -> WriteReport {
+    let (mut hydrogens, mut charges, mut isotopes, mut radicals, mut maps, mut sites) =
+        (0, 0, 0, 0, 0, 0);
+    for &atom_id in topology.atom_ids() {
+        let view = topology
+            .atom(atom_id)
+            .expect("dense topology atom IDs name topology atoms");
+        let atom = view.atom();
+        hydrogens += usize::from(view.implicit_hydrogens() != Some(0));
+        charges += usize::from(atom.formal_charge() != 0);
+        isotopes += usize::from(atom.isotope().is_some());
+        radicals += usize::from(atom.radical().is_some());
+        maps += usize::from(atom.atom_map().is_some());
+        sites += usize::from(view.atom_site().is_some_and(|site| {
+            let metadata = site.metadata();
+            metadata.label_atom_id().is_some() || metadata.auth_atom_id().is_some()
+        }));
+    }
+    let stereo = topology
+        .instances()
+        .filter(|instance| {
+            let molecule = instance.definition().molecule();
+            molecule.stereo_elements().next().is_some() || molecule.stereo_groups().next().is_some()
+        })
+        .count();
+    [
+        WriteOmission::Bonds {
+            bonds: topology.bond_count(),
+        },
+        WriteOmission::ImplicitHydrogens { atoms: hydrogens },
+        WriteOmission::FormalCharges { atoms: charges },
+        WriteOmission::Isotopes { atoms: isotopes },
+        WriteOmission::Radicals { atoms: radicals },
+        WriteOmission::AtomMaps { atoms: maps },
+        WriteOmission::AtomSites { atoms: sites },
+        WriteOmission::Stereo { molecules: stereo },
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// Strict multi-frame XYZ writer over a caller-supplied stream.
+pub struct XyzWriter<W> {
+    writer: W,
+    topology: Arc<Topology>,
+    options: XyzWriteOptions,
+    source_label: String,
+    frame_count: usize,
+    /// Set while a frame's bytes are being written and left set if writing
+    /// fails, so a stream that may end in a partial frame is never extended
+    /// or reported as finished.
+    partial: bool,
+    report: WriteReport,
+}
+
+impl<W> fmt::Debug for XyzWriter<W> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("XyzWriter")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("source_label", &self.source_label)
+            .field("frame_count", &self.frame_count)
+            .field("partial", &self.partial)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<W: Write> XyzWriter<W> {
+    /// A writer of `topology` frames to `writer`; `source_label` names the
+    /// destination in errors. Nothing is written until the first frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the length
+    /// unit is not a length or the comment contains a line break,
+    /// [`TrajectoryIoErrorKind::InvalidPrecision`] for more than 17 decimal
+    /// places, and [`TrajectoryIoErrorKind::LimitExceeded`] for a comment over
+    /// 1 MiB or a topology without atoms.
+    pub fn new(
+        writer: W,
+        topology: impl Into<Arc<Topology>>,
+        options: XyzWriteOptions,
+        source_label: impl Into<String>,
+    ) -> Result<Self, TrajectoryIoError> {
+        let topology = topology.into();
+        let source_label = source_label.into();
+        options
+            .length_unit
+            .conversion_factor_to(CANONICAL_LENGTH_UNIT)
+            .map_err(|error| {
+                codec_context(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::Open,
+                    Some(TrajectoryFormat::Xyz),
+                    &source_label,
+                    "The XYZ length unit is not a length.",
+                )
+                .with_source(error)
+            })?;
+        if options.decimal_places > 17 {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidPrecision,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &source_label,
+                format!(
+                    "The decimal precision is {} places, more than 17.",
+                    options.decimal_places
+                ),
+            ));
+        }
+        if options.comment.contains(['\r', '\n']) {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &source_label,
+                "The comment contains a line break.",
+            ));
+        }
+        if options.comment.len() > MAX_WRITER_COMMENT_BYTES {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &source_label,
+                format!(
+                    "The comment has {} bytes, more than {MAX_WRITER_COMMENT_BYTES}.",
+                    options.comment.len()
+                ),
+            ));
+        }
+        if topology.atom_count() == 0 {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &source_label,
+                "The topology has no atoms.",
+            ));
+        }
+        Ok(Self {
+            writer,
+            options,
+            source_label,
+            frame_count: 0,
+            partial: false,
+            report: topology_omissions(&topology),
+            topology,
+        })
+    }
+
+    /// What the stream written so far leaves out: XYZ carries each atom's
+    /// element and position only.
+    ///
+    /// From construction, the report holds the topology content every frame
+    /// leaves out: bonds; atoms whose implicit-hydrogen count is nonzero, or
+    /// inferred and not yet perceived, since XYZ readers fix every count at
+    /// zero; atoms with a nonzero formal charge, an isotope, radical
+    /// electrons, or an atom-map number; atoms whose hierarchy atom site has
+    /// an atom name, which is lost with the site's residue and chain; and
+    /// molecule instances with represented stereo. Sites without a name,
+    /// such as the synthetic `UNL` residues `kekule::xyz` gives an
+    /// interpreted file, are not counted.
+    ///
+    /// Each frame or ensemble written then adds what it left out, counted
+    /// over every frame written: cells omitted under
+    /// [`XyzWriteOptions::cell`], frame state omitted under
+    /// [`XyzWriteOptions::frame_metadata`] and
+    /// [`XyzWriteOptions::frame_properties`], sample state omitted under
+    /// [`XyzWriteOptions::ensemble_metadata`], and samples' occupancies and
+    /// B factors. The writer writes the same text whatever it reports.
+    pub fn report(&self) -> &WriteReport {
+        &self.report
+    }
+
+    /// The topology every written frame must share.
+    pub fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    /// The underlying stream.
+    pub fn writer(&self) -> &W {
+        &self.writer
+    }
+
+    /// Takes the stream as holding `frame_count` frames already, which the
+    /// next frame follows, as when appending to a file.
+    pub(crate) const fn resumed(mut self, frame_count: usize) -> Self {
+        self.frame_count = frame_count;
+        self
+    }
+
+    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Xyz,
+            &self.source_label,
+        )?;
+        require_nonempty_writer(self.frame_count, TrajectoryFormat::Xyz, &self.source_label)
+    }
+
+    /// Flushes and returns the completed nonempty XYZ stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] when no frame was
+    /// written or an earlier write left a partial frame, and
+    /// [`TrajectoryIoErrorKind::Io`] when flushing fails.
+    pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
+        self.validate_finish()?;
+        self.writer.flush().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::Finish,
+                Some(TrajectoryFormat::Xyz),
+                &self.source_label,
+                error,
+            )
+        })?;
+        Ok(self.writer)
+    }
+}
+
+impl<W: Write> TrajectoryWriter for XyzWriter<W> {
+    fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xyz,
+            &self.source_label,
+        )?;
+        if !self.topology().shares_layout(frame.topology()) {
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
+        }
+        if frame.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail {
+            return Err(writer_field_error(
+                &self.source_label,
+                self.frame_count,
+                TrajectoryField::PeriodicCell,
+            ));
+        }
+        let omitted = unrepresentable_frame_state(
+            [
+                (
+                    frame.velocities().is_some(),
+                    TrajectoryField::Velocities,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.forces().is_some(),
+                    TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.time().is_some(),
+                    TrajectoryField::Time,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.step().is_some(),
+                    TrajectoryField::Step,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.properties().atoms().has_data(),
+                    TrajectoryField::AtomProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    frame.properties().bonds().has_data(),
+                    TrajectoryField::BondProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    !frame.properties().owner().is_empty(),
+                    TrajectoryField::Properties,
+                    self.options.frame_properties,
+                ),
+            ],
+            |field| writer_field_error(&self.source_label, self.frame_count, field),
+        )?;
+        let factor = self.output_factor()?;
+        self.check_positions(frame.positions(), factor)?;
+        self.write_positions(frame.positions(), factor)?;
+        self.record(
+            [WriteOmission::Cell {
+                structures: usize::from(frame.cell().is_some()),
+            }]
+            .into_iter()
+            .chain(omitted),
+        );
+        Ok(())
+    }
+
+    /// Flushes the stream, which then ends after the last whole frame.
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xyz,
+            &self.source_label,
+        )?;
+        self.writer.flush().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xyz),
+                &self.source_label,
+                error,
+            )
+        })
+    }
+}
+
+impl<W: Write> XyzWriter<W> {
+    /// Writes one frame per sample of `ensemble`, in sample order, with the
+    /// sample's positions; reading the file back gives one state of equally
+    /// weighted samples, as `kekule::xyz` interprets it.
+    ///
+    /// The whole ensemble is checked before its first frame is written.
+    /// Sample weights, states, state energies, and the temperature follow
+    /// [`XyzWriteOptions::ensemble_metadata`] and cells follow
+    /// [`XyzWriteOptions::cell`]; occupancies and B factors are always left
+    /// out. [`Self::report`] gains everything left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::TopologyMismatch`] when the ensemble
+    /// does not share the writer's topology layout;
+    /// [`TrajectoryIoErrorKind::InvalidFrame`] for an empty ensemble, for a
+    /// coordinate that is not finite after conversion, or after an earlier
+    /// write left a partial frame; [`TrajectoryIoErrorKind::UnsupportedField`]
+    /// naming the [`TrajectoryField`] for ensemble, state, or sample
+    /// properties and for a cell or sample state the options do not omit,
+    /// with [`TrajectoryIoError::frame`] the frame of the first sample
+    /// concerned; and [`TrajectoryIoErrorKind::Io`] when the stream fails.
+    pub fn write_ensemble(&mut self, ensemble: &Ensemble) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xyz,
+            &self.source_label,
+        )?;
+        if !self.topology().shares_layout(ensemble.topology()) {
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
+        }
+        if ensemble.is_empty() {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xyz),
+                &self.source_label,
+                "The ensemble has no samples.",
+            ));
+        }
+        // The frame a sample is written as, for errors.
+        let frame = |sample: usize| self.frame_count.saturating_add(sample);
+        if !ensemble.properties().is_empty() {
+            return Err(writer_field_error(
+                &self.source_label,
+                frame(0),
+                TrajectoryField::CollectionProperties,
+            ));
+        }
+        if let Some(state) = ensemble
+            .states()
+            .find(|state| !state.payload().properties().is_empty())
+        {
+            return Err(writer_field_error(
+                &self.source_label,
+                frame(state.representative()),
+                TrajectoryField::StateProperties,
+            ));
+        }
+        let factor = self.output_factor()?;
+        for sample in ensemble {
+            let view = sample.as_model_view();
+            let properties = view.properties();
+            let unsupported = [
+                (
+                    view.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail,
+                    TrajectoryField::PeriodicCell,
+                ),
+                (
+                    properties.atoms().has_data(),
+                    TrajectoryField::AtomProperties,
+                ),
+                (
+                    properties.bonds().has_data(),
+                    TrajectoryField::BondProperties,
+                ),
+                (!properties.owner().is_empty(), TrajectoryField::Properties),
+            ];
+            if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {
+                return Err(writer_field_error(
+                    &self.source_label,
+                    frame(sample.index()),
+                    field,
+                ));
+            }
+            self.check_positions(view.positions(), factor)?;
+        }
+        let state = check_multi_model_ensemble(ensemble, self.options.ensemble_metadata).map_err(
+            |unrepresentable| {
+                let field = match unrepresentable.field() {
+                    StructureField::Weight => TrajectoryField::Weight,
+                    StructureField::Energy => TrajectoryField::Energy,
+                    StructureField::State => TrajectoryField::State,
+                    _ => TrajectoryField::Temperature,
+                };
+                writer_field_error(&self.source_label, frame(unrepresentable.sample()), field)
+            },
+        )?;
+
+        for sample in ensemble {
+            self.write_positions(sample.as_model_view().positions(), factor)?;
+        }
+        let count = |present: fn(ModelView<'_>) -> bool| {
+            ensemble
+                .iter()
+                .filter(|sample| present(sample.as_model_view()))
+                .count()
+        };
+        let omitted = [
+            WriteOmission::Cell {
+                structures: count(|view| view.cell().is_some()),
+            },
+            WriteOmission::Occupancies {
+                structures: count(|view| {
+                    view.occupancies()
+                        .is_some_and(|values| values.iter().any(Option::is_some))
+                }),
+            },
+            WriteOmission::BFactors {
+                structures: count(|view| {
+                    view.b_factors()
+                        .is_some_and(|values| values.value().iter().any(Option::is_some))
+                }),
+            },
+        ];
+        self.record(state.omissions().iter().copied().chain(omitted));
+        Ok(())
+    }
+
+    /// Writes one frame per item of `series`, in series order, with the
+    /// item's positions.
+    ///
+    /// The whole series is checked before its first frame is written. The
+    /// items' steps or coordinates follow [`XyzWriteOptions::series_metadata`],
+    /// their atom, bond, and own properties, such as their energies,
+    /// [`XyzWriteOptions::frame_properties`], and their cells
+    /// [`XyzWriteOptions::cell`]. [`Self::report`] gains everything left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::TopologyMismatch`] when the series
+    /// does not share the writer's topology layout;
+    /// [`TrajectoryIoErrorKind::InvalidFrame`] for an empty series, for a
+    /// coordinate that is not finite after conversion, or after an earlier
+    /// write left a partial frame; [`TrajectoryIoErrorKind::UnsupportedField`]
+    /// naming the [`TrajectoryField`] for series properties and for a cell,
+    /// item property, step, or coordinate the options do not omit, with
+    /// [`TrajectoryIoError::frame`] the frame of the first item concerned;
+    /// and [`TrajectoryIoErrorKind::Io`] when the stream fails.
+    pub fn write_series(&mut self, series: &Series) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Xyz,
+            &self.source_label,
+        )?;
+        if !self.topology().shares_layout(series.topology()) {
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
+        }
+        if series.is_empty() {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xyz),
+                &self.source_label,
+                "The series has no items.",
+            ));
+        }
+        // The frame an item is written as, for errors.
+        let frame = |item: usize| self.frame_count.saturating_add(item);
+        if !series.properties().is_empty() {
+            return Err(writer_field_error(
+                &self.source_label,
+                frame(0),
+                TrajectoryField::CollectionProperties,
+            ));
+        }
+        let place = match series.axis() {
+            SeriesAxis::Step => TrajectoryField::ItemStep,
+            _ => TrajectoryField::ItemCoordinate,
+        };
+        let factor = self.output_factor()?;
+        let mut omitted = Vec::new();
+        for item in series {
+            let view = item.as_model_view();
+            let properties = view.properties();
+            if view.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail {
+                return Err(writer_field_error(
+                    &self.source_label,
+                    frame(item.index()),
+                    TrajectoryField::PeriodicCell,
+                ));
+            }
+            let state = unrepresentable_frame_state(
+                [
+                    (true, place, self.options.series_metadata),
+                    (
+                        properties.atoms().has_data(),
+                        TrajectoryField::AtomProperties,
+                        self.options.frame_properties,
+                    ),
+                    (
+                        properties.bonds().has_data(),
+                        TrajectoryField::BondProperties,
+                        self.options.frame_properties,
+                    ),
+                    (
+                        !properties.owner().is_empty(),
+                        TrajectoryField::Properties,
+                        self.options.frame_properties,
+                    ),
+                ],
+                |field| writer_field_error(&self.source_label, frame(item.index()), field),
+            )?;
+            self.check_positions(view.positions(), factor)?;
+            omitted.extend(state);
+            omitted.push(WriteOmission::Cell {
+                structures: usize::from(view.cell().is_some()),
+            });
+        }
+        for item in series {
+            self.write_positions(item.as_model_view().positions(), factor)?;
+        }
+        self.record(omitted);
+        Ok(())
+    }
+
+    /// Adds `omissions` to [`Self::report`].
+    fn record(&mut self, omissions: impl IntoIterator<Item = WriteOmission>) {
+        record(&mut self.report, omissions);
+    }
+
+    /// The factor from canonical lengths to the output unit.
+    fn output_factor(&self) -> Result<f64, TrajectoryIoError> {
+        CANONICAL_LENGTH_UNIT
+            .conversion_factor_to(self.options.length_unit)
+            .map_err(|error| {
+                codec_context(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Xyz),
+                    &self.source_label,
+                    "The XYZ output unit is not a length.",
+                )
+                .with_source(error)
+            })
+    }
+
+    /// Fails unless every coordinate stays finite after conversion.
+    fn check_positions(&self, positions: &Positions, factor: f64) -> Result<(), TrajectoryIoError> {
+        for point in positions.values().value().iter() {
+            if !Point3::new(point.x * factor, point.y * factor, point.z * factor).is_finite() {
+                return Err(codec_context(
+                    TrajectoryIoErrorKind::InvalidFrame,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Xyz),
+                    &self.source_label,
+                    "A coordinate is not finite in the output unit.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes one frame of checked positions.
+    fn write_positions(
+        &mut self,
+        positions: &Positions,
+        factor: f64,
+    ) -> Result<(), TrajectoryIoError> {
+        let positions = positions.values();
+        self.partial = true;
+        writeln!(self.writer, "{}", self.topology.atom_count()).map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xyz),
+                &self.source_label,
+                error,
+            )
+        })?;
+        writeln!(self.writer, "{}", self.options.comment).map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xyz),
+                &self.source_label,
+                error,
+            )
+        })?;
+        for (atom_index, point) in positions.value().iter().enumerate() {
+            let atom_id = self.topology.atom_ids()[atom_index];
+            let element = self
+                .topology
+                .atom(atom_id)
+                .expect("dense topology atom IDs name topology atoms");
+            writeln!(
+                self.writer,
+                "{} {x:.precision$} {y:.precision$} {z:.precision$}",
+                element.element().symbol(),
+                x = point.x * factor,
+                y = point.y * factor,
+                z = point.z * factor,
+                precision = self.options.decimal_places,
+            )
+            .map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Xyz),
+                    &self.source_label,
+                    error,
+                )
+            })?;
+        }
+        self.partial = false;
+        self.frame_count = self.frame_count.checked_add(1).ok_or_else(|| {
+            codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xyz),
+                &self.source_label,
+                "The frame count exceeds this platform's address range.",
+            )
+        })?;
+        Ok(())
+    }
+}
+
+fn validate_atom_limit(
+    atom_count: usize,
+    limits: &TrajectoryIoLimits,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
+    if atom_count > limits.max_atoms() {
+        return Err(codec_context(
+            TrajectoryIoErrorKind::LimitExceeded,
+            TrajectoryIoOperation::ReadHeader,
+            Some(TrajectoryFormat::Xyz),
+            source_label,
+            "",
+        )
+        .exceeding(
+            "The atom count",
+            LimitExceeded::new(Resource::Atoms, limits.max_atoms(), atom_count),
+        ));
+    }
+    let scratch_bytes = atom_count
+        .checked_mul(std::mem::size_of::<Point3>())
+        .ok_or_else(|| {
+            codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Xyz),
+                source_label,
+                "The position buffer exceeds this platform's address range.",
+            )
+        })?;
+    if scratch_bytes > limits.max_scratch_bytes() {
+        return Err(codec_context(
+            TrajectoryIoErrorKind::LimitExceeded,
+            TrajectoryIoOperation::ReadHeader,
+            Some(TrajectoryFormat::Xyz),
+            source_label,
+            format!(
+                "The position buffer needs {scratch_bytes} bytes, more than the buffer limit of {} bytes.",
+                limits.max_scratch_bytes()
+            ),
+        )
+        .with_limit(LimitExceeded::new(
+            Resource::RecordBytes,
+            limits.max_scratch_bytes(),
+            scratch_bytes,
+        )));
+    }
+    Ok(())
+}
+
+fn validate_frame_bytes(
+    frame_bytes: u64,
+    limits: &TrajectoryIoLimits,
+    source_label: &str,
+    frame: usize,
+    operation: TrajectoryIoOperation,
+) -> Result<(), TrajectoryIoError> {
+    if frame_bytes > limits.max_frame_bytes() {
+        return Err(frame_codec_error(
+            TrajectoryIoErrorKind::LimitExceeded,
+            operation,
+            source_label,
+            frame,
+            "",
+        )
+        .exceeding(
+            "The frame",
+            exceeded_bytes(limits.max_frame_bytes(), frame_bytes),
+        ));
+    }
+    Ok(())
+}
+
+/// Adds the bytes one line consumed from the source, terminator included.
+fn checked_frame_add(
+    frame_bytes: u64,
+    consumed_bytes: usize,
+    source_label: &str,
+    frame: usize,
+    operation: TrajectoryIoOperation,
+) -> Result<u64, TrajectoryIoError> {
+    u64::try_from(consumed_bytes)
+        .ok()
+        .and_then(|bytes| frame_bytes.checked_add(bytes))
+        .ok_or_else(|| {
+            frame_codec_error(
+                TrajectoryIoErrorKind::LimitExceeded,
+                operation,
+                source_label,
+                frame,
+                "The frame's size exceeds the 64-bit range.",
+            )
+        })
+}
+
+/// Reads one line and returns it without its LF or CRLF terminator, together
+/// with the exact number of source bytes consumed, terminator included.
+///
+/// The line, terminator included, must fit `limit`. The retained `line` buffer
+/// grows only while its capacity plus `other_scratch_bytes` stays within
+/// `max_scratch_bytes`, so whether a line fits depends only on its length.
+/// With `terminated`, a line the stream ends inside, without its line break,
+/// is truncated: its writer may not have finished it.
+#[allow(clippy::too_many_arguments)]
+fn read_line<'a, R: BufRead>(
+    reader: &mut R,
+    line: &'a mut Vec<u8>,
+    limit: usize,
+    other_scratch_bytes: Option<usize>,
+    limits: &TrajectoryIoLimits,
+    source_label: &str,
+    frame: usize,
+    operation: TrajectoryIoOperation,
+    terminated: bool,
+) -> Result<Option<(&'a str, usize)>, TrajectoryIoError> {
+    line.clear();
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                return Err(io_context(
+                    operation,
+                    Some(TrajectoryFormat::Xyz),
+                    source_label,
+                    error,
+                ))
+            }
+        };
+        if available.is_empty() {
+            break;
+        }
+        // Scan at most one byte past the limit, enough to detect an overlong line.
+        let window = &available[..available.len().min((limit - line.len()).saturating_add(1))];
+        let (chunk, complete) = match window.iter().position(|byte| *byte == b'\n') {
+            Some(end) => (&window[..=end], true),
+            None => (window, false),
+        };
+        let needed = line.len() + chunk.len();
+        if needed > limit {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                operation,
+                Some(TrajectoryFormat::Xyz),
+                source_label,
+                "",
+            )
+            .exceeding(
+                "A line",
+                LimitExceeded::new(Resource::RecordBytes, limit, needed),
+            ));
+        }
+        if needed > line.capacity() {
+            // Grow geometrically so a long line is not copied once per buffered
+            // chunk, but never past the line limit or the remaining budget.
+            let remaining = other_scratch_bytes
+                .and_then(|bytes| limits.max_scratch_bytes().checked_sub(bytes))
+                .unwrap_or(0);
+            let target = line
+                .capacity()
+                .saturating_mul(2)
+                .min(limit)
+                .min(remaining)
+                .max(needed);
+            reserve_scratch(
+                line,
+                target,
+                other_scratch_bytes,
+                limits.max_scratch_bytes(),
+                |detail| {
+                    frame_codec_error(
+                        TrajectoryIoErrorKind::LimitExceeded,
+                        operation,
+                        source_label,
+                        frame,
+                        format!("The line buffer cannot grow. {detail}"),
+                    )
+                },
+            )?;
+        }
+        line.extend_from_slice(chunk);
+        let consumed = chunk.len();
+        reader.consume(consumed);
+        if complete {
+            break;
+        }
+    }
+    let read = line.len();
+    if read == 0 {
+        return Ok(None);
+    }
+    if terminated && !line.ends_with(b"\n") {
+        return Err(frame_codec_error(
+            TrajectoryIoErrorKind::TruncatedRecord,
+            operation,
+            source_label,
+            frame,
+            "The last line has no line break yet.",
+        ));
+    }
+    let mut content = line.as_slice();
+    if let Some(stripped) = content.strip_suffix(b"\n") {
+        content = stripped.strip_suffix(b"\r").unwrap_or(stripped);
+    }
+    let content = std::str::from_utf8(content).map_err(|_| {
+        io_context(
+            operation,
+            Some(TrajectoryFormat::Xyz),
+            source_label,
+            io::Error::new(io::ErrorKind::InvalidData, "The stream is not valid UTF-8."),
+        )
+    })?;
+    Ok(Some((content, read)))
+}
+
+fn frame_codec_error(
+    kind: TrajectoryIoErrorKind,
+    operation: TrajectoryIoOperation,
+    source_label: &str,
+    frame: usize,
+    detail: impl Into<String>,
+) -> TrajectoryIoError {
+    TrajectoryIoError::codec(kind, operation, Some(TrajectoryFormat::Xyz))
+        .with_source_label(source_label)
+        .with_frame(frame)
+        .with_detail(detail)
+}
+
+fn writer_field_error(
+    source_label: &str,
+    frame: usize,
+    field: TrajectoryField,
+) -> TrajectoryIoError {
+    TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::UnsupportedField,
+        TrajectoryIoOperation::WriteFrame,
+        Some(TrajectoryFormat::Xyz),
+    )
+    .with_source_label(source_label)
+    .with_frame(frame)
+    .with_field(field)
+    .with_detail(format!("XYZ cannot store the {field}."))
+}

@@ -101,7 +101,7 @@ impl TrajectorySampling {
 /// memory held is that of the finished ensemble. Frames that no sample
 /// requests are ignored, which lets a caller pass every frame of a stream.
 /// [`super::Trajectory::to_ensemble`] uses it for loaded trajectories, and
-/// `kekule-traj` for streaming readers.
+/// [`crate::traj::read_ensemble`] for streaming readers.
 ///
 /// ```
 /// use std::sync::Arc;

@@ -30,9 +30,6 @@ openff = ["dep:kekule-openff"]
 kekule.workspace = true
 kekule-openff = { workspace = true, optional = true }
 
-[dev-dependencies]
-kekule-traj.workspace = true
-
 [[example]]
 name = "openff_workflow"
 required-features = ["openff"]

@@ -62,15 +62,7 @@ name = "kekule-fuzz"
 version = "0.0.0"
 dependencies = [
  "kekule",
- "kekule-traj",
  "libfuzzer-sys",
-]
-
-[[package]]
-name = "kekule-traj"
-version = "0.4.0"
-dependencies = [
- "kekule",
 ]
 
 [[package]]

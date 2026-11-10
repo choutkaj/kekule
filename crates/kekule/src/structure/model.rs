@@ -394,7 +394,7 @@ pub(crate) mod sealed {
 ///
 /// Each implementor also has an inherent `as_model_view` method, so the trait
 /// only needs importing for generic code. This trait is sealed; other
-/// structure-like types, such as a `kekule-traj` frame buffer, are passed
+/// structure-like types, such as a [`crate::traj::FrameBuffer`], are passed
 /// through their own `as_model_view()`.
 pub trait AsModelView: sealed::Sealed {
     /// Borrows the structure as a [`ModelView`] without copying.

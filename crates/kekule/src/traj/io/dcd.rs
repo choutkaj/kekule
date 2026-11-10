@@ -1,0 +1,2878 @@
+//! Strict common-profile CHARMM/NAMD/OpenMM DCD trajectory I/O.
+//!
+//! [`DcdReader`] and [`IndexedDcdReader`] read 32-bit-record `CORD` files in
+//! either byte order, with optional unit cells and fixed atoms. [`DcdWriter`]
+//! writes canonical all-atom files. DCD stores f32 coordinates in angstrom and
+//! one step per frame on the `ISTART`/`NSAVC` sequence; time is derived from
+//! the header `DELTA` only under an explicit [`DcdTimePolicy`]. The writer
+//! rejects frame state DCD cannot carry (velocities, forces, and times
+//! under [`DcdTimePolicy::Absent`], and properties) unless
+//! [`DcdWriteOptions::frame_metadata`] and
+//! [`DcdWriteOptions::frame_properties`] omit it, and reports what it leaves
+//! out in [`DcdWriter::report`]. Under [`DcdFrameTimingPolicy::Number`] it
+//! numbers frames whose steps or times are missing or off the header's
+//! sequence, and reports the steps and times it replaced.
+//!
+//! # Examples
+//!
+//! ```
+//! use std::io::Cursor;
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::Point3;
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::units::{Quantity, ANGSTROM};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule::traj::io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
+//! use kekule::traj::{TrajectoryReader, TrajectoryWriter};
+//!
+//! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let mut trajectory = Trajectory::new(Arc::clone(&topology));
+//! for step in [10, 20] {
+//!     let x = step as f64;
+//!     let points = vec![Point3::new(x, 0.0, 0.0)];
+//!     let positions = Positions::from_vec(Quantity::new(points, ANGSTROM))?;
+//!     let mut frame = TrajectoryFrame::new(positions);
+//!     frame.set_step(Some(step));
+//!     trajectory.push(frame)?;
+//! }
+//!
+//! // Frame steps must follow the writer's step sequence exactly.
+//! let options = DcdWriteOptions::default().with_step_sequence(10, 10);
+//! let stream = Cursor::new(Vec::new());
+//! let mut writer = DcdWriter::new(stream, Arc::clone(&topology), options, "memory")?;
+//! for frame in &trajectory {
+//!     writer.write_frame(frame)?;
+//! }
+//! let mut stream = writer.finish()?;
+//! stream.set_position(0);
+//!
+//! let mut reader = DcdReader::new(stream, topology, DcdReadOptions::default())?;
+//! let mut frame = reader.frame_buffer();
+//! assert!(reader.read_next(&mut frame)?);
+//! assert_eq!(frame.step(), Some(10));
+//! assert_eq!(frame.time(), None);
+//! assert!(reader.read_next(&mut frame)?);
+//! assert_eq!(frame.step(), Some(20));
+//! // DCD stores f32 angstrom; compare at that precision.
+//! let position = frame.positions().get(0).unwrap().value_in(ANGSTROM)?;
+//! assert_eq!([position.x as f32, position.y as f32, position.z as f32], [20.0, 0.0, 0.0]);
+//! assert!(!reader.read_next(&mut frame)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+
+use crate::traj::TrajectoryField;
+use std::fmt;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::Arc;
+
+use crate::diagnostics::{
+    LimitExceeded, Resource, StructureField, UnrepresentablePolicy, WriteOmission, WriteReport,
+};
+use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::structure::TrajectoryFrameView;
+use crate::topology::Topology;
+use crate::traj::{
+    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
+    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+};
+use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
+
+use super::frame_state::{record, unrepresentable_frame_state};
+use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
+use super::{
+    codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
+    projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
+    FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
+};
+
+const HEADER_BYTES: usize = 84;
+const CELL_BYTES: usize = 48;
+
+/// Byte order used by DCD record markers and numeric payloads.
+///
+/// This enum is closed: a DCD file is either little- or big-endian.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DcdEndian {
+    /// Little-endian, the common default.
+    Little,
+    /// Big-endian.
+    Big,
+}
+
+impl DcdEndian {
+    fn u32(self, bytes: [u8; 4]) -> u32 {
+        match self {
+            Self::Little => u32::from_le_bytes(bytes),
+            Self::Big => u32::from_be_bytes(bytes),
+        }
+    }
+
+    fn i32(self, bytes: [u8; 4]) -> i32 {
+        match self {
+            Self::Little => i32::from_le_bytes(bytes),
+            Self::Big => i32::from_be_bytes(bytes),
+        }
+    }
+
+    fn f32(self, bytes: [u8; 4]) -> f32 {
+        f32::from_bits(self.u32(bytes))
+    }
+
+    fn f64(self, bytes: [u8; 8]) -> f64 {
+        match self {
+            Self::Little => f64::from_le_bytes(bytes),
+            Self::Big => f64::from_be_bytes(bytes),
+        }
+    }
+
+    fn encode_u32(self, value: u32) -> [u8; 4] {
+        match self {
+            Self::Little => value.to_le_bytes(),
+            Self::Big => value.to_be_bytes(),
+        }
+    }
+
+    fn encode_i32(self, value: i32) -> [u8; 4] {
+        match self {
+            Self::Little => value.to_le_bytes(),
+            Self::Big => value.to_be_bytes(),
+        }
+    }
+
+    fn encode_f32(self, value: f32) -> [u8; 4] {
+        self.encode_u32(value.to_bits())
+    }
+
+    fn encode_f64(self, value: f64) -> [u8; 8] {
+        match self {
+            Self::Little => value.to_le_bytes(),
+            Self::Big => value.to_be_bytes(),
+        }
+    }
+}
+
+/// Explicit interpretation of the DCD header's unitless `DELTA` value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum DcdTimePolicy {
+    /// Preserve steps but do not synthesize per-frame time.
+    Absent,
+    /// Treat `DELTA` as the duration of one integration step in this unit.
+    HeaderDelta {
+        /// The time unit of `DELTA`.
+        unit: Unit,
+    },
+}
+
+/// Whether a DCD writer stores periodic cells.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DcdCellPolicy {
+    /// Write no unit-cell records; a frame with a cell is rejected.
+    #[default]
+    Omit,
+    /// Write one unit-cell record per frame; a frame without a cell is rejected.
+    Write,
+}
+
+/// How a DCD writer, whose frames must follow the header's
+/// `ISTART + n·NSAVC` step sequence, treats a frame whose step is missing
+/// or off that sequence, such as a frame read from XYZ or a stride of
+/// another trajectory.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DcdFrameTimingPolicy {
+    /// Frame `n` of the frames written, counted from 0, must carry step
+    /// `start_step + n × step_interval` of
+    /// [`DcdWriteOptions::with_step_sequence`], and under
+    /// [`DcdTimePolicy::HeaderDelta`] a time of that step × `DELTA`;
+    /// any other frame fails to write.
+    #[default]
+    Require,
+    /// Number the frames on the header's sequence: frame `n` is written at
+    /// step `start_step + n × step_interval` and, under
+    /// [`DcdTimePolicy::HeaderDelta`], at that step × `DELTA`. A frame
+    /// without a step or a time is given them. A frame whose own step or
+    /// time disagrees has it replaced, and [`DcdWriter::report`] counts the
+    /// frames whose steps and times were replaced as
+    /// [`WriteOmission::StructureState`] for [`StructureField::Step`] and
+    /// [`StructureField::Time`]. A frame on the sequence writes as it would
+    /// under [`Self::Require`].
+    Number,
+}
+
+/// DCD reader policy.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DcdReadOptions {
+    time_policy: DcdTimePolicy,
+    limits: TrajectoryIoLimits,
+    source_label: String,
+}
+
+impl Default for DcdReadOptions {
+    fn default() -> Self {
+        Self {
+            limits: TrajectoryIoLimits::default(),
+            source_label: "dcd stream".into(),
+            time_policy: DcdTimePolicy::Absent,
+        }
+    }
+}
+
+impl DcdReadOptions {
+    /// Sets limits applied before allocation, scanning, and seeking.
+    ///
+    /// The scratch limit covers the combined retained capacities of coordinates,
+    /// record bytes, and fixed-atom reconstruction/validation buffers. Indexed
+    /// and sequential reads share those buffers; index offsets have a separate limit.
+    #[must_use]
+    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Sets the source label used in decoding errors.
+    #[must_use]
+    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
+        self.source_label = source_label.into();
+        self
+    }
+
+    /// Sets [`Self::time_policy`].
+    #[must_use]
+    pub const fn with_time_policy(mut self, time_policy: DcdTimePolicy) -> Self {
+        self.time_policy = time_policy;
+        self
+    }
+
+    /// How frame times are derived; [`DcdTimePolicy::Absent`] by default.
+    pub const fn time_policy(&self) -> DcdTimePolicy {
+        self.time_policy
+    }
+
+    /// Limits applied before allocation, scanning, and seeking.
+    pub const fn limits(&self) -> &TrajectoryIoLimits {
+        &self.limits
+    }
+
+    /// The source label used in decoding errors.
+    pub fn source_label(&self) -> &str {
+        &self.source_label
+    }
+}
+
+/// Canonical DCD writer policy.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DcdWriteOptions {
+    endian: DcdEndian,
+    cell_policy: DcdCellPolicy,
+    start_step: u64,
+    step_interval: u64,
+    delta: f32,
+    time_policy: DcdTimePolicy,
+    frame_timing: DcdFrameTimingPolicy,
+    frame_metadata: UnrepresentablePolicy,
+    frame_properties: UnrepresentablePolicy,
+}
+
+impl Default for DcdWriteOptions {
+    fn default() -> Self {
+        Self {
+            endian: DcdEndian::Little,
+            cell_policy: DcdCellPolicy::Omit,
+            start_step: 0,
+            step_interval: 1,
+            delta: 1.0,
+            time_policy: DcdTimePolicy::Absent,
+            frame_timing: DcdFrameTimingPolicy::Require,
+            frame_metadata: UnrepresentablePolicy::Fail,
+            frame_properties: UnrepresentablePolicy::Fail,
+        }
+    }
+}
+
+impl DcdWriteOptions {
+    /// Sets [`Self::endian`].
+    #[must_use]
+    pub const fn with_endian(mut self, endian: DcdEndian) -> Self {
+        self.endian = endian;
+        self
+    }
+
+    /// Includes cells in the canonical DCD orientation: `a` along positive x,
+    /// `b` in the xy plane with positive y, and `c` with positive z.
+    /// Other orientations are rejected because DCD lengths and angles cannot
+    /// preserve their relation to the stored Cartesian coordinates.
+    /// Angles are written using the unambiguous supported cosine convention.
+    #[must_use]
+    pub const fn with_cell_policy(mut self, cell_policy: DcdCellPolicy) -> Self {
+        self.cell_policy = cell_policy;
+        self
+    }
+
+    /// Sets the header step sequence: frame `n` must carry step
+    /// `start_step + n * step_interval`, or is numbered with it under
+    /// [`DcdFrameTimingPolicy::Number`]. Both must fit an `i32`, and the
+    /// interval must be positive; [`DcdWriter::new`] checks them.
+    #[must_use]
+    pub const fn with_step_sequence(mut self, start_step: u64, step_interval: u64) -> Self {
+        self.start_step = start_step;
+        self.step_interval = step_interval;
+        self
+    }
+
+    /// Stores `DELTA`, the duration of one step, as an `f32` in the time
+    /// unit of [`DcdTimePolicy::HeaderDelta`], or in the canonical time unit
+    /// for [`DcdTimePolicy::Absent`]. With `HeaderDelta`, every frame time
+    /// must equal its step times `DELTA` to f32 precision, the precision
+    /// `DELTA` has in the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when `delta`
+    /// is not a time.
+    pub fn with_header_delta(
+        mut self,
+        delta: Quantity<f64>,
+        time_policy: DcdTimePolicy,
+    ) -> Result<Self, TrajectoryIoError> {
+        let unit = header_delta_unit(time_policy);
+        let delta = delta.value_in(unit).map_err(|error| {
+            codec_context(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Dcd),
+                "DCD writer options",
+                "The DCD DELTA is not a time.",
+            )
+            .with_source(error)
+        })?;
+        self.delta = delta as f32;
+        self.time_policy = time_policy;
+        Ok(self)
+    }
+
+    /// Sets [`Self::frame_timing`].
+    #[must_use]
+    pub const fn with_frame_timing(mut self, frame_timing: DcdFrameTimingPolicy) -> Self {
+        self.frame_timing = frame_timing;
+        self
+    }
+
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
+        self
+    }
+
+    /// Sets [`Self::frame_properties`].
+    #[must_use]
+    pub const fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
+        self.frame_properties = frame_properties;
+        self
+    }
+
+    /// A trajectory frame's velocities and forces, and its time under
+    /// [`DcdTimePolicy::Absent`], which DCD cannot carry: by default a frame
+    /// with any of them fails to write; [`UnrepresentablePolicy::Omit`]
+    /// writes the frame without them and reports a
+    /// [`WriteOmission::StructureState`] for each kind left out (see
+    /// [`DcdWriter::report`]).
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
+    }
+
+    /// A trajectory frame's atom, bond, and frame properties, which DCD
+    /// cannot carry, under the rules of [`Self::frame_metadata`].
+    pub const fn frame_properties(&self) -> UnrepresentablePolicy {
+        self.frame_properties
+    }
+
+    /// How a frame whose step or time is missing or off the header's
+    /// sequence is written; [`DcdFrameTimingPolicy::Require`], under which
+    /// such a frame fails, by default.
+    pub const fn frame_timing(&self) -> DcdFrameTimingPolicy {
+        self.frame_timing
+    }
+
+    /// The byte order written; [`DcdEndian::Little`] by default.
+    pub const fn endian(&self) -> DcdEndian {
+        self.endian
+    }
+
+    /// Whether unit cells are written; [`DcdCellPolicy::Omit`] by default.
+    pub const fn cell_policy(&self) -> DcdCellPolicy {
+        self.cell_policy
+    }
+
+    /// The step of the first frame (`ISTART`); 0 by default.
+    pub const fn start_step(&self) -> u64 {
+        self.start_step
+    }
+
+    /// The step increment between frames (`NSAVC`); 1 by default.
+    pub const fn step_interval(&self) -> u64 {
+        self.step_interval
+    }
+
+    /// `DELTA` in the unit [`Self::with_header_delta`] stores it in.
+    pub fn delta(&self) -> Quantity<f64> {
+        Quantity::new(f64::from(self.delta), header_delta_unit(self.time_policy))
+    }
+
+    /// How frame times relate to `DELTA`; [`DcdTimePolicy::Absent`] by
+    /// default, under which a frame's time follows [`Self::frame_metadata`].
+    pub const fn time_policy(&self) -> DcdTimePolicy {
+        self.time_policy
+    }
+
+    const fn writes_cells(&self) -> bool {
+        match self.cell_policy {
+            DcdCellPolicy::Omit => false,
+            DcdCellPolicy::Write => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DcdHeader {
+    endian: DcdEndian,
+    declared_frames: usize,
+    start_step: u64,
+    step_interval: u64,
+    delta: f32,
+    fixed_count: usize,
+    atom_count: usize,
+    has_cell: bool,
+    charmm_version: i32,
+    /// Where the header record starts.
+    header_start: u64,
+    data_start: u64,
+}
+
+impl DcdHeader {
+    pub(crate) const fn declared_frames(&self) -> usize {
+        self.declared_frames
+    }
+
+    pub(crate) const fn atom_count(&self) -> usize {
+        self.atom_count
+    }
+
+    pub(crate) const fn has_cell(&self) -> bool {
+        self.has_cell
+    }
+
+    pub(crate) fn variant(&self) -> String {
+        format!(
+            "CHARMM-compatible v{} {:?}{}{}",
+            self.charmm_version,
+            self.endian,
+            if self.has_cell { " cell" } else { "" },
+            if self.fixed_count > 0 {
+                " fixed-atoms"
+            } else {
+                ""
+            }
+        )
+    }
+}
+
+/// Sequential DCD reader over one seekable stream.
+pub struct DcdReader<R> {
+    reader: R,
+    topology: Arc<Topology>,
+    options: DcdReadOptions,
+    header: DcdHeader,
+    free_indices: Vec<usize>,
+    fixed_indices: Vec<usize>,
+    fixed_reference: Vec<Point3>,
+    positions: Vec<Point3>,
+    record: Vec<u8>,
+    frame_cursor: usize,
+    /// Whether frames are counted in the stream rather than checked against
+    /// the header's `NSET`, as in a file still being written.
+    growing: bool,
+}
+
+impl<R> fmt::Debug for DcdReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DcdReader")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("frame_cursor", &self.frame_cursor)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DcdDecodedFrame {
+    cell: Option<PeriodicCell>,
+    step: u64,
+    time: Option<f64>,
+}
+
+impl<R: Read + Seek> DcdReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order.
+    ///
+    /// Accepts an owned topology or a shared `Arc<Topology>`. Counts and available
+    /// format metadata are checked automatically; matching counts alone cannot
+    /// establish atom identity. Limits and diagnostic labels are set in `options`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidHeader`],
+    /// [`TrajectoryIoErrorKind::UnsupportedVariant`],
+    /// [`TrajectoryIoErrorKind::TruncatedRecord`] or
+    /// [`TrajectoryIoErrorKind::RecordMarkerMismatch`] for a malformed or
+    /// unsupported header, [`TrajectoryIoErrorKind::InconsistentAtomCount`]
+    /// when its atom count differs from the topology's,
+    /// [`TrajectoryIoErrorKind::LimitExceeded`] when it exceeds the limits, and
+    /// [`TrajectoryIoErrorKind::Io`] when reading fails.
+    pub fn new(
+        mut reader: R,
+        topology: impl Into<Arc<Topology>>,
+        options: DcdReadOptions,
+    ) -> Result<Self, TrajectoryIoError> {
+        let topology = topology.into();
+        let source_label = &options.source_label;
+        let limits = &options.limits;
+        validate_time_policy(options.time_policy, source_label)?;
+        let atom_count = topology.atom_count();
+        validate_atom_count(atom_count, limits, source_label)?;
+        let start = reader
+            .stream_position()
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))?;
+        let mut marker = [0_u8; 4];
+        read_exact_required(
+            &mut reader,
+            &mut marker,
+            TrajectoryIoOperation::ReadHeader,
+            source_label,
+            None,
+            "DCD header marker",
+        )?;
+        let endian = if u32::from_le_bytes(marker) == HEADER_BYTES as u32 {
+            DcdEndian::Little
+        } else if u32::from_be_bytes(marker) == HEADER_BYTES as u32 {
+            DcdEndian::Big
+        } else {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidHeader,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Dcd),
+                source_label,
+                "The first record marker is not 84 in either byte order.",
+            ));
+        };
+        reader
+            .seek(SeekFrom::Start(start))
+            .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))?;
+
+        let mut record = Vec::new();
+        read_record(
+            &mut reader,
+            endian,
+            &mut record,
+            Some(0),
+            limits,
+            source_label,
+            TrajectoryIoOperation::ReadHeader,
+            None,
+            false,
+            None,
+        )?;
+        if record.len() != HEADER_BYTES || &record[..4] != b"CORD" {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidHeader,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Dcd),
+                source_label,
+                "The header is not an 84-byte CORD record.",
+            ));
+        }
+        let controls = parse_controls(&record[4..], endian, source_label)?;
+        if controls[11] != 0 || controls[12] != 0 {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Dcd),
+                source_label,
+                "Four-dimensional and charge coordinate records are not supported.",
+            ));
+        }
+        let declared_frames = nonnegative_u64(controls[0], "NSET", source_label)? as usize;
+        let start_step = nonnegative_u64(controls[1], "ISTART", source_label)?;
+        let step_interval = positive_u64(controls[2], "NSAVC", source_label)?;
+        let fixed_count = nonnegative_usize(controls[8], "NAMNF", source_label)?;
+        let delta = endian.f32(record[40..44].try_into().expect("header slice"));
+        if !delta.is_finite() || delta < 0.0 {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Dcd),
+                source_label,
+                format!("The time step DELTA is {delta}. It is not a finite, nonnegative number."),
+            ));
+        }
+        let has_cell = controls[10] != 0;
+        let charmm_version = controls[19];
+        if charmm_version <= 0 {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Dcd),
+                source_label,
+                "The header is not in the CHARMM, NAMD or OpenMM layout. Other DCD layouts are not supported.",
+            ));
+        }
+
+        read_record(
+            &mut reader,
+            endian,
+            &mut record,
+            Some(0),
+            limits,
+            source_label,
+            TrajectoryIoOperation::ReadHeader,
+            None,
+            false,
+            None,
+        )?;
+        validate_title_record(&record, endian, source_label)?;
+        read_record(
+            &mut reader,
+            endian,
+            &mut record,
+            Some(0),
+            limits,
+            source_label,
+            TrajectoryIoOperation::ReadHeader,
+            None,
+            false,
+            None,
+        )?;
+        if record.len() != 4 {
+            return Err(header_error(
+                source_label,
+                format!("The atom-count record has {} bytes, not 4.", record.len()),
+            ));
+        }
+        let file_atoms = nonnegative_usize(
+            endian.i32(record[..4].try_into().expect("atom-count slice")),
+            "NATOM",
+            source_label,
+        )?;
+        validate_atom_count(file_atoms, limits, source_label)?;
+        if file_atoms != atom_count {
+            return Err(TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentAtomCount,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Dcd),
+            )
+            .with_source_label(source_label)
+            .with_counts(atom_count as u64, file_atoms as u64));
+        }
+        if fixed_count > atom_count {
+            return Err(header_error(
+                source_label,
+                format!(
+                    "The header declares {fixed_count} fixed atoms but only {atom_count} atoms."
+                ),
+            ));
+        }
+        let free_count = atom_count - fixed_count;
+        let mut free_indices = Vec::new();
+        let mut fixed_indices = Vec::new();
+        let reserve_error =
+            |detail: &str| resource_error(TrajectoryIoOperation::Open, source_label, None, detail);
+        if fixed_count > 0 {
+            read_record(
+                &mut reader,
+                endian,
+                &mut record,
+                Some(0),
+                limits,
+                source_label,
+                TrajectoryIoOperation::ReadHeader,
+                None,
+                false,
+                None,
+            )?;
+            let expected = checked_coordinate_bytes(free_count, source_label)?;
+            if record.len() != expected {
+                return Err(header_error(
+                    source_label,
+                    format!(
+                        "The free-atom index record has {} bytes, not {expected}.",
+                        record.len()
+                    ),
+                ));
+            }
+            reserve_scratch(
+                &mut free_indices,
+                free_count,
+                scratch_bytes(&record),
+                limits.max_scratch_bytes(),
+                reserve_error,
+            )?;
+            let mut seen = Vec::new();
+            reserve_scratch(
+                &mut seen,
+                atom_count,
+                scratch_bytes(&record)
+                    .and_then(|bytes| bytes.checked_add(scratch_bytes(&free_indices)?)),
+                limits.max_scratch_bytes(),
+                reserve_error,
+            )?;
+            seen.resize(atom_count, false);
+            for chunk in record.as_chunks::<4>().0 {
+                let one_based = endian.i32(*chunk);
+                if one_based <= 0 {
+                    return Err(header_error(
+                        source_label,
+                        format!("The free-atom index {one_based} is not positive."),
+                    ));
+                }
+                let index = usize::try_from(one_based - 1).map_err(|_| {
+                    header_error(
+                        source_label,
+                        "A free-atom index is outside this platform's address range.",
+                    )
+                })?;
+                if index >= atom_count || seen[index] {
+                    return Err(header_error(
+                        source_label,
+                        format!("The free-atom index {one_based} is outside the {atom_count} atoms or repeated."),
+                    ));
+                }
+                seen[index] = true;
+                free_indices.push(index);
+            }
+            reserve_scratch(
+                &mut fixed_indices,
+                fixed_count,
+                scratch_bytes(&record)
+                    .and_then(|bytes| bytes.checked_add(scratch_bytes(&free_indices)?))
+                    .and_then(|bytes| bytes.checked_add(scratch_bytes(&seen)?)),
+                limits.max_scratch_bytes(),
+                reserve_error,
+            )?;
+            fixed_indices.extend(
+                seen.iter()
+                    .enumerate()
+                    .filter_map(|(index, free)| (!free).then_some(index)),
+            );
+        }
+        let index_bytes = scratch_bytes(&free_indices)
+            .and_then(|bytes| bytes.checked_add(scratch_bytes(&fixed_indices)?));
+        let mut fixed_reference = Vec::new();
+        reserve_scratch(
+            &mut fixed_reference,
+            fixed_count,
+            index_bytes.and_then(|bytes| bytes.checked_add(scratch_bytes(&record)?)),
+            limits.max_scratch_bytes(),
+            reserve_error,
+        )?;
+        let mut positions = Vec::new();
+        reserve_scratch(
+            &mut positions,
+            atom_count,
+            index_bytes
+                .and_then(|bytes| bytes.checked_add(scratch_bytes(&fixed_reference)?))
+                .and_then(|bytes| bytes.checked_add(scratch_bytes(&record)?)),
+            limits.max_scratch_bytes(),
+            reserve_error,
+        )?;
+        positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
+        let data_start = reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Dcd),
+                source_label,
+                error,
+            )
+        })?;
+        let header = DcdHeader {
+            endian,
+            declared_frames,
+            start_step,
+            step_interval,
+            delta,
+            fixed_count,
+            atom_count,
+            has_cell,
+            charmm_version,
+            header_start: start,
+            data_start,
+        };
+        Ok(Self {
+            reader,
+            topology,
+            options,
+            header,
+            free_indices,
+            fixed_indices,
+            fixed_reference,
+            positions,
+            record,
+            frame_cursor: 0,
+            growing: false,
+        })
+    }
+
+    /// The topology every frame belongs to.
+    pub fn topology(&self) -> &Topology {
+        self.topology.as_ref()
+    }
+
+    pub(crate) fn header(&self) -> &DcdHeader {
+        &self.header
+    }
+
+    fn early_eof_error(&self, frame_start: u64) -> TrajectoryIoError {
+        TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::ReadFrame,
+            Some(TrajectoryFormat::Dcd),
+        )
+        .with_source_label(&self.options.source_label)
+        .with_frame(self.frame_cursor)
+        .with_byte_offset(frame_start)
+        .with_counts(self.header.declared_frames as u64, self.frame_cursor as u64)
+        .with_detail("The file ends before the frame count NSET in its header.")
+    }
+
+    fn parse_next(
+        &mut self,
+        capture_fixed_reference: bool,
+    ) -> Result<Option<DcdDecodedFrame>, TrajectoryIoError> {
+        let other_scratch_bytes = scratch_bytes(&self.positions)
+            .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.free_indices)?))
+            .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.fixed_indices)?))
+            .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.fixed_reference)?));
+        let frame_start = self.reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadFrame,
+                Some(TrajectoryFormat::Dcd),
+                &self.options.source_label,
+                error,
+            )
+        })?;
+        if self.growing {
+            // Frames are counted in the stream; NSET may lag behind them.
+            if probe_seekable_eof(
+                &mut self.reader,
+                TrajectoryIoOperation::ReadFrame,
+                TrajectoryFormat::Dcd,
+                &self.options.source_label,
+            )? {
+                return Ok(None);
+            }
+        } else if self.frame_cursor >= self.header.declared_frames {
+            if probe_seekable_eof(
+                &mut self.reader,
+                TrajectoryIoOperation::ReadFrame,
+                TrajectoryFormat::Dcd,
+                &self.options.source_label,
+            )? {
+                return Ok(None);
+            }
+            return Err(TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::ReadFrame,
+                Some(TrajectoryFormat::Dcd),
+            )
+            .with_source_label(&self.options.source_label)
+            .with_frame(self.frame_cursor)
+            .with_byte_offset(frame_start)
+            .with_counts(
+                self.header.declared_frames as u64,
+                (self.frame_cursor as u64).saturating_add(1),
+            )
+            .with_detail("The file holds more frames than the frame count NSET in its header."));
+        }
+        if self.frame_cursor >= self.options.limits.max_frames() {
+            if probe_seekable_eof(
+                &mut self.reader,
+                TrajectoryIoOperation::ReadFrame,
+                TrajectoryFormat::Dcd,
+                &self.options.source_label,
+            )? {
+                return Err(self.early_eof_error(frame_start));
+            }
+            return Err(resource_error(
+                TrajectoryIoOperation::ReadFrame,
+                &self.options.source_label,
+                Some(self.frame_cursor),
+                "",
+            )
+            .exceeding(
+                "The trajectory",
+                LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+            ));
+        }
+        let mut cell = None;
+        if self.header.has_cell {
+            if !read_record(
+                &mut self.reader,
+                self.header.endian,
+                &mut self.record,
+                other_scratch_bytes,
+                &self.options.limits,
+                &self.options.source_label,
+                TrajectoryIoOperation::ReadFrame,
+                Some(self.frame_cursor),
+                true,
+                Some((
+                    CELL_BYTES,
+                    "The unit-cell record does not hold six double-precision values.",
+                )),
+            )? {
+                return Err(self.early_eof_error(frame_start));
+            }
+            cell = Some(decode_cell(
+                &self.record,
+                self.header.endian,
+                &self.options.source_label,
+                self.frame_cursor,
+            )?);
+        }
+
+        let coordinate_indices = if self.frame_cursor == 0 || self.header.fixed_count == 0 {
+            None
+        } else {
+            // A prior random read may have overwritten the shared position
+            // scratch. Every partial frame restores its immutable fixed atoms.
+            for (&index, &point) in self.fixed_indices.iter().zip(&self.fixed_reference) {
+                self.positions[index] = point;
+            }
+            Some(self.free_indices.as_slice())
+        };
+        let coordinate_count = coordinate_indices.map_or(self.header.atom_count, <[usize]>::len);
+        let coordinate_bytes =
+            checked_coordinate_bytes(coordinate_count, &self.options.source_label)?;
+        if coordinate_bytes as u64 > self.options.limits.max_frame_bytes() {
+            return Err(resource_error(
+                TrajectoryIoOperation::ReadFrame,
+                &self.options.source_label,
+                Some(self.frame_cursor),
+                "",
+            )
+            .exceeding(
+                "A coordinate record",
+                exceeded_bytes(
+                    self.options.limits.max_frame_bytes(),
+                    coordinate_bytes as u64,
+                ),
+            ));
+        }
+        for axis in 0..3 {
+            let clean_frame_eof = !self.header.has_cell && axis == 0;
+            if !read_record(
+                &mut self.reader,
+                self.header.endian,
+                &mut self.record,
+                other_scratch_bytes,
+                &self.options.limits,
+                &self.options.source_label,
+                TrajectoryIoOperation::ReadFrame,
+                Some(self.frame_cursor),
+                clean_frame_eof,
+                Some((coordinate_bytes, "A coordinate record has the wrong size.")),
+            )? {
+                return Err(self.early_eof_error(frame_start));
+            }
+            for (value_index, chunk) in self.record.as_chunks::<4>().0.iter().enumerate() {
+                let value = f64::from(self.header.endian.f32(*chunk));
+                if !value.is_finite() {
+                    return Err(frame_error(
+                        TrajectoryIoErrorKind::InvalidFrame,
+                        &self.options.source_label,
+                        self.frame_cursor,
+                        "A coordinate is not finite.",
+                    ));
+                }
+                let atom_index =
+                    coordinate_indices.map_or(value_index, |indices| indices[value_index]);
+                match axis {
+                    0 => self.positions[atom_index].x = value,
+                    1 => self.positions[atom_index].y = value,
+                    _ => self.positions[atom_index].z = value,
+                }
+            }
+        }
+        let frame_end = self.reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadFrame,
+                Some(TrajectoryFormat::Dcd),
+                &self.options.source_label,
+                error,
+            )
+        })?;
+        let frame_bytes = frame_end.checked_sub(frame_start).ok_or_else(|| {
+            frame_error(
+                TrajectoryIoErrorKind::InvalidFrame,
+                &self.options.source_label,
+                self.frame_cursor,
+                "The frame ends before it starts.",
+            )
+        })?;
+        if frame_bytes > self.options.limits.max_frame_bytes() {
+            return Err(resource_error(
+                TrajectoryIoOperation::ReadFrame,
+                &self.options.source_label,
+                Some(self.frame_cursor),
+                "",
+            )
+            .exceeding(
+                "The frame",
+                exceeded_bytes(self.options.limits.max_frame_bytes(), frame_bytes),
+            ));
+        }
+        if capture_fixed_reference && self.frame_cursor == 0 && self.header.fixed_count > 0 {
+            self.fixed_reference.clear();
+            self.fixed_reference.extend(
+                self.fixed_indices
+                    .iter()
+                    .map(|&index| self.positions[index]),
+            );
+        }
+        let (step, time) = self.step_and_time(self.frame_cursor)?;
+        self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
+            resource_error(
+                TrajectoryIoOperation::ReadFrame,
+                &self.options.source_label,
+                Some(self.frame_cursor),
+                "The frame number exceeds this platform's address range.",
+            )
+        })?;
+        Ok(Some(DcdDecodedFrame { cell, step, time }))
+    }
+
+    /// The step of frame `frame` on the `ISTART`/`NSAVC` sequence and, under
+    /// [`DcdTimePolicy::HeaderDelta`], its time in the policy's unit.
+    fn step_and_time(&self, frame: usize) -> Result<(u64, Option<f64>), TrajectoryIoError> {
+        let step = self
+            .header
+            .start_step
+            .checked_add(
+                (frame as u64)
+                    .checked_mul(self.header.step_interval)
+                    .ok_or_else(|| {
+                        frame_error(
+                            TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
+                            &self.options.source_label,
+                            frame,
+                            "The frame's step exceeds the 64-bit step range.",
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                frame_error(
+                    TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
+                    &self.options.source_label,
+                    frame,
+                    "The frame's step exceeds the 64-bit step range.",
+                )
+            })?;
+        let time = if let DcdTimePolicy::HeaderDelta { unit } = self.options.time_policy {
+            let time = (step as f64) * f64::from(self.header.delta);
+            if !Quantity::new(time, unit)
+                .value_in(CANONICAL_TIME_UNIT)
+                .is_ok_and(f64::is_finite)
+            {
+                return Err(frame_error(
+                    TrajectoryIoErrorKind::InvalidFrame,
+                    &self.options.source_label,
+                    frame,
+                    "The frame's time is not finite.",
+                ));
+            }
+            Some(time)
+        } else {
+            None
+        };
+        Ok((step, time))
+    }
+
+    /// The step and canonical time of frame `frame`, as an index records them.
+    fn stamp(&self, frame: usize) -> Result<FrameStamp, TrajectoryIoError> {
+        let (step, time) = self.step_and_time(frame)?;
+        let unit = header_delta_unit(self.options.time_policy);
+        Ok(FrameStamp {
+            time: time
+                .and_then(|time| Quantity::new(time, unit).value_in(CANONICAL_TIME_UNIT).ok()),
+            step: Some(step),
+        })
+    }
+
+    fn publish(
+        &self,
+        positions: &[Point3],
+        decoded: DcdDecodedFrame,
+        destination: &mut FrameBuffer,
+    ) -> Result<(), TrajectoryIoError> {
+        let mut data = FrameData::new(Quantity::new(positions, ANGSTROM)).with_step(decoded.step);
+        if let Some(cell) = decoded.cell {
+            data = data.with_cell(cell);
+        }
+        if let (Some(time), DcdTimePolicy::HeaderDelta { unit }) =
+            (decoded.time, self.options.time_policy)
+        {
+            data = data.with_time(Quantity::new(time, unit));
+        }
+        destination.replace_from_data(data).map_err(Into::into)
+    }
+
+    /// Indexes a freshly opened reader, whose next frame is frame 0.
+    fn index_frames(
+        self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<IndexedDcdReader<R>, TrajectoryIoError> {
+        let mut indexed = IndexedDcdReader {
+            offsets: FrameOffsets::empty(self.header.data_start),
+            inner: self,
+            pending_bytes: 0,
+        };
+        indexed.extend(growing, control)?;
+        Ok(indexed)
+    }
+
+    fn position(&mut self, operation: TrajectoryIoOperation) -> Result<u64, TrajectoryIoError> {
+        self.reader.stream_position().map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.options.source_label,
+                error,
+            )
+        })
+    }
+
+    fn seek_to(
+        &mut self,
+        offset: SeekFrom,
+        operation: TrajectoryIoOperation,
+    ) -> Result<u64, TrajectoryIoError> {
+        self.reader.seek(offset).map_err(|error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.options.source_label,
+                error,
+            )
+        })
+    }
+
+    /// Reads the header's `NSET` again, which a writer appending frames may
+    /// have updated, and returns it; the stream position is kept.
+    fn reread_declared_frames(&mut self) -> Result<usize, TrajectoryIoError> {
+        let position = self.position(TrajectoryIoOperation::ReadHeader)?;
+        let count_offset = self.header.header_start.checked_add(8).ok_or_else(|| {
+            header_error(
+                &self.options.source_label,
+                "The header's byte offset exceeds the 64-bit range.",
+            )
+        })?;
+        self.seek_to(
+            SeekFrom::Start(count_offset),
+            TrajectoryIoOperation::ReadHeader,
+        )?;
+        let mut count = [0_u8; 4];
+        let read = read_exact_required(
+            &mut self.reader,
+            &mut count,
+            TrajectoryIoOperation::ReadHeader,
+            &self.options.source_label,
+            None,
+            "The DCD NSET is truncated.",
+        );
+        self.seek_to(SeekFrom::Start(position), TrajectoryIoOperation::ReadHeader)?;
+        read?;
+        let declared = nonnegative_u64(
+            self.header.endian.i32(count),
+            "NSET",
+            &self.options.source_label,
+        )?;
+        Ok(declared as usize)
+    }
+}
+
+impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
+    fn topology(&self) -> &Topology {
+        self.topology()
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
+        if !self.topology().shares_layout(destination.topology()) {
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
+        }
+        let offset = self.reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadFrame,
+                Some(TrajectoryFormat::Dcd),
+                &self.options.source_label,
+                error,
+            )
+        })?;
+        let decoded = self
+            .parse_next(true)
+            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?;
+        let Some(decoded) = decoded else {
+            return Ok(false);
+        };
+        self.publish(&self.positions, decoded, destination)?;
+        Ok(true)
+    }
+}
+
+/// Fully verified DCD indexed reader.
+///
+/// Random and sequential reads share one set of decode scratch. Fixed-atom
+/// reference coordinates remain immutable during random reads.
+pub struct IndexedDcdReader<R> {
+    inner: DcdReader<R>,
+    offsets: FrameOffsets,
+    /// Bytes after the last indexed frame when the index last grew.
+    pending_bytes: u64,
+}
+
+impl<R> fmt::Debug for IndexedDcdReader<R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IndexedDcdReader")
+            .field("reader", &self.inner)
+            .field("frame_count", &self.offsets.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<R: Read + Seek> IndexedDcdReader<R> {
+    /// Opens a stream whose coordinates follow the supplied topology's dense order
+    /// and indexes it for random access.
+    ///
+    /// The stream's position at construction is frame 0. Every frame from there to
+    /// the end is decoded and verified before the reader is returned, and both
+    /// sequential and indexed reads then address frames from that start. Topology,
+    /// limits, and diagnostic labels follow [`DcdReader::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`DcdReader::new`], the decoding error of the
+    /// first invalid frame, [`TrajectoryIoErrorKind::InconsistentMetadata`]
+    /// when the frame count differs from the header `NSET` count,
+    /// [`TrajectoryIoErrorKind::LimitExceeded`] when the index outgrows the
+    /// limits, and [`TrajectoryIoErrorKind::Io`] when reading or seeking
+    /// fails.
+    pub fn new(
+        reader: R,
+        topology: impl Into<Arc<Topology>>,
+        options: DcdReadOptions,
+    ) -> Result<Self, TrajectoryIoError> {
+        Self::build(
+            reader,
+            topology.into(),
+            options,
+            false,
+            &IndexBuildControl::default(),
+        )
+    }
+
+    /// Indexes the stream like [`Self::new`], reporting to `control`. A
+    /// `growing` stream may end in a partial frame, and its frames are
+    /// counted in the stream rather than checked against `NSET` (see
+    /// [`Self::extend`]).
+    pub(crate) fn build(
+        reader: R,
+        topology: Arc<Topology>,
+        options: DcdReadOptions,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<Self, TrajectoryIoError> {
+        DcdReader::new(reader, topology, options)?.index_frames(growing, control)
+    }
+
+    /// Opens the stream with previously verified `offsets` instead of
+    /// scanning it; random reads verify each frame against them. Unless the
+    /// stream is `growing`, the offsets must count at most the header's
+    /// `NSET` frames, and [`Self::extend`] then requires the rest. With
+    /// fixed atoms, frame 0 is decoded and verified here for their reference
+    /// coordinates.
+    pub(crate) fn from_offsets(
+        reader: R,
+        topology: Arc<Topology>,
+        options: DcdReadOptions,
+        offsets: FrameOffsets,
+        growing: bool,
+    ) -> Result<Self, TrajectoryIoError> {
+        let mut inner = DcdReader::new(reader, topology, options)?;
+        inner.growing = growing;
+        let label = inner.options.source_label.clone();
+        if !growing && offsets.len() > inner.header.declared_frames {
+            return Err(index_mismatch(
+                TrajectoryIoOperation::Open,
+                TrajectoryFormat::Dcd,
+                &label,
+                "The index counts more frames than the frame count NSET in the header.",
+            )
+            .with_counts(inner.header.declared_frames as u64, offsets.len() as u64));
+        }
+        offsets.verify_start(inner.header.data_start, TrajectoryFormat::Dcd, &label)?;
+        for frame in 0..offsets.len() {
+            offsets.verify_stamp(
+                frame,
+                inner.stamp(frame)?,
+                TrajectoryIoOperation::Open,
+                TrajectoryFormat::Dcd,
+                &label,
+            )?;
+        }
+        if inner.header.fixed_count > 0 && !offsets.is_empty() {
+            let data_start = inner.header.data_start;
+            inner
+                .parse_next(true)
+                .map_err(|error| frame_offset_context(error, 0, data_start))?
+                .ok_or(TrajectoryIoError::frame_index_out_of_range(0))?;
+            offsets.verify_stream_frame_end(0, &mut inner.reader, TrajectoryFormat::Dcd, &label)?;
+            inner
+                .reader
+                .seek(SeekFrom::Start(data_start))
+                .map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Open,
+                        Some(TrajectoryFormat::Dcd),
+                        &label,
+                        error,
+                    )
+                })?;
+            inner.frame_cursor = 0;
+        }
+        Ok(Self {
+            inner,
+            offsets,
+            pending_bytes: 0,
+        })
+    }
+
+    pub(crate) fn offsets(&self) -> &FrameOffsets {
+        &self.offsets
+    }
+
+    /// The stream every read goes through.
+    pub(crate) fn stream_mut(&mut self) -> &mut R {
+        &mut self.inner.reader
+    }
+
+    /// Bytes after the last indexed frame when the index last grew.
+    pub(crate) const fn pending_bytes(&self) -> u64 {
+        self.pending_bytes
+    }
+
+    /// Drops the frames indexed after `mark`, with the declared frame count
+    /// and pending bytes the reader had then; see [`FrameOffsets::mark`].
+    pub(crate) fn restore_index(
+        &mut self,
+        mark: (usize, u64),
+        declared_frames: usize,
+        pending_bytes: u64,
+    ) {
+        self.offsets.restore(mark);
+        self.inner.header.declared_frames = declared_frames;
+        self.pending_bytes = pending_bytes;
+    }
+
+    /// Verifies and indexes every complete frame after the last indexed one,
+    /// up to the end of the stream, and returns the bytes left after them.
+    ///
+    /// The header's `NSET` is read again first, since a writer appending
+    /// frames updates it. A growing stream (see [`Self::build`]) may end in
+    /// a frame still being written: the scan stops before a frame the stream
+    /// ends inside, which is not yet an error, and `NSET` is not checked.
+    /// Otherwise such a frame is an error, as is any frame that is invalid
+    /// with all its bytes present, and the stream must hold exactly `NSET`
+    /// frames. Failure leaves the index as it was; the sequential cursor is
+    /// kept either way.
+    pub(crate) fn extend(
+        &mut self,
+        growing: bool,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        self.inner.growing = growing;
+        let mark = self.offsets.mark();
+        let declared = self.inner.header.declared_frames;
+        let saved_offset = self.inner.position(TrajectoryIoOperation::Index)?;
+        let saved_cursor = self.inner.frame_cursor;
+        let scanned = self
+            .inner
+            .reread_declared_frames()
+            .and_then(|declared| {
+                self.inner.header.declared_frames = declared;
+                self.inner.seek_to(
+                    SeekFrom::Start(self.offsets.end()),
+                    TrajectoryIoOperation::Index,
+                )
+            })
+            .and_then(|_| {
+                self.inner.frame_cursor = self.offsets.len();
+                self.scan(control)
+            });
+        let restored = self
+            .inner
+            .seek_to(SeekFrom::Start(saved_offset), TrajectoryIoOperation::Index);
+        self.inner.frame_cursor = saved_cursor;
+        match scanned.and_then(|pending| restored.map(|_| pending)) {
+            Ok(pending) => {
+                self.pending_bytes = pending;
+                Ok(pending)
+            }
+            Err(error) => {
+                self.offsets.restore(mark);
+                self.inner.header.declared_frames = declared;
+                Err(error)
+            }
+        }
+    }
+
+    /// Indexes frames from the current position; see [`Self::extend`].
+    fn scan(&mut self, control: &IndexBuildControl<'_>) -> Result<u64, TrajectoryIoError> {
+        let label = self.inner.options.source_label.clone();
+        let growing = self.inner.growing;
+        let declared = self.inner.header.declared_frames;
+        control.checkpoint(
+            self.offsets.len(),
+            self.offsets.end(),
+            TrajectoryFormat::Dcd,
+            &label,
+        )?;
+        let ended_early = |indexed: usize| {
+            TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::Index,
+                Some(TrajectoryFormat::Dcd),
+            )
+            .with_source_label(&label)
+            .with_counts(declared as u64, indexed as u64)
+            .with_detail("The file ends before the frame count NSET in its header.")
+        };
+        loop {
+            if !growing && self.offsets.len() >= declared {
+                if probe_seekable_eof(
+                    &mut self.inner.reader,
+                    TrajectoryIoOperation::Index,
+                    TrajectoryFormat::Dcd,
+                    &label,
+                )? {
+                    return Ok(0);
+                }
+                return Err(TrajectoryIoError::codec(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Dcd),
+                )
+                .with_source_label(&label)
+                .with_counts(
+                    declared as u64,
+                    (self.offsets.len() as u64).saturating_add(1),
+                )
+                .with_detail(
+                    "The file holds more frames than the frame count NSET in its header.",
+                ));
+            }
+            if let Some(limit) =
+                projected_index_limit(self.offsets.len(), &self.inner.options.limits)
+            {
+                if probe_seekable_eof(
+                    &mut self.inner.reader,
+                    TrajectoryIoOperation::Index,
+                    TrajectoryFormat::Dcd,
+                    &label,
+                )? {
+                    if growing {
+                        return Ok(0);
+                    }
+                    return Err(ended_early(self.offsets.len()));
+                }
+                return Err(resource_error(
+                    TrajectoryIoOperation::Index,
+                    &label,
+                    Some(self.offsets.len()),
+                    "",
+                )
+                .exceeding("The frame index", limit));
+            }
+            let offset = self.inner.position(TrajectoryIoOperation::Index)?;
+            let frame = self.inner.frame_cursor;
+            let stamp = self
+                .inner
+                .stamp(frame)
+                .map_err(|error| frame_offset_context(error, frame, offset))?;
+            match self.inner.parse_next(true) {
+                Ok(Some(_)) => {}
+                Ok(None) if growing => return Ok(0),
+                Ok(None) => return Err(ended_early(self.offsets.len())),
+                Err(error) if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord => {
+                    let file_end = self
+                        .inner
+                        .seek_to(SeekFrom::End(0), TrajectoryIoOperation::Index)?;
+                    return Ok(file_end.saturating_sub(offset));
+                }
+                Err(error) => return Err(frame_offset_context(error, frame, offset)),
+            }
+            let end = self.inner.position(TrajectoryIoOperation::Index)?;
+            self.offsets.push(
+                offset,
+                end,
+                stamp,
+                &self.inner.options.limits,
+                TrajectoryFormat::Dcd,
+                &label,
+            )?;
+            control.checkpoint(self.offsets.len(), end, TrajectoryFormat::Dcd, &label)?;
+        }
+    }
+
+    /// The topology every frame belongs to.
+    pub fn topology(&self) -> &Topology {
+        self.inner.topology()
+    }
+
+    pub(crate) fn header(&self) -> &DcdHeader {
+        self.inner.header()
+    }
+}
+
+impl<R: Read + Seek> TrajectoryReader for IndexedDcdReader<R> {
+    fn topology(&self) -> &Topology {
+        self.topology()
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.inner.shared_topology()
+    }
+
+    /// Reads the indexed frames in order and ends after the last of them,
+    /// even when the stream holds more.
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
+        if self.topology().shares_layout(destination.topology())
+            && self.inner.frame_cursor >= self.offsets.len()
+        {
+            return Ok(false);
+        }
+        self.inner.read_next(destination)
+    }
+}
+
+impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
+    fn frame_count(&self) -> Option<usize> {
+        Some(self.offsets.len())
+    }
+
+    fn read_frame(
+        &mut self,
+        index: usize,
+        destination: &mut FrameBuffer,
+    ) -> Result<(), TrajectoryIoError> {
+        if !self.topology().shares_layout(destination.topology()) {
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
+        }
+        let (offset, _) = self
+            .offsets
+            .frame(index)
+            .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
+        let saved_offset = self.inner.reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::Index,
+                Some(TrajectoryFormat::Dcd),
+                &self.inner.options.source_label,
+                error,
+            )
+        })?;
+        let saved_cursor = self.inner.frame_cursor;
+        self.inner
+            .reader
+            .seek(SeekFrom::Start(offset))
+            .map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.inner.options.source_label,
+                    error,
+                )
+            })?;
+        self.inner.frame_cursor = index;
+        let result = self
+            .inner
+            .parse_next(false)
+            .map_err(|error| frame_offset_context(error, index, offset))
+            .and_then(|decoded| decoded.ok_or(TrajectoryIoError::frame_index_out_of_range(index)))
+            .and_then(|decoded| {
+                self.offsets.verify_stream_frame_end(
+                    index,
+                    &mut self.inner.reader,
+                    TrajectoryFormat::Dcd,
+                    &self.inner.options.source_label,
+                )?;
+                Ok(decoded)
+            });
+        let restore = self
+            .inner
+            .reader
+            .seek(SeekFrom::Start(saved_offset))
+            .map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.inner.options.source_label,
+                    error,
+                )
+            });
+        self.inner.frame_cursor = saved_cursor;
+        let decoded = result?;
+        restore?;
+        self.inner
+            .publish(&self.inner.positions, decoded, destination)
+    }
+}
+
+/// Canonical DCD writer over one seekable stream.
+pub struct DcdWriter<W> {
+    writer: W,
+    topology: Arc<Topology>,
+    options: DcdWriteOptions,
+    source_label: String,
+    header_start: u64,
+    frame_count: usize,
+    /// Set while a frame's bytes are being written and left set if writing
+    /// fails, so a stream that may end in a partial frame is never extended
+    /// or reported as finished.
+    partial: bool,
+    finalized: bool,
+    axis: Vec<f32>,
+    report: WriteReport,
+}
+
+impl<W> fmt::Debug for DcdWriter<W> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DcdWriter")
+            .field("atom_count", &self.topology.atom_count())
+            .field("options", &self.options)
+            .field("source_label", &self.source_label)
+            .field("frame_count", &self.frame_count)
+            .field("partial", &self.partial)
+            .field("finalized", &self.finalized)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<W: Write + Seek> DcdWriter<W> {
+    /// A writer of `topology` frames that writes the header at the stream's
+    /// current position; `source_label` names the destination in errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the step
+    /// sequence or `DELTA` does not fit the i32/f32 header or the time-policy
+    /// unit is not a time, [`TrajectoryIoErrorKind::LimitExceeded`] when the
+    /// atom count is zero or exceeds `i32::MAX` or scratch cannot be reserved,
+    /// and [`TrajectoryIoErrorKind::Io`] when writing the header fails.
+    pub fn new(
+        mut writer: W,
+        topology: impl Into<Arc<Topology>>,
+        options: DcdWriteOptions,
+        source_label: impl Into<String>,
+    ) -> Result<Self, TrajectoryIoError> {
+        let topology = topology.into();
+        let source_label = source_label.into();
+        let header = header_records(options, topology.atom_count(), &source_label)?;
+        let io = |error| {
+            io_context(
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Dcd),
+                &source_label,
+                error,
+            )
+        };
+        let header_start = writer.stream_position().map_err(io)?;
+        writer.write_all(&header).map_err(io)?;
+        Self::with_frames(writer, topology, options, source_label, header_start, 0)
+    }
+
+    /// A writer that appends to a DCD whose `frame_count` frames end at the
+    /// stream's position, after the header `options` write starting at
+    /// `header_start` ([`check_append_header`]). Nothing is written.
+    pub(crate) fn resume(
+        writer: W,
+        topology: Arc<Topology>,
+        options: DcdWriteOptions,
+        source_label: String,
+        header_start: u64,
+        frame_count: usize,
+    ) -> Result<Self, TrajectoryIoError> {
+        header_records(options, topology.atom_count(), &source_label)?;
+        Self::with_frames(
+            writer,
+            topology,
+            options,
+            source_label,
+            header_start,
+            frame_count,
+        )
+    }
+
+    fn with_frames(
+        writer: W,
+        topology: Arc<Topology>,
+        options: DcdWriteOptions,
+        source_label: String,
+        header_start: u64,
+        frame_count: usize,
+    ) -> Result<Self, TrajectoryIoError> {
+        let mut axis = Vec::new();
+        axis.try_reserve_exact(topology.atom_count()).map_err(|_| {
+            resource_error(
+                TrajectoryIoOperation::Open,
+                &source_label,
+                None,
+                "Cannot allocate the writer's buffers.",
+            )
+        })?;
+        Ok(Self {
+            writer,
+            topology,
+            options,
+            source_label,
+            header_start,
+            frame_count,
+            partial: false,
+            finalized: false,
+            axis,
+            report: WriteReport::default(),
+        })
+    }
+
+    /// The frame state the frames written so far leave out under
+    /// [`DcdWriteOptions::frame_metadata`] and `frame_properties`, and the
+    /// steps and times [`DcdFrameTimingPolicy::Number`] replaced, counted
+    /// over every frame written. DCD stores coordinates for a topology its readers receive
+    /// separately, so nothing else is reported.
+    pub fn report(&self) -> &WriteReport {
+        &self.report
+    }
+
+    /// The topology every written frame must share.
+    pub fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    /// The underlying stream.
+    pub fn writer(&self) -> &W {
+        &self.writer
+    }
+
+    /// Writes the frame count to the header's `NSET`, after every frame
+    /// written so far has reached the stream, and leaves the stream at its
+    /// end.
+    fn write_frame_count(
+        &mut self,
+        operation: TrajectoryIoOperation,
+    ) -> Result<(), TrajectoryIoError> {
+        if self.frame_count > i32::MAX as usize {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                "The trajectory has more frames than the 32-bit frame count of the header holds.",
+            ));
+        }
+        let io = |error| {
+            io_context(
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                error,
+            )
+        };
+        let end = self.writer.stream_position().map_err(io)?;
+        let count_offset = self.header_start.checked_add(8).ok_or_else(|| {
+            codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                "The header's byte offset exceeds the 64-bit range.",
+            )
+        })?;
+        let count = self
+            .options
+            .endian
+            .encode_i32(i32::try_from(self.frame_count).expect("checked frame count"));
+        // Frames reach the stream before the count that includes them, so a
+        // reader never sees the header count a frame that is not there.
+        self.partial = true;
+        self.writer
+            .flush()
+            .and_then(|()| self.writer.seek(SeekFrom::Start(count_offset)))
+            .and_then(|_| self.writer.write_all(&count))
+            .and_then(|()| self.writer.seek(SeekFrom::Start(end)))
+            .map_err(|error| {
+                io_context(
+                    operation,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.source_label,
+                    error,
+                )
+            })?;
+        self.partial = false;
+        Ok(())
+    }
+
+    /// Patches the header frame count, leaving the stream at its end; later
+    /// calls do nothing. No frame can be written afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] when no frame was
+    /// written or an earlier write left a partial frame,
+    /// [`TrajectoryIoErrorKind::LimitExceeded`] when the frame count exceeds
+    /// `i32::MAX`, and [`TrajectoryIoErrorKind::Io`] when seeking or writing
+    /// fails.
+    pub fn finalize(&mut self) -> Result<(), TrajectoryIoError> {
+        if self.finalized {
+            return Ok(());
+        }
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Dcd,
+            &self.source_label,
+        )?;
+        require_nonempty_writer(self.frame_count, TrajectoryFormat::Dcd, &self.source_label)?;
+        self.write_frame_count(TrajectoryIoOperation::Finish)?;
+        self.finalized = true;
+        Ok(())
+    }
+
+    /// Finalizes the frame count, flushes, and returns the nonempty DCD stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::finalize`] and
+    /// [`TrajectoryIoErrorKind::Io`] when flushing fails.
+    pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
+        self.finalize()?;
+        self.writer.flush().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::Finish,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                error,
+            )
+        })?;
+        Ok(self.writer)
+    }
+}
+
+impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
+    fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
+    /// Writes the header's `NSET` for the frames written so far, after
+    /// them, and flushes the stream, which then holds a complete DCD of
+    /// those frames.
+    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            &self.source_label,
+        )?;
+        if !self.finalized {
+            self.write_frame_count(TrajectoryIoOperation::WriteFrame)?;
+        }
+        self.writer.flush().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                error,
+            )
+        })
+    }
+
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+        require_no_partial_frame(
+            self.partial,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            &self.source_label,
+        )?;
+        if self.finalized {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                "The writer is already finished.",
+            ));
+        }
+        if !frame.topology().shares_layout(self.topology()) {
+            return Err(TrajectoryIoError::new(
+                TrajectoryIoErrorKind::TopologyMismatch,
+            ));
+        }
+        let omitted = unrepresentable_frame_state(
+            [
+                (
+                    frame.velocities().is_some(),
+                    TrajectoryField::Velocities,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.forces().is_some(),
+                    TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    frame.properties().atoms().has_data(),
+                    TrajectoryField::AtomProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    frame.properties().bonds().has_data(),
+                    TrajectoryField::BondProperties,
+                    self.options.frame_properties,
+                ),
+                (
+                    !frame.properties().owner().is_empty(),
+                    TrajectoryField::Properties,
+                    self.options.frame_properties,
+                ),
+                (
+                    self.options.time_policy == DcdTimePolicy::Absent && frame.time().is_some(),
+                    TrajectoryField::Time,
+                    self.options.frame_metadata,
+                ),
+            ],
+            |field| writer_field_error(&self.source_label, self.frame_count, field),
+        )?;
+        if self.frame_count >= i32::MAX as usize {
+            return Err(writer_overflow(
+                &self.source_label,
+                "The trajectory has more frames than the 32-bit frame count of the header holds.",
+            ));
+        }
+        let expected_step = self
+            .options
+            .start_step
+            .checked_add(
+                (self.frame_count as u64)
+                    .checked_mul(self.options.step_interval)
+                    .ok_or_else(|| {
+                        writer_overflow(
+                            &self.source_label,
+                            "The frame's step exceeds the 64-bit step range.",
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                writer_overflow(
+                    &self.source_label,
+                    "The frame's step exceeds the 64-bit step range.",
+                )
+            })?;
+        let numbers = self.options.frame_timing == DcdFrameTimingPolicy::Number;
+        let replaced_step = match frame.step() {
+            Some(step) if step == expected_step => false,
+            None if numbers => false,
+            Some(_) if numbers => true,
+            _ => {
+                return Err(codec_context(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.source_label,
+                    format!(
+                        "The frame's step is not {expected_step}, the next step of the header's sequence."
+                    ),
+                ))
+            }
+        };
+        let mut replaced_time = false;
+        match (self.options.time_policy, frame.time()) {
+            // A time was omitted above or failed there.
+            (DcdTimePolicy::Absent, _) => {}
+            (DcdTimePolicy::HeaderDelta { unit }, Some(time)) => {
+                let actual = time.value_in(unit).map_err(|error| {
+                    codec_context(
+                        TrajectoryIoErrorKind::InconsistentMetadata,
+                        TrajectoryIoOperation::WriteFrame,
+                        Some(TrajectoryFormat::Dcd),
+                        &self.source_label,
+                        "The DCD time unit is incompatible.",
+                    )
+                    .with_source(error)
+                })?;
+                // Readers derive time as step × DELTA, and DELTA is stored
+                // as f32. A time therefore matches when it agrees to f32
+                // precision; rounding a timestep such as 0.002 to f32
+                // already moves it by up to half an f32 epsilon.
+                let expected = (expected_step as f64) * f64::from(self.options.delta);
+                if !actual.is_finite()
+                    || (actual - expected).abs() > f64::from(f32::EPSILON) * expected.abs()
+                {
+                    if !numbers {
+                        return Err(codec_context(
+                            TrajectoryIoErrorKind::InconsistentMetadata,
+                            TrajectoryIoOperation::WriteFrame,
+                            Some(TrajectoryFormat::Dcd),
+                            &self.source_label,
+                            "The frame's time differs from the time the step and DELTA give.",
+                        ));
+                    }
+                    replaced_time = true;
+                }
+            }
+            (DcdTimePolicy::HeaderDelta { .. }, None) if numbers => {}
+            (DcdTimePolicy::HeaderDelta { .. }, None) => {
+                return Err(codec_context(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.source_label,
+                    "The frame has no time. The header's time policy needs one.",
+                ))
+            }
+        }
+        let cell = frame.cell().copied();
+        if self.options.writes_cells() != cell.is_some() {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Dcd),
+                &self.source_label,
+                "The frame's periodic cell does not match the unit-cell flag of the header.",
+            ));
+        }
+        let factor = CANONICAL_LENGTH_UNIT
+            .conversion_factor_to(ANGSTROM)
+            .map_err(|error| {
+                codec_context(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.source_label,
+                    "The DCD position unit is incompatible.",
+                )
+                .with_source(error)
+            })?;
+        let positions = frame.positions().values();
+        for point in *positions.value() {
+            for value in [point.x * factor, point.y * factor, point.z * factor] {
+                if !value.is_finite() || !(value as f32).is_finite() {
+                    return Err(codec_context(
+                        TrajectoryIoErrorKind::InvalidFrame,
+                        TrajectoryIoOperation::WriteFrame,
+                        Some(TrajectoryFormat::Dcd),
+                        &self.source_label,
+                        "A coordinate does not fit single precision.",
+                    ));
+                }
+            }
+        }
+        // Everything that can reject the frame is checked above or here, so a
+        // rejected frame leaves the stream untouched.
+        let cell_payload = cell
+            .map(|cell| -> Result<[u8; CELL_BYTES], TrajectoryIoError> {
+                let values = encode_cell(cell, &self.source_label)?;
+                let mut payload = [0_u8; CELL_BYTES];
+                for (chunk, value) in payload.as_chunks_mut::<8>().0.iter_mut().zip(values) {
+                    chunk.copy_from_slice(&self.options.endian.encode_f64(value));
+                }
+                Ok(payload)
+            })
+            .transpose()?;
+        let byte_len = positions
+            .value()
+            .len()
+            .checked_mul(4)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or_else(|| {
+                writer_overflow(
+                    &self.source_label,
+                    "A coordinate record exceeds the 32-bit record length.",
+                )
+            })?;
+        self.partial = true;
+        if let Some(payload) = cell_payload {
+            write_record(
+                &mut self.writer,
+                self.options.endian,
+                &payload,
+                &self.source_label,
+                TrajectoryIoOperation::WriteFrame,
+            )?;
+        }
+        for axis in 0..3 {
+            self.axis.clear();
+            for point in *positions.value() {
+                let value = match axis {
+                    0 => point.x,
+                    1 => point.y,
+                    _ => point.z,
+                } * factor;
+                self.axis.push(value as f32);
+            }
+            self.writer
+                .write_all(&self.options.endian.encode_u32(byte_len))
+                .and_then(|_| {
+                    for value in &self.axis {
+                        self.writer
+                            .write_all(&self.options.endian.encode_f32(*value))?;
+                    }
+                    self.writer
+                        .write_all(&self.options.endian.encode_u32(byte_len))
+                })
+                .map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::WriteFrame,
+                        Some(TrajectoryFormat::Dcd),
+                        &self.source_label,
+                        error,
+                    )
+                })?;
+        }
+        self.partial = false;
+        self.frame_count = self.frame_count.checked_add(1).ok_or_else(|| {
+            writer_overflow(
+                &self.source_label,
+                "The frame count exceeds this platform's address range.",
+            )
+        })?;
+        record(&mut self.report, omitted);
+        record(
+            &mut self.report,
+            [
+                (replaced_step, StructureField::Step),
+                (replaced_time, StructureField::Time),
+            ]
+            .map(|(replaced, field)| WriteOmission::StructureState {
+                field,
+                structures: usize::from(replaced),
+            }),
+        );
+        Ok(())
+    }
+}
+
+/// The header, title, and atom-count records a writer with `options` writes
+/// for `atom_count` atoms, counting no frames.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the step
+/// sequence or `DELTA` does not fit the i32/f32 header or the time-policy
+/// unit is not a time, and [`TrajectoryIoErrorKind::LimitExceeded`] when the
+/// atom count is zero or exceeds `i32::MAX`.
+fn header_records(
+    options: DcdWriteOptions,
+    atom_count: usize,
+    source_label: &str,
+) -> Result<Vec<u8>, TrajectoryIoError> {
+    if options.step_interval == 0
+        || options.start_step > i32::MAX as u64
+        || options.step_interval > i32::MAX as u64
+        || !options.delta.is_finite()
+        || options.delta < 0.0
+    {
+        return Err(codec_context(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::Open,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            if options.step_interval == 0 {
+                "The step interval is zero.".to_owned()
+            } else if !options.delta.is_finite() || options.delta < 0.0 {
+                format!(
+                    "The time step DELTA is {}. It is not a finite, nonnegative number.",
+                    options.delta
+                )
+            } else {
+                "The first step or the step interval exceeds the 32-bit header field.".to_owned()
+            },
+        ));
+    }
+    validate_time_policy(options.time_policy, source_label)?;
+    if atom_count == 0 || atom_count > i32::MAX as usize {
+        return Err(codec_context(
+            TrajectoryIoErrorKind::LimitExceeded,
+            TrajectoryIoOperation::Open,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            format!("The trajectory has {atom_count} atoms. The header holds 1 to 2,147,483,647."),
+        ));
+    }
+    let mut records = Vec::new();
+    let mut title = vec![0_u8; 84];
+    title[..4].copy_from_slice(&options.endian.encode_i32(1));
+    let text = b"Created by kekule-traj";
+    title[4..4 + text.len()].copy_from_slice(text);
+    let atoms = options
+        .endian
+        .encode_i32(i32::try_from(atom_count).expect("checked atom count"));
+    for payload in [&encode_header(options, 0)[..], &title, &atoms] {
+        write_record(
+            &mut records,
+            options.endian,
+            payload,
+            source_label,
+            TrajectoryIoOperation::Open,
+        )?;
+    }
+    Ok(records)
+}
+
+/// Fails unless `stream`, at a DCD's start, holds the header, title, and
+/// atom-count records a writer with `options` writes for `atom_count` atoms,
+/// whatever frame count `NSET` they hold, so that appending with `options`
+/// continues the file as one writer would have written it.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the records
+/// differ: another endianness, step sequence, `DELTA`, unit-cell flag,
+/// title, or atom count; the errors of the options' validation; and
+/// [`TrajectoryIoErrorKind::Io`] when the records cannot be read.
+pub(crate) fn check_append_header(
+    stream: &mut impl Read,
+    options: DcdWriteOptions,
+    atom_count: usize,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
+    let expected = header_records(options, atom_count, source_label)?;
+    let mut found = vec![0_u8; expected.len()];
+    stream.read_exact(&mut found).map_err(|error| {
+        io_context(
+            TrajectoryIoOperation::Open,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            error,
+        )
+    })?;
+    // NSET, after the header record's marker and signature, counts frames.
+    found[8..12].copy_from_slice(&expected[8..12]);
+    if found != expected {
+        return Err(codec_context(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::Open,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            "The file's header differs from the header of the write options. Append with the options the file was written with.",
+        ));
+    }
+    Ok(())
+}
+
+fn encode_header(options: DcdWriteOptions, frames: i32) -> [u8; HEADER_BYTES] {
+    let mut header = [0_u8; HEADER_BYTES];
+    header[..4].copy_from_slice(b"CORD");
+    let controls = [
+        frames,
+        options.start_step as i32,
+        options.step_interval as i32,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        i32::from_ne_bytes(options.delta.to_bits().to_ne_bytes()),
+        i32::from(options.writes_cells()),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        24,
+    ];
+    for (chunk, control) in header[4..].as_chunks_mut::<4>().0.iter_mut().zip(controls) {
+        chunk.copy_from_slice(&options.endian.encode_i32(control));
+    }
+    header[40..44].copy_from_slice(&options.endian.encode_f32(options.delta));
+    header
+}
+
+fn parse_controls(
+    bytes: &[u8],
+    endian: DcdEndian,
+    source_label: &str,
+) -> Result<[i32; 20], TrajectoryIoError> {
+    if bytes.len() != 80 {
+        return Err(header_error(
+            source_label,
+            format!("The control block has {} bytes, not 80.", bytes.len()),
+        ));
+    }
+    let mut controls = [0_i32; 20];
+    for (target, chunk) in controls.iter_mut().zip(bytes.as_chunks::<4>().0.iter()) {
+        *target = endian.i32(*chunk);
+    }
+    Ok(controls)
+}
+
+fn validate_title_record(
+    record: &[u8],
+    endian: DcdEndian,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
+    if record.len() < 4 {
+        return Err(header_error(
+            source_label,
+            format!("The title record has {} bytes, fewer than 4.", record.len()),
+        ));
+    }
+    let count = nonnegative_usize(
+        endian.i32(record[..4].try_into().expect("title count")),
+        "NTITLE",
+        source_label,
+    )?;
+    let expected = count
+        .checked_mul(80)
+        .and_then(|bytes| bytes.checked_add(4))
+        .ok_or_else(|| {
+            header_error(
+                source_label,
+                "The title count NTITLE exceeds this platform's address range.",
+            )
+        })?;
+    if record.len() != expected {
+        return Err(header_error(
+            source_label,
+            format!(
+                "The title record has {} bytes. Its {count} titles need {expected}.",
+                record.len()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// The unit `DELTA` is written in under a time policy.
+const fn header_delta_unit(policy: DcdTimePolicy) -> Unit {
+    match policy {
+        DcdTimePolicy::HeaderDelta { unit } => unit,
+        DcdTimePolicy::Absent => CANONICAL_TIME_UNIT,
+    }
+}
+
+fn validate_time_policy(
+    policy: DcdTimePolicy,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
+    if let DcdTimePolicy::HeaderDelta { unit } = policy {
+        unit.conversion_factor_to(CANONICAL_TIME_UNIT)
+            .map_err(|error| {
+                codec_context(
+                    TrajectoryIoErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::Open,
+                    Some(TrajectoryFormat::Dcd),
+                    source_label,
+                    "The DCD time-policy unit is incompatible.",
+                )
+                .with_source(error)
+            })?;
+    }
+    Ok(())
+}
+
+fn decode_cell(
+    record: &[u8],
+    endian: DcdEndian,
+    source_label: &str,
+    frame: usize,
+) -> Result<PeriodicCell, TrajectoryIoError> {
+    let mut values = [0_f64; 6];
+    for (target, chunk) in values.iter_mut().zip(record.as_chunks::<8>().0.iter()) {
+        *target = endian.f64(*chunk);
+    }
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(frame_error(
+            TrajectoryIoErrorKind::InvalidFrame,
+            source_label,
+            frame,
+            "The cell holds a value that is not finite.",
+        ));
+    }
+    let [a, gamma_raw, b, beta_raw, alpha_raw, c] = values;
+    if a <= 0.0 || b <= 0.0 || c <= 0.0 {
+        return Err(frame_error(
+            TrajectoryIoErrorKind::InvalidFrame,
+            source_label,
+            frame,
+            format!("The cell lengths {a} Å, {b} Å and {c} Å are not all positive."),
+        ));
+    }
+    let cosine_variant = [alpha_raw, beta_raw, gamma_raw]
+        .into_iter()
+        .all(|value| (-1.0..=1.0).contains(&value));
+    let angle = |value: f64| {
+        if cosine_variant {
+            value.acos()
+        } else {
+            value.to_radians()
+        }
+    };
+    let alpha = angle(alpha_raw);
+    let beta = angle(beta_raw);
+    let gamma = angle(gamma_raw);
+    let sin_gamma = gamma.sin();
+    if !alpha.is_finite()
+        || !beta.is_finite()
+        || !gamma.is_finite()
+        || sin_gamma.abs() <= f64::EPSILON
+    {
+        return Err(frame_error(
+            TrajectoryIoErrorKind::InvalidFrame,
+            source_label,
+            frame,
+            "The cell angles are degenerate.",
+        ));
+    }
+    let ax = Vector3::new(a, 0.0, 0.0);
+    let bx = Vector3::new(b * gamma.cos(), b * sin_gamma, 0.0);
+    let cx = c * beta.cos();
+    let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / sin_gamma;
+    let cz_squared = c * c - cx * cx - cy * cy;
+    if !cz_squared.is_finite() || cz_squared <= 0.0 {
+        return Err(frame_error(
+            TrajectoryIoErrorKind::InvalidFrame,
+            source_label,
+            frame,
+            "The cell vectors are degenerate.",
+        ));
+    }
+    PeriodicCell::new(
+        Quantity::new([ax, bx, Vector3::new(cx, cy, cz_squared.sqrt())], ANGSTROM),
+        [true; 3],
+    )
+    .map_err(|error| {
+        frame_error(
+            TrajectoryIoErrorKind::InvalidFrame,
+            source_label,
+            frame,
+            "The DCD cell is invalid.",
+        )
+        .with_source(error)
+    })
+}
+
+fn encode_cell(cell: PeriodicCell, source_label: &str) -> Result<[f64; 6], TrajectoryIoError> {
+    if cell.periodic_axes() != [true; 3] {
+        return Err(codec_context(
+            TrajectoryIoErrorKind::UnsupportedVariant,
+            TrajectoryIoOperation::WriteFrame,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            "The cell is not periodic along all three axes. DCD stores only fully periodic cells.",
+        ));
+    }
+    let [a, b, c] = cell.vectors().value_in(ANGSTROM).map_err(|error| {
+        codec_context(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::WriteFrame,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            "The DCD cell unit is incompatible.",
+        )
+        .with_source(error)
+    })?;
+    if a.x <= 0.0 || a.y != 0.0 || a.z != 0.0 || b.y <= 0.0 || b.z != 0.0 || c.z <= 0.0 {
+        return Err(codec_context(
+            TrajectoryIoErrorKind::UnsupportedVariant,
+            TrajectoryIoOperation::WriteFrame,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            "The cell is not in standard orientation. Cell vector a lies along +x, b in the xy plane with +y, c with +z.",
+        ));
+    }
+    let length =
+        |vector: Vector3| (vector.x * vector.x + vector.y * vector.y + vector.z * vector.z).sqrt();
+    let dot =
+        |left: Vector3, right: Vector3| left.x * right.x + left.y * right.y + left.z * right.z;
+    let la = length(a);
+    let lb = length(b);
+    let lc = length(c);
+    let cosine = |left: Vector3, right: Vector3, ll: f64, lr: f64| {
+        (dot(left, right) / (ll * lr)).clamp(-1.0, 1.0)
+    };
+    let alpha = cosine(b, c, lb, lc);
+    let beta = cosine(a, c, la, lc);
+    let gamma = cosine(a, b, la, lb);
+    let values = [la, gamma, lb, beta, alpha, lc];
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(codec_context(
+            TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::WriteFrame,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            "The cell has no finite lengths and angles.",
+        ));
+    }
+    let mut record = [0; CELL_BYTES];
+    for (chunk, value) in record.as_chunks_mut::<8>().0.iter_mut().zip(values) {
+        *chunk = value.to_le_bytes();
+    }
+    decode_cell(&record, DcdEndian::Little, source_label, 0).map_err(|error| {
+        codec_context(
+            TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::WriteFrame,
+            Some(TrajectoryFormat::Dcd),
+            source_label,
+            "The cell is degenerate when written as lengths and angles.",
+        )
+        .with_source(validation_cause(error))
+    })?;
+    Ok(values)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_record<R: Read>(
+    reader: &mut R,
+    endian: DcdEndian,
+    scratch: &mut Vec<u8>,
+    other_scratch_bytes: Option<usize>,
+    limits: &TrajectoryIoLimits,
+    source_label: &str,
+    operation: TrajectoryIoOperation,
+    frame: Option<usize>,
+    clean_eof: bool,
+    expected: Option<(usize, &str)>,
+) -> Result<bool, TrajectoryIoError> {
+    let mut marker = [0_u8; 4];
+    match reader.read(&mut marker[..1]) {
+        Ok(0) if clean_eof => return Ok(false),
+        Ok(0) => {
+            return Err(record_error(
+                source_label,
+                operation,
+                frame,
+                "The DCD record marker is missing.",
+            ))
+        }
+        Ok(_) => {}
+        Err(error) => {
+            return Err(io_context(
+                operation,
+                Some(TrajectoryFormat::Dcd),
+                source_label,
+                error,
+            ))
+        }
+    }
+    read_exact_required(
+        reader,
+        &mut marker[1..],
+        operation,
+        source_label,
+        frame,
+        "The DCD record marker is incomplete.",
+    )?;
+    let size = usize::try_from(endian.u32(marker)).map_err(|_| {
+        resource_error(
+            operation,
+            source_label,
+            frame,
+            "A record length exceeds this platform's address range.",
+        )
+    })?;
+    // A record whose size the layout fixes is checked before its payload is
+    // read, so that a corrupt marker is never taken for a record still being
+    // written.
+    if let Some((expected, detail)) = expected.filter(|&(expected, _)| expected != size) {
+        let mut context = TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::InvalidFrame,
+            operation,
+            Some(TrajectoryFormat::Dcd),
+        )
+        .with_source_label(source_label)
+        .with_counts(expected as u64, size as u64)
+        .with_detail(detail);
+        if let Some(frame) = frame {
+            context = context.with_frame(frame);
+        }
+        return Err(context);
+    }
+    if size as u64 > limits.max_record_bytes() {
+        return Err(
+            resource_error(operation, source_label, frame, "").exceeding(
+                "A record",
+                exceeded_bytes(limits.max_record_bytes(), size as u64),
+            ),
+        );
+    }
+    if size > limits.max_scratch_bytes() {
+        return Err(resource_error(
+            operation,
+            source_label,
+            frame,
+            format!(
+                "A record of {size} bytes exceeds the buffer limit of {} bytes.",
+                limits.max_scratch_bytes()
+            ),
+        ));
+    }
+    reserve_scratch(
+        scratch,
+        size,
+        other_scratch_bytes,
+        limits.max_scratch_bytes(),
+        |detail| resource_error(operation, source_label, frame, detail),
+    )?;
+    scratch.resize(size, 0);
+    read_exact_required(
+        reader,
+        scratch,
+        operation,
+        source_label,
+        frame,
+        "The DCD record payload is truncated.",
+    )?;
+    let mut trailing = [0_u8; 4];
+    read_exact_required(
+        reader,
+        &mut trailing,
+        operation,
+        source_label,
+        frame,
+        "The DCD trailing record marker is missing.",
+    )?;
+    if endian.u32(trailing) != size as u32 {
+        let mut context = TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::RecordMarkerMismatch,
+            operation,
+            Some(TrajectoryFormat::Dcd),
+        )
+        .with_source_label(source_label)
+        .with_counts(size as u64, u64::from(endian.u32(trailing)))
+        .with_detail("A record's leading and trailing length markers differ.");
+        if let Some(frame) = frame {
+            context = context.with_frame(frame);
+        }
+        return Err(context);
+    }
+    Ok(true)
+}
+
+fn read_exact_required<R: Read>(
+    reader: &mut R,
+    bytes: &mut [u8],
+    operation: TrajectoryIoOperation,
+    source_label: &str,
+    frame: Option<usize>,
+    detail: &str,
+) -> Result<(), TrajectoryIoError> {
+    reader.read_exact(bytes).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            record_error(source_label, operation, frame, detail)
+        } else {
+            io_context(operation, Some(TrajectoryFormat::Dcd), source_label, error)
+        }
+    })
+}
+
+fn write_record<W: Write>(
+    writer: &mut W,
+    endian: DcdEndian,
+    payload: &[u8],
+    source_label: &str,
+    operation: TrajectoryIoOperation,
+) -> Result<(), TrajectoryIoError> {
+    let size = u32::try_from(payload.len())
+        .map_err(|_| writer_overflow(source_label, "A record exceeds the 32-bit record length."))?;
+    writer
+        .write_all(&endian.encode_u32(size))
+        .and_then(|_| writer.write_all(payload))
+        .and_then(|_| writer.write_all(&endian.encode_u32(size)))
+        .map_err(|error| io_context(operation, Some(TrajectoryFormat::Dcd), source_label, error))
+}
+
+fn validate_atom_count(
+    count: usize,
+    limits: &TrajectoryIoLimits,
+    source_label: &str,
+) -> Result<(), TrajectoryIoError> {
+    if count == 0 {
+        return Err(resource_error(
+            TrajectoryIoOperation::ReadHeader,
+            source_label,
+            None,
+            "The header declares no atoms.",
+        ));
+    }
+    let limit = limits.max_atoms().min(i32::MAX as usize);
+    if count > limit {
+        return Err(
+            resource_error(TrajectoryIoOperation::ReadHeader, source_label, None, "").exceeding(
+                "The atom count",
+                LimitExceeded::new(Resource::Atoms, limit, count),
+            ),
+        );
+    }
+    Ok(())
+}
+
+fn checked_coordinate_bytes(count: usize, source_label: &str) -> Result<usize, TrajectoryIoError> {
+    count.checked_mul(4).ok_or_else(|| {
+        resource_error(
+            TrajectoryIoOperation::ReadFrame,
+            source_label,
+            None,
+            "A coordinate record's size exceeds this platform's address range.",
+        )
+    })
+}
+
+fn nonnegative_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryIoError> {
+    u64::try_from(value).map_err(|_| {
+        header_error(
+            source_label,
+            format!("The header field {field} is {value}. It is negative."),
+        )
+    })
+}
+
+fn positive_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryIoError> {
+    if value <= 0 {
+        return Err(header_error(
+            source_label,
+            format!("The header field {field} is {value}. It is not positive."),
+        ));
+    }
+    Ok(value as u64)
+}
+
+fn nonnegative_usize(
+    value: i32,
+    field: &str,
+    source_label: &str,
+) -> Result<usize, TrajectoryIoError> {
+    usize::try_from(value).map_err(|_| {
+        header_error(
+            source_label,
+            format!("The header field {field} is {value}. It is negative."),
+        )
+    })
+}
+
+fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
+    codec_context(
+        TrajectoryIoErrorKind::InvalidHeader,
+        TrajectoryIoOperation::ReadHeader,
+        Some(TrajectoryFormat::Dcd),
+        source_label,
+        detail,
+    )
+}
+
+fn record_error(
+    source_label: &str,
+    operation: TrajectoryIoOperation,
+    frame: Option<usize>,
+    detail: impl Into<String>,
+) -> TrajectoryIoError {
+    let mut context = TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::TruncatedRecord,
+        operation,
+        Some(TrajectoryFormat::Dcd),
+    )
+    .with_source_label(source_label)
+    .with_detail(detail);
+    if let Some(frame) = frame {
+        context = context.with_frame(frame);
+    }
+    context
+}
+
+fn frame_error(
+    kind: TrajectoryIoErrorKind,
+    source_label: &str,
+    frame: usize,
+    detail: impl Into<String>,
+) -> TrajectoryIoError {
+    TrajectoryIoError::codec(
+        kind,
+        TrajectoryIoOperation::ReadFrame,
+        Some(TrajectoryFormat::Dcd),
+    )
+    .with_source_label(source_label)
+    .with_frame(frame)
+    .with_detail(detail)
+}
+
+fn resource_error(
+    operation: TrajectoryIoOperation,
+    source_label: &str,
+    frame: Option<usize>,
+    detail: impl Into<String>,
+) -> TrajectoryIoError {
+    let mut context = TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::LimitExceeded,
+        operation,
+        Some(TrajectoryFormat::Dcd),
+    )
+    .with_source_label(source_label)
+    .with_detail(detail);
+    if let Some(frame) = frame {
+        context = context.with_frame(frame);
+    }
+    context
+}
+
+fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
+    codec_context(
+        TrajectoryIoErrorKind::LimitExceeded,
+        TrajectoryIoOperation::WriteFrame,
+        Some(TrajectoryFormat::Dcd),
+        source_label,
+        detail,
+    )
+}
+
+fn writer_field_error(
+    source_label: &str,
+    frame: usize,
+    field: TrajectoryField,
+) -> TrajectoryIoError {
+    TrajectoryIoError::codec(
+        TrajectoryIoErrorKind::UnsupportedField,
+        TrajectoryIoOperation::WriteFrame,
+        Some(TrajectoryFormat::Dcd),
+    )
+    .with_source_label(source_label)
+    .with_frame(frame)
+    .with_field(field)
+    .with_detail(format!("DCD cannot store the {field}."))
+}

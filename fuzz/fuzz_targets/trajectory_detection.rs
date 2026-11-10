@@ -2,7 +2,7 @@
 
 use std::io::{Cursor, Seek};
 
-use kekule_traj::io::{detect_trajectory_format, TrajectoryFormatHint, TrajectoryIoLimits};
+use kekule::traj::io::{detect_trajectory_format, TrajectoryFormatHint, TrajectoryIoLimits};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

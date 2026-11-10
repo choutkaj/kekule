@@ -63,7 +63,7 @@ pub enum UnrepresentablePolicy {
 /// What a structure writer left out of its output: content the caller chose
 /// [`UnrepresentablePolicy::Omit`] for, and content a writer gives no such
 /// choice for because its format can never carry it, such as the bonds of
-/// `kekule-traj`'s XYZ writer.
+/// the XYZ writer of [`crate::traj::io::xyz`].
 ///
 /// A writer reports every omission it makes, once per kind, with the number
 /// of entities it affects summed over everything one call writes. An empty
@@ -516,7 +516,7 @@ impl UnrepresentableSampleState {
 /// Checks the sample state of `ensemble` that a file of equally weighted
 /// structures in one state cannot carry, by the rules of the PDB and mmCIF
 /// ensemble writers, for writers of other formats that share them, such as
-/// `kekule-traj`'s XYZ writer.
+/// the XYZ writer of [`crate::traj::io::xyz`].
 ///
 /// Such a file reads back as one state of equally weighted samples without
 /// an energy or temperature. Unequal weights, more than one state, any state
