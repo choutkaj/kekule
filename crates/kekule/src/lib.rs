@@ -17,8 +17,7 @@
 //! - [`structure::Trajectory`] stores ordered
 //!   [`structure::TrajectoryFrame`]s of one shared topology, each with
 //!   positions and optional cell, velocities, forces, time, and step. File
-//!   codecs and streaming analysis for trajectories live in the `kekule-traj`
-//!   companion crate.
+//!   codecs and streaming analysis for trajectories live in [`traj`].
 //! - [`structure::Series`] stores [`structure::SeriesItem`]s of one shared
 //!   topology in an order that is neither temporal nor weighted, such as the
 //!   steps of a geometry optimization or the points of a relaxed scan, each
@@ -41,6 +40,7 @@
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
 //! | Structure analysis and preparation | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`sequence`], [`solvation`] |
+//! | Trajectories | [`traj`] ([`traj::io`], [`traj::periodic`], [`traj::analysis`]) |
 //!
 //! # Typical workflow
 //!
@@ -168,6 +168,7 @@ pub mod solvation;
 pub mod statistics;
 pub mod structure;
 pub mod topology;
+pub mod traj;
 pub mod units;
 
 pub use draft::DraftError;
@@ -1378,7 +1379,7 @@ pub mod pdb {
 /// the same atoms become an equally weighted
 /// [`Ensemble`](crate::structure::Ensemble), and every frame must infer the
 /// same bonds. Interpretation keeps atom lines in source order as dense atom
-/// order, so a trajectory reader such as `kekule-traj`'s `XyzReader` can
+/// order, so a trajectory reader such as [`crate::traj::io::xyz::XyzReader`] can
 /// stream the frames of the same file against the interpreted topology when
 /// the file spells every element as a symbol in its standard letter case,
 /// the only element tokens that reader accepts; interpretation also accepts

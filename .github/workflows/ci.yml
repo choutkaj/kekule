@@ -59,7 +59,7 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-openff --no-default-features --no-deps --locked
       - name: Check packaged license copies
         run: |
-          for package in kekule kekule-potentials kekule-traj kekule-openff kekule-openff-ash; do
+          for package in kekule kekule-potentials kekule-openff kekule-openff-ash; do
             cmp LICENSE-APACHE "crates/$package/LICENSE-APACHE"
             cmp LICENSE-MIT "crates/$package/LICENSE-MIT"
           done

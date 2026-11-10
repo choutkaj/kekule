@@ -40,8 +40,8 @@ pub enum MissingTimePolicy {
 /// Frames are validated against the shared topology on insertion.
 /// Superposition and RMSD are inherent methods; see [`crate::alignment`].
 /// In-memory storage lives here; file codecs, streaming readers and writers,
-/// periodic preprocessing, and trajectory reductions live in the
-/// `kekule-traj` companion crate.
+/// periodic preprocessing, and trajectory reductions live in
+/// [`crate::traj`].
 #[derive(Debug, Clone)]
 pub struct Trajectory {
     topology: Arc<Topology>,

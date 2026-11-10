@@ -24,7 +24,7 @@ security fixes; older minor versions are not patched.
 
 | Crate | Supported |
 | --- | --- |
-| `kekule`, `kekule-traj`, `kekule-openff`, `kekule-potentials` | Latest 0.x minor (currently 0.4) |
+| `kekule`, `kekule-openff`, `kekule-potentials` | Latest 0.x minor (currently 0.4) |
 | `kekule-openff-ash` (model data only) | Latest release (currently 0.3) |
 
 ## Scope

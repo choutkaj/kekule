@@ -9,6 +9,7 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Ensemble, EnsemblePartition, Model, ModelView, Positions};
 use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
+use kekule::traj::FrameBuffer;
 use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
 use kekule_openff::{ForceField, ParameterizedTopology, VdwMethod};
 use kekule_potentials::openff::{OpenFfPotential, OpenFfPotentialError};
@@ -16,7 +17,6 @@ use kekule_potentials::{
     minimize, minimize_scoped, ComponentKind, EvaluationError, InteractionKind, MinimizationScope,
     MinimizationStatus, MinimizeOptions, Potential, SingularGeometry,
 };
-use kekule_traj::FrameBuffer;
 
 // Deliberately simple, distinct numbers make every handler visible in the
 // energy; the reference below recomputes it independently of the kernels.

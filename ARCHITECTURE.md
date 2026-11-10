@@ -75,7 +75,7 @@ ensemble sample; an energy belongs to an ensemble state, not to any
 structure, except as a series item's own property. Coordinate kernels share
 code through the borrowed `ModelView`, not through a common owned payload.
 
-Both live in `kekule::structure`. `kekule-traj` owns file codecs, streaming
+Both live in `kekule::structure`. `kekule::traj` owns file codecs, streaming
 reader and writer contracts, the reusable `FrameBuffer`, periodic
 preprocessing, and streaming superposition; it owns no second in-memory
 trajectory type.
@@ -95,7 +95,7 @@ See the [crate overview](crates/kekule/src/lib.rs),
 [structure types](crates/kekule/src/structure/mod.rs),
 [ensembles](crates/kekule/src/structure/ensemble.rs),
 [trajectories](crates/kekule/src/structure/trajectory.rs), and
-[streaming contracts](crates/kekule-traj/src/trajectory/mod.rs).
+[streaming contracts](crates/kekule/src/traj/trajectory/mod.rs).
 
 ## Represented and derived chemistry
 
@@ -540,7 +540,7 @@ positive weight, so no structure is reduced with an implied weight.
 methods observe every frame with weight one, taking frames as equally weighted
 equilibrium samples, and other frame weights are passed to the accumulators
 explicitly. Streamed frames reach the same accumulators through their buffer's
-`ModelView`; `kekule-traj` adds no statistics of its own. Accumulators consume
+`ModelView`; `kekule::traj` adds no statistics of its own. Accumulators consume
 structures sharing the source topology's layout with memory bounded by
 selected atoms, pairs, or groups, not observation count. Failed observations leave
 accumulators unchanged. Accumulators of the same selection, or of the same
@@ -606,10 +606,10 @@ For format profiles, limits, periodic conventions, statistical definitions, and
 streaming sequence/reset contracts, see
 [trajectory payloads](crates/kekule/src/structure/trajectory.rs),
 [collection alignment](crates/kekule/src/alignment/collection.rs),
-[frame buffers](crates/kekule-traj/src/trajectory/buffer.rs),
-[file I/O](crates/kekule-traj/src/io/mod.rs),
-[periodic operations](crates/kekule-traj/src/periodic.rs),
-[streaming periodic operations](crates/kekule-traj/src/periodic/stream.rs), and
+[frame buffers](crates/kekule/src/traj/trajectory/buffer.rs),
+[file I/O](crates/kekule/src/traj/io/mod.rs),
+[periodic operations](crates/kekule/src/traj/periodic.rs),
+[streaming periodic operations](crates/kekule/src/traj/periodic/stream.rs), and
 [weighted statistics](crates/kekule/src/statistics.rs).
 
 ## Parsing, interpretation, and export
@@ -689,7 +689,7 @@ Coordinate-only trajectory formats are the deliberate exception: they carry no
 chemistry to interpret, so streaming codecs decode frames directly against a
 caller-supplied topology (see Trajectories and streaming). XYZ is read both
 ways: `kekule::xyz` interprets its frames into structures through this
-pipeline, and `kekule-traj` streams its coordinates against a topology, such
+pipeline, and `kekule::traj` streams its coordinates against a topology, such
 as the one that interpretation produced. Writing XYZ keeps elements and
 coordinates only, so the writer reports the topology content it leaves out in
 the shared write report. It writes an ensemble as one frame per sample and
@@ -1049,6 +1049,7 @@ The public modules of `kekule`, by domain:
 | Systems and structures | `topology` (`edit`), `structure` (`measure`, `placement`), `solvation` |
 | Analysis | `alignment`, `clustering`, `dssp`, `interactions` |
 | Formats | `smiles`, `smarts`, `molfile`, `sdf`, `mmcif`, `pdb`, `xyz`, `macromolecular`, `components`, `native` |
+| Trajectories | `traj` (`io` with `xyz`, `dcd`, `trr`, `xtc`; `periodic`; `analysis`) |
 
 A type lives in the module of the domain that owns it:
 
@@ -1058,8 +1059,9 @@ A type lives in the module of the domain that owns it:
 - interpretation types shared by mmCIF and PDB in `macromolecular` only;
 - the shared failure vocabulary in `diagnostics`.
 
-Format modules stay at the crate root. The foundational crate has no optional
-features.
+Format modules stay at the crate root, except the trajectory codecs, which
+live in `traj::io` beside the streaming contracts they implement. The
+foundational crate has no optional features.
 
 ### Names, conversions, and identifiers
 

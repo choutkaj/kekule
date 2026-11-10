@@ -456,7 +456,7 @@ fn combine_into(
 /// # }
 /// ```
 ///
-/// A streamed `kekule-traj` frame buffer is observed through
+/// A streamed [`crate::traj::FrameBuffer`] is observed through
 /// `buffer.as_model_view()`.
 #[derive(Debug, Clone)]
 pub struct RmsfAccumulator {

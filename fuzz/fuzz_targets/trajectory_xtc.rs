@@ -5,9 +5,9 @@ use std::sync::{Arc, OnceLock};
 
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule_traj::io::xtc::{XtcReadOptions, XtcReader};
-use kekule_traj::io::TrajectoryIoLimits;
-use kekule_traj::{FrameBuffer, TrajectoryReader};
+use kekule::traj::io::xtc::{XtcReadOptions, XtcReader};
+use kekule::traj::io::TrajectoryIoLimits;
+use kekule::traj::{FrameBuffer, TrajectoryReader};
 use libfuzzer_sys::fuzz_target;
 
 fn topology() -> &'static Arc<Topology> {

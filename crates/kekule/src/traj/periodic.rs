@@ -1,0 +1,741 @@
+//! Periodic coordinate reconstruction, imaging, imaging onto a reference
+//! frame, and temporal unwrapping.
+//!
+//! These operations change positions only, in place. The shared topology, cells,
+//! velocities, forces, time, step, and all properties are retained. Collection
+//! functions publish only after every item succeeds; clone the collection first
+//! to keep the original. Every processed item must have a periodic cell.
+//!
+//! Molecules and bonds come from the authoritative topology. No bonds are guessed
+//! from distances or hierarchy. Orthorhombic, triclinic, rotated, and partially
+//! periodic cells are supported. Molecular reconstruction uses shortest Cartesian
+//! bond images; temporal unwrapping uses continuity in fractional cell coordinates.
+//! Molecular image ties are resolved deterministically. The exact nearest-image
+//! search permits up to one million candidates per displacement and fails explicitly
+//! for cells requiring more; it never substitutes an approximate image silently.
+//!
+//! Collection functions operate on an in-memory [`Trajectory`];
+//! [`MoleculeImager`] and
+//! [`TrajectoryUnwrapper`] apply the same operations to streamed
+//! [`FrameBuffer`](crate::traj::FrameBuffer)s.
+//!
+//! # Examples
+//!
+//! An ethane C–C bond split across a 1 nm periodic boundary is made whole:
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use kekule::geometry::{PeriodicCell, Point3, Vector3};
+//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::units::{Quantity, NANOMETER};
+//! use kekule::{smiles, topology::Topology};
+//! use kekule::traj::periodic;
+//!
+//! let molecule = smiles::to_molecules("CC")?.pop().unwrap();
+//! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let lengths = Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER);
+//! let cell = PeriodicCell::orthorhombic(lengths, [true; 3])?;
+//! let points = vec![Point3::new(0.125, 0.0, 0.0), Point3::new(0.875, 0.0, 0.0)];
+//! let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
+//! let frame = TrajectoryFrame::new(positions).with_cell(cell);
+//! let mut trajectory = Trajectory::from_items(topology, [frame])?;
+//!
+//! periodic::make_molecules_whole(&mut trajectory)?;
+//! let frame = trajectory.get(0).unwrap();
+//! let moved = frame.positions().get(1).unwrap().value_in(NANOMETER)?;
+//! assert_eq!(moved, Point3::new(-0.125, 0.0, 0.0));
+//! let anchor = frame.positions().get(0).unwrap().value_in(NANOMETER)?;
+//! assert_eq!(anchor, Point3::new(0.125, 0.0, 0.0));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Reading a file, then reconstructing, unwrapping and imaging:
+//!
+//! ```no_run
+//! use kekule::{mmcif, topology::AtomSelection};
+//! use kekule::traj::{io::read_trajectory, periodic};
+//!
+//! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
+//! let topology = document.interpret(Default::default())?.into_topology();
+//! let mut trajectory = read_trajectory("trajectory.xtc", topology.clone(), Default::default())?;
+//! periodic::make_molecules_whole(&mut trajectory)?;
+//!
+//! // A continuous path through time, retaining the initial molecular images.
+//! let mut continuous = trajectory.clone();
+//! periodic::unwrap_trajectory(&mut continuous)?;
+//!
+//! // A separate per-frame view with molecules centered around selected anchors.
+//! let anchors = AtomSelection::all(topology.clone()); // Or select the solute's atoms.
+//! periodic::image_molecules(&mut trajectory, &anchors)?;
+//! trajectory.superpose(0, &anchors, Default::default())?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! For a large trajectory, retain the bond plan and temporal state across reads:
+//!
+//! ```no_run
+//! use kekule::mmcif;
+//! use kekule::traj::{
+//!     io::open_trajectory, periodic::{MoleculeImager, TrajectoryUnwrapper},
+//!     TrajectoryReader,
+//! };
+//! let topology = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?
+//!     .interpret(Default::default())?.into_topology();
+//! let mut reader = open_trajectory("trajectory.xtc", topology.clone(), Default::default())?;
+//! let mut frame = reader.frame_buffer();
+//! let imager = MoleculeImager::new(topology.clone());
+//! let mut unwrapper = TrajectoryUnwrapper::new(topology);
+//! let mut index = 0;
+//! while reader.read_next(&mut frame)? {
+//!     imager.make_whole(index, &mut frame)?;
+//!     unwrapper.unwrap(index, &mut frame)?;
+//!     // Analyze or write this frame here. Downsample only after unwrapping.
+//!     index += 1;
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+
+use std::collections::VecDeque;
+use std::fmt;
+
+use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::structure::{AsModelView, DenseArrayError, Positions, Trajectory, TrajectoryError};
+use crate::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
+use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
+
+mod stream;
+pub use stream::{MoleculeImager, TrajectoryUnwrapper};
+
+/// Failure to reconstruct or publish periodic coordinates.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum PeriodicError {
+    /// A frame has no periodic cell.
+    MissingCell {
+        /// The frame index.
+        frame: usize,
+    },
+    /// The anchor selection belongs to another topology.
+    SelectionTopologyMismatch,
+    /// The reference structure belongs to another topology.
+    ReferenceTopologyMismatch,
+    /// A frame belongs to another topology.
+    TopologyMismatch {
+        /// The frame index.
+        frame: usize,
+    },
+    /// Stateful unwrapping requires consecutive source-frame indices.
+    NonSequentialFrame {
+        /// The previously unwrapped frame index.
+        previous: usize,
+        /// The frame index that does not follow it.
+        frame: usize,
+    },
+    /// Available time values must not decrease, including across missing values.
+    NonMonotonicTime {
+        /// The frame index whose time decreases.
+        frame: usize,
+    },
+    /// Imaging was requested with no anchor atom.
+    EmptyAnchors,
+    /// Selected shortest bond images do not form a consistent finite molecule (e.g. a winding ring).
+    InconsistentBondImages {
+        /// The frame index.
+        frame: usize,
+        /// The bond whose images are inconsistent.
+        bond: InstanceBondId,
+    },
+    /// The periodic axes of the cell change between unwrapped frames.
+    PeriodicAxesChanged {
+        /// The frame index whose axes differ.
+        frame: usize,
+    },
+    /// A displacement lies on a half-cell boundary, with no unique temporal image.
+    AmbiguousDisplacement {
+        /// The frame index.
+        frame: usize,
+        /// The atom whose displacement is ambiguous.
+        atom: TopologyAtomIndex,
+        /// The cell axis (0, 1 or 2) of the ambiguity.
+        axis: usize,
+    },
+    /// An ill-conditioned cell requires more lattice images than the bounded
+    /// nearest-image search examines.
+    LimitExceeded {
+        /// The frame whose cell is ill-conditioned.
+        frame: usize,
+        /// The exceeded bound of lattice images.
+        limit: crate::diagnostics::LimitExceeded,
+    },
+    /// A periodic coordinate calculation exceeds numerical precision or
+    /// range.
+    NumericalFailure {
+        /// The frame index.
+        frame: usize,
+    },
+    /// A frame's positions are invalid; see the source.
+    Position {
+        /// The frame index.
+        frame: usize,
+        /// The position failure.
+        source: Box<DenseArrayError>,
+    },
+    /// Valid positions could not be published into the destination.
+    Publication(Box<TrajectoryError>),
+}
+
+impl fmt::Display for PeriodicError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingCell { frame } => write!(f, "Frame {frame} has no periodic cell."),
+            Self::SelectionTopologyMismatch => {
+                f.write_str("The anchor selection belongs to another topology.")
+            }
+            Self::ReferenceTopologyMismatch => {
+                f.write_str("The reference structure belongs to another topology.")
+            }
+            Self::TopologyMismatch { frame } => {
+                write!(f, "Frame {frame} belongs to another topology.")
+            }
+            Self::NonSequentialFrame { previous, frame } => write!(
+                f,
+                "Frame {frame} does not follow frame {previous}."
+            ),
+            Self::NonMonotonicTime { frame } => {
+                write!(f, "Time decreases at frame {frame}.")
+            }
+            Self::EmptyAnchors => f.write_str("No anchor atom is selected."),
+            Self::InconsistentBondImages { frame, bond } => write!(
+                f,
+                "The periodic images around {bond} in frame {frame} are inconsistent."
+            ),
+            Self::PeriodicAxesChanged { frame } => {
+                write!(f, "The periodic axes change at frame {frame}.")
+            }
+            Self::AmbiguousDisplacement { frame, atom, axis } => write!(
+                f,
+                "The displacement of {atom} along cell axis {} in frame {frame} is half a cell. Its image is ambiguous.",
+                ["a", "b", "c"].get(*axis).copied().unwrap_or("?")
+            ),
+            Self::LimitExceeded { frame, limit } => write!(
+                f,
+                "The nearest-image search in frame {frame} exceeded its {}.",
+                limit.describe()
+            ),
+            Self::NumericalFailure { frame } => write!(
+                f,
+                "A periodic coordinate in frame {frame} exceeds the precision or range of double-precision numbers."
+            ),
+            Self::Position { frame, .. } => write!(f, "Frame {frame} has invalid positions."),
+            Self::Publication(_) => f.write_str("Cannot publish the periodic coordinates."),
+        }
+    }
+}
+
+impl std::error::Error for PeriodicError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Position { source, .. } => Some(source.as_ref()),
+            Self::Publication(source) => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+/// Makes each bonded molecule whole independently in every frame.
+///
+/// The first atom of each molecule stays at its original position; other atoms
+/// are placed using shortest Cartesian bond images. All bonds, including ring
+/// closures, must agree with the reconstruction. Molecules are neither centered
+/// nor joined to other molecules. This does not establish continuity across time.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::MissingCell`] for a frame without a cell,
+/// [`PeriodicError::InconsistentBondImages`] when bond images disagree,
+/// [`PeriodicError::LimitExceeded`] or [`PeriodicError::NumericalFailure`] for
+/// an ill-conditioned cell or out-of-range coordinates, and
+/// [`PeriodicError::Position`] or [`PeriodicError::Publication`] when the
+/// result cannot be stored. On error the trajectory is unchanged.
+pub fn make_molecules_whole(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
+    let positions = whole_positions(trajectory, None)?;
+    publish(trajectory, positions)
+}
+
+/// Images whole molecules around explicitly selected anchors in every frame.
+///
+/// Every molecule containing a selected atom becomes an anchor. Other anchors
+/// are placed at their nearest centroid image to the first anchor in topology
+/// order. The combined geometric center of all atoms in the anchor molecules
+/// is moved to the cell center along periodic axes. Other whole molecules are
+/// placed at their nearest centroid image to that combined center. No anchor
+/// heuristics are used.
+///
+/// This includes making molecules whole. It is a per-frame centering operation,
+/// not temporal unwrapping. Coordinates along nonperiodic fractional axes remain
+/// unchanged; a molecule may extend outside the primary cell.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::SelectionTopologyMismatch`] when `anchors`
+/// belongs to another layout, [`PeriodicError::EmptyAnchors`] when it selects
+/// no atom, and the errors of [`make_molecules_whole`]. On error the
+/// trajectory is unchanged.
+pub fn image_molecules(
+    trajectory: &mut Trajectory,
+    anchors: &AtomSelection,
+) -> Result<(), PeriodicError> {
+    let positions = whole_positions(trajectory, Some(anchors))?;
+    publish(trajectory, positions)
+}
+
+/// Moves each molecule of every frame to its periodic image nearest the same
+/// molecule in `reference`.
+///
+/// Each bonded molecule of a frame is translated as a whole by the lattice
+/// vector of the frame's own cell that brings its geometric center nearest,
+/// by the exact Cartesian nearest-image search, to the center of the same
+/// molecule in `reference`. Positions change only by lattice vectors, so each
+/// frame stays the same periodic system; the frame's cell, velocities, forces,
+/// time, step, and properties are retained.
+///
+/// Molecules rather than atoms are imaged, as in [`image_molecules`], so that
+/// molecules made whole by earlier steps stay whole: per-atom images would
+/// split a molecule whose atoms lie on either side of a half-cell distance from
+/// the reference. Make molecules whole in both structures first (see
+/// [`make_molecules_whole`]), or the centers are not meaningful; this function
+/// does not repair split molecules.
+///
+/// The frame's cell defines the images. The reference's cell is not used, so
+/// the reference may have a different cell or none; with a changing cell, the
+/// nearest image is the nearest under the frame's cell. A frame without a cell
+/// is an error. Ties between equally near images are resolved
+/// deterministically. This is a per-frame operation, independent of frame
+/// order and unlike [`unwrap_trajectory`] free of temporal state. To image onto
+/// a frame of the same trajectory, retain a copy of it first, for example with
+/// `trajectory.get(0).unwrap().to_model()`.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::ReferenceTopologyMismatch`] when `reference` does
+/// not share the trajectory's layout, [`PeriodicError::MissingCell`] for a
+/// frame without a cell, [`PeriodicError::LimitExceeded`] or
+/// [`PeriodicError::NumericalFailure`] for an ill-conditioned cell or
+/// out-of-range coordinates, and [`PeriodicError::Position`] or
+/// [`PeriodicError::Publication`] when the result cannot be stored. On error
+/// the trajectory is unchanged.
+pub fn image_onto(
+    trajectory: &mut Trajectory,
+    reference: &(impl AsModelView + ?Sized),
+) -> Result<(), PeriodicError> {
+    let imager = MoleculeImager::new(trajectory.shared_topology());
+    let reference = reference.as_model_view();
+    let positions = trajectory
+        .iter()
+        .enumerate()
+        .map(|(index, item)| imager.reference_positions(index, item.as_model_view(), reference))
+        .collect::<Result<Vec<_>, _>>()?;
+    publish(trajectory, positions)
+}
+
+/// Unwraps a trajectory through time using fractional-coordinate continuity.
+///
+/// Frame zero is unchanged. For each subsequent frame, integer periodic images
+/// are chosen so each atom moves less than half a cell in each periodic
+/// fractional coordinate relative to the previous unwrapped frame. For changing
+/// cells, previous fractional coordinates are retained and the current cell maps
+/// the new fractional coordinates back to Cartesian space. This is the lattice
+/// convention in Kulke & Vermaas (2022), equation B6, DOI: 10.1021/acs.jctc.2c00327.
+///
+/// Available times must not decrease. Requires fixed periodic-axis flags and
+/// sequential, sufficiently closely sampled frames. Multiple crossings between
+/// saved frames cannot be inferred; exact half-cell displacements are rejected
+/// as ambiguous. Initial split molecules are not repaired: call
+/// [`make_molecules_whole`] first when necessary. Apply before frame-dependent
+/// alignment. This convention is not a universal prescription for diffusion
+/// analysis under a fluctuating simulation cell.
+///
+/// # Errors
+///
+/// Returns [`PeriodicError::MissingCell`] for a frame without a cell,
+/// [`PeriodicError::PeriodicAxesChanged`] when the periodic axes change,
+/// [`PeriodicError::NonMonotonicTime`] when an available time decreases,
+/// [`PeriodicError::AmbiguousDisplacement`] for an exact half-cell move,
+/// [`PeriodicError::NumericalFailure`] for out-of-range coordinates, and
+/// [`PeriodicError::Position`] or [`PeriodicError::Publication`] when the
+/// result cannot be stored. On error the trajectory is unchanged.
+pub fn unwrap_trajectory(trajectory: &mut Trajectory) -> Result<(), PeriodicError> {
+    let mut unwrapper = TrajectoryUnwrapper::new(trajectory.shared_topology());
+    let positions = trajectory
+        .iter()
+        .enumerate()
+        .map(|(index, frame)| unwrapper.next_positions(index, frame))
+        .collect::<Result<Vec<_>, _>>()?;
+    publish(trajectory, positions)
+}
+
+fn whole_positions(
+    trajectory: &Trajectory,
+    anchors: Option<&AtomSelection>,
+) -> Result<Vec<Positions>, PeriodicError> {
+    let imager = MoleculeImager::new(trajectory.shared_topology());
+    let anchors = anchors
+        .map(|selection| imager.anchor_groups(selection))
+        .transpose()?;
+    trajectory
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            imager.frame_positions(index, item.as_model_view(), anchors.as_deref())
+        })
+        .collect()
+}
+
+fn publish(trajectory: &mut Trajectory, positions: Vec<Positions>) -> Result<(), PeriodicError> {
+    trajectory
+        .replace_positions(positions)
+        .map_err(|error| PeriodicError::Publication(Box::new(error)))
+}
+
+fn positions(points: Vec<Point3>, frame: usize) -> Result<Positions, PeriodicError> {
+    Positions::new(Quantity::new(points, CANONICAL_LENGTH_UNIT)).map_err(|source| {
+        PeriodicError::Position {
+            frame,
+            source: Box::new(source),
+        }
+    })
+}
+
+struct MoleculePlan {
+    groups: Vec<Vec<usize>>,
+    atom_group: Vec<usize>,
+    tree: Vec<(usize, usize, usize)>,
+    bonds: Vec<(InstanceBondId, usize, usize)>,
+}
+
+impl MoleculePlan {
+    fn new(topology: &Topology) -> Self {
+        let mut adjacency = vec![Vec::new(); topology.atom_count()];
+        let mut bonds = Vec::with_capacity(topology.bond_count());
+        for bond in topology.bonds() {
+            let id = bond.id();
+            let [a, b] = bond.atoms().map(|atom| atom.index().index());
+            adjacency[a].push((b, bonds.len()));
+            adjacency[b].push((a, bonds.len()));
+            bonds.push((id, a, b));
+        }
+        let mut groups = Vec::with_capacity(topology.instance_count());
+        let mut atom_group = vec![0; topology.atom_count()];
+        let mut tree = Vec::new();
+        let mut visited = vec![false; topology.atom_count()];
+        for molecule in topology.instances() {
+            let atoms: Vec<_> = molecule.atoms().map(|atom| atom.index().index()).collect();
+            for &atom in &atoms {
+                atom_group[atom] = groups.len();
+            }
+            let root = atoms[0]; // Published molecules are nonempty and connected.
+            visited[root] = true;
+            let mut queue = VecDeque::from([root]);
+            while let Some(parent) = queue.pop_front() {
+                for &(child, bond) in &adjacency[parent] {
+                    if !visited[child] {
+                        visited[child] = true;
+                        tree.push((parent, child, bond));
+                        queue.push_back(child);
+                    }
+                }
+            }
+            groups.push(atoms);
+        }
+        Self {
+            groups,
+            atom_group,
+            tree,
+            bonds,
+        }
+    }
+
+    fn make_whole(
+        &self,
+        source: &[Point3],
+        lattice: &Lattice,
+    ) -> Result<Vec<Point3>, PeriodicError> {
+        let mut points = source.to_vec();
+        let mut atom_images = vec![[0_i64; 3]; source.len()];
+        // Choose each bond image once, in its authoritative endpoint order. Tree
+        // traversal may reverse a bond; reusing its image also makes ties consistent.
+        let bond_images = self
+            .bonds
+            .iter()
+            .map(|&(_, a, b)| {
+                lattice
+                    .nearest_image(source[b] - source[a])
+                    .map(|(_, images)| images)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for &(parent, child, bond) in &self.tree {
+            let direction = if parent == self.bonds[bond].1 { 1 } else { -1 };
+            let images = bond_images[bond];
+            for axis in 0..3 {
+                let image = atom_images[parent][axis] + direction * images[axis];
+                checked_image(image as f64, lattice.frame)?;
+                atom_images[child][axis] = image;
+            }
+            points[child] = source[child] - lattice.cartesian(atom_images[child].map(|n| n as f64));
+        }
+        for (&(bond, a, b), images) in self.bonds.iter().zip(bond_images) {
+            // Check closure in integer lattice space, without a length tolerance
+            // that could conceal a winding cycle in a short cell direction.
+            if (0..3).any(|axis| atom_images[b][axis] - atom_images[a][axis] != images[axis]) {
+                return Err(PeriodicError::InconsistentBondImages {
+                    frame: lattice.frame,
+                    bond,
+                });
+            }
+        }
+        Ok(points)
+    }
+
+    fn image_onto(
+        &self,
+        points: &mut [Point3],
+        reference: &[Point3],
+        lattice: &Lattice,
+    ) -> Result<(), PeriodicError> {
+        for group in &self.groups {
+            let delta =
+                center(points, group, lattice.frame)? - center(reference, group, lattice.frame)?;
+            let (_, images) = lattice.nearest_image(delta)?;
+            let shift = lattice.cartesian(images.map(|n| n as f64));
+            for &atom in group {
+                points[atom] = points[atom] - shift;
+            }
+        }
+        Ok(())
+    }
+
+    fn image(
+        &self,
+        points: &mut [Point3],
+        lattice: &Lattice,
+        anchors: &[bool],
+    ) -> Result<(), PeriodicError> {
+        let first = anchors
+            .iter()
+            .position(|selected| *selected)
+            .expect("nonempty checked anchors");
+        let first_center = center(points, &self.groups[first], lattice.frame)?;
+        for (group, &anchor) in self.groups.iter().zip(anchors) {
+            if anchor {
+                let delta = center(points, group, lattice.frame)? - first_center;
+                let shift = lattice.minimum_image(delta)? - delta;
+                for &atom in group {
+                    points[atom] = points[atom] + shift;
+                }
+            }
+        }
+        let anchor_atoms: Vec<_> = self
+            .groups
+            .iter()
+            .zip(anchors)
+            .filter(|(_, anchor)| **anchor)
+            .flat_map(|(atoms, _)| atoms.iter().copied())
+            .collect();
+        let anchor_center = center(points, &anchor_atoms, lattice.frame)?;
+        let fractional = lattice.fractional(anchor_center - Point3::origin())?;
+        let shift = lattice.cartesian(std::array::from_fn(|axis| {
+            if lattice.periodic[axis] {
+                0.5 - fractional[axis]
+            } else {
+                0.0
+            }
+        }));
+        for point in points.iter_mut() {
+            *point = *point + shift;
+        }
+        let anchor_center = anchor_center + shift;
+        for (group, &anchor) in self.groups.iter().zip(anchors) {
+            if !anchor {
+                let delta = center(points, group, lattice.frame)? - anchor_center;
+                let shift = lattice.minimum_image(delta)? - delta;
+                for &atom in group {
+                    points[atom] = points[atom] + shift;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn center(points: &[Point3], atoms: &[usize], frame: usize) -> Result<Point3, PeriodicError> {
+    let scale = 1.0 / atoms.len() as f64;
+    let mut mean = Vector3::zero();
+    for &atom in atoms {
+        mean += (points[atom] - Point3::origin()) * scale;
+    }
+    if !mean.is_finite() {
+        return Err(PeriodicError::NumericalFailure { frame });
+    }
+    Ok(Point3::origin() + mean)
+}
+
+struct Lattice {
+    geometry: crate::geometry::PeriodicGeometry,
+    periodic: [bool; 3],
+    frame: usize,
+}
+impl Lattice {
+    fn new(cell: Option<PeriodicCell>, frame: usize) -> Result<Self, PeriodicError> {
+        let cell = cell.ok_or(PeriodicError::MissingCell { frame })?;
+        Ok(Self {
+            geometry: crate::geometry::PeriodicGeometry::new(cell)
+                .map_err(|error| geometry_error(error, frame))?,
+            periodic: cell.periodic_axes(),
+            frame,
+        })
+    }
+    fn fractional(&self, vector: Vector3) -> Result<[f64; 3], PeriodicError> {
+        self.geometry
+            .fractional(Quantity::new(vector, CANONICAL_LENGTH_UNIT))
+            .map_err(|error| geometry_error(error, self.frame))
+    }
+    fn cartesian(&self, fractional: [f64; 3]) -> Vector3 {
+        self.geometry.cartesian(fractional).into_value()
+    }
+    fn minimum_image(&self, delta: Vector3) -> Result<Vector3, PeriodicError> {
+        self.geometry
+            .minimum_image(Quantity::new(delta, CANONICAL_LENGTH_UNIT))
+            .map(Quantity::into_value)
+            .map_err(|error| geometry_error(error, self.frame))
+    }
+    fn nearest_image(&self, delta: Vector3) -> Result<(Vector3, [i64; 3]), PeriodicError> {
+        self.geometry
+            .nearest_image(Quantity::new(delta, CANONICAL_LENGTH_UNIT))
+            .map(|(vector, images)| (vector.into_value(), images))
+            .map_err(|error| geometry_error(error, self.frame))
+    }
+}
+fn geometry_error(error: crate::geometry::PeriodicGeometryError, frame: usize) -> PeriodicError {
+    match error {
+        crate::geometry::PeriodicGeometryError::NumericalFailure => {
+            PeriodicError::NumericalFailure { frame }
+        }
+        crate::geometry::PeriodicGeometryError::LimitExceeded(limit) => {
+            PeriodicError::LimitExceeded { frame, limit }
+        }
+        _ => PeriodicError::NumericalFailure { frame },
+    }
+}
+fn checked_image(value: f64, frame: usize) -> Result<f64, PeriodicError> {
+    if !value.is_finite() || value.abs() >= 2.0_f64.powi(52) {
+        return Err(PeriodicError::NumericalFailure { frame });
+    }
+    Ok(value.round())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::units::NANOMETER;
+
+    #[test]
+    fn nearest_images_match_exhaustive_cartesian_search_for_all_axis_flags() {
+        let base = [
+            Vector3::new(1.0, 0.2, -0.1),
+            Vector3::new(0.4, 1.2, 0.3),
+            Vector3::new(0.2, -0.1, 0.8),
+        ];
+        for basis in [
+            base,
+            base.map(|v| Vector3::new(-v.y, v.x, v.z)),
+            [base[1], base[0], base[2]],
+        ] {
+            for mask in 1..8 {
+                let axes = std::array::from_fn(|axis| mask & (1 << axis) != 0);
+                let cell = PeriodicCell::new(Quantity::new(basis, NANOMETER), axes).unwrap();
+                let lattice = Lattice::new(Some(cell), 7).unwrap();
+                for sample in 0..19 {
+                    let delta = Vector3::new(
+                        f64::from((sample * 17) % 31 - 15) / 11.0,
+                        f64::from((sample * 11) % 29 - 14) / 9.0,
+                        f64::from((sample * 7) % 23 - 11) / 8.0,
+                    );
+                    let (nearest, images) = lattice.nearest_image(delta).unwrap();
+                    let mut exhaustive = f64::INFINITY;
+                    for a in -4..=4 {
+                        for b in -4..=4 {
+                            for c in -4..=4 {
+                                if (!axes[0] && a != 0)
+                                    || (!axes[1] && b != 0)
+                                    || (!axes[2] && c != 0)
+                                {
+                                    continue;
+                                }
+                                let residual = delta
+                                    - basis[0] * f64::from(a)
+                                    - basis[1] * f64::from(b)
+                                    - basis[2] * f64::from(c);
+                                exhaustive = exhaustive.min(residual.norm_squared());
+                            }
+                        }
+                    }
+                    assert!(
+                        (nearest.norm_squared() - exhaustive).abs() < 1.0e-12,
+                        "basis={basis:?}, axes={axes:?}, delta={delta:?}, images={images:?}"
+                    );
+                    for axis in 0..3 {
+                        assert!(axes[axis] || images[axis] == 0);
+                    }
+                    assert!(
+                        (nearest - (delta - lattice.cartesian(images.map(|n| n as f64)))).norm()
+                            < 1.0e-12
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rectangular_cells_use_independent_images_even_with_extreme_aspect_ratios() {
+        let cell = PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(1.0, 1.0e-6, 1.0e6), NANOMETER),
+            [true; 3],
+        )
+        .unwrap();
+        let lattice = Lattice::new(Some(cell), 0).unwrap();
+        let (nearest, images) = lattice
+            .nearest_image(Vector3::new(1.25, 1.25e-6, 1.25e6))
+            .unwrap();
+        assert_eq!(images, [1; 3]);
+        assert!((nearest.x - 0.25).abs() < 1.0e-14);
+        assert!((nearest.y - 0.25e-6).abs() < 1.0e-20);
+        assert!((nearest.z - 0.25e6).abs() < 1.0e-8);
+    }
+
+    #[test]
+    fn nearest_image_fails_explicitly_on_excessive_search_or_lost_integer_precision() {
+        let cell = PeriodicCell::new(
+            Quantity::new(
+                [
+                    Vector3::new(1.0, 0.0, 0.0),
+                    Vector3::new(0.99999, 1.0e-6, 0.0),
+                    Vector3::new(0.0, 0.0, 1.0),
+                ],
+                NANOMETER,
+            ),
+            [true; 3],
+        )
+        .unwrap();
+        let lattice = Lattice::new(Some(cell), 7).unwrap();
+        assert!(matches!(
+            lattice.nearest_image(Vector3::new(0.49, 0.49, 0.0)),
+            Err(PeriodicError::LimitExceeded { frame: 7, limit })
+                if limit.resource() == crate::diagnostics::Resource::LatticeImages
+        ));
+        assert!(matches!(
+            lattice.nearest_image(Vector3::new(1.0e100, 0.0, 0.0)),
+            Err(PeriodicError::NumericalFailure { frame: 7 })
+        ));
+    }
+}

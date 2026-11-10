@@ -18,7 +18,7 @@ Use a new output directory; existing exports are not overwritten.
 
 ```text
 python tools/trajectory-reference/export_periodic.py --topology SYSTEM.pdb --trajectory INPUT.xtc --output target/periodic-reference
-cargo run -p kekule-traj --release --example trajectory_periodic_reference -- target/periodic-reference/topology.txt INPUT.xtc target/periodic-reference
+cargo run -p kekule --release --example trajectory_periodic_reference -- target/periodic-reference/topology.txt INPUT.xtc target/periodic-reference
 ```
 
 All coordinate components must agree within the predeclared tolerance of
@@ -58,7 +58,7 @@ relaxing compressed-data validation.
 ## Informational performance check
 
 ```text
-cargo bench -p kekule-traj --bench frame_workflow -- SYSTEM.cif
+cargo bench -p kekule --bench frame_workflow -- SYSTEM.cif
 ```
 
 The benchmark repeats the coordinates and annotations of an external mmCIF model
