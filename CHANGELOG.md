@@ -36,6 +36,22 @@ are marked **Breaking:**.
   other side cannot hold (`SampleSetError::NotConvertible`, or frames that
   record a time or step only in part), so a conversion that succeeds loses
   nothing.
+- Analysis of sample sets (SeekDelta K72b). `SampleSet::superpose`, `rmsd`,
+  and `aligned_rmsd` act on every sample. `SampleSet::rmsf`,
+  `contact_occupancy`, and `group_contact_occupancy` observe the members of
+  the distribution, each with its probability, and leave the other samples
+  out; without a distribution they observe every sample with weight one.
+  `SampleSet::cluster_by_radius(_with)`, `pairwise_fitted_rmsd(_with)`,
+  `cluster_hierarchical`, and `cluster_k_medoids` cluster the members, or
+  every sample without a distribution. Their distance matrices and
+  partitions are indexed by member position, so `DistributionMut::regroup`
+  installs a partition directly, and their errors name sample indices.
+  `DistributionMut::assign_boltzmann_populations` sets state populations
+  from state energies and records the temperature, refusing with
+  `Missing(StateEnergies)`. `ClusteringError::SampleSet` wraps what a set
+  lacks for clustering, such as the state energies `ClusterOrder::Energy`
+  needs. The ensemble, trajectory, and series methods share these
+  implementations, so a converted collection gives identical results.
 - Biological assemblies (SeekDelta K66, K67). Interpretation reports list
   the assemblies an entry states: `StructureInterpretationReport::assemblies`
   reads mmCIF `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
@@ -855,6 +871,10 @@ are marked **Breaking:**.
 
 ### Changed
 
+- Clustering error texts name what applies to sample sets as well as
+  ensembles (SeekDelta K72b): `ClusteringError::PairFit` reads "Cannot fit
+  samples 0 and 4." and `ClusteringError::MatrixMismatch` "The distance
+  matrix covers 2 members, but there are 3 to cluster."
 - **Breaking:** `StructureKind` has two variants (SeekDelta K72):
   `StructureKind::Model`, and `StructureKind::Sample` with a
   `SampleContext`. The context reports the sample's place in its order

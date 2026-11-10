@@ -13,7 +13,7 @@ use crate::topology::{
 use crate::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 
 use super::partition::EnsemblePartition;
-use super::sample_set::SampleStructure;
+use super::sample_set::{boltzmann_weights, thermal_energy, SampleStructure};
 use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     validate_binding,
@@ -924,55 +924,21 @@ impl Ensemble {
         temperature: Quantity<f64>,
     ) -> Result<(), EnsembleError> {
         let temperature = checked_temperature(temperature)?;
-        let thermal_energy = MOLAR_GAS_CONSTANT * temperature;
-        if !(thermal_energy.is_finite() && thermal_energy > 0.0) {
-            return Err(EnsembleError::InvalidTemperature);
-        }
+        let thermal_energy =
+            thermal_energy(temperature).ok_or(EnsembleError::InvalidTemperature)?;
         let energies = self.state_energies()?;
-        let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
-        let targets = energies
-            .iter()
-            .map(|energy| (-(energy - minimum) / thermal_energy).exp())
-            .collect::<Vec<_>>();
-        let target_total = targets.iter().sum::<f64>();
-        let scaled = self.scaled_weights();
-        let total = scaled.iter().sum::<f64>();
-        let maximum = self.max_weight();
-        let populations = self.scaled_state_populations();
-        // Each state's share of the total weight becomes its target share:
-        // its samples scale by that share times the total over its
-        // population. A state far lighter than the heaviest sample has a
-        // population that underflows when scaled by the heaviest weight, so
-        // its samples are normalized within the state instead, keeping every
-        // intermediate value representable.
-        let mut state_maxima = vec![0.0_f64; self.states.len()];
-        for (sample, state) in self.samples.iter().zip(self.partition.assignments()) {
-            state_maxima[*state] = state_maxima[*state].max(sample.weight);
-        }
-        let mut within = vec![0.0; self.states.len()];
-        for (sample, state) in self.samples.iter().zip(self.partition.assignments()) {
-            within[*state] += sample.weight / state_maxima[*state];
-        }
-        let shares = targets
-            .iter()
-            .map(|target| target / target_total)
-            .collect::<Vec<_>>();
         let weights = self
             .samples
             .iter()
-            .zip(self.partition.assignments())
-            .map(|(sample, state)| {
-                let factor = shares[*state] * (total / populations[*state]);
-                let weight = if factor.is_finite() {
-                    sample.weight * factor
-                } else {
-                    (sample.weight / state_maxima[*state])
-                        * (shares[*state] * total / within[*state])
-                        * maximum
-                };
-                checked_weight(weight)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|sample| sample.weight)
+            .collect::<Vec<_>>();
+        let weights = boltzmann_weights(
+            thermal_energy,
+            &energies,
+            &weights,
+            self.partition.assignments(),
+        )
+        .map_err(|_| StructureError::InvalidWeight)?;
         for (sample, weight) in self.samples.iter_mut().zip(weights) {
             sample.weight = weight;
         }
@@ -1304,9 +1270,6 @@ impl EnsembleState {
         &mut self.properties
     }
 }
-
-/// The molar gas constant `N_A k_B` in kJ/(mol K), exact since the 2019 SI.
-const MOLAR_GAS_CONSTANT: f64 = 8.314_462_618_153_24e-3;
 
 fn checked_weight(weight: f64) -> Result<f64, StructureError> {
     if weight.is_finite() && weight > 0.0 {

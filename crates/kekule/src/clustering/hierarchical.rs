@@ -4,20 +4,22 @@ use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentOptions, FitAtoms, NormalizedWeights,
 };
 use crate::parallel::map_ranges;
-use crate::structure::{Ensemble, ModelView};
+use crate::structure::{Ensemble, EnsemblePartition, SampleSet};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::run::{FirstFailure, Stop, Tracker};
-use super::{undirected, ClusteringError, ClusteringRun};
-use crate::structure::EnsemblePartition;
+use super::{sample_index, undirected, Clustered, ClusteringError, ClusteringRun};
 
-/// Symmetric pairwise distances between the members of one ensemble, stored
-/// once per unordered pair in [`CANONICAL_LENGTH_UNIT`].
+/// Symmetric pairwise distances between the members of one sample set's
+/// distribution or one ensemble, stored once per unordered pair in
+/// [`CANONICAL_LENGTH_UNIT`].
 ///
-/// The condensed order lists the pairs `(i, j)` with `i < j` row by row:
+/// Members are numbered by member position, from zero. The condensed order
+/// lists the pairs `(i, j)` with `i < j` row by row:
 /// `(0, 1), (0, 2), ..., (0, n - 1), (1, 2), ...`, the order SciPy's
 /// `squareform` uses. Build one from fitted RMSDs with
-/// [`Ensemble::pairwise_fitted_rmsd`] or from any other distances with
+/// [`SampleSet::pairwise_fitted_rmsd`] or
+/// [`Ensemble::pairwise_fitted_rmsd`], or from any other distances with
 /// [`Self::from_condensed`]. It stores `n (n - 1) / 2` values, so memory
 /// grows quadratically with the member count.
 #[derive(Debug, Clone, PartialEq)]
@@ -304,6 +306,244 @@ impl Dendrogram {
     }
 }
 
+impl Clustered<'_> {
+    fn pairwise_fitted_rmsd(
+        &self,
+        atoms: FitAtoms<'_>,
+        options: AlignmentOptions<'_>,
+        run: ClusteringRun<'_>,
+    ) -> Result<DistanceMatrix, ClusteringError> {
+        let atoms = undirected(atoms)?;
+        let (views, samples) = (&self.views, self.samples);
+        let members = views.len();
+        let expected = condensed_len(members)?;
+        let Some(first) = views.first() else {
+            Tracker::start(run, 0, 0)?;
+            return Ok(DistanceMatrix {
+                members,
+                values: Vec::new(),
+            });
+        };
+        let sets = atoms.pair_sets(*first, *first)?;
+        check_fit_count(atoms.pair_count())?;
+        let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
+        let policy = options.periodic_policy();
+        let tracker = Tracker::start(run, expected, atoms.pair_count())?;
+        let failure = FirstFailure::new();
+        let ranges = map_ranges(
+            tracker.executor(),
+            expected,
+            tracker.fits_per_work_item(),
+            |pairs| {
+                let (mut moving, mut reference) = condensed_pair(members, pairs.start);
+                let mut values = Vec::with_capacity(pairs.len());
+                let mut fits = 0;
+                for pair in pairs {
+                    if failure.precedes(pair) {
+                        return Err(Stop::Superseded);
+                    }
+                    let fit = best_kabsch(views[moving], views[reference], &sets, weights, policy)
+                        .map_err(|source| {
+                            failure.record(pair);
+                            ClusteringError::PairFit {
+                                first: sample_index(samples, moving),
+                                second: sample_index(samples, reference),
+                                source: Box::new(source),
+                            }
+                        })?;
+                    values.push(fit.rmsd().into_value());
+                    fits += 1;
+                    if fits == tracker.fits_per_checkpoint() {
+                        tracker.checkpoint(fits)?;
+                        fits = 0;
+                    }
+                    reference += 1;
+                    if reference == members {
+                        moving += 1;
+                        reference = moving + 1;
+                    }
+                }
+                tracker.finish(fits);
+                Ok(values)
+            },
+        );
+        let mut values = Vec::with_capacity(expected);
+        for range in ranges {
+            values.extend(range.map_err(Stop::into_error)?);
+        }
+        Ok(DistanceMatrix { members, values })
+    }
+
+    fn cluster_hierarchical(
+        &self,
+        distances: &DistanceMatrix,
+        linkage: Linkage,
+        cut: Cut,
+    ) -> Result<EnsemblePartition, ClusteringError> {
+        self.check_matrix(distances)?;
+        let assignments = distances.dendrogram(linkage).cut(cut)?;
+        let representatives = weighted_medoids(&self.scaled_weights(), distances, &assignments);
+        Ok(EnsemblePartition::from_parts_unchecked(
+            assignments,
+            representatives,
+        ))
+    }
+
+    /// Checks that `distances` covers the members.
+    pub(super) fn check_matrix(&self, distances: &DistanceMatrix) -> Result<(), ClusteringError> {
+        if distances.member_count() != self.len() {
+            return Err(ClusteringError::MatrixMismatch {
+                expected: self.len(),
+                actual: distances.member_count(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// The weighted medoid of every cluster of `assignments`, whose clusters
+/// are numbered densely from zero, with members weighted by `weights`.
+fn weighted_medoids(
+    weights: &[f64],
+    distances: &DistanceMatrix,
+    assignments: &[usize],
+) -> Vec<usize> {
+    let distances = ObjectiveDistances::new(distances);
+    let clusters = assignments.iter().max().map_or(0, |last| last + 1);
+    let mut members = vec![Vec::new(); clusters];
+    for (member, cluster) in assignments.iter().enumerate() {
+        members[*cluster].push(member);
+    }
+    members
+        .iter()
+        .map(|cluster| {
+            let mut best = (cluster[0], f64::INFINITY);
+            for candidate in cluster {
+                let cost = cluster
+                    .iter()
+                    .map(|other| weights[*other] * distances.at(*candidate, *other))
+                    .sum::<f64>();
+                if cost < best.1 {
+                    best = (*candidate, cost);
+                }
+            }
+            best.0
+        })
+        .collect()
+}
+
+impl SampleSet {
+    /// Fitted RMSD between every pair of members of the set's distribution,
+    /// or of every pair of samples of a set without one, after a
+    /// [`fit`](crate::alignment::fit) over `atoms` with the weights and
+    /// periodic policy of `options`.
+    ///
+    /// The matrix is indexed by member position: its member `i` is the `i`th
+    /// member ([`Distribution::members`](crate::structure::Distribution::members)),
+    /// or sample `i` without a distribution, so it fits
+    /// [`Self::cluster_hierarchical`] and [`Self::cluster_k_medoids`] of this
+    /// set. Samples outside the distribution are left out. Fits, costs, and
+    /// threads are those of [`Ensemble::pairwise_fitted_rmsd`]; they run on
+    /// the calling thread, and [`Self::pairwise_fitted_rmsd_with`] spreads
+    /// them over threads, reports progress, and can be cancelled.
+    ///
+    /// ```
+    /// use kekule::geometry::Point3;
+    /// use kekule::structure::{
+    ///     Distribution, EnsemblePartition, Members, Positions, Sample, SampleSet,
+    /// };
+    /// use kekule::clustering::{Cut, Linkage};
+    /// use kekule::topology::AtomSelection;
+    /// use kekule::units::{Quantity, ANGSTROM};
+    ///
+    /// let topology = kekule::smiles::to_topology("CCO")?;
+    /// let mut set = SampleSet::new(topology.clone());
+    /// for stretch in [1.0, 1.0, 1.01, 1.3, 1.31] {
+    ///     let points = [
+    ///         Point3::new(0.0, 0.0, 0.0),
+    ///         Point3::new(1.5 * stretch, 0.0, 0.0),
+    ///         Point3::new(2.0, 1.2, 0.0),
+    ///     ];
+    ///     set.push(Sample::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
+    /// }
+    /// // Samples 1 to 4 are the members; sample 0 is left out.
+    /// let members = Members::Subset(vec![1, 2, 3, 4]);
+    /// set.set_distribution(Some(Distribution::new(members, EnsemblePartition::one_state(4))?))?;
+    ///
+    /// let atoms = AtomSelection::all(topology);
+    /// let matrix = set.pairwise_fitted_rmsd(&atoms, Default::default())?;
+    /// assert_eq!(matrix.member_count(), 4);
+    /// let cut = Cut::Height(Quantity::new(0.1, ANGSTROM));
+    /// let states = set.cluster_hierarchical(&matrix, Linkage::Complete, cut)?;
+    /// // By member position: members 0 and 1 (samples 1 and 2), then 2 and 3.
+    /// assert_eq!(states.assignments(), [0, 0, 1, 1]);
+    /// set.distribution_mut().unwrap().regroup(states)?;
+    /// assert_eq!(set.get(3).unwrap().state().unwrap().index(), 1);
+    /// assert!(set.get(0).unwrap().state().is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`Ensemble::pairwise_fitted_rmsd`], with
+    /// [`ClusteringError::PairFit`] naming both members by sample index.
+    pub fn pairwise_fitted_rmsd<'a>(
+        &self,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: AlignmentOptions<'_>,
+    ) -> Result<DistanceMatrix, ClusteringError> {
+        self.pairwise_fitted_rmsd_with(atoms, options, ClusteringRun::default())
+    }
+
+    /// [`Self::pairwise_fitted_rmsd`], with its fits run, followed and
+    /// stopped as `run` says, as [`Ensemble::pairwise_fitted_rmsd_with`]
+    /// describes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::pairwise_fitted_rmsd`], and [`ClusteringError::Cancelled`]
+    /// once `run`'s cancellation is requested.
+    ///
+    /// # Panics
+    ///
+    /// When a work item panics, which
+    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
+    /// the executor skips or repeats a work item.
+    pub fn pairwise_fitted_rmsd_with<'a>(
+        &self,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: AlignmentOptions<'_>,
+        run: ClusteringRun<'_>,
+    ) -> Result<DistanceMatrix, ClusteringError> {
+        Clustered::of_set(self).pairwise_fitted_rmsd(atoms.into(), options, run)
+    }
+
+    /// Hierarchical clustering of the members of the set's distribution, or
+    /// of every sample of a set without one, on `distances` indexed by
+    /// member position ([`Self::pairwise_fitted_rmsd`]), cut into flat
+    /// clusters, each represented by its weighted medoid.
+    ///
+    /// The clustering is [`Ensemble::cluster_hierarchical`]'s, with the
+    /// members' weights (equal without weights or a distribution). The
+    /// partition groups the members by member position; install it with
+    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)
+    /// or, without a distribution, as `Distribution::new(Members::All,
+    /// partition)` through [`Self::set_distribution`].
+    ///
+    /// # Errors
+    ///
+    /// [`ClusteringError::MatrixMismatch`] when the matrix covers a different
+    /// member count, and the errors of [`Dendrogram::cut`] for `cut`.
+    pub fn cluster_hierarchical(
+        &self,
+        distances: &DistanceMatrix,
+        linkage: Linkage,
+        cut: Cut,
+    ) -> Result<EnsemblePartition, ClusteringError> {
+        Clustered::of_set(self).cluster_hierarchical(distances, linkage, cut)
+    }
+}
+
 impl Ensemble {
     /// Fitted RMSD between every pair of members, after a
     /// [`fit`](crate::alignment::fit) over `atoms` with the weights and
@@ -398,68 +638,7 @@ impl Ensemble {
         options: AlignmentOptions<'_>,
         run: ClusteringRun<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
-        let atoms = undirected(atoms.into())?;
-        let views = self
-            .iter()
-            .map(|member| member.as_model_view())
-            .collect::<Vec<ModelView<'_>>>();
-        let members = views.len();
-        let expected = condensed_len(members)?;
-        let Some(first) = views.first() else {
-            Tracker::start(run, 0, 0)?;
-            return Ok(DistanceMatrix {
-                members,
-                values: Vec::new(),
-            });
-        };
-        let sets = atoms.pair_sets(*first, *first)?;
-        check_fit_count(atoms.pair_count())?;
-        let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
-        let policy = options.periodic_policy();
-        let tracker = Tracker::start(run, expected, atoms.pair_count())?;
-        let failure = FirstFailure::new();
-        let ranges = map_ranges(
-            tracker.executor(),
-            expected,
-            tracker.fits_per_work_item(),
-            |pairs| {
-                let (mut moving, mut reference) = condensed_pair(members, pairs.start);
-                let mut values = Vec::with_capacity(pairs.len());
-                let mut fits = 0;
-                for pair in pairs {
-                    if failure.precedes(pair) {
-                        return Err(Stop::Superseded);
-                    }
-                    let fit = best_kabsch(views[moving], views[reference], &sets, weights, policy)
-                        .map_err(|source| {
-                            failure.record(pair);
-                            ClusteringError::PairFit {
-                                first: moving,
-                                second: reference,
-                                source: Box::new(source),
-                            }
-                        })?;
-                    values.push(fit.rmsd().into_value());
-                    fits += 1;
-                    if fits == tracker.fits_per_checkpoint() {
-                        tracker.checkpoint(fits)?;
-                        fits = 0;
-                    }
-                    reference += 1;
-                    if reference == members {
-                        moving += 1;
-                        reference = moving + 1;
-                    }
-                }
-                tracker.finish(fits);
-                Ok(values)
-            },
-        );
-        let mut values = Vec::with_capacity(expected);
-        for range in ranges {
-            values.extend(range.map_err(Stop::into_error)?);
-        }
-        Ok(DistanceMatrix { members, values })
+        Clustered::of_ensemble(self).pairwise_fitted_rmsd(atoms.into(), options, run)
     }
 
     /// Hierarchical clustering of the members on `distances`, cut into flat
@@ -481,46 +660,7 @@ impl Ensemble {
         linkage: Linkage,
         cut: Cut,
     ) -> Result<EnsemblePartition, ClusteringError> {
-        if distances.member_count() != self.len() {
-            return Err(ClusteringError::MatrixMismatch {
-                expected: self.len(),
-                actual: distances.member_count(),
-            });
-        }
-        let assignments = distances.dendrogram(linkage).cut(cut)?;
-        let representatives = self.weighted_medoids(distances, &assignments);
-        Ok(EnsemblePartition::from_parts_unchecked(
-            assignments,
-            representatives,
-        ))
-    }
-
-    /// The weighted medoid of every cluster of `assignments`, whose clusters
-    /// are numbered densely from zero.
-    fn weighted_medoids(&self, distances: &DistanceMatrix, assignments: &[usize]) -> Vec<usize> {
-        let weights = self.scaled_weights();
-        let distances = ObjectiveDistances::new(distances);
-        let clusters = assignments.iter().max().map_or(0, |last| last + 1);
-        let mut members = vec![Vec::new(); clusters];
-        for (member, cluster) in assignments.iter().enumerate() {
-            members[*cluster].push(member);
-        }
-        members
-            .iter()
-            .map(|cluster| {
-                let mut best = (cluster[0], f64::INFINITY);
-                for candidate in cluster {
-                    let cost = cluster
-                        .iter()
-                        .map(|other| weights[*other] * distances.at(*candidate, *other))
-                        .sum::<f64>();
-                    if cost < best.1 {
-                        best = (*candidate, cost);
-                    }
-                }
-                best.0
-            })
-            .collect()
+        Clustered::of_ensemble(self).cluster_hierarchical(distances, linkage, cut)
     }
 }
 
