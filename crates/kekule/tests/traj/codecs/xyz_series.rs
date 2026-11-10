@@ -5,7 +5,7 @@ use std::sync::Arc;
 use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use kekule::geometry::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Series, SeriesAxis, SeriesItem, TrajectoryFrame};
+use kekule::structure::{SampleSet, Series, SeriesAxis, SeriesItem, TrajectoryFrame};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
@@ -219,6 +219,76 @@ fn cells_are_rejected_or_omitted_and_items_follow_written_frames() {
     writer.write_series(&boxed).unwrap();
     let written = String::from_utf8(writer.finish().unwrap()).unwrap();
     assert_eq!(written.lines().count(), 4 * 5);
+}
+
+/// Writes `set` and returns the text and report.
+fn write_set(
+    set: &SampleSet,
+    options: XyzWriteOptions,
+) -> Result<(String, WriteReport), TrajectoryIoError> {
+    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "s.xyz")?;
+    writer.write_sample_set(set)?;
+    let report = writer.report().clone();
+    Ok((String::from_utf8(writer.finish()?).unwrap(), report))
+}
+
+#[test]
+fn a_sample_set_writes_what_the_series_it_converts_from_writes() {
+    let outcome = |result: Result<(String, WriteReport), TrajectoryIoError>| {
+        result.map_err(|error| (error.kind(), error.field(), error.frame()))
+    };
+    let mut valued = history();
+    valued
+        .get_mut(1)
+        .unwrap()
+        .properties_mut()
+        .owner_mut()
+        .insert(
+            PropertyKey::new("energy").unwrap(),
+            PropertyValue::real(-1.0, KILOJOULE_PER_MOLE).unwrap(),
+        )
+        .unwrap();
+    let items = history()
+        .iter()
+        .map(|item| item.payload().clone().with_cell(cell()))
+        .collect::<Vec<_>>();
+    let boxed = Series::from_items(history().shared_topology(), SeriesAxis::Step, items).unwrap();
+    let fail = UnrepresentablePolicy::Fail;
+    let omit = UnrepresentablePolicy::Omit;
+    // Places, then item properties and cells. A series checks an item's
+    // place before its properties, and a sample set checks every sample's
+    // properties before any place, so the item properties are checked only
+    // with places omitted.
+    let cases = [
+        (history(), vec![(fail, fail), (omit, fail)]),
+        (scan(), vec![(fail, fail), (omit, fail)]),
+        (valued, vec![(omit, fail), (omit, omit)]),
+        (boxed, vec![(fail, fail), (omit, fail), (omit, omit)]),
+    ];
+    for (index, (series, policies)) in cases.into_iter().enumerate() {
+        let set = SampleSet::from_series(series.clone());
+        for (places, rest) in policies {
+            let old = write(
+                &series,
+                options()
+                    .with_series_metadata(places)
+                    .with_frame_properties(rest)
+                    .with_cell(rest),
+            );
+            let new = write_set(
+                &set,
+                options()
+                    .with_sample_metadata(places)
+                    .with_frame_properties(rest)
+                    .with_cell(rest),
+            );
+            assert_eq!(
+                outcome(new),
+                outcome(old),
+                "series {index}, {places:?}, {rest:?}"
+            );
+        }
+    }
 }
 
 #[test]

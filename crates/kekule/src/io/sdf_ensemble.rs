@@ -1,12 +1,19 @@
-//! Explicit assembly of interpreted SDF records into one ensemble.
+//! Explicit assembly of interpreted SDF records into one ensemble or
+//! sample set.
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
-use crate::structure::{Ensemble, EnsembleError, EnsemblePartition, EnsembleSample};
-use crate::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
+use crate::structure::{
+    Ensemble, EnsembleError, EnsemblePartition, EnsembleSample, Order, SampleSet,
+};
+use crate::units::{
+    Quantity, Unit, ANGSTROM, BOHR, COULOMB, DEGREE, DIMENSIONLESS, ELEMENTARY_CHARGE, FEMTOSECOND,
+    JOULE, KELVIN, KILOCALORIE, KILOCALORIE_PER_MOLE, KILOJOULE, KILOJOULE_PER_MOLE, METER, MOLE,
+    NANOMETER, PICOSECOND, RADIAN, SECOND, SQUARE_ANGSTROM, SQUARE_NANOMETER,
+};
 
 use super::sdf_document::SdfRecordInterpretation;
 use super::sdf_write::{
-    SDF_ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD, SDF_STATE_FIELD, SDF_TEMPERATURE_FIELD,
-    SDF_WEIGHT_FIELD,
+    SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD, SDF_ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD,
+    SDF_STATE_FIELD, SDF_STEP_FIELD, SDF_TEMPERATURE_FIELD, SDF_WEIGHT_FIELD,
 };
 
 fn ensemble_error(error: EnsembleError) -> FormatError {
@@ -198,6 +205,142 @@ pub(crate) fn sdf_ensemble<'a>(
             .with_source(error)
         })?;
     Ok(ensemble)
+}
+
+/// Assembles interpreted SDF records as [`sdf_ensemble`] does, into an
+/// unordered sample set whose distribution is that ensemble's, and orders
+/// the samples by the records' [`SDF_STEP_FIELD`] or, in the unit
+/// [`SDF_COORDINATE_UNIT_FIELD`] names, [`SDF_COORDINATE_FIELD`], when
+/// every record carries one.
+pub(crate) fn sdf_sample_set<'a>(
+    records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
+) -> Result<SampleSet, FormatError> {
+    let records = records.into_iter().collect::<Vec<_>>();
+    let ensemble = sdf_ensemble(records.iter().copied())?;
+    let order = record_order(&records)?;
+    let mut set = SampleSet::from_ensemble(ensemble);
+    set.set_order(order).map_err(|error| {
+        FormatError::interpret(
+            Format::Sdf,
+            DiagnosticKind::InvalidValue,
+            "The records' coordinates do not form an order.",
+        )
+        .with_source(error)
+    })?;
+    Ok(set)
+}
+
+/// The units a record's [`SDF_COORDINATE_UNIT_FIELD`] can name, by symbol.
+const COORDINATE_UNITS: [Unit; 21] = [
+    DIMENSIONLESS,
+    METER,
+    NANOMETER,
+    ANGSTROM,
+    BOHR,
+    SQUARE_ANGSTROM,
+    SQUARE_NANOMETER,
+    SECOND,
+    PICOSECOND,
+    FEMTOSECOND,
+    KELVIN,
+    MOLE,
+    COULOMB,
+    ELEMENTARY_CHARGE,
+    RADIAN,
+    DEGREE,
+    JOULE,
+    KILOJOULE,
+    KILOCALORIE,
+    KILOJOULE_PER_MOLE,
+    KILOCALORIE_PER_MOLE,
+];
+
+/// The step or coordinate order the records' fields state: none when no
+/// record has a step or a coordinate, otherwise every record's.
+fn record_order(records: &[&SdfRecordInterpretation]) -> Result<Option<Order>, FormatError> {
+    let text = |record: &SdfRecordInterpretation, name: &str| {
+        record
+            .data_fields()
+            .iter()
+            .find(|field| field.name() == name)
+            .map(|field| field.value().trim().to_owned())
+    };
+    let has = |name: &str| {
+        records
+            .iter()
+            .position(|record| text(record, name).is_some())
+    };
+    let required = |index: usize, name: &str| {
+        text(records[index], name).ok_or_else(|| {
+            invalid(
+                DiagnosticKind::Inconsistent,
+                index + 1,
+                name,
+                "is missing. Other records have it.",
+            )
+        })
+    };
+    match (has(SDF_STEP_FIELD), has(SDF_COORDINATE_FIELD)) {
+        (None, None) => Ok(None),
+        (Some(_), Some(placed)) => Err(invalid(
+            DiagnosticKind::Inconsistent,
+            placed + 1,
+            SDF_COORDINATE_FIELD,
+            "is on a record of a set with steps.",
+        )),
+        (Some(_), None) => {
+            let steps = (0..records.len())
+                .map(|index| {
+                    let value = required(index, SDF_STEP_FIELD)?;
+                    value.parse::<u64>().map_err(|_| {
+                        invalid(
+                            DiagnosticKind::InvalidValue,
+                            index + 1,
+                            SDF_STEP_FIELD,
+                            &format!("holds {value:?}, not a step."),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Some(Order::Step(steps)))
+        }
+        (None, Some(_)) => {
+            let symbol = required(0, SDF_COORDINATE_UNIT_FIELD)?;
+            let unit = COORDINATE_UNITS
+                .into_iter()
+                .find(|unit| unit.to_string() == symbol)
+                .ok_or_else(|| {
+                    invalid(
+                        DiagnosticKind::InvalidValue,
+                        1,
+                        SDF_COORDINATE_UNIT_FIELD,
+                        &format!("holds {symbol:?}, not a known unit."),
+                    )
+                })?;
+            let values = (0..records.len())
+                .map(|index| {
+                    if required(index, SDF_COORDINATE_UNIT_FIELD)? != symbol {
+                        return Err(invalid(
+                            DiagnosticKind::Inconsistent,
+                            index + 1,
+                            SDF_COORDINATE_UNIT_FIELD,
+                            "differs from that of the first record.",
+                        ));
+                    }
+                    let value = required(index, SDF_COORDINATE_FIELD)?;
+                    value.parse::<f64>().map_err(|_| {
+                        invalid(
+                            DiagnosticKind::InvalidValue,
+                            index + 1,
+                            SDF_COORDINATE_FIELD,
+                            &format!("holds {value:?}, not a number."),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Some(Order::Coordinate { unit, values }))
+        }
+    }
 }
 
 /// One state per record without state fields; otherwise the states the

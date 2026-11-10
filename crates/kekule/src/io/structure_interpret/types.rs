@@ -13,7 +13,7 @@ use crate::diagnostics::{
     FormatError, FormatErrorDetail, SourceLocation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{Ensemble, Model};
+use crate::structure::{Ensemble, Model, SampleSet};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 /// Which coordinate model of a source one interpretation reads.
@@ -1660,6 +1660,64 @@ impl StructureEnsembleInterpretation {
     pub fn into_parts(self) -> (Ensemble, Vec<StructureInterpretationReport>) {
         (self.ensemble, self.reports)
     }
+}
+
+/// One shared-topology sample set and one report per sample, in sample
+/// order.
+#[derive(Debug, Clone)]
+pub struct StructureSampleSetInterpretation {
+    pub(crate) set: SampleSet,
+    pub(crate) reports: Vec<StructureInterpretationReport>,
+}
+
+impl StructureSampleSetInterpretation {
+    /// The interpreted sample set, one sample per selected model.
+    pub fn sample_set(&self) -> &SampleSet {
+        &self.set
+    }
+
+    /// One report per sample, in sample order.
+    pub fn reports(&self) -> &[StructureInterpretationReport] {
+        &self.reports
+    }
+
+    /// The topology all samples share.
+    pub fn topology(&self) -> &Topology {
+        self.set.topology()
+    }
+
+    /// The interpreted sample set, discarding the reports.
+    pub fn into_sample_set(self) -> SampleSet {
+        self.set
+    }
+
+    /// The sample set and its per-sample reports.
+    pub fn into_parts(self) -> (SampleSet, Vec<StructureInterpretationReport>) {
+        (self.set, self.reports)
+    }
+}
+
+impl StructureSampleSetInterpretation {
+    /// The set of an interpreted ensemble's samples, with its distribution
+    /// of equally weighted members and no stored weights.
+    pub(crate) fn from_ensemble(interpretation: StructureEnsembleInterpretation) -> Self {
+        let StructureEnsembleInterpretation { ensemble, reports } = interpretation;
+        Self {
+            set: equally_weighted_set(ensemble),
+            reports,
+        }
+    }
+}
+
+/// The set of an ensemble whose members weigh the same, without stored
+/// weights.
+fn equally_weighted_set(ensemble: Ensemble) -> SampleSet {
+    let mut set = SampleSet::from_ensemble(ensemble);
+    set.distribution_mut()
+        .expect("an ensemble's set has a distribution")
+        .set_weights(None)
+        .expect("clearing weights cannot fail");
+    set
 }
 
 #[cfg(test)]

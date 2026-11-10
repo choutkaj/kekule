@@ -113,6 +113,26 @@ fn structure_field(field: TrajectoryField) -> StructureField {
     }
 }
 
+/// The trajectory field that names the sample state `field`.
+pub(crate) fn sample_field(field: StructureField) -> TrajectoryField {
+    match field {
+        StructureField::Weight => TrajectoryField::Weight,
+        StructureField::Energy => TrajectoryField::Energy,
+        StructureField::State => TrajectoryField::State,
+        StructureField::Temperature => TrajectoryField::Temperature,
+        StructureField::Membership => TrajectoryField::Membership,
+        StructureField::Time => TrajectoryField::Time,
+        StructureField::Step => TrajectoryField::Step,
+        StructureField::ItemStep => TrajectoryField::ItemStep,
+        StructureField::ItemCoordinate => TrajectoryField::ItemCoordinate,
+        StructureField::Velocities => TrajectoryField::Velocities,
+        StructureField::Forces => TrajectoryField::Forces,
+        StructureField::AtomProperties => TrajectoryField::AtomProperties,
+        StructureField::BondProperties => TrajectoryField::BondProperties,
+        StructureField::Properties => TrajectoryField::Properties,
+    }
+}
+
 /// Adds `omissions` to `report`, summing counts of a kind it already has.
 pub(crate) fn record(report: &mut WriteReport, omissions: impl IntoIterator<Item = WriteOmission>) {
     *report = report

@@ -2,8 +2,8 @@
 use std::io::Write;
 
 use crate::structure::{
-    AsModelView, EnsembleSampleView, Membership, Model, ModelView, Place, SeriesItemView,
-    StructureKind, TrajectoryFrameView,
+    AsModelView, EnsembleSampleView, Membership, Model, ModelView, Place, SampleView,
+    SeriesItemView, StructureKind, TrajectoryFrameView,
 };
 use crate::units::{KELVIN, KILOJOULE_PER_MOLE};
 
@@ -20,6 +20,7 @@ pub struct SdfWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
+    sample_metadata: UnrepresentablePolicy,
 }
 
 impl SdfWriteOptions {
@@ -62,6 +63,23 @@ impl SdfWriteOptions {
     #[must_use]
     pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
         self.frame_metadata = frame_metadata;
+        self
+    }
+
+    /// The state of a sample set's sample that an SDF record cannot carry:
+    /// its time and MD step in a time order, its velocities and forces, and
+    /// its being outside the set's distribution, which a record cannot tell
+    /// from membership. By default writing a sample with any of them fails.
+    /// Its weight, state, state energy, and temperature, and its step or
+    /// coordinate, are always written as data fields.
+    pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
+        self.sample_metadata
+    }
+
+    /// Sets [`Self::sample_metadata`].
+    #[must_use]
+    pub const fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
+        self.sample_metadata = sample_metadata;
         self
     }
 }
@@ -109,20 +127,24 @@ const ITEM_FIELDS: [&str; 3] = [
 
 /// One SDF record: a model view with an optional title and data fields.
 ///
-/// Convert from `&Model`, a borrowed ensemble sample, trajectory frame, or
-/// series item, or `&SdfRecordInterpretation` (which keeps its title and
-/// data fields). An ensemble sample's weight, its state, and the ensemble's
-/// temperature follow its data fields as [`SDF_WEIGHT_FIELD`],
+/// Convert from `&Model`, a borrowed ensemble sample, trajectory frame,
+/// series item, or sample of a sample set, or `&SdfRecordInterpretation`
+/// (which keeps its title and data fields); `sdf::write(&set, options)`
+/// writes a record per sample. A sample's membership in a distribution,
+/// such as an ensemble sample's, follows its data fields: its weight, its
+/// state, and the distribution's temperature as [`SDF_WEIGHT_FIELD`],
 /// [`SDF_STATE_FIELD`], and [`SDF_TEMPERATURE_FIELD`]; a representative's
 /// record is marked with [`SDF_REPRESENTATIVE_FIELD`] and carries its
 /// state's energy as [`SDF_ENERGY_FIELD`], whichever way its view is passed.
-/// A series item's step follows its data fields as [`SDF_STEP_FIELD`], or
-/// its coordinate as [`SDF_COORDINATE_FIELD`] with
-/// [`SDF_COORDINATE_UNIT_FIELD`]. State, ensemble, series, and structure
+/// A step place, such as a series item's, follows as [`SDF_STEP_FIELD`], and
+/// a coordinate place as [`SDF_COORDINATE_FIELD`] with
+/// [`SDF_COORDINATE_UNIT_FIELD`]; a sample with both a membership and a
+/// place writes both groups. State, ensemble, series, set, and structure
 /// properties are not written; add the values a record should carry, such
 /// as a series item's energy, as data fields. A trajectory frame's time,
 /// step, velocities, and forces fail to write unless
-/// [`SdfWriteOptions::frame_metadata`] omits them.
+/// [`SdfWriteOptions::frame_metadata`] omits them, and so do a set sample's
+/// unless [`SdfWriteOptions::sample_metadata`] does.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
     model: ModelView<'a>,
@@ -188,6 +210,12 @@ impl<'a> From<SeriesItemView<'a>> for SdfRecordSource<'a> {
     }
 }
 
+impl<'a> From<SampleView<'a>> for SdfRecordSource<'a> {
+    fn from(sample: SampleView<'a>) -> Self {
+        Self::view(sample.as_model_view())
+    }
+}
+
 impl<'a> From<&'a SdfRecordInterpretation> for SdfRecordSource<'a> {
     fn from(record: &'a SdfRecordInterpretation) -> Self {
         Self::model(record.model())
@@ -206,8 +234,8 @@ pub(crate) fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
     Ok(String::from_utf8(output).expect("SDF writer emits UTF-8"))
 }
 
-/// Writes independent records in input order. An ensemble, trajectory, or
-/// series writes one record per sample, frame, or item
+/// Writes independent records in input order. An ensemble, trajectory,
+/// series, or sample set writes one record per sample, frame, or item
 /// (`sdf::write(&ensemble, options)`).
 pub(crate) fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     writer: &mut impl Write,
@@ -233,25 +261,27 @@ fn write_record(
             sample: None,
             frame: options.frame_metadata,
             item: None,
+            set: options.sample_metadata,
         },
     )?;
     // A sample's membership and its step or coordinate place, which travel
     // as data fields.
-    let (membership, place) = match record.model.kind() {
+    let (membership, place, of_set) = match record.model.kind() {
         StructureKind::Sample(context) => (
             context.membership(),
             context
                 .place()
                 .filter(|place| matches!(place, Place::Step(_) | Place::Coordinate(_))),
+            context.is_of_set(),
         ),
-        _ => (None, None),
+        _ => (None, None, false),
     };
     // The names a structure's own metadata uses, and what owns them.
     let reserved_by = |name: &str| {
         if membership.is_some() && SAMPLE_FIELDS.contains(&name) {
-            Some("ensemble sample")
+            Some(if of_set { "sample" } else { "ensemble sample" })
         } else if place.is_some() && ITEM_FIELDS.contains(&name) {
-            Some("series item")
+            Some(if of_set { "sample" } else { "series item" })
         } else {
             None
         }

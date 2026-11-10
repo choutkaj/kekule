@@ -34,13 +34,7 @@ impl SampleSet {
             .into_iter()
             .map(|sample| (Sample::from_structure(sample.structure), sample.weight))
             .unzip();
-        let distribution = Distribution {
-            members: Members::All,
-            weights: Some(weights),
-            partition,
-            states,
-            temperature,
-        };
+        let distribution = Distribution::ensemble(weights, partition, states, temperature);
         Self {
             topology,
             properties,
@@ -66,29 +60,7 @@ impl SampleSet {
     /// [`SampleSetError::UnexpectedStep`] for steps.
     pub fn from_trajectory(trajectory: Trajectory) -> Result<Self, SampleSetError> {
         let (topology, properties, frames) = trajectory.into_parts();
-        let timed = frames.first().is_some_and(|frame| frame.time.is_some());
-        let stepped = frames.first().is_some_and(|frame| frame.step.is_some());
-        for (sample, frame) in frames.iter().enumerate() {
-            match (timed, frame.time.is_some()) {
-                (true, false) => return Err(SampleSetError::MissingTime { sample }),
-                (false, true) => return Err(SampleSetError::UnexpectedTime { sample }),
-                _ => {}
-            }
-            match (stepped, frame.step.is_some()) {
-                (true, false) => return Err(SampleSetError::MissingStep { sample }),
-                (false, true) => return Err(SampleSetError::UnexpectedStep { sample }),
-                _ => {}
-            }
-        }
-        let times = frames
-            .iter()
-            .map(|frame| frame.time.map(Quantity::into_value))
-            .collect::<Option<Vec<_>>>();
-        let steps = frames
-            .iter()
-            .map(|frame| frame.step)
-            .collect::<Option<Vec<_>>>();
-        let axis = TimeAxis::from_columns(times.filter(|_| timed), steps.filter(|_| stepped));
+        let axis = TimeAxis::of_frames(&frames)?;
         let samples = frames
             .into_iter()
             .map(|frame| {
@@ -119,25 +91,7 @@ impl SampleSet {
     /// [`Self::to_series`] converts back to an equal series.
     pub fn from_series(series: Series) -> Self {
         let (topology, properties, axis, items) = series.into_parts();
-        let order = match axis {
-            SeriesAxis::Step => Order::Step(
-                items
-                    .iter()
-                    .map(|item| item.step().expect("step items lie on a step axis"))
-                    .collect(),
-            ),
-            SeriesAxis::Coordinate(unit) => Order::Coordinate {
-                unit,
-                values: items
-                    .iter()
-                    .map(|item| {
-                        item.coordinate()
-                            .expect("coordinate items lie on a coordinate axis")
-                            .into_value()
-                    })
-                    .collect(),
-            },
-        };
+        let order = Order::of_items(axis, &items);
         let samples = items
             .into_iter()
             .map(|item| {
@@ -391,6 +345,137 @@ impl SampleSet {
             properties,
             axis,
             items,
+        }
+    }
+}
+
+impl SampleSet {
+    /// Sample `index`, which must exist, copied as a trajectory frame with
+    /// its place on a time order; occupancies and B-factors are dropped.
+    pub(crate) fn frame(&self, index: usize) -> TrajectoryFrame {
+        let structure = self.samples[index].structure();
+        let (time, step) = match &self.order {
+            Some(Order::Time(axis)) => (axis.time(index), axis.step(index)),
+            _ => (None, None),
+        };
+        TrajectoryFrame {
+            positions: structure.positions.clone(),
+            cell: structure.cell,
+            properties: structure.properties.clone(),
+            velocities: structure.velocities.clone(),
+            forces: structure.forces.clone(),
+            time,
+            step,
+        }
+    }
+}
+
+impl Distribution {
+    /// The distribution of an ensemble's samples: every one a member, with
+    /// the ensemble's weights, partition, states, and temperature.
+    fn ensemble(
+        weights: Vec<f64>,
+        partition: crate::structure::EnsemblePartition,
+        states: Vec<crate::structure::EnsembleState>,
+        temperature: Option<Quantity<f64>>,
+    ) -> Self {
+        Self {
+            members: Members::All,
+            weights: Some(weights),
+            partition,
+            states,
+            temperature,
+        }
+    }
+
+    /// The distribution [`SampleSet::from_ensemble`] gives `ensemble`,
+    /// copying no coordinates.
+    pub(crate) fn of_ensemble(ensemble: &Ensemble) -> Self {
+        Self::ensemble(
+            ensemble
+                .samples
+                .iter()
+                .map(|sample| sample.weight)
+                .collect(),
+            ensemble.partition.clone(),
+            ensemble.states.clone(),
+            ensemble.temperature,
+        )
+    }
+}
+
+impl TimeAxis {
+    /// The axis of these frames' times and steps.
+    ///
+    /// # Errors
+    ///
+    /// The axis has a time for every frame or for none, and so a step:
+    /// [`SampleSetError::MissingTime`] or [`SampleSetError::UnexpectedTime`]
+    /// for the first frame whose time differs from the first frame in being
+    /// recorded, and [`SampleSetError::MissingStep`] or
+    /// [`SampleSetError::UnexpectedStep`] for steps.
+    fn of_frames(frames: &[TrajectoryFrame]) -> Result<Self, SampleSetError> {
+        let timed = frames.first().is_some_and(|frame| frame.time.is_some());
+        let stepped = frames.first().is_some_and(|frame| frame.step.is_some());
+        for (sample, frame) in frames.iter().enumerate() {
+            match (timed, frame.time.is_some()) {
+                (true, false) => return Err(SampleSetError::MissingTime { sample }),
+                (false, true) => return Err(SampleSetError::UnexpectedTime { sample }),
+                _ => {}
+            }
+            match (stepped, frame.step.is_some()) {
+                (true, false) => return Err(SampleSetError::MissingStep { sample }),
+                (false, true) => return Err(SampleSetError::UnexpectedStep { sample }),
+                _ => {}
+            }
+        }
+        let times = frames
+            .iter()
+            .map(|frame| frame.time.map(Quantity::into_value))
+            .collect::<Option<Vec<_>>>();
+        let steps = frames
+            .iter()
+            .map(|frame| frame.step)
+            .collect::<Option<Vec<_>>>();
+        Ok(Self::from_columns(
+            times.filter(|_| timed),
+            steps.filter(|_| stepped),
+        ))
+    }
+}
+
+impl Order {
+    /// The time order [`SampleSet::from_trajectory`] gives `trajectory`,
+    /// with its errors.
+    pub(crate) fn of_trajectory(trajectory: &Trajectory) -> Result<Self, SampleSetError> {
+        TimeAxis::of_frames(&trajectory.frames).map(Self::Time)
+    }
+
+    /// The step or coordinate order [`SampleSet::from_series`] gives
+    /// `series`.
+    pub(crate) fn of_series(series: &Series) -> Self {
+        Self::of_items(series.axis, &series.items)
+    }
+
+    fn of_items(axis: SeriesAxis, items: &[SeriesItem]) -> Self {
+        match axis {
+            SeriesAxis::Step => Self::Step(
+                items
+                    .iter()
+                    .map(|item| item.step().expect("step items lie on a step axis"))
+                    .collect(),
+            ),
+            SeriesAxis::Coordinate(unit) => Self::Coordinate {
+                unit,
+                values: items
+                    .iter()
+                    .map(|item| {
+                        item.coordinate()
+                            .expect("coordinate items lie on a coordinate axis")
+                            .into_value()
+                    })
+                    .collect(),
+            },
         }
     }
 }

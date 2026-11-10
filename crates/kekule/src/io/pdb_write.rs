@@ -29,17 +29,17 @@ use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters}
 use crate::io::mmcif_write::bond_order_name;
 use crate::io::structure_interpret::{
     is_metal, StructureEnsembleInterpretation, StructureInterpretation,
-    StructureInterpretationReport,
+    StructureInterpretationReport, StructureSampleSetInterpretation,
 };
 use crate::io::write_error::{
-    check_structure_state, record_multi_model_ensemble, record_multi_model_series, Omissions,
-    StatePolicies,
+    check_structure_state, record_multi_model_ensemble, record_multi_model_sample_set,
+    record_multi_model_series, Omissions, StatePolicies,
 };
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::molecule::{BondOrder, ImplicitHydrogens};
-use crate::structure::{AsModelView, Ensemble, Model, ModelView, Series};
+use crate::structure::{AsModelView, Ensemble, Model, ModelView, SampleSet, SampleView, Series};
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId,
     Topology, TopologyAtomIndex,
@@ -83,6 +83,7 @@ pub struct PdbWriteOptions {
     ensemble_metadata: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
     series_metadata: UnrepresentablePolicy,
+    sample_metadata: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
     chemistry: UnrepresentablePolicy,
@@ -138,13 +139,34 @@ impl PdbWriteOptions {
         self
     }
 
-    /// The policies for the sample, frame, and series item state of one
-    /// structure.
+    /// The state of a sample set's samples that PDB cannot carry. A PDB
+    /// reader gives one state of equally weighted samples without an order,
+    /// so by default a set fails to write when a sample is outside its
+    /// distribution, weights are unequal, it has more than one state, a
+    /// state energy, a temperature, or an order, or a sample has velocities
+    /// or forces; so does a single sample with a membership, a place,
+    /// velocities, or forces. [`UnrepresentablePolicy::Omit`] writes the
+    /// models without them and reports a [`WriteOmission::StructureState`]
+    /// for each field.
+    pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
+        self.sample_metadata
+    }
+
+    /// Sets [`Self::sample_metadata`].
+    #[must_use]
+    pub const fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
+        self.sample_metadata = sample_metadata;
+        self
+    }
+
+    /// The policies for the sample, frame, series item, and sample set state
+    /// of one structure.
     const fn state_policies(&self) -> StatePolicies {
         StatePolicies {
             sample: Some(self.ensemble_metadata),
             frame: self.frame_metadata,
             item: Some(self.series_metadata),
+            set: self.sample_metadata,
         }
     }
 
@@ -433,6 +455,17 @@ pub enum PdbWriteIssue {
     },
     /// The series has no items.
     EmptySeries,
+    /// The 1-based sample `sample` of a sample set has state PDB cannot
+    /// carry, with [`PdbWriteOptions::sample_metadata`] set to fail. A
+    /// temperature is reported for the first sample.
+    UnrepresentableSample {
+        /// The 1-based sample number.
+        sample: usize,
+        /// The state; see [`PdbWriteOptions::sample_metadata`].
+        field: StructureField,
+    },
+    /// The sample set has no samples.
+    EmptySampleSet,
     /// The number of interpretation reports does not match the number of
     /// structures: one for a structure, one per sample or item.
     ReportCountMismatch {
@@ -445,14 +478,16 @@ pub enum PdbWriteIssue {
 
 impl PdbWriteIssue {
     /// The diagnostic kind of a write error with this detail:
-    /// [`DiagnosticKind::Inconsistent`] for an empty ensemble or series and
+    /// [`DiagnosticKind::Inconsistent`] for an empty ensemble, series, or
+    /// sample set and
     /// for reports that do not match the structures, and
     /// [`DiagnosticKind::Unsupported`] otherwise.
     pub const fn kind(&self) -> DiagnosticKind {
         match self {
-            Self::EmptyEnsemble | Self::EmptySeries | Self::ReportCountMismatch { .. } => {
-                DiagnosticKind::Inconsistent
-            }
+            Self::EmptyEnsemble
+            | Self::EmptySeries
+            | Self::EmptySampleSet
+            | Self::ReportCountMismatch { .. } => DiagnosticKind::Inconsistent,
             _ => DiagnosticKind::Unsupported,
         }
     }
@@ -555,6 +590,13 @@ impl fmt::Display for PdbWriteIssue {
                 "The {field} of series item {item} has no PDB representation."
             ),
             Self::EmptySeries => f.write_str("The series has no items."),
+            Self::UnrepresentableSample { sample, field } => {
+                write!(
+                    f,
+                    "The {field} of sample {sample} has no PDB representation."
+                )
+            }
+            Self::EmptySampleSet => f.write_str("The sample set has no samples."),
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
                 "The entry has {} and {}.",
@@ -570,14 +612,17 @@ fn fail(issue: PdbWriteIssue) -> FormatError {
         .with_detail(FormatErrorDetail::PdbWrite(issue))
 }
 
-/// One PDB entry to write: a structure, an ensemble, or a series, and the
-/// interpretation reports whose metal coordination it states.
+/// One PDB entry to write: a structure, an ensemble, a series, or a sample
+/// set, and the interpretation reports whose metal coordination it states.
 ///
-/// Convert from `&Model`, `&Ensemble`, `&Series`, `&StructureInterpretation`,
-/// or `&StructureEnsembleInterpretation`; interpretations keep their source
+/// Convert from `&Model`, `&Ensemble`, `&Series`, `&SampleSet`,
+/// [`SampleView`], `&StructureInterpretation`,
+/// `&StructureEnsembleInterpretation`, or
+/// `&StructureSampleSetInterpretation`; interpretations keep their source
 /// reports. [`Self::structure`] accepts any borrowed model view, such as an
-/// ensemble sample, a trajectory frame, or a series item, whose own state
-/// fails to write unless the write options omit it.
+/// ensemble sample, a trajectory frame, a series item, or a sample of a
+/// sample set, whose own state fails to write unless the write options omit
+/// it.
 #[derive(Debug, Clone, Copy)]
 pub struct PdbSource<'a> {
     content: Content<'a>,
@@ -589,6 +634,7 @@ enum Content<'a> {
     Structure(ModelView<'a>),
     Ensemble(&'a Ensemble),
     Series(&'a Series),
+    SampleSet(&'a SampleSet),
 }
 
 impl<'a> PdbSource<'a> {
@@ -614,6 +660,16 @@ impl<'a> PdbSource<'a> {
     pub fn series(series: &'a Series) -> Self {
         Self {
             content: Content::Series(series),
+            reports: None,
+        }
+    }
+
+    /// A sample set, one `MODEL` per sample in sample order. The state PDB
+    /// cannot carry follows [`PdbWriteOptions::sample_metadata`]; set and
+    /// sample properties are not written, as no structure's are.
+    pub fn sample_set(set: &'a SampleSet) -> Self {
+        Self {
+            content: Content::SampleSet(set),
             reports: None,
         }
     }
@@ -664,6 +720,27 @@ impl<'a> From<&'a Ensemble> for PdbSource<'a> {
 impl<'a> From<&'a Series> for PdbSource<'a> {
     fn from(series: &'a Series) -> Self {
         Self::series(series)
+    }
+}
+
+impl<'a> From<&'a SampleSet> for PdbSource<'a> {
+    fn from(set: &'a SampleSet) -> Self {
+        Self::sample_set(set)
+    }
+}
+
+impl<'a> From<SampleView<'a>> for PdbSource<'a> {
+    fn from(sample: SampleView<'a>) -> Self {
+        Self {
+            content: Content::Structure(sample.as_model_view()),
+            reports: None,
+        }
+    }
+}
+
+impl<'a> From<&'a StructureSampleSetInterpretation> for PdbSource<'a> {
+    fn from(interpretation: &'a StructureSampleSetInterpretation) -> Self {
+        Self::sample_set(interpretation.sample_set()).with_reports(interpretation.reports())
     }
 }
 
@@ -729,6 +806,16 @@ pub(crate) fn write_pdb_to<'a>(
                 |(item, field)| fail(PdbWriteIssue::UnrepresentableSeriesItem { item, field }),
             )?;
             let views = series.iter().map(|item| item.as_model_view()).collect();
+            (views, true)
+        }
+        Content::SampleSet(set) => {
+            if set.is_empty() {
+                return Err(fail(PdbWriteIssue::EmptySampleSet));
+            }
+            record_multi_model_sample_set(set, options.sample_metadata, &mut omissions).map_err(
+                |(sample, field)| fail(PdbWriteIssue::UnrepresentableSample { sample, field }),
+            )?;
+            let views = set.iter().map(|sample| sample.as_model_view()).collect();
             (views, true)
         }
     };

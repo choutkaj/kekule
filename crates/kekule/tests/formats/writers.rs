@@ -867,7 +867,8 @@ fn stateful_trajectory() -> Trajectory {
 }
 
 /// Writes one structure view as a Molfile, an SDF record and an mmCIF model
-/// block, each with member and frame state set to `policy`.
+/// block, each with member, frame, series item, and sample set state set to
+/// `policy`.
 fn write_structure(
     view: ModelView<'_>,
     policy: UnrepresentablePolicy,
@@ -877,17 +878,23 @@ fn write_structure(
             molfile::MolfileSource::model(&view),
             MolfileWriteOptions::default()
                 .with_ensemble_metadata(policy)
-                .with_frame_metadata(policy),
+                .with_frame_metadata(policy)
+                .with_series_metadata(policy)
+                .with_sample_metadata(policy),
         ),
         sdf::write(
             [sdf::SdfRecordSource::model(&view)],
-            SdfWriteOptions::default().with_frame_metadata(policy),
+            SdfWriteOptions::default()
+                .with_frame_metadata(policy)
+                .with_sample_metadata(policy),
         ),
         mmcif::write(
             [mmcif::MmcifBlockSource::model(&view)],
             MmcifWriteOptions::default()
                 .with_ensemble_metadata(policy)
-                .with_frame_metadata(policy),
+                .with_frame_metadata(policy)
+                .with_series_metadata(policy)
+                .with_sample_metadata(policy),
         )
         .map(|(text, _)| text),
     ]
@@ -2123,7 +2130,8 @@ fn molfile_titles_and_smiles_names_round_trip_and_reject_unreadable_text() {
 }
 
 /// Every structure writer's output with its report, or its error, for one
-/// view with sample, frame, and series item state set to `policy`.
+/// view with sample, frame, series item, and sample set state set to
+/// `policy`.
 fn write_with_reports(view: ModelView<'_>, policy: UnrepresentablePolicy) -> Vec<String> {
     let mut written = write_structure(view, policy)
         .iter()
@@ -2136,7 +2144,8 @@ fn write_with_reports(view: ModelView<'_>, policy: UnrepresentablePolicy) -> Vec
             MolfileWriteOptions::default()
                 .with_ensemble_metadata(policy)
                 .with_frame_metadata(policy)
-                .with_series_metadata(policy),
+                .with_series_metadata(policy)
+                .with_sample_metadata(policy),
         )
     ));
     written.push(format!(
@@ -2145,7 +2154,9 @@ fn write_with_reports(view: ModelView<'_>, policy: UnrepresentablePolicy) -> Vec
             [mmcif::MmcifBlockSource::model(&view)],
             MmcifWriteOptions::default()
                 .with_ensemble_metadata(policy)
-                .with_frame_metadata(policy),
+                .with_frame_metadata(policy)
+                .with_series_metadata(policy)
+                .with_sample_metadata(policy),
         )
     ));
     written.push(format!(
@@ -2155,7 +2166,8 @@ fn write_with_reports(view: ModelView<'_>, policy: UnrepresentablePolicy) -> Vec
             PdbWriteOptions::default()
                 .with_ensemble_metadata(policy)
                 .with_frame_metadata(policy)
-                .with_series_metadata(policy),
+                .with_series_metadata(policy)
+                .with_sample_metadata(policy),
         )
     ));
     written
@@ -2211,6 +2223,213 @@ fn sample_set_views_write_as_the_views_they_come_from() {
     }
     // The failure paths are compared too, not only the written text.
     assert!(failures > 0);
+}
+
+/// Asserts that a sample set writes what the collection it converts from
+/// writes, or fails as it does; errors name a sample where the collection's
+/// name an ensemble sample, a series item or a trajectory frame.
+fn assert_same_outcome<T: std::fmt::Debug>(
+    old: Result<T, FormatError>,
+    new: Result<T, FormatError>,
+    label: &str,
+) -> bool {
+    match (old, new) {
+        (Ok(old), Ok(new)) => {
+            assert_eq!(format!("{new:?}"), format!("{old:?}"), "{label}");
+            true
+        }
+        (Err(old), Err(new)) => {
+            let named = |error: &FormatError| {
+                error
+                    .to_string()
+                    .replace("ensemble sample ", "sample ")
+                    .replace("Ensemble sample ", "Sample ")
+                    .replace("series item ", "sample ")
+                    .replace("ensemble state ", "state ")
+            };
+            assert_eq!(new.kind(), old.kind(), "{label}");
+            assert_eq!(named(&new), named(&old), "{label}");
+            false
+        }
+        (old, new) => panic!("{label}: {old:?} != {new:?}"),
+    }
+}
+
+/// Two methane frames, both timed and stepped, the second with velocities.
+fn timed_trajectory() -> Trajectory {
+    let topology = model("C", &[[0.0; 3]]).shared_topology();
+    let mut trajectory = Trajectory::new(topology);
+    for index in 0..2u32 {
+        let mut frame = TrajectoryFrame::new(Positions::zeros(1));
+        frame
+            .set_time(Some(Quantity::new(f64::from(index), PICOSECOND)))
+            .unwrap();
+        frame.set_step(Some(u64::from(index) * 10));
+        trajectory.push(frame).unwrap();
+    }
+    let velocities = Velocities::from_vec(Quantity::new(
+        vec![Vector3::new(0.0, 0.0, 0.0)],
+        NANOMETER_PER_PICOSECOND,
+    ))
+    .unwrap();
+    trajectory
+        .get_mut(1)
+        .unwrap()
+        .set_velocities(Some(velocities))
+        .unwrap();
+    trajectory
+}
+
+#[test]
+fn sample_sets_write_what_the_collections_they_convert_from_write() {
+    let first = model("C", &[[1.0, 0.0, 0.0]]);
+    let second = Model::new(
+        first.shared_topology(),
+        Positions::new(Quantity::new([Point3::new(2.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
+    )
+    .unwrap();
+    let plain = Ensemble::from_models([first, second], EnsemblePartition::one_state(2)).unwrap();
+    let ensembles = [plain, weighted_ensemble(), clustered_ensemble()];
+    let (history, scan) = methane_series();
+    let trajectory = timed_trajectory();
+    let mut written = 0;
+    for policy in [UnrepresentablePolicy::Fail, UnrepresentablePolicy::Omit] {
+        let pdb_old = PdbWriteOptions::default()
+            .with_implicit_hydrogens(UnrepresentablePolicy::Omit)
+            .with_ensemble_metadata(policy)
+            .with_series_metadata(policy);
+        let pdb_new = PdbWriteOptions::default()
+            .with_implicit_hydrogens(UnrepresentablePolicy::Omit)
+            .with_sample_metadata(policy);
+        let mmcif_old = MmcifWriteOptions::default().with_ensemble_metadata(policy);
+        let mmcif_new = MmcifWriteOptions::default().with_sample_metadata(policy);
+        let sdf_old = SdfWriteOptions::default().with_frame_metadata(policy);
+        let sdf_new = SdfWriteOptions::default().with_sample_metadata(policy);
+        for (index, ensemble) in ensembles.iter().enumerate() {
+            let set = SampleSet::from_ensemble(ensemble.clone());
+            let label = format!("ensemble {index}, {policy:?}");
+            for written_now in [
+                assert_same_outcome(
+                    pdb::write(ensemble, pdb_old),
+                    pdb::write(&set, pdb_new),
+                    &format!("PDB {label}"),
+                ),
+                assert_same_outcome(
+                    mmcif::write([ensemble], mmcif_old.clone()),
+                    mmcif::write([&set], mmcif_new.clone()),
+                    &format!("mmCIF {label}"),
+                ),
+                assert_same_outcome(
+                    sdf::write(ensemble, sdf_old),
+                    sdf::write(&set, sdf_new),
+                    &format!("SDF {label}"),
+                ),
+            ] {
+                written += usize::from(written_now);
+            }
+        }
+        for (index, series) in [&history, &scan].into_iter().enumerate() {
+            let set = SampleSet::from_series(series.clone());
+            let label = format!("series {index}, {policy:?}");
+            written += usize::from(assert_same_outcome(
+                pdb::write(series, pdb_old),
+                pdb::write(&set, pdb_new),
+                &format!("PDB {label}"),
+            ));
+            written += usize::from(assert_same_outcome(
+                sdf::write(series, SdfWriteOptions::default()),
+                sdf::write(&set, sdf_new),
+                &format!("SDF {label}"),
+            ));
+        }
+        let set = SampleSet::from_trajectory(trajectory.clone()).unwrap();
+        written += usize::from(assert_same_outcome(
+            sdf::write(&trajectory, sdf_old),
+            sdf::write(&set, sdf_new),
+            &format!("SDF trajectory, {policy:?}"),
+        ));
+    }
+    // Both written text and failures are compared.
+    assert!(written > 10, "{written}");
+}
+
+#[test]
+fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
+    let trajectory = timed_trajectory();
+    let set = SampleSet::from_trajectory(trajectory.clone()).unwrap();
+    let pdb_options =
+        PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let error = pdb::write(&set, pdb_options).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The trajectory frame time of sample 1 has no PDB representation."
+    );
+    let (text, report) = pdb::write(
+        &set,
+        pdb_options.with_sample_metadata(UnrepresentablePolicy::Omit),
+    )
+    .unwrap();
+    let state = |field, structures| WriteOmission::StructureState { field, structures };
+    assert!(report.omissions().starts_with(&[
+        state(StructureField::Time, 2),
+        state(StructureField::Step, 2),
+        state(StructureField::Velocities, 1),
+    ]));
+    // The positions are the frames' positions.
+    let models = trajectory
+        .iter()
+        .map(|frame| frame.to_model())
+        .collect::<Vec<_>>();
+    let bare = Ensemble::from_models(models, EnsemblePartition::one_state(2)).unwrap();
+    assert_eq!(text, pdb::write(&bare, pdb_options).unwrap().0);
+
+    // A sample outside the distribution is a model all the same; the file
+    // cannot say it is no member.
+    let mut subset = SampleSet::from_ensemble(bare.clone());
+    subset
+        .set_distribution(Some(
+            Distribution::new(Members::Subset(vec![1]), EnsemblePartition::one_state(1)).unwrap(),
+        ))
+        .unwrap();
+    let error = mmcif::write([&subset], MmcifWriteOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::MmcifWrite(
+            MmcifWriteIssue::UnrepresentableSample {
+                sample: 1,
+                field: StructureField::Membership,
+            }
+        ))
+    );
+    let (text, report) = mmcif::write(
+        [&subset],
+        MmcifWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit),
+    )
+    .unwrap();
+    assert_eq!(report.omissions(), [state(StructureField::Membership, 1)]);
+    assert_eq!(
+        text,
+        mmcif::write([&bare], MmcifWriteOptions::default())
+            .unwrap()
+            .0
+    );
+
+    // A sample set without samples writes nothing.
+    let empty = SampleSet::new(bare.shared_topology());
+    for error in [
+        pdb::write(&empty, pdb_options).unwrap_err(),
+        mmcif::write([&empty], MmcifWriteOptions::default()).unwrap_err(),
+    ] {
+        assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+        assert!(
+            error
+                .to_string()
+                .ends_with("The sample set has no samples."),
+            "{error}"
+        );
+    }
 }
 
 #[test]

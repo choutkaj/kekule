@@ -850,6 +850,49 @@ pub mod sdf {
         crate::io::sdf_ensemble(records)
     }
 
+    /// Assembles interpreted records, in order, into one sample set, record
+    /// `i` becoming sample `i`. Its distribution is the ensemble
+    /// [`ensemble()`] reads, with a state per record unless the records name
+    /// states. When the records carry [`STEP_FIELD`], or [`COORDINATE_FIELD`]
+    /// with [`COORDINATE_UNIT_FIELD`], as [`write()`] emits for series items,
+    /// the samples are ordered by them.
+    ///
+    /// ```
+    /// use kekule::geometry::Point3;
+    /// use kekule::sdf;
+    /// use kekule::structure::{Model, Order, Positions};
+    /// use kekule::units::{Quantity, ANGSTROM};
+    ///
+    /// let water = kekule::smiles::to_molecules("O")?.remove(0);
+    /// let positions = Positions::new(Quantity::new(vec![Point3::new(0.0, 0.0, 0.0)], ANGSTROM))?;
+    /// let model = Model::from_molecule(water, &positions)?;
+    /// let text = sdf::write([&model, &model], Default::default())?;
+    /// let records = sdf::parse_str(&text, Default::default())?
+    ///     .records()
+    ///     .iter()
+    ///     .map(|record| record.interpret(Default::default()))
+    ///     .collect::<Result<Vec<_>, _>>()?;
+    /// let set = sdf::sample_set(&records)?;
+    /// assert_eq!(set.len(), 2);
+    /// assert_eq!(set.order(), None);
+    /// assert_eq!(set.distribution().map(|distribution| distribution.state_count()), Some(2));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`ensemble()`]. Also returns a [`FormatError`] of kind
+    /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
+    /// when some records carry a step or coordinate and others do not, steps
+    /// and coordinates are mixed, or coordinate units differ, and
+    /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
+    /// when a step, coordinate, or unit is not valid.
+    pub fn sample_set<'a>(
+        records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
+    ) -> Result<crate::structure::SampleSet, FormatError> {
+        crate::io::sdf_sample_set(records)
+    }
+
     /// Streams the records of an SDF input from `reader`, each bounded by
     /// `options`.
     ///
@@ -976,7 +1019,7 @@ pub mod macromolecular {
         SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
         StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
         StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
-        StructureInterpretationReport,
+        StructureInterpretationReport, StructureSampleSetInterpretation,
     };
 }
 
@@ -1407,7 +1450,8 @@ pub mod xyz {
     pub use crate::io::{
         XyzAtom, XyzDocument, XyzEnsembleInterpretOptions, XyzEnsembleInterpretation, XyzFrame,
         XyzFrameSelection, XyzInferredBond, XyzInterpretIssue, XyzInterpretOptions,
-        XyzInterpretation, XyzInterpretationReport, XyzParseOptions, DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+        XyzInterpretation, XyzInterpretationReport, XyzParseOptions, XyzSampleSetInterpretation,
+        DEFAULT_XYZ_MAX_ATOM_CONTACTS,
     };
 
     /// Parses XYZ frames without assigning molecular meaning. `options` sets
@@ -1450,22 +1494,30 @@ pub mod xyz {
 /// Scientific formats exchange chemistry with other tools; they are not exact
 /// persistence. The native format stores one [`Molecule`](crate::molecule::Molecule),
 /// [`Topology`](crate::topology::Topology), [`Model`](crate::structure::Model),
-/// [`Ensemble`](crate::structure::Ensemble), in-memory
-/// [`Trajectory`](crate::structure::Trajectory), or
-/// [`Series`](crate::structure::Series) losslessly: represented
+/// or [`SampleSet`](crate::structure::SampleSet) losslessly: represented
 /// chemistry, definitions and instances, semantic IDs, dense order,
 /// hierarchy, classifications with their explicit or inferred assignment,
 /// properties at every scope with units, coordinates as exact bits, and every
-/// structure and collection field. A model or ensemble may carry its
-/// structure interpretation reports: write a
+/// structure, sample, order, and distribution field. An
+/// [`Ensemble`](crate::structure::Ensemble), in-memory
+/// [`Trajectory`](crate::structure::Trajectory), or
+/// [`Series`](crate::structure::Series) is written as the sample set it
+/// converts to, and [`NativeObject::into_ensemble`](native::NativeObject::into_ensemble),
+/// [`into_trajectory`](native::NativeObject::into_trajectory), and
+/// [`into_series`](native::NativeObject::into_series) convert a decoded set
+/// back. A model or sample set may carry its structure interpretation
+/// reports: write a
 /// [`StructureInterpretation`](crate::macromolecular::StructureInterpretation)
-/// or [`StructureEnsembleInterpretation`](crate::macromolecular::StructureEnsembleInterpretation),
-/// or pair a model or ensemble with reports held apart through
+/// or [`StructureSampleSetInterpretation`](crate::macromolecular::StructureSampleSetInterpretation),
+/// or pair a model or set with reports held apart through
 /// [`NativeSource::interpreted_model`](native::NativeSource::interpreted_model)
-/// and [`NativeSource::interpreted_ensemble`](native::NativeSource::interpreted_ensemble),
+/// and [`NativeSource::interpreted_sample_set`](native::NativeSource::interpreted_sample_set),
 /// and read them back with
 /// [`NativeObject::into_interpretation`](native::NativeObject::into_interpretation)
-/// or [`NativeObject::into_ensemble_interpretation`](native::NativeObject::into_ensemble_interpretation).
+/// or [`NativeObject::into_sample_set_interpretation`](native::NativeObject::into_sample_set_interpretation).
+/// A [`SampleSetDescription`](native::SampleSetDescription) stores a sample
+/// set whose samples are kept elsewhere: its topology, properties, order,
+/// distribution, and the number of its samples.
 /// Installed perception is stored with its provenance unless
 /// [`NativeWriteOptions::with_perception`](native::NativeWriteOptions::with_perception)
 /// omits it.
@@ -1496,9 +1548,9 @@ pub mod native {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
         NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
-        DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES,
-        DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_VERSION,
-        NATIVE_MAGIC,
+        SampleSetDescription, DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS,
+        DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES,
+        NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
     };
 
     /// Encodes one object into a new byte vector.

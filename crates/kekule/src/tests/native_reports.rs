@@ -711,7 +711,7 @@ fn ensembles_need_one_report_per_sample() {
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
         error.to_string(),
-        "Cannot write the native output. The ensemble has 2 samples and 1 interpretation \
+        "Cannot write the native output. The sample set has 2 samples and 1 interpretation \
          report. Give one report per sample."
     );
     let interpretation = StructureEnsembleInterpretation {

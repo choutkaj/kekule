@@ -10,13 +10,16 @@ use std::num::{NonZeroU16, NonZeroU32};
 use std::sync::Arc;
 
 use super::crc::Crc32;
-use super::encode::{ABSENT_STRING, BASE_DIMENSIONS, END_MARKER};
-use super::{NativeKind, NativeObject, NativeReadOptions, NATIVE_FORMAT_VERSION, NATIVE_MAGIC};
+use super::encode::{ABSENT_STRING, BASE_DIMENSIONS, END_MARKER, SAMPLES_EXTERNAL, SAMPLES_INLINE};
+use super::{
+    NativeKind, NativeObject, NativeReadOptions, SampleSetDescription, NATIVE_FORMAT_VERSION,
+    NATIVE_MAGIC,
+};
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
 };
 use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::io::{StructureEnsembleInterpretation, StructureInterpretation};
+use crate::io::{StructureInterpretation, StructureSampleSetInterpretation};
 use crate::molecule::{
     Atom, AtomId, AtomRadical, AxisOrientation, AxisStereo, BondId, BondOrder,
     DoubleBondOrientation, DoubleBondStereo, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
@@ -36,8 +39,8 @@ use crate::properties::{
     RawPropertyTable, StructureProperties, TopologyProperties,
 };
 use crate::structure::{
-    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Forces, Model, Positions, Series,
-    SeriesAxis, SeriesItem, Trajectory, TrajectoryFrame, Velocities,
+    Distribution, EnsemblePartition, EnsembleState, Forces, Members, Model, Order, Positions,
+    Sample, SampleSet, TimeAxis, Velocities,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
@@ -74,9 +77,6 @@ pub(crate) fn read_native(
         NativeKind::Molecule => NativeObject::Molecule(Box::new(decoder.molecule()?)),
         NativeKind::Topology => NativeObject::Topology(decoder.topology()?),
         NativeKind::Model => NativeObject::Model(decoder.model()?),
-        NativeKind::Ensemble => NativeObject::Ensemble(decoder.ensemble()?),
-        NativeKind::Trajectory => NativeObject::Trajectory(decoder.trajectory()?),
-        NativeKind::Series => NativeObject::Series(decoder.series()?),
         NativeKind::StructureInterpretation => {
             let model = decoder.model()?;
             let report = decoder.report()?;
@@ -85,15 +85,22 @@ pub(crate) fn read_native(
                 report,
             }))
         }
-        NativeKind::StructureEnsembleInterpretation => {
-            let ensemble = decoder.ensemble()?;
-            let mut reports = Vec::with_capacity(ensemble.len());
-            for _ in 0..ensemble.len() {
+        NativeKind::SampleSet => match decoder.sample_set(false)? {
+            Decoded::Inline(set) => NativeObject::SampleSet(*set),
+            Decoded::External(description) => NativeObject::SampleSetDescription(description),
+        },
+        NativeKind::SampleSetInterpretation => {
+            let Decoded::Inline(set) = decoder.sample_set(true)? else {
+                unreachable!("an interpreted sample set is read with its samples")
+            };
+            let mut reports = Vec::with_capacity(set.len().min(CHUNK_BYTES));
+            for _ in 0..set.len() {
                 reports.push(decoder.report()?);
             }
-            NativeObject::StructureEnsembleInterpretation(Box::new(
-                StructureEnsembleInterpretation { ensemble, reports },
-            ))
+            NativeObject::SampleSetInterpretation(Box::new(StructureSampleSetInterpretation {
+                set: *set,
+                reports,
+            }))
         }
     };
     decoder.trailer()?;
@@ -1250,83 +1257,41 @@ impl<R: Read> Decoder<'_, R> {
         Ok(model)
     }
 
-    fn ensemble(&mut self) -> Result<Ensemble> {
+    /// A sample set record; an external samples section is rejected when
+    /// `inline` is required.
+    fn sample_set(&mut self, inline: bool) -> Result<Decoded> {
         let topology = Arc::new(self.topology()?);
         let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let owner = self.owner()?;
-        let temperature = self.opt_f64()?;
         let count = self.count(self.options.max_items(), Resource::Records)?;
+        let order = self.order(count)?;
+        let distribution = self.distribution(count)?;
+        match self.u8()? {
+            SAMPLES_INLINE => {}
+            SAMPLES_EXTERNAL if !inline => {
+                let description = SampleSetDescription::new(topology, count)
+                    .with_properties(owner)
+                    .with_order(order)
+                    .and_then(|description| description.with_distribution(distribution))
+                    .map_err(|error| self.structure_error(error))?;
+                return Ok(Decoded::External(Box::new(description)));
+            }
+            SAMPLES_EXTERNAL => {
+                return Err(self.invalid(
+                    "An interpreted sample set stores its samples elsewhere. It must store them in the record.",
+                ))
+            }
+            other => {
+                return Err(self.invalid(format!("The samples section tag {other} is unknown.")))
+            }
+        }
         let mut samples = Vec::with_capacity(count.min(CHUNK_BYTES));
         let mut properties = Vec::with_capacity(count.min(CHUNK_BYTES));
-        let mut assignments = Vec::with_capacity(count.min(CHUNK_BYTES));
         for _ in 0..count {
             let positions = self.positions(atoms)?;
             let cell = self.cell()?;
             let occupancies = self.scalars(atoms)?;
             let b_factors = self.scalars(atoms)?;
-            properties.push(self.structure_properties(atoms, bonds)?);
-            let weight = self.f64()?;
-            assignments.push(self.u32()? as usize);
-            let mut sample = EnsembleSample::new(positions, weight)
-                .map_err(|error| self.structure_error(error))?;
-            sample.set_cell(cell);
-            sample
-                .set_occupancies(occupancies)
-                .map_err(|error| self.structure_error(error))?;
-            sample
-                .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
-                .map_err(|error| self.structure_error(error))?;
-            samples.push(sample);
-        }
-        let state_count = self.count(self.options.max_items(), Resource::Records)?;
-        let mut representatives = Vec::with_capacity(state_count.min(CHUNK_BYTES));
-        let mut states = Vec::with_capacity(state_count.min(CHUNK_BYTES));
-        for _ in 0..state_count {
-            representatives.push(self.u32()? as usize);
-            let energy = self.opt_f64()?;
-            let mut state = EnsembleState::new();
-            state
-                .set_energy(energy.map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT)))
-                .map_err(|error| self.structure_error(error))?;
-            *state.properties_mut() = self.owner()?;
-            states.push(state);
-        }
-        let partition = EnsemblePartition::new(assignments, representatives)
-            .map_err(|error| self.structure_error(error))?;
-        let mut ensemble = Ensemble::from_samples(topology, samples, partition)
-            .map_err(|error| self.structure_error(error))?;
-        *ensemble.properties_mut() = owner;
-        ensemble
-            .set_temperature(
-                temperature
-                    .map(|temperature| Quantity::new(temperature, CANONICAL_TEMPERATURE_UNIT)),
-            )
-            .map_err(|error| self.structure_error(error))?;
-        for (index, state) in states.into_iter().enumerate() {
-            *ensemble
-                .state_mut(index)
-                .expect("the partition numbers every decoded state") = state;
-        }
-        for (index, properties) in properties.into_iter().enumerate() {
-            ensemble
-                .get_mut(index)
-                .expect("every decoded sample was added")
-                .set_properties(properties)
-                .map_err(|error| self.structure_error(error))?;
-        }
-        Ok(ensemble)
-    }
-
-    fn trajectory(&mut self) -> Result<Trajectory> {
-        let topology = Arc::new(self.topology()?);
-        let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
-        let owner = self.owner()?;
-        let count = self.count(self.options.max_items(), Resource::Frames)?;
-        let mut frames = Vec::with_capacity(count.min(CHUNK_BYTES));
-        let mut properties = Vec::with_capacity(count.min(CHUNK_BYTES));
-        for _ in 0..count {
-            let positions = self.positions(atoms)?;
-            let cell = self.cell()?;
             properties.push(self.structure_properties(atoms, bonds)?);
             let velocities = if self.tag("velocities")? {
                 let values = self.vectors(atoms)?;
@@ -1346,79 +1311,162 @@ impl<R: Read> Decoder<'_, R> {
             } else {
                 None
             };
-            let time = self.opt_f64()?;
-            let step = if self.tag("step")? {
-                Some(self.u64()?)
-            } else {
-                None
-            };
-            let mut frame = TrajectoryFrame::new(positions);
-            frame.set_cell(cell);
-            frame
+            let mut sample = Sample::new(positions);
+            sample.set_cell(cell);
+            sample
+                .set_occupancies(occupancies)
+                .map_err(|error| self.structure_error(error))?;
+            sample
+                .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
+                .map_err(|error| self.structure_error(error))?;
+            sample
                 .set_velocities(velocities)
                 .map_err(|error| self.structure_error(error))?;
-            frame
+            sample
                 .set_forces(forces)
                 .map_err(|error| self.structure_error(error))?;
-            frame
-                .set_time(time.map(|time| Quantity::new(time, CANONICAL_TIME_UNIT)))
-                .map_err(|error| self.structure_error(error))?;
-            frame.set_step(step);
-            frames.push(frame);
+            samples.push(sample);
         }
-        let mut trajectory = Trajectory::from_items(topology, frames)
+        let mut set = SampleSet::from_samples(topology, samples)
             .map_err(|error| self.structure_error(error))?;
-        *trajectory.properties_mut() = owner;
+        *set.properties_mut() = owner;
         for (index, properties) in properties.into_iter().enumerate() {
-            trajectory
-                .get_mut(index)
-                .expect("every decoded frame was added")
+            set.get_mut(index)
+                .expect("every decoded sample was added")
                 .set_properties(properties)
                 .map_err(|error| self.structure_error(error))?;
         }
-        Ok(trajectory)
+        set.set_order(order)
+            .map_err(|error| self.structure_error(error))?;
+        set.set_distribution(distribution)
+            .map_err(|error| self.structure_error(error))?;
+        Ok(Decoded::Inline(Box::new(set)))
     }
 
-    fn series(&mut self) -> Result<Series> {
-        let topology = Arc::new(self.topology()?);
-        let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
-        let owner = self.owner()?;
-        let axis = match self.u8()? {
-            0 => SeriesAxis::Step,
-            1 => SeriesAxis::Coordinate(self.unit()?),
-            other => return Err(self.invalid(format!("The series axis {other} is unknown."))),
-        };
-        let count = self.count(self.options.max_items(), Resource::Records)?;
-        let mut items = Vec::with_capacity(count.min(CHUNK_BYTES));
-        let mut properties = Vec::with_capacity(count.min(CHUNK_BYTES));
-        for _ in 0..count {
-            let positions = self.positions(atoms)?;
-            let cell = self.cell()?;
-            properties.push(self.structure_properties(atoms, bonds)?);
-            let item = match axis {
-                SeriesAxis::Coordinate(unit) => {
-                    SeriesItem::at_coordinate(positions, Quantity::new(self.f64()?, unit))
-                        .map_err(|error| self.structure_error(error))?
+    /// The order of a set of `count` samples.
+    fn order(&mut self, count: usize) -> Result<Option<Order>> {
+        Ok(Some(match self.u8()? {
+            0 => return Ok(None),
+            1 => {
+                let times = if self.tag("times")? {
+                    Some(self.f64_array(count)?)
+                } else {
+                    None
+                };
+                let steps = if self.tag("steps")? {
+                    Some(self.u64_array(count)?)
+                } else {
+                    None
+                };
+                let axis = TimeAxis::new(
+                    times.map(|times| Quantity::new(times, CANONICAL_TIME_UNIT)),
+                    steps,
+                )
+                .map_err(|error| self.structure_error(error))?;
+                Order::Time(axis)
+            }
+            2 => Order::Step(self.u64_array(count)?),
+            3 => {
+                let unit = self.unit()?;
+                Order::Coordinate {
+                    unit,
+                    values: self.f64_array(count)?,
                 }
-                SeriesAxis::Step => SeriesItem::at_step(positions, self.u64()?),
-            };
-            items.push(match cell {
-                Some(cell) => item.with_cell(cell),
-                None => item,
-            });
+            }
+            other => return Err(self.invalid(format!("The order kind {other} is unknown."))),
+        }))
+    }
+
+    /// The distribution over a set of `count` samples.
+    fn distribution(&mut self, count: usize) -> Result<Option<Distribution>> {
+        if !self.tag("distribution")? {
+            return Ok(None);
         }
-        let mut series = Series::from_items(topology, axis, items)
+        let members = match self.u8()? {
+            0 => Members::All,
+            1 => Members::Subset(
+                self.ids(count, Resource::Records)?
+                    .into_iter()
+                    .map(|index| index as usize)
+                    .collect(),
+            ),
+            other => return Err(self.invalid(format!("The members tag {other} is unknown."))),
+        };
+        let member_count = match &members {
+            Members::Subset(indices) => indices.len(),
+            _ => count,
+        };
+        let weights = if self.tag("weights")? {
+            Some(self.f64_array(member_count)?)
+        } else {
+            None
+        };
+        let assignments = self
+            .u32_array(member_count)?
+            .into_iter()
+            .map(|state| state as usize)
+            .collect();
+        let state_count = self.count(self.options.max_items(), Resource::Records)?;
+        let mut representatives = Vec::with_capacity(state_count.min(CHUNK_BYTES));
+        let mut states = Vec::with_capacity(state_count.min(CHUNK_BYTES));
+        for _ in 0..state_count {
+            representatives.push(self.u32()? as usize);
+            let energy = self.opt_f64()?;
+            let mut state = EnsembleState::new();
+            state
+                .set_energy(energy.map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT)))
+                .map_err(|error| self.structure_error(error))?;
+            *state.properties_mut() = self.owner()?;
+            states.push(state);
+        }
+        let temperature = self.opt_f64()?;
+        let partition = EnsemblePartition::new(assignments, representatives)
             .map_err(|error| self.structure_error(error))?;
-        *series.properties_mut() = owner;
-        for (index, properties) in properties.into_iter().enumerate() {
-            series
-                .get_mut(index)
-                .expect("every decoded item was added")
-                .set_properties(properties)
+        let mut distribution = Distribution::new(members, partition)
+            .and_then(|distribution| distribution.with_states(states))
+            .map_err(|error| self.structure_error(error))?;
+        if let Some(weights) = weights {
+            distribution = distribution
+                .with_weights(weights)
                 .map_err(|error| self.structure_error(error))?;
         }
-        Ok(series)
+        if let Some(temperature) = temperature {
+            distribution = distribution
+                .with_temperature(Quantity::new(temperature, CANONICAL_TEMPERATURE_UNIT))
+                .map_err(|error| self.structure_error(error))?;
+        }
+        Ok(Some(distribution))
     }
+
+    fn f64_array(&mut self, count: usize) -> Result<Vec<f64>> {
+        Ok(self
+            .u64_array(count)?
+            .into_iter()
+            .map(f64::from_bits)
+            .collect())
+    }
+
+    fn u64_array(&mut self, count: usize) -> Result<Vec<u64>> {
+        let mut values = Vec::with_capacity(count.min(CHUNK_BYTES / 8));
+        self.chunks(count.saturating_mul(8), |bytes| {
+            values.extend(
+                bytes
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .map(|raw| u64::from_le_bytes(*raw)),
+            );
+            Ok(())
+        })?;
+        Ok(values)
+    }
+}
+
+/// A decoded sample set record: the set, or the description of one whose
+/// samples are stored elsewhere.
+enum Decoded {
+    Inline(Box<SampleSet>),
+    External(Box<SampleSetDescription>),
 }
 
 fn bond_order(code: u8) -> Option<BondOrder> {

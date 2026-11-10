@@ -886,6 +886,20 @@ pub enum FormatErrorDetail {
         /// The kind the input holds.
         found: crate::io::NativeKind,
     },
+    /// A native sample set record stores its samples elsewhere, so it has
+    /// none to give; the kind is [`DiagnosticKind::Inconsistent`].
+    NativeExternalSamples {
+        /// The number of samples the record describes.
+        samples: usize,
+    },
+    /// A native sample set does not convert to the collection a projection
+    /// requested, such as an ordered set to an ensemble; the kind is
+    /// [`DiagnosticKind::Inconsistent`], and the source is the
+    /// [`SampleSetError`](crate::structure::SampleSetError).
+    NativeSampleSetShape {
+        /// The collection the projection requires.
+        target: crate::structure::ConversionTarget,
+    },
 }
 
 /// Ensemble sample, trajectory frame, or series item state named by
@@ -920,6 +934,9 @@ pub enum StructureField {
     ItemStep,
     /// A series item's coordinate on its series' axis.
     ItemCoordinate,
+    /// A sample set's sample that is outside its distribution, which a file
+    /// whose every structure is a member cannot tell apart.
+    Membership,
 }
 
 impl fmt::Display for StructureField {
@@ -938,6 +955,7 @@ impl fmt::Display for StructureField {
             Self::Properties => "structure properties",
             Self::ItemStep => "series item step",
             Self::ItemCoordinate => "series item coordinate",
+            Self::Membership => "distribution membership",
         })
     }
 }

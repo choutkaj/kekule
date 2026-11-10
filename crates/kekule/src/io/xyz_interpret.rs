@@ -8,7 +8,9 @@ use crate::diagnostics::{
 };
 use crate::geometry::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
-use crate::structure::{Ensemble, EnsembleSample, EnsembleState, Model, ModelBuilder, Positions};
+use crate::structure::{
+    Ensemble, EnsembleSample, EnsembleState, Model, ModelBuilder, Positions, SampleSet,
+};
 use crate::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, Unit, ANGSTROM};
 
@@ -390,6 +392,55 @@ impl XyzEnsembleInterpretation {
     pub fn into_parts(self) -> (Ensemble, Vec<XyzInterpretationReport>) {
         (self.ensemble, self.reports)
     }
+}
+
+/// Several frames interpreted as one unordered sample set without a
+/// distribution, with one report per sample.
+#[derive(Debug, Clone)]
+pub struct XyzSampleSetInterpretation {
+    set: SampleSet,
+    reports: Vec<XyzInterpretationReport>,
+}
+
+impl XyzSampleSetInterpretation {
+    /// The interpreted sample set, one sample per selected frame.
+    pub fn sample_set(&self) -> &SampleSet {
+        &self.set
+    }
+
+    /// One report per sample, in sample order.
+    pub fn reports(&self) -> &[XyzInterpretationReport] {
+        &self.reports
+    }
+
+    /// The topology all samples share.
+    pub fn topology(&self) -> &Topology {
+        self.set.topology()
+    }
+
+    /// The interpreted sample set, discarding the reports.
+    pub fn into_sample_set(self) -> SampleSet {
+        self.set
+    }
+
+    /// The sample set and its per-sample reports.
+    pub fn into_parts(self) -> (SampleSet, Vec<XyzInterpretationReport>) {
+        (self.set, self.reports)
+    }
+}
+
+/// The frames of an ensemble interpretation as a sample set without a
+/// distribution: an XYZ file states no weights or states.
+pub(crate) fn interpret_xyz_sample_set(
+    document: &XyzDocument,
+    options: &XyzEnsembleInterpretOptions,
+) -> Result<XyzSampleSetInterpretation, FormatError> {
+    let XyzEnsembleInterpretation { ensemble, reports } =
+        interpret_xyz_ensemble(document, options)?;
+    let mut set = SampleSet::from_ensemble(ensemble);
+    set.set_distribution(None)
+        .expect("clearing a distribution cannot fail");
+    Ok(XyzSampleSetInterpretation { set, reports })
 }
 
 fn interpret_error(kind: DiagnosticKind, message: impl Into<String>) -> FormatError {

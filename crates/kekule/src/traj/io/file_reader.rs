@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::topology::Topology;
 
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::structure::Trajectory;
+use crate::structure::{SampleSet, Trajectory};
 use crate::traj::{
     FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryFormat,
     TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
@@ -558,6 +558,38 @@ pub fn read_trajectory(
         writer.write_frame(buffer.frame_view())?;
     }
     Ok(writer.into_trajectory())
+}
+
+/// Reads an entire trajectory file into a sample set, one sample per frame
+/// in file frame order, as [`read_trajectory`] reads it: the frames' times
+/// and steps become a time order, and each frame's positions, cell,
+/// properties, velocities, and forces its sample's. The set has no
+/// distribution.
+///
+/// # Errors
+///
+/// The errors of [`read_trajectory`], and
+/// [`TrajectoryIoErrorKind::InconsistentMetadata`] when some frames have a
+/// time or step and others do not, or the times are not finite.
+///
+/// [`TrajectoryIoErrorKind::InconsistentMetadata`]:
+///     crate::traj::TrajectoryIoErrorKind::InconsistentMetadata
+pub fn read_sample_set(
+    path: impl AsRef<Path>,
+    topology: impl Into<Arc<Topology>>,
+    options: TrajectoryOpenOptions,
+) -> Result<SampleSet, TrajectoryIoError> {
+    let path = path.as_ref();
+    let trajectory = read_trajectory(path, topology, options)?;
+    SampleSet::from_trajectory(trajectory).map_err(|error| {
+        TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::ReadFrame,
+            None,
+        )
+        .with_source_label(path.display().to_string())
+        .with_source(error)
+    })
 }
 
 /// Opens one fast sequential path-backed trajectory reader without loading all frames.

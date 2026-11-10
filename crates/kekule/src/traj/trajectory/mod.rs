@@ -189,7 +189,8 @@ impl fmt::Display for TrajectoryIoErrorKind {
     }
 }
 
-/// Frame, ensemble, or series state a trajectory format cannot store.
+/// Frame, ensemble, series, or sample set state a trajectory format cannot
+/// store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TrajectoryField {
@@ -225,6 +226,10 @@ pub enum TrajectoryField {
     ItemStep,
     /// A series item's coordinate on its series' axis.
     ItemCoordinate,
+    /// Whether a sample belongs to its set's distribution.
+    Membership,
+    /// A sample set's distribution, which a trajectory file cannot store.
+    Distribution,
 }
 
 impl fmt::Display for TrajectoryField {
@@ -246,6 +251,8 @@ impl fmt::Display for TrajectoryField {
             Self::StateProperties => "ensemble state properties",
             Self::ItemStep => "series item step",
             Self::ItemCoordinate => "series item coordinate",
+            Self::Membership => "distribution membership",
+            Self::Distribution => "sample set distribution",
         })
     }
 }

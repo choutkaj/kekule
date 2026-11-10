@@ -38,6 +38,7 @@ pub struct MolfileWriteOptions {
     ensemble_metadata: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
     series_metadata: UnrepresentablePolicy,
+    sample_metadata: UnrepresentablePolicy,
 }
 
 impl MolfileWriteOptions {
@@ -108,6 +109,21 @@ impl MolfileWriteOptions {
         self.series_metadata = series_metadata;
         self
     }
+
+    /// The state of a sample set's sample that a Molfile cannot carry: its
+    /// membership in the set's distribution, its place in the set's order,
+    /// and its velocities and forces. By default writing a view of a sample
+    /// with any of them fails.
+    pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
+        self.sample_metadata
+    }
+
+    /// Sets [`Self::sample_metadata`].
+    #[must_use]
+    pub const fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
+        self.sample_metadata = sample_metadata;
+        self
+    }
 }
 
 /// What one Molfile CTAB describes: a coordinate-free molecule written with
@@ -147,7 +163,8 @@ impl<'a> MolfileSource<'a> {
         }
     }
 
-    /// A geometry-bearing model, ensemble sample, or trajectory frame.
+    /// A geometry-bearing model, ensemble sample, trajectory frame, series item,
+    /// or sample of a sample set.
     pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
         Self {
             content: MolfileContent::Model(model.as_model_view()),
@@ -204,6 +221,7 @@ pub(crate) fn write_molfile<'a>(
                     sample: Some(options.ensemble_metadata),
                     frame: options.frame_metadata,
                     item: Some(options.series_metadata),
+                    set: options.sample_metadata,
                 },
             )?;
             render_model(model, source.title, options.version)

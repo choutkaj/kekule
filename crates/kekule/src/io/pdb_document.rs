@@ -17,7 +17,7 @@ use super::structure_interpret::{
 };
 use super::{
     AltLocResidue, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
-    StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretOptions, StructureInterpretation, StructureSampleSetInterpretation,
 };
 
 /// Syntax and resource limits for parsing a PDB entry.
@@ -620,6 +620,22 @@ impl PdbDocument {
         options: StructureEnsembleInterpretOptions,
     ) -> Result<StructureEnsembleInterpretation, FormatError> {
         interpret_pdb_ensemble(self, options).map_err(pdb)
+    }
+
+    /// Interprets the coordinate models that `options` selects, as
+    /// [`Self::interpret_ensemble`] does, as an unordered sample set with
+    /// one report per sample. Its distribution covers every sample in one
+    /// state and stores no weights, as the members weigh the same.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::interpret_ensemble`].
+    pub fn interpret_sample_set(
+        &self,
+        options: StructureEnsembleInterpretOptions,
+    ) -> Result<StructureSampleSetInterpretation, FormatError> {
+        self.interpret_ensemble(options)
+            .map(StructureSampleSetInterpretation::from_ensemble)
     }
 
     /// Interprets explicit model and alternate-location selections, in the
