@@ -1717,23 +1717,26 @@ fn model_views_report_which_structure_they_borrow() {
     ensemble
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
+    let StructureKind::Sample(context) = ensemble.get(1).unwrap().as_model_view().kind() else {
+        panic!("an ensemble sample is a sample");
+    };
+    assert_eq!(context.place(), None);
     assert_eq!(
-        ensemble.get(1).unwrap().as_model_view().kind(),
-        StructureKind::Sample {
-            weight: 3.0,
-            state: 0,
-            representative: false,
-            energy: kj(2.5).as_ref(),
-            temperature: Some(&Quantity::new(300.0, KELVIN)),
-        }
+        context.membership(),
+        Some(Membership::new(
+            3.0,
+            0,
+            false,
+            kj(2.5),
+            Some(Quantity::new(300.0, KELVIN)),
+        ))
     );
+    assert_eq!(context.velocities(), None);
     let sample = ensemble.get(0).unwrap();
     assert!(matches!(
         sample.as_model_view().kind(),
-        StructureKind::Sample {
-            representative: true,
-            ..
-        }
+        StructureKind::Sample(context)
+            if context.membership().is_some_and(Membership::is_representative)
     ));
     // Materializing a sample as a model drops its sample state.
     assert_eq!(
@@ -1746,15 +1749,18 @@ fn model_views_report_which_structure_they_borrow() {
     frame.set_step(Some(4));
     trajectory.push(frame).unwrap();
     let frame = trajectory.get(0).unwrap();
+    let StructureKind::Sample(context) = frame.as_model_view().kind() else {
+        panic!("a trajectory frame is a sample");
+    };
     assert_eq!(
-        frame.as_model_view().kind(),
-        StructureKind::Frame {
+        context.place(),
+        Some(Place::Time {
             time: None,
             step: Some(4),
-            velocities: None,
-            forces: None,
-        }
+        })
     );
+    assert_eq!(context.membership(), None);
+    assert_eq!(context.forces(), None);
 }
 
 #[test]
@@ -1813,3 +1819,5 @@ fn rigid_transforms_move_models_members_and_frames_with_their_cells() {
         assert_eq!(view.cell(), model.cell());
     }
 }
+
+mod sample_set;

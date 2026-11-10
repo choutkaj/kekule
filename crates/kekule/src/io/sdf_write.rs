@@ -2,10 +2,10 @@
 use std::io::Write;
 
 use crate::structure::{
-    AsModelView, EnsembleSampleView, Model, ModelView, SeriesItemView, StructureKind,
-    TrajectoryFrameView,
+    AsModelView, EnsembleSampleView, Membership, Model, ModelView, Place, SeriesItemView,
+    StructureKind, TrajectoryFrameView,
 };
-use crate::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
+use crate::units::{KELVIN, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
@@ -235,32 +235,35 @@ fn write_record(
             item: None,
         },
     )?;
+    // A sample's membership and its step or coordinate place, which travel
+    // as data fields.
+    let (membership, place) = match record.model.kind() {
+        StructureKind::Sample(context) => (
+            context.membership(),
+            context
+                .place()
+                .filter(|place| matches!(place, Place::Step(_) | Place::Coordinate(_))),
+        ),
+        _ => (None, None),
+    };
     // The names a structure's own metadata uses, and what owns them.
-    let (reserved, owner): (&[&str], &str) = match record.model.kind() {
-        StructureKind::Sample { .. } => (&SAMPLE_FIELDS, "ensemble sample"),
-        StructureKind::Item { .. } => (&ITEM_FIELDS, "series item"),
-        _ => (&[], ""),
+    let reserved_by = |name: &str| {
+        if membership.is_some() && SAMPLE_FIELDS.contains(&name) {
+            Some("ensemble sample")
+        } else if place.is_some() && ITEM_FIELDS.contains(&name) {
+            Some("series item")
+        } else {
+            None
+        }
     };
-    let own_fields = match record.model.kind() {
-        StructureKind::Sample {
-            weight,
-            state,
-            representative,
-            energy,
-            temperature,
-            ..
-        } => sample_fields(weight, state, representative, energy, temperature),
-        StructureKind::Item {
-            step, coordinate, ..
-        } => item_fields(step, coordinate),
-        _ => Vec::new(),
-    };
+    let mut own_fields = membership.map_or_else(Vec::new, sample_fields);
+    own_fields.extend(place.map_or_else(Vec::new, item_fields));
     for field in record.data_fields {
         validate_data_field(field)?;
         // Every sample or item owns these names, whether or not it writes
         // them, so a caller's field never adds a second representative,
         // energy, or place.
-        if reserved.contains(&field.name()) {
+        if let Some(owner) = reserved_by(field.name()) {
             return Err(FormatError::write(
                 Format::Sdf,
                 DiagnosticKind::Inconsistent,
@@ -288,41 +291,35 @@ fn write_record(
 /// A series item's step, or its coordinate and the coordinate's unit, as
 /// data fields, the number in the shortest decimal text that reads back to
 /// the same value.
-fn item_fields(step: Option<u64>, coordinate: Option<Quantity<f64>>) -> Vec<SdfDataField> {
-    match (step, coordinate) {
-        (Some(step), _) => vec![SdfDataField::new(SDF_STEP_FIELD, step.to_string())],
-        (None, Some(coordinate)) => vec![
+fn item_fields(place: Place) -> Vec<SdfDataField> {
+    match place {
+        Place::Step(step) => vec![SdfDataField::new(SDF_STEP_FIELD, step.to_string())],
+        Place::Coordinate(coordinate) => vec![
             SdfDataField::new(SDF_COORDINATE_FIELD, coordinate.value().to_string()),
             SdfDataField::new(SDF_COORDINATE_UNIT_FIELD, coordinate.unit().to_string()),
         ],
-        (None, None) => Vec::new(),
+        _ => Vec::new(),
     }
 }
 
 /// An ensemble sample's weight and state, its state's energy on a
 /// representative's record, and the ensemble's temperature as data fields,
 /// numbers in the shortest decimal text that reads back to the same value.
-fn sample_fields(
-    weight: f64,
-    state: usize,
-    representative: bool,
-    energy: Option<&Quantity<f64>>,
-    temperature: Option<&Quantity<f64>>,
-) -> Vec<SdfDataField> {
+fn sample_fields(membership: Membership) -> Vec<SdfDataField> {
     let mut fields = vec![
-        SdfDataField::new(SDF_WEIGHT_FIELD, weight.to_string()),
-        SdfDataField::new(SDF_STATE_FIELD, state.to_string()),
+        SdfDataField::new(SDF_WEIGHT_FIELD, membership.weight().to_string()),
+        SdfDataField::new(SDF_STATE_FIELD, membership.state().to_string()),
     ];
-    if representative {
+    if membership.is_representative() {
         fields.push(SdfDataField::new(SDF_REPRESENTATIVE_FIELD, "true"));
-        if let Some(energy) = energy {
+        if let Some(energy) = membership.energy() {
             let kj_per_mol = energy
                 .value_in(KILOJOULE_PER_MOLE)
                 .expect("state energies have an energy-per-amount dimension");
             fields.push(SdfDataField::new(SDF_ENERGY_FIELD, kj_per_mol.to_string()));
         }
     }
-    if let Some(temperature) = temperature {
+    if let Some(temperature) = membership.temperature() {
         let kelvin = temperature
             .value_in(KELVIN)
             .expect("ensemble temperatures have a temperature dimension");

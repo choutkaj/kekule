@@ -13,7 +13,15 @@
 //!   ([`ModelAppend`], [`ModelAppendReport`]). [`ModelEditor::topology_mut`]
 //!   ([`ModelEditorTopologyMut`]) and [`ModelEditor::properties_mut`]
 //!   ([`ModelEditorPropertiesMut`]) reach annotations without geometry.
-//! - Collections of one shared topology: [`Ensemble`] is a distribution of
+//! - [`SampleSet`]: many structures of one shared topology as [`Sample`]s,
+//!   each shared and copied on write, with an optional [`Order`] that places
+//!   every sample ([`TimeAxis`], steps, or coordinate values; [`Place`]) and
+//!   an optional [`Distribution`] over all samples or some of them
+//!   ([`Members`]) grouped into states. [`SampleView`], [`SampleMut`], and
+//!   [`StateView`] read and edit them; every failure is a
+//!   [`SampleSetError`]. It converts from and to the three older
+//!   collections without loss.
+//! - Older collections of one shared topology: [`Ensemble`] is a distribution of
 //!   weighted samples ([`EnsembleSample`]) grouped into states
 //!   ([`EnsembleState`]) by an [`EnsemblePartition`]; [`Trajectory`] is a time-ordered
 //!   in-memory sequence of [`TrajectoryFrame`]s, which may carry time, step,
@@ -25,11 +33,14 @@
 //!   steps of a geometry optimization or the points of a relaxed scan, each
 //!   at a step or a coordinate value of its [`SeriesAxis`].
 //! - Borrowed access: [`ModelView`] is the common input of coordinate-dependent
-//!   kernels. Models, ensemble samples ([`EnsembleSampleView`]), trajectory
-//!   frames ([`TrajectoryFrameView`]), and series items ([`SeriesItemView`])
-//!   all borrow as one without copying ([`AsModelView`]); [`ModelAtomView`] pairs one topology atom with its
-//!   structure state. [`ModelView::kind`] says which structure a view borrows
-//!   ([`StructureKind`]), so sample and frame state is never silently dropped.
+//!   kernels. Models, samples ([`SampleView`]), ensemble samples
+//!   ([`EnsembleSampleView`]), trajectory frames ([`TrajectoryFrameView`]),
+//!   and series items ([`SeriesItemView`]) all borrow as one without copying
+//!   ([`AsModelView`]); [`ModelAtomView`] pairs one topology atom with its
+//!   structure state. [`ModelView::kind`] says whether a view borrows a model
+//!   or a sample ([`StructureKind`]); a sample's [`SampleContext`] reports
+//!   its place, [`Membership`], velocities, and forces, so that state is
+//!   never silently dropped.
 //! - [`measure`]: checked distances, angles, dihedrals, bond dihedrals and
 //!   distance-based selections.
 //! - [`placement`]: builder geometry on a [`ModelEditor`] draft: hydrogens
@@ -119,6 +130,7 @@ mod model_state;
 mod partition;
 pub mod placement;
 mod positions;
+mod sample_set;
 mod sampling;
 mod scalars;
 mod series;
@@ -141,6 +153,11 @@ pub use model_editor::{
 };
 pub use partition::{EnsemblePartition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
+pub use sample_set::{
+    ConversionTarget, Distribution, Members, Membership, Order, Place, Requirement, Sample,
+    SampleContext, SampleIter, SampleMut, SampleSet, SampleSetError, SampleView, StateIter,
+    StateView, TimeAxis, Unconvertible,
+};
 pub use sampling::{TrajectorySampler, TrajectorySampling};
 pub use series::{
     Series, SeriesAxis, SeriesError, SeriesItem, SeriesItemMut, SeriesItemView, SeriesIter,

@@ -14,7 +14,9 @@ use super::state::{
     structure_mutators, structure_readers, subset_rows, transform_cell, transform_positions,
     validate_binding,
 };
-use super::{AsModelView, Model, ModelView, Positions, StructureError, StructureKind};
+use super::{
+    AsModelView, Model, ModelView, Positions, SampleContext, StructureError, StructureKind,
+};
 
 /// What orders the items of a [`Series`]: steps, or the values of one
 /// coordinate.
@@ -98,10 +100,10 @@ impl fmt::Display for SeriesAxis {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Series {
-    topology: Arc<Topology>,
-    properties: OwnerProperties,
-    axis: SeriesAxis,
-    items: Vec<SeriesItem>,
+    pub(super) topology: Arc<Topology>,
+    pub(super) properties: OwnerProperties,
+    pub(super) axis: SeriesAxis,
+    pub(super) items: Vec<SeriesItem>,
 }
 
 impl Series {
@@ -414,11 +416,11 @@ impl Series {
 
 impl SeriesAxis {
     /// `place` on this axis: its coordinate in the axis unit.
-    fn place(self, place: Place) -> Result<Place, SeriesError> {
+    fn place(self, place: ItemPlace) -> Result<ItemPlace, SeriesError> {
         match (self, place) {
-            (Self::Step, Place::Step(step)) => Ok(Place::Step(step)),
-            (Self::Coordinate(unit), Place::Coordinate(coordinate)) => {
-                Ok(Place::Coordinate(checked_coordinate(coordinate, unit)?))
+            (Self::Step, ItemPlace::Step(step)) => Ok(ItemPlace::Step(step)),
+            (Self::Coordinate(unit), ItemPlace::Coordinate(coordinate)) => {
+                Ok(ItemPlace::Coordinate(checked_coordinate(coordinate, unit)?))
             }
             _ => Err(SeriesError::AxisMismatch { axis: self }),
         }
@@ -436,7 +438,7 @@ impl<'a> IntoIterator for &'a Series {
 
 /// Where an item lies on its series' axis.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Place {
+pub(super) enum ItemPlace {
     Step(u64),
     /// Finite, in the axis unit once bound.
     Coordinate(Quantity<f64>),
@@ -460,10 +462,10 @@ fn checked_coordinate(coordinate: Quantity<f64>, unit: Unit) -> Result<Quantity<
 /// [`Series`], which checks that it lies on the series' axis.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SeriesItem {
-    positions: Positions,
-    cell: Option<PeriodicCell>,
-    properties: StructureProperties,
-    place: Place,
+    pub(super) positions: Positions,
+    pub(super) cell: Option<PeriodicCell>,
+    pub(super) properties: StructureProperties,
+    pub(super) place: ItemPlace,
 }
 
 impl SeriesItem {
@@ -475,7 +477,7 @@ impl SeriesItem {
             positions,
             cell: None,
             properties,
-            place: Place::Step(step),
+            place: ItemPlace::Step(step),
         }
     }
 
@@ -499,7 +501,7 @@ impl SeriesItem {
             positions,
             cell: None,
             properties,
-            place: Place::Coordinate(coordinate),
+            place: ItemPlace::Coordinate(coordinate),
         })
     }
 
@@ -509,7 +511,7 @@ impl SeriesItem {
             positions: model.positions,
             cell: model.cell,
             properties: model.properties,
-            place: Place::Step(step),
+            place: ItemPlace::Step(step),
         }
     }
 
@@ -528,8 +530,8 @@ impl SeriesItem {
     /// The item's step, or `None` for an item placed by a coordinate.
     pub const fn step(&self) -> Option<u64> {
         match self.place {
-            Place::Step(step) => Some(step),
-            Place::Coordinate(_) => None,
+            ItemPlace::Step(step) => Some(step),
+            ItemPlace::Coordinate(_) => None,
         }
     }
 
@@ -537,14 +539,14 @@ impl SeriesItem {
     /// `None` for an item placed by a step.
     pub const fn coordinate(&self) -> Option<Quantity<f64>> {
         match self.place {
-            Place::Step(_) => None,
-            Place::Coordinate(coordinate) => Some(coordinate),
+            ItemPlace::Step(_) => None,
+            ItemPlace::Coordinate(coordinate) => Some(coordinate),
         }
     }
 
     /// Places the item at `step`, for a [`SeriesAxis::Step`] series.
     pub fn set_step(&mut self, step: u64) {
-        self.place = Place::Step(step);
+        self.place = ItemPlace::Step(step);
     }
 
     /// Places the item at a finite `coordinate`, for a
@@ -558,7 +560,7 @@ impl SeriesItem {
         if !coordinate.value().is_finite() {
             return Err(StructureError::NonFiniteCoordinate);
         }
-        self.place = Place::Coordinate(coordinate);
+        self.place = ItemPlace::Coordinate(coordinate);
         Ok(())
     }
 
@@ -580,10 +582,7 @@ impl SeriesItem {
             &ABSENT,
             &ABSENT,
             &self.properties,
-            StructureKind::Item {
-                step: self.step(),
-                coordinate: self.coordinate(),
-            },
+            StructureKind::Sample(SampleContext::of_item(self)),
         )
     }
 
@@ -660,8 +659,8 @@ impl<'a> SeriesItemView<'a> {
     }
 
     /// Borrows the item as the common kernel input, with the view's full
-    /// lifetime. Its [`StructureKind::Item`] carries the item's step or
-    /// coordinate.
+    /// lifetime. Its [`StructureKind::Sample`] carries the item's step or
+    /// coordinate as its [`Place`](super::Place).
     pub fn as_model_view(self) -> ModelView<'a> {
         self.payload().model_view(&self.series.topology)
     }
@@ -707,7 +706,7 @@ impl SeriesItemMut<'_> {
     /// [`SeriesError::AxisMismatch`] unless the series is a
     /// [`SeriesAxis::Step`] series; the item is unchanged then.
     pub fn set_step(&mut self, step: u64) -> Result<(), SeriesError> {
-        self.item.place = self.axis.place(Place::Step(step))?;
+        self.item.place = self.axis.place(ItemPlace::Step(step))?;
         Ok(())
     }
 
@@ -721,7 +720,7 @@ impl SeriesItemMut<'_> {
     /// [`SeriesError::Structure`] for one that is not finite; the item is
     /// unchanged then.
     pub fn set_coordinate(&mut self, coordinate: Quantity<f64>) -> Result<(), SeriesError> {
-        self.item.place = self.axis.place(Place::Coordinate(coordinate))?;
+        self.item.place = self.axis.place(ItemPlace::Coordinate(coordinate))?;
         Ok(())
     }
 

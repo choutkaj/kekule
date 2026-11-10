@@ -8,8 +8,8 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    AsModelView, Model, Positions, Series, SeriesAxis, SeriesError, SeriesItem, StructureError,
-    StructureKind,
+    AsModelView, Model, Place, Positions, Series, SeriesAxis, SeriesError, SeriesItem,
+    StructureError, StructureKind,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{
@@ -187,11 +187,9 @@ fn item_views_borrow_as_models_with_their_place() {
     let view = item.as_model_view();
     assert!(matches!(
         view.kind(),
-        StructureKind::Item {
-            step: None,
-            coordinate: Some(coordinate),
-            ..
-        } if coordinate == Quantity::new(1.25, ANGSTROM)
+        StructureKind::Sample(context)
+            if context.place() == Some(Place::Coordinate(Quantity::new(1.25, ANGSTROM)))
+                && context.membership().is_none()
     ));
     assert_eq!(AsModelView::as_model_view(&item).atom_count(), 3);
     assert_eq!(view.cell(), Some(&cell));

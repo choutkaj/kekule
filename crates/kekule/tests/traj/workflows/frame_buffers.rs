@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use kekule::geometry::Point3;
 use kekule::structure::{
-    DenseArrayError, Positions, StructureError, StructureKind, TrajectoryError, TrajectoryFrame,
+    DenseArrayError, Place, Positions, StructureError, StructureKind, TrajectoryError,
+    TrajectoryFrame,
 };
 use kekule::traj::io::xyz::{XyzReadOptions, XyzReader};
 use kekule::traj::{FrameBuffer, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryReader};
@@ -47,7 +48,11 @@ fn decoded_frames_leave_and_return_to_a_buffer_without_copying() {
     assert_eq!(frame.positions().values().value().as_ptr(), decoded);
     assert_eq!(frame.properties().bonds().len(), topology.bond_count());
     let view = frame.as_model_view();
-    assert!(matches!(view.kind(), StructureKind::Frame { .. }));
+    assert!(matches!(
+        view.kind(),
+        StructureKind::Sample(context)
+            if matches!(context.place(), Some(Place::Time { .. }))
+    ));
     assert!((view.positions().values().value()[1].x - 0.3).abs() < 1.0e-12);
 
     // Storage no longer needed becomes a buffer again; the next frame

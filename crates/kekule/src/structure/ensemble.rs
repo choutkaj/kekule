@@ -13,12 +13,15 @@ use crate::topology::{
 use crate::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 
 use super::partition::EnsemblePartition;
-use super::scalars::AtomScalars;
+use super::sample_set::SampleStructure;
 use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
-    transform_cell, transform_positions, validate_binding,
+    validate_binding,
 };
-use super::{AsModelView, Model, ModelView, Positions, StructureError, StructureKind};
+use super::{
+    AsModelView, Membership, Model, ModelView, Positions, SampleContext, StructureError,
+    StructureKind,
+};
 
 /// A molecule as the distribution of its conformations: weighted samples of
 /// one shared topology, grouped into states.
@@ -94,12 +97,12 @@ use super::{AsModelView, Model, ModelView, Positions, StructureError, StructureK
 /// ```
 #[derive(Debug, Clone)]
 pub struct Ensemble {
-    topology: Arc<Topology>,
-    properties: OwnerProperties,
-    samples: Vec<EnsembleSample>,
-    partition: EnsemblePartition,
-    states: Vec<EnsembleState>,
-    temperature: Option<Quantity<f64>>,
+    pub(super) topology: Arc<Topology>,
+    pub(super) properties: OwnerProperties,
+    pub(super) samples: Vec<EnsembleSample>,
+    pub(super) partition: EnsemblePartition,
+    pub(super) states: Vec<EnsembleState>,
+    pub(super) temperature: Option<Quantity<f64>>,
 }
 
 impl Ensemble {
@@ -316,6 +319,19 @@ impl Ensemble {
             ensemble: self,
             index,
         })
+    }
+
+    /// What a view of sample `index`, which must exist, reports: its weight
+    /// and state, the state's energy, and the ensemble's temperature.
+    pub(super) fn membership(&self, index: usize) -> Membership {
+        let state = self.partition.assignments()[index];
+        Membership::new(
+            self.samples[index].weight,
+            state,
+            self.partition.representatives()[state] == index,
+            self.states[state].energy,
+            self.temperature,
+        )
     }
 
     /// The energy and properties of one state. Its samples and
@@ -1107,18 +1123,8 @@ impl<'a> IntoIterator for &'a Ensemble {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnsembleSample {
-    structure: Arc<SampleStructure>,
-    weight: f64,
-}
-
-/// The structure state of an [`EnsembleSample`], shared between clones.
-#[derive(Debug, Clone, PartialEq)]
-struct SampleStructure {
-    positions: Positions,
-    cell: Option<PeriodicCell>,
-    occupancies: AtomScalars,
-    b_factors: AtomScalars,
-    properties: StructureProperties,
+    pub(super) structure: Arc<SampleStructure>,
+    pub(super) weight: f64,
 }
 
 impl EnsembleSample {
@@ -1139,13 +1145,7 @@ impl EnsembleSample {
     /// An equally weighted sample holding a model's structure state; the
     /// model's topology is dropped.
     pub(crate) fn from_model(model: Model) -> Self {
-        Self::with_structure(SampleStructure {
-            positions: model.positions,
-            cell: model.cell,
-            occupancies: model.occupancies,
-            b_factors: model.b_factors,
-            properties: model.properties,
-        })
+        Self::with_structure(SampleStructure::from_model(model))
     }
 
     /// An equally weighted sample without occupancies or B-factors, for
@@ -1155,13 +1155,9 @@ impl EnsembleSample {
         cell: Option<PeriodicCell>,
         properties: StructureProperties,
     ) -> Self {
-        Self::with_structure(SampleStructure {
-            positions,
-            cell,
-            occupancies: AtomScalars::default(),
-            b_factors: AtomScalars::default(),
-            properties,
-        })
+        Self::with_structure(SampleStructure::from_frame_state(
+            positions, cell, properties,
+        ))
     }
 
     /// An equally weighted sample owning `structure`.
@@ -1212,49 +1208,18 @@ impl EnsembleSample {
         Ok(())
     }
 
-    fn model_view<'a>(
-        &'a self,
-        topology: &'a Arc<Topology>,
-        kind: StructureKind<'a>,
-    ) -> ModelView<'a> {
-        let structure = &*self.structure;
-        ModelView::bound(
-            topology,
-            &structure.positions,
-            structure.cell.as_ref(),
-            &structure.occupancies,
-            &structure.b_factors,
-            &structure.properties,
-            kind,
-        )
-    }
-
     /// Projects every dense row through a subset correspondence.
     fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, StructureError> {
-        let structure = &*self.structure;
         Ok(Self {
-            structure: Arc::new(SampleStructure {
-                positions: structure.positions.select_indices(atoms)?,
-                cell: structure.cell,
-                occupancies: structure.occupancies.select(atoms),
-                b_factors: structure.b_factors.select(atoms),
-                properties: structure.properties.project(atoms, bonds)?,
-            }),
+            structure: Arc::new(self.structure.project(atoms, bonds)?),
             weight: self.weight,
         })
     }
 
     /// Positions move and the cell rotates.
     fn transformed(&self, transform: RigidTransform) -> Result<Self, StructureError> {
-        let structure = &*self.structure;
         Ok(Self {
-            structure: Arc::new(SampleStructure {
-                cell: transform_cell(structure.cell, transform)?,
-                positions: transform_positions(&structure.positions, transform)?,
-                occupancies: structure.occupancies.clone(),
-                b_factors: structure.b_factors.clone(),
-                properties: structure.properties.clone(),
-            }),
+            structure: Arc::new(self.structure.transformed(transform)?),
             weight: self.weight,
         })
     }
@@ -1262,19 +1227,7 @@ impl EnsembleSample {
     /// Replaces the positions, copying the rest of a shared structure but
     /// never the positions being replaced.
     fn replace_positions(&mut self, positions: Positions) {
-        match Arc::get_mut(&mut self.structure) {
-            Some(structure) => structure.positions = positions,
-            None => {
-                let structure = &*self.structure;
-                self.structure = Arc::new(SampleStructure {
-                    positions,
-                    cell: structure.cell,
-                    occupancies: structure.occupancies.clone(),
-                    b_factors: structure.b_factors.clone(),
-                    properties: structure.properties.clone(),
-                });
-            }
-        }
+        SampleStructure::replace_positions(&mut self.structure, positions);
     }
 
     fn storage_ref(&self) -> &SampleStructure {
@@ -1427,19 +1380,13 @@ impl<'a> EnsembleSampleView<'a> {
     }
 
     /// Borrows the sample as the common kernel input, with the view's full
-    /// lifetime. Its [`StructureKind::Sample`] carries the sample's weight
-    /// and state, the state's energy, and the ensemble's temperature.
+    /// lifetime. Its [`StructureKind::Sample`] carries the sample's
+    /// [`Membership`]: its weight and state, the state's energy, and the
+    /// ensemble's temperature.
     pub fn as_model_view(self) -> ModelView<'a> {
-        let state = self.state();
-        self.payload().model_view(
+        self.payload().structure.model_view(
             &self.ensemble.topology,
-            StructureKind::Sample {
-                weight: self.weight(),
-                state: state.index(),
-                representative: state.representative() == self.index,
-                energy: state.payload().energy.as_ref(),
-                temperature: self.ensemble.temperature.as_ref(),
-            },
+            StructureKind::Sample(SampleContext::of_ensemble(self.ensemble, self.index)),
         )
     }
 

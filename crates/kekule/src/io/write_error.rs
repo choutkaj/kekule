@@ -2,7 +2,7 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
 };
-use crate::structure::{Ensemble, Series, SeriesAxis, StructureKind};
+use crate::structure::{Ensemble, Place, SampleContext, Series, SeriesAxis, StructureKind};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -283,58 +283,35 @@ impl Omissions {
         }
     }
 
-    /// Records the sample, frame, or item state `kind` has that the policies
-    /// omit; call it after [`check_structure_state`] has passed.
+    /// Records the sample state `kind` has that the policies omit: its
+    /// membership, its step or coordinate, and its time, step, velocities,
+    /// and forces. Call it after [`check_structure_state`] has passed.
     pub(crate) fn record_structure_state(
         &mut self,
         kind: StructureKind<'_>,
         policies: StatePolicies,
     ) {
+        let StructureKind::Sample(context) = kind else {
+            return;
+        };
+        let omit = Some(UnrepresentablePolicy::Omit);
         let mut fields = Vec::new();
-        match kind {
-            StructureKind::Sample {
-                energy,
-                temperature,
-                ..
-            } if policies.sample == Some(UnrepresentablePolicy::Omit) => {
-                // A lone record cannot carry a weight relative to other
-                // samples, so its weight is always left out.
-                fields.push(StructureField::Weight);
-                if energy.is_some() {
-                    fields.push(StructureField::Energy);
-                }
-                if temperature.is_some() {
-                    fields.push(StructureField::Temperature);
-                }
+        if let Some(membership) = context.membership().filter(|_| policies.sample == omit) {
+            // A lone record cannot carry a weight relative to other
+            // samples, so its weight is always left out.
+            fields.push(StructureField::Weight);
+            if membership.energy().is_some() {
+                fields.push(StructureField::Energy);
             }
-            StructureKind::Frame {
-                time,
-                step,
-                velocities,
-                forces,
-                ..
-            } if policies.frame == UnrepresentablePolicy::Omit => {
-                for (present, field) in [
-                    (time.is_some(), StructureField::Time),
-                    (step.is_some(), StructureField::Step),
-                    (velocities.is_some(), StructureField::Velocities),
-                    (forces.is_some(), StructureField::Forces),
-                ] {
-                    if present {
-                        fields.push(field);
-                    }
-                }
+            if membership.temperature().is_some() {
+                fields.push(StructureField::Temperature);
             }
-            StructureKind::Item { step, .. }
-                if policies.item == Some(UnrepresentablePolicy::Omit) =>
-            {
-                fields.push(if step.is_some() {
-                    StructureField::ItemStep
-                } else {
-                    StructureField::ItemCoordinate
-                });
-            }
-            _ => {}
+        }
+        if policies.item == omit {
+            fields.extend(place_field(context));
+        }
+        if policies.frame == UnrepresentablePolicy::Omit {
+            fields.extend(frame_fields(context));
         }
         for field in fields {
             self.record(WriteOmission::StructureState {
@@ -349,52 +326,63 @@ impl Omissions {
     }
 }
 
-/// Fails for ensemble sample, trajectory frame, or series item state that
-/// `format` cannot carry, unless the caller chose to omit it.
+/// The field a sample's step or coordinate place is written as, if it has
+/// one.
+fn place_field(context: SampleContext<'_>) -> Option<StructureField> {
+    match context.place() {
+        Some(Place::Step(_)) => Some(StructureField::ItemStep),
+        Some(Place::Coordinate(_)) => Some(StructureField::ItemCoordinate),
+        _ => None,
+    }
+}
+
+/// A sample's time, MD step, velocities, and forces that are present, in
+/// that order.
+fn frame_fields(context: SampleContext<'_>) -> impl Iterator<Item = StructureField> {
+    let (time, step) = match context.place() {
+        Some(Place::Time { time, step }) => (time.is_some(), step.is_some()),
+        _ => (false, false),
+    };
+    [
+        (time, StructureField::Time),
+        (step, StructureField::Step),
+        (context.velocities().is_some(), StructureField::Velocities),
+        (context.forces().is_some(), StructureField::Forces),
+    ]
+    .into_iter()
+    .filter_map(|(present, field)| present.then_some(field))
+}
+
+/// Fails for sample state that `format` cannot carry, unless the caller
+/// chose to omit it: a membership, a step or coordinate place, and a time,
+/// MD step, velocities, or forces, checked in that order.
 pub(crate) fn check_structure_state(
     format: Format,
     kind: StructureKind<'_>,
     policies: StatePolicies,
 ) -> Result<(), FormatError> {
-    let field = match kind {
-        StructureKind::Sample { energy, .. }
-            if policies.sample == Some(UnrepresentablePolicy::Fail) =>
-        {
+    let StructureKind::Sample(context) = kind else {
+        return Ok(());
+    };
+    let fail = Some(UnrepresentablePolicy::Fail);
+    let membership = context
+        .membership()
+        .filter(|_| policies.sample == fail)
+        .map(|membership| {
             // A lone record cannot carry a weight relative to other samples.
-            Some(if energy.is_some() {
+            if membership.energy().is_some() {
                 StructureField::Energy
             } else {
                 StructureField::Weight
-            })
-        }
-        StructureKind::Item { step, .. } if policies.item == Some(UnrepresentablePolicy::Fail) => {
-            Some(if step.is_some() {
-                StructureField::ItemStep
-            } else {
-                StructureField::ItemCoordinate
-            })
-        }
-        StructureKind::Frame {
-            time,
-            step,
-            velocities,
-            forces,
-            ..
-        } if policies.frame == UnrepresentablePolicy::Fail => {
-            if time.is_some() {
-                Some(StructureField::Time)
-            } else if step.is_some() {
-                Some(StructureField::Step)
-            } else if velocities.is_some() {
-                Some(StructureField::Velocities)
-            } else if forces.is_some() {
-                Some(StructureField::Forces)
-            } else {
-                None
             }
-        }
-        _ => None,
-    };
+        });
+    let field = membership
+        .or_else(|| place_field(context).filter(|_| policies.item == fail))
+        .or_else(|| {
+            frame_fields(context)
+                .next()
+                .filter(|_| policies.frame == UnrepresentablePolicy::Fail)
+        });
     match field {
         None => Ok(()),
         Some(field) => Err(FormatError::write(

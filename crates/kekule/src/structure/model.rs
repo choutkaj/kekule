@@ -20,7 +20,7 @@ use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     transform_cell, transform_positions, validate_binding,
 };
-use super::{DenseArrayError, Forces, Positions, StructureError, Velocities};
+use super::{DenseArrayError, Positions, SampleContext, StructureError};
 
 /// One concrete structure of one topology.
 ///
@@ -422,63 +422,29 @@ impl<'a> From<&'a Model> for ModelView<'a> {
     }
 }
 
-/// What a [`ModelView`] borrows: a model, an ensemble sample, a trajectory
-/// frame, or a series item, with the state only that kind of structure owns.
+/// What a [`ModelView`] borrows: a model, or one sample of a collection of
+/// structures with what its collection records about it.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
-/// it so that sample and frame state is written, rejected, or deliberately
-/// omitted, never silently dropped.
+/// it so that a sample's place, membership, velocities, and forces are
+/// written, rejected, or deliberately omitted, never silently dropped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum StructureKind<'a> {
     /// A [`Model`], or a view materialized as one.
     Model,
-    /// An [`EnsembleSample`](super::EnsembleSample), with what its
-    /// ensemble records about it.
-    #[non_exhaustive]
-    Sample {
-        /// The sample's finite, positive relative weight.
-        weight: f64,
-        /// The index of the sample's state.
-        state: usize,
-        /// Whether the sample represents its state.
-        representative: bool,
-        /// The energy of the sample's state, when recorded.
-        energy: Option<&'a Quantity<f64>>,
-        /// The temperature the ensemble's populations describe, when
-        /// recorded.
-        temperature: Option<&'a Quantity<f64>>,
-    },
-    /// A [`TrajectoryFrame`](super::TrajectoryFrame) or a frame buffer.
-    #[non_exhaustive]
-    Frame {
-        /// The frame's simulation time, when recorded.
-        time: Option<Quantity<f64>>,
-        /// The frame's integration step, when recorded.
-        step: Option<u64>,
-        /// The frame's velocities, when recorded.
-        velocities: Option<&'a Velocities>,
-        /// The frame's forces, when recorded.
-        forces: Option<&'a Forces>,
-    },
-    /// A [`SeriesItem`](super::SeriesItem), with its place on its series'
-    /// axis: exactly one of a step and a coordinate.
-    #[non_exhaustive]
-    Item {
-        /// The item's step, on a [`SeriesAxis::Step`](super::SeriesAxis::Step)
-        /// series.
-        step: Option<u64>,
-        /// The item's coordinate in the axis unit, on a
-        /// [`SeriesAxis::Coordinate`](super::SeriesAxis::Coordinate) series.
-        coordinate: Option<Quantity<f64>>,
-    },
+    /// A sample of a [`SampleSet`](super::SampleSet), an ensemble sample, a
+    /// trajectory frame or frame buffer, or a series item, with its
+    /// [`SampleContext`].
+    Sample(SampleContext<'a>),
 }
 
 /// A borrowed topology plus the structure state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
-/// Models, ensemble samples, trajectory frames, series items, and frame
-/// buffers all borrow as a view, and [`Self::kind`] says which one it is.
+/// Models, samples, ensemble samples, trajectory frames, series items, and
+/// frame buffers all borrow as a view, and [`Self::kind`] says whether it is
+/// a model or a sample.
 /// Accessors return borrows with the view's full lifetime. A view of a
 /// trajectory frame or series item has no occupancies or B-factors. Views
 /// preserve exact topology identity.
@@ -516,7 +482,8 @@ impl<'a> ModelView<'a> {
         }
     }
 
-    /// Which structure this view borrows, with its member or frame state.
+    /// Whether this view borrows a model or a sample, with the sample's
+    /// place, membership, velocities, and forces.
     ///
     /// ```
     /// use kekule::{smiles, structure::{Model, Positions, StructureKind}};
@@ -619,7 +586,7 @@ impl<'a> ModelView<'a> {
     }
 
     /// Materializes this borrowed structure as an owned model, dropping any
-    /// member or frame state reported by [`Self::kind`]. A view of a
+    /// sample state reported by [`Self::kind`]. A view of a
     /// trajectory frame yields a model without occupancies or B-factors.
     pub fn to_model(self) -> Model {
         Model {

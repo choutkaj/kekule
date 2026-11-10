@@ -41,12 +41,16 @@ Molecule  = Graph + Perception + Properties
 Topology  = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
-Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `Ensemble` and `Trajectory` are distinct collections of structures of one system: an ensemble is a weighted, unordered set of members with statistical weight; a trajectory is a time-ordered sequence of frames produced by a simulation.
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `SampleSet` holds many structures of one system as samples. An optional order places every sample: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An optional distribution groups all samples or some of them into states, with weights and state energies, as for a conformer ensemble. `Ensemble`, `Trajectory`, and `Series` are older collections for each of these cases; a sample set converts from and to each without loss.
 
 ```text
-Model      = Topology + positions, cell, occupancies, B-factors, properties
-Ensemble   = Topology + weighted EnsembleMembers (positions, cell, occupancies, B-factors, properties, weight)
-Trajectory = Topology + time-ordered TrajectoryFrames (positions, cell, properties, velocities, forces, time, step)
+Model        = Topology + positions, cell, occupancies, B-factors, properties
+SampleSet    = Topology + Samples (positions, cell, occupancies, B-factors, velocities, forces, properties)
+               + optional Order (times and steps, steps, or coordinate values)
+               + optional Distribution (members, weights, states with energies, temperature)
+Ensemble     = Topology + weighted EnsembleSamples grouped into states
+Trajectory   = Topology + time-ordered TrajectoryFrames (velocities, forces, time, step)
+Series       = Topology + SeriesItems at steps or coordinate values
 ```
 
 ## Formats
