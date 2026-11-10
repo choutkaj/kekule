@@ -901,6 +901,51 @@ impl DistributionMut<'_> {
         self.distribution.set_temperature(temperature)
     }
 
+    /// Sets each state's population in proportion to the Boltzmann factor
+    /// of its energy relative to the lowest one, `exp(-(E - E_min) / RT)`,
+    /// and records `temperature`.
+    ///
+    /// The weights of each state's members are scaled together, so their
+    /// ratios within the state are kept, and the total weight is kept. A
+    /// distribution of one state is therefore unchanged, apart from gaining
+    /// weights (`1.0` each) when it had none. Samples drawn from a simulation
+    /// already follow their distribution; group them into a state without an
+    /// energy, which this refuses, rather than weighting them a second time.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::InvalidTemperature`] and [`SampleSetError::Unit`]
+    /// for a temperature that is not finite and positive,
+    /// `Missing(StateEnergies)` when a state has no energy, and
+    /// [`SampleSetError::InvalidWeight`] when a weight would underflow to
+    /// zero (keep only the states within an energy window first, with
+    /// [`Distribution::within_energy_window`] and
+    /// [`super::SampleSet::select_states`]). Failure changes nothing.
+    pub fn assign_boltzmann_populations(
+        &mut self,
+        temperature: Quantity<f64>,
+    ) -> Result<(), SampleSetError> {
+        let kelvin = checked_temperature(temperature)?;
+        let thermal_energy = thermal_energy(kelvin).ok_or(SampleSetError::InvalidTemperature)?;
+        let distribution = &mut *self.distribution;
+        let energies = distribution.state_energies()?;
+        let weights = (0..distribution.member_count())
+            .map(|position| distribution.member_weight(position))
+            .collect::<Vec<_>>();
+        let weights = boltzmann_weights(
+            thermal_energy,
+            &energies,
+            &weights,
+            distribution.partition.assignments(),
+        )
+        .map_err(|position| SampleSetError::InvalidWeight {
+            sample: distribution.member(position),
+        })?;
+        distribution.weights = Some(weights);
+        distribution.temperature = Some(Quantity::new(kelvin, CANONICAL_TEMPERATURE_UNIT));
+        Ok(())
+    }
+
     /// The energy and properties of one state. Its members and
     /// representative change only through [`Self::regroup`].
     pub fn state_mut(&mut self, state: usize) -> Option<&mut EnsembleState> {
@@ -958,6 +1003,83 @@ impl DistributionMut<'_> {
         self.distribution.partition = partition;
         Ok(())
     }
+}
+
+/// The molar gas constant `N_A k_B` in kJ/(mol K), exact since the 2019 SI.
+const MOLAR_GAS_CONSTANT: f64 = 8.314_462_618_153_24e-3;
+
+/// `R T` for a temperature in kelvin, when it is finite and positive.
+pub(crate) fn thermal_energy(kelvin: f64) -> Option<f64> {
+    let thermal_energy = MOLAR_GAS_CONSTANT * kelvin;
+    (thermal_energy.is_finite() && thermal_energy > 0.0).then_some(thermal_energy)
+}
+
+/// New relative weights giving each state the population share
+/// `exp(-(E - E_min) / RT)` normalized over the states, at `thermal_energy`
+/// `RT`, from state `energies` in [`CANONICAL_ENERGY_UNIT`] and member
+/// `weights` grouped into states by `assignments`.
+///
+/// Each state's members scale by one factor, so their ratios within the
+/// state are kept, and the total weight is kept. Fails with the position of
+/// the first member whose weight would not be finite and positive. This is
+/// the one implementation behind the sample set's and the ensemble's
+/// Boltzmann populations.
+pub(crate) fn boltzmann_weights(
+    thermal_energy: f64,
+    energies: &[f64],
+    weights: &[f64],
+    assignments: &[usize],
+) -> Result<Vec<f64>, usize> {
+    let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
+    let targets = energies
+        .iter()
+        .map(|energy| (-(energy - minimum) / thermal_energy).exp())
+        .collect::<Vec<_>>();
+    let target_total = targets.iter().sum::<f64>();
+    let maximum = weights.iter().copied().fold(0.0_f64, f64::max);
+    let scaled = weights
+        .iter()
+        .map(|weight| weight / maximum)
+        .collect::<Vec<_>>();
+    let total = scaled.iter().sum::<f64>();
+    let mut populations = vec![0.0; energies.len()];
+    for (weight, state) in scaled.iter().zip(assignments) {
+        populations[*state] += weight;
+    }
+    // Each state's share of the total weight becomes its target share: its
+    // members scale by that share times the total over its population. A
+    // state far lighter than the heaviest member has a population that
+    // underflows when scaled by the heaviest weight, so its members are
+    // normalized within the state instead, keeping every intermediate value
+    // representable.
+    let mut state_maxima = vec![0.0_f64; energies.len()];
+    for (weight, state) in weights.iter().zip(assignments) {
+        state_maxima[*state] = state_maxima[*state].max(*weight);
+    }
+    let mut within = vec![0.0; energies.len()];
+    for (weight, state) in weights.iter().zip(assignments) {
+        within[*state] += weight / state_maxima[*state];
+    }
+    let shares = targets
+        .iter()
+        .map(|target| target / target_total)
+        .collect::<Vec<_>>();
+    weights
+        .iter()
+        .zip(assignments)
+        .enumerate()
+        .map(|(position, (weight, state))| {
+            let factor = shares[*state] * (total / populations[*state]);
+            let weight = if factor.is_finite() {
+                weight * factor
+            } else {
+                (weight / state_maxima[*state])
+                    * (shares[*state] * total / within[*state])
+                    * maximum
+            };
+            checked_weight(weight).ok_or(position)
+        })
+        .collect()
 }
 
 /// `weight` when it is finite and positive.

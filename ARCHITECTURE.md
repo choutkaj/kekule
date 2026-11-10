@@ -48,15 +48,19 @@ editing one sample copies that sample alone. The operations of the set and
 its distribution fail with one `SampleSetError`, whose `Missing` variant
 names the `Requirement` an operation lacks, such as a time order or an
 energy for every state; a sample's own edits fail with `StructureError`, and
-perception with `TopologyPerceptionError`. Statistics over a set walk
-`SampleSet::weighted_samples`: the members with their weights, or every
-sample with weight 1 without a distribution.
+perception with `TopologyPerceptionError`. Statistics and clustering over a
+set read `SampleSet::weighted_samples`: the members, or every sample
+without a distribution; samples outside the distribution are left out.
+Superposition and RMSD act on every sample.
 
 `Ensemble`, `Trajectory`, and `Series` remain beside `SampleSet`. An ensemble
 is a distribution over all its samples without an order; a trajectory is a
 time order without a distribution, its frames without site fields; a series
 is a step or coordinate order of samples without site fields or dynamics.
-Each implements its own operations; `Trajectory::into_ensemble` and
+Each implements its own editing. Their superposition, RMSD, statistics,
+clustering, and Boltzmann populations share one implementation with the
+set's, so a set converted from one of them returns identical results.
+`Trajectory::into_ensemble` and
 `Trajectory::to_ensemble` project a trajectory to one state of equally
 weighted frames or to chosen frames with explicit weights. `SampleSet`
 converts from each (`from_ensemble`, `from_trajectory`, `from_series`) and
@@ -530,8 +534,9 @@ each frame step and time it replaces.
 Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in
 place and stage all affected state before publication; clone first to keep the
-source. Superposition and RMSD are methods of both trajectories and ensembles, against
-one of its items or an independent view; streaming superposition applies the
+source. Superposition and RMSD are methods of sample sets, ensembles,
+trajectories, and series, against one of the collection's items or an
+independent view, through one implementation; streaming superposition applies the
 same kernel to a buffer. Streaming tools take the caller's frame index for
 diagnostics. Superposition rotates cells, velocities, and forces consistently.
 Periodic reconstruction uses asserted bonds and checks ring closure. Imaging
@@ -545,10 +550,14 @@ RMSF and contact occupancy, of atom pairs or of pairs of atom groups, are
 weighted statistics in `kekule::statistics`.
 Every observation is a borrowed structure together with an explicit, finite,
 positive weight, so no structure is reduced with an implied weight.
-`Ensemble` methods observe each sample with its probability; `Trajectory`
+`SampleSet` methods observe each member of the distribution with its
+probability, its weight over the members' total, and leave the other samples
+out; a set without a distribution is observed as a trajectory is. `Ensemble`
+methods observe each sample with its probability; `Trajectory`
 methods observe every frame with weight one, taking frames as equally weighted
 equilibrium samples, and other frame weights are passed to the accumulators
-explicitly. Streamed frames reach the same accumulators through their buffer's
+explicitly. All of them run one reduction per statistic, so a set converted
+from an ensemble or a trajectory gives its results bit for bit. Streamed frames reach the same accumulators through their buffer's
 `ModelView`; `kekule::traj` adds no statistics of its own. Accumulators consume
 structures sharing the source topology's layout with memory bounded by
 selected atoms, pairs, or groups, not observation count. Failed observations leave
@@ -563,16 +572,22 @@ indices are diagnostic labels. Preprocessing, including alignment or imaging,
 is explicit. These are separate analysis results, not new topology state or a
 generic reduction framework.
 
-Ensemble clustering is weight-aware and belongs to ensembles only. It returns an
-`EnsemblePartition`, the same grouping type an ensemble owns, and never changes
-the ensemble. `Ensemble::regroup` applies a partition without changing any
-weight or sample order: a new state that contains every sample of an old state
-keeps the energy and properties of its representative's old state, and a state
-split apart loses them. Collapsing makes a new ensemble of each state's
+Clustering is weight-aware and groups the members of a distribution: those
+of a sample set, or every sample of a set without one, and the samples of an
+ensemble, through one implementation. It returns an `EnsemblePartition`,
+the grouping type a distribution and an ensemble own, and never changes the
+collection. A sample set's distances and partitions are indexed by member
+position, so `DistributionMut::regroup` installs a partition directly, and a
+set without a distribution takes it as a new distribution of every sample;
+errors name sample indices. `DistributionMut::regroup` and
+`Ensemble::regroup` apply a partition without changing any weight or sample
+order: a new state that contains every member of an old state keeps the
+energy and properties of its representative's old state, and a state split
+apart loses them. Collapsing makes a new collection of each state's
 representative carrying the state's population. Visiting order and
 tie-breaking are deterministic. Pairwise distances
 are a separate `DistanceMatrix` result. A hierarchical `Dendrogram` depends on
-distances alone, and ensemble weights enter only when choosing representatives;
+distances alone, and weights enter only when choosing representatives;
 k-medoids instead minimizes the weight-summed distance to medoids, so weights
 shape its clusters. Pairwise fits and leader clustering may run on a
 `parallel::Executor`, poll a `Cancellation`, and report progress through a

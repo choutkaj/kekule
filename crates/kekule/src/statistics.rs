@@ -5,8 +5,9 @@
 //! Weights are relative: scaling every weight by one factor changes no
 //! statistic. [`RmsfAccumulator`], [`ContactOccupancyAccumulator`], and
 //! [`GroupContactOccupancyAccumulator`] observe any borrowed structure
-//! ([`AsModelView`]: a model, an ensemble sample, a trajectory frame, or a
-//! streamed frame buffer through its `as_model_view()`) one at a time, with
+//! ([`AsModelView`]: a model, a sample, an ensemble sample, a trajectory
+//! frame, or a streamed frame buffer through its `as_model_view()`) one at a
+//! time, with
 //! memory bounded by the selected atoms, pairs, or groups, not the
 //! observation count.
 //!
@@ -16,7 +17,12 @@
 //! result is the same whichever threads observed the ranges, and it equals
 //! observing everything in one accumulator up to rounding.
 //!
-//! Ensembles and trajectories reduce themselves with the same accumulators.
+//! Sample sets, ensembles, and trajectories reduce themselves with the same
+//! accumulators, through one reduction. [`SampleSet::rmsf`],
+//! [`SampleSet::contact_occupancy`], and
+//! [`SampleSet::group_contact_occupancy`] observe the members of the set's
+//! distribution, each with its probability, and leave the other samples out;
+//! without a distribution they observe every sample with weight one.
 //! [`Ensemble::rmsf`], [`Ensemble::contact_occupancy`], and
 //! [`Ensemble::group_contact_occupancy`] observe each sample with its
 //! probability, its weight divided by the total. [`Trajectory::rmsf`],
@@ -65,7 +71,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::geometry::{Point3, PointGrid, Vector3};
-use crate::structure::{AsModelView, Ensemble, Trajectory};
+use crate::structure::{AsModelView, Ensemble, ModelView, SampleSet, Trajectory};
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
@@ -1442,6 +1448,148 @@ impl GroupContactOccupancyResult {
     }
 }
 
+/// Observes each `(index, structure, weight)` into a new [`RmsfAccumulator`]
+/// over `selection`, after checking it against `topology`; the one reduction
+/// behind every collection's RMSF.
+fn rmsf_of<'a>(
+    topology: &Arc<Topology>,
+    selection: &AtomSelection,
+    observations: impl IntoIterator<Item = (usize, ModelView<'a>, f64)>,
+) -> Result<RmsfResult, StatisticsError> {
+    selection
+        .ensure_compatible(topology)
+        .map_err(StatisticsError::Selection)?;
+    let mut accumulator = RmsfAccumulator::new(selection)?;
+    for (index, structure, weight) in observations {
+        accumulator.observe(index, &structure, weight)?;
+    }
+    accumulator.finish()
+}
+
+/// Observes each `(index, structure, weight)` into a new
+/// [`ContactOccupancyAccumulator`]; the one reduction behind every
+/// collection's contact occupancy.
+fn contact_occupancy_of<'a>(
+    topology: &Arc<Topology>,
+    pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
+    cutoff: Quantity<f64>,
+    observations: impl IntoIterator<Item = (usize, ModelView<'a>, f64)>,
+) -> Result<ContactOccupancyResult, StatisticsError> {
+    let mut accumulator = ContactOccupancyAccumulator::new(topology, pairs, cutoff)?;
+    for (index, structure, weight) in observations {
+        accumulator.observe(index, &structure, weight)?;
+    }
+    accumulator.finish()
+}
+
+/// Observes each `(index, structure, weight)` into a new
+/// [`GroupContactOccupancyAccumulator`]; the one reduction behind every
+/// collection's group contact occupancy.
+fn group_contact_occupancy_of<'a>(
+    topology: &Arc<Topology>,
+    groups: impl IntoIterator<Item = AtomSelection>,
+    pairs: impl IntoIterator<Item = (usize, usize)>,
+    cutoff: Quantity<f64>,
+    observations: impl IntoIterator<Item = (usize, ModelView<'a>, f64)>,
+) -> Result<GroupContactOccupancyResult, StatisticsError> {
+    let mut accumulator = GroupContactOccupancyAccumulator::new(topology, groups, pairs, cutoff)?;
+    for (index, structure, weight) in observations {
+        accumulator.observe(index, &structure, weight)?;
+    }
+    accumulator.finish()
+}
+
+/// Probabilities from weights already scaled by the largest one, so that
+/// the total cannot overflow.
+fn probabilities(scaled: Vec<f64>) -> Vec<f64> {
+    let total = scaled.iter().sum::<f64>();
+    scaled.into_iter().map(|weight| weight / total).collect()
+}
+
+impl SampleSet {
+    /// Per-atom weighted RMSF about each atom's weighted mean stored position,
+    /// as defined by [`RmsfAccumulator`], over the samples statistics see
+    /// ([`Self::weighted_samples`]): the members of the distribution, each
+    /// observed with its probability (its weight over the members' total),
+    /// or, without a distribution, every sample with weight one. Samples
+    /// outside the distribution are not observed. Align and perform periodic
+    /// preprocessing beforehand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::Selection`] when `selection` is incompatible
+    /// with the set's topology, [`StatisticsError::NoObservations`] when there
+    /// is no sample to observe, [`StatisticsError::InvalidWeight`] naming the
+    /// sample index of a member whose probability underflows to zero, and the
+    /// errors of [`RmsfAccumulator::new`] and [`RmsfAccumulator::observe`].
+    pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, StatisticsError> {
+        rmsf_of(&self.shared_topology(), selection, self.observations())
+    }
+
+    /// Weighted Cartesian contact occupancies, as defined by
+    /// [`ContactOccupancyAccumulator`], over the samples [`Self::rmsf`]
+    /// observes, with the same weights: each contact weight is a probability
+    /// with a distribution and a sample count without one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::NoObservations`] when there is no sample to
+    /// observe, [`StatisticsError::InvalidWeight`] naming a member whose
+    /// probability underflows to zero, and the errors of
+    /// [`ContactOccupancyAccumulator::new`] and
+    /// [`ContactOccupancyAccumulator::observe`].
+    pub fn contact_occupancy(
+        &self,
+        pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
+        cutoff: Quantity<f64>,
+    ) -> Result<ContactOccupancyResult, StatisticsError> {
+        contact_occupancy_of(&self.shared_topology(), pairs, cutoff, self.observations())
+    }
+
+    /// Weighted Cartesian contact occupancies of pairs of atom groups, as
+    /// defined by [`GroupContactOccupancyAccumulator`], over the samples
+    /// [`Self::rmsf`] observes, with the same weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::NoObservations`] when there is no sample to
+    /// observe, [`StatisticsError::InvalidWeight`] naming a member whose
+    /// probability underflows to zero, and the errors of
+    /// [`GroupContactOccupancyAccumulator::new`] and
+    /// [`GroupContactOccupancyAccumulator::observe`].
+    pub fn group_contact_occupancy(
+        &self,
+        groups: impl IntoIterator<Item = AtomSelection>,
+        pairs: impl IntoIterator<Item = (usize, usize)>,
+        cutoff: Quantity<f64>,
+    ) -> Result<GroupContactOccupancyResult, StatisticsError> {
+        group_contact_occupancy_of(
+            &self.shared_topology(),
+            groups,
+            pairs,
+            cutoff,
+            self.observations(),
+        )
+    }
+
+    /// Each observed sample, labelled by its sample index, with its
+    /// observation weight: the members with their probabilities, or every
+    /// sample with weight one.
+    fn observations(&self) -> Vec<(usize, ModelView<'_>, f64)> {
+        let weights = match self.distribution() {
+            Some(distribution) => probabilities(distribution.scaled_weights()),
+            None => vec![1.0; self.len()],
+        };
+        self.weighted_samples()
+            .zip(weights)
+            .map(|((index, _), weight)| {
+                let sample = self.get(index).expect("weighted samples are in the set");
+                (index, sample.as_model_view(), weight)
+            })
+            .collect()
+    }
+}
+
 impl Ensemble {
     /// Per-atom weighted RMSF about each atom's weighted mean stored position
     /// over every sample, as defined by [`RmsfAccumulator`], each sample
@@ -1456,14 +1604,7 @@ impl Ensemble {
     /// probability underflows to zero, and the errors of
     /// [`RmsfAccumulator::new`] and [`RmsfAccumulator::observe`].
     pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, StatisticsError> {
-        selection
-            .ensure_compatible(&self.shared_topology())
-            .map_err(StatisticsError::Selection)?;
-        let mut accumulator = RmsfAccumulator::new(selection)?;
-        for (index, (sample, probability)) in self.iter().zip(self.observed_weights()).enumerate() {
-            accumulator.observe(index, &sample, probability)?;
-        }
-        accumulator.finish()
+        rmsf_of(&self.shared_topology(), selection, self.observations())
     }
 
     /// Weighted Cartesian contact occupancies over every sample, as defined
@@ -1482,12 +1623,7 @@ impl Ensemble {
         pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
         cutoff: Quantity<f64>,
     ) -> Result<ContactOccupancyResult, StatisticsError> {
-        let mut accumulator =
-            ContactOccupancyAccumulator::new(&self.shared_topology(), pairs, cutoff)?;
-        for (index, (sample, probability)) in self.iter().zip(self.observed_weights()).enumerate() {
-            accumulator.observe(index, &sample, probability)?;
-        }
-        accumulator.finish()
+        contact_occupancy_of(&self.shared_topology(), pairs, cutoff, self.observations())
     }
 
     /// Weighted Cartesian contact occupancies of pairs of atom groups over
@@ -1507,20 +1643,21 @@ impl Ensemble {
         pairs: impl IntoIterator<Item = (usize, usize)>,
         cutoff: Quantity<f64>,
     ) -> Result<GroupContactOccupancyResult, StatisticsError> {
-        let mut accumulator =
-            GroupContactOccupancyAccumulator::new(&self.shared_topology(), groups, pairs, cutoff)?;
-        for (index, (sample, probability)) in self.iter().zip(self.observed_weights()).enumerate() {
-            accumulator.observe(index, &sample, probability)?;
-        }
-        accumulator.finish()
+        group_contact_occupancy_of(
+            &self.shared_topology(),
+            groups,
+            pairs,
+            cutoff,
+            self.observations(),
+        )
     }
 
-    /// Each sample's probability, computed from weights scaled by the largest
-    /// so that the total cannot overflow.
-    fn observed_weights(&self) -> Vec<f64> {
-        let scaled = self.scaled_weights();
-        let total = scaled.iter().sum::<f64>();
-        scaled.into_iter().map(|weight| weight / total).collect()
+    /// Each sample, labelled by its index, with its probability.
+    fn observations(&self) -> impl Iterator<Item = (usize, ModelView<'_>, f64)> {
+        self.iter()
+            .zip(probabilities(self.scaled_weights()))
+            .enumerate()
+            .map(|(index, (sample, probability))| (index, sample.as_model_view(), probability))
     }
 }
 
@@ -1538,14 +1675,7 @@ impl Trajectory {
     /// an empty trajectory, and the errors of [`RmsfAccumulator::new`] and
     /// [`RmsfAccumulator::observe`].
     pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, StatisticsError> {
-        selection
-            .ensure_compatible(&self.shared_topology())
-            .map_err(StatisticsError::Selection)?;
-        let mut accumulator = RmsfAccumulator::new(selection)?;
-        for (index, frame) in self.iter().enumerate() {
-            accumulator.observe(index, &frame, 1.0)?;
-        }
-        accumulator.finish()
+        rmsf_of(&self.shared_topology(), selection, self.observations())
     }
 
     /// Cartesian contact occupancies over every frame, as defined by
@@ -1563,12 +1693,7 @@ impl Trajectory {
         pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
         cutoff: Quantity<f64>,
     ) -> Result<ContactOccupancyResult, StatisticsError> {
-        let mut accumulator =
-            ContactOccupancyAccumulator::new(&self.shared_topology(), pairs, cutoff)?;
-        for (index, frame) in self.iter().enumerate() {
-            accumulator.observe(index, &frame, 1.0)?;
-        }
-        accumulator.finish()
+        contact_occupancy_of(&self.shared_topology(), pairs, cutoff, self.observations())
     }
 
     /// Cartesian contact occupancies of pairs of atom groups over every
@@ -1588,11 +1713,19 @@ impl Trajectory {
         pairs: impl IntoIterator<Item = (usize, usize)>,
         cutoff: Quantity<f64>,
     ) -> Result<GroupContactOccupancyResult, StatisticsError> {
-        let mut accumulator =
-            GroupContactOccupancyAccumulator::new(&self.shared_topology(), groups, pairs, cutoff)?;
-        for (index, frame) in self.iter().enumerate() {
-            accumulator.observe(index, &frame, 1.0)?;
-        }
-        accumulator.finish()
+        group_contact_occupancy_of(
+            &self.shared_topology(),
+            groups,
+            pairs,
+            cutoff,
+            self.observations(),
+        )
+    }
+
+    /// Each frame, labelled by its index, with weight one.
+    fn observations(&self) -> impl Iterator<Item = (usize, ModelView<'_>, f64)> {
+        self.iter()
+            .enumerate()
+            .map(|(index, frame)| (index, frame.as_model_view(), 1.0))
     }
 }

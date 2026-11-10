@@ -1,10 +1,63 @@
 //! Weighted k-medoids clustering by Partitioning Around Medoids.
 
-use crate::structure::Ensemble;
+use crate::structure::{Ensemble, EnsemblePartition, SampleSet};
 
 use super::hierarchical::ObjectiveDistances;
-use super::{ClusteringError, DistanceMatrix};
-use crate::structure::EnsemblePartition;
+use super::{Clustered, ClusteringError, DistanceMatrix};
+
+impl Clustered<'_> {
+    fn cluster_k_medoids(
+        &self,
+        distances: &DistanceMatrix,
+        clusters: usize,
+    ) -> Result<EnsemblePartition, ClusteringError> {
+        self.check_matrix(distances)?;
+        let members = self.len();
+        let valid = if members == 0 {
+            clusters == 0
+        } else {
+            (1..=members).contains(&clusters)
+        };
+        if !valid {
+            return Err(ClusteringError::InvalidClusterCount {
+                requested: clusters,
+                members,
+            });
+        }
+        let weights = self.scaled_weights();
+        let objective = ObjectiveDistances::new(distances);
+        let mut medoids = build(objective, &weights, clusters);
+        swap(objective, &weights, &mut medoids);
+        Ok(partition(distances, &medoids))
+    }
+}
+
+impl SampleSet {
+    /// Partitions the members of the set's distribution, or every sample of
+    /// a set without one, into `clusters` clusters around medoid members, on
+    /// `distances` indexed by member position
+    /// ([`Self::pairwise_fitted_rmsd`]).
+    ///
+    /// The clustering is [`Ensemble::cluster_k_medoids`]'s, with the
+    /// members' weights (equal without weights or a distribution). The
+    /// partition groups the members by member position; install it with
+    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)
+    /// or, without a distribution, as `Distribution::new(Members::All,
+    /// partition)` through [`Self::set_distribution`].
+    ///
+    /// # Errors
+    ///
+    /// [`ClusteringError::MatrixMismatch`] when the matrix covers a different
+    /// member count, and [`ClusteringError::InvalidClusterCount`] when
+    /// `clusters` is out of range.
+    pub fn cluster_k_medoids(
+        &self,
+        distances: &DistanceMatrix,
+        clusters: usize,
+    ) -> Result<EnsemblePartition, ClusteringError> {
+        Clustered::of_set(self).cluster_k_medoids(distances, clusters)
+    }
+}
 
 impl Ensemble {
     /// Partitions the members into `clusters` clusters around medoid
@@ -39,29 +92,7 @@ impl Ensemble {
         distances: &DistanceMatrix,
         clusters: usize,
     ) -> Result<EnsemblePartition, ClusteringError> {
-        if distances.member_count() != self.len() {
-            return Err(ClusteringError::MatrixMismatch {
-                expected: self.len(),
-                actual: distances.member_count(),
-            });
-        }
-        let members = self.len();
-        let valid = if members == 0 {
-            clusters == 0
-        } else {
-            (1..=members).contains(&clusters)
-        };
-        if !valid {
-            return Err(ClusteringError::InvalidClusterCount {
-                requested: clusters,
-                members,
-            });
-        }
-        let weights = self.scaled_weights();
-        let objective = ObjectiveDistances::new(distances);
-        let mut medoids = build(objective, &weights, clusters);
-        swap(objective, &weights, &mut medoids);
-        Ok(partition(distances, &medoids))
+        Clustered::of_ensemble(self).cluster_k_medoids(distances, clusters)
     }
 }
 
