@@ -1697,7 +1697,7 @@ fn every_error_reads_as_a_sentence() {
     for (error, text) in errors {
         assert_eq!(error.to_string(), text, "{error:?}");
     }
-    assert_eq!(E::from(unit.clone()).to_string(), unit.to_string());
+    assert_eq!(E::from(unit).to_string(), unit.to_string());
     // Wrapped causes are the error's source.
     use std::error::Error;
     assert!(E::Structure(StructureError::NonFiniteTime)
