@@ -230,6 +230,11 @@ pub enum TrajectoryField {
     Membership,
     /// A sample set's distribution, which a trajectory file cannot store.
     Distribution,
+    /// A sample set's state representative that is not the state's first
+    /// member.
+    Representative,
+    /// A sample set's time order without times or steps.
+    Order,
 }
 
 impl fmt::Display for TrajectoryField {
@@ -253,6 +258,8 @@ impl fmt::Display for TrajectoryField {
             Self::ItemCoordinate => "series item coordinate",
             Self::Membership => "distribution membership",
             Self::Distribution => "sample set distribution",
+            Self::Representative => "state representative",
+            Self::Order => "sample order",
         })
     }
 }

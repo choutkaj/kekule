@@ -85,7 +85,7 @@ fn atom_provenance(id: InstanceAtomId, order: usize, full: bool) -> AtomProvenan
 /// A report with every issue, bond evidence, selection reason, residue
 /// position, polymer type, and code origin. Its atoms all refer to their own
 /// instance unless `foreign`.
-fn report(foreign: bool) -> StructureInterpretationReport {
+pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
     use StructureInterpretIssue as Issue;
     let other = if foreign { atom(9, 4) } else { atom(1, 1) };
     let instances = vec![
@@ -520,7 +520,7 @@ fn report(foreign: bool) -> StructureInterpretationReport {
     }
 }
 
-fn parts() -> (Model, Ensemble) {
+pub(super) fn parts() -> (Model, Ensemble) {
     let document = crate::mmcif::parse_str(MODELS, Default::default()).unwrap();
     let model = document
         .interpret(
@@ -536,7 +536,9 @@ fn parts() -> (Model, Ensemble) {
     (model, ensemble)
 }
 
-fn read(bytes: &[u8]) -> Result<crate::native::NativeObject, crate::diagnostics::FormatError> {
+pub(super) fn read(
+    bytes: &[u8],
+) -> Result<crate::native::NativeObject, crate::diagnostics::FormatError> {
     native::read(bytes, NativeReadOptions::default())
 }
 
@@ -595,14 +597,14 @@ fn crc32(bytes: &[u8]) -> u32 {
 
 /// `bytes` with its checksum recomputed, so that only the decoder's
 /// validation can reject a corruption.
-fn resealed(mut bytes: Vec<u8>) -> Vec<u8> {
+pub(super) fn resealed(mut bytes: Vec<u8>) -> Vec<u8> {
     let end = bytes.len() - 4;
     let crc = crc32(&bytes[..end]);
     bytes[end..].copy_from_slice(&crc.to_le_bytes());
     bytes
 }
 
-fn find(bytes: &[u8], needle: &[u8]) -> usize {
+pub(super) fn find(bytes: &[u8], needle: &[u8]) -> usize {
     bytes
         .windows(needle.len())
         .position(|window| window == needle)

@@ -141,10 +141,12 @@ impl PdbWriteOptions {
 
     /// The state of a sample set's samples that PDB cannot carry. A PDB
     /// reader gives one state of equally weighted samples without an order,
-    /// so by default a set fails to write when a sample is outside its
-    /// distribution, weights are unequal, it has more than one state, a
-    /// state energy, a temperature, or an order, or a sample has velocities
-    /// or forces; so does a single sample with a membership, a place,
+    /// represented by the first sample, so by default a set fails to write
+    /// when a sample is outside its distribution, weights are unequal, it
+    /// has more than one state, a state energy, state properties, another
+    /// representative, a temperature, or an order, a time order without
+    /// times or steps included, or a sample has velocities or forces; so
+    /// does a single sample with a membership, a place,
     /// velocities, or forces. [`UnrepresentablePolicy::Omit`] writes the
     /// models without them and reports a [`WriteOmission::StructureState`]
     /// for each field.

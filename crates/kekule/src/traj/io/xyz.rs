@@ -310,8 +310,9 @@ impl XyzWriteOptions {
     /// an XYZ file reads back as samples without an order or distribution,
     /// so by default [`XyzWriter::write_sample_set`] fails for a set with a
     /// sample outside its distribution, unequal weights, more than one
-    /// state, a state energy, a temperature, or an order, or a sample with
-    /// velocities or forces; [`UnrepresentablePolicy::Omit`] writes it and
+    /// state, a state energy, a representative that is not its state's
+    /// first member, a temperature, or an order, a time order without times
+    /// or steps among them, or a sample with velocities or forces; [`UnrepresentablePolicy::Omit`] writes it and
     /// reports each kind of [`WriteOmission::StructureState`] left out.
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
         self.sample_metadata

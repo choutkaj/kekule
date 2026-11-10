@@ -143,10 +143,12 @@ impl MmcifWriteOptions {
 
     /// The state of a sample set's samples that mmCIF cannot carry. An mmCIF
     /// reader gives one state of equally weighted samples without an order,
-    /// so by default a set fails to write when a sample is outside its
-    /// distribution, weights are unequal, it has more than one state, a
-    /// state energy, a temperature, or an order, or a sample has velocities
-    /// or forces; so does a model block of one sample with a membership, a
+    /// represented by the first sample, so by default a set fails to write
+    /// when a sample is outside its distribution, weights are unequal, it
+    /// has more than one state, a state energy, state properties, another
+    /// representative, a temperature, or an order, a time order without
+    /// times or steps included, or a sample has velocities or forces; so
+    /// does a model block of one sample with a membership, a
     /// place, velocities, or forces. [`UnrepresentablePolicy::Omit`] writes
     /// the models without them and reports a
     /// [`WriteOmission::StructureState`] for each field.
@@ -1059,53 +1061,50 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
                 write_model_block_to(writer, view, block.entities, &block_options, &mut omissions)?
             }
             BlockContent::Ensemble(ensemble) => {
-                // Omissions are recorded only once the block has reached the
-                // sink.
-                let mut state = Omissions::default();
-                record_multi_model_ensemble(ensemble, options.ensemble_metadata, &mut state)
-                    .map_err(|(sample, field)| {
-                        let field = match field {
-                            StructureField::Weight => MmcifSampleField::Weight,
-                            StructureField::Energy => MmcifSampleField::Energy,
-                            StructureField::State => MmcifSampleField::State,
-                            _ => MmcifSampleField::Temperature,
-                        };
-                        fail(MmcifWriteIssue::UnrepresentableEnsembleSample { sample, field })
-                    })?;
                 let views = ensemble
                     .iter()
                     .map(|sample| sample.as_model_view())
                     .collect::<Vec<_>>();
-                if views.is_empty() {
-                    return Err(fail(MmcifWriteIssue::EmptyEnsemble));
-                }
+                let record_state = |state: &mut Omissions| {
+                    record_multi_model_ensemble(ensemble, options.ensemble_metadata, state).map_err(
+                        |(sample, field)| {
+                            let field = match field {
+                                StructureField::Weight => MmcifSampleField::Weight,
+                                StructureField::Energy => MmcifSampleField::Energy,
+                                StructureField::State => MmcifSampleField::State,
+                                _ => MmcifSampleField::Temperature,
+                            };
+                            fail(MmcifWriteIssue::UnrepresentableEnsembleSample { sample, field })
+                        },
+                    )
+                };
                 write_multi_model_block_to(
                     writer,
                     &views,
-                    state,
+                    record_state,
+                    MmcifWriteIssue::EmptyEnsemble,
                     block.entities,
                     &block_options,
                     &mut omissions,
                 )?;
             }
             BlockContent::SampleSet(set) => {
-                if set.is_empty() {
-                    return Err(fail(MmcifWriteIssue::EmptySampleSet));
-                }
-                let mut state = Omissions::default();
-                record_multi_model_sample_set(set, options.sample_metadata, &mut state).map_err(
-                    |(sample, field)| {
-                        fail(MmcifWriteIssue::UnrepresentableSample { sample, field })
-                    },
-                )?;
                 let views = set
                     .iter()
                     .map(|sample| sample.as_model_view())
                     .collect::<Vec<_>>();
+                let record_state = |state: &mut Omissions| {
+                    record_multi_model_sample_set(set, options.sample_metadata, state).map_err(
+                        |(sample, field)| {
+                            fail(MmcifWriteIssue::UnrepresentableSample { sample, field })
+                        },
+                    )
+                };
                 write_multi_model_block_to(
                     writer,
                     &views,
-                    state,
+                    record_state,
+                    MmcifWriteIssue::EmptySampleSet,
                     block.entities,
                     &block_options,
                     &mut omissions,
@@ -1201,13 +1200,15 @@ fn block_cell<'a>(
     }
 }
 
-/// Writes one block of the nonempty `views` as models `1..`, recording
-/// `state`, the multi-model state the block omits, once the block has
-/// reached the sink.
+/// Writes one block of `views` as models `1..`. It checks the report count,
+/// then the multi-model state the block omits, which `record_state` records
+/// or rejects, then the cell, and fails with `empty` without views. The
+/// state's omissions are recorded once the block has reached the sink.
 fn write_multi_model_block_to(
     writer: &mut impl Write,
     views: &[ModelView<'_>],
-    state: Omissions,
+    record_state: impl FnOnce(&mut Omissions) -> Result<(), FormatError>,
+    empty: MmcifWriteIssue,
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
     omissions: &mut Omissions,
@@ -1225,9 +1226,11 @@ fn write_multi_model_block_to(
             (None, Some(reports))
         }
     };
+    let mut state = Omissions::default();
+    record_state(&mut state)?;
     let cell = block_cell(views.iter().map(|view| view.cell()), options.cell)?;
     let mut samples = views.iter().copied().enumerate();
-    let (_, first_view) = samples.next().expect("a multi-model block has a model");
+    let (_, first_view) = samples.next().ok_or_else(|| fail(empty))?;
     let first_plan = ensemble_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
     let mut first = prepare_model(
         first_view,

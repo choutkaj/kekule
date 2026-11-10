@@ -1,16 +1,20 @@
 //! Readers that interpret sample sets give what the readers of ensembles,
 //! series and trajectories give, converted.
 
-use kekule::diagnostics::{DiagnosticKind, FormatErrorDetail, UnrepresentablePolicy};
+use kekule::diagnostics::{
+    DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy,
+};
+use kekule::geometry::Point3;
 use kekule::mmcif::{self, MmcifWriteOptions};
 use kekule::native::{self, NativeWriteOptions};
 use kekule::pdb::{self, PdbWriteOptions};
-use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
+use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::structure::{
-    Ensemble, EnsemblePartition, Model, Order, Positions, SampleSet, Series, SeriesAxis, SeriesItem,
+    Ensemble, EnsemblePartition, Model, Order, Positions, Sample, SampleSet, Series, SeriesAxis,
+    SeriesItem,
 };
 use kekule::topology::Topology;
-use kekule::units::{Quantity, ANGSTROM, DEGREE, KILOJOULE_PER_MOLE};
+use kekule::units::{Dimension, Quantity, Unit, ANGSTROM, DEGREE, KILOJOULE_PER_MOLE};
 
 const WATERS: &str = "3
 first
@@ -194,14 +198,9 @@ fn sdf_sample_sets_are_the_ensembles_and_series_of_their_records() {
             (SeriesAxis::Step, Some(Order::Step(_)))
                 | (SeriesAxis::Coordinate(_), Some(Order::Coordinate { .. }))
         ));
-        // Without its order, the set is the ensemble of the same records.
-        let ensemble = sdf::ensemble(&records).unwrap();
-        let mut converted = set.clone();
-        converted.set_order(None).unwrap();
-        assert_same_ensemble(&converted.into_ensemble().unwrap(), &ensemble);
-        // Without its distribution, it is the series.
-        let mut set = set;
-        set.set_distribution(None).unwrap();
+        // The records have no ensemble field, so the set has no
+        // distribution and is the series.
+        assert_eq!(set.distribution(), None);
         let read = set.into_series().unwrap();
         assert_eq!(read.axis(), series.axis());
         for (left, right) in read.iter().zip(series.iter()) {
@@ -246,6 +245,212 @@ fn sdf_records_that_do_not_form_an_order_are_refused() {
         error.detail(),
         Some(FormatErrorDetail::DataField { .. })
     ));
+}
+
+/// One methane record at `x` with `fields`.
+fn methane_record(x: f64, fields: &[(&str, &str)]) -> SdfRecordInterpretation {
+    let topology = kekule::smiles::to_topology("C").unwrap();
+    let model = Model::new(
+        topology,
+        Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap(),
+    )
+    .unwrap();
+    let fields = fields
+        .iter()
+        .map(|(name, value)| SdfDataField::new(*name, *value))
+        .collect();
+    SdfRecordInterpretation::new("", model, fields)
+}
+
+/// The set an SDF text of `set` reads back as.
+fn sdf_round_trip(set: &SampleSet, options: SdfWriteOptions) -> SampleSet {
+    sdf::sample_set(&interpret_records(&sdf::write(set, options).unwrap())).unwrap()
+}
+
+#[test]
+fn sdf_sample_sets_state_only_what_the_records_state() {
+    // Records without ensemble fields give no distribution.
+    let bare = [methane_record(0.0, &[]), methane_record(1.0, &[])];
+    let set = sdf::sample_set(&bare).unwrap();
+    assert_eq!(set.distribution(), None);
+    assert_eq!(set.order(), None);
+    // `sdf::ensemble` still gives a state per record of weight 1.
+    let ensemble = sdf::ensemble(&bare).unwrap();
+    assert_eq!(ensemble.state_count(), 2);
+    assert!(ensemble.iter().all(|sample| sample.weight() == 1.0));
+    // A set without a distribution survives a round trip.
+    let read = sdf_round_trip(&set, SdfWriteOptions::default());
+    assert_eq!(read.distribution(), None);
+    assert_eq!(read.len(), 2);
+
+    // States without weights give a distribution without weights.
+    let states = [
+        methane_record(
+            0.0,
+            &[(sdf::STATE_FIELD, "0"), (sdf::REPRESENTATIVE_FIELD, "true")],
+        ),
+        methane_record(1.0, &[(sdf::STATE_FIELD, "0")]),
+    ];
+    let set = sdf::sample_set(&states).unwrap();
+    let distribution = set.distribution().unwrap();
+    assert_eq!(distribution.state_count(), 1);
+    assert_eq!(distribution.weights(), None);
+    // One field on one record is enough for a distribution.
+    let warm = [
+        methane_record(0.0, &[(sdf::TEMPERATURE_FIELD, "300")]),
+        methane_record(1.0, &[(sdf::TEMPERATURE_FIELD, "300")]),
+    ];
+    let set = sdf::sample_set(&warm).unwrap();
+    let distribution = set.distribution().unwrap();
+    assert_eq!(distribution.state_count(), 2);
+    assert_eq!(distribution.weights(), None);
+    assert!(distribution.temperature().is_some());
+    // A weight on one record stores every weight.
+    let weighted = [
+        methane_record(0.0, &[(sdf::WEIGHT_FIELD, "2")]),
+        methane_record(1.0, &[]),
+    ];
+    let set = sdf::sample_set(&weighted).unwrap();
+    assert_eq!(
+        set.distribution().unwrap().weights(),
+        Some([2.0, 1.0].as_slice())
+    );
+
+    // A set with a distribution and no order survives a round trip.
+    let set = SampleSet::from_ensemble(weighted_methanes());
+    let read = sdf_round_trip(&set, SdfWriteOptions::default());
+    assert_eq!(read.order(), None);
+    assert_eq!(read.distribution(), set.distribution());
+}
+
+/// A two-sample methane set ordered by coordinates in `unit`.
+fn coordinate_set(unit: Unit) -> SampleSet {
+    let topology = kekule::smiles::to_topology("C").unwrap();
+    let mut set = SampleSet::from_samples(
+        topology,
+        [0.0, 1.0].map(|x| {
+            Sample::new(
+                Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap(),
+            )
+        }),
+    )
+    .unwrap();
+    set.set_order(Some(Order::Coordinate {
+        unit,
+        values: vec![-1.5, 0.25],
+    }))
+    .unwrap();
+    set
+}
+
+#[test]
+fn sdf_coordinate_units_are_the_unit_constants() {
+    use kekule::units::*;
+    let named = [
+        DIMENSIONLESS,
+        METER,
+        NANOMETER,
+        ANGSTROM,
+        BOHR,
+        CUBIC_BOHR,
+        PER_NANOMETER,
+        SQUARE_ANGSTROM,
+        CUBIC_NANOMETER,
+        SQUARE_NANOMETER,
+        KILOGRAM,
+        DALTON,
+        SECOND,
+        PICOSECOND,
+        FEMTOSECOND,
+        KELVIN,
+        MOLAR,
+        MOLE,
+        COULOMB,
+        ELEMENTARY_CHARGE,
+        RADIAN,
+        DEGREE,
+        JOULE,
+        KILOJOULE,
+        KILOCALORIE,
+        KILOJOULE_PER_MOLE,
+        KILOCALORIE_PER_MOLE,
+        KILOJOULE_PER_MOLE_PER_ANGSTROM,
+        KILOJOULE_PER_MOLE_PER_NANOMETER,
+        KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM,
+        KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER,
+        NANOMETER_PER_PICOSECOND,
+    ];
+    for unit in named {
+        let set = coordinate_set(unit);
+        let read = sdf_round_trip(&set, SdfWriteOptions::default());
+        assert_eq!(read.order(), set.order(), "{unit}");
+        let Some(Order::Coordinate {
+            unit: read_unit, ..
+        }) = read.order()
+        else {
+            panic!("{unit} gives a coordinate order");
+        };
+        assert_eq!(read_unit.to_string(), unit.to_string());
+    }
+
+    // A unit that is not a constant, by scale or by symbol, has no field.
+    for unit in [
+        Unit::new(Dimension::LENGTH, 2.0e-10, None).unwrap(),
+        Unit::new(Dimension::LENGTH, 2.0e-10, Some("A")).unwrap(),
+    ] {
+        let set = coordinate_set(unit);
+        let error = sdf::write(&set, SdfWriteOptions::default()).unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{error}");
+        assert_eq!(
+            error.detail(),
+            Some(&FormatErrorDetail::UnrepresentableState(
+                StructureField::ItemCoordinate
+            ))
+        );
+        assert!(error.to_string().contains("coordinate unit"), "{error}");
+        let omit = SdfWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit);
+        let text = sdf::write(&set, omit).unwrap();
+        assert!(!text.contains(sdf::COORDINATE_FIELD), "{text}");
+        assert_eq!(sdf_round_trip(&set, omit).order(), None);
+    }
+    // A series writes its unit as it displays itself, as before.
+    let unit = Unit::new(Dimension::LENGTH, 2.0e-10, None).unwrap();
+    let series = methane_series(SeriesAxis::Coordinate(unit));
+    let text = sdf::write(&series, SdfWriteOptions::default()).unwrap();
+    assert!(
+        text.contains(&format!("<{}>\n{unit}\n", sdf::COORDINATE_UNIT_FIELD)),
+        "{text}"
+    );
+}
+
+#[test]
+fn sdf_place_fields_appear_once_per_record() {
+    for (name, value) in [
+        (sdf::STEP_FIELD, "4"),
+        (sdf::COORDINATE_FIELD, "1.5"),
+        (sdf::COORDINATE_UNIT_FIELD, "A"),
+    ] {
+        let mut fields = vec![
+            (sdf::COORDINATE_FIELD, "1.5"),
+            (sdf::COORDINATE_UNIT_FIELD, "A"),
+        ];
+        if name == sdf::STEP_FIELD {
+            fields = vec![(sdf::STEP_FIELD, "4")];
+        }
+        let first = methane_record(0.0, &fields);
+        fields.push((name, value));
+        let records = [first, methane_record(1.0, &fields)];
+        let error = sdf::sample_set(&records).unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::Inconsistent, "{error}");
+        assert_eq!(error.record(), Some(2), "{error}");
+        assert!(error.to_string().contains("appears twice."), "{error}");
+        assert_eq!(
+            error.detail(),
+            Some(&FormatErrorDetail::DataField {
+                name: name.to_owned()
+            })
+        );
+    }
 }
 
 #[test]

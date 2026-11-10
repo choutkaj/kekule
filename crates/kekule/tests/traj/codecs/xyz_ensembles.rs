@@ -514,6 +514,36 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
         [BONDS, state_omission(StructureField::Time, 3)]
     );
 
+    // A time order without times or steps reads back unordered.
+    let mut bare = SampleSet::from_ensemble(waters());
+    bare.set_order(Some(Order::Time(TimeAxis::new(None, None).unwrap())))
+        .unwrap();
+    assert_set_rejects(&bare, TrajectoryField::Order, 0);
+    let (text, report) = write_set(&bare, omit.clone()).unwrap();
+    assert_eq!(text, plain);
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(StructureField::Order, 3)]
+    );
+
+    // A lone state represented by its second member.
+    let mut late = SampleSet::from_ensemble(waters());
+    late.set_distribution(Some(
+        Distribution::new(
+            Members::All,
+            EnsemblePartition::new(vec![0, 0, 0], vec![1]).unwrap(),
+        )
+        .unwrap(),
+    ))
+    .unwrap();
+    assert_set_rejects(&late, TrajectoryField::Representative, 1);
+    let (text, report) = write_set(&late, omit.clone()).unwrap();
+    assert_eq!(text, plain);
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(StructureField::Representative, 1)]
+    );
+
     // Velocities on one sample.
     let mut moving = SampleSet::from_ensemble(waters());
     moving

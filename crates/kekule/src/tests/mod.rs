@@ -639,6 +639,7 @@ mod mmcif_altloc;
 mod mmcif_contents;
 pub(crate) mod mmcif_syntax;
 mod native_reports;
+mod native_sample_sets;
 mod normalization;
 mod perception;
 mod query;

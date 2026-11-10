@@ -724,9 +724,11 @@ omitted with a report. It writes a series as one frame per item, whose step
 or coordinate fails or is omitted with a report as in PDB, and whose
 properties and cell follow the frame policies. It writes a sample set as one
 frame per sample, with the PDB writer's rules for sample state: a sample
-outside the distribution, unequal weights, several states, energies, a
-temperature, a place in the order, velocities, and forces fail or are
-omitted with a report under `sample_metadata`. XYZ interprets frames as a
+outside the distribution, unequal weights, several states, energies, state
+properties, a representative that is not its state's first member, a
+temperature, a place in the order, a time order without times or steps,
+velocities, and forces fail or are omitted with a report under
+`sample_metadata`. XYZ interprets frames as a
 sample set without a distribution, since the file states none, or as an
 ensemble of one state of equal weights.
 
@@ -896,9 +898,11 @@ export.
   item's step, or its coordinate and the coordinate's unit, travel as SDF
   data fields too. A sample of a sample set writes its membership's fields
   and its place's, and `sdf::sample_set` assembles records into a sample set
-  whose distribution is the one `sdf::ensemble` reads and whose order the
-  steps or coordinates give. A sample outside the distribution has no SDF
-  field. A Molfile, an mmCIF block, and a PDB entry cannot carry a place,
+  whose order the steps or coordinates give. It has a distribution, the one
+  `sdf::ensemble` reads, only when a record has an ensemble field, and
+  weights only when a record has a weight. A coordinate unit travels as the
+  symbol of a unit constant, which both the writer and the reader take from
+  one table of `units`. A sample outside the distribution has no SDF field. A Molfile, an mmCIF block, and a PDB entry cannot carry a place,
   and PDB writes a series as one `MODEL` per item once places are omitted. A
   Molfile, an SDF record, and an mmCIF block cannot carry a frame's time,
   step, velocities, or forces. A Molfile cannot carry a sample's weight or

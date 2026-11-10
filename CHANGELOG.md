@@ -49,7 +49,7 @@ are marked **Breaking:**.
   `macromolecular::StructureSampleSetInterpretation` of one state without
   weights and one report per sample; `sdf::sample_set` assembles records
   into a set ordered by their steps or coordinates, with the distribution
-  `sdf::ensemble` reads; `xyz::XyzDocument::interpret_sample_set` gives an
+  `sdf::ensemble` reads only when a record has an ensemble field; `xyz::XyzDocument::interpret_sample_set` gives an
   `xyz::XyzSampleSetInterpretation` without order or distribution; and
   `traj::io::read_sample_set` reads a trajectory file as a set of a time
   order. `pdb::PdbSource`, `mmcif::MmcifBlockSource`, and
@@ -61,11 +61,19 @@ are marked **Breaking:**.
   converts to. The new `sample_metadata` option of the Molfile, SDF, PDB,
   mmCIF, and XYZ writers decides what happens to the state of a sample-set
   sample a format cannot carry, including a sample outside the
-  distribution (`StructureField::Membership`); `PdbWriteIssue` and
-  `MmcifWriteIssue` gain `UnrepresentableSample` and `EmptySampleSet`, and
-  `TrajectoryField` gains `Membership` and `Distribution`. A converted set
-  writes exactly what the ensemble, trajectory, or series it came from
-  writes.
+  distribution (`StructureField::Membership`). The PDB, mmCIF, and XYZ
+  writers also refuse or report state properties, a lone state's
+  representative that is not its first member, and a time order without
+  times or steps (`StructureField::StateProperties`, `Representative`, and
+  `Order`; `TrajectoryField::Representative` and `Order`). An SDF coordinate
+  unit is the symbol of a unit constant, which the writer and the reader
+  take from one table; a set's coordinate in another unit fails to write
+  unless `sample_metadata` omits it. `PdbWriteIssue` and `MmcifWriteIssue`
+  gain `UnrepresentableSample` and `EmptySampleSet`, and `TrajectoryField`
+  gains `Membership` and `Distribution`. A converted set writes what the
+  ensemble, trajectory, or series it came from writes, and also refuses or
+  reports the state properties and representatives the ensemble writers
+  leave out.
 - Analysis of sample sets (SeekDelta K72b). `SampleSet::superpose`, `rmsd`,
   and `aligned_rmsd` act on every sample. `SampleSet::rmsf`,
   `contact_occupancy`, and `group_contact_occupancy` observe the members of

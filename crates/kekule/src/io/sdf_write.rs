@@ -5,13 +5,13 @@ use crate::structure::{
     AsModelView, EnsembleSampleView, Membership, Model, ModelView, Place, SampleView,
     SeriesItemView, StructureKind, TrajectoryFrameView,
 };
-use crate::units::{KELVIN, KILOJOULE_PER_MOLE};
+use crate::units::{named_unit, KELVIN, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
 use super::write_error::{check_structure_state, StatePolicies};
 use super::{MolfileWriteVersion, UnrepresentablePolicy};
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField};
 
 /// Options of SDF writing; the default writes
 /// [`MolfileWriteVersion::Auto`] records and fails on a periodic cell.
@@ -67,11 +67,12 @@ impl SdfWriteOptions {
     }
 
     /// The state of a sample set's sample that an SDF record cannot carry:
-    /// its time and MD step in a time order, its velocities and forces, and
-    /// its being outside the set's distribution, which a record cannot tell
-    /// from membership. By default writing a sample with any of them fails.
-    /// Its weight, state, state energy, and temperature, and its step or
-    /// coordinate, are always written as data fields.
+    /// its time and MD step in a time order, its velocities and forces, a
+    /// coordinate unit that is not a unit constant, and its being outside
+    /// the set's distribution, which a record cannot tell from membership.
+    /// By default writing a sample with any of them fails. Its weight,
+    /// state, state energy, and temperature, and its step or coordinate,
+    /// are otherwise written as data fields.
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
         self.sample_metadata
     }
@@ -139,7 +140,10 @@ const ITEM_FIELDS: [&str; 3] = [
 /// A step place, such as a series item's, follows as [`SDF_STEP_FIELD`], and
 /// a coordinate place as [`SDF_COORDINATE_FIELD`] with
 /// [`SDF_COORDINATE_UNIT_FIELD`]; a sample with both a membership and a
-/// place writes both groups. State, ensemble, series, set, and structure
+/// place writes both groups. A set sample's coordinate unit must be one of
+/// the unit constants of [`crate::units`], which the reader knows by
+/// symbol; another fails to write unless
+/// [`SdfWriteOptions::sample_metadata`] omits the coordinate. State, ensemble, series, set, and structure
 /// properties are not written; add the values a record should carry, such
 /// as a series item's energy, as data fields. A trajectory frame's time,
 /// step, velocities, and forces fail to write unless
@@ -286,8 +290,31 @@ fn write_record(
             None
         }
     };
+    // A set sample's coordinate unit travels as the symbol of a unit
+    // constant, which the reader turns back into that unit.
+    let written_place = match place {
+        Some(Place::Coordinate(coordinate))
+            if of_set && named_unit(&coordinate.unit().to_string()) != Some(coordinate.unit()) =>
+        {
+            if options.sample_metadata == UnrepresentablePolicy::Fail {
+                return Err(FormatError::write(
+                    Format::Sdf,
+                    DiagnosticKind::Unsupported,
+                    format!(
+                        "SDF cannot represent the coordinate unit {}.",
+                        coordinate.unit()
+                    ),
+                )
+                .with_detail(FormatErrorDetail::UnrepresentableState(
+                    StructureField::ItemCoordinate,
+                )));
+            }
+            None
+        }
+        place => place,
+    };
     let mut own_fields = membership.map_or_else(Vec::new, sample_fields);
-    own_fields.extend(place.map_or_else(Vec::new, item_fields));
+    own_fields.extend(written_place.map_or_else(Vec::new, item_fields));
     for field in record.data_fields {
         validate_data_field(field)?;
         // Every sample or item owns these names, whether or not it writes

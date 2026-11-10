@@ -3,7 +3,8 @@ use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
 };
 use crate::structure::{
-    Distribution, Ensemble, Place, SampleContext, SampleSet, Series, SeriesAxis, StructureKind,
+    Distribution, Ensemble, Order, Place, SampleContext, SampleSet, Series, SeriesAxis,
+    StructureKind,
 };
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
@@ -518,14 +519,17 @@ pub(crate) fn record_multi_model_series(
 
 /// Records or rejects the state of `set` that a multi-model format cannot
 /// carry. Its readers give one state of equally weighted samples without an
-/// energy, a temperature, or an order, so only that survives a round trip:
-/// a sample outside the distribution, unequal weights, more than one state,
-/// state energies, the temperature, the samples' places, velocities, and
-/// forces are lost.
+/// energy, properties, a temperature, or an order, the first sample
+/// representing it, so only that survives a round trip: a sample outside
+/// the distribution, unequal weights, more than one state, state energies,
+/// state properties, a lone state's representative that is not its first
+/// member, the samples' places, velocities, and forces, the temperature,
+/// and a time order without times or steps are lost.
 ///
 /// With [`UnrepresentablePolicy::Fail`], returns the 1-based number of the
 /// first sample with such state and the field, checked for each sample in
-/// the order above; the temperature is the first sample's and is checked
+/// the order above; state properties are their representative's. The
+/// temperature and the time order are the first sample's and are checked
 /// last. With [`UnrepresentablePolicy::Omit`], records the omissions.
 pub(crate) fn record_multi_model_sample_set(
     set: &SampleSet,
@@ -538,8 +542,23 @@ pub(crate) fn record_multi_model_sample_set(
         .clone()
         .find_map(|context| context.membership())
         .map(|membership| membership.weight());
+    // The representatives of states with properties, and of a lone state
+    // when it is not the state's first member; with several states, the
+    // lost grouping includes the representatives.
+    let mut with_properties = Vec::new();
+    let mut late = Vec::new();
+    let lone = distribution.map_or(0, Distribution::state_count) == 1;
+    for state in set.states() {
+        let representative = state.representative();
+        if !state.payload().properties().is_empty() {
+            with_properties.push(representative);
+        }
+        if lone && state.samples().next() != Some(representative) {
+            late.push(representative);
+        }
+    }
     // The state of one sample that is lost, in checking order.
-    let lost = |context: SampleContext<'_>| {
+    let lost = |index: usize, context: SampleContext<'_>| {
         let membership = context.membership();
         let mut fields = Vec::new();
         match membership {
@@ -554,6 +573,12 @@ pub(crate) fn record_multi_model_sample_set(
                 }
                 if membership.state() != 0 {
                     fields.push(StructureField::State);
+                }
+                if with_properties.contains(&index) {
+                    fields.push(StructureField::StateProperties);
+                }
+                if late.contains(&index) {
+                    fields.push(StructureField::Representative);
                 }
             }
         }
@@ -575,14 +600,21 @@ pub(crate) fn record_multi_model_sample_set(
         fields
     };
     let temperature = distribution.and_then(|distribution| distribution.temperature());
+    let bare_order = matches!(
+        set.order(),
+        Some(Order::Time(axis)) if axis.times().is_none() && axis.steps().is_none()
+    );
     if policy == UnrepresentablePolicy::Fail {
         for (index, context) in contexts.enumerate() {
-            if let Some(&field) = lost(context).first() {
+            if let Some(&field) = lost(index, context).first() {
                 return Err((index + 1, field));
             }
         }
         if temperature.is_some() {
             return Err((1, StructureField::Temperature));
+        }
+        if bare_order && !set.is_empty() {
+            return Err((1, StructureField::Order));
         }
         return Ok(());
     }
@@ -594,7 +626,8 @@ pub(crate) fn record_multi_model_sample_set(
     let count = |field: StructureField| {
         contexts
             .clone()
-            .filter(|context| lost(*context).contains(&field))
+            .enumerate()
+            .filter(|(index, context)| lost(*index, *context).contains(&field))
             .count()
     };
     let states = distribution.map_or(0, Distribution::state_count);
@@ -603,8 +636,20 @@ pub(crate) fn record_multi_model_sample_set(
         (StructureField::Energy, count(StructureField::Energy)),
         (StructureField::State, if states > 1 { members } else { 0 }),
         (
+            StructureField::StateProperties,
+            count(StructureField::StateProperties),
+        ),
+        (
+            StructureField::Representative,
+            count(StructureField::Representative),
+        ),
+        (
             StructureField::Temperature,
             if temperature.is_some() { members } else { 0 },
+        ),
+        (
+            StructureField::Order,
+            if bare_order { set.len() } else { 0 },
         ),
         (
             StructureField::Membership,

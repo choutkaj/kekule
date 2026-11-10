@@ -1384,12 +1384,20 @@ impl<R: Read> Decoder<'_, R> {
         }
         let members = match self.u8()? {
             0 => Members::All,
-            1 => Members::Subset(
-                self.ids(count, Resource::Records)?
-                    .into_iter()
-                    .map(|index| index as usize)
-                    .collect(),
-            ),
+            1 => {
+                let listed = self.u32()? as usize;
+                if listed > count {
+                    return Err(self.invalid(format!(
+                        "The distribution lists {listed} members of {count} samples."
+                    )));
+                }
+                Members::Subset(
+                    self.u32_array(listed)?
+                        .into_iter()
+                        .map(|index| index as usize)
+                        .collect(),
+                )
+            }
             other => return Err(self.invalid(format!("The members tag {other} is unknown."))),
         };
         let member_count = match &members {

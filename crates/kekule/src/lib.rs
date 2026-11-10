@@ -851,11 +851,16 @@ pub mod sdf {
     }
 
     /// Assembles interpreted records, in order, into one sample set, record
-    /// `i` becoming sample `i`. Its distribution is the ensemble
-    /// [`ensemble()`] reads, with a state per record unless the records name
-    /// states. When the records carry [`STEP_FIELD`], or [`COORDINATE_FIELD`]
-    /// with [`COORDINATE_UNIT_FIELD`], as [`write()`] emits for series items,
-    /// the samples are ordered by them.
+    /// `i` becoming sample `i`. The set states only what the records state.
+    /// Records without ensemble fields give a set without a distribution.
+    /// When a record has one ([`WEIGHT_FIELD`], [`STATE_FIELD`],
+    /// [`REPRESENTATIVE_FIELD`], [`ENERGY_FIELD`], or
+    /// [`TEMPERATURE_FIELD`]), the distribution is the ensemble
+    /// [`ensemble()`] reads, with weights only when a record has
+    /// [`WEIGHT_FIELD`]. When the records carry [`STEP_FIELD`], or
+    /// [`COORDINATE_FIELD`] with [`COORDINATE_UNIT_FIELD`], as [`write()`]
+    /// emits for series items, the samples are ordered by them. The unit is
+    /// the symbol of a unit constant of [`crate::units`].
     ///
     /// ```
     /// use kekule::geometry::Point3;
@@ -875,7 +880,7 @@ pub mod sdf {
     /// let set = sdf::sample_set(&records)?;
     /// assert_eq!(set.len(), 2);
     /// assert_eq!(set.order(), None);
-    /// assert_eq!(set.distribution().map(|distribution| distribution.state_count()), Some(2));
+    /// assert!(set.distribution().is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -884,7 +889,8 @@ pub mod sdf {
     /// The errors of [`ensemble()`]. Also returns a [`FormatError`] of kind
     /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
     /// when some records carry a step or coordinate and others do not, steps
-    /// and coordinates are mixed, or coordinate units differ, and
+    /// and coordinates are mixed, a place field is repeated, or coordinate
+    /// units differ, and
     /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
     /// when a step, coordinate, or unit is not valid.
     pub fn sample_set<'a>(
@@ -1505,7 +1511,8 @@ pub mod xyz {
 /// converts to, and [`NativeObject::into_ensemble`](native::NativeObject::into_ensemble),
 /// [`into_trajectory`](native::NativeObject::into_trajectory), and
 /// [`into_series`](native::NativeObject::into_series) convert a decoded set
-/// back. A model or sample set may carry its structure interpretation
+/// back. A trajectory with a time or a step on only some frames has no
+/// sample set, so writing it is refused. A model or sample set may carry its structure interpretation
 /// reports: write a
 /// [`StructureInterpretation`](crate::macromolecular::StructureInterpretation)
 /// or [`StructureSampleSetInterpretation`](crate::macromolecular::StructureSampleSetInterpretation),

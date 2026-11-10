@@ -4,11 +4,7 @@ use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail}
 use crate::structure::{
     Ensemble, EnsembleError, EnsemblePartition, EnsembleSample, Order, SampleSet,
 };
-use crate::units::{
-    Quantity, Unit, ANGSTROM, BOHR, COULOMB, DEGREE, DIMENSIONLESS, ELEMENTARY_CHARGE, FEMTOSECOND,
-    JOULE, KELVIN, KILOCALORIE, KILOCALORIE_PER_MOLE, KILOJOULE, KILOJOULE_PER_MOLE, METER, MOLE,
-    NANOMETER, PICOSECOND, RADIAN, SECOND, SQUARE_ANGSTROM, SQUARE_NANOMETER,
-};
+use crate::units::{named_unit, Quantity, KELVIN, KILOJOULE_PER_MOLE};
 
 use super::sdf_document::SdfRecordInterpretation;
 use super::sdf_write::{
@@ -39,9 +35,34 @@ fn invalid(kind: DiagnosticKind, record: usize, name: &str, predicate: &str) -> 
     })
 }
 
+/// The trimmed value of the data field `name` of the 1-based record
+/// `number`, if it has one; a second field of that name fails.
+fn field<'r>(
+    record: &'r SdfRecordInterpretation,
+    number: usize,
+    name: &str,
+) -> Result<Option<&'r str>, FormatError> {
+    let mut values = record
+        .data_fields()
+        .iter()
+        .filter(|field| field.name() == name);
+    let Some(field) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(invalid(
+            DiagnosticKind::Inconsistent,
+            number,
+            name,
+            "appears twice.",
+        ));
+    }
+    Ok(Some(field.value().trim()))
+}
+
 /// The ensemble data fields of one record.
 struct RecordFields {
-    weight: f64,
+    weight: Option<f64>,
     state: Option<usize>,
     representative: bool,
     energy: Option<f64>,
@@ -50,24 +71,7 @@ struct RecordFields {
 
 impl RecordFields {
     fn read(record: &SdfRecordInterpretation, number: usize) -> Result<Self, FormatError> {
-        let text = |name: &str| -> Result<Option<&str>, FormatError> {
-            let mut values = record
-                .data_fields()
-                .iter()
-                .filter(|field| field.name() == name);
-            let Some(field) = values.next() else {
-                return Ok(None);
-            };
-            if values.next().is_some() {
-                return Err(invalid(
-                    DiagnosticKind::Inconsistent,
-                    number,
-                    name,
-                    "appears twice.",
-                ));
-            }
-            Ok(Some(field.value().trim()))
-        };
+        let text = |name: &str| field(record, number, name);
         let real = |name: &str| -> Result<Option<f64>, FormatError> {
             text(name)?
                 .map(|value| {
@@ -107,12 +111,21 @@ impl RecordFields {
             }
         };
         Ok(Self {
-            weight: real(SDF_WEIGHT_FIELD)?.unwrap_or(1.0),
+            weight: real(SDF_WEIGHT_FIELD)?,
             state,
             representative,
             energy: real(SDF_ENERGY_FIELD)?,
             temperature: real(SDF_TEMPERATURE_FIELD)?,
         })
+    }
+
+    /// Whether the record has any ensemble data field.
+    fn any(&self) -> bool {
+        self.weight.is_some()
+            || self.state.is_some()
+            || self.representative
+            || self.energy.is_some()
+            || self.temperature.is_some()
     }
 }
 
@@ -134,6 +147,14 @@ pub(crate) fn sdf_ensemble<'a>(
     records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
 ) -> Result<Ensemble, FormatError> {
     let records = records.into_iter().collect::<Vec<_>>();
+    assemble(&records).map(|(ensemble, _)| ensemble)
+}
+
+/// The ensemble [`sdf_ensemble`] assembles, with each record's ensemble
+/// data fields.
+fn assemble(
+    records: &[&SdfRecordInterpretation],
+) -> Result<(Ensemble, Vec<RecordFields>), FormatError> {
     let topology = records
         .first()
         .ok_or_else(|| ensemble_error(EnsembleError::EmptySource))?
@@ -147,8 +168,9 @@ pub(crate) fn sdf_ensemble<'a>(
             return Err(ensemble_error(EnsembleError::TopologyMismatch).in_record(number));
         }
         let read = RecordFields::read(record, number)?;
-        let sample = EnsembleSample::new(record.model().positions().clone(), read.weight).map_err(
-            |error| {
+        let weight = read.weight.unwrap_or(1.0);
+        let sample =
+            EnsembleSample::new(record.model().positions().clone(), weight).map_err(|error| {
                 invalid(
                     DiagnosticKind::InvalidValue,
                     number,
@@ -156,8 +178,7 @@ pub(crate) fn sdf_ensemble<'a>(
                     "holds an invalid weight.",
                 )
                 .with_source(error)
-            },
-        )?;
+            })?;
         samples.push(sample);
         fields.push(read);
     }
@@ -204,21 +225,32 @@ pub(crate) fn sdf_ensemble<'a>(
             )
             .with_source(error)
         })?;
-    Ok(ensemble)
+    Ok((ensemble, fields))
 }
 
-/// Assembles interpreted SDF records as [`sdf_ensemble`] does, into an
-/// unordered sample set whose distribution is that ensemble's, and orders
-/// the samples by the records' [`SDF_STEP_FIELD`] or, in the unit
+/// Assembles interpreted SDF records as [`sdf_ensemble`] does, into a
+/// sample set of the records' samples. It has the ensemble's distribution
+/// when a record has an ensemble data field, with weights only when a
+/// record has [`SDF_WEIGHT_FIELD`], and no distribution otherwise. It
+/// orders the samples by the records' [`SDF_STEP_FIELD`] or, in the unit
 /// [`SDF_COORDINATE_UNIT_FIELD`] names, [`SDF_COORDINATE_FIELD`], when
 /// every record carries one.
 pub(crate) fn sdf_sample_set<'a>(
     records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
 ) -> Result<SampleSet, FormatError> {
     let records = records.into_iter().collect::<Vec<_>>();
-    let ensemble = sdf_ensemble(records.iter().copied())?;
+    let (ensemble, fields) = assemble(&records)?;
     let order = record_order(&records)?;
     let mut set = SampleSet::from_ensemble(ensemble);
+    if !fields.iter().any(RecordFields::any) {
+        set.set_distribution(None)
+            .expect("a set without a distribution is valid");
+    } else if fields.iter().all(|read| read.weight.is_none()) {
+        set.distribution_mut()
+            .expect("the set has the ensemble's distribution")
+            .set_weights(None)
+            .expect("a distribution without weights is valid");
+    }
     set.set_order(order).map_err(|error| {
         FormatError::interpret(
             Format::Sdf,
@@ -230,48 +262,36 @@ pub(crate) fn sdf_sample_set<'a>(
     Ok(set)
 }
 
-/// The units a record's [`SDF_COORDINATE_UNIT_FIELD`] can name, by symbol.
-const COORDINATE_UNITS: [Unit; 21] = [
-    DIMENSIONLESS,
-    METER,
-    NANOMETER,
-    ANGSTROM,
-    BOHR,
-    SQUARE_ANGSTROM,
-    SQUARE_NANOMETER,
-    SECOND,
-    PICOSECOND,
-    FEMTOSECOND,
-    KELVIN,
-    MOLE,
-    COULOMB,
-    ELEMENTARY_CHARGE,
-    RADIAN,
-    DEGREE,
-    JOULE,
-    KILOJOULE,
-    KILOCALORIE,
-    KILOJOULE_PER_MOLE,
-    KILOCALORIE_PER_MOLE,
-];
-
 /// The step or coordinate order the records' fields state: none when no
-/// record has a step or a coordinate, otherwise every record's.
+/// record has a step or a coordinate, otherwise every record's. The
+/// coordinate unit is named by the symbol of a unit constant.
 fn record_order(records: &[&SdfRecordInterpretation]) -> Result<Option<Order>, FormatError> {
-    let text = |record: &SdfRecordInterpretation, name: &str| {
-        record
-            .data_fields()
+    // Every record's place fields are read first, so a duplicate fails
+    // wherever it is.
+    let names = [
+        SDF_STEP_FIELD,
+        SDF_COORDINATE_FIELD,
+        SDF_COORDINATE_UNIT_FIELD,
+    ];
+    let places = records
+        .iter()
+        .enumerate()
+        .map(|(index, record)| {
+            names
+                .into_iter()
+                .map(|name| Ok((name, field(record, index + 1, name)?)))
+                .collect::<Result<Vec<_>, FormatError>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let text = |index: usize, name: &str| {
+        places[index]
             .iter()
-            .find(|field| field.name() == name)
-            .map(|field| field.value().trim().to_owned())
+            .find_map(|(known, value)| (*known == name).then_some(*value))
+            .flatten()
     };
-    let has = |name: &str| {
-        records
-            .iter()
-            .position(|record| text(record, name).is_some())
-    };
+    let has = |name: &str| (0..records.len()).find(|index| text(*index, name).is_some());
     let required = |index: usize, name: &str| {
-        text(records[index], name).ok_or_else(|| {
+        text(index, name).ok_or_else(|| {
             invalid(
                 DiagnosticKind::Inconsistent,
                 index + 1,
@@ -306,17 +326,14 @@ fn record_order(records: &[&SdfRecordInterpretation]) -> Result<Option<Order>, F
         }
         (None, Some(_)) => {
             let symbol = required(0, SDF_COORDINATE_UNIT_FIELD)?;
-            let unit = COORDINATE_UNITS
-                .into_iter()
-                .find(|unit| unit.to_string() == symbol)
-                .ok_or_else(|| {
-                    invalid(
-                        DiagnosticKind::InvalidValue,
-                        1,
-                        SDF_COORDINATE_UNIT_FIELD,
-                        &format!("holds {symbol:?}, not a known unit."),
-                    )
-                })?;
+            let unit = named_unit(symbol).ok_or_else(|| {
+                invalid(
+                    DiagnosticKind::InvalidValue,
+                    1,
+                    SDF_COORDINATE_UNIT_FIELD,
+                    &format!("holds {symbol:?}, not a known unit."),
+                )
+            })?;
             let values = (0..records.len())
                 .map(|index| {
                     if required(index, SDF_COORDINATE_UNIT_FIELD)? != symbol {

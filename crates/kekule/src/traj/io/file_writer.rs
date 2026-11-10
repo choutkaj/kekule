@@ -665,9 +665,10 @@ pub fn write_trajectory_to<W: Write + Seek + ?Sized>(
 /// Writes a sample set as a trajectory file, one frame per sample in sample
 /// order, as [`write_trajectory`] writes the trajectory the set converts to:
 /// a time order gives the frames' times and steps, and each sample's
-/// positions, cell, properties, velocities, and forces are its frame's.
-/// Occupancies and B factors, which no trajectory format stores, are left
-/// out and reported.
+/// positions, cell, properties, velocities, and forces are its frame's. A
+/// set without an order is written too; reading the file back gives a time
+/// order. Occupancies and B factors, which no trajectory format stores, are
+/// left out and reported.
 ///
 /// # Errors
 ///

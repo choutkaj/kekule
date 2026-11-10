@@ -916,6 +916,13 @@ pub enum StructureField {
     State,
     /// The temperature an ensemble's populations describe.
     Temperature,
+    /// The properties of a sample set's state.
+    StateProperties,
+    /// A sample set's state representative that is not the state's first
+    /// member.
+    Representative,
+    /// A sample set's time order without times or steps.
+    Order,
     /// A trajectory frame's time.
     Time,
     /// A trajectory frame's step.
@@ -946,6 +953,9 @@ impl fmt::Display for StructureField {
             Self::Energy => "ensemble state energy",
             Self::State => "ensemble state",
             Self::Temperature => "ensemble temperature",
+            Self::StateProperties => "ensemble state properties",
+            Self::Representative => "state representative",
+            Self::Order => "sample order",
             Self::Time => "trajectory frame time",
             Self::Step => "trajectory frame step",
             Self::Velocities => "trajectory frame velocities",

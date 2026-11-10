@@ -8,7 +8,8 @@ record may also store only the number of its samples, kept elsewhere, as a
 `SampleSetDescription`. An `Ensemble`, in-memory `Trajectory`, or `Series` is
 written as the sample set it converts to, and `NativeObject::into_ensemble`,
 `into_trajectory`, and `into_series` convert a decoded sample set back.
-Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
+A trajectory with a time or a step on only some frames has no sample set,
+so writing it is refused. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
 [Identity and reconstruction](../ARCHITECTURE.md#identity-and-reconstruction).
 The API lives in [`kekule::native`](../crates/kekule/src/lib.rs); the codec is
