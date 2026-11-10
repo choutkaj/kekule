@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::diagnostics::Cancellation;
+use crate::geometry::RigidTransform;
 use crate::properties::{OwnerProperties, TopologyPropertiesMut};
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
@@ -16,6 +17,7 @@ mod sample;
 mod views;
 
 pub use context::{Membership, SampleContext};
+pub(crate) use distribution::{boltzmann_weights, thermal_energy};
 pub use distribution::{Distribution, DistributionMut, Members};
 pub use error::{ConversionTarget, Requirement, SampleSetError, Unconvertible};
 pub use order::{Order, Place, TimeAxis};
@@ -282,7 +284,9 @@ impl SampleSet {
     /// Each sample statistics over the set must see, with its relative
     /// weight: the distribution's members ([`Distribution::weighted_members`])
     /// or, without a distribution, every sample with weight `1.0`. Items are
-    /// sample indices, in increasing order.
+    /// sample indices, in increasing order. The set's own statistics, such
+    /// as [`Self::rmsf`], and its clusterings, such as
+    /// [`Self::cluster_by_radius`], read these samples alone.
     pub fn weighted_samples(&self) -> impl ExactSizeIterator<Item = (usize, f64)> + '_ {
         let distribution = self.distribution.as_ref();
         let count = distribution.map_or(self.samples.len(), Distribution::member_count);
@@ -634,6 +638,27 @@ impl SampleSet {
     /// topology, the order, the distribution, and the set properties.
     pub fn into_samples(self) -> Vec<Sample> {
         self.samples
+    }
+
+    /// Applies one rigid transform per sample transactionally: positions
+    /// move; cells, velocities, and forces rotate.
+    pub(crate) fn transform_samples(
+        &mut self,
+        transforms: &[RigidTransform],
+    ) -> Result<(), StructureError> {
+        debug_assert_eq!(transforms.len(), self.samples.len());
+        let samples = self
+            .samples
+            .iter()
+            .zip(transforms)
+            .map(|(sample, transform)| {
+                Ok(Sample::from_structure(Arc::new(
+                    sample.structure().transformed(*transform)?,
+                )))
+            })
+            .collect::<Result<Vec<_>, StructureError>>()?;
+        self.samples = samples;
+        Ok(())
     }
 
     /// A copy of the samples `indices` (checked) with an order and a

@@ -1,5 +1,22 @@
-//! Partitions of an [`Ensemble`]'s samples into states of similar
-//! structures.
+//! Partitions of the members of a [`SampleSet`]'s distribution, or of an
+//! [`Ensemble`]'s samples, into states of similar structures.
+//!
+//! A sample set and an ensemble cluster through one implementation, so a
+//! set converted from an ensemble ([`SampleSet::from_ensemble`]) clusters
+//! exactly as the ensemble does. A set clusters the members of its
+//! distribution, leaving the other samples out, or every sample when it has
+//! no distribution. Its results are indexed by member position, the `i`th
+//! member being the `i`th sample
+//! [`Distribution::members`](crate::structure::Distribution::members) lists
+//! (sample `i` without a distribution): the [`DistanceMatrix`] of
+//! [`SampleSet::pairwise_fitted_rmsd`] and each partition, whose
+//! assignments and representatives are member positions. A partition
+//! installs with
+//! [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup),
+//! which changes no weight, or as a new distribution of every sample through
+//! [`SampleSet::set_distribution`]. Errors name sample indices.
+//!
+//! The examples below use an ensemble; the same calls work on a sample set.
 //!
 //! Clustering never changes the ensemble. It returns an
 //! [`EnsemblePartition`] that assigns every sample to one state and names one
@@ -88,7 +105,10 @@ use crate::alignment::{
 };
 use crate::diagnostics::Cancelled;
 use crate::parallel::map_ranges;
-use crate::structure::{Ensemble, EnsembleError, EnsemblePartition, ModelView, StructureError};
+use crate::structure::{
+    Ensemble, EnsembleError, EnsemblePartition, Members, ModelView, Requirement, SampleSet,
+    SampleSetError, StructureError,
+};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 use run::{FirstFailure, Stop, Tracker};
 
@@ -139,103 +159,110 @@ impl<'a> ClusteringOptions<'a> {
     }
 }
 
-impl Ensemble {
-    /// Leader clustering on fitted RMSD within `radius`, a finite,
-    /// nonnegative length.
-    ///
-    /// Members are visited in the [`ClusterOrder`] of `options`, by default
-    /// descending weight; ties keep member order. Each member joins the
-    /// cluster whose representative is nearest by RMSD after a
-    /// [`fit`](crate::alignment::fit) over `atoms` with the fit weights of
-    /// `options`, by default uniform, if
-    /// that RMSD is at most `radius`; ties keep the earlier cluster.
-    /// Otherwise it founds a new cluster and represents it. Every member is
-    /// therefore within `radius` of its representative, and representatives
-    /// are farther than `radius` from one another. Clusters are numbered in
-    /// order of founding.
-    ///
-    /// `atoms` is a selection or a
-    /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
-    /// ensemble's layout, so each distance is the same whichever member
-    /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
-    /// is rejected. Each member is fitted to at most every representative, so
-    /// the cost grows with members times clusters (times symmetry
-    /// permutations). An empty ensemble gives an empty partition. Fits run
-    /// on the calling thread; [`Self::cluster_by_radius_with`] spreads them
-    /// over threads, reports progress, and can be cancelled.
-    ///
-    /// # Errors
-    ///
-    /// - [`ClusteringError::Unit`] when `radius` is not a length, and
-    ///   [`ClusteringError::InvalidRadius`] when it is negative or not finite.
-    /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
-    ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
-    /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
-    ///   ensemble's layout, has fewer than three pairs, or the explicit
-    ///   weights of `options` are invalid.
-    ///   A failed fit is wrapped in [`AlignmentError::Item`] naming the
-    ///   member being placed.
-    /// - [`ClusteringError::Ensemble`] wrapping
-    ///   [`EnsembleError::MissingEnergy`] when ordering by
-    ///   [`ClusterOrder::Energy`] and a state has no energy.
-    pub fn cluster_by_radius<'a>(
-        &self,
-        radius: Quantity<f64>,
-        atoms: impl Into<FitAtoms<'a>>,
-        options: ClusteringOptions<'_>,
-    ) -> Result<EnsemblePartition, ClusteringError> {
-        self.cluster_by_radius_with(radius, atoms, options, ClusteringRun::default())
+/// The structures a clustering groups, in member order: an ensemble's
+/// samples, or the members of a sample set's distribution (every sample of a
+/// set without one). Every clustering of either type runs on it, so both
+/// share one implementation.
+struct Clustered<'a> {
+    views: Vec<ModelView<'a>>,
+    /// The sample index of each member, which errors name.
+    samples: &'a Members,
+    /// Each member's relative weight.
+    weights: Vec<f64>,
+    /// Each member's state energy in the canonical unit, or why there is
+    /// none.
+    energies: Result<Vec<f64>, ClusteringError>,
+}
+
+/// The members of a set without a distribution, or of an ensemble: every
+/// sample.
+static EVERY_SAMPLE: Members = Members::All;
+
+impl<'a> Clustered<'a> {
+    fn of_ensemble(ensemble: &'a Ensemble) -> Self {
+        let energies = ensemble
+            .state_energies()
+            .map(|energies| member_energies(&energies, ensemble.partition()))
+            .map_err(ClusteringError::from);
+        Self {
+            views: ensemble
+                .iter()
+                .map(|sample| sample.as_model_view())
+                .collect(),
+            samples: &EVERY_SAMPLE,
+            weights: ensemble.iter().map(|sample| sample.weight()).collect(),
+            energies,
+        }
     }
 
-    /// [`Self::cluster_by_radius`], with its fits run, followed and stopped
-    /// as `run` says.
-    ///
-    /// Each member joins or founds a cluster depending on those placed
-    /// before it, so members are still placed one at a time in visiting
-    /// order. Their fits run ahead in batches: every member of a batch is
-    /// fitted, in ranges of members on `run`'s executor, to the
-    /// representatives founded before the batch, and then, as it is placed,
-    /// to the few founded within it. The nearest is chosen in cluster order
-    /// and the first failed fit in visiting order is reported, so the
-    /// partition or error is the one [`Self::cluster_by_radius`] returns.
-    /// Progress counts members placed, of the member count.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::cluster_by_radius`], and [`ClusteringError::Cancelled`]
-    /// once `run`'s cancellation is requested.
-    ///
-    /// # Panics
-    ///
-    /// When a work item panics, which
-    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
-    /// the executor skips or repeats a work item.
-    pub fn cluster_by_radius_with<'a>(
+    fn of_set(set: &'a SampleSet) -> Self {
+        let Some(distribution) = set.distribution() else {
+            return Self {
+                views: set.iter().map(|sample| sample.as_model_view()).collect(),
+                samples: &EVERY_SAMPLE,
+                weights: vec![1.0; set.len()],
+                energies: Err(SampleSetError::Missing(Requirement::Distribution).into()),
+            };
+        };
+        let (views, weights) = distribution
+            .weighted_members()
+            .map(|(sample, weight)| {
+                let view = set.get(sample).expect("members are samples of the set");
+                (view.as_model_view(), weight)
+            })
+            .unzip();
+        let energies = distribution
+            .state_energies()
+            .map(|energies| member_energies(&energies, distribution.partition()))
+            .map_err(ClusteringError::from);
+        Self {
+            views,
+            samples: distribution.members(),
+            weights,
+            energies,
+        }
+    }
+
+    /// The number of members.
+    fn len(&self) -> usize {
+        self.views.len()
+    }
+
+    /// Weights divided by the largest one, so sums cannot overflow.
+    fn scaled_weights(&self) -> Vec<f64> {
+        let maximum = self.weights.iter().copied().fold(0.0_f64, f64::max);
+        self.weights.iter().map(|weight| weight / maximum).collect()
+    }
+
+    /// Member positions in visiting order.
+    fn visiting_order(&self, order: ClusterOrder) -> Result<Vec<usize>, ClusteringError> {
+        let mut positions = (0..self.len()).collect::<Vec<_>>();
+        match order {
+            ClusterOrder::Weight => {
+                positions.sort_by(|&a, &b| self.weights[b].total_cmp(&self.weights[a]))
+            }
+            ClusterOrder::Energy => {
+                let energies = self.energies.as_ref().map_err(Clone::clone)?;
+                positions.sort_by(|&a, &b| energies[a].total_cmp(&energies[b]));
+            }
+        }
+        Ok(positions)
+    }
+
+    fn cluster_by_radius(
         &self,
         radius: Quantity<f64>,
-        atoms: impl Into<FitAtoms<'a>>,
+        atoms: FitAtoms<'_>,
         options: ClusteringOptions<'_>,
         run: ClusteringRun<'_>,
     ) -> Result<EnsemblePartition, ClusteringError> {
-        let atoms = undirected(atoms.into())?;
+        let atoms = undirected(atoms)?;
         let radius = radius.value_in(CANONICAL_LENGTH_UNIT)?;
         if !(radius.is_finite() && radius >= 0.0) {
             return Err(ClusteringError::InvalidRadius);
         }
-        let order = match options.order {
-            ClusterOrder::Weight => self.ranked_by_weight(),
-            ClusterOrder::Energy => {
-                let energies = self.state_energies()?;
-                let states = self.partition().assignments();
-                let mut order = (0..self.len()).collect::<Vec<_>>();
-                order.sort_by(|&a, &b| energies[states[a]].total_cmp(&energies[states[b]]));
-                order
-            }
-        };
-        let views = self
-            .iter()
-            .map(|member| member.as_model_view())
-            .collect::<Vec<ModelView<'_>>>();
+        let order = self.visiting_order(options.order)?;
+        let (views, samples) = (&self.views, self.samples);
         let Some(first) = views.first() else {
             Tracker::start(run, 0, 0)?;
             return Ok(EnsemblePartition::state_per_sample(0));
@@ -262,7 +289,7 @@ impl Ensemble {
                     policy,
                 )
                 .map_err(|source| AlignmentError::Item {
-                    index: member,
+                    index: sample_index(samples, member),
                     source: Box::new(source),
                 })?
                 .rmsd()
@@ -355,6 +382,170 @@ impl Ensemble {
     }
 }
 
+/// Each member's state energy, from every state's energy and the members'
+/// grouping into states.
+fn member_energies(energies: &[f64], partition: &EnsemblePartition) -> Vec<f64> {
+    partition
+        .assignments()
+        .iter()
+        .map(|state| energies[*state])
+        .collect()
+}
+
+/// The sample index of the member at `position` of `members`.
+fn sample_index(members: &Members, position: usize) -> usize {
+    match members {
+        Members::All => position,
+        Members::Subset(indices) => indices[position],
+    }
+}
+
+impl SampleSet {
+    /// Leader clustering on fitted RMSD within `radius`, a finite,
+    /// nonnegative length, of the members of the set's distribution, or of
+    /// every sample of a set without one.
+    ///
+    /// The result groups exactly those samples, by member position: entry
+    /// `i` of its assignments, and each representative, is the `i`th member
+    /// ([`Distribution::members`](crate::structure::Distribution::members)),
+    /// or sample `i` without a distribution. Install it with
+    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup),
+    /// which keeps every weight, or, for a set without a distribution, as
+    /// `Distribution::new(Members::All, partition)` through
+    /// [`Self::set_distribution`]. Samples outside the distribution are not
+    /// clustered.
+    ///
+    /// Visiting order, joining, and numbering are those of
+    /// [`Ensemble::cluster_by_radius`]: by default members are visited by
+    /// descending weight (in member order without a distribution, every
+    /// member weighing the same), and [`ClusterOrder::Energy`] visits them by
+    /// ascending energy of their states. Fits run on the calling thread;
+    /// [`Self::cluster_by_radius_with`] spreads them over threads, reports
+    /// progress, and can be cancelled.
+    ///
+    /// # Errors
+    ///
+    /// As [`Ensemble::cluster_by_radius`], with a failed fit's
+    /// [`AlignmentError::Item`] naming the sample index of the member being
+    /// placed, and [`ClusteringError::SampleSet`] wrapping
+    /// `Missing(Distribution)` or `Missing(StateEnergies)` when ordering by
+    /// [`ClusterOrder::Energy`] a set without a distribution or with a state
+    /// without an energy.
+    pub fn cluster_by_radius<'a>(
+        &self,
+        radius: Quantity<f64>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: ClusteringOptions<'_>,
+    ) -> Result<EnsemblePartition, ClusteringError> {
+        self.cluster_by_radius_with(radius, atoms, options, ClusteringRun::default())
+    }
+
+    /// [`Self::cluster_by_radius`], with its fits run, followed and stopped
+    /// as `run` says, as [`Ensemble::cluster_by_radius_with`] describes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::cluster_by_radius`], and [`ClusteringError::Cancelled`]
+    /// once `run`'s cancellation is requested.
+    ///
+    /// # Panics
+    ///
+    /// When a work item panics, which
+    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
+    /// the executor skips or repeats a work item.
+    pub fn cluster_by_radius_with<'a>(
+        &self,
+        radius: Quantity<f64>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: ClusteringOptions<'_>,
+        run: ClusteringRun<'_>,
+    ) -> Result<EnsemblePartition, ClusteringError> {
+        Clustered::of_set(self).cluster_by_radius(radius, atoms.into(), options, run)
+    }
+}
+
+impl Ensemble {
+    /// Leader clustering on fitted RMSD within `radius`, a finite,
+    /// nonnegative length.
+    ///
+    /// Members are visited in the [`ClusterOrder`] of `options`, by default
+    /// descending weight; ties keep member order. Each member joins the
+    /// cluster whose representative is nearest by RMSD after a
+    /// [`fit`](crate::alignment::fit) over `atoms` with the fit weights of
+    /// `options`, by default uniform, if
+    /// that RMSD is at most `radius`; ties keep the earlier cluster.
+    /// Otherwise it founds a new cluster and represents it. Every member is
+    /// therefore within `radius` of its representative, and representatives
+    /// are farther than `radius` from one another. Clusters are numbered in
+    /// order of founding.
+    ///
+    /// `atoms` is a selection or a
+    /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
+    /// ensemble's layout, so each distance is the same whichever member
+    /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
+    /// is rejected. Each member is fitted to at most every representative, so
+    /// the cost grows with members times clusters (times symmetry
+    /// permutations). An empty ensemble gives an empty partition. Fits run
+    /// on the calling thread; [`Self::cluster_by_radius_with`] spreads them
+    /// over threads, reports progress, and can be cancelled.
+    ///
+    /// # Errors
+    ///
+    /// - [`ClusteringError::Unit`] when `radius` is not a length, and
+    ///   [`ClusteringError::InvalidRadius`] when it is negative or not finite.
+    /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
+    ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
+    /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
+    ///   ensemble's layout, has fewer than three pairs, or the explicit
+    ///   weights of `options` are invalid.
+    ///   A failed fit is wrapped in [`AlignmentError::Item`] naming the
+    ///   member being placed.
+    /// - [`ClusteringError::Ensemble`] wrapping
+    ///   [`EnsembleError::MissingEnergy`] when ordering by
+    ///   [`ClusterOrder::Energy`] and a state has no energy.
+    pub fn cluster_by_radius<'a>(
+        &self,
+        radius: Quantity<f64>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: ClusteringOptions<'_>,
+    ) -> Result<EnsemblePartition, ClusteringError> {
+        self.cluster_by_radius_with(radius, atoms, options, ClusteringRun::default())
+    }
+
+    /// [`Self::cluster_by_radius`], with its fits run, followed and stopped
+    /// as `run` says.
+    ///
+    /// Each member joins or founds a cluster depending on those placed
+    /// before it, so members are still placed one at a time in visiting
+    /// order. Their fits run ahead in batches: every member of a batch is
+    /// fitted, in ranges of members on `run`'s executor, to the
+    /// representatives founded before the batch, and then, as it is placed,
+    /// to the few founded within it. The nearest is chosen in cluster order
+    /// and the first failed fit in visiting order is reported, so the
+    /// partition or error is the one [`Self::cluster_by_radius`] returns.
+    /// Progress counts members placed, of the member count.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::cluster_by_radius`], and [`ClusteringError::Cancelled`]
+    /// once `run`'s cancellation is requested.
+    ///
+    /// # Panics
+    ///
+    /// When a work item panics, which
+    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
+    /// the executor skips or repeats a work item.
+    pub fn cluster_by_radius_with<'a>(
+        &self,
+        radius: Quantity<f64>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: ClusteringOptions<'_>,
+        run: ClusteringRun<'_>,
+    ) -> Result<EnsemblePartition, ClusteringError> {
+        Clustered::of_ensemble(self).cluster_by_radius(radius, atoms.into(), options, run)
+    }
+}
+
 /// Clustering distances must not depend on which member moves. Fitting
 /// member `a` onto `b` pairs `a`'s moving atoms with `b`'s reference atoms,
 /// so a correspondence pairing different atoms of one layout gives a
@@ -368,15 +559,16 @@ fn undirected(atoms: FitAtoms<'_>) -> Result<FitAtoms<'_>, ClusteringError> {
     }
 }
 
-/// Failure of an ensemble clustering operation.
+/// Failure of a sample set or ensemble clustering operation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ClusteringError {
     /// A clustering radius is not finite and nonnegative.
     InvalidRadius,
-    /// A distance matrix covers a different member count than the ensemble.
+    /// A distance matrix covers a different member count than there are
+    /// members to cluster.
     MatrixMismatch {
-        /// The ensemble's member count.
+        /// The number of members to cluster.
         expected: usize,
         /// The matrix's member count.
         actual: usize,
@@ -402,9 +594,9 @@ pub enum ClusteringError {
     },
     /// Fitting one pair of members failed.
     PairFit {
-        /// The first member of the pair.
+        /// The sample index of the first member of the pair, the one fitted.
         first: usize,
-        /// The second member of the pair.
+        /// The sample index of the second member of the pair.
         second: usize,
         /// The fit failure.
         source: Box<AlignmentError>,
@@ -426,6 +618,9 @@ pub enum ClusteringError {
     Alignment(Box<AlignmentError>),
     /// Reading or building the ensemble failed; see the source.
     Ensemble(Box<EnsembleError>),
+    /// The sample set lacks what the clustering needs, such as an energy for
+    /// every state; see the source.
+    SampleSet(Box<SampleSetError>),
     /// A quantity could not be converted to the required unit; see the source.
     Unit(Box<UnitError>),
     /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
@@ -441,7 +636,7 @@ impl fmt::Display for ClusteringError {
             }
             Self::MatrixMismatch { expected, actual } => write!(
                 formatter,
-                "The distance matrix covers {}. The ensemble has {expected}.",
+                "The distance matrix covers {}, but there are {expected} to cluster.",
                 crate::diagnostics::counted(*actual, "member", "members")
             ),
             Self::CondensedLength {
@@ -461,7 +656,7 @@ impl fmt::Display for ClusteringError {
                 "The pairwise distances of {members} members are too many to store."
             ),
             Self::PairFit { first, second, .. } => {
-                write!(formatter, "Cannot fit members {first} and {second}.")
+                write!(formatter, "Cannot fit samples {first} and {second}.")
             }
             Self::InvalidHeight => {
                 formatter.write_str("The dendrogram cut height is negative or not finite.")
@@ -475,6 +670,7 @@ impl fmt::Display for ClusteringError {
             ),
             Self::Alignment(_) => formatter.write_str("Cannot fit the members."),
             Self::Ensemble(_) => formatter.write_str("Cannot read the ensemble."),
+            Self::SampleSet(_) => formatter.write_str("Cannot cluster the sample set."),
             Self::Unit(_) => formatter.write_str("A clustering quantity has the wrong unit."),
             Self::Cancelled(_) => formatter.write_str("Clustering stopped."),
         }
@@ -486,6 +682,7 @@ impl std::error::Error for ClusteringError {
         match self {
             Self::Alignment(error) | Self::PairFit { source: error, .. } => Some(error.as_ref()),
             Self::Ensemble(error) => Some(error.as_ref()),
+            Self::SampleSet(error) => Some(error.as_ref()),
             Self::Unit(error) => Some(error.as_ref()),
             Self::Cancelled(cancelled) => Some(cancelled),
             _ => None,
@@ -502,6 +699,12 @@ impl From<AlignmentError> for ClusteringError {
 impl From<EnsembleError> for ClusteringError {
     fn from(error: EnsembleError) -> Self {
         Self::Ensemble(Box::new(error))
+    }
+}
+
+impl From<SampleSetError> for ClusteringError {
+    fn from(error: SampleSetError) -> Self {
+        Self::SampleSet(Box::new(error))
     }
 }
 
