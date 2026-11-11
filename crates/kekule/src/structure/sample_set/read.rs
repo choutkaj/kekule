@@ -156,8 +156,13 @@ pub enum SampleReadError {
         /// The number of samples.
         len: usize,
     },
-    /// The trajectory file cannot be read; see the source.
-    Trajectory(TrajectoryIoError),
+    /// A sample cannot be read from its trajectory file; see the source.
+    Trajectory {
+        /// The sample index.
+        sample: usize,
+        /// The failure.
+        source: TrajectoryIoError,
+    },
     /// A periodic processing step failed on a sample; see the source.
     Periodic {
         /// The sample index.
@@ -225,7 +230,13 @@ impl PartialEq for SampleReadError {
                     len: other_len,
                 },
             ) => index == other_index && len == other_len,
-            (Self::Trajectory(error), Self::Trajectory(other)) => error == other,
+            (
+                Self::Trajectory { sample, source },
+                Self::Trajectory {
+                    sample: other_sample,
+                    source: other_source,
+                },
+            ) => sample == other_sample && source == other_source,
             (
                 Self::Periodic { sample, source },
                 Self::Periodic {
@@ -267,12 +278,13 @@ impl fmt::Display for SampleReadError {
                 "Sample {index} does not exist. There are {}.",
                 crate::diagnostics::counted(*len, "sample", "samples")
             ),
-            Self::Trajectory(error) => fmt::Display::fmt(error, formatter),
             Self::Periodic { sample, .. } | Self::Structure { sample, .. } => {
                 write!(formatter, "Cannot process sample {sample}.")
             }
             Self::Alignment { sample, .. } => write!(formatter, "Cannot fit sample {sample}."),
-            Self::Reader { sample, .. } => write!(formatter, "Cannot read sample {sample}."),
+            Self::Trajectory { sample, .. } | Self::Reader { sample, .. } => {
+                write!(formatter, "Cannot read sample {sample}.")
+            }
         }
     }
 }
@@ -281,17 +293,11 @@ impl std::error::Error for SampleReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::IndexOutOfRange { .. } => None,
-            Self::Trajectory(error) => std::error::Error::source(error),
+            Self::Trajectory { source, .. } => Some(source),
             Self::Periodic { source, .. } => Some(source.as_ref()),
             Self::Alignment { source, .. } => Some(source.as_ref()),
             Self::Structure { source, .. } => Some(source.as_ref()),
             Self::Reader { source, .. } => Some(source.as_ref()),
         }
-    }
-}
-
-impl From<TrajectoryIoError> for SampleReadError {
-    fn from(error: TrajectoryIoError) -> Self {
-        Self::Trajectory(error)
     }
 }

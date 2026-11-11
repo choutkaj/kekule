@@ -11,6 +11,21 @@ are marked **Breaking:**.
 
 ### Added
 
+- Store follow-ups (SeekDelta K73).
+  `IndexedFileTrajectoryReader::into_sample_set` makes a
+  `SampleSet<IndexedFile>` from a reader the host opened, so a host that
+  opens the reader itself, for the scan's progress or a file still being
+  written, does not open and scan the file twice.
+  `SampleSet<IndexedFile>::snapshot` makes a set of the samples indexed so
+  far that reads the same open file and shares the frame index, keeping
+  the set properties, order, and distribution; the set goes on refreshing
+  without changing it. `Processed` keeps the sample 0 its construction
+  processes and lends it through `peek`, and `read(0)` returns it, so a
+  cache in front of the reader does not process it again. The
+  `clustering_fits` benchmark times the pairwise fitted RMSD matrix,
+  hierarchical clustering, and leader clustering of a set in memory, and
+  `pooled_reads` reads one set over an XTC file in bursts from a pool of
+  threads and counts the arrays freed on another thread.
 - Sample sets read from files, and lazy processing (SeekDelta K73).
   `SampleSet<S = InMemory>` takes its storage as a type parameter.
   `traj::io::open_indexed_sample_set` and
@@ -949,6 +964,10 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** `SampleReadError::Trajectory` is a struct variant naming the
+  sample, `Trajectory { sample, source }`, and displays "Cannot read sample
+  7." with the trajectory error as its source (SeekDelta K73 follow-ups).
+  `SampleReadError` no longer converts from `TrajectoryIoError`.
 - `StatisticsError`, `AlignmentError`, and `ClusteringError` gain variants
   for samples that cannot be read and for cancellation (`Read`,
   `Cancelled`, `ObservationsOutOfRange`) (SeekDelta K73).
@@ -1476,6 +1495,22 @@ are marked **Breaking:**.
 
 ### Fixed
 
+- Memory of a set over a file read from several threads (SeekDelta K73
+  follow-ups). A pooled indexed reader allocated the next sample's arrays
+  at the end of each read, on the thread that read; the next read, often on
+  another thread, filled them, and that thread freed them. Allocators that
+  do not promptly reuse memory freed by another thread, such as mimalloc,
+  grew by gigabytes over a 100,000-atom trajectory read in bursts. A read
+  of XYZ, DCD, TRR, or XTC through a set now allocates the sample's arrays
+  on the thread that reads it, and a set's pooled readers keep none between
+  reads, after a failed read too. The scratch limit counts the arrays a
+  read allocates, so a frame passes or fails it whatever the reader read
+  before.
+- Fitting speed (SeekDelta K73 follow-ups). Since K73 the rigid fit was
+  inlined into each caller, where it compiled to slower code: the pairwise
+  fitted RMSD matrix took about 40 % longer, and leader clustering and
+  single fits about 35 % longer. The fit is compiled once again, and every
+  result is bit for bit as before.
 - A hierarchy edit of one instance of a shared definition no longer
   changes the class of the others (SeekDelta K23b). Setting a residue's
   class, or adding, changing, moving or deleting an atom site, published the whole

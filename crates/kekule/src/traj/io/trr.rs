@@ -79,7 +79,7 @@ use crate::units::{
 };
 
 use super::frame_state::{record, unrepresentable_frame_state};
-use super::limits::exceeded_bytes;
+use super::limits::{exceeded_bytes, filled_bytes};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
@@ -148,9 +148,9 @@ impl Default for TrrReadOptions {
 
 impl TrrReadOptions {
     /// Sets limits applied before allocation, scanning, and seeking.
-    /// `max_scratch_bytes` bounds the combined capacities of the three dense
-    /// decode arrays and the reusable raw record buffer, in both sequential and
-    /// indexed modes. The frame index has its own `max_index_bytes` limit.
+    /// `max_scratch_bytes` bounds the three dense decode arrays, one vector
+    /// per atom each, and the reusable raw record buffer, in both sequential
+    /// and indexed modes. The frame index has its own `max_index_bytes` limit.
     #[must_use]
     pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
         self.limits = limits;
@@ -557,7 +557,10 @@ impl<R: Read + Seek> TrrReader<R> {
         }
 
         // The reusable raw record and all three dense arrays coexist. Account
-        // for retained capacity as well as any growth needed by this frame.
+        // for retained capacity as well as any growth needed by this frame;
+        // each dense array holds one vector per atom, whether it is kept or
+        // allocated by this read, as the check at opening counts them.
+        let atom_count = self.topology.atom_count();
         let raw_bytes = self
             .raw
             .capacity()
@@ -565,22 +568,9 @@ impl<R: Read + Seek> TrrReader<R> {
             .max(header.x_size)
             .max(header.v_size)
             .max(header.f_size);
-        let scratch_bytes = self
-            .positions
-            .capacity()
-            .checked_mul(std::mem::size_of::<Point3>())
-            .and_then(|bytes| {
-                self.velocities
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<Vector3>())
-                    .and_then(|vectors| bytes.checked_add(vectors))
-            })
-            .and_then(|bytes| {
-                self.forces
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<Vector3>())
-                    .and_then(|vectors| bytes.checked_add(vectors))
-            })
+        let scratch_bytes = filled_bytes(&self.positions, atom_count)
+            .and_then(|bytes| bytes.checked_add(filled_bytes(&self.velocities, atom_count)?))
+            .and_then(|bytes| bytes.checked_add(filled_bytes(&self.forces, atom_count)?))
             .and_then(|bytes| bytes.checked_add(raw_bytes));
         if scratch_bytes.is_none_or(|bytes| bytes > self.options.limits.max_scratch_bytes()) {
             return Err(resource_error(
@@ -979,28 +969,32 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
 
     /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
     /// does and hands over its positions, velocities, and forces, each
-    /// written once as it was decoded.
+    /// written once as it was decoded. The read allocates them on the
+    /// calling thread and the reader keeps no buffer for its next read,
+    /// which may run on another.
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
-        let decoded = self.read_indexed(index)?;
-        let atoms = self.inner.positions.len();
-        let take = |values: &mut Vec<Vector3>| std::mem::replace(values, Vec::with_capacity(atoms));
-        let positions = std::mem::replace(&mut self.inner.positions, Vec::with_capacity(atoms));
+        let read = self.read_indexed(index);
+        // Taken whether the read succeeds or fails, and whether the frame
+        // holds velocities and forces or not, so that the reader keeps no
+        // array for a read on another thread.
+        let positions = std::mem::take(&mut self.inner.positions);
+        let velocities = std::mem::take(&mut self.inner.velocities);
+        let forces = std::mem::take(&mut self.inner.forces);
+        let decoded = read?;
         Ok(DecodedSample {
             positions: Quantity::new(positions, NANOMETER),
             cell: decoded.cell,
             velocities: decoded
                 .header
                 .has_velocities()
-                .then(|| Quantity::new(take(&mut self.inner.velocities), NANOMETER_PER_PICOSECOND)),
-            forces: decoded.header.has_forces().then(|| {
-                Quantity::new(
-                    take(&mut self.inner.forces),
-                    KILOJOULE_PER_MOLE_PER_NANOMETER,
-                )
-            }),
+                .then(|| Quantity::new(velocities, NANOMETER_PER_PICOSECOND)),
+            forces: decoded
+                .header
+                .has_forces()
+                .then(|| Quantity::new(forces, KILOJOULE_PER_MOLE_PER_NANOMETER)),
             owner: Some(self.inner.properties.clone()),
         })
     }
@@ -2138,6 +2132,9 @@ fn decode_triplets_into<T>(
     field: &str,
 ) -> Result<(), TrajectoryIoError> {
     destination.clear();
+    // The indexed reader hands the buffers over, so the next read
+    // allocates its own on the thread that reads.
+    destination.reserve_exact(raw.len() / (3 * precision.bytes()));
     for values in raw.chunks_exact(3 * precision.bytes()) {
         let x = scalar_at(values, 0, precision);
         let y = scalar_at(values, 1, precision);

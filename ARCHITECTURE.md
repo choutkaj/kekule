@@ -64,8 +64,9 @@ distribution, `peek`, `read`), which is open to the host. `peek` lends a
 sample the reader holds; `read` returns an owned one. Everything in kekule
 that reads many samples takes a `&dyn SampleRead`: the observation of
 statistics, RMSD of listed samples, pairwise fitted RMSD, and lazy
-processing. kekule keeps no samples a reader read and starts no threads:
-caching, read-ahead, and parallel observation belong to the host.
+processing. kekule keeps no samples a reader read, but for the sample 0
+that lazy processing checks its steps on, and starts no threads: caching,
+read-ahead, and parallel observation belong to the host.
 
 `Ensemble`, `Trajectory`, and `Series` remain beside `SampleSet`. An ensemble
 is a distribution over all its samples without an order; a trajectory is a
@@ -545,8 +546,10 @@ under an explicit `FrameTimingPolicy::Number` and DCD numbers on its header's
 step sequence under an explicit `DcdFrameTimingPolicy::Number`, which reports
 each frame step and time it replaces.
 
-`open_indexed_sample_set` opens a file as a `SampleSet<IndexedFile>`, and
-`open_indexed_sample_set_from_index` opens it from a kept frame index. The
+`open_indexed_sample_set` opens a file as a `SampleSet<IndexedFile>`,
+`open_indexed_sample_set_from_index` opens it from a kept frame index, and
+`IndexedFileTrajectoryReader::into_sample_set` makes one from a reader the
+host opened, without opening or scanning the file again. The
 set's order is the index's time axis, and it exposes the index and its
 fingerprint. Sample `i` is frame `i`, decoded on every read into a sample
 that holds the only copy of its coordinates: the codec decodes them once
@@ -557,7 +560,10 @@ each read takes an idle indexed reader from a pool, or forks one from the
 set's reader, and returns it, so no lock is held while decoding. Every
 reader reads the file object the set opened, through positional reads, and
 shares the set's frame index (`Arc`), so forking reads the start of the
-file alone and every reader gives the same sample. On Windows, reads of
+file alone and every reader gives the same sample. A read allocates the
+sample's arrays on the calling thread, and a pooled reader keeps none for
+its next read, so the arrays are allocated and freed on one thread however
+the host's threads take the readers. On Windows, reads of
 the one shared handle run one after another, so threads take turns reading
 the file and decode at once. A read decodes whatever bytes the file holds
 at the indexed offsets, and kekule does not watch the file. A file
@@ -571,12 +577,16 @@ otherwise; the pool's readers are kept and read by the new index. It opens
 the path again, so a replacement that begins with the indexed bytes is
 taken and every reader moves to it. A truncated or rewritten file fails
 `refresh`, and the host opens it again. A host that must know of changes
-between refreshes compares the fingerprint. A host keeping the frame index
-makes each growing refresh copy the offsets. A distribution over every
+between refreshes compares the fingerprint. A host keeping the frame index,
+or a live snapshot, makes each growing refresh copy the offsets. A distribution over every
 sample becomes one over the samples it covered, so appended frames are not
-members. `load` reads every sample, or listed ones, into a set in memory
-that keeps their order values and restricts the distribution, as `select`
-does.
+members. `snapshot` makes a set of the samples indexed so far that forks
+the set's reader: it reads the same file object and shares the index, so a
+host hands it to an analysis while the set goes on refreshing. Refreshing
+either one changes only that one. A failed
+read names the sample (`SampleReadError::Trajectory`). `load` reads every
+sample, or listed ones, into a set in memory that keeps their order values
+and restricts the distribution, as `select` does.
 
 `Processed` reads another `SampleRead` and runs `ProcessingSteps` on each
 sample as it is read: make whole or wrap, center, fit onto a sample of the
@@ -598,8 +608,9 @@ them, and a shared one is copied once. Smoothing averages the window's
 samples after the steps before it, each molecule imaged onto the sample, so
 it expects whole molecules; it keeps everything else of the sample.
 Analyses read the same steps without smoothing, through a second reader
-with `ProcessingSteps::without_smoothing`. `Processed` keeps nothing it
-read, so a host caches in front of it.
+with `ProcessingSteps::without_smoothing`. `Processed` keeps sample 0, the
+one construction processed, and lends it through `peek`; it keeps nothing
+else it read, so a host caches in front of it.
 
 Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in

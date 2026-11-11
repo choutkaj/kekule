@@ -90,3 +90,11 @@ harness = false
 [[bench]]
 name = "sample_storage"
 harness = false
+
+[[bench]]
+name = "clustering_fits"
+harness = false
+
+[[bench]]
+name = "pooled_reads"
+harness = false

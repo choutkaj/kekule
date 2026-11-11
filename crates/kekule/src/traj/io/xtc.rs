@@ -787,7 +787,11 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         source_label: &str,
         frame: usize,
     ) -> Result<(), TrajectoryIoError> {
-        let position_bytes = positions_capacity.checked_mul(std::mem::size_of::<Point3>());
+        // The position array holds one point per atom, whether it is kept or
+        // allocated by this read.
+        let position_bytes = positions_capacity
+            .max(coordinate_scalars / 3)
+            .checked_mul(std::mem::size_of::<Point3>());
         let error = |detail: &str| resource_error(source_label, Some(frame), detail);
         // Include the forthcoming byte buffer before reserving scalar storage;
         // neither allocation may temporarily escape the aggregate limit.
@@ -1056,8 +1060,11 @@ impl<R: Read + Seek> XtcReader<R> {
         }
         self.adapter
             .decode(&info, &self.options.source_label, self.frame_cursor)?;
-        // Written once, into a buffer the indexed reader may hand over.
+        // Written once. The indexed reader hands the buffer over, so the
+        // next read allocates its own on the thread that reads.
         self.positions.clear();
+        self.positions
+            .reserve_exact(self.adapter.decoded_positions.len() / 3);
         self.positions.extend(
             self.adapter
                 .decoded_positions
@@ -1344,14 +1351,17 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
 
     /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
     /// does and hands over its positions, written once as they were
-    /// decoded.
+    /// decoded. The read allocates them on the calling thread and the
+    /// reader keeps no buffer for its next read, which may run on another.
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
-        let info = self.read_indexed(index)?;
-        let atoms = self.inner.positions.len();
-        let positions = std::mem::replace(&mut self.inner.positions, Vec::with_capacity(atoms));
+        let read = self.read_indexed(index);
+        // Taken whether the read succeeds or fails, so that the reader keeps
+        // no array for a read on another thread.
+        let positions = std::mem::take(&mut self.inner.positions);
+        let info = read?;
         Ok(DecodedSample {
             positions: Quantity::new(positions, NANOMETER),
             cell: info.cell,

@@ -322,6 +322,20 @@ impl<S: SampleStorage> SampleSet<S> {
         }
     }
 
+    /// The same set over `storage`, which holds the same samples: the
+    /// topology, the set properties, the order, and the distribution are
+    /// kept.
+    pub(crate) fn with_storage<T: SampleStorage>(&self, storage: T) -> SampleSet<T> {
+        debug_assert_eq!(storage.sample_count(), self.len());
+        SampleSet {
+            topology: self.shared_topology(),
+            properties: self.properties.clone(),
+            storage,
+            order: self.order.clone(),
+            distribution: self.distribution.clone(),
+        }
+    }
+
     /// An in-memory set of `samples`, read as the samples `indices` of this
     /// set, with their order values and the distribution restricted to
     /// them, as [`SampleSet::select`] gives them; set properties are kept.

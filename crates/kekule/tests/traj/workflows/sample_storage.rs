@@ -23,7 +23,7 @@ use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
     append_trajectory, open_indexed_sample_set, open_indexed_sample_set_from_index,
     open_indexed_trajectory, read_sample_set, write_trajectory, IndexedFile, KeepFrames,
-    TrajectoryOpenOptions, TrajectoryWriteOptions,
+    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
     Processed, ProcessingSteps, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
@@ -453,9 +453,10 @@ fn a_failed_read_leaves_the_reader_reading() {
 
     let failed = set.read(3).unwrap_err();
     assert!(
-        matches!(failed, SampleReadError::Trajectory(_)),
+        matches!(failed, SampleReadError::Trajectory { sample: 3, .. }),
         "{failed:?}"
     );
+    assert_eq!(failed.to_string(), "Cannot read sample 3.");
     // The same reader, back in the pool, reads the other frames.
     for index in [2, 4, 0, 5, 1] {
         assert_frame(&set, index, &set.read(index).unwrap(), &frames[index]);
@@ -490,9 +491,14 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
             .map(|index| set.read(index).unwrap_err())
             .collect::<Vec<_>>();
         for (index, error) in (first_lost..).zip(&lost) {
-            let SampleReadError::Trajectory(error) = error else {
+            let SampleReadError::Trajectory {
+                sample,
+                source: error,
+            } = error
+            else {
                 panic!("frame {index}: {error:?}");
             };
+            assert_eq!(*sample, index);
             assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
             assert_eq!(error.frame(), Some(index));
             let detail = error.detail().unwrap();
@@ -901,5 +907,320 @@ fn a_dcd_with_fixed_atoms_reads_whole_frames_through_a_set() {
             from_memory.read(index).unwrap(),
             "sample {index}"
         );
+    }
+}
+
+/// A set made from a reader already open reads as one opened from the path,
+/// and a snapshot keeps its samples and its file while the set follows the
+/// file.
+#[test]
+fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let head = Trajectory::from_items(
+        Arc::clone(&topology),
+        all.iter().take(3).map(|frame| frame.payload().clone()),
+    )
+    .unwrap();
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    write_trajectory(&path, &head, options.clone()).unwrap();
+
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let reader = open_indexed_trajectory(&path, Arc::clone(&topology), growing.clone()).unwrap();
+    let mut set = reader.into_sample_set();
+    let opened = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    assert_eq!(set.len(), 3);
+    assert_eq!(set.order(), opened.order());
+    for index in 0..3 {
+        assert_eq!(set.read(index).unwrap(), opened.read(index).unwrap());
+    }
+    let distribution = Distribution::new(Members::All, EnsemblePartition::one_state(3)).unwrap();
+    set.set_distribution(Some(distribution)).unwrap();
+    let expected = (0..3)
+        .map(|index| set.read(index).unwrap())
+        .collect::<Vec<_>>();
+
+    let mut snapshot = set.snapshot().unwrap();
+    assert_eq!(snapshot.order(), set.order());
+    assert_eq!(snapshot.distribution(), set.distribution());
+    let (mut writer, _) =
+        append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
+    for frame in all.iter().skip(3) {
+        writer.write_frame(frame).unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(set.refresh().unwrap(), 3);
+    assert_eq!(set.len(), 6);
+    assert_eq!(snapshot.len(), 3);
+    assert_eq!(snapshot.storage().frame_index().frame_count(), 3);
+    assert_eq!(snapshot.distribution().unwrap().members(), &Members::All);
+
+    // Another file at the path: the snapshot reads the file it shares.
+    let other = directory.0.join("other.xtc");
+    write_trajectory(
+        &other,
+        &shifted(&head, 0.5),
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc),
+    )
+    .unwrap();
+    fs::rename(&other, &path).unwrap();
+    for (index, sample) in expected.iter().enumerate() {
+        assert_eq!(&snapshot.read(index).unwrap(), sample, "sample {index}");
+    }
+    // Refreshed, the snapshot follows the path on its own.
+    let refused = snapshot.refresh().unwrap_err();
+    assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+    assert_eq!(snapshot.len(), 3);
+}
+
+/// A snapshot and its set each take the frames appended to the file on
+/// their own refresh, and the other keeps the samples it had.
+#[test]
+fn a_snapshot_and_its_set_grow_apart() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    let first = |count: usize| {
+        Trajectory::from_items(
+            Arc::clone(&topology),
+            all.iter().take(count).map(|frame| frame.payload().clone()),
+        )
+        .unwrap()
+    };
+    write_trajectory(&path, &first(2), options.clone()).unwrap();
+    let append = |from: usize, to: usize| {
+        let (mut writer, _) = append_trajectory(
+            &path,
+            Arc::clone(&topology),
+            KeepFrames::First(from),
+            options.clone(),
+        )
+        .unwrap();
+        for frame in all.iter().take(to).skip(from) {
+            writer.write_frame(frame).unwrap();
+        }
+        writer.finish().unwrap();
+    };
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut snapshot = set.snapshot().unwrap();
+
+    append(2, 4);
+    assert_eq!(snapshot.refresh().unwrap(), 2);
+    assert_eq!(snapshot.len(), 4);
+    assert_eq!(set.len(), 2);
+    assert_eq!(set.storage().frame_index().frame_count(), 2);
+
+    append(4, 6);
+    assert_eq!(set.refresh().unwrap(), 4);
+    assert_eq!(set.len(), 6);
+    assert_eq!(snapshot.len(), 4);
+    assert_eq!(snapshot.storage().frame_index().frame_count(), 4);
+
+    let frames = indexed_frames(&path, &topology);
+    for (index, frame) in frames.iter().enumerate() {
+        assert_frame(&set, index, &set.read(index).unwrap(), frame);
+        if index < 4 {
+            assert_frame(&snapshot, index, &snapshot.read(index).unwrap(), frame);
+        }
+    }
+    assert!(snapshot.read(4).is_err());
+}
+
+/// Two frames of a chain in a cell: frame 0 on a regular line, frame 1
+/// scattered far from it, so that frame 1 needs more scratch to read in
+/// every format but DCD, whose frames all have one size.
+fn uneven(topology: &Arc<Topology>) -> Trajectory {
+    let atoms = topology.atom_count();
+    let frames = (0..2_u32).map(|step| {
+        let points = (0..atoms)
+            .map(|atom| {
+                let atom = atom as f64;
+                if step == 0 {
+                    Point3::new(0.1 * atom, 0.0, 0.0)
+                } else {
+                    Point3::new(
+                        -123.456 + 37.7 * atom.sin(),
+                        456.789 * atom.cos(),
+                        -98.765 + 0.11 * atom * atom.sqrt(),
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+        let cell = PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(3.0, 3.5, 4.0), NANOMETER),
+            [true; 3],
+        )
+        .unwrap();
+        let mut frame =
+            TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
+                .with_cell(cell);
+        frame.set_step(Some(10 * u64::from(step)));
+        frame
+            .set_time(Some(Quantity::new(f64::from(step), PICOSECOND)))
+            .unwrap();
+        frame
+    });
+    Trajectory::from_items(Arc::clone(topology), frames).unwrap()
+}
+
+/// Which reader reads sample 1 in [`reads_under`].
+#[derive(Debug, Clone, Copy)]
+enum History {
+    /// A fresh set.
+    Fresh,
+    /// The reader that read sample 0 just before.
+    ReadBefore,
+    /// A pooled reader that read sample 0 on another thread.
+    Pooled,
+}
+
+/// A file as a set opens it, and as it reads it after the bytes were
+/// rewritten in place.
+struct Rewritten<'a> {
+    path: &'a Path,
+    opened: Vec<u8>,
+    read: Vec<u8>,
+}
+
+/// Whether sample 1 of `file` opens and reads under a scratch limit of
+/// `bytes`, by the reader `history` names.
+fn reads_under(
+    file: &Rewritten<'_>,
+    topology: &Arc<Topology>,
+    bytes: usize,
+    history: History,
+) -> bool {
+    fs::write(file.path, &file.opened).unwrap();
+    let limits = TrajectoryIoLimits::default().with_max_scratch_bytes(bytes);
+    let options = TrajectoryOpenOptions::default().with_limits(limits);
+    let Ok(set) = open_indexed_sample_set(file.path, Arc::clone(topology), options) else {
+        return false;
+    };
+    let mut rewrite = OpenOptions::new().write(true).open(file.path).unwrap();
+    rewrite.write_all(&file.read).unwrap();
+    drop(rewrite);
+    match history {
+        History::Fresh => {}
+        History::ReadBefore => drop(set.read(0)),
+        History::Pooled => thread::scope(|scope| {
+            scope.spawn(|| drop(set.read(0)));
+        }),
+    }
+    set.read(1).is_ok()
+}
+
+/// The least scratch limit under which [`reads_under`] reads sample 1.
+fn least_limit(file: &Rewritten<'_>, topology: &Arc<Topology>, history: History) -> usize {
+    let (mut fails, mut reads) = (0, 1 << 20);
+    assert!(reads_under(file, topology, reads, history), "{history:?}");
+    while reads - fails > 1 {
+        let middle = fails + (reads - fails) / 2;
+        if reads_under(file, topology, middle, history) {
+            reads = middle;
+        } else {
+            fails = middle;
+        }
+    }
+    reads
+}
+
+/// `xyz` with frame 1's first atom line 200 bytes longer and the 200 lines
+/// after it a byte shorter each, so that every frame keeps its bytes.
+fn one_long_line(xyz: &[u8]) -> Vec<u8> {
+    let lines = xyz
+        .split_inclusive(|byte| *byte == b'\n')
+        .collect::<Vec<_>>();
+    let atoms = lines.len() / 2 - 2;
+    let first = atoms + 4;
+    let mut rewritten = lines[..first].concat();
+    let long = lines[first];
+    rewritten.extend_from_slice(&long[..long.len() - 1]);
+    rewritten.extend(std::iter::repeat_n(b'0', 200));
+    rewritten.push(b'\n');
+    for line in &lines[first + 1..first + 201] {
+        assert!(line[line.len() - 2].is_ascii_digit());
+        rewritten.extend_from_slice(&line[..line.len() - 2]);
+        rewritten.push(b'\n');
+    }
+    rewritten.extend(lines[first + 201..].concat());
+    assert_eq!(rewritten.len(), xyz.len());
+    rewritten
+}
+
+/// The scratch limit counts the arrays a read allocates, so a frame passes
+/// or fails it alike on a fresh reader, on one that read before, and on a
+/// pooled one, which gave the arrays of its last read away. Opening checks
+/// every frame as indexed, so the XYZ file is also read after a line of
+/// frame 1 grew in place.
+#[test]
+fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
+    let topology = linear_carbon_topology(600);
+    let trajectory = uneven(&topology);
+    let directory = Directory::new();
+    for (format, rewrite) in [
+        (TrajectoryFormat::Xyz, false),
+        (TrajectoryFormat::Xyz, true),
+        (TrajectoryFormat::Dcd, false),
+        (TrajectoryFormat::Trr, false),
+        (TrajectoryFormat::Xtc, false),
+    ] {
+        let path = directory.0.join(format!(
+            "uneven-{rewrite}.{}",
+            format.to_string().to_ascii_lowercase()
+        ));
+        let options = growing_options(format).with_trr_options(
+            TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+        );
+        write_trajectory(&path, &trajectory, options).unwrap();
+        let opened = fs::read(&path).unwrap();
+        let read = if rewrite {
+            one_long_line(&opened)
+        } else {
+            opened.clone()
+        };
+        let file = Rewritten {
+            path: &path,
+            opened,
+            read,
+        };
+        let fresh = least_limit(&file, &topology, History::Fresh);
+        assert!(fresh > 600 * size_of::<Point3>(), "{format}: {fresh}");
+        for history in [History::ReadBefore, History::Pooled] {
+            assert_eq!(
+                least_limit(&file, &topology, history),
+                fresh,
+                "{format} {rewrite} {history:?}"
+            );
+        }
+        // Just under it, the read fails for the limit.
+        if reads_under(&file, &topology, fresh - 1, History::Fresh) {
+            panic!("{format}: sample 1 reads under {} bytes", fresh - 1);
+        }
+        fs::write(&path, &file.opened).unwrap();
+        let limits = TrajectoryIoLimits::default().with_max_scratch_bytes(fresh - 1);
+        if let Ok(set) = open_indexed_sample_set(
+            &path,
+            Arc::clone(&topology),
+            TrajectoryOpenOptions::default().with_limits(limits),
+        ) {
+            let mut rewrite = OpenOptions::new().write(true).open(&path).unwrap();
+            rewrite.write_all(&file.read).unwrap();
+            drop(rewrite);
+            let error = set.read(1).unwrap_err();
+            let SampleReadError::Trajectory { sample, source } = error else {
+                panic!("{format}: {error:?}");
+            };
+            assert_eq!(sample, 1);
+            assert_eq!(
+                source.kind(),
+                TrajectoryIoErrorKind::LimitExceeded,
+                "{format}"
+            );
+        }
     }
 }

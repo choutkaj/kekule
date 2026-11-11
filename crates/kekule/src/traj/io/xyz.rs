@@ -76,7 +76,7 @@ use crate::traj::{
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::frame_state::{record, sample_field, unrepresentable_frame_state};
-use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
+use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
     require_nonempty_writer, FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
@@ -104,8 +104,8 @@ impl Default for XyzReadOptions {
 
 impl XyzReadOptions {
     /// Sets limits applied before allocation, scanning, and seeking.
-    /// `max_scratch_bytes` bounds the combined capacities of the dense position
-    /// array and the reusable line buffer, which grows to hold the longest
+    /// `max_scratch_bytes` bounds the dense position array, one point per
+    /// atom, and the reusable line buffer, which grows to hold the longest
     /// line read so far, terminator included, in both sequential and indexed
     /// modes. The frame index has its own `max_index_bytes` limit.
     #[must_use]
@@ -440,9 +440,10 @@ impl<R: BufRead> XyzReader<R> {
                 LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
             ));
         }
-        // The position array never grows after construction; the line buffer
-        // may grow only within what it leaves of the scratch budget.
-        let position_bytes = scratch_bytes(&self.positions);
+        // The position array holds one point per atom, whether it is kept or
+        // allocated by this read; the line buffer may grow only within what
+        // it leaves of the scratch budget.
+        let position_bytes = filled_bytes(&self.positions, self.topology().atom_count());
         let growing = self.growing;
         let Some((count_line, consumed)) = read_line(
             &mut self.reader,
@@ -536,7 +537,10 @@ impl<R: BufRead> XyzReader<R> {
             operation,
         )?;
 
+        // The indexed reader hands the buffer over, so the next read
+        // allocates its own on the thread that reads.
         self.positions.clear();
+        self.positions.reserve_exact(atom_count);
         for atom_index in 0..atom_count {
             let atom_id = self.topology().atom_ids()[atom_index];
             let expected_element = self
@@ -930,13 +934,17 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
 
     /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
     /// does and hands over its positions, written once as they were parsed.
+    /// The read allocates them on the calling thread and the reader keeps
+    /// no buffer for its next read, which may run on another.
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
-        self.read_indexed(index)?;
-        let atoms = self.reader.positions.len();
-        let positions = std::mem::replace(&mut self.reader.positions, Vec::with_capacity(atoms));
+        let read = self.read_indexed(index);
+        // Taken whether the read succeeds or fails, so that the reader keeps
+        // no array for a read on another thread.
+        let positions = std::mem::take(&mut self.reader.positions);
+        read?;
         Ok(DecodedSample {
             positions: Quantity::new(positions, self.reader.options.length_unit),
             cell: None,

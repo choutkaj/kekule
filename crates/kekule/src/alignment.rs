@@ -369,7 +369,20 @@ pub(crate) fn best_kabsch<'m, 'r>(
     weights: NormalizedWeights<'_>,
     policy: PeriodicPolicy,
 ) -> Result<RigidAlignment, AlignmentError> {
-    let (moving, reference) = (moving.into(), reference.into());
+    best_coordinates_kabsch(moving.into(), reference.into(), sets, weights, policy)
+}
+
+/// [`best_kabsch`] on coordinates, kept out of line: inlined into its
+/// callers, such as the pairwise matrix's loop, the kernel compiles to
+/// slower code and a fit takes about 40 % longer.
+#[inline(never)]
+fn best_coordinates_kabsch(
+    moving: Coordinates<'_>,
+    reference: Coordinates<'_>,
+    sets: &[Pairs],
+    weights: NormalizedWeights<'_>,
+    policy: PeriodicPolicy,
+) -> Result<RigidAlignment, AlignmentError> {
     let mut best: Option<RigidAlignment> = None;
     for pairs in sets {
         let alignment = kabsch_pairs(moving, reference, pairs, weights, policy)?;
