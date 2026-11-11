@@ -24,7 +24,7 @@ use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::{
     open_indexed_sample_set, write_trajectory, IndexedFile, TrajectoryWriteOptions,
 };
-use kekule::traj::TrajectoryFormat;
+use kekule::traj::{FitReference, Processed, ProcessingSteps, TrajectoryFormat};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
 const ATOMS: usize = 6;
@@ -233,6 +233,26 @@ fn statistics_over_a_reader_equal_the_set_in_memory() {
 }
 
 #[test]
+fn a_sample_listed_twice_is_observed_twice() {
+    let (_scratch, mut file, mut memory) = file_and_memory("repeated");
+    let listed = [4, 2, 4, 8, 2, 2];
+    for distribution in [None, Some(partial())] {
+        file.set_distribution(distribution.clone()).unwrap();
+        memory.set_distribution(distribution).unwrap();
+        let selected = memory.select(listed).unwrap();
+        for reader in [&file as &dyn SampleRead, &memory] {
+            let observations = SampleObservations::of(reader, listed).unwrap();
+            assert_eq!(observations.samples(), listed);
+            assert_eq!(
+                bits(observations.weights()),
+                bits(SampleObservations::all(&selected).weights())
+            );
+            statistics_match(reader, &observations, &selected);
+        }
+    }
+}
+
+#[test]
 fn split_observations_merge_and_cancelled_ones_change_nothing() {
     let (_scratch, file, memory) = file_and_memory("merge");
     let atoms = AtomSelection::all(file.shared_topology());
@@ -376,4 +396,41 @@ fn pairwise_fitted_rmsd_over_a_reader_equals_the_set_in_memory() {
         clustering::pairwise_fitted_rmsd(&file, &atoms, Default::default(), run),
         Err(ClusteringError::Cancelled(_))
     ));
+}
+
+/// Several threads fit the processed samples of one file at once, each on
+/// threads of its own, and all get the matrix of the set in memory.
+#[test]
+fn pairwise_fitted_rmsd_over_processed_samples_runs_from_several_threads() {
+    let (_scratch, file, memory) = file_and_memory("processed-pairwise");
+    let topology = file.shared_topology();
+    let fit = selection(&topology, &[0, 1, 2, 3]);
+    let steps = ProcessingSteps::default()
+        .with_center(fit.clone())
+        .with_fit(fit, FitReference::Sample(2));
+    let file = Processed::new(file, steps.clone()).unwrap();
+    let memory = Processed::new(memory, steps).unwrap();
+    let atoms = selection(&topology, &[1, 2, 4, 5]);
+    let held = clustering::pairwise_fitted_rmsd(
+        &memory,
+        &atoms,
+        Default::default(),
+        ClusteringRun::default(),
+    )
+    .unwrap();
+    std::thread::scope(|scope| {
+        let runs = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    let threads = ScopedThreads::new(NonZeroUsize::new(3).unwrap());
+                    let run = ClusteringRun::default().with_executor(&threads);
+                    clustering::pairwise_fitted_rmsd(&file, &atoms, Default::default(), run)
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        for run in runs {
+            assert_eq!(run.join().unwrap(), held);
+        }
+    });
 }

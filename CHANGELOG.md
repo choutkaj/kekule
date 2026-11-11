@@ -20,17 +20,23 @@ are marked **Breaking:**.
   path through `storage()`. Its samples are read through the
   `structure::SampleRead` trait (`topology`, `len`, `order`,
   `distribution`, `peek`, `read`), which sets in memory implement too and a
-  host can implement; `read` decodes one frame into an owned `Sample` and
-  runs from many threads at once, with a pool of indexed readers and no
-  lock held while decoding. `SampleSet<IndexedFile>::refresh` takes the
-  frames a writer appended; a distribution over every sample becomes one
-  over the samples it covered. `load` reads every sample, or listed ones,
-  into a set in memory that keeps order values and restricts the
-  distribution. `SampleView::new` checks a sample a host's reader lends.
-  `traj::Processed` runs `ProcessingSteps` on every sample of another
-  reader as it is read: make whole or wrap, center, fit (`FitReference`),
-  smooth over an odd window, and atom subset; `Processed::unsmoothed`
-  reads the layer below smoothing, and failures to set up are
+  host can implement; `SampleReadError::reader` carries a host reader's own
+  error. `read` decodes one frame once into the arrays of an owned `Sample`
+  and runs from many threads at once, with a pool of indexed readers that
+  read the one open file and share the frame index, and no lock held while
+  decoding. A file truncated while open fails the reads of the frames it
+  lost with one error. `SampleSet<IndexedFile>::refresh` takes the frames a
+  writer appended and keeps the pool; a distribution over every sample
+  becomes one over the samples it covered. `state` and `states` view the
+  states of a set of either storage; a state of a set in memory lends its
+  representative sample, and one of a set in a file names its index. A
+  reader lends samples as `SampleView<'_, dyn SampleRead>`. `load` reads every sample, or listed ones, into a set in memory that
+  keeps order values and restricts the distribution. `SampleView::new`
+  checks a sample a host's reader lends. `traj::Processed` runs
+  `ProcessingSteps` on every sample of another reader as it is read: make
+  whole or wrap, center, fit (`FitReference`), smooth over an odd window,
+  and atom subset, changing the sample in place. Analyses read
+  `ProcessingSteps::without_smoothing`, and failures to set up are
   `ProcessingError`s naming the `ProcessingStep`. Each step gives the bits
   of the in-memory periodic functions, `MoleculeImager`, and
   `FrameSuperposer`. `statistics::SampleObservations` lists every member or
@@ -943,11 +949,11 @@ are marked **Breaking:**.
 
 ### Changed
 
-- **Breaking:** `StateView::representative_sample` returns an
-  `Option<SampleView>` (SeekDelta K73): a state of a set read from a file
-  has no sample to lend. `StatisticsError`, `AlignmentError`, and
-  `ClusteringError` gain variants for samples that cannot be read and for
-  cancellation (`Read`, `Cancelled`, `ObservationsOutOfRange`).
+- `StatisticsError`, `AlignmentError`, and `ClusteringError` gain variants
+  for samples that cannot be read and for cancellation (`Read`,
+  `Cancelled`, `ObservationsOutOfRange`) (SeekDelta K73).
+- `IndexedFileTrajectoryReader::refresh` of a file whose indexed bytes
+  changed says to open the file again (SeekDelta K73).
 - **Breaking:** native format version 5 (SeekDelta K72c). Kind 9 stores a
   sample set and kind 10 a sample set with its reports; kinds 4, 5, 6, and 8
   (ensemble, trajectory, series, interpreted ensemble) are retired, and

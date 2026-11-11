@@ -461,6 +461,10 @@ const MEMBERS_PER_WORK_ITEM: usize = 16;
 /// `atoms`. Progress counts pairs fitted once the members are loaded;
 /// cancellation is polled before each member is loaded and while fitting.
 ///
+/// To cluster a range of the samples, such as the frames after
+/// equilibration, give the reader a distribution whose members are that
+/// range ([`Members::Subset`]) and cluster its members.
+///
 /// ```
 /// use kekule::clustering::{pairwise_fitted_rmsd, ClusteringRun};
 /// use kekule::geometry::Point3;

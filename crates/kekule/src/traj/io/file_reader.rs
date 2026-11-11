@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::topology::Topology;
 
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::structure::{SampleSet, Trajectory};
+use crate::structure::{DecodedSample, Sample, SampleSet, Trajectory};
 use crate::traj::{
     FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryFormat,
     TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
@@ -17,8 +17,8 @@ use crate::traj::{
 use super::limits::index_hard_capacity;
 use super::{
     dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata, FrameOffsets,
-    IndexBuildControl, TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryOpenOptions,
-    TrajectoryOpenReport, TrajectoryWriteOptions,
+    IndexBuildControl, SharedFile, TrajectoryFileFingerprint, TrajectoryFrameIndex,
+    TrajectoryOpenOptions, TrajectoryOpenReport, TrajectoryWriteOptions,
 };
 
 enum SequentialReaderInner {
@@ -94,11 +94,13 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
     }
 }
 
+/// Every indexed reader reads its file through a shared position, so that
+/// readers forked from it read the same file object.
 enum IndexedReaderInner {
-    Xyz(xyz::IndexedXyzReader<BufReader<File>>),
-    Dcd(dcd::IndexedDcdReader<BufReader<File>>),
-    Trr(Box<trr::IndexedTrrReader<BufReader<File>>>),
-    Xtc(xtc::IndexedXtcReader<BufReader<File>>),
+    Xyz(xyz::IndexedXyzReader<BufReader<SharedFile>>),
+    Dcd(dcd::IndexedDcdReader<BufReader<SharedFile>>),
+    Trr(Box<trr::IndexedTrrReader<BufReader<SharedFile>>>),
+    Xtc(xtc::IndexedXtcReader<BufReader<SharedFile>>),
 }
 
 /// What an index extension may have to undo.
@@ -117,6 +119,76 @@ impl IndexedReaderInner {
             Self::Dcd(reader) => reader.offsets(),
             Self::Trr(reader) => reader.offsets(),
             Self::Xtc(reader) => reader.offsets(),
+        }
+    }
+
+    fn shared_offsets(&self) -> &Arc<FrameOffsets> {
+        match self {
+            Self::Xyz(reader) => reader.shared_offsets(),
+            Self::Dcd(reader) => reader.shared_offsets(),
+            Self::Trr(reader) => reader.shared_offsets(),
+            Self::Xtc(reader) => reader.shared_offsets(),
+        }
+    }
+
+    /// See the codecs' `release_index`.
+    fn release_index(&mut self) {
+        match self {
+            Self::Xyz(reader) => reader.release_index(),
+            Self::Dcd(reader) => reader.release_index(),
+            Self::Trr(reader) => reader.release_index(),
+            Self::Xtc(reader) => reader.release_index(),
+        }
+    }
+
+    /// Reads by the index of `other`, a reader of the same file, and the
+    /// file object it reads, from now on.
+    fn share_index(&mut self, other: &Self) {
+        match (&mut *self, other) {
+            (Self::Xyz(reader), Self::Xyz(other)) => reader.share_index(other),
+            (Self::Dcd(reader), Self::Dcd(other)) => reader.share_index(other),
+            (Self::Trr(reader), Self::Trr(other)) => reader.share_index(other),
+            (Self::Xtc(reader), Self::Xtc(other)) => reader.share_index(other),
+            _ => unreachable!("readers of one file read one format"),
+        }
+        let file = other.file();
+        let stream = self.stream_mut();
+        if !stream.get_ref().same_file(file) {
+            // The buffered bytes were read but not yet consumed.
+            let position = stream.get_ref().position() - stream.buffer().len() as u64;
+            *stream = BufReader::new(file.at(position));
+        }
+    }
+
+    /// Another reader of the same frames and file object, sharing the
+    /// index; see the codecs' `fork`.
+    fn fork(&self) -> Result<Self, TrajectoryIoError> {
+        let stream = BufReader::new(self.file().at(0));
+        Ok(match self {
+            Self::Xyz(reader) => Self::Xyz(reader.fork(stream)?),
+            Self::Dcd(reader) => Self::Dcd(reader.fork(stream)?),
+            Self::Trr(reader) => Self::Trr(Box::new(reader.fork(stream)?)),
+            Self::Xtc(reader) => Self::Xtc(reader.fork(stream)?),
+        })
+    }
+
+    /// See the codecs' `read_decoded`.
+    fn read_decoded(&mut self, index: usize) -> Result<DecodedSample, TrajectoryIoError> {
+        match self {
+            Self::Xyz(reader) => reader.read_decoded(index),
+            Self::Dcd(reader) => reader.read_decoded(index),
+            Self::Trr(reader) => reader.read_decoded(index),
+            Self::Xtc(reader) => reader.read_decoded(index),
+        }
+    }
+
+    /// The file every read goes through.
+    fn file(&self) -> &SharedFile {
+        match self {
+            Self::Xyz(reader) => reader.stream().get_ref(),
+            Self::Dcd(reader) => reader.stream().get_ref(),
+            Self::Trr(reader) => reader.stream().get_ref(),
+            Self::Xtc(reader) => reader.stream().get_ref(),
         }
     }
 
@@ -185,7 +257,7 @@ impl IndexedReaderInner {
     }
 
     /// The stream every read goes through.
-    fn stream_mut(&mut self) -> &mut BufReader<File> {
+    fn stream_mut(&mut self) -> &mut BufReader<SharedFile> {
         match self {
             Self::Xyz(reader) => reader.stream_mut(),
             Self::Dcd(reader) => reader.stream_mut(),
@@ -200,7 +272,7 @@ impl IndexedReaderInner {
         &mut self,
         format: TrajectoryFormat,
         label: &str,
-        check: impl FnOnce(&mut File) -> Result<T, TrajectoryIoError>,
+        check: impl FnOnce(&mut SharedFile) -> Result<T, TrajectoryIoError>,
     ) -> Result<T, TrajectoryIoError> {
         let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
         let stream = self.stream_mut();
@@ -220,11 +292,11 @@ impl IndexedReaderInner {
         file: File,
         format: TrajectoryFormat,
         label: &str,
-    ) -> Result<BufReader<File>, TrajectoryIoError> {
+    ) -> Result<BufReader<SharedFile>, TrajectoryIoError> {
         let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
         let stream = self.stream_mut();
         let position = stream.stream_position().map_err(io)?;
-        let mut replacement = BufReader::new(file);
+        let mut replacement = BufReader::new(SharedFile::new(file));
         replacement.seek(SeekFrom::Start(position)).map_err(io)?;
         Ok(std::mem::replace(stream, replacement))
     }
@@ -274,15 +346,82 @@ impl IndexedFileTrajectoryReader {
     }
 
     /// Exports the frame offsets, times, and steps with the fingerprint of
-    /// the indexed bytes, copying them, for
-    /// [`open_indexed_trajectory_from_index`].
+    /// the indexed bytes, for [`open_indexed_trajectory_from_index`]. The
+    /// index shares the reader's offsets until either changes them.
     pub fn to_frame_index(&self) -> TrajectoryFrameIndex {
         TrajectoryFrameIndex::new(
             self.metadata.format(),
             self.fingerprint.clone(),
-            self.inner.offsets().clone(),
+            Arc::clone(self.inner.shared_offsets()),
             self.inner.precision_mixed(),
         )
+    }
+
+    /// The path the reader opened.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The fingerprint of the indexed bytes.
+    pub(crate) const fn fingerprint(&self) -> &TrajectoryFileFingerprint {
+        &self.fingerprint
+    }
+
+    /// Another reader of the indexed frames that reads the same file object
+    /// and shares the index. Opening it reads the start of the file alone:
+    /// the header, and the first frame where the format checks it.
+    pub(crate) fn fork(&self) -> Result<Self, TrajectoryIoError> {
+        Ok(Self {
+            inner: self.inner.fork()?,
+            metadata: self.metadata.clone(),
+            open_report: self.open_report.clone(),
+            fingerprint: self.fingerprint.clone(),
+            path: self.path.clone(),
+            growing: self.growing,
+        })
+    }
+
+    /// Lets go of the index until [`Self::share_index`], so that refreshing
+    /// another reader extends the index without copying it.
+    pub(crate) fn release_index(&mut self) {
+        self.inner.release_index();
+    }
+
+    /// Reads by the index of `other`, a reader of the same file, and the
+    /// file object it reads, from now on.
+    pub(crate) fn share_index(&mut self, other: &Self) {
+        self.inner.share_index(&other.inner);
+        self.fingerprint = other.fingerprint.clone();
+        self.metadata = other.metadata.clone();
+    }
+
+    /// Reads frame `index` as a sample, as [`SeekableTrajectoryReader::read_frame`]
+    /// verifies it, moving the decoded arrays into the sample.
+    pub(crate) fn read_sample(&mut self, index: usize) -> Result<Sample, TrajectoryIoError> {
+        let decoded = self.inner.read_decoded(index)?;
+        Ok(Sample::from_decoded(decoded, self.topology())?)
+    }
+
+    /// The error for a read of frame `index` that failed with `error`: one
+    /// naming the frame as lost when the file no longer holds all of it,
+    /// whatever the read reported, otherwise `error`.
+    pub(crate) fn lost_frame(&self, index: usize, error: TrajectoryIoError) -> TrajectoryIoError {
+        let Some((_, end)) = self.inner.offsets().frame(index) else {
+            return error;
+        };
+        match self.inner.file().len() {
+            Ok(length) if length < end => TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::IndexMismatch,
+                TrajectoryIoOperation::ReadFrame,
+                Some(self.metadata.format()),
+            )
+            .with_source_label(self.path.display().to_string())
+            .with_frame(index)
+            .with_detail(format!(
+                "The file no longer holds frame {index}: it is {length} bytes, and the frame ends at byte {end}. Open the file again."
+            )),
+            _ => error,
+        }
     }
 
     /// The bytes the file held after the last indexed frame when the reader
@@ -325,7 +464,9 @@ impl IndexedFileTrajectoryReader {
     /// [`TrajectoryIoErrorKind::LimitExceeded`] when the index outgrows the
     /// limits, and [`TrajectoryIoErrorKind::Io`] when the file cannot be
     /// read. Failure changes nothing: the reader keeps its frames and the
-    /// file it read them from, and can be refreshed again.
+    /// file it read them from, and can be refreshed again. A file whose
+    /// indexed bytes changed, such as a truncated or rewritten one, never
+    /// refreshes; opening it again is the way back.
     ///
     /// ```no_run
     /// use kekule::{smiles, topology::Topology};
@@ -365,7 +506,7 @@ impl IndexedFileTrajectoryReader {
                 TrajectoryIoOperation::Index,
                 format,
                 &label,
-                "The file's indexed bytes changed since they were indexed.",
+                "The file's indexed bytes changed since they were indexed. Open the file again.",
             )
         };
         if !self
@@ -871,7 +1012,7 @@ fn open_indexed(
             &mut file, &label,
         )?),
     };
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::new(SharedFile::new(file));
     let detection = detect::select_format(
         &mut reader,
         path,

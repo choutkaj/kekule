@@ -6,7 +6,7 @@ use crate::structure::series::ItemPlace;
 use crate::structure::{Ensemble, Forces, SeriesItem, TrajectoryFrame, Velocities};
 use crate::units::Quantity;
 
-use super::{Place, SampleView};
+use super::{Place, SampleRead, SampleView};
 
 /// What a borrowed sample carries besides its structure: its place in its
 /// set's order, its membership in the set's distribution, and its
@@ -30,7 +30,7 @@ pub struct SampleContext<'a> {
 /// Where a context reads the sample's state.
 #[derive(Clone, Copy)]
 enum Source<'a> {
-    Set(SampleView<'a>),
+    Set(SampleView<'a, dyn SampleRead>),
     Ensemble(&'a Ensemble, usize),
     Frame(&'a TrajectoryFrame),
     Item(&'a SeriesItem),
@@ -38,7 +38,7 @@ enum Source<'a> {
 
 impl<'a> SampleContext<'a> {
     /// The context of a sample of a set or another reader.
-    pub(crate) const fn of_view(view: SampleView<'a>) -> Self {
+    pub(crate) const fn of_view(view: SampleView<'a, dyn SampleRead>) -> Self {
         Self {
             source: Source::Set(view),
         }

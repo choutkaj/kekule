@@ -179,6 +179,7 @@ mod frame_state;
 mod indexed_file;
 mod limits;
 mod metadata;
+mod shared_file;
 pub mod trr;
 mod util;
 pub mod xtc;
@@ -206,6 +207,7 @@ pub use metadata::{
 
 pub(crate) use frame_index::{index_mismatch, FrameOffsets, FrameStamp, IndexBuildControl};
 pub(crate) use limits::{projected_index_limit, reserve_index_for_push};
+pub(crate) use shared_file::SharedFile;
 pub(crate) use util::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, require_no_partial_frame,
     require_nonempty_writer, validation_cause,

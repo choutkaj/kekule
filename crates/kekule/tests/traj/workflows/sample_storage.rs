@@ -2,7 +2,8 @@
 //! reader's frame, reads run from many threads at once, a refresh takes the
 //! frames a writer appended, and loading gives the set in memory.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -14,14 +15,16 @@ use kekule::structure::{
     Distribution, EnsemblePartition, Members, Order, Positions, Sample, SampleRead,
     SampleReadError, SampleSet, Trajectory, TrajectoryFrame,
 };
-use kekule::topology::Topology;
+use kekule::topology::{AtomSelection, Topology};
+use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::{
     append_trajectory, open_indexed_sample_set, open_indexed_sample_set_from_index,
-    open_indexed_trajectory, read_sample_set, write_trajectory, KeepFrames, TrajectoryOpenOptions,
-    TrajectoryWriteOptions,
+    open_indexed_trajectory, read_sample_set, write_trajectory, IndexedFile, KeepFrames,
+    TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
-    SeekableTrajectoryReader, TrajectoryFormat, TrajectoryReader, TrajectoryWriter,
+    Processed, ProcessingSteps, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
+    TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
@@ -172,7 +175,7 @@ fn every_read_is_the_indexed_frame_of_every_format() {
         );
 
         // Opened again from the kept index, the set reads the same samples.
-        let index = set.storage().frame_index().clone();
+        let index = set.storage().frame_index();
         let reopened = open_indexed_sample_set_from_index(
             &path,
             Arc::clone(&topology),
@@ -337,8 +340,8 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     );
 }
 
-/// Reads on many threads open readers of the grown file, which index more
-/// frames than the set holds; a refresh still takes every appended frame.
+/// Reads on many threads open readers while a writer appends; each refresh
+/// takes the appended frame, and the readers kept from before read it.
 #[test]
 fn refresh_counts_from_the_set_after_concurrent_reads() {
     let topology = linear_carbon_topology(12);
@@ -374,8 +377,282 @@ fn refresh_counts_from_the_set_after_concurrent_reads() {
         assert_eq!(set.refresh().unwrap(), 1, "frame {count}");
         assert_eq!(set.len(), count + 1);
         assert_eq!(set.refresh().unwrap(), 0);
+        thread::scope(|scope| {
+            for _ in 0..8 {
+                let set = &set;
+                scope.spawn(move || {
+                    set.read(count).unwrap();
+                });
+            }
+        });
     }
     writer.finish().unwrap();
+    let written = indexed_frames(&path, &topology);
+    for (index, frame) in written.iter().enumerate() {
+        assert_frame(&set, index, &set.read(index).unwrap(), frame);
+    }
+}
+
+/// A TRR file of [`chain`] in `directory`.
+fn chain_trr(directory: &Directory, topology: &Arc<Topology>, count: u64) -> PathBuf {
+    let path = directory.0.join("run.trr");
+    write_trajectory(&path, &chain(topology, count), trr_options()).unwrap();
+    path
+}
+
+fn trr_options() -> TrajectoryWriteOptions {
+    TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
+        TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+    )
+}
+
+/// Reads every sample of `set` on `threads` threads at once, each in its
+/// own order, so that some readers are opened for the reads.
+fn read_at_once(
+    set: &SampleSet<IndexedFile>,
+    threads: usize,
+) -> Vec<Vec<Result<Sample, SampleReadError>>> {
+    let barrier = std::sync::Barrier::new(threads);
+    thread::scope(|scope| {
+        let runs = (0..threads)
+            .map(|offset| {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    let mut reads = (0..set.len())
+                        .map(|step| {
+                            let index = (offset + step) % set.len();
+                            (index, set.read(index))
+                        })
+                        .collect::<Vec<_>>();
+                    reads.sort_by_key(|(index, _)| *index);
+                    reads.into_iter().map(|(_, read)| read).collect()
+                })
+            })
+            .collect::<Vec<_>>();
+        runs.into_iter().map(|run| run.join().unwrap()).collect()
+    })
+}
+
+#[test]
+fn a_failed_read_leaves_the_reader_reading() {
+    let topology = linear_carbon_topology(12);
+    let directory = Directory::new();
+    let path = chain_trr(&directory, &topology, 6);
+    let frames = indexed_frames(&path, &topology);
+    let set = open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    // The last coordinates of frame 3 become NaN.
+    let end = set.storage().frame_index().frame_offsets()[4];
+    let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+    file.seek(SeekFrom::Start(end - 8)).unwrap();
+    file.write_all(&[0xff; 8]).unwrap();
+    drop(file);
+
+    let failed = set.read(3).unwrap_err();
+    assert!(
+        matches!(failed, SampleReadError::Trajectory(_)),
+        "{failed:?}"
+    );
+    // The same reader, back in the pool, reads the other frames.
+    for index in [2, 4, 0, 5, 1] {
+        assert_frame(&set, index, &set.read(index).unwrap(), &frames[index]);
+    }
+    assert_eq!(set.read(3).unwrap_err(), failed);
+}
+
+/// The lost frames of a truncated file fail with one error, whether a kept
+/// reader or a reader opened for the read reads them.
+#[test]
+fn a_truncated_file_fails_the_frames_it_lost_alike() {
+    let topology = linear_carbon_topology(12);
+    let directory = Directory::new();
+    let path = chain_trr(&directory, &topology, 8);
+    let mut set =
+        open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let starts = set.storage().frame_index().frame_offsets().to_vec();
+    let expected = (0..set.len())
+        .map(|index| set.read(index).unwrap())
+        .collect::<Vec<_>>();
+    // Several readers are kept.
+    read_at_once(&set, 4);
+
+    for (cut, first_lost) in [(starts[5] + 10, 5), (0, 0)] {
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(cut)
+            .unwrap();
+        let lost = (first_lost..set.len())
+            .map(|index| set.read(index).unwrap_err())
+            .collect::<Vec<_>>();
+        for (index, error) in (first_lost..).zip(&lost) {
+            let SampleReadError::Trajectory(error) = error else {
+                panic!("frame {index}: {error:?}");
+            };
+            assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
+            assert_eq!(error.frame(), Some(index));
+            let detail = error.detail().unwrap();
+            assert!(detail.ends_with("Open the file again."), "{detail}");
+            assert!(detail.contains(&format!("it is {cut} bytes")), "{detail}");
+        }
+        for reads in read_at_once(&set, 12) {
+            for (index, read) in reads.into_iter().enumerate() {
+                match read {
+                    Ok(sample) => {
+                        assert!(index < first_lost, "frame {index}");
+                        assert_eq!(sample, expected[index]);
+                    }
+                    Err(error) => assert_eq!(error, lost[index - first_lost], "frame {index}"),
+                }
+            }
+        }
+        let refused = set.refresh().unwrap_err();
+        assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+        assert!(refused.detail().unwrap().ends_with("Open the file again."));
+        assert_eq!(set.len(), expected.len());
+    }
+}
+
+/// A set keeps reading the file it opened when another file replaces it,
+/// and its refresh says to open the new file.
+#[test]
+fn a_replaced_file_reads_as_before_and_refresh_fails() {
+    let topology = linear_carbon_topology(12);
+    let directory = Directory::new();
+    let path = chain_trr(&directory, &topology, 6);
+    let mut set =
+        open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let expected = (0..set.len())
+        .map(|index| set.read(index).unwrap())
+        .collect::<Vec<_>>();
+    let other = directory.0.join("other.trr");
+    let mut reversed = chain(&topology, 9)
+        .iter()
+        .map(|frame| frame.payload().clone())
+        .collect::<Vec<_>>();
+    reversed.reverse();
+    let reversed = Trajectory::from_items(Arc::clone(&topology), reversed).unwrap();
+    write_trajectory(&other, &reversed, trr_options()).unwrap();
+    fs::rename(&other, &path).unwrap();
+
+    for reads in read_at_once(&set, 12) {
+        for (index, read) in reads.into_iter().enumerate() {
+            assert_eq!(read.unwrap(), expected[index], "frame {index}");
+        }
+    }
+    let refused = set.refresh().unwrap_err();
+    assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+    assert!(refused.detail().unwrap().ends_with("Open the file again."));
+    assert_eq!(set.len(), expected.len());
+    // Opened again, the set reads the new file.
+    let reopened = open_indexed_sample_set(&path, topology, Default::default()).unwrap();
+    assert_eq!(reopened.len(), 9);
+}
+
+#[test]
+fn refresh_keeps_a_distribution_over_some_samples_or_none() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let frames = all
+        .iter()
+        .map(|frame| frame.payload().clone())
+        .collect::<Vec<_>>();
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    for members in [vec![0, 2], vec![]] {
+        let directory = Directory::new();
+        let path = directory.0.join("run.xtc");
+        let head =
+            Trajectory::from_items(Arc::clone(&topology), frames[..3].iter().cloned()).unwrap();
+        write_trajectory(&path, &head, options.clone()).unwrap();
+        let mut set =
+            open_indexed_sample_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
+        let partition = EnsemblePartition::one_state(members.len());
+        let distribution = Distribution::new(Members::Subset(members.clone()), partition).unwrap();
+        set.set_distribution(Some(distribution.clone())).unwrap();
+        let (mut writer, _) = append_trajectory(
+            &path,
+            Arc::clone(&topology),
+            KeepFrames::First(3),
+            options.clone(),
+        )
+        .unwrap();
+        for frame in all.iter().skip(3) {
+            writer.write_frame(frame).unwrap();
+        }
+        writer.finish().unwrap();
+        assert_eq!(set.refresh().unwrap(), 3);
+        assert_eq!(set.len(), 6);
+        assert_eq!(set.distribution(), Some(&distribution), "{members:?}");
+        assert_eq!(set.states().count(), usize::from(!members.is_empty()));
+    }
+}
+
+/// A host following a growing file takes the set out of its processed
+/// reader, refreshes it, and processes it again.
+#[test]
+fn a_processed_growing_file_reads_the_appended_samples() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 7);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let head = Trajectory::from_items(
+        Arc::clone(&topology),
+        all.iter().take(3).map(|frame| frame.payload().clone()),
+    )
+    .unwrap();
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    write_trajectory(&path, &head, options.clone()).unwrap();
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let ids = topology.atom_ids();
+    let middle =
+        AtomSelection::from_atoms(Arc::clone(&topology), ids[4..8].iter().copied()).unwrap();
+    let steps = ProcessingSteps::default()
+        .with_wrap(middle.clone())
+        .with_center(middle);
+    let mut processed = Processed::new(set, steps).unwrap();
+    let before = (0..3)
+        .map(|index| processed.read(index).unwrap())
+        .collect::<Vec<_>>();
+
+    let (mut writer, _) =
+        append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
+    for frame in all.iter().skip(3) {
+        writer.write_frame(frame).unwrap();
+    }
+    writer.finish().unwrap();
+    let (mut set, steps) = processed.into_parts();
+    assert_eq!(set.refresh().unwrap(), 4);
+    processed = Processed::new(set, steps.clone()).unwrap();
+    assert_eq!(processed.len(), 7);
+
+    let reopened = open_indexed_sample_set(&path, topology, Default::default()).unwrap();
+    let expected = Processed::new(reopened, steps).unwrap();
+    for index in 0..7 {
+        let sample = processed.read(index).unwrap();
+        assert_eq!(sample, expected.read(index).unwrap(), "sample {index}");
+        if let Some(read) = before.get(index) {
+            assert_eq!(&sample, read, "sample {index}");
+        }
+    }
+}
+
+/// Wrapping and making whole leave samples without a cell as they are.
+#[test]
+fn wrapping_a_file_without_cells_reads_the_samples_as_stored() {
+    let (path, topology) = fixtures()[0].clone();
+    let set = open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let steps = ProcessingSteps::default()
+        .with_whole(true)
+        .with_wrap(AtomSelection::all(topology));
+    let processed = Processed::new(&set, steps).unwrap();
+    for index in 0..set.len() {
+        let stored = set.read(index).unwrap();
+        assert!(stored.cell().is_none(), "sample {index}");
+        assert_eq!(processed.read(index).unwrap(), stored, "sample {index}");
+    }
 }
 
 #[test]
@@ -394,7 +671,9 @@ fn a_failed_refresh_changes_nothing() {
     bytes[last] ^= 0x01;
     bytes.extend_from_slice(&fs::read(&fixture).unwrap());
     fs::write(&path, &bytes).unwrap();
-    assert!(set.refresh().is_err());
+    let refused = set.refresh().unwrap_err();
+    assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+    assert!(refused.detail().unwrap().ends_with("Open the file again."));
     assert_eq!(set.len(), len);
     assert_eq!(set.order(), order.as_ref());
 }

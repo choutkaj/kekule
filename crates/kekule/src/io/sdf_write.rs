@@ -214,8 +214,8 @@ impl<'a> From<SeriesItemView<'a>> for SdfRecordSource<'a> {
     }
 }
 
-impl<'a> From<SampleView<'a>> for SdfRecordSource<'a> {
-    fn from(sample: SampleView<'a>) -> Self {
+impl<'a, R: ?Sized> From<SampleView<'a, R>> for SdfRecordSource<'a> {
+    fn from(sample: SampleView<'a, R>) -> Self {
         Self::view(sample.as_model_view())
     }
 }

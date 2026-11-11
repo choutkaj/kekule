@@ -537,7 +537,7 @@ pub(crate) fn record_multi_model_sample_set(
     omissions: &mut Omissions,
 ) -> Result<(), (usize, StructureField)> {
     let distribution = set.distribution();
-    let contexts = set.iter().map(SampleContext::of_view);
+    let contexts = set.iter().map(|view| SampleContext::of_view(view.as_dyn()));
     let weight = contexts
         .clone()
         .find_map(|context| context.membership())

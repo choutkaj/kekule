@@ -158,7 +158,7 @@ pub use model_editor::{
 };
 pub use partition::{EnsemblePartition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
-pub(crate) use sample_set::{sealed as sample_storage, visit_sample};
+pub(crate) use sample_set::{sealed as sample_storage, visit_sample, DecodedSample};
 pub use sample_set::{
     ConversionTarget, Distribution, DistributionMut, InMemory, Members, Membership, Order, Place,
     Requirement, Sample, SampleContext, SampleIter, SampleMut, SampleRead, SampleReadError,

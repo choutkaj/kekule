@@ -5,27 +5,39 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use crate::alignment::{self, AlignmentOptions};
-use crate::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
+use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::structure::{
-    subset_rows, Distribution, Model, ModelError, Order, Positions, Sample, SampleRead,
-    SampleReadError, SampleView, StructureError,
+    subset_rows, DenseArrayError, Distribution, Model, ModelError, Order, Positions, Sample,
+    SampleRead, SampleReadError, SampleView, StructureError,
 };
 use crate::topology::{AtomSelection, Topology, TopologySubsetError};
-use crate::units::Quantity;
 
-use super::periodic::MoleculeImager;
+use super::periodic::{MoleculeImager, PeriodicError};
 
 /// The steps a [`Processed`] reader runs on every sample as it is read.
 /// Each is optional; they run in this order:
 ///
-/// 1. Wrap ([`Self::with_wrap`]): every molecule made whole and imaged
-///    around anchor atoms, as [`super::periodic::image_molecules`] does; or
-///    make whole ([`Self::with_whole`]), as
-///    [`super::periodic::make_molecules_whole`] does. Samples without a cell
-///    skip this step.
+/// 1. Make whole ([`Self::with_whole`]) or wrap ([`Self::with_wrap`]).
+///    Making whole joins every molecule across the cell's boundaries, as
+///    [`super::periodic::make_molecules_whole`] does. Wrapping makes every
+///    molecule whole and images the molecules around the anchor atoms, as
+///    [`super::periodic::image_molecules`] does: the molecules that hold an
+///    anchor atom are imaged next to each other, the sample is translated
+///    so that the centroid of their atoms lies at the center of the cell
+///    along every periodic axis, and every other molecule moves to its
+///    periodic image nearest that centroid, so it lies within half a cell
+///    of it. A sample without a cell skips this step, where those two
+///    functions fail with
+///    [`PeriodicError::MissingCell`](super::periodic::PeriodicError::MissingCell),
+///    so a trajectory whose frames have no box is read as stored.
 /// 2. Center ([`Self::with_center`]): the sample translated so that the
-///    centroid of the centered atoms lies at the center of its cell, or,
-///    without a cell, where it lies in the reader's sample 0 as stored.
+///    centroid of the centered atoms lies at the center of its cell, half
+///    the sum of all three cell vectors, periodic or not. Centering on the
+///    anchor atoms after wrapping moves them to where wrapping put them, so
+///    the wrapped molecules stay in the cell. A sample without a cell is
+///    translated so that the centroid lies where it lies in sample 0 of the
+///    reader below, as stored; in a reader where only some samples have a
+///    cell, the two kinds are centered on different targets.
 /// 3. Fit ([`Self::with_fit`]): the sample superposed onto a reference
 ///    through the fitted atoms, as
 ///    [`FrameSuperposer`](super::analysis::FrameSuperposer) does with
@@ -33,12 +45,17 @@ use super::periodic::MoleculeImager;
 ///    rotate.
 /// 4. Smooth ([`Self::with_smoothing`]): positions averaged over a window of
 ///    samples centered on the sample, fewer at the ends, each processed by
-///    steps 1–3 and, with a cell, imaged onto the sample first, as
-///    [`MoleculeImager::image_onto`] does, so that molecules crossing the
-///    cell between samples are averaged whole. Everything but the positions
-///    is the sample's own.
+///    steps 1–3. A sample of the window with a cell has each of its
+///    molecules moved to the periodic image nearest the same molecule of
+///    the smoothed sample first, as [`MoleculeImager::image_onto`] does, so
+///    that a molecule crossing the cell between samples is averaged whole.
+///    Smoothing therefore expects whole molecules: make them whole or wrap
+///    them. Everything but the positions is the sample's own.
 /// 5. Subset ([`Self::with_subset`]): the sample projected onto the atoms of
 ///    a topology subset, which becomes the reader's topology.
+///
+/// Analyses read samples without smoothing, which is for display: they read
+/// a reader with [`Self::without_smoothing`].
 ///
 /// ```
 /// use kekule::topology::AtomSelection;
@@ -149,7 +166,29 @@ impl ProcessingSteps {
         self
     }
 
-    /// The same steps without smoothing.
+    /// The same steps without smoothing: what analyses read, through
+    /// another [`Processed`] reader over the same reader below.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    ///
+    /// use kekule::structure::{Positions, Sample, SampleRead, SampleSet};
+    /// use kekule::traj::{Processed, ProcessingSteps};
+    ///
+    /// let topology = kekule::smiles::to_topology("CCO")?;
+    /// let mut set = SampleSet::new(topology.clone());
+    /// for _ in 0..3 {
+    ///     set.push(Sample::new(Positions::zeros(topology.atom_count())), None)?;
+    /// }
+    /// let set: Arc<dyn SampleRead> = Arc::new(set);
+    /// let steps = ProcessingSteps::default().with_whole(true).with_smoothing(3)?;
+    /// let shown = Processed::new(Arc::clone(&set), steps.clone())?;
+    /// // A background analysis owns its reader.
+    /// let analysed: Arc<dyn SampleRead> =
+    ///     Arc::new(Processed::new(set, steps.without_smoothing())?);
+    /// assert_eq!(analysed.len(), shown.len());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[must_use]
     pub fn without_smoothing(mut self) -> Self {
         self.smoothing = None;
@@ -283,17 +322,28 @@ impl From<SampleReadError> for ProcessingError {
 /// is read.
 ///
 /// Reading sample `i` reads sample `i` of the reader below, and with
-/// smoothing the samples of its window, and processes them; nothing is
-/// kept, so a host caches samples in front of this reader when it reads
-/// them again. The order and the distribution are those of the reader
-/// below. [`Self::unsmoothed`] reads the samples without smoothing, which is
-/// what analyses read: smoothing is for display. To cache the samples that
-/// smoothing averages, a host puts its cache in front of a reader with the
-/// other steps and smooths through another `Processed` reader in front of
-/// the cache.
+/// smoothing the samples of its window, and runs the steps on them in the
+/// order [`ProcessingSteps`] gives; nothing is kept, so a host caches
+/// samples in front of this reader when it reads them again. The order and
+/// the distribution are those of the reader below.
+///
+/// The steps change the sample they read in place. A sample the reader
+/// below owns alone, as a set in a file returns it, is not copied by
+/// making whole, wrapping, centering, or fitting; one it shares, as a set
+/// in memory or a host's cache returns it, is copied once, by the first of
+/// them that runs. Smoothing adds the samples of its window into one sum
+/// without copying them, and the subset copies the atoms it keeps.
+///
+/// Analyses read the samples without smoothing, which is for display,
+/// through a second reader with [`ProcessingSteps::without_smoothing`]. To
+/// cache the samples that smoothing averages, a host puts its cache in
+/// front of a reader without smoothing and smooths through another
+/// `Processed` reader, with smoothing alone, in front of the cache.
 ///
 /// The reader below can be owned, borrowed (`&R`), or shared (`Arc<R>`),
-/// such as an `Arc<dyn SampleRead>`.
+/// such as an `Arc<dyn SampleRead>`. A host following a growing file takes
+/// the reader below out with [`Self::into_parts`], refreshes it, and makes
+/// the reader again with [`Self::new`].
 ///
 /// ```
 /// use kekule::geometry::Point3;
@@ -417,12 +467,6 @@ impl<R: SampleRead> Processed<R> {
         (self.inner, self.steps)
     }
 
-    /// The samples without smoothing: every other step runs, the subset
-    /// included. Without smoothing, they are this reader's samples.
-    pub const fn unsmoothed(&self) -> Unsmoothed<'_, R> {
-        Unsmoothed { processed: self }
-    }
-
     /// The model fitting superposes onto.
     fn reference_model(&self, reference: &FitReference) -> Result<Model, ProcessingError> {
         match reference {
@@ -451,26 +495,23 @@ impl<R: SampleRead> Processed<R> {
     }
 
     /// A view of `sample`, sample `index` of the reader below.
-    fn view<'a>(&'a self, index: usize, sample: &'a Sample) -> SampleView<'a> {
+    fn view<'a>(&'a self, index: usize, sample: &'a Sample) -> SampleView<'a, dyn SampleRead> {
         SampleView::of_reader(&self.inner, index, sample)
     }
 
     /// Wraps or makes whole, then centers, sample `index` of the reader
-    /// below.
+    /// below, in place.
     fn prepare(&self, index: usize, sample: &mut Sample) -> Result<(), SampleReadError> {
-        if let Some(imager) = &self.imager {
-            if sample.cell().is_some() && (self.steps.whole || self.anchors.is_some()) {
-                let positions = imager
-                    .frame_positions(
+        if let (Some(imager), Some(cell)) = (&self.imager, sample.cell().copied()) {
+            if self.steps.whole || self.anchors.is_some() {
+                imager
+                    .whole_in_place(
                         index,
-                        self.view(index, sample).as_model_view(),
+                        cell,
+                        sample.positions_in_place(),
                         self.anchors.as_deref(),
                     )
-                    .map_err(|source| SampleReadError::Periodic {
-                        sample: index,
-                        source: Box::new(source),
-                    })?;
-                sample.replace_checked_positions(positions);
+                    .map_err(periodic(index))?;
             }
         }
         if let Some(center) = &self.steps.center {
@@ -479,15 +520,7 @@ impl<R: SampleRead> Processed<R> {
                 None => self.rest(center)?,
             };
             let shift = target - centroid(sample.positions().values().value(), center);
-            let structure = |source| SampleReadError::Structure {
-                sample: index,
-                source: Box::new(source),
-            };
-            let transform = RigidTransform::from_canonical(Matrix3::identity(), shift)
-                .map_err(|_| structure(StructureError::NonFiniteCoordinate))?;
-            sample
-                .apply_rigid_transform(&transform)
-                .map_err(structure)?;
+            sample.translate_in_place(shift).map_err(structure(index))?;
         }
         Ok(())
     }
@@ -519,11 +552,8 @@ impl<R: SampleRead> Processed<R> {
                 source: Box::new(source),
             })?;
             sample
-                .apply_rigid_transform(&fitted.transform())
-                .map_err(|source| SampleReadError::Structure {
-                    sample: index,
-                    source: Box::new(source),
-                })?;
+                .transform_in_place(&fitted.transform())
+                .map_err(structure(index))?;
         }
         Ok(sample)
     }
@@ -551,30 +581,29 @@ impl<R: SampleRead> Processed<R> {
                 continue;
             }
             let sample = self.stepped(other)?;
-            if sample.cell().is_some() {
-                let imaged = imager
-                    .reference_positions(
+            let points = sample.positions().values().into_value();
+            match sample.cell() {
+                Some(cell) => imager
+                    .add_imaged_onto(
                         other,
-                        self.view(other, &sample).as_model_view(),
-                        self.view(index, &center).as_model_view(),
+                        *cell,
+                        points,
+                        center.positions().values().value(),
+                        &mut sum,
                     )
-                    .map_err(|source| SampleReadError::Periodic {
-                        sample: other,
-                        source: Box::new(source),
-                    })?;
-                add(&mut sum, imaged.values().value());
-            } else {
-                add(&mut sum, sample.positions().values().value());
+                    .map_err(periodic(other))?,
+                None => add(&mut sum, points),
             }
             count += 1.0;
         }
-        let average: Vec<Point3> = sum.iter().map(|v| Point3::origin() + *v / count).collect();
-        let positions = Positions::from_vec(Quantity::new(average, crate::units::NANOMETER))
-            .map_err(|source| SampleReadError::Structure {
-                sample: index,
-                source: Box::new(StructureError::Array(source)),
-            })?;
-        center.replace_checked_positions(positions);
+        for (atom, (point, total)) in center.positions_in_place().iter_mut().zip(&sum).enumerate() {
+            *point = Point3::origin() + *total / count;
+            if !point.is_finite() {
+                return Err(structure(index)(StructureError::Array(
+                    DenseArrayError::NonFinite { index: atom },
+                )));
+            }
+        }
         Ok(center)
     }
 
@@ -611,7 +640,7 @@ impl<R: SampleRead> SampleRead for Processed<R> {
         self.inner.distribution()
     }
 
-    fn peek(&self, _index: usize) -> Option<SampleView<'_>> {
+    fn peek(&self, _index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
         None
     }
 
@@ -624,45 +653,19 @@ impl<R: SampleRead> SampleRead for Processed<R> {
     }
 }
 
-/// The samples of a [`Processed`] reader without smoothing, from
-/// [`Processed::unsmoothed`].
-#[derive(Debug)]
-pub struct Unsmoothed<'a, R> {
-    processed: &'a Processed<R>,
-}
-
-impl<R> Clone for Unsmoothed<'_, R> {
-    fn clone(&self) -> Self {
-        *self
+/// Reports a periodic step's failure on sample `sample`.
+fn periodic(sample: usize) -> impl FnOnce(PeriodicError) -> SampleReadError {
+    move |source| SampleReadError::Periodic {
+        sample,
+        source: Box::new(source),
     }
 }
 
-impl<R> Copy for Unsmoothed<'_, R> {}
-
-impl<R: SampleRead> SampleRead for Unsmoothed<'_, R> {
-    fn topology(&self) -> &Arc<Topology> {
-        self.processed.topology()
-    }
-
-    fn len(&self) -> usize {
-        self.processed.len()
-    }
-
-    fn order(&self) -> Option<&Order> {
-        self.processed.order()
-    }
-
-    fn distribution(&self) -> Option<&Distribution> {
-        self.processed.distribution()
-    }
-
-    fn peek(&self, _index: usize) -> Option<SampleView<'_>> {
-        None
-    }
-
-    fn read(&self, index: usize) -> Result<Sample, SampleReadError> {
-        let sample = self.processed.stepped(index)?;
-        self.processed.finish(index, sample)
+/// Reports a step's failure to store its result in sample `sample`.
+fn structure(sample: usize) -> impl FnOnce(StructureError) -> SampleReadError {
+    move |source| SampleReadError::Structure {
+        sample,
+        source: Box::new(source),
     }
 }
 

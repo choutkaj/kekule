@@ -19,6 +19,7 @@ mod storage;
 mod views;
 
 pub use context::{Membership, SampleContext};
+pub(crate) use convert::DecodedSample;
 pub(crate) use distribution::{boltzmann_weights, thermal_energy};
 pub use distribution::{Distribution, DistributionMut, Members};
 pub use error::{ConversionTarget, Requirement, SampleSetError, Unconvertible};
@@ -339,6 +340,24 @@ impl<S: SampleStorage> SampleSet<S> {
     }
 }
 
+impl<S: SampleStorage> SampleSet<S>
+where
+    Self: SampleRead,
+{
+    /// One state of the distribution by index, with its representative,
+    /// members, and population; None without a distribution or out of
+    /// range. The state of a set in memory lends its representative sample
+    /// ([StateView::representative_sample]).
+    pub fn state(&self, index: usize) -> Option<StateView<'_, Self>> {
+        (index < self.distribution.as_ref()?.state_count()).then(|| StateView::new(self, index))
+    }
+
+    /// The states of the distribution in order; empty without one.
+    pub fn states(&self) -> StateIter<'_, Self> {
+        StateIter::new(self)
+    }
+}
+
 impl SampleSet {
     /// An empty, unordered set of one shared topology, without a
     /// distribution.
@@ -395,7 +414,7 @@ impl SampleSet {
         self.storage
             .samples
             .get(index)
-            .map(|sample| SampleView::of_reader(self, index, sample))
+            .map(|sample| SampleView::of_set(self, index, sample))
     }
 
     /// A dimension-preserving editor for one sample. Whole-sample
@@ -438,18 +457,6 @@ impl SampleSet {
             None if place.is_none() => Ok(()),
             None => Err(SampleSetError::PlaceMismatch { sample: index }),
         }
-    }
-
-    /// One state of the distribution by index, with its representative,
-    /// members, and population; `None` without a distribution or out of
-    /// range.
-    pub fn state(&self, index: usize) -> Option<StateView<'_>> {
-        (index < self.distribution.as_ref()?.state_count()).then_some(StateView::new(self, index))
-    }
-
-    /// The states of the distribution in order; empty without one.
-    pub fn states(&self) -> StateIter<'_> {
-        StateIter::new(self)
     }
 
     /// Validates and appends one sample at `place` in the order, outside
@@ -828,8 +835,8 @@ impl SampleRead for SampleSet {
         self.distribution.as_ref()
     }
 
-    fn peek(&self, index: usize) -> Option<SampleView<'_>> {
-        self.get(index)
+    fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
+        self.get(index).map(SampleView::as_dyn)
     }
 
     fn read(&self, index: usize) -> Result<Sample, SampleReadError> {

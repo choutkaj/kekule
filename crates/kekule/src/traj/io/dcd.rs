@@ -71,7 +71,7 @@ use crate::diagnostics::{
     LimitExceeded, Resource, StructureField, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::structure::TrajectoryFrameView;
+use crate::structure::{DecodedSample, TrajectoryFrameView};
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -788,7 +788,6 @@ impl<R: Read + Seek> DcdReader<R> {
             limits.max_scratch_bytes(),
             reserve_error,
         )?;
-        positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         let data_start = reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
@@ -944,10 +943,16 @@ impl<R: Read + Seek> DcdReader<R> {
         }
 
         let coordinate_indices = if self.frame_cursor == 0 || self.header.fixed_count == 0 {
+            // The first record writes every atom once, into a buffer the
+            // indexed reader may hand over.
+            self.positions.clear();
             None
         } else {
             // A prior random read may have overwritten the shared position
-            // scratch. Every partial frame restores its immutable fixed atoms.
+            // scratch, or handed it over. Every partial frame restores its
+            // immutable fixed atoms.
+            self.positions
+                .resize(self.header.atom_count, Point3::new(0.0, 0.0, 0.0));
             for (&index, &point) in self.fixed_indices.iter().zip(&self.fixed_reference) {
                 self.positions[index] = point;
             }
@@ -1000,6 +1005,9 @@ impl<R: Read + Seek> DcdReader<R> {
                 let atom_index =
                     coordinate_indices.map_or(value_index, |indices| indices[value_index]);
                 match axis {
+                    0 if coordinate_indices.is_none() => {
+                        self.positions.push(Point3::new(value, 0.0, 0.0));
+                    }
                     0 => self.positions[atom_index].x = value,
                     1 => self.positions[atom_index].y = value,
                     _ => self.positions[atom_index].z = value,
@@ -1136,7 +1144,7 @@ impl<R: Read + Seek> DcdReader<R> {
         control: &IndexBuildControl<'_>,
     ) -> Result<IndexedDcdReader<R>, TrajectoryIoError> {
         let mut indexed = IndexedDcdReader {
-            offsets: FrameOffsets::empty(self.header.data_start),
+            offsets: Arc::new(FrameOffsets::empty(self.header.data_start)),
             inner: self,
             pending_bytes: 0,
         };
@@ -1244,7 +1252,7 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
 /// reference coordinates remain immutable during random reads.
 pub struct IndexedDcdReader<R> {
     inner: DcdReader<R>,
-    offsets: FrameOffsets,
+    offsets: Arc<FrameOffsets>,
     /// Bytes after the last indexed frame when the index last grew.
     pending_bytes: u64,
 }
@@ -1314,7 +1322,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: DcdReadOptions,
-        offsets: FrameOffsets,
+        offsets: Arc<FrameOffsets>,
         growing: bool,
     ) -> Result<Self, TrajectoryIoError> {
         let mut inner = DcdReader::new(reader, topology, options)?;
@@ -1370,9 +1378,66 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         &self.offsets
     }
 
+    pub(crate) fn shared_offsets(&self) -> &Arc<FrameOffsets> {
+        &self.offsets
+    }
+
+    /// Lets go of the index until [`Self::share_index`], so that a reader
+    /// extending it does not copy it.
+    pub(crate) fn release_index(&mut self) {
+        self.offsets = Arc::new(FrameOffsets::empty(self.offsets.end()));
+    }
+
+    /// Reads by the index and frame count `NSET` of `other`, a reader of
+    /// the same file, from now on.
+    pub(crate) fn share_index(&mut self, other: &Self) {
+        self.offsets = Arc::clone(&other.offsets);
+        self.inner.header.declared_frames = other.inner.header.declared_frames;
+    }
+
+    /// Another reader of the same frames over `stream`, which must read the
+    /// same file from its start; it shares the index and reads the header,
+    /// and with fixed atoms frame 0.
+    pub(crate) fn fork(&self, stream: R) -> Result<Self, TrajectoryIoError> {
+        let mut fork = Self::from_offsets(
+            stream,
+            Arc::clone(&self.inner.topology),
+            self.inner.options.clone(),
+            Arc::clone(&self.offsets),
+            self.inner.growing,
+        )?;
+        fork.inner.header.declared_frames = self.inner.header.declared_frames;
+        Ok(fork)
+    }
+
+    /// The stream every read goes through.
+    pub(crate) fn stream(&self) -> &R {
+        &self.inner.reader
+    }
+
     /// The stream every read goes through.
     pub(crate) fn stream_mut(&mut self) -> &mut R {
         &mut self.inner.reader
+    }
+
+    /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
+    /// does and hands over its positions. Without fixed atoms they are
+    /// written once as they are decoded; with them, a frame after the first
+    /// fills a fresh buffer with the fixed atoms first.
+    pub(crate) fn read_decoded(
+        &mut self,
+        index: usize,
+    ) -> Result<DecodedSample, TrajectoryIoError> {
+        let decoded = self.read_indexed(index)?;
+        let atoms = self.inner.positions.len();
+        let positions = std::mem::replace(&mut self.inner.positions, Vec::with_capacity(atoms));
+        Ok(DecodedSample {
+            positions: Quantity::new(positions, ANGSTROM),
+            cell: decoded.cell,
+            velocities: None,
+            forces: None,
+            owner: None,
+        })
     }
 
     /// Bytes after the last indexed frame when the index last grew.
@@ -1388,7 +1453,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         declared_frames: usize,
         pending_bytes: u64,
     ) {
-        self.offsets.restore(mark);
+        Arc::make_mut(&mut self.offsets).restore(mark);
         self.inner.header.declared_frames = declared_frames;
         self.pending_bytes = pending_bytes;
     }
@@ -1438,7 +1503,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 Ok(pending)
             }
             Err(error) => {
-                self.offsets.restore(mark);
+                Arc::make_mut(&mut self.offsets).restore(mark);
                 self.inner.header.declared_frames = declared;
                 Err(error)
             }
@@ -1531,7 +1596,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 Err(error) => return Err(frame_offset_context(error, frame, offset)),
             }
             let end = self.inner.position(TrajectoryIoOperation::Index)?;
-            self.offsets.push(
+            Arc::make_mut(&mut self.offsets).push(
                 offset,
                 end,
                 stamp,
@@ -1589,6 +1654,16 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        let decoded = self.read_indexed(index)?;
+        self.inner
+            .publish(&self.inner.positions, decoded, destination)
+    }
+}
+
+impl<R: Read + Seek> IndexedDcdReader<R> {
+    /// Decodes and verifies frame `index` into the reader's buffers, then
+    /// puts the stream back where it was.
+    fn read_indexed(&mut self, index: usize) -> Result<DcdDecodedFrame, TrajectoryIoError> {
         let (offset, _) = self
             .offsets
             .frame(index)
@@ -1643,8 +1718,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         self.inner.frame_cursor = saved_cursor;
         let decoded = result?;
         restore?;
-        self.inner
-            .publish(&self.inner.positions, decoded, destination)
+        Ok(decoded)
     }
 }
 

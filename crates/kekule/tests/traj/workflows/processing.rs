@@ -3,14 +3,16 @@
 //! averages a window of processed samples imaged onto the sample, and a set
 //! read from a file processes like the same set in memory.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, Mutex};
 
 use kekule::diagnostics::UnrepresentablePolicy;
-use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
+use kekule::geometry::{Matrix3, PeriodicCell, PeriodicGeometry, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Forces, Order, Positions, Sample, SampleRead, SampleReadError, SampleSet,
+    Distribution, Forces, Model, Order, Positions, Sample, SampleRead, SampleReadError, SampleSet,
     SampleView, Trajectory, TrajectoryFrame, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
@@ -223,7 +225,7 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
     )
     .unwrap();
     let mut expected = trajectory.clone();
-    let model = kekule::structure::Model::new(
+    let model = Model::new(
         Arc::clone(&topology),
         trajectory.get(3).unwrap().positions().clone(),
     )
@@ -276,21 +278,66 @@ fn every_step_together_equals_the_functions_in_order() {
         .with_fit(fit, FitReference::Sample(0))
         .with_subset(second);
     let processed = Processed::new(&set, steps.clone()).unwrap();
-    let unsmoothed = processed.unsmoothed();
     for index in 0..set.len() {
         let sample = processed.read(index).unwrap();
         assert_eq!(&sample, expected.get(index).unwrap().payload(), "{index}");
-        assert_eq!(unsmoothed.read(index).unwrap(), sample);
     }
-
-    // With smoothing, the layer below is the same steps without it.
-    let smoothed = Processed::new(&set, steps.clone().with_smoothing(3).unwrap()).unwrap();
-    let plain = Processed::new(&set, steps.without_smoothing()).unwrap();
+    // Without smoothing, the steps read as before.
+    let smoothed = steps.with_smoothing(3).unwrap();
+    assert_eq!(smoothed.smoothing(), Some(3));
+    let plain = Processed::new(&set, smoothed.without_smoothing()).unwrap();
     for index in 0..set.len() {
-        assert_eq!(
-            smoothed.unsmoothed().read(index).unwrap(),
-            plain.read(index).unwrap()
-        );
+        assert_eq!(plain.read(index).unwrap(), processed.read(index).unwrap());
+    }
+}
+
+/// The centroid of each molecule of `sample`, in fractional coordinates of
+/// its cell from the cell's center.
+fn molecule_centers_from_cell_center(topology: &Topology, sample: &Sample) -> Vec<[f64; 3]> {
+    let cell = sample.cell().unwrap();
+    let [a, b, c] = cell.vectors().into_value();
+    let middle = (a + b + c) * 0.5;
+    let lattice = PeriodicGeometry::new(*cell).unwrap();
+    let values = sample.positions().values();
+    let points = values.value();
+    let count = topology.atom_count() / 2;
+    (0..2)
+        .map(|molecule| {
+            let mut sum = Vector3::zero();
+            for atom in molecule * count..(molecule + 1) * count {
+                sum += points[atom] - Point3::origin();
+            }
+            let offset = sum / count as f64 - middle;
+            lattice
+                .fractional(Quantity::new(offset, NANOMETER))
+                .unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn wrapping_then_centering_on_the_anchors_keeps_every_molecule_in_the_cell() {
+    let trajectory = source();
+    let topology = trajectory.shared_topology();
+    let set = set_of(&trajectory);
+    for anchors in [
+        atoms(&trajectory, &[0, 1, 2]),
+        atoms(&trajectory, &[3, 4, 5]),
+        AtomSelection::all(Arc::clone(&topology)),
+    ] {
+        let steps = ProcessingSteps::default()
+            .with_wrap(anchors.clone())
+            .with_center(anchors);
+        let processed = Processed::new(&set, steps).unwrap();
+        for index in 0..set.len() {
+            let sample = processed.read(index).unwrap();
+            for center in molecule_centers_from_cell_center(&topology, &sample) {
+                assert!(
+                    center.iter().all(|value| value.abs() <= 0.5 + 1.0e-12),
+                    "sample {index}: {center:?}"
+                );
+            }
+        }
     }
 }
 
@@ -337,7 +384,8 @@ fn smoothing_averages_the_window_imaged_onto_each_sample() {
             .with_fit(all.clone(), FitReference::Sample(0))
             .with_smoothing(window)
             .unwrap();
-        let processed = Processed::new(&set, steps).unwrap();
+        let processed = Processed::new(&set, steps.clone()).unwrap();
+        let plain = Processed::new(&set, steps.without_smoothing()).unwrap();
         for index in 0..set.len() {
             let sample = processed.read(index).unwrap();
             let frame = stepped.get(index).unwrap();
@@ -350,10 +398,7 @@ fn smoothing_averages_the_window_imaged_onto_each_sample() {
             assert_eq!(sample.cell(), frame.cell());
             assert_eq!(sample.velocities(), frame.velocities());
             assert_eq!(sample.properties(), frame.properties());
-            assert_eq!(
-                processed.unsmoothed().read(index).unwrap().positions(),
-                frame.positions()
-            );
+            assert_eq!(plain.read(index).unwrap().positions(), frame.positions());
         }
     }
     // Smoothing alone averages the samples as stored, imaged.
@@ -364,6 +409,60 @@ fn smoothing_averages_the_window_imaged_onto_each_sample() {
             *processed.read(index).unwrap().positions().values().value(),
             &smoothed_by_hand(&trajectory, 3, index)[..]
         );
+    }
+}
+
+#[test]
+fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
+    let trajectory = source();
+    let set = set_of(&trajectory);
+    let second = atoms(&trajectory, &[3, 4, 5]);
+    let steps = ProcessingSteps::default()
+        .with_whole(true)
+        .with_smoothing(3)
+        .unwrap()
+        .with_subset(second);
+    let processed = Processed::new(&set, steps).unwrap();
+    assert_eq!(processed.topology().atom_count(), 3);
+    let stepped = whole(&trajectory);
+    for index in 0..set.len() {
+        assert_eq!(
+            *processed.read(index).unwrap().positions().values().value(),
+            &smoothed_by_hand(&stepped, 3, index)[3..6],
+            "sample {index}"
+        );
+    }
+}
+
+#[test]
+fn smoothing_images_each_sample_of_the_window_in_its_own_cell() {
+    let mut trajectory = source();
+    for index in 0..trajectory.len() {
+        let edge = 1.0 + 0.03 * index as f64;
+        let cell = PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(edge, edge, 1.0), NANOMETER),
+            [true; 3],
+        )
+        .unwrap();
+        trajectory.get_mut(index).unwrap().set_cell(Some(cell));
+    }
+    let set = set_of(&trajectory);
+    for window in [3, 5] {
+        let steps = ProcessingSteps::default()
+            .with_whole(true)
+            .with_smoothing(window)
+            .unwrap();
+        let processed = Processed::new(&set, steps).unwrap();
+        let stepped = whole(&trajectory);
+        for index in 0..set.len() {
+            let sample = processed.read(index).unwrap();
+            assert_eq!(
+                *sample.positions().values().value(),
+                &smoothed_by_hand(&stepped, window, index)[..],
+                "window {window}, sample {index}"
+            );
+            assert_eq!(sample.cell(), trajectory.get(index).unwrap().cell());
+        }
     }
 }
 
@@ -381,7 +480,9 @@ fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
         .with_center(first.clone())
         .with_smoothing(3)
         .unwrap();
-    let processed = Processed::new(&set, steps).unwrap();
+    // Smoothing reads the samples, so construction checks it too.
+    Processed::new(&set, steps.clone()).unwrap();
+    let processed = Processed::new(&set, steps.without_smoothing()).unwrap();
     let centroid = |sample: &Sample| {
         let values = sample.positions().values();
         let points = values.value();
@@ -393,7 +494,7 @@ fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
     };
     let rest = centroid(&set.read(0).unwrap());
     for index in 0..set.len() {
-        let sample = processed.unsmoothed().read(index).unwrap();
+        let sample = processed.read(index).unwrap();
         assert!((centroid(&sample) - rest).norm() < 1.0e-12, "{index}");
         assert!(sample.cell().is_none());
     }
@@ -536,7 +637,7 @@ impl SampleRead for Short {
         None
     }
 
-    fn peek(&self, _index: usize) -> Option<SampleView<'_>> {
+    fn peek(&self, _index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
         None
     }
 
@@ -545,6 +646,149 @@ impl SampleRead for Short {
         Ok(Sample::new(
             Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap(),
         ))
+    }
+}
+
+/// A reader of its own that panics reading sample 4.
+#[derive(Debug)]
+struct Panicking(SampleSet);
+
+impl SampleRead for Panicking {
+    fn topology(&self) -> &Arc<Topology> {
+        SampleRead::topology(&self.0)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn order(&self) -> Option<&Order> {
+        self.0.order()
+    }
+
+    fn distribution(&self) -> Option<&Distribution> {
+        None
+    }
+
+    fn peek(&self, _index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
+        None
+    }
+
+    fn read(&self, index: usize) -> Result<Sample, SampleReadError> {
+        assert_ne!(index, 4, "the host's reader fails on sample 4");
+        self.0.read(index)
+    }
+}
+
+#[test]
+fn a_panic_in_the_reader_below_leaves_the_other_samples_readable() {
+    let trajectory = source();
+    let set = set_of(&trajectory);
+    let panicking = Panicking(set_of(&trajectory));
+    let first = atoms(&trajectory, &[0, 1, 2]);
+    let steps = ProcessingSteps::default()
+        .with_wrap(first.clone())
+        .with_center(first.clone())
+        .with_fit(first, FitReference::Sample(0))
+        .with_smoothing(3)
+        .unwrap();
+    let processed = Processed::new(&panicking, steps.clone()).unwrap();
+    let expected = Processed::new(&set, steps).unwrap();
+    for _ in 0..2 {
+        // Samples 3 and 5 smooth over sample 4.
+        for index in [3, 4, 5] {
+            let read = std::panic::catch_unwind(AssertUnwindSafe(|| processed.read(index)));
+            assert!(read.is_err(), "sample {index}");
+        }
+        for index in [0, 1, 2, 6] {
+            assert_eq!(
+                processed.read(index).unwrap(),
+                expected.read(index).unwrap(),
+                "sample {index}"
+            );
+        }
+    }
+}
+
+/// A reader of its own that returns samples nothing else holds, as a set in
+/// a file does, and keeps the address of each sample's positions.
+#[derive(Debug)]
+struct Unique {
+    set: SampleSet,
+    addresses: Mutex<HashMap<usize, usize>>,
+}
+
+fn address(sample: &Sample) -> usize {
+    sample.positions().values().value().as_ptr() as usize
+}
+
+impl SampleRead for Unique {
+    fn topology(&self) -> &Arc<Topology> {
+        SampleRead::topology(&self.set)
+    }
+
+    fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    fn order(&self) -> Option<&Order> {
+        self.set.order()
+    }
+
+    fn distribution(&self) -> Option<&Distribution> {
+        None
+    }
+
+    fn peek(&self, _index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
+        None
+    }
+
+    fn read(&self, index: usize) -> Result<Sample, SampleReadError> {
+        let stored = self.set.read(index)?;
+        let points = stored.positions().values().value().to_vec();
+        let positions = Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap();
+        let model = Model::new(Arc::clone(SampleRead::topology(&self.set)), positions).unwrap();
+        let sample = Sample::from_model(model).with_cell(*stored.cell().unwrap());
+        self.addresses
+            .lock()
+            .unwrap()
+            .insert(index, address(&sample));
+        Ok(sample)
+    }
+}
+
+#[test]
+fn the_steps_change_a_unique_sample_in_place_and_copy_a_shared_one() {
+    let trajectory = source();
+    let topology = trajectory.shared_topology();
+    let set = set_of(&trajectory);
+    let first = atoms(&trajectory, &[0, 1, 2]);
+    let steps = ProcessingSteps::default()
+        .with_whole(true)
+        .with_wrap(first.clone())
+        .with_center(first)
+        .with_fit(AtomSelection::all(topology), FitReference::Sample(0));
+    let unique = Unique {
+        set: set_of(&trajectory),
+        addresses: Mutex::new(HashMap::new()),
+    };
+    let from_unique = Processed::new(&unique, steps.clone()).unwrap();
+    let from_shared = Processed::new(&set, steps).unwrap();
+    for index in 0..set.len() {
+        // A unique sample is processed in the allocation it was read into.
+        let sample = from_unique.read(index).unwrap();
+        assert_eq!(
+            address(&sample),
+            unique.addresses.lock().unwrap()[&index],
+            "sample {index}"
+        );
+        let shared = from_shared.read(index).unwrap();
+        assert_eq!(sample.positions(), shared.positions(), "sample {index}");
+        // A shared sample is copied, and the set's sample is unchanged.
+        let stored = set.read(index).unwrap();
+        assert!(!shared.shares_structure_with(&stored), "sample {index}");
+        assert_ne!(address(&shared), address(&stored), "sample {index}");
+        assert_sample(&stored, trajectory.get(index).unwrap().payload(), "stored");
     }
 }
 

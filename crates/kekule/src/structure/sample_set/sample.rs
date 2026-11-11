@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3, RigidTransform};
+use crate::geometry::{PeriodicCell, Point3, RigidTransform, Vector3};
 use crate::properties::{StructureProperties, StructurePropertiesMut};
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::Quantity;
@@ -257,10 +257,51 @@ impl Sample {
         )))
     }
 
-    /// Replaces the positions without checking them again, copying the rest
-    /// of a shared structure but never the positions.
-    pub(crate) fn replace_checked_positions(&mut self, positions: Positions) {
-        SampleStructure::replace_positions(&mut self.structure, positions);
+    /// The positions for writing in place: a structure shared with a clone
+    /// is copied first, once. The caller keeps every value finite.
+    pub(crate) fn positions_in_place(&mut self) -> &mut [Point3] {
+        Arc::make_mut(&mut self.structure).positions.as_mut_slice()
+    }
+
+    /// Moves every position by `shift` in place, copying a shared structure
+    /// once; the cell, velocities, and forces do not change under a
+    /// translation. On failure some positions have moved, so the caller
+    /// drops the sample.
+    pub(crate) fn translate_in_place(&mut self, shift: Vector3) -> Result<(), StructureError> {
+        for (index, point) in self.positions_in_place().iter_mut().enumerate() {
+            *point = *point + shift;
+            if !point.is_finite() {
+                return Err(DenseArrayError::NonFinite { index }.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies a rigid transform in place, as
+    /// [`Self::apply_rigid_transform`] does, copying a shared structure
+    /// once. On failure the sample is partly transformed, so the caller
+    /// drops it.
+    pub(crate) fn transform_in_place(
+        &mut self,
+        transform: &RigidTransform,
+    ) -> Result<(), StructureError> {
+        let cell = transform_cell(self.structure.cell, *transform)?;
+        let structure = Arc::make_mut(&mut self.structure);
+        structure.cell = cell;
+        for (index, point) in structure.positions.as_mut_slice().iter_mut().enumerate() {
+            *point = transform.transform_point(*point);
+            if !point.is_finite() {
+                return Err(DenseArrayError::NonFinite { index }.into());
+            }
+        }
+        let rotate = |vector| transform.transform_vector(vector);
+        if let Some(velocities) = &mut structure.velocities {
+            velocities.rotate_in_place(rotate)?;
+        }
+        if let Some(forces) = &mut structure.forces {
+            forces.rotate_in_place(rotate)?;
+        }
+        Ok(())
     }
 
     /// Returns this sample with a periodic cell.

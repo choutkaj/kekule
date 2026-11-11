@@ -462,7 +462,19 @@ impl MoleculePlan {
         lattice: &Lattice,
     ) -> Result<Vec<Point3>, PeriodicError> {
         let mut points = source.to_vec();
-        let mut atom_images = vec![[0_i64; 3]; source.len()];
+        self.make_whole_in_place(&mut points, lattice)?;
+        Ok(points)
+    }
+
+    /// Makes every molecule of `points` whole in place. Every image is
+    /// chosen and checked before any point moves, so failure changes
+    /// nothing.
+    fn make_whole_in_place(
+        &self,
+        points: &mut [Point3],
+        lattice: &Lattice,
+    ) -> Result<(), PeriodicError> {
+        let mut atom_images = vec![[0_i64; 3]; points.len()];
         // Choose each bond image once, in its authoritative endpoint order. Tree
         // traversal may reverse a bond; reusing its image also makes ties consistent.
         let bond_images = self
@@ -470,7 +482,7 @@ impl MoleculePlan {
             .iter()
             .map(|&(_, a, b)| {
                 lattice
-                    .nearest_image(source[b] - source[a])
+                    .nearest_image(points[b] - points[a])
                     .map(|(_, images)| images)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -482,7 +494,6 @@ impl MoleculePlan {
                 checked_image(image as f64, lattice.frame)?;
                 atom_images[child][axis] = image;
             }
-            points[child] = source[child] - lattice.cartesian(atom_images[child].map(|n| n as f64));
         }
         for (&(bond, a, b), images) in self.bonds.iter().zip(bond_images) {
             // Check closure in integer lattice space, without a length tolerance
@@ -494,7 +505,32 @@ impl MoleculePlan {
                 });
             }
         }
-        Ok(points)
+        for &(_, child, _) in &self.tree {
+            points[child] = points[child] - lattice.cartesian(atom_images[child].map(|n| n as f64));
+        }
+        Ok(())
+    }
+
+    /// Adds each atom of `points`, its molecule moved to the periodic image
+    /// nearest the same molecule in `reference` as [`Self::image_onto`]
+    /// moves it, to the atom's entry of `sum`.
+    fn add_imaged_onto(
+        &self,
+        points: &[Point3],
+        reference: &[Point3],
+        lattice: &Lattice,
+        sum: &mut [Vector3],
+    ) -> Result<(), PeriodicError> {
+        for group in &self.groups {
+            let delta =
+                center(points, group, lattice.frame)? - center(reference, group, lattice.frame)?;
+            let (_, images) = lattice.nearest_image(delta)?;
+            let shift = lattice.cartesian(images.map(|n| n as f64));
+            for &atom in group {
+                sum[atom] += (points[atom] - shift) - Point3::origin();
+            }
+        }
+        Ok(())
     }
 
     fn image_onto(

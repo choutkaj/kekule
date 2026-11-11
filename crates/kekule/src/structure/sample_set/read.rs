@@ -74,7 +74,7 @@ pub trait SampleRead: Send + Sync + fmt::Debug {
     /// Sample `index` lent by reference, when the reader holds it: always
     /// for a set in memory, never for one in a file. `None` past the last
     /// sample.
-    fn peek(&self, index: usize) -> Option<SampleView<'_>>;
+    fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>>;
 
     /// Sample `index`, owned. A set in memory returns a clone, which shares
     /// the sample's storage; other readers decode or compute it.
@@ -108,7 +108,7 @@ macro_rules! forward_sample_read {
                 (**self).distribution()
             }
 
-            fn peek(&self, index: usize) -> Option<SampleView<'_>> {
+            fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
                 (**self).peek(index)
             }
 
@@ -143,7 +143,10 @@ pub(crate) fn visit_sample<T, E>(
 }
 
 /// Failure to read a sample from a [`SampleRead`].
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Two errors are equal when they report the same failure; a host's own
+/// failures ([`Self::Reader`]) are equal only to their clones.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SampleReadError {
     /// No sample has this index.
@@ -177,6 +180,83 @@ pub enum SampleReadError {
         /// The failure.
         source: Box<StructureError>,
     },
+    /// A host's reader cannot provide the sample, for its own reason, such
+    /// as a cache whose source is gone; see the source. Made with
+    /// [`Self::reader`].
+    Reader {
+        /// The sample index.
+        sample: usize,
+        /// The host's failure, shared so that the error stays cheap to
+        /// clone.
+        source: Arc<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+impl SampleReadError {
+    /// A host reader's own failure to provide sample `sample`, such as a
+    /// cache that cannot reach the reader below it.
+    ///
+    /// ```
+    /// use kekule::structure::SampleReadError;
+    ///
+    /// let error = SampleReadError::reader(3, "The trajectory file is gone.");
+    /// assert_eq!(error.to_string(), "Cannot read sample 3.");
+    /// let source = std::error::Error::source(&error).unwrap();
+    /// assert_eq!(source.to_string(), "The trajectory file is gone.");
+    /// ```
+    pub fn reader(
+        sample: usize,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        Self::Reader {
+            sample,
+            source: Arc::from(source.into()),
+        }
+    }
+}
+
+impl PartialEq for SampleReadError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::IndexOutOfRange { index, len },
+                Self::IndexOutOfRange {
+                    index: other_index,
+                    len: other_len,
+                },
+            ) => index == other_index && len == other_len,
+            (Self::Trajectory(error), Self::Trajectory(other)) => error == other,
+            (
+                Self::Periodic { sample, source },
+                Self::Periodic {
+                    sample: other_sample,
+                    source: other_source,
+                },
+            ) => sample == other_sample && source == other_source,
+            (
+                Self::Alignment { sample, source },
+                Self::Alignment {
+                    sample: other_sample,
+                    source: other_source,
+                },
+            ) => sample == other_sample && source == other_source,
+            (
+                Self::Structure { sample, source },
+                Self::Structure {
+                    sample: other_sample,
+                    source: other_source,
+                },
+            ) => sample == other_sample && source == other_source,
+            (
+                Self::Reader { sample, source },
+                Self::Reader {
+                    sample: other_sample,
+                    source: other_source,
+                },
+            ) => sample == other_sample && Arc::ptr_eq(source, other_source),
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for SampleReadError {
@@ -192,6 +272,7 @@ impl fmt::Display for SampleReadError {
                 write!(formatter, "Cannot process sample {sample}.")
             }
             Self::Alignment { sample, .. } => write!(formatter, "Cannot fit sample {sample}."),
+            Self::Reader { sample, .. } => write!(formatter, "Cannot read sample {sample}."),
         }
     }
 }
@@ -204,6 +285,7 @@ impl std::error::Error for SampleReadError {
             Self::Periodic { source, .. } => Some(source.as_ref()),
             Self::Alignment { source, .. } => Some(source.as_ref()),
             Self::Structure { source, .. } => Some(source.as_ref()),
+            Self::Reader { source, .. } => Some(source.as_ref()),
         }
     }
 }

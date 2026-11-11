@@ -731,8 +731,8 @@ impl<'a> From<&'a SampleSet> for PdbSource<'a> {
     }
 }
 
-impl<'a> From<SampleView<'a>> for PdbSource<'a> {
-    fn from(sample: SampleView<'a>) -> Self {
+impl<'a, R: ?Sized> From<SampleView<'a, R>> for PdbSource<'a> {
+    fn from(sample: SampleView<'a, R>) -> Self {
         Self {
             content: Content::Structure(sample.as_model_view()),
             reports: None,

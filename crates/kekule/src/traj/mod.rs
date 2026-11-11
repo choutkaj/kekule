@@ -138,9 +138,7 @@ pub mod analysis;
 pub mod io;
 pub mod periodic;
 
-pub use processed::{
-    FitReference, Processed, ProcessingError, ProcessingStep, ProcessingSteps, Unsmoothed,
-};
+pub use processed::{FitReference, Processed, ProcessingError, ProcessingStep, ProcessingSteps};
 pub use trajectory::{
     read_ensemble, read_ensemble_seekable, EnsembleReadOptions, EnsembleReadProgress, FrameBuffer,
     FrameData, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,

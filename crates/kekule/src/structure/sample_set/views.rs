@@ -2,6 +2,7 @@
 //! [`SampleRead`].
 
 use std::fmt;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::structure::model::sealed::Sealed;
@@ -20,14 +21,29 @@ use super::{Place, Sample, SampleContext, SampleRead, SampleReadError, SampleSet
 /// Reads sample state through `Deref` and converts to a [`ModelView`]
 /// through [`AsModelView`] without copying; the view's
 /// [`StructureKind::Sample`] carries the sample's [`SampleContext`].
-#[derive(Clone, Copy)]
-pub struct SampleView<'a> {
+///
+/// The type parameter says where the view comes from. `SampleView<'_>` is a
+/// sample of a set in memory ([`SampleSet::get`]), whose state lends its
+/// representative sample ([`StateView::representative_sample`]).
+/// `SampleView<'_, dyn SampleRead>` is a sample of any reader, as
+/// [`SampleRead::peek`] lends it; [`Self::as_dyn`] turns the first into the
+/// second.
+pub struct SampleView<'a, R: ?Sized = SampleSet> {
     pub(super) reader: &'a dyn SampleRead,
     pub(super) sample: &'a Sample,
     pub(super) index: usize,
+    origin: PhantomData<&'a R>,
 }
 
-impl fmt::Debug for SampleView<'_> {
+impl<R: ?Sized> Clone for SampleView<'_, R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<R: ?Sized> Copy for SampleView<'_, R> {}
+
+impl<R: ?Sized> fmt::Debug for SampleView<'_, R> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("SampleView")
@@ -37,7 +53,7 @@ impl fmt::Debug for SampleView<'_> {
     }
 }
 
-impl std::ops::Deref for SampleView<'_> {
+impl<R: ?Sized> std::ops::Deref for SampleView<'_, R> {
     type Target = Sample;
 
     fn deref(&self) -> &Self::Target {
@@ -45,7 +61,7 @@ impl std::ops::Deref for SampleView<'_> {
     }
 }
 
-impl<'a> SampleView<'a> {
+impl<'a> SampleView<'a, dyn SampleRead> {
     /// A view of `sample` as sample `index` of `reader`, for a
     /// [`SampleRead::peek`] that lends a sample the reader holds, such as a
     /// host's cache of samples read from another reader.
@@ -79,7 +95,28 @@ impl<'a> SampleView<'a> {
             reader,
             sample,
             index,
+            origin: PhantomData,
         }
+    }
+}
+
+impl<'a> SampleView<'a> {
+    /// A view of sample `index` of an in-memory `set`, which holds `sample`.
+    pub(crate) fn of_set(set: &'a SampleSet, index: usize, sample: &'a Sample) -> Self {
+        Self {
+            reader: set,
+            sample,
+            index,
+            origin: PhantomData,
+        }
+    }
+}
+
+impl<'a, R: ?Sized> SampleView<'a, R> {
+    /// The same view as one of any reader, as [`SampleRead::peek`] returns
+    /// it.
+    pub fn as_dyn(self) -> SampleView<'a, dyn SampleRead> {
+        SampleView::of_reader(self.reader, self.index, self.sample)
     }
 
     /// The sample's index in its set.
@@ -103,7 +140,7 @@ impl<'a> SampleView<'a> {
 
     /// The state the sample belongs to, or `None` when it is not a member
     /// of the set's distribution.
-    pub fn state(self) -> Option<StateView<'a>> {
+    pub fn state(self) -> Option<StateView<'a, R>> {
         let state = self.reader.distribution()?.state_of(self.index)?;
         Some(StateView::new(self.reader, state))
     }
@@ -134,7 +171,7 @@ impl<'a> SampleView<'a> {
     pub fn as_model_view(self) -> ModelView<'a> {
         self.sample.structure().model_view(
             self.reader.topology(),
-            StructureKind::Sample(SampleContext::of_view(self)),
+            StructureKind::Sample(SampleContext::of_view(self.as_dyn())),
         )
     }
 
@@ -159,9 +196,9 @@ pub(crate) fn check_bound(topology: &Topology, sample: &Sample) -> Result<(), St
     Ok(())
 }
 
-impl Sealed for SampleView<'_> {}
+impl<R: ?Sized> Sealed for SampleView<'_, R> {}
 
-impl AsModelView for SampleView<'_> {
+impl<R: ?Sized> AsModelView for SampleView<'_, R> {
     fn as_model_view(&self) -> ModelView<'_> {
         SampleView::as_model_view(*self)
     }
@@ -170,14 +207,27 @@ impl AsModelView for SampleView<'_> {
 /// One state of the distribution of a [`SampleSet`] or another
 /// [`SampleRead`], with its members, representative, and population.
 ///
-/// Reads the state's energy and properties through `Deref`.
-#[derive(Clone, Copy)]
-pub struct StateView<'a> {
+/// Reads the state's energy and properties through `Deref`. The type
+/// parameter says where the state comes from, as for [`SampleView`]: a
+/// state of a set in memory, `StateView<'_>`, lends its representative
+/// sample ([`Self::representative_sample`]); the state of a set in a file,
+/// or of another reader, gives its index ([`Self::representative`]), which
+/// the host reads.
+pub struct StateView<'a, R: ?Sized = SampleSet> {
     reader: &'a dyn SampleRead,
     index: usize,
+    origin: PhantomData<&'a R>,
 }
 
-impl fmt::Debug for StateView<'_> {
+impl<R: ?Sized> Clone for StateView<'_, R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<R: ?Sized> Copy for StateView<'_, R> {}
+
+impl<R: ?Sized> fmt::Debug for StateView<'_, R> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StateView")
@@ -187,7 +237,7 @@ impl fmt::Debug for StateView<'_> {
     }
 }
 
-impl std::ops::Deref for StateView<'_> {
+impl<R: ?Sized> std::ops::Deref for StateView<'_, R> {
     type Target = EnsembleState;
 
     fn deref(&self) -> &Self::Target {
@@ -195,9 +245,14 @@ impl std::ops::Deref for StateView<'_> {
     }
 }
 
-impl<'a> StateView<'a> {
+impl<'a, R: ?Sized> StateView<'a, R> {
+    /// State `index` of `reader`'s distribution, which `R` describes.
     pub(crate) fn new(reader: &'a dyn SampleRead, index: usize) -> Self {
-        Self { reader, index }
+        Self {
+            reader,
+            index,
+            origin: PhantomData,
+        }
     }
 
     fn distribution(self) -> &'a super::Distribution {
@@ -215,13 +270,6 @@ impl<'a> StateView<'a> {
     pub fn representative(self) -> usize {
         let distribution = self.distribution();
         distribution.member(distribution.partition().representatives()[self.index])
-    }
-
-    /// The state's representative sample, lent by the reader
-    /// ([`SampleRead::peek`]): always by a set in memory, and `None` when
-    /// the reader does not hold it.
-    pub fn representative_sample(self) -> Option<SampleView<'a>> {
-        self.reader.peek(self.representative())
     }
 
     /// The sample indices of the state's members, in sample order.
@@ -245,6 +293,23 @@ impl<'a> StateView<'a> {
     /// The borrowed state with the view's full lifetime.
     pub fn payload(self) -> &'a EnsembleState {
         self.distribution().state(self.index)
+    }
+}
+
+impl<'a> StateView<'a> {
+    /// The state's representative sample.
+    pub fn representative_sample(self) -> SampleView<'a> {
+        let index = self.representative();
+        let view = self
+            .reader
+            .peek(index)
+            .expect("a set in memory lends every sample");
+        SampleView {
+            reader: view.reader,
+            sample: view.sample,
+            index,
+            origin: PhantomData,
+        }
     }
 }
 
@@ -280,32 +345,56 @@ impl<'a> Iterator for SampleIter<'a> {
 
 impl ExactSizeIterator for SampleIter<'_> {}
 
-/// Iterator over the states of a [`SampleSet`]'s distribution, in state
-/// order; empty without a distribution.
-#[derive(Debug, Clone)]
-pub struct StateIter<'a> {
-    set: &'a SampleSet,
+/// Iterator over the states of a set's distribution, in state order; empty
+/// without a distribution. Its type parameter is the set's, as for
+/// [`StateView`].
+pub struct StateIter<'a, R: ?Sized = SampleSet> {
+    reader: &'a dyn SampleRead,
     indices: std::ops::Range<usize>,
+    origin: PhantomData<&'a R>,
 }
 
-impl<'a> StateIter<'a> {
-    pub(crate) fn new(set: &'a SampleSet) -> Self {
-        let states = set
-            .distribution()
-            .map_or(0, super::Distribution::state_count);
+impl<R: ?Sized> Clone for StateIter<'_, R> {
+    fn clone(&self) -> Self {
         Self {
-            set,
-            indices: 0..states,
+            reader: self.reader,
+            indices: self.indices.clone(),
+            origin: PhantomData,
         }
     }
 }
 
-impl<'a> Iterator for StateIter<'a> {
-    type Item = StateView<'a>;
+impl<R: ?Sized> fmt::Debug for StateIter<'_, R> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StateIter")
+            .field("indices", &self.indices)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a, R: ?Sized> StateIter<'a, R> {
+    /// The states of `reader`'s distribution, which `R` describes.
+    pub(crate) fn new(reader: &'a dyn SampleRead) -> Self {
+        let states = reader
+            .distribution()
+            .map_or(0, super::Distribution::state_count);
+        Self {
+            reader,
+            indices: 0..states,
+            origin: PhantomData,
+        }
+    }
+}
+
+impl<'a, R: ?Sized> Iterator for StateIter<'a, R> {
+    type Item = StateView<'a, R>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let set = self.set;
-        self.indices.next().map(|index| StateView::new(set, index))
+        let reader = self.reader;
+        self.indices
+            .next()
+            .map(|index| StateView::new(reader, index))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -313,4 +402,4 @@ impl<'a> Iterator for StateIter<'a> {
     }
 }
 
-impl ExactSizeIterator for StateIter<'_> {}
+impl<R: ?Sized> ExactSizeIterator for StateIter<'_, R> {}

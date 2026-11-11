@@ -63,7 +63,7 @@ use std::sync::Arc;
 
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::structure::TrajectoryFrameView;
+use crate::structure::{DecodedSample, TrajectoryFrameView};
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -925,7 +925,6 @@ impl<R: Read + Seek> XtcReader<R> {
             limits.max_scratch_bytes(),
             |detail| resource_error(source_label, None, detail),
         )?;
-        positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         let mut adapter = CheckedXtcReaderAdapter::new(reader);
         let stream_start = adapter.reader.stream_position().map_err(|error| {
             io_context(
@@ -1057,17 +1056,22 @@ impl<R: Read + Seek> XtcReader<R> {
         }
         self.adapter
             .decode(&info, &self.options.source_label, self.frame_cursor)?;
-        for (point, values) in self
-            .positions
-            .iter_mut()
-            .zip(self.adapter.decoded_positions.as_chunks::<3>().0.iter())
-        {
-            *point = Point3::new(
-                f64::from(values[0]),
-                f64::from(values[1]),
-                f64::from(values[2]),
-            );
-        }
+        // Written once, into a buffer the indexed reader may hand over.
+        self.positions.clear();
+        self.positions.extend(
+            self.adapter
+                .decoded_positions
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|values| {
+                    Point3::new(
+                        f64::from(values[0]),
+                        f64::from(values[1]),
+                        f64::from(values[2]),
+                    )
+                }),
+        );
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             resource_error(
                 &self.options.source_label,
@@ -1100,7 +1104,7 @@ impl<R: Read + Seek> XtcReader<R> {
         control: &IndexBuildControl<'_>,
     ) -> Result<IndexedXtcReader<R>, TrajectoryIoError> {
         let mut indexed = IndexedXtcReader {
-            offsets: FrameOffsets::empty(self.stream_start),
+            offsets: Arc::new(FrameOffsets::empty(self.stream_start)),
             inner: self,
             pending_bytes: 0,
         };
@@ -1219,7 +1223,7 @@ pub(crate) fn check_append_frames(
 /// frame is decoded again when it was already pending.
 pub struct IndexedXtcReader<R> {
     inner: XtcReader<R>,
-    offsets: FrameOffsets,
+    offsets: Arc<FrameOffsets>,
     /// Bytes after the last indexed frame when the index last grew.
     pending_bytes: u64,
 }
@@ -1281,7 +1285,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: XtcReadOptions,
-        offsets: FrameOffsets,
+        offsets: Arc<FrameOffsets>,
     ) -> Result<Self, TrajectoryIoError> {
         let inner = XtcReader::new(reader, topology, options)?;
         offsets.verify_start(
@@ -1300,9 +1304,61 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         &self.offsets
     }
 
+    pub(crate) fn shared_offsets(&self) -> &Arc<FrameOffsets> {
+        &self.offsets
+    }
+
+    /// Lets go of the index until [`Self::share_index`], so that a reader
+    /// extending it does not copy it.
+    pub(crate) fn release_index(&mut self) {
+        self.offsets = Arc::new(FrameOffsets::empty(self.offsets.end()));
+    }
+
+    /// Reads by the index of `other`, a reader of the same file, from now
+    /// on.
+    pub(crate) fn share_index(&mut self, other: &Self) {
+        self.offsets = Arc::clone(&other.offsets);
+    }
+
+    /// Another reader of the same frames over `stream`, which must read the
+    /// same file from its start; it shares the index and reads the first
+    /// frame alone.
+    pub(crate) fn fork(&self, stream: R) -> Result<Self, TrajectoryIoError> {
+        Self::from_offsets(
+            stream,
+            Arc::clone(&self.inner.topology),
+            self.inner.options.clone(),
+            Arc::clone(&self.offsets),
+        )
+    }
+
+    /// The stream every read goes through.
+    pub(crate) fn stream(&self) -> &R {
+        &self.inner.adapter.reader
+    }
+
     /// The stream every read goes through.
     pub(crate) fn stream_mut(&mut self) -> &mut R {
         &mut self.inner.adapter.reader
+    }
+
+    /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
+    /// does and hands over its positions, written once as they were
+    /// decoded.
+    pub(crate) fn read_decoded(
+        &mut self,
+        index: usize,
+    ) -> Result<DecodedSample, TrajectoryIoError> {
+        let info = self.read_indexed(index)?;
+        let atoms = self.inner.positions.len();
+        let positions = std::mem::replace(&mut self.inner.positions, Vec::with_capacity(atoms));
+        Ok(DecodedSample {
+            positions: Quantity::new(positions, NANOMETER),
+            cell: info.cell,
+            velocities: None,
+            forces: None,
+            owner: None,
+        })
     }
 
     /// Bytes after the last indexed frame when the index last grew.
@@ -1312,7 +1368,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
 
     /// Drops the frames indexed after `mark`; see [`FrameOffsets::mark`].
     pub(crate) fn restore_index(&mut self, mark: (usize, u64), pending_bytes: u64) {
-        self.offsets.restore(mark);
+        Arc::make_mut(&mut self.offsets).restore(mark);
         self.pending_bytes = pending_bytes;
     }
 
@@ -1355,7 +1411,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                 Ok(pending)
             }
             Err(error) => {
-                self.offsets.restore(mark);
+                Arc::make_mut(&mut self.offsets).restore(mark);
                 Err(error)
             }
         }
@@ -1409,7 +1465,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                 }
             };
             let end = self.inner.position(TrajectoryIoOperation::Index)?;
-            self.offsets.push(
+            Arc::make_mut(&mut self.offsets).push(
                 offset,
                 end,
                 info.stamp(),
@@ -1467,6 +1523,16 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        let info = self.read_indexed(index)?;
+        self.inner
+            .publish(&self.inner.positions, &info, destination)
+    }
+}
+
+impl<R: Read + Seek> IndexedXtcReader<R> {
+    /// Decodes and verifies frame `index` into the reader's buffers, then
+    /// puts the stream back where it was.
+    fn read_indexed(&mut self, index: usize) -> Result<XtcFrameInfo, TrajectoryIoError> {
         let (offset, _) = self
             .offsets
             .frame(index)
@@ -1540,8 +1606,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
         self.inner.adapter.decoded_start = None;
         let info = result?;
         restore?;
-        self.inner
-            .publish(&self.inner.positions, &info, destination)
+        Ok(info)
     }
 }
 

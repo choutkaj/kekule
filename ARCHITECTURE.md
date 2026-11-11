@@ -549,29 +549,47 @@ each frame step and time it replaces.
 `open_indexed_sample_set_from_index` opens it from a kept frame index. The
 set's order is the index's time axis, and it exposes the index and its
 fingerprint. Sample `i` is frame `i`, decoded on every read into a sample
-that holds the only copy of its coordinates. Reads take `&self` and run on
-any number of threads at once: each read takes an idle indexed reader from
-a pool, or opens one, and returns it, so no lock is held while decoding.
-`refresh` takes the frames a writer appended, through the indexed reader's
-refresh, and fails without change otherwise. A distribution over every
+that holds the only copy of its coordinates: the codec decodes them once
+into the arrays the sample keeps. XTC decodes to single precision first,
+and DCD with fixed atoms fills a frame's array with the fixed atoms before
+its free ones. Reads take `&self` and run on any number of threads at once:
+each read takes an idle indexed reader from a pool, or forks one from the
+set's reader, and returns it, so no lock is held while decoding. Every
+reader reads the file object the set opened, through positional reads, and
+shares the set's frame index (`Arc`), so forking reads the start of the
+file alone and every reader gives the same sample. A file truncated while
+open fails every read of the frames it lost with one `IndexMismatch` error
+naming the frame. `refresh` takes the frames a writer appended, through the
+set's reader's refresh, and fails without change otherwise; the pool's
+readers are kept and read by the new index. A truncated or rewritten file
+fails `refresh` too, and the host opens it again. A distribution over every
 sample becomes one over the samples it covered, so appended frames are not
 members. `load` reads every sample, or listed ones, into a set in memory
 that keeps their order values and restricts the distribution, as `select`
 does.
 
 `Processed` reads another `SampleRead` and runs `ProcessingSteps` on each
-sample as it is read: make whole or wrap (samples without a cell skip
-both), center, fit onto a sample of the same reader or onto given
-positions, smooth over an odd window, and project onto an atom subset, in
-that order. Each step is optional. Construction checks the steps and
-processes sample 0, so steps that cannot process the samples fail there.
-Making whole and wrapping call the same kernels as the in-memory periodic
-functions and `MoleculeImager`, and fitting the same as `FrameSuperposer`,
-so each step gives the same bits. Smoothing averages the window's samples
-after the steps before it, each imaged onto the sample, and keeps
-everything else of the sample. `Processed::unsmoothed` reads the same
-steps without smoothing, which is what analyses read. `Processed` keeps
-nothing it read, so a host caches in front of it.
+sample as it is read: make whole or wrap, center, fit onto a sample of the
+same reader or onto given positions, smooth over an odd window, and project
+onto an atom subset, in that order. Each step is optional. Wrapping images
+the molecules around the anchors and moves the anchors' centroid to the
+cell center, so every molecule's center lies within the cell; centering on
+the anchors then keeps them there. Samples without a cell skip making
+whole and wrapping, where the in-memory functions fail with `MissingCell`.
+Centering moves the centroid to half the sum of all three cell vectors, or
+without a cell to where it lies in sample 0, so a reader mixing samples
+with and without cells centers them on different targets. Construction
+checks the steps and processes sample 0, so steps that cannot process the
+samples fail there. Making whole and wrapping call the same kernels as the
+in-memory periodic functions and `MoleculeImager`, and fitting the same as
+`FrameSuperposer`, so each step gives the same bits. The steps change the
+sample in place: a sample the reader below owns alone is not copied by
+them, and a shared one is copied once. Smoothing averages the window's
+samples after the steps before it, each molecule imaged onto the sample, so
+it expects whole molecules; it keeps everything else of the sample.
+Analyses read the same steps without smoothing, through a second reader
+with `ProcessingSteps::without_smoothing`. `Processed` keeps nothing it
+read, so a host caches in front of it.
 
 Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in
