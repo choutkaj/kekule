@@ -54,6 +54,7 @@ pub use types::{
     EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection,
     StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    StructureSampleSetInterpretation,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a

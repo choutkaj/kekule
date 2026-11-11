@@ -65,6 +65,22 @@ impl<'a> SampleContext<'a> {
         }
     }
 
+    /// Whether the sample belongs to a [`SampleSet`], whose writers apply one
+    /// policy to all of its state.
+    pub(crate) const fn is_of_set(self) -> bool {
+        matches!(self.source, Source::Set(..))
+    }
+
+    /// Whether the sample belongs to a set whose distribution leaves it out.
+    pub(crate) fn is_outside_distribution(self) -> bool {
+        match self.source {
+            Source::Set(set, index) => set
+                .distribution()
+                .is_some_and(|distribution| distribution.membership(index).is_none()),
+            _ => false,
+        }
+    }
+
     /// The sample's place in its set's order: a time and step, a step, or a
     /// coordinate in the order's unit. `None` in an unordered set.
     pub fn place(self) -> Option<Place> {

@@ -6,8 +6,12 @@
 //!
 //! Start with [`read_trajectory`] to load an entire file into an in-memory
 //! [`crate::structure::Trajectory`], and [`write_trajectory`] to save it
-//! atomically. Every operation takes its options, which set the codec and
-//! field policies; the defaults detect the format.
+//! atomically; [`read_sample_set`], [`write_sample_set`], and
+//! [`write_sample_set_to`] do the same for a
+//! [`crate::structure::SampleSet`] in a time order. The writers also take a
+//! set without an order, which reads back in a time order. Every operation
+//! takes its options, which set the codec and field policies; the defaults
+//! detect the format.
 //! Use [`open_trajectory`] for sequential processing with
 //! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access,
 //! [`create_trajectory_writer`] for atomic path-backed writing, or
@@ -180,13 +184,13 @@ pub mod xyz;
 
 pub use append::{append_trajectory, KeepFrames, TrajectoryAppendOptions, TrajectoryAppendReport};
 pub use file_reader::{
-    open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory, read_trajectory,
-    IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
+    open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory, read_sample_set,
+    read_trajectory, IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
-    create_trajectory_stream_writer, create_trajectory_writer, write_trajectory,
-    write_trajectory_to, FileTrajectoryWriter, OverwritePolicy, TrajectoryStreamWriter,
-    TrajectoryWriteOptions,
+    create_trajectory_stream_writer, create_trajectory_writer, write_sample_set,
+    write_sample_set_to, write_trajectory, write_trajectory_to, FileTrajectoryWriter,
+    OverwritePolicy, TrajectoryStreamWriter, TrajectoryWriteOptions,
 };
 pub use frame_index::{TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryIndexProgress};
 pub use frame_state::FrameTimingPolicy;

@@ -17,9 +17,10 @@ use crate::diagnostics::{
 use crate::geometry::Point3;
 use crate::molecule::Element;
 
-use super::xyz_interpret::{interpret_xyz, interpret_xyz_ensemble};
+use super::xyz_interpret::{interpret_xyz, interpret_xyz_ensemble, interpret_xyz_sample_set};
 use super::{
     XyzEnsembleInterpretOptions, XyzEnsembleInterpretation, XyzInterpretOptions, XyzInterpretation,
+    XyzSampleSetInterpretation,
 };
 
 /// Syntax and resource limits for parsing an XYZ file.
@@ -266,6 +267,22 @@ impl XyzDocument {
         options: XyzEnsembleInterpretOptions,
     ) -> Result<XyzEnsembleInterpretation, FormatError> {
         interpret_xyz_ensemble(self, &options)
+    }
+
+    /// Interprets several frames over the same atoms, as
+    /// [`Self::interpret_ensemble`] does, as an unordered
+    /// [`SampleSet`](crate::structure::SampleSet) without a distribution,
+    /// with one report per sample: an XYZ file states no weights, states,
+    /// or order.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::interpret_ensemble`].
+    pub fn interpret_sample_set(
+        &self,
+        options: XyzEnsembleInterpretOptions,
+    ) -> Result<XyzSampleSetInterpretation, FormatError> {
+        interpret_xyz_sample_set(self, &options)
     }
 }
 

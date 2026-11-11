@@ -14,7 +14,7 @@ use super::structure_interpret::{
     interpret_mmcif, interpret_mmcif_block, interpret_mmcif_conformations,
     interpret_mmcif_conformations_block, interpret_mmcif_ensemble, interpret_mmcif_ensemble_block,
     StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretOptions,
-    StructureInterpretation,
+    StructureInterpretation, StructureSampleSetInterpretation,
 };
 
 /// Number of `_atom_site` columns in a typical wwPDB entry, used to keep the
@@ -246,6 +246,22 @@ impl MmcifDocument {
     ) -> Result<StructureEnsembleInterpretation, FormatError> {
         interpret_mmcif_ensemble(self, options)
     }
+
+    /// Interprets the coordinate models that `options` selects, as
+    /// [`Self::interpret_ensemble`] does, as an unordered sample set with
+    /// one report per sample. Its distribution covers every sample in one
+    /// state and stores no weights, as the members weigh the same.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::interpret_ensemble`].
+    pub fn interpret_sample_set(
+        &self,
+        options: StructureEnsembleInterpretOptions,
+    ) -> Result<StructureSampleSetInterpretation, FormatError> {
+        self.interpret_ensemble(options)
+            .map(StructureSampleSetInterpretation::from_ensemble)
+    }
 }
 
 /// One independently interpretable CIF/mmCIF data block.
@@ -396,6 +412,21 @@ impl MmcifBlock {
         options: StructureEnsembleInterpretOptions,
     ) -> Result<StructureEnsembleInterpretation, FormatError> {
         interpret_mmcif_ensemble_block(self, options)
+    }
+
+    /// Interprets the coordinate models that `options` selects in this
+    /// block as a sample set, as
+    /// [`MmcifDocument::interpret_sample_set`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::interpret_ensemble`].
+    pub fn interpret_sample_set(
+        &self,
+        options: StructureEnsembleInterpretOptions,
+    ) -> Result<StructureSampleSetInterpretation, FormatError> {
+        self.interpret_ensemble(options)
+            .map(StructureSampleSetInterpretation::from_ensemble)
     }
 }
 

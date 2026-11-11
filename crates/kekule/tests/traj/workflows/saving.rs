@@ -690,6 +690,81 @@ fn stream_writers_write_from_the_stream_position_what_path_writers_publish() {
 }
 
 #[test]
+fn sample_sets_save_and_load_as_the_trajectories_they_convert_from() {
+    use kekule::structure::{Distribution, EnsemblePartition, Members, Order, SampleSet};
+    use kekule::traj::io::{read_sample_set, write_sample_set, write_sample_set_to};
+
+    let directory = Directory::new();
+    let source = dcd_fixture();
+    let set = SampleSet::from_trajectory(source.clone()).unwrap();
+    for format in [
+        TrajectoryFormat::Xyz,
+        TrajectoryFormat::Dcd,
+        TrajectoryFormat::Trr,
+        TrajectoryFormat::Xtc,
+    ] {
+        let frames_path = directory.file(&format!("frames.{}", format.name()));
+        let samples_path = directory.file(&format!("samples.{}", format.name()));
+        let frames = write_trajectory(&frames_path, &source, converting_options(format)).unwrap();
+        let samples = write_sample_set(&samples_path, &set, converting_options(format)).unwrap();
+        assert_eq!(samples, frames, "{format}");
+        let bytes = fs::read(&frames_path).unwrap();
+        assert_eq!(fs::read(&samples_path).unwrap(), bytes, "{format}");
+        let mut stream = io::Cursor::new(Vec::new());
+        let streamed = write_sample_set_to(&mut stream, &set, converting_options(format)).unwrap();
+        assert_eq!(streamed, frames, "{format}");
+        assert_eq!(stream.into_inner(), bytes, "{format}");
+
+        // Reading gives the sample set the read trajectory converts to: a
+        // time order and no distribution.
+        let read =
+            read_sample_set(&samples_path, source.shared_topology(), Default::default()).unwrap();
+        let expected = SampleSet::from_trajectory(
+            read_trajectory(&frames_path, source.shared_topology(), Default::default()).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(read.order(), Some(Order::Time(_))), "{format}");
+        assert_eq!(read.order(), expected.order(), "{format}");
+        assert_eq!(read.distribution(), None);
+        assert_eq!(read.len(), expected.len());
+        for (actual, expected) in read.iter().zip(expected.iter()) {
+            assert_eq!(actual.payload(), expected.payload(), "{format}");
+        }
+    }
+
+    // A distribution and a step or coordinate order have no trajectory
+    // representation; nothing is written.
+    let mut weighted = set.clone();
+    weighted
+        .set_distribution(Some(
+            Distribution::new(Members::All, EnsemblePartition::one_state(set.len())).unwrap(),
+        ))
+        .unwrap();
+    let mut stepped = set.clone();
+    stepped
+        .set_order(Some(Order::Step((0..set.len() as u64).collect())))
+        .unwrap();
+    let mut scanned = set.clone();
+    scanned
+        .set_order(Some(Order::Coordinate {
+            unit: kekule::units::ANGSTROM,
+            values: (0..set.len()).map(|index| index as f64).collect(),
+        }))
+        .unwrap();
+    for (refused, field) in [
+        (weighted, TrajectoryField::Distribution),
+        (stepped, TrajectoryField::ItemStep),
+        (scanned, TrajectoryField::ItemCoordinate),
+    ] {
+        let path = directory.file("refused.dcd");
+        let error = write_sample_set(&path, &refused, Default::default()).unwrap_err();
+        assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
+        assert_eq!(error.field(), Some(field));
+        assert!(!path.exists());
+    }
+}
+
+#[test]
 fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
     use kekule::traj::io::create_trajectory_stream_writer;
 

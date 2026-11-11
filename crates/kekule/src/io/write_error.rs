@@ -2,7 +2,10 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
 };
-use crate::structure::{Ensemble, Place, SampleContext, Series, SeriesAxis, StructureKind};
+use crate::structure::{
+    Distribution, Ensemble, Order, Place, SampleContext, SampleSet, Series, SeriesAxis,
+    StructureKind,
+};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -194,8 +197,8 @@ pub enum WriteOmission {
         /// The chains written so.
         chains: usize,
     },
-    /// Ensemble sample, trajectory frame, or series item state the format
-    /// cannot carry.
+    /// Sample set sample, ensemble sample, trajectory frame, or series item
+    /// state the format cannot carry.
     StructureState {
         /// The state left out.
         field: StructureField,
@@ -213,6 +216,25 @@ pub(crate) struct StatePolicies {
     pub(crate) frame: UnrepresentablePolicy,
     /// `None` for a format that writes an item's step or coordinate itself.
     pub(crate) item: Option<UnrepresentablePolicy>,
+    /// The policy for all state of a sample of a [`SampleSet`], in place of
+    /// the three above.
+    pub(crate) set: UnrepresentablePolicy,
+}
+
+impl StatePolicies {
+    /// The policies for a sample with `context`: the set policy for every
+    /// state the format cannot carry when the sample belongs to a set.
+    fn of(self, context: SampleContext<'_>) -> Self {
+        if !context.is_of_set() {
+            return self;
+        }
+        Self {
+            sample: self.sample.map(|_| self.set),
+            frame: self.set,
+            item: self.item.map(|_| self.set),
+            set: self.set,
+        }
+    }
 }
 
 /// The item state a series' items have that a format without series
@@ -294,8 +316,12 @@ impl Omissions {
         let StructureKind::Sample(context) = kind else {
             return;
         };
+        let policies = policies.of(context);
         let omit = Some(UnrepresentablePolicy::Omit);
         let mut fields = Vec::new();
+        if outside_distribution(context, policies) && policies.set == UnrepresentablePolicy::Omit {
+            fields.push(StructureField::Membership);
+        }
         if let Some(membership) = context.membership().filter(|_| policies.sample == omit) {
             // A lone record cannot carry a weight relative to other
             // samples, so its weight is always left out.
@@ -326,6 +352,13 @@ impl Omissions {
     }
 }
 
+/// Whether a format that writes distribution membership itself writes a
+/// sample of a set whose distribution leaves it out, which its records
+/// cannot tell from a member.
+fn outside_distribution(context: SampleContext<'_>, policies: StatePolicies) -> bool {
+    policies.sample.is_none() && context.is_outside_distribution()
+}
+
 /// The field a sample's step or coordinate place is written as, if it has
 /// one.
 fn place_field(context: SampleContext<'_>) -> Option<StructureField> {
@@ -354,8 +387,9 @@ fn frame_fields(context: SampleContext<'_>) -> impl Iterator<Item = StructureFie
 }
 
 /// Fails for sample state that `format` cannot carry, unless the caller
-/// chose to omit it: a membership, a step or coordinate place, and a time,
-/// MD step, velocities, or forces, checked in that order.
+/// chose to omit it: a membership, or for a format that writes memberships,
+/// a sample outside its set's distribution; a step or coordinate place; and
+/// a time, MD step, velocities, or forces, checked in that order.
 pub(crate) fn check_structure_state(
     format: Format,
     kind: StructureKind<'_>,
@@ -364,6 +398,7 @@ pub(crate) fn check_structure_state(
     let StructureKind::Sample(context) = kind else {
         return Ok(());
     };
+    let policies = policies.of(context);
     let fail = Some(UnrepresentablePolicy::Fail);
     let membership = context
         .membership()
@@ -375,6 +410,10 @@ pub(crate) fn check_structure_state(
             } else {
                 StructureField::Weight
             }
+        })
+        .or_else(|| {
+            (outside_distribution(context, policies) && policies.set == UnrepresentablePolicy::Fail)
+                .then_some(StructureField::Membership)
         });
     let field = membership
         .or_else(|| place_field(context).filter(|_| policies.item == fail))
@@ -475,6 +514,162 @@ pub(crate) fn record_multi_model_series(
         field,
         structures: series.len(),
     });
+    Ok(())
+}
+
+/// Records or rejects the state of `set` that a multi-model format cannot
+/// carry. Its readers give one state of equally weighted samples without an
+/// energy, properties, a temperature, or an order, the first sample
+/// representing it, so only that survives a round trip: a sample outside
+/// the distribution, unequal weights, more than one state, state energies,
+/// state properties, a lone state's representative that is not its first
+/// member, the samples' places, velocities, and forces, the temperature,
+/// and a time order without times or steps are lost.
+///
+/// With [`UnrepresentablePolicy::Fail`], returns the 1-based number of the
+/// first sample with such state and the field, checked for each sample in
+/// the order above; state properties are their representative's. The
+/// temperature and the time order are the first sample's and are checked
+/// last. With [`UnrepresentablePolicy::Omit`], records the omissions.
+pub(crate) fn record_multi_model_sample_set(
+    set: &SampleSet,
+    policy: UnrepresentablePolicy,
+    omissions: &mut Omissions,
+) -> Result<(), (usize, StructureField)> {
+    let distribution = set.distribution();
+    let contexts = (0..set.len()).map(|index| SampleContext::of_set(set, index));
+    let weight = contexts
+        .clone()
+        .find_map(|context| context.membership())
+        .map(|membership| membership.weight());
+    // The representatives of states with properties, and of a lone state
+    // when it is not the state's first member; with several states, the
+    // lost grouping includes the representatives.
+    let mut with_properties = Vec::new();
+    let mut late = Vec::new();
+    let lone = distribution.map_or(0, Distribution::state_count) == 1;
+    for state in set.states() {
+        let representative = state.representative();
+        if !state.payload().properties().is_empty() {
+            with_properties.push(representative);
+        }
+        if lone && state.samples().next() != Some(representative) {
+            late.push(representative);
+        }
+    }
+    // The state of one sample that is lost, in checking order.
+    let lost = |index: usize, context: SampleContext<'_>| {
+        let membership = context.membership();
+        let mut fields = Vec::new();
+        match membership {
+            None if distribution.is_some() => fields.push(StructureField::Membership),
+            None => {}
+            Some(membership) => {
+                if membership.state_energy().is_some() {
+                    fields.push(StructureField::Energy);
+                }
+                if Some(membership.weight()) != weight {
+                    fields.push(StructureField::Weight);
+                }
+                if membership.state() != 0 {
+                    fields.push(StructureField::State);
+                }
+                if with_properties.contains(&index) {
+                    fields.push(StructureField::StateProperties);
+                }
+                if late.contains(&index) {
+                    fields.push(StructureField::Representative);
+                }
+            }
+        }
+        fields.extend(place_field(context));
+        let (time, step) = match context.place() {
+            Some(Place::Time { time, step }) => (time.is_some(), step.is_some()),
+            _ => (false, false),
+        };
+        fields.extend(
+            [
+                (time, StructureField::Time),
+                (step, StructureField::Step),
+                (context.velocities().is_some(), StructureField::Velocities),
+                (context.forces().is_some(), StructureField::Forces),
+            ]
+            .into_iter()
+            .filter_map(|(present, field)| present.then_some(field)),
+        );
+        fields
+    };
+    let temperature = distribution.and_then(|distribution| distribution.temperature());
+    let bare_order = matches!(
+        set.order(),
+        Some(Order::Time(axis)) if axis.times().is_none() && axis.steps().is_none()
+    );
+    if policy == UnrepresentablePolicy::Fail {
+        for (index, context) in contexts.enumerate() {
+            if let Some(&field) = lost(index, context).first() {
+                return Err((index + 1, field));
+            }
+        }
+        if temperature.is_some() {
+            return Err((1, StructureField::Temperature));
+        }
+        if bare_order && !set.is_empty() {
+            return Err((1, StructureField::Order));
+        }
+        return Ok(());
+    }
+    let members = distribution.map_or(0, Distribution::member_count);
+    let unequal = contexts
+        .clone()
+        .filter_map(|context| context.membership())
+        .any(|membership| Some(membership.weight()) != weight);
+    let count = |field: StructureField| {
+        contexts
+            .clone()
+            .enumerate()
+            .filter(|(index, context)| lost(*index, *context).contains(&field))
+            .count()
+    };
+    let states = distribution.map_or(0, Distribution::state_count);
+    for (field, structures) in [
+        (StructureField::Weight, if unequal { members } else { 0 }),
+        (StructureField::Energy, count(StructureField::Energy)),
+        (StructureField::State, if states > 1 { members } else { 0 }),
+        (
+            StructureField::StateProperties,
+            count(StructureField::StateProperties),
+        ),
+        (
+            StructureField::Representative,
+            count(StructureField::Representative),
+        ),
+        (
+            StructureField::Temperature,
+            if temperature.is_some() { members } else { 0 },
+        ),
+        (
+            StructureField::Order,
+            if bare_order { set.len() } else { 0 },
+        ),
+        (
+            StructureField::Membership,
+            count(StructureField::Membership),
+        ),
+        (StructureField::Time, count(StructureField::Time)),
+        (StructureField::Step, count(StructureField::Step)),
+        (StructureField::ItemStep, count(StructureField::ItemStep)),
+        (
+            StructureField::ItemCoordinate,
+            count(StructureField::ItemCoordinate),
+        ),
+        (
+            StructureField::Velocities,
+            count(StructureField::Velocities),
+        ),
+        (StructureField::Forces, count(StructureField::Forces)),
+    ] {
+        omissions.record(WriteOmission::StructureState { field, structures });
+    }
     Ok(())
 }
 

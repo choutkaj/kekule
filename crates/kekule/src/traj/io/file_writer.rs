@@ -8,10 +8,10 @@ use std::sync::{
     Arc,
 };
 
-use crate::diagnostics::{UnrepresentablePolicy, WriteReport};
+use crate::diagnostics::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::topology::Topology;
 
-use crate::structure::{Trajectory, TrajectoryFrameView};
+use crate::structure::{ModelView, Order, SampleSet, Trajectory, TrajectoryFrameView};
 use crate::traj::{
     TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
     TrajectoryWriter,
@@ -660,6 +660,122 @@ pub fn write_trajectory_to<W: Write + Seek + ?Sized>(
     let report = writer.report().clone();
     writer.finish()?;
     Ok(report)
+}
+
+/// Writes a sample set as a trajectory file, one frame per sample in sample
+/// order, as [`write_trajectory`] writes the trajectory the set converts to:
+/// a time order gives the frames' times and steps, and each sample's
+/// positions, cell, properties, velocities, and forces are its frame's. A
+/// set without an order is written too; reading the file back gives a time
+/// order. Occupancies and B factors, which no trajectory format stores, are
+/// left out and reported.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::UnsupportedField`] for set properties,
+/// with [`TrajectoryField::Distribution`] for a distribution, which these
+/// formats cannot store and must be cleared first, and with
+/// [`TrajectoryField::ItemStep`] or [`TrajectoryField::ItemCoordinate`] for
+/// a step or coordinate order; otherwise the errors of
+/// [`write_trajectory`]. No file is published on error.
+pub fn write_sample_set(
+    path: impl AsRef<Path>,
+    set: &SampleSet,
+    options: TrajectoryWriteOptions,
+) -> Result<WriteReport, TrajectoryIoError> {
+    let path = path.as_ref();
+    resolve_format(path, options.format)?;
+    check_sample_set(set)?;
+    let mut writer = create_trajectory_writer(path, set.shared_topology(), options)?;
+    let topology = set.shared_topology();
+    for index in 0..set.len() {
+        let frame = set.frame(index);
+        writer.write_frame(
+            TrajectoryFrameView::new(&topology, &frame).expect("a sample has its set's rows"),
+        )?;
+    }
+    let report = sample_set_report(writer.report(), set);
+    writer.finish()?;
+    Ok(report)
+}
+
+/// Writes a sample set to a host's stream, as [`write_sample_set`] writes a
+/// file and [`write_trajectory_to`] writes a trajectory.
+///
+/// # Errors
+///
+/// The errors of [`write_sample_set`] and [`write_trajectory_to`]. Output
+/// before a failure has already reached `writer`.
+pub fn write_sample_set_to<W: Write + Seek + ?Sized>(
+    writer: &mut W,
+    set: &SampleSet,
+    options: TrajectoryWriteOptions,
+) -> Result<WriteReport, TrajectoryIoError> {
+    check_sample_set(set)?;
+    let topology = set.shared_topology();
+    let mut writer = create_trajectory_stream_writer(
+        writer,
+        set.shared_topology(),
+        options,
+        "trajectory stream",
+    )?;
+    for index in 0..set.len() {
+        let frame = set.frame(index);
+        writer.write_frame(
+            TrajectoryFrameView::new(&topology, &frame).expect("a sample has its set's rows"),
+        )?;
+    }
+    let report = sample_set_report(writer.report(), set);
+    writer.finish()?;
+    Ok(report)
+}
+
+/// Fails for sample set state no trajectory format stores: set properties,
+/// a distribution, and a step or coordinate order.
+fn check_sample_set(set: &SampleSet) -> Result<(), TrajectoryIoError> {
+    let field = if !set.properties().is_empty() {
+        Some(TrajectoryField::CollectionProperties)
+    } else if set.distribution().is_some() {
+        Some(TrajectoryField::Distribution)
+    } else {
+        match set.order() {
+            Some(Order::Step(_)) => Some(TrajectoryField::ItemStep),
+            Some(Order::Coordinate { .. }) => Some(TrajectoryField::ItemCoordinate),
+            _ => None,
+        }
+    };
+    field.map_or(Ok(()), |field| {
+        Err(TrajectoryIoError::unsupported_field(field))
+    })
+}
+
+/// The codec's report with the samples' occupancies and B factors, which no
+/// trajectory format stores.
+fn sample_set_report(report: &WriteReport, set: &SampleSet) -> WriteReport {
+    let count = |present: fn(ModelView<'_>) -> bool| {
+        set.iter()
+            .filter(|sample| present(sample.as_model_view()))
+            .count()
+    };
+    report
+        .omissions()
+        .iter()
+        .copied()
+        .chain([
+            WriteOmission::Occupancies {
+                structures: count(|view| {
+                    view.occupancies()
+                        .is_some_and(|values| values.iter().any(Option::is_some))
+                }),
+            },
+            WriteOmission::BFactors {
+                structures: count(|view| {
+                    view.b_factors()
+                        .is_some_and(|values| values.value().iter().any(Option::is_some))
+                }),
+            },
+        ])
+        .collect()
 }
 
 /// Creates a strict writer of the format `options` names over a host's

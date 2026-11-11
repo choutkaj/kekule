@@ -427,7 +427,10 @@ kernels across models, samples, frames, and buffers. A view's `kind()` is
 sample's place in its order, its membership (weight, state, whether it
 represents the state, the state's energy, and the temperature), and its
 velocities and forces. Views of ensemble samples, frames, and items report
-the same context, so writers and reductions never lose that state silently. Owned
+the same context, so writers and reductions never lose that state silently.
+Writers hold a sample of a sample set to one policy, `sample_metadata`, for
+all of that state, and samples of ensembles, trajectories, and series to the
+ensemble, frame, and series policies. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
 equal layouts (`same_layout`), keeping the first model's topology, and a
@@ -514,7 +517,9 @@ transactionally. A buffer hands its frame out as a one-frame trajectory, and
 takes a frame back, by moving it; the frame stays bound and validated. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
 stream writers write the same bytes into a host's `Write + Seek` stream and
-leave placing the file to the host. Codec writers append frames whole and in
+leave placing the file to the host. A sample set of a time order, or of none,
+without a distribution writes through both as the trajectory it converts to,
+and `read_sample_set` reads a file as a sample set of a time order. Codec writers append frames whole and in
 order and never rewrite one, so after a flush the stream holds a complete
 trajectory, a DCD header counting its frames, that another process can read
 while it grows. Frame state a codec cannot carry fails
@@ -717,16 +722,24 @@ same rules (`diagnostics::check_multi_model_ensemble`): an XYZ file reads
 back as one state of equally weighted samples, so anything more fails or is
 omitted with a report. It writes a series as one frame per item, whose step
 or coordinate fails or is omitted with a report as in PDB, and whose
-properties and cell follow the frame policies.
+properties and cell follow the frame policies. It writes a sample set as one
+frame per sample, with the PDB writer's rules for sample state: a sample
+outside the distribution, unequal weights, several states, energies, state
+properties, a representative that is not its state's first member, a
+temperature, a place in the order, a time order without times or steps,
+velocities, and forces fail or are omitted with a report under
+`sample_metadata`. XYZ interprets frames as a
+sample set without a distribution, since the file states none, or as an
+ensemble of one state of equal weights.
 
 | Format scope | Interpretation and projection |
 | --- | --- |
 | SMILES record | All connected components, with topology projection |
 | Molfile | One model with topology and molecule projections |
 | SDF record | Model, title, fields, and reports; each record independent |
-| CIF data block | One model or compatible coordinate models as an ensemble of one state |
-| PDB entry | One model or compatible coordinate models as an ensemble of one state |
-| XYZ file | One frame as a model, or frames of the same atoms and inferred bonds as an ensemble of one state |
+| CIF data block | One model, or compatible coordinate models as a sample set of one unweighted state or an ensemble of one state |
+| PDB entry | One model, or compatible coordinate models as a sample set of one unweighted state or an ensemble of one state |
+| XYZ file | One frame as a model, or frames of the same atoms and inferred bonds as a sample set without a distribution or an ensemble of one state |
 
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
@@ -883,8 +896,14 @@ export.
   assembles records into an ensemble, one state per record unless the records
   name their states. State and ensemble properties are not written. A series
   item's step, or its coordinate and the coordinate's unit, travel as SDF
-  data fields; a Molfile, an mmCIF block, and a PDB entry cannot carry them,
-  and PDB writes a series as one `MODEL` per item once they are omitted. A
+  data fields too. A sample of a sample set writes its membership's fields
+  and its place's, and `sdf::sample_set` assembles records into a sample set
+  whose order the steps or coordinates give. It has a distribution, the one
+  `sdf::ensemble` reads, only when a record has an ensemble field, and
+  weights only when a record has a weight. A coordinate unit travels as the
+  symbol of a unit constant, which both the writer and the reader take from
+  one table of `units`. A sample outside the distribution has no SDF field. A Molfile, an mmCIF block, and a PDB entry cannot carry a place,
+  and PDB writes a series as one `MODEL` per item once places are omitted. A
   Molfile, an SDF record, and an mmCIF block cannot carry a frame's time,
   step, velocities, or forces. A Molfile cannot carry a sample's weight or
   its state's energy. mmCIF distinguishes independent model blocks from one
@@ -939,7 +958,7 @@ export.
   labels as appended, since a label names a source's instance, not one
   of the combined model's.
 - PDB writes one entry per call, with `MODEL` records only for an
-  ensemble. It writes what its reader reads back and no more: author
+  ensemble, a series, or a sample set. It writes what its reader reads back and no more: author
   identifiers, a `TER` record after each chain's polymer, and `CONECT` for
   every bond the reader cannot derive. Standard residues covered by the
   bundled component dictionary, polymer linkage, and water are derived and
@@ -1026,10 +1045,13 @@ native persistence and must not weaken these boundaries. See
 [reconstruction regressions](crates/kekule/tests/molecule/identity.rs).
 
 Exact persistence is the `native` format module, the one owner of Kekule's
-binary encoding of molecules, topologies, models, ensembles, trajectories,
-and series. A model or ensemble may carry its structure interpretation
-reports, stored as they are, so that an application that saves structures in
-native files keeps what the source stated beyond the structure. It stores
+binary encoding of molecules, topologies, models, and sample sets. An
+ensemble, trajectory, or series is stored as the sample set it converts to.
+A model or sample set may carry its structure interpretation reports, stored
+as they are, so that an application that saves structures in native files
+keeps what the source stated beyond the structure. A sample set record may
+also keep its samples elsewhere and store only their number, with its
+topology, order, and distribution, as a `SampleSetDescription`. It stores
 each owner's authoritative state, including
 explicit or inferred class assignments and adjacency order, and reconstructs
 it only through those owners' validating paths: molecule publication,

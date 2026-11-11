@@ -1,11 +1,15 @@
 # Native serialization format
 
 Kekule's native format is the exact persistence of one canonical owner:
-a `Molecule`, `Topology`, `Model`, `Ensemble`, in-memory `Trajectory`, or
-`Series`. A `Model` or `Ensemble` may carry its structure interpretation
-reports, as a `StructureInterpretation` or
-`StructureEnsembleInterpretation`.
-Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
+a `Molecule`, `Topology`, `Model`, or `SampleSet`. A `Model` or `SampleSet`
+may carry its structure interpretation reports, as a
+`StructureInterpretation` or `StructureSampleSetInterpretation`. A sample set
+record may also store only the number of its samples, kept elsewhere, as a
+`SampleSetDescription`. An `Ensemble`, in-memory `Trajectory`, or `Series` is
+written as the sample set it converts to, and `NativeObject::into_ensemble`,
+`into_trajectory`, and `into_series` convert a decoded sample set back.
+A trajectory with a time or a step on only some frames has no sample set,
+so writing it is refused. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
 [Identity and reconstruction](../ARCHITECTURE.md#identity-and-reconstruction).
 The API lives in [`kekule::native`](../crates/kekule/src/lib.rs); the codec is
@@ -19,13 +23,14 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   insertion codes, component IDs, atom-site metadata, and child order), and
   classifications together with whether each was assigned explicitly. It also
   preserves properties at every scope with their units, molecular adjacency
-  order, positions, cells, occupancies, B factors, ensemble sample weights,
-  states (each sample's state and each state's representative), state energies
-  and owner properties, and temperature, frame time, step, velocities, and
-  forces, series axes and item steps and coordinates, and collection owner
-  properties. Interpretation reports round-trip field by field and compare
-  equal. Floating-point values are stored as their IEEE-754 bits, so
-  coordinates come back bitwise identical (`-0.0` stays `-0.0`).
+  order, positions, cells, occupancies, B factors, and a sample set's samples
+  with their velocities and forces, its order (times and steps, steps, or
+  coordinates with their unit), its distribution (members, weights, each
+  member's state, each state's representative, energy, and owner properties,
+  and the temperature), and its owner properties. Interpretation reports
+  round-trip field by field and compare equal. Floating-point values are
+  stored as their IEEE-754 bits, so coordinates come back bitwise identical
+  (`-0.0` stays `-0.0`).
 - **Identity.** Semantic IDs round-trip exactly. A decoded topology is a new
   publication and therefore gets a fresh layout identity; selections bound to
   the source topology do not bind to the decoded one.
@@ -54,7 +59,7 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 
 ## Versioning
 
-The header carries one format version, currently **4**. A reader accepts only
+The header carries one format version, currently **5**. A reader accepts only
 the versions it implements and rejects any other with
 `FormatErrorDetail::NativeVersion { found, supported }` of kind
 `DiagnosticKind::Unsupported`. Before kekule 1.0 a version may change
@@ -72,7 +77,9 @@ stored conjugated groups without one. Interpreted models and ensembles,
 kinds 7 and 8, joined version 3 in the same way: every earlier version 3 file
 still reads the same, and readers that predate them reject them as unknown
 kinds. Version 4 stores the biological assemblies of each interpretation
-report; version 3 reports had none.
+report; version 3 reports had none. Version 5 stores ensembles,
+trajectories, and series as sample sets, kinds 9 and 10, and retires kinds
+4, 5, 6, and 8; a version 5 reader reads no version 4 file.
 
 ## Layout
 
@@ -97,12 +104,15 @@ IEEE-754 bit pattern. There is no padding or alignment.
 file      := header payload trailer
 header    := magic[8] version:u32 kind:u8 flags:u8 reserved:u16
 magic     := 0x89 'K' 'E' 'K' 0x0D 0x0A 0x1A 0x0A
-kind      := 1 molecule | 2 topology | 3 model | 4 ensemble | 5 trajectory | 6 series
-           | 7 interpreted model | 8 interpreted ensemble
+kind      := 1 molecule | 2 topology | 3 model | 7 interpreted model
+           | 9 sample set | 10 interpreted sample set
 flags     := bit 0: perception stored; all other bits zero
 reserved  := 0
 trailer   := end:u32 = 0x444E_454B ("KEND") crc:u32
 ```
+
+Kinds 4, 5, 6, and 8 are retired and, like any other unlisted kind, rejected
+as unknown.
 
 `crc` is the CRC-32 (IEEE 802.3, reflected polynomial `0xEDB88320`, as used
 by zlib and PNG) of every preceding byte, header included. The decoded object
@@ -252,26 +262,31 @@ reclassification.
 ### Structures
 
 ```text
-model       := topology structure
-ensemble    := topology owner temperature:opt f64
-               sample_count:count sample[sample_count]
-               state_count:count state[state_count]
-trajectory  := topology owner frame_count:count frame[frame_count]
-series      := topology owner axis item_count:count item[item_count]
-structure   := positions cell:opt cell occupancies b_factors structure_properties
-sample      := structure weight:f64 state:u32
-state       := representative:u32 energy:opt f64 owner
-frame       := positions cell:opt cell structure_properties
-               velocities:opt vectors forces:opt vectors time:opt f64 step:opt u64
-axis        := 0 (steps) | 1 unit (a coordinate in that unit)
-item        := positions cell:opt cell structure_properties place
-place       := step:u64 (steps) | coordinate:f64 (a coordinate)
-positions   := (x:f64 y:f64 z:f64)[atom_count]
-vectors     := (x:f64 y:f64 z:f64)[atom_count]
-cell        := (x:f64 y:f64 z:f64)[3] periodic_axes:u8
-occupancies := scalars
-b_factors   := scalars
-scalars     := 0 (absent) | 1 present:bits(atom_count) f64[populated]
+model        := topology structure
+sample_set   := topology owner sample_count:count order
+                distribution:opt distribution samples
+order        := 0                                (none)
+              | 1 times:opt [f64; sample_count] steps:opt [u64; sample_count]
+                                                 (time)
+              | 2 [u64; sample_count]            (steps)
+              | 3 unit [f64; sample_count]       (a coordinate in that unit)
+distribution := members weights:opt [f64; member_count]
+                state:u32[member_count]
+                state_count:count state[state_count]
+                temperature:opt f64
+members      := 0                                (every sample)
+              | 1 member_count:count sample:u32[member_count]
+state        := representative:u32 energy:opt f64 owner
+samples      := 0 sample[sample_count]           (inline)
+              | 1                                (stored elsewhere)
+sample       := structure velocities:opt vectors forces:opt vectors
+structure    := positions cell:opt cell occupancies b_factors structure_properties
+positions    := (x:f64 y:f64 z:f64)[atom_count]
+vectors      := (x:f64 y:f64 z:f64)[atom_count]
+cell         := (x:f64 y:f64 z:f64)[3] periodic_axes:u8
+occupancies  := scalars
+b_factors    := scalars
+scalars      := 0 (absent) | 1 present:bits(atom_count) f64[populated]
 ```
 
 Values are in Kekule's canonical units: positions and cell vectors in nm,
@@ -281,23 +296,31 @@ kJ/mol, temperatures in K, and time in ps. Cell vectors are the columns a, b, c;
 the topology's atom count; structure property tables have one row per
 topology atom and bond.
 
-An ensemble's samples are stored in their stable order, each with the index of
-its state; each state stores the index of its representative sample. The
-reader validates the partition: every state index names a stored state, and
-every representative is a sample of its own state, so no state is empty.
+A sample set stores its samples in set order, after what describes them. A
+time order stores times, steps, or both, each for every sample; a step order
+a step per sample; a coordinate order a coordinate per sample in its unit,
+stored as property units are. Times and coordinates are finite. Without a
+distribution, the set states no weights or states. A distribution's members
+are every sample, or the samples that a strictly ascending list of indices
+names; `member_count` is the sample count for every sample. Weights, one per
+member, are finite and positive; without them members weigh the same. Each
+member stores the index of its state, and each state the member position of
+its representative. The reader validates the partition: every state index
+names a stored state, and every representative is a member of its own state,
+so no state is empty.
 
-A series stores its items in series order, each with its place on the
-axis: a step for an axis of steps, or a coordinate, in the axis unit, for a
-coordinate axis. The axis unit is stored as property units are, and every
-coordinate must be finite.
+The samples section is inline, or tag `1` for samples stored elsewhere: such
+a record is a `SampleSetDescription`, whose `sample_count` bounds its order
+and distribution as stored samples would. An interpreted sample set stores
+its samples inline.
 
 ### Interpretation reports
 
 An interpreted model is a model followed by its report; an interpreted
-ensemble is an ensemble followed by one report per sample, in sample order.
-Reports are stored as they are: their IDs name atoms, chains, residues, and
-molecule instances of the model they were interpreted with, and the reader
-does not resolve them.
+sample set is a sample set followed by one report per sample, in sample
+order. Reports are stored as they are: their IDs name atoms, chains,
+residues, and molecule instances of the model they were interpreted with,
+and the reader does not resolve them.
 
 Report columns use two further encodings. `packed(n)` holds `n` unsigned
 integers in the narrowest width that holds the largest, and `dict(n)` holds
@@ -439,8 +462,8 @@ rotation, `6` too many operations; `2` to `5` with a `str`), and its line
 
 `NativeReadOptions` bounds the input bytes; the atoms and bonds of one
 molecule or topology (including the instance expansion of a topology), which
-also bound atom sites and residue site lists; the samples, states, frames, or items of one
-collection, hierarchy chains and residues, property columns and owner
+also bound atom sites and residue site lists; the samples, members, and states of one
+sample set, hierarchy chains and residues, property columns and owner
 values, and the entries of report lists; and the byte length of one string.
 The atoms and bonds of one report's instance provenance count against the
 atom and bond limits. The defaults are exported as

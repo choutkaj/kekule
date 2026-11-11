@@ -5,10 +5,15 @@ use std::sync::Arc;
 use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use kekule::geometry::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Ensemble, EnsemblePartition, TrajectoryFrame};
+use kekule::structure::{
+    Distribution, Ensemble, EnsemblePartition, Members, Order, SampleSet, TimeAxis,
+    TrajectoryFrame, Velocities,
+};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
-use kekule::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE, NANOMETER};
+use kekule::units::{
+    Quantity, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND,
+};
 
 const WATERS: &str = "3
 first
@@ -400,6 +405,193 @@ fn ensemble_rules_match_the_pdb_writer() {
             state_omission(StructureField::Temperature, 3),
         ]
     );
+}
+
+/// Writes `set` and returns the text and report.
+fn write_set(
+    set: &SampleSet,
+    options: XyzWriteOptions,
+) -> Result<(String, WriteReport), TrajectoryIoError> {
+    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz")?;
+    writer.write_sample_set(set)?;
+    let report = writer.report().clone();
+    Ok((String::from_utf8(writer.finish()?).unwrap(), report))
+}
+
+/// The text and report, or the error's kind, field, and frame.
+type Outcome = Result<
+    (String, WriteReport),
+    (
+        TrajectoryIoErrorKind,
+        Option<TrajectoryField>,
+        Option<usize>,
+    ),
+>;
+
+fn outcome(result: Result<(String, WriteReport), TrajectoryIoError>) -> Outcome {
+    result.map_err(|error| (error.kind(), error.field(), error.frame()))
+}
+
+#[test]
+fn a_sample_set_writes_what_the_ensemble_it_converts_from_writes() {
+    let mut weighted = waters();
+    weighted.get_mut(2).unwrap().set_weight(3.0).unwrap();
+    let mut clustered = waters();
+    clustered
+        .regroup(EnsemblePartition::new(vec![0, 1, 1], vec![0, 1]).unwrap())
+        .unwrap();
+    clustered
+        .state_mut(1)
+        .unwrap()
+        .set_energy(Some(Quantity::new(-1.5, KILOJOULE_PER_MOLE)))
+        .unwrap();
+    clustered
+        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
+        .unwrap();
+    let mut boxed = waters();
+    boxed.get_mut(1).unwrap().set_cell(Some(cell()));
+    let mut occupied = waters();
+    occupied
+        .get_mut(0)
+        .unwrap()
+        .set_occupancies(Some(vec![Some(0.5), None, None]))
+        .unwrap();
+    let mut labelled = waters();
+    labelled
+        .get_mut(1)
+        .unwrap()
+        .properties_mut()
+        .owner_mut()
+        .insert(
+            PropertyKey::new("label").unwrap(),
+            PropertyValue::Bool(true),
+        )
+        .unwrap();
+    for (index, ensemble) in [waters(), weighted, clustered, boxed, occupied, labelled]
+        .into_iter()
+        .enumerate()
+    {
+        let set = SampleSet::from_ensemble(ensemble.clone());
+        for policy in [UnrepresentablePolicy::Fail, UnrepresentablePolicy::Omit] {
+            let old = write(
+                &ensemble,
+                options().with_ensemble_metadata(policy).with_cell(policy),
+            );
+            let new = write_set(
+                &set,
+                options().with_sample_metadata(policy).with_cell(policy),
+            );
+            assert_eq!(outcome(new), outcome(old), "ensemble {index}, {policy:?}");
+        }
+    }
+}
+
+#[test]
+fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
+    let omit = options().with_sample_metadata(UnrepresentablePolicy::Omit);
+    let assert_set_rejects = |set: &SampleSet, field: TrajectoryField, frame: usize| {
+        let mut writer =
+            XyzWriter::new(Vec::new(), set.shared_topology(), options(), "e.xyz").unwrap();
+        let error = writer.write_sample_set(set).unwrap_err();
+        assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
+        assert_eq!((error.field(), error.frame()), (Some(field), Some(frame)));
+        assert!(writer.writer().is_empty());
+    };
+    let plain = write(&waters(), options()).unwrap().0;
+
+    // A time order.
+    let mut timed = SampleSet::from_ensemble(waters());
+    timed
+        .set_order(Some(Order::Time(
+            TimeAxis::new(Some(Quantity::new(vec![0.0, 1.0, 2.0], PICOSECOND)), None).unwrap(),
+        )))
+        .unwrap();
+    assert_set_rejects(&timed, TrajectoryField::Time, 0);
+    let (text, report) = write_set(&timed, omit.clone()).unwrap();
+    assert_eq!(text, plain);
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(StructureField::Time, 3)]
+    );
+
+    // A time order without times or steps reads back unordered.
+    let mut bare = SampleSet::from_ensemble(waters());
+    bare.set_order(Some(Order::Time(TimeAxis::new(None, None).unwrap())))
+        .unwrap();
+    assert_set_rejects(&bare, TrajectoryField::Order, 0);
+    let (text, report) = write_set(&bare, omit.clone()).unwrap();
+    assert_eq!(text, plain);
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(StructureField::Order, 3)]
+    );
+
+    // A lone state represented by its second member.
+    let mut late = SampleSet::from_ensemble(waters());
+    late.set_distribution(Some(
+        Distribution::new(
+            Members::All,
+            EnsemblePartition::new(vec![0, 0, 0], vec![1]).unwrap(),
+        )
+        .unwrap(),
+    ))
+    .unwrap();
+    assert_set_rejects(&late, TrajectoryField::Representative, 1);
+    let (text, report) = write_set(&late, omit.clone()).unwrap();
+    assert_eq!(text, plain);
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(StructureField::Representative, 1)]
+    );
+
+    // Velocities on one sample.
+    let mut moving = SampleSet::from_ensemble(waters());
+    moving
+        .get_mut(1)
+        .unwrap()
+        .set_velocities(Some(
+            Velocities::from_vec(Quantity::new(
+                vec![Vector3::new(0.0, 0.0, 0.0); 3],
+                NANOMETER_PER_PICOSECOND,
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_set_rejects(&moving, TrajectoryField::Velocities, 1);
+    let (text, report) = write_set(&moving, omit.clone()).unwrap();
+    assert_eq!(text, plain);
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(StructureField::Velocities, 1)]
+    );
+
+    // A sample outside the distribution: XYZ reads every frame back as a
+    // member.
+    let mut subset = SampleSet::from_ensemble(waters());
+    subset
+        .set_distribution(Some(
+            Distribution::new(Members::Subset(vec![0, 2]), EnsemblePartition::one_state(2))
+                .unwrap(),
+        ))
+        .unwrap();
+    assert_set_rejects(&subset, TrajectoryField::Membership, 1);
+    let (text, report) = write_set(&subset, omit).unwrap();
+    assert_eq!(text, plain);
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(StructureField::Membership, 1)]
+    );
+
+    // Without a distribution, the frames read back as one state of equally
+    // weighted samples, as from an ensemble of one.
+    let mut alone = SampleSet::from_ensemble(waters());
+    alone.set_distribution(None).unwrap();
+    assert_eq!(write_set(&alone, options()).unwrap().0, plain);
+    let empty = SampleSet::new(alone.shared_topology());
+    let mut writer =
+        XyzWriter::new(Vec::new(), alone.shared_topology(), options(), "e.xyz").unwrap();
+    let error = writer.write_sample_set(&empty).unwrap_err();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
 }
 
 #[test]

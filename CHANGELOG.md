@@ -36,6 +36,44 @@ are marked **Breaking:**.
   other side cannot hold (`SampleSetError::NotConvertible`, or frames that
   record a time or step only in part), so a conversion that succeeds loses
   nothing.
+- Sample sets in formats (SeekDelta K72c). `native::read` and `write` store
+  a `SampleSet` (`NativeKind::SampleSet`) and a sample set with one report
+  per sample (`NativeKind::SampleSetInterpretation`, read as
+  `NativeObject::SampleSetInterpretation`); `NativeSource::interpreted_sample_set`
+  pairs a set with its reports. A `native::SampleSetDescription` is a sample
+  set record that stores only the number of its samples, with its topology,
+  properties, order, and distribution, for samples kept elsewhere;
+  `NativeObject::into_sample_set_description` reads it from any sample set
+  record. `pdb::PdbDocument::interpret_sample_set` and the mmCIF document's
+  and block's `interpret_sample_set` give a
+  `macromolecular::StructureSampleSetInterpretation` of one state without
+  weights and one report per sample; `sdf::sample_set` assembles records
+  into a set ordered by their steps or coordinates, with the distribution
+  `sdf::ensemble` reads only when a record has an ensemble field; `xyz::XyzDocument::interpret_sample_set` gives an
+  `xyz::XyzSampleSetInterpretation` without order or distribution; and
+  `traj::io::read_sample_set` reads a trajectory file as a set of a time
+  order. `pdb::PdbSource`, `mmcif::MmcifBlockSource`, and
+  `sdf::SdfRecordSource` take a `SampleSet` (SDF one record per sample) or a
+  `SampleView`, and `pdb::write`, `mmcif::write`, and `sdf::write` take a
+  set directly. `XyzWriter::write_sample_set` writes one frame per sample,
+  and `traj::io::write_sample_set` and `write_sample_set_to` write a set of
+  a time order or of none, without a distribution, as the trajectory it
+  converts to. The new `sample_metadata` option of the Molfile, SDF, PDB,
+  mmCIF, and XYZ writers decides what happens to the state of a sample-set
+  sample a format cannot carry, including a sample outside the
+  distribution (`StructureField::Membership`). The PDB, mmCIF, and XYZ
+  writers also refuse or report state properties, a lone state's
+  representative that is not its first member, and a time order without
+  times or steps (`StructureField::StateProperties`, `Representative`, and
+  `Order`; `TrajectoryField::Representative` and `Order`). An SDF coordinate
+  unit is the symbol of a unit constant, which the writer and the reader
+  take from one table; a set's coordinate in another unit fails to write
+  unless `sample_metadata` omits it. `PdbWriteIssue` and `MmcifWriteIssue`
+  gain `UnrepresentableSample` and `EmptySampleSet`, and `TrajectoryField`
+  gains `Membership` and `Distribution`. A converted set writes what the
+  ensemble, trajectory, or series it came from writes, and also refuses or
+  reports the state properties and representatives the ensemble writers
+  leave out.
 - Analysis of sample sets (SeekDelta K72b). `SampleSet::superpose`, `rmsd`,
   and `aligned_rmsd` act on every sample. `SampleSet::rmsf`,
   `contact_occupancy`, and `group_contact_occupancy` observe the members of
@@ -871,6 +909,19 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** native format version 5 (SeekDelta K72c). Kind 9 stores a
+  sample set and kind 10 a sample set with its reports; kinds 4, 5, 6, and 8
+  (ensemble, trajectory, series, interpreted ensemble) are retired, and
+  readers reject version 4 files. `NativeKind` and `NativeObject` lose their
+  `Ensemble`, `Trajectory`, `Series`, and `StructureEnsembleInterpretation`
+  variants and gain the sample set ones. An ensemble, in-memory trajectory,
+  or series is written as the sample set it converts to; `into_ensemble`,
+  `into_ensemble_interpretation`, `into_trajectory`, and `into_series`
+  convert a decoded sample set back and fail with
+  `FormatErrorDetail::NativeSampleSetShape` when it is no such collection,
+  and `FormatErrorDetail::NativeExternalSamples` when its samples are stored
+  elsewhere. Trajectory frames of which some state a time or step and
+  others do not no longer write natively.
 - Clustering error texts name what applies to sample sets as well as
   ensembles (SeekDelta K72b): `ClusteringError::PairFit` reads "Cannot fit
   samples 0 and 4." and `ClusteringError::MatrixMismatch` "The distance

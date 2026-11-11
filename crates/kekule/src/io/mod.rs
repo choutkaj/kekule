@@ -54,8 +54,9 @@ pub use molfile_write::{MolfileSource, MolfileWriteOptions, MolfileWriteVersion}
 pub(crate) use native::{read_native, write_native, write_native_to};
 pub use native::{
     NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
-    DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES,
-    DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+    SampleSetDescription, DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS,
+    DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES,
+    NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };
 pub(crate) use pdb_document::{parse_pdb_reader, parse_pdb_str};
 pub use pdb_document::{
@@ -71,7 +72,7 @@ pub use sdf_document::{
     SdfDataField, SdfDocument, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
     SdfRecordInterpretationReport, SdfRecords,
 };
-pub(crate) use sdf_ensemble::sdf_ensemble;
+pub(crate) use sdf_ensemble::{sdf_ensemble, sdf_sample_set};
 pub(crate) use sdf_write::{write_sdf, write_sdf_to};
 pub use sdf_write::{
     SdfRecordSource, SdfWriteOptions, SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD,
@@ -103,7 +104,7 @@ pub use structure_interpret::{
     PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource,
     SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretOptions,
     StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation, StructureInterpretationReport,
+    StructureInterpretation, StructureInterpretationReport, StructureSampleSetInterpretation,
 };
 pub use write_error::{
     check_multi_model_ensemble, UnrepresentablePolicy, UnrepresentableSampleState, WriteOmission,
@@ -114,5 +115,5 @@ pub use xyz_document::{XyzAtom, XyzDocument, XyzFrame, XyzParseOptions};
 pub use xyz_interpret::{
     XyzEnsembleInterpretOptions, XyzEnsembleInterpretation, XyzFrameSelection, XyzInferredBond,
     XyzInterpretIssue, XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport,
-    DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+    XyzSampleSetInterpretation, DEFAULT_XYZ_MAX_ATOM_CONTACTS,
 };

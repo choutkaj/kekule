@@ -10,6 +10,7 @@ use super::{
 };
 use crate::diagnostics::{counted, DiagnosticKind, Format, FormatError};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::io::StructureInterpretationReport;
 use crate::molecule::{
     AtomRadical, AxisOrientation, BondOrder, DoubleBondOrientation, ImplicitHydrogens, Molecule,
     StereoCarrier, StereoDescriptor, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
@@ -21,7 +22,9 @@ use crate::perception::{
 use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue, StructureProperties,
 };
-use crate::structure::{Ensemble, Model, Series, SeriesAxis, Trajectory};
+use crate::structure::{
+    Distribution, Ensemble, Members, Model, ModelView, Order, SampleSet, StructureKind,
+};
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
 
@@ -39,14 +42,19 @@ pub(crate) fn write_native_to<'a>(
     options: NativeWriteOptions,
 ) -> Result {
     let source = source.into();
-    if let NativeContent::InterpretedEnsemble(ensemble, reports) = source.content {
-        if reports.len() != ensemble.len() {
+    let reports = match source.content {
+        NativeContent::InterpretedSampleSet(set, reports) => Some((set.len(), reports)),
+        NativeContent::InterpretedEnsemble(ensemble, reports) => Some((ensemble.len(), reports)),
+        _ => None,
+    };
+    if let Some((samples, reports)) = reports {
+        if reports.len() != samples {
             return Err(FormatError::write(
                 Format::Native,
                 DiagnosticKind::Inconsistent,
                 format!(
-                    "The ensemble has {} and {}. Give one report per sample.",
-                    counted(ensemble.len(), "sample", "samples"),
+                    "The sample set has {} and {}. Give one report per sample.",
+                    counted(samples, "sample", "samples"),
                     counted(
                         reports.len(),
                         "interpretation report",
@@ -56,6 +64,20 @@ pub(crate) fn write_native_to<'a>(
             ));
         }
     }
+    // A trajectory's order is checked before anything reaches the sink.
+    let trajectory_order = match source.content {
+        NativeContent::Trajectory(trajectory) => {
+            Some(Order::of_trajectory(trajectory).map_err(|error| {
+                FormatError::write(
+                    Format::Native,
+                    DiagnosticKind::Inconsistent,
+                    "The trajectory's frame times do not form a time order.",
+                )
+                .with_source(error)
+            })?)
+        }
+        _ => None,
+    };
     let mut encoder = Encoder {
         sink: writer,
         buffer: Vec::with_capacity(STAGE_BYTES),
@@ -67,21 +89,66 @@ pub(crate) fn write_native_to<'a>(
         NativeContent::Molecule(molecule) => encoder.molecule(molecule)?,
         NativeContent::Topology(topology) => encoder.topology(topology)?,
         NativeContent::Model(model) => encoder.model(model)?,
-        NativeContent::Ensemble(ensemble) => encoder.ensemble(ensemble)?,
-        NativeContent::Trajectory(trajectory) => encoder.trajectory(trajectory)?,
-        NativeContent::Series(series) => encoder.series(series)?,
         NativeContent::InterpretedModel(model, report) => {
             encoder.model(model)?;
             encoder.report(report)?;
         }
+        NativeContent::SampleSet(set) => encoder.sample_set(set)?,
+        NativeContent::InterpretedSampleSet(set, reports) => {
+            encoder.sample_set(set)?;
+            encoder.reports(reports)?;
+        }
+        NativeContent::SampleSetDescription(description) => {
+            encoder.sample_set_head(SetHead {
+                topology: description.topology(),
+                properties: description.properties(),
+                sample_count: description.sample_count(),
+                order: description.order(),
+                distribution: description.distribution(),
+            })?;
+            encoder.u8(SAMPLES_EXTERNAL)?;
+        }
+        NativeContent::Ensemble(ensemble) => encoder.ensemble(ensemble)?,
         NativeContent::InterpretedEnsemble(ensemble, reports) => {
             encoder.ensemble(ensemble)?;
-            for report in reports {
-                encoder.report(report)?;
-            }
+            encoder.reports(reports)?;
+        }
+        NativeContent::Trajectory(trajectory) => {
+            encoder.sample_set_head(SetHead {
+                topology: trajectory.topology(),
+                properties: trajectory.properties(),
+                sample_count: trajectory.len(),
+                order: trajectory_order.as_ref(),
+                distribution: None,
+            })?;
+            encoder.samples(trajectory.iter().map(|frame| frame.as_model_view()))?;
+        }
+        NativeContent::Series(series) => {
+            encoder.sample_set_head(SetHead {
+                topology: series.topology(),
+                properties: series.properties(),
+                sample_count: series.len(),
+                order: Some(&Order::of_series(series)),
+                distribution: None,
+            })?;
+            encoder.samples(series.iter().map(|item| item.as_model_view()))?;
         }
     }
     encoder.finish()
+}
+
+/// The samples section's tag for samples stored in the record.
+pub(super) const SAMPLES_INLINE: u8 = 0;
+/// The samples section's tag for samples stored elsewhere.
+pub(super) const SAMPLES_EXTERNAL: u8 = 1;
+
+/// The sections of a sample set record before its samples.
+struct SetHead<'a> {
+    topology: &'a Topology,
+    properties: &'a OwnerProperties,
+    sample_count: usize,
+    order: Option<&'a Order>,
+    distribution: Option<&'a Distribution>,
 }
 
 pub(crate) fn write_native<'a>(
@@ -675,91 +742,149 @@ impl<W: Write> Encoder<'_, W> {
         self.structure_properties(model.properties())
     }
 
+    // Sample sets.
+
+    fn sample_set(&mut self, set: &SampleSet) -> Result {
+        self.sample_set_head(SetHead {
+            topology: set.topology(),
+            properties: set.properties(),
+            sample_count: set.len(),
+            order: set.order(),
+            distribution: set.distribution(),
+        })?;
+        self.samples(set.iter().map(|sample| sample.as_model_view()))
+    }
+
+    /// An ensemble as the set [`SampleSet::from_ensemble`] gives it.
     fn ensemble(&mut self, ensemble: &Ensemble) -> Result {
-        self.topology(ensemble.topology())?;
-        self.owner(ensemble.properties())?;
-        self.opt_f64(
-            ensemble
-                .temperature()
-                .map(|temperature| *temperature.value()),
-        )?;
-        self.count(ensemble.len())?;
-        for sample in ensemble.iter() {
-            let state = sample.state().index();
-            let sample = sample.payload();
-            self.points(sample.positions().values().value())?;
-            self.cell(sample.cell())?;
-            self.scalars(sample.occupancies())?;
-            self.scalars(sample.b_factors().map(|values| *values.value()))?;
-            self.structure_properties(sample.properties())?;
-            self.f64(sample.weight())?;
-            self.count(state)?;
-        }
-        self.count(ensemble.state_count())?;
-        for state in ensemble.states() {
-            self.count(state.representative())?;
-            self.opt_f64(state.energy().map(|energy| *energy.value()))?;
-            self.owner(state.properties())?;
+        self.sample_set_head(SetHead {
+            topology: ensemble.topology(),
+            properties: ensemble.properties(),
+            sample_count: ensemble.len(),
+            order: None,
+            distribution: Some(&Distribution::of_ensemble(ensemble)),
+        })?;
+        self.samples(ensemble.iter().map(|sample| sample.as_model_view()))
+    }
+
+    fn reports(&mut self, reports: &[StructureInterpretationReport]) -> Result {
+        for report in reports {
+            self.report(report)?;
         }
         Ok(())
     }
 
-    fn trajectory(&mut self, trajectory: &Trajectory) -> Result {
-        self.topology(trajectory.topology())?;
-        self.owner(trajectory.properties())?;
-        self.count(trajectory.len())?;
-        for frame in trajectory.iter() {
-            let frame = frame.payload();
-            self.points(frame.positions().values().value())?;
-            self.cell(frame.cell())?;
-            self.structure_properties(frame.properties())?;
-            match frame.velocities() {
+    fn sample_set_head(&mut self, head: SetHead<'_>) -> Result {
+        self.topology(head.topology)?;
+        self.owner(head.properties)?;
+        self.count(head.sample_count)?;
+        match head.order {
+            None => self.u8(0)?,
+            Some(Order::Time(axis)) => {
+                self.u8(1)?;
+                match axis.times() {
+                    None => self.u8(0)?,
+                    Some(times) => {
+                        self.u8(1)?;
+                        self.f64s(times.value())?;
+                    }
+                }
+                match axis.steps() {
+                    None => self.u8(0)?,
+                    Some(steps) => {
+                        self.u8(1)?;
+                        for step in steps {
+                            self.u64(*step)?;
+                        }
+                    }
+                }
+            }
+            Some(Order::Step(steps)) => {
+                self.u8(2)?;
+                for step in steps {
+                    self.u64(*step)?;
+                }
+            }
+            Some(Order::Coordinate { unit, values }) => {
+                self.u8(3)?;
+                self.unit(*unit)?;
+                self.f64s(values)?;
+            }
+        }
+        let Some(distribution) = head.distribution else {
+            return self.u8(0);
+        };
+        self.u8(1)?;
+        match distribution.members() {
+            Members::All => self.u8(0)?,
+            Members::Subset(indices) => {
+                self.u8(1)?;
+                self.count(indices.len())?;
+                for index in indices {
+                    self.count(*index)?;
+                }
+            }
+        }
+        match distribution.weights() {
+            None => self.u8(0)?,
+            Some(weights) => {
+                self.u8(1)?;
+                self.f64s(weights)?;
+            }
+        }
+        let partition = distribution.partition();
+        for state in partition.assignments() {
+            self.count(*state)?;
+        }
+        self.count(distribution.state_count())?;
+        for (index, representative) in partition.representatives().iter().enumerate() {
+            let state = distribution.state(index);
+            self.count(*representative)?;
+            self.opt_f64(state.energy().map(|energy| *energy.value()))?;
+            self.owner(state.properties())?;
+        }
+        self.opt_f64(
+            distribution
+                .temperature()
+                .map(|temperature| *temperature.value()),
+        )
+    }
+
+    /// The inline samples section: each sample's positions, cell, site
+    /// values, properties, velocities, and forces.
+    fn samples<'v>(&mut self, samples: impl Iterator<Item = ModelView<'v>>) -> Result {
+        self.u8(SAMPLES_INLINE)?;
+        for view in samples {
+            let (velocities, forces) = match view.kind() {
+                StructureKind::Sample(context) => (context.velocities(), context.forces()),
+                _ => (None, None),
+            };
+            self.points(view.positions().values().value())?;
+            self.cell(view.cell())?;
+            self.scalars(view.occupancies())?;
+            self.scalars(view.b_factors().map(|values| *values.value()))?;
+            self.structure_properties(view.properties())?;
+            match velocities {
                 None => self.u8(0)?,
                 Some(velocities) => {
                     self.u8(1)?;
                     self.vectors(velocities.values().value())?;
                 }
             }
-            match frame.forces() {
+            match forces {
                 None => self.u8(0)?,
                 Some(forces) => {
                     self.u8(1)?;
                     self.vectors(forces.values().value())?;
                 }
             }
-            self.opt_f64(frame.time().map(|time| *time.value()))?;
-            match frame.step() {
-                None => self.u8(0)?,
-                Some(step) => {
-                    self.u8(1)?;
-                    self.u64(step)?;
-                }
-            }
         }
         Ok(())
     }
 
-    fn series(&mut self, series: &Series) -> Result {
-        self.topology(series.topology())?;
-        self.owner(series.properties())?;
-        match series.axis() {
-            SeriesAxis::Step => self.u8(0)?,
-            SeriesAxis::Coordinate(unit) => {
-                self.u8(1)?;
-                self.unit(unit)?;
-            }
-        }
-        self.count(series.len())?;
-        for item in series.iter() {
-            let item = item.payload();
-            self.points(item.positions().values().value())?;
-            self.cell(item.cell())?;
-            self.structure_properties(item.properties())?;
-            match (item.step(), item.coordinate()) {
-                (Some(step), _) => self.u64(step)?,
-                (None, Some(coordinate)) => self.f64(*coordinate.value())?,
-                (None, None) => unreachable!("every series item has a step or a coordinate"),
-            }
+    fn f64s(&mut self, values: &[f64]) -> Result {
+        for value in values {
+            self.f64(*value)?;
         }
         Ok(())
     }

@@ -831,7 +831,8 @@ pub const CANONICAL_GRADIENT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_NANOMETER;
 /// Canonical force constant: kJ/(mol nm²).
 pub const CANONICAL_FORCE_CONSTANT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER;
 
-// Every named unit constant, for restoring a symbol that was stored as text.
+// Every named unit constant, for restoring a unit or a symbol that was
+// stored as text.
 const NAMED_UNITS: [Unit; 32] = [
     DIMENSIONLESS,
     METER,
@@ -866,6 +867,14 @@ const NAMED_UNITS: [Unit; 32] = [
     KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER,
     NANOMETER_PER_PICOSECOND,
 ];
+
+/// The unit constant whose symbol is `symbol`, `1` naming the dimensionless
+/// unit.
+pub(crate) fn named_unit(symbol: &str) -> Option<Unit> {
+    NAMED_UNITS
+        .into_iter()
+        .find(|unit| unit.symbol == Some(symbol))
+}
 
 /// The unit with `dimension` and `scale`, carrying `symbol` when it names a
 /// unit constant of that dimension and scale and no symbol otherwise.
