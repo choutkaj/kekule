@@ -805,3 +805,81 @@ fn samples_of_another_layout_fail_instead_of_being_processed() {
         }))
     ));
 }
+
+/// A reader of a set in memory that counts the reads of each sample and
+/// lends none.
+#[derive(Debug)]
+struct Counting {
+    set: SampleSet,
+    reads: Mutex<HashMap<usize, usize>>,
+}
+
+impl Counting {
+    fn reads(&self, index: usize) -> usize {
+        self.reads.lock().unwrap().get(&index).copied().unwrap_or(0)
+    }
+}
+
+impl SampleRead for Counting {
+    fn topology(&self) -> &Arc<Topology> {
+        SampleRead::topology(&self.set)
+    }
+
+    fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    fn order(&self) -> Option<&Order> {
+        self.set.order()
+    }
+
+    fn distribution(&self) -> Option<&Distribution> {
+        None
+    }
+
+    fn peek(&self, _index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
+        None
+    }
+
+    fn read(&self, index: usize) -> Result<Sample, SampleReadError> {
+        *self.reads.lock().unwrap().entry(index).or_default() += 1;
+        self.set.read(index)
+    }
+}
+
+#[test]
+fn the_reader_lends_sample_0_it_processed_on_construction() {
+    let trajectory = source();
+    let first = atoms(&trajectory, &[0, 1, 2]);
+    let steps = ProcessingSteps::default()
+        .with_wrap(first.clone())
+        .with_center(first.clone())
+        .with_fit(
+            first,
+            FitReference::Positions(trajectory.get(3).unwrap().payload().positions().clone()),
+        )
+        .with_smoothing(3)
+        .unwrap()
+        .with_subset(atoms(&trajectory, &[0, 1, 2, 3]));
+    let counting = Counting {
+        set: set_of(&trajectory),
+        reads: Mutex::new(HashMap::new()),
+    };
+    let processed = Processed::new(&counting, steps.clone()).unwrap();
+    let expected = Processed::new(set_of(&trajectory), steps).unwrap();
+    let reads = counting.reads(0);
+    assert!(reads > 0);
+
+    let lent = processed.peek(0).unwrap();
+    assert_eq!(lent.index(), 0);
+    assert_eq!(lent.payload(), &expected.read(0).unwrap());
+    let read = processed.read(0).unwrap();
+    assert!(read.shares_structure_with(lent.payload()));
+    assert_eq!(counting.reads(0), reads);
+    assert!(processed.peek(1).is_none());
+    assert_eq!(processed.read(1).unwrap(), expected.read(1).unwrap());
+
+    let empty = SampleSet::new(trajectory.shared_topology());
+    let processed = Processed::new(&empty, ProcessingSteps::default().with_whole(true)).unwrap();
+    assert!(processed.peek(0).is_none());
+}

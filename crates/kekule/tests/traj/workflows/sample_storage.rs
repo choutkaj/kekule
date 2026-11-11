@@ -453,9 +453,10 @@ fn a_failed_read_leaves_the_reader_reading() {
 
     let failed = set.read(3).unwrap_err();
     assert!(
-        matches!(failed, SampleReadError::Trajectory(_)),
+        matches!(failed, SampleReadError::Trajectory { sample: 3, .. }),
         "{failed:?}"
     );
+    assert_eq!(failed.to_string(), "Cannot read sample 3.");
     // The same reader, back in the pool, reads the other frames.
     for index in [2, 4, 0, 5, 1] {
         assert_frame(&set, index, &set.read(index).unwrap(), &frames[index]);
@@ -490,9 +491,14 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
             .map(|index| set.read(index).unwrap_err())
             .collect::<Vec<_>>();
         for (index, error) in (first_lost..).zip(&lost) {
-            let SampleReadError::Trajectory(error) = error else {
+            let SampleReadError::Trajectory {
+                sample,
+                source: error,
+            } = error
+            else {
                 panic!("frame {index}: {error:?}");
             };
+            assert_eq!(*sample, index);
             assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
             assert_eq!(error.frame(), Some(index));
             let detail = error.detail().unwrap();
@@ -902,4 +908,69 @@ fn a_dcd_with_fixed_atoms_reads_whole_frames_through_a_set() {
             "sample {index}"
         );
     }
+}
+
+/// A set made from a reader already open reads as one opened from the path,
+/// and a snapshot keeps its samples and its file while the set follows the
+/// file.
+#[test]
+fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let head = Trajectory::from_items(
+        Arc::clone(&topology),
+        all.iter().take(3).map(|frame| frame.payload().clone()),
+    )
+    .unwrap();
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    write_trajectory(&path, &head, options.clone()).unwrap();
+
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let reader = open_indexed_trajectory(&path, Arc::clone(&topology), growing.clone()).unwrap();
+    let mut set = reader.into_sample_set();
+    let opened = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    assert_eq!(set.len(), 3);
+    assert_eq!(set.order(), opened.order());
+    for index in 0..3 {
+        assert_eq!(set.read(index).unwrap(), opened.read(index).unwrap());
+    }
+    let distribution = Distribution::new(Members::All, EnsemblePartition::one_state(3)).unwrap();
+    set.set_distribution(Some(distribution)).unwrap();
+    let expected = (0..3)
+        .map(|index| set.read(index).unwrap())
+        .collect::<Vec<_>>();
+
+    let mut snapshot = set.snapshot().unwrap();
+    assert_eq!(snapshot.order(), set.order());
+    assert_eq!(snapshot.distribution(), set.distribution());
+    let (mut writer, _) =
+        append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
+    for frame in all.iter().skip(3) {
+        writer.write_frame(frame).unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(set.refresh().unwrap(), 3);
+    assert_eq!(set.len(), 6);
+    assert_eq!(snapshot.len(), 3);
+    assert_eq!(snapshot.storage().frame_index().frame_count(), 3);
+    assert_eq!(snapshot.distribution().unwrap().members(), &Members::All);
+
+    // Another file at the path: the snapshot reads the file it shares.
+    let other = directory.0.join("other.xtc");
+    write_trajectory(
+        &other,
+        &shifted(&head, 0.5),
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc),
+    )
+    .unwrap();
+    fs::rename(&other, &path).unwrap();
+    for (index, sample) in expected.iter().enumerate() {
+        assert_eq!(&snapshot.read(index).unwrap(), sample, "sample {index}");
+    }
+    // Refreshed, the snapshot follows the path on its own.
+    let refused = snapshot.refresh().unwrap_err();
+    assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+    assert_eq!(snapshot.len(), 3);
 }

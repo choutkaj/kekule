@@ -536,7 +536,10 @@ impl<R: BufRead> XyzReader<R> {
             operation,
         )?;
 
+        // The indexed reader hands the buffer over, so the next read
+        // allocates its own on the thread that reads.
         self.positions.clear();
+        self.positions.reserve_exact(atom_count);
         for atom_index in 0..atom_count {
             let atom_id = self.topology().atom_ids()[atom_index];
             let expected_element = self
@@ -930,13 +933,14 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
 
     /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
     /// does and hands over its positions, written once as they were parsed.
+    /// The read allocates them on the calling thread and the reader keeps
+    /// no buffer for its next read, which may run on another.
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
         self.read_indexed(index)?;
-        let atoms = self.reader.positions.len();
-        let positions = std::mem::replace(&mut self.reader.positions, Vec::with_capacity(atoms));
+        let positions = std::mem::take(&mut self.reader.positions);
         Ok(DecodedSample {
             positions: Quantity::new(positions, self.reader.options.length_unit),
             cell: None,

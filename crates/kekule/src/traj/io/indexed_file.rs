@@ -55,9 +55,15 @@ use super::{
 /// [`read_sample_set`](super::read_sample_set) gives them.
 ///
 /// Open one with [`open_indexed_sample_set`] or
-/// [`open_indexed_sample_set_from_index`], follow a growing file with
-/// [`SampleSet::refresh`], and load samples into memory with
-/// [`SampleSet::load`].
+/// [`open_indexed_sample_set_from_index`], or make one from a reader already
+/// open with [`IndexedFileTrajectoryReader::into_sample_set`]. Follow a
+/// growing file with [`SampleSet::refresh`], take a set of the samples
+/// indexed so far with [`SampleSet::snapshot`], and load samples into memory
+/// with [`SampleSet::load`].
+///
+/// A read allocates the sample's arrays on the thread that reads it, and
+/// the pool's readers keep none for their next read, so that the arrays are
+/// allocated and freed on one thread wherever the readers move.
 ///
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
 pub struct IndexedFile {
@@ -164,8 +170,7 @@ pub fn open_indexed_sample_set(
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
 ) -> Result<SampleSet<IndexedFile>, TrajectoryIoError> {
-    let reader = open_indexed_trajectory(path, topology, options)?;
-    Ok(sample_set(reader))
+    Ok(open_indexed_trajectory(path, topology, options)?.into_sample_set())
 }
 
 /// Opens a trajectory file as a [`SampleSet`] over its frames from a frame
@@ -183,19 +188,39 @@ pub fn open_indexed_sample_set_from_index(
     index: TrajectoryFrameIndex,
     options: TrajectoryOpenOptions,
 ) -> Result<SampleSet<IndexedFile>, TrajectoryIoError> {
-    let reader = open_indexed_trajectory_from_index(path, topology, index, options)?;
-    Ok(sample_set(reader))
+    Ok(open_indexed_trajectory_from_index(path, topology, index, options)?.into_sample_set())
 }
 
-/// The set over `reader`'s frames.
-fn sample_set(reader: IndexedFileTrajectoryReader) -> SampleSet<IndexedFile> {
-    let topology = reader.shared_topology();
-    let order = time_order(&reader.to_frame_index());
-    let storage = IndexedFile {
-        reader,
-        idle: Mutex::new(Vec::new()),
-    };
-    SampleSet::from_storage(topology, storage, Some(order), None)
+impl IndexedFileTrajectoryReader {
+    /// A [`SampleSet`] over the reader's indexed frames, as
+    /// [`open_indexed_sample_set`] opens it, without opening or scanning the
+    /// file again: for a host that opened the reader itself, such as to show
+    /// the scan's progress or to follow a file still being written.
+    ///
+    /// The set reads the file object the reader opened. The reader's
+    /// sequential position does not matter, since the set reads by index.
+    ///
+    /// ```no_run
+    /// use kekule::structure::SampleRead;
+    /// use kekule::traj::io::{open_indexed_trajectory, TrajectoryOpenOptions};
+    ///
+    /// let topology = kekule::smiles::to_topology("CC")?;
+    /// let options = TrajectoryOpenOptions::default().with_growing(true);
+    /// let reader = open_indexed_trajectory("run.xtc", topology, options)?;
+    /// println!("{} bytes still being written", reader.pending_byte_count());
+    /// let set = reader.into_sample_set();
+    /// let sample = set.read(0)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn into_sample_set(self) -> SampleSet<IndexedFile> {
+        let topology = self.shared_topology();
+        let order = time_order(&self.to_frame_index());
+        let storage = IndexedFile {
+            reader: self,
+            idle: Mutex::new(Vec::new()),
+        };
+        SampleSet::from_storage(topology, storage, Some(order), None)
+    }
 }
 
 /// The time order of an index's frames.
@@ -270,6 +295,45 @@ impl SampleSet<IndexedFile> {
         Ok(count - previous)
     }
 
+    /// A set of the samples indexed now, which reads the file object this
+    /// set reads and shares its frame index, without opening the file
+    /// again. The set properties, the order, and the distribution are kept.
+    ///
+    /// The snapshot keeps its samples while this set follows the file:
+    /// refreshing either adds frames to it alone. A host hands the snapshot
+    /// to an analysis and refreshes this set meanwhile.
+    ///
+    /// ```no_run
+    /// use kekule::structure::SampleRead;
+    /// use kekule::traj::io::{open_indexed_sample_set, TrajectoryOpenOptions};
+    ///
+    /// let topology = kekule::smiles::to_topology("CC")?;
+    /// let options = TrajectoryOpenOptions::default().with_growing(true);
+    /// let mut set = open_indexed_sample_set("run.xtc", topology, options)?;
+    /// let snapshot = set.snapshot()?;
+    /// set.refresh()?;
+    /// assert!(snapshot.len() <= set.len());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The snapshot reads the start of the file, as every reader of the
+    /// pool does: [`TrajectoryIoErrorKind::Io`] when it cannot be read,
+    /// the header errors of [`open_indexed_trajectory`], and
+    /// [`TrajectoryIoErrorKind::IndexMismatch`] when the first frame is no
+    /// longer where the index places it.
+    ///
+    /// [`TrajectoryIoErrorKind::Io`]: crate::traj::TrajectoryIoErrorKind::Io
+    /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
+    pub fn snapshot(&self) -> Result<Self, TrajectoryIoError> {
+        let storage = IndexedFile {
+            reader: self.storage().reader.fork()?,
+            idle: Mutex::new(Vec::new()),
+        };
+        Ok(self.with_storage(storage))
+    }
+
     /// Reads the samples `indices` into a set in memory, in the requested
     /// order: each with its order value, and the distribution restricted to
     /// them, as [`SampleSet::select`] restricts it. Ranges and strides can be
@@ -320,6 +384,11 @@ impl SampleRead for SampleSet<IndexedFile> {
         if index >= len {
             return Err(SampleReadError::IndexOutOfRange { index, len });
         }
-        Ok(self.storage().read(index)?)
+        self.storage()
+            .read(index)
+            .map_err(|source| SampleReadError::Trajectory {
+                sample: index,
+                source,
+            })
     }
 }

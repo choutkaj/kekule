@@ -1056,8 +1056,11 @@ impl<R: Read + Seek> XtcReader<R> {
         }
         self.adapter
             .decode(&info, &self.options.source_label, self.frame_cursor)?;
-        // Written once, into a buffer the indexed reader may hand over.
+        // Written once. The indexed reader hands the buffer over, so the
+        // next read allocates its own on the thread that reads.
         self.positions.clear();
+        self.positions
+            .reserve_exact(self.adapter.decoded_positions.len() / 3);
         self.positions.extend(
             self.adapter
                 .decoded_positions
@@ -1344,14 +1347,14 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
 
     /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
     /// does and hands over its positions, written once as they were
-    /// decoded.
+    /// decoded. The read allocates them on the calling thread and the
+    /// reader keeps no buffer for its next read, which may run on another.
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
         let info = self.read_indexed(index)?;
-        let atoms = self.inner.positions.len();
-        let positions = std::mem::replace(&mut self.inner.positions, Vec::with_capacity(atoms));
+        let positions = std::mem::take(&mut self.inner.positions);
         Ok(DecodedSample {
             positions: Quantity::new(positions, NANOMETER),
             cell: info.cell,

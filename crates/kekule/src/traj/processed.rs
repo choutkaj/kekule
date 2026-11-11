@@ -323,9 +323,11 @@ impl From<SampleReadError> for ProcessingError {
 ///
 /// Reading sample `i` reads sample `i` of the reader below, and with
 /// smoothing the samples of its window, and runs the steps on them in the
-/// order [`ProcessingSteps`] gives; nothing is kept, so a host caches
-/// samples in front of this reader when it reads them again. The order and
-/// the distribution are those of the reader below.
+/// order [`ProcessingSteps`] gives. Only sample 0 is kept: [`Self::new`]
+/// processes it, and [`SampleRead::peek`] lends it, so a host's cache in
+/// front of this reader takes it without processing it again. A host
+/// caches the other samples in front of this reader when it reads them
+/// again. The order and the distribution are those of the reader below.
 ///
 /// The steps change the sample they read in place. A sample the reader
 /// below owns alone, as a set in a file returns it, is not copied by
@@ -385,12 +387,15 @@ pub struct Processed<R> {
     reference: Option<Model>,
     /// The dense atom and bond rows the subset keeps.
     subset: Option<(Vec<usize>, Vec<usize>)>,
+    /// Processed sample 0, when there is one.
+    first: Option<Sample>,
 }
 
 impl<R: SampleRead> Processed<R> {
     /// The samples of `inner` processed by `steps`. The steps are checked
     /// against the reader's topology, the reference made, and sample 0
     /// processed, so steps that cannot process the samples fail here.
+    /// Sample 0 is kept and lent.
     ///
     /// # Errors
     ///
@@ -441,13 +446,14 @@ impl<R: SampleRead> Processed<R> {
             rest: OnceLock::new(),
             reference: None,
             subset,
+            first: None,
         };
 
         if let Some((_, reference)) = &processed.steps.fit {
             processed.reference = Some(processed.reference_model(reference)?);
         }
         if !processed.inner.is_empty() {
-            processed.read(0)?;
+            processed.first = Some(processed.processed(0)?);
         }
         Ok(processed)
     }
@@ -607,6 +613,15 @@ impl<R: SampleRead> Processed<R> {
         Ok(center)
     }
 
+    /// Sample `index` read from the reader below and processed.
+    fn processed(&self, index: usize) -> Result<Sample, SampleReadError> {
+        let sample = match self.steps.smoothing {
+            Some(window) => self.smoothed(index, window / 2)?,
+            None => self.stepped(index)?,
+        };
+        self.finish(index, sample)
+    }
+
     /// Projects sample `index` onto the subset.
     fn finish(&self, index: usize, sample: Sample) -> Result<Sample, SampleReadError> {
         match &self.subset {
@@ -640,16 +655,21 @@ impl<R: SampleRead> SampleRead for Processed<R> {
         self.inner.distribution()
     }
 
-    fn peek(&self, _index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
-        None
+    /// Sample 0, which the reader keeps; `None` for every other sample.
+    fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
+        match (index, &self.first) {
+            (0, Some(first)) => Some(SampleView::of_reader(self, 0, first)),
+            _ => None,
+        }
     }
 
+    /// Sample `index`, processed. Sample 0 is a clone of the kept sample,
+    /// which shares its storage.
     fn read(&self, index: usize) -> Result<Sample, SampleReadError> {
-        let sample = match self.steps.smoothing {
-            Some(window) => self.smoothed(index, window / 2)?,
-            None => self.stepped(index)?,
-        };
-        self.finish(index, sample)
+        match (index, &self.first) {
+            (0, Some(first)) => Ok(first.clone()),
+            _ => self.processed(index),
+        }
     }
 }
 

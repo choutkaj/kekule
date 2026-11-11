@@ -979,15 +979,16 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
 
     /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
     /// does and hands over its positions, velocities, and forces, each
-    /// written once as it was decoded.
+    /// written once as it was decoded. The read allocates them on the
+    /// calling thread and the reader keeps no buffer for its next read,
+    /// which may run on another.
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
         let decoded = self.read_indexed(index)?;
-        let atoms = self.inner.positions.len();
-        let take = |values: &mut Vec<Vector3>| std::mem::replace(values, Vec::with_capacity(atoms));
-        let positions = std::mem::replace(&mut self.inner.positions, Vec::with_capacity(atoms));
+        let take = std::mem::take::<Vec<Vector3>>;
+        let positions = std::mem::take(&mut self.inner.positions);
         Ok(DecodedSample {
             positions: Quantity::new(positions, NANOMETER),
             cell: decoded.cell,
@@ -2138,6 +2139,9 @@ fn decode_triplets_into<T>(
     field: &str,
 ) -> Result<(), TrajectoryIoError> {
     destination.clear();
+    // The indexed reader hands the buffers over, so the next read
+    // allocates its own on the thread that reads.
+    destination.reserve_exact(raw.len() / (3 * precision.bytes()));
     for values in raw.chunks_exact(3 * precision.bytes()) {
         let x = scalar_at(values, 0, precision);
         let y = scalar_at(values, 1, precision);

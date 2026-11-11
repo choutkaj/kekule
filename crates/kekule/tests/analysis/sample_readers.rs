@@ -434,3 +434,27 @@ fn pairwise_fitted_rmsd_over_processed_samples_runs_from_several_threads() {
         }
     });
 }
+
+#[test]
+fn a_reduction_over_a_cut_file_names_the_sample_it_cannot_read() {
+    let (scratch, file, _memory) = file_and_memory("cut");
+    let starts = file.storage().frame_index().frame_offsets().to_vec();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(scratch.0.join("run.trr"))
+        .unwrap()
+        .set_len(starts[7] + 4)
+        .unwrap();
+    let atoms = AtomSelection::all(file.shared_topology());
+    let observations = SampleObservations::all(&file);
+    let mut accumulator = RmsfAccumulator::new(&atoms).unwrap();
+    let error = accumulator
+        .observe_samples_cancellable(&file, &observations, 0..10, &Cancellation::new(|| false))
+        .unwrap_err();
+    let StatisticsError::Read(SampleReadError::Trajectory { sample, source }) = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(*sample, 7);
+    assert_eq!(source.frame(), Some(7));
+    assert_eq!(error.to_string(), "Cannot read sample 7.");
+}

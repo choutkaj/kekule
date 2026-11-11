@@ -943,9 +943,11 @@ impl<R: Read + Seek> DcdReader<R> {
         }
 
         let coordinate_indices = if self.frame_cursor == 0 || self.header.fixed_count == 0 {
-            // The first record writes every atom once, into a buffer the
-            // indexed reader may hand over.
+            // The first record writes every atom once. The indexed reader
+            // hands the buffer over, so the next read allocates its own on
+            // the thread that reads.
             self.positions.clear();
+            self.positions.reserve_exact(self.header.atom_count);
             None
         } else {
             // A prior random read may have overwritten the shared position
@@ -1423,14 +1425,15 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
     /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
     /// does and hands over its positions. Without fixed atoms they are
     /// written once as they are decoded; with them, a frame after the first
-    /// fills a fresh buffer with the fixed atoms first.
+    /// fills a fresh buffer with the fixed atoms first. The read allocates
+    /// them on the calling thread and the reader keeps no buffer for its
+    /// next read, which may run on another.
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
         let decoded = self.read_indexed(index)?;
-        let atoms = self.inner.positions.len();
-        let positions = std::mem::replace(&mut self.inner.positions, Vec::with_capacity(atoms));
+        let positions = std::mem::take(&mut self.inner.positions);
         Ok(DecodedSample {
             positions: Quantity::new(positions, ANGSTROM),
             cell: decoded.cell,
