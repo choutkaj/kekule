@@ -337,6 +337,47 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     );
 }
 
+/// Reads on many threads open readers of the grown file, which index more
+/// frames than the set holds; a refresh still takes every appended frame.
+#[test]
+fn refresh_counts_from_the_set_after_concurrent_reads() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 24);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let head = Trajectory::from_items(
+        Arc::clone(&topology),
+        all.iter().take(2).map(|frame| frame.payload().clone()),
+    )
+    .unwrap();
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    write_trajectory(&path, &head, options.clone()).unwrap();
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let (mut writer, _) =
+        append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(2), options).unwrap();
+    for (count, frame) in all.iter().enumerate().skip(2) {
+        writer.write_frame(frame).unwrap();
+        writer.flush().unwrap();
+        let barrier = std::sync::Barrier::new(8);
+        thread::scope(|scope| {
+            for _ in 0..8 {
+                let (set, barrier) = (&set, &barrier);
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..4 {
+                        set.read(0).unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(set.refresh().unwrap(), 1, "frame {count}");
+        assert_eq!(set.len(), count + 1);
+        assert_eq!(set.refresh().unwrap(), 0);
+    }
+    writer.finish().unwrap();
+}
+
 #[test]
 fn a_failed_refresh_changes_nothing() {
     let (fixture, topology) = fixtures()[3].clone();

@@ -225,18 +225,19 @@ impl SampleSet<IndexedFile> {
         let topology = self.shared_topology();
         let storage = self.storage();
         let mut reader = storage.take(&topology)?;
-        let added = match reader.refresh() {
-            Ok(added) => added,
-            Err(error) => {
-                storage.give_back(reader);
-                return Err(error);
-            }
-        };
-        if added == 0 {
+        if let Err(error) = reader.refresh() {
+            storage.give_back(reader);
+            return Err(error);
+        }
+        // A reader the pool opened after the file grew indexed more frames
+        // than the set holds, so the new samples are counted from the set.
+        let previous = self.len();
+        let count = reader.frame_count().unwrap_or(previous);
+        if count <= previous {
             storage.give_back(reader);
             return Ok(0);
         }
-        let previous = self.len();
+        let added = count - previous;
         let index = reader.to_frame_index();
         let order = time_order(&index);
         let storage = self.storage_mut();
