@@ -28,12 +28,28 @@ use super::{
 ///
 /// Every reader reads the file object the set opened and shares the set's
 /// frame index, so opening one reads the start of the file alone and a read
-/// gives the same sample whichever reader serves it. A file truncated
-/// while the set is open fails every read of the frames it no longer holds
-/// with one error, [`TrajectoryIoErrorKind::IndexMismatch`] naming the
-/// frame; the frames before them read as before. A file replaced at its
-/// path keeps reading as it was opened. [`SampleSet::refresh`] of either
-/// fails, and opening the file again is the way back.
+/// gives the same sample whichever reader serves it. The readers share one
+/// file handle. On Windows, reads of one handle run one after another, so
+/// reads from several threads take turns reading the file and decode at
+/// once.
+///
+/// A read decodes whatever bytes the file holds at the indexed offsets;
+/// kekule does not watch the file.
+/// - A file truncated while the set is open fails every read of the frames
+///   it no longer holds with one error,
+///   [`TrajectoryIoErrorKind::IndexMismatch`] naming the frame. The frames
+///   before them read as before.
+/// - Bytes rewritten in place are read as they now are. A rewritten frame
+///   of the same size reads without error, until [`SampleSet::refresh`]
+///   finds that the indexed bytes changed and fails.
+/// - A file replaced at its path keeps reading through the open file. A
+///   refresh opens the path again. When the new file begins with the
+///   indexed bytes, the refresh takes it, and every reader reads it from
+///   then on. Otherwise the refresh fails.
+///
+/// After a failed refresh, opening the file again is the way back. A host
+/// that must know of changes between refreshes compares
+/// [`Self::fingerprint`] with [`TrajectoryFileFingerprint::is_prefix_of_path`].
 ///
 /// The order is a time order of the index's times and steps, as
 /// [`read_sample_set`](super::read_sample_set) gives them.
@@ -71,6 +87,9 @@ impl IndexedFile {
     /// set's offsets. A host keeps it with [`TrajectoryFrameIndex::to_bytes`]
     /// and opens the file again from it without scanning
     /// ([`open_indexed_sample_set_from_index`]).
+    ///
+    /// While a host keeps the index, each [`SampleSet::refresh`] that adds
+    /// frames copies the offsets, so the host's index stays as it was.
     pub fn frame_index(&self) -> TrajectoryFrameIndex {
         self.reader.to_frame_index()
     }

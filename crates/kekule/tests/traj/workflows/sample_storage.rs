@@ -9,14 +9,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::diagnostics::UnrepresentablePolicy;
+use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::native::SampleSetDescription;
 use kekule::structure::{
     Distribution, EnsemblePartition, Members, Order, Positions, Sample, SampleRead,
     SampleReadError, SampleSet, Trajectory, TrajectoryFrame,
 };
 use kekule::topology::{AtomSelection, Topology};
+use kekule::traj::io::dcd::{DcdCellPolicy, DcdEndian, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
+use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
     append_trajectory, open_indexed_sample_set, open_indexed_sample_set_from_index,
     open_indexed_trajectory, read_sample_set, write_trajectory, IndexedFile, KeepFrames,
@@ -28,7 +31,7 @@ use kekule::traj::{
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
-use crate::support::{linear_carbon_topology, topology};
+use crate::support::{fixed_atom_fixture, linear_carbon_topology, topology};
 
 /// The externally supplied fixture of every format with its topology.
 fn fixtures() -> [(PathBuf, Arc<Topology>); 4] {
@@ -695,4 +698,208 @@ fn a_set_in_memory_lends_what_a_file_reads() {
             .shares_structure_with(&memory_sample));
     }
     assert_eq!(readers[0].order(), readers[1].order());
+}
+
+/// `trajectory` with every atom moved by `dx` nanometres along x.
+fn shifted(trajectory: &Trajectory, dx: f64) -> Trajectory {
+    let mut shifted = trajectory.clone();
+    let transform = RigidTransform::new(
+        Matrix3::identity(),
+        Quantity::new(Vector3::new(dx, 0.0, 0.0), NANOMETER),
+    )
+    .unwrap();
+    for index in 0..shifted.len() {
+        shifted
+            .get_mut(index)
+            .unwrap()
+            .apply_rigid_transform(&transform)
+            .unwrap();
+    }
+    shifted
+}
+
+/// The set reads whatever bytes the file holds at the indexed offsets: a
+/// frame rewritten in place at the same size reads as it now is, until a
+/// refresh finds the indexed bytes changed.
+#[test]
+fn a_frame_rewritten_in_place_reads_as_it_now_is() {
+    let topology = linear_carbon_topology(12);
+    let directory = Directory::new();
+    let path = chain_trr(&directory, &topology, 6);
+    let other = directory.0.join("other.trr");
+    write_trajectory(&other, &shifted(&chain(&topology, 6), 0.05), trr_options()).unwrap();
+    let rewritten = indexed_frames(&other, &topology);
+    let mut set =
+        open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let before = (0..set.len())
+        .map(|index| set.read(index).unwrap())
+        .collect::<Vec<_>>();
+    read_at_once(&set, 4);
+
+    // Frame 2 of the other file, at the same offsets.
+    let starts = set.storage().frame_index().frame_offsets().to_vec();
+    let bytes = fs::read(&other).unwrap();
+    let frame = &bytes[starts[2] as usize..starts[3] as usize];
+    let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+    file.seek(SeekFrom::Start(starts[2])).unwrap();
+    file.write_all(frame).unwrap();
+    drop(file);
+
+    for reads in read_at_once(&set, 8) {
+        for (index, read) in reads.into_iter().enumerate() {
+            let sample = read.unwrap();
+            if index == 2 {
+                assert_frame(&set, index, &sample, &rewritten[index]);
+                assert_ne!(sample, before[index]);
+            } else {
+                assert_eq!(sample, before[index], "frame {index}");
+            }
+        }
+    }
+    let refused = set.refresh().unwrap_err();
+    assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+    assert!(refused.detail().unwrap().ends_with("Open the file again."));
+}
+
+/// A file replaced by one that begins with the indexed frames is taken by
+/// the next refresh, and every reader reads the new file.
+#[test]
+fn refresh_takes_a_replacement_that_begins_with_the_indexed_frames() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let frames = all
+        .iter()
+        .map(|frame| frame.payload().clone())
+        .collect::<Vec<_>>();
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    let head = Trajectory::from_items(Arc::clone(&topology), frames[..3].iter().cloned()).unwrap();
+    write_trajectory(&path, &head, options.clone()).unwrap();
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    read_at_once(&set, 4);
+
+    let other = directory.0.join("other.xtc");
+    write_trajectory(&other, &all, options).unwrap();
+    assert!(fs::read(&other)
+        .unwrap()
+        .starts_with(&fs::read(&path).unwrap()));
+    fs::rename(&other, &path).unwrap();
+
+    assert_eq!(set.refresh().unwrap(), 3);
+    let written = indexed_frames(&path, &topology);
+    for reads in read_at_once(&set, 8) {
+        for (index, read) in reads.into_iter().enumerate() {
+            assert_frame(&set, index, &read.unwrap(), &written[index]);
+        }
+    }
+}
+
+/// Write options keeping what each format holds of [`chain`].
+fn growing_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
+    TrajectoryWriteOptions::new(format)
+        .with_dcd_options(
+            DcdWriteOptions::default()
+                .with_cell_policy(DcdCellPolicy::Write)
+                .with_step_sequence(0, 10)
+                .with_frame_metadata(UnrepresentablePolicy::Omit),
+        )
+        .with_xyz_options(
+            XyzWriteOptions::default()
+                .with_cell(UnrepresentablePolicy::Omit)
+                .with_frame_metadata(UnrepresentablePolicy::Omit),
+        )
+}
+
+#[test]
+fn xyz_and_dcd_sets_take_appended_frames_on_refresh() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let frames = all
+        .iter()
+        .map(|frame| frame.payload().clone())
+        .collect::<Vec<_>>();
+    for (format, name) in [
+        (TrajectoryFormat::Xyz, "run.xyz"),
+        (TrajectoryFormat::Dcd, "run.dcd"),
+    ] {
+        let directory = Directory::new();
+        let path = directory.0.join(name);
+        let options = growing_options(format);
+        let head =
+            Trajectory::from_items(Arc::clone(&topology), frames[..3].iter().cloned()).unwrap();
+        write_trajectory(&path, &head, options.clone()).unwrap();
+        let growing = TrajectoryOpenOptions::default().with_growing(true);
+        let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+        assert_eq!(set.len(), 3, "{format}");
+        let before = read_at_once(&set, 4).remove(0);
+
+        let (mut writer, _) =
+            append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
+        for frame in all.iter().skip(3).take(2) {
+            writer.write_frame(frame).unwrap();
+        }
+        writer.flush().unwrap();
+        assert_eq!(set.refresh().unwrap(), 2, "{format}");
+        for frame in all.iter().skip(5) {
+            writer.write_frame(frame).unwrap();
+        }
+        writer.finish().unwrap();
+        assert_eq!(set.refresh().unwrap(), 1, "{format}");
+        assert_eq!(set.len(), 6, "{format}");
+
+        let written = indexed_frames(&path, &topology);
+        for reads in read_at_once(&set, 8) {
+            for (index, read) in reads.into_iter().enumerate() {
+                assert_frame(&set, index, &read.unwrap(), &written[index]);
+            }
+        }
+        for (index, read) in before.into_iter().enumerate() {
+            assert_eq!(set.read(index).unwrap(), read.unwrap(), "{format} {index}");
+        }
+    }
+}
+
+/// A DCD with fixed atoms fills each later frame's fixed atoms from frame 0,
+/// read through a set, from many threads, and processed.
+#[test]
+fn a_dcd_with_fixed_atoms_reads_whole_frames_through_a_set() {
+    let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
+    let directory = Directory::new();
+    let path = directory.0.join("fixed.dcd");
+    fs::write(&path, fixed_atom_fixture(DcdEndian::Little)).unwrap();
+    let frames = indexed_frames(&path, &topology);
+    let set = open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    assert_eq!(set.len(), 2);
+    // Frame 1 first, so the fixed atoms do not come from a read of frame 0.
+    for index in [1, 0, 1] {
+        assert_frame(&set, index, &set.read(index).unwrap(), &frames[index]);
+    }
+    let points = set.read(1).unwrap().positions().values().value().to_vec();
+    let expected = [
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 1.1, 1.2),
+        Point3::new(0.2, 0.2, 0.2),
+    ];
+    for (point, expected) in points.iter().zip(expected) {
+        assert!((*point - expected).norm() < 1.0e-6, "{point:?}");
+    }
+    for reads in read_at_once(&set, 6) {
+        for (index, read) in reads.into_iter().enumerate() {
+            assert_frame(&set, index, &read.unwrap(), &frames[index]);
+        }
+    }
+
+    let memory = set.load(0..set.len()).unwrap();
+    let steps = ProcessingSteps::default().with_center(AtomSelection::all(Arc::clone(&topology)));
+    let from_file = Processed::new(&set, steps.clone()).unwrap();
+    let from_memory = Processed::new(&memory, steps).unwrap();
+    for index in [1, 0, 1] {
+        assert_eq!(
+            from_file.read(index).unwrap(),
+            from_memory.read(index).unwrap(),
+            "sample {index}"
+        );
+    }
 }

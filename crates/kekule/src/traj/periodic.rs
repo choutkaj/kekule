@@ -513,7 +513,8 @@ impl MoleculePlan {
 
     /// Adds each atom of `points`, its molecule moved to the periodic image
     /// nearest the same molecule in `reference` as [`Self::image_onto`]
-    /// moves it, to the atom's entry of `sum`.
+    /// moves it, to the atom's entry of `sum`. An imaged atom that is not
+    /// finite fails as the frame's position, and `sum` is then partly added.
     fn add_imaged_onto(
         &self,
         points: &[Point3],
@@ -527,7 +528,14 @@ impl MoleculePlan {
             let (_, images) = lattice.nearest_image(delta)?;
             let shift = lattice.cartesian(images.map(|n| n as f64));
             for &atom in group {
-                sum[atom] += (points[atom] - shift) - Point3::origin();
+                let imaged = points[atom] - shift;
+                if !imaged.is_finite() {
+                    return Err(PeriodicError::Position {
+                        frame: lattice.frame,
+                        source: Box::new(DenseArrayError::NonFinite { index: atom }),
+                    });
+                }
+                sum[atom] += imaged - Point3::origin();
             }
         }
         Ok(())

@@ -557,12 +557,22 @@ each read takes an idle indexed reader from a pool, or forks one from the
 set's reader, and returns it, so no lock is held while decoding. Every
 reader reads the file object the set opened, through positional reads, and
 shares the set's frame index (`Arc`), so forking reads the start of the
-file alone and every reader gives the same sample. A file truncated while
-open fails every read of the frames it lost with one `IndexMismatch` error
-naming the frame. `refresh` takes the frames a writer appended, through the
-set's reader's refresh, and fails without change otherwise; the pool's
-readers are kept and read by the new index. A truncated or rewritten file
-fails `refresh` too, and the host opens it again. A distribution over every
+file alone and every reader gives the same sample. On Windows, reads of
+the one shared handle run one after another, so threads take turns reading
+the file and decode at once. A read decodes whatever bytes the file holds
+at the indexed offsets, and kekule does not watch the file. A file
+truncated while open fails every read of the frames it lost with one
+`IndexMismatch` error naming the frame. Bytes rewritten in place are read
+as they now are, without error when a frame keeps its size, until
+`refresh` finds the indexed bytes changed. A file replaced at its path
+keeps reading through the open file. `refresh` takes the frames a writer
+appended, through the set's reader's refresh, and fails without change
+otherwise; the pool's readers are kept and read by the new index. It opens
+the path again, so a replacement that begins with the indexed bytes is
+taken and every reader moves to it. A truncated or rewritten file fails
+`refresh`, and the host opens it again. A host that must know of changes
+between refreshes compares the fingerprint. A host keeping the frame index
+makes each growing refresh copy the offsets. A distribution over every
 sample becomes one over the samples it covered, so appended frames are not
 members. `load` reads every sample, or listed ones, into a set in memory
 that keeps their order values and restricts the distribution, as `select`
