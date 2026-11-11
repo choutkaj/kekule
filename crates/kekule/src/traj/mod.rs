@@ -122,12 +122,23 @@
 //! [`analysis::FrameSuperposer`], [`periodic::MoleculeImager`], and
 //! [`periodic::TrajectoryUnwrapper`] apply the in-memory operations to
 //! streamed frames.
+//!
+//! # Sample sets of files
+//!
+//! [`io::open_indexed_sample_set`] opens a file as a
+//! [`crate::structure::SampleSet`] of [`io::IndexedFile`] storage, which
+//! decodes each sample when it is read through
+//! [`crate::structure::SampleRead`]. [`Processed`] runs
+//! [`ProcessingSteps`] on the samples of any reader as they are read, with
+//! the kernels of [`periodic`] and [`analysis::FrameSuperposer`].
+mod processed;
 mod trajectory;
 
 pub mod analysis;
 pub mod io;
 pub mod periodic;
 
+pub use processed::{FitReference, Processed, ProcessingError, ProcessingStep, ProcessingSteps};
 pub use trajectory::{
     read_ensemble, read_ensemble_seekable, EnsembleReadOptions, EnsembleReadProgress, FrameBuffer,
     FrameData, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::properties::OwnerProperties;
-use crate::structure::{Distribution, Order, SampleSet, SampleSetError};
+use crate::structure::{Distribution, Order, SampleSet, SampleSetError, SampleStorage};
 use crate::topology::Topology;
 
 /// A sample set without its samples: the topology, set properties, order,
@@ -56,9 +56,9 @@ impl SampleSetDescription {
         }
     }
 
-    /// The description of `set`: its topology, set properties, order,
-    /// distribution, and number of samples.
-    pub fn of(set: &SampleSet) -> Self {
+    /// The description of `set`, in memory or read from a file: its
+    /// topology, set properties, order, distribution, and number of samples.
+    pub fn of<S: SampleStorage>(set: &SampleSet<S>) -> Self {
         Self {
             topology: set.shared_topology(),
             properties: set.properties().clone(),

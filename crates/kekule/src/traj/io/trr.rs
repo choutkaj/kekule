@@ -67,7 +67,7 @@ use std::sync::Arc;
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::properties::{OwnerProperties, PropertyKey, PropertyValue, StructureProperties};
-use crate::structure::TrajectoryFrameView;
+use crate::structure::{DecodedSample, TrajectoryFrameView};
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -427,9 +427,6 @@ impl<R: Read + Seek> TrrReader<R> {
         forces
             .try_reserve_exact(atom_count)
             .map_err(|_| resource_error(source_label, None, "Cannot allocate the force buffer."))?;
-        positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
-        velocities.resize(atom_count, Vector3::zero());
-        forces.resize(atom_count, Vector3::zero());
         let mut properties = OwnerProperties::new();
         if options.lambda_policy == TrrLambdaPolicy::FrameProperty {
             properties
@@ -624,7 +621,7 @@ impl<R: Read + Seek> TrrReader<R> {
             self.frame_cursor,
             "position",
         )?;
-        decode_triplets(
+        decode_triplets_into(
             &self.raw,
             header.precision,
             &mut self.positions,
@@ -643,7 +640,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 self.frame_cursor,
                 "velocity",
             )?;
-            decode_triplets(
+            decode_triplets_into(
                 &self.raw,
                 header.precision,
                 &mut self.velocities,
@@ -663,7 +660,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 self.frame_cursor,
                 "force",
             )?;
-            decode_triplets(
+            decode_triplets_into(
                 &self.raw,
                 header.precision,
                 &mut self.forces,
@@ -732,7 +729,7 @@ impl<R: Read + Seek> TrrReader<R> {
         control: &IndexBuildControl<'_>,
     ) -> Result<IndexedTrrReader<R>, TrajectoryIoError> {
         let mut indexed = IndexedTrrReader {
-            offsets: FrameOffsets::empty(self.stream_start),
+            offsets: Arc::new(FrameOffsets::empty(self.stream_start)),
             precision_mixed: false,
             inner: self,
             pending_bytes: 0,
@@ -853,7 +850,7 @@ pub(crate) fn check_append_frames(
 /// reads restore stream position and header state before publishing a frame.
 pub struct IndexedTrrReader<R> {
     inner: TrrReader<R>,
-    offsets: FrameOffsets,
+    offsets: Arc<FrameOffsets>,
     /// Whether the indexed frames mix scalar widths.
     precision_mixed: bool,
     /// Bytes after the last indexed frame when the index last grew.
@@ -918,7 +915,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: TrrReadOptions,
-        offsets: FrameOffsets,
+        offsets: Arc<FrameOffsets>,
         precision_mixed: bool,
     ) -> Result<Self, TrajectoryIoError> {
         let mut inner = TrrReader::new(reader, topology, options)?;
@@ -940,9 +937,72 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         &self.offsets
     }
 
+    pub(crate) fn shared_offsets(&self) -> &Arc<FrameOffsets> {
+        &self.offsets
+    }
+
+    /// Lets go of the index until [`Self::share_index`], so that a reader
+    /// extending it does not copy it.
+    pub(crate) fn release_index(&mut self) {
+        self.offsets = Arc::new(FrameOffsets::empty(self.offsets.end()));
+    }
+
+    /// Reads by the index of `other`, a reader of the same file, from now
+    /// on.
+    pub(crate) fn share_index(&mut self, other: &Self) {
+        self.offsets = Arc::clone(&other.offsets);
+        self.precision_mixed = other.precision_mixed;
+    }
+
+    /// Another reader of the same frames over `stream`, which must read the
+    /// same file from its start; it shares the index and reads the first
+    /// frame's header alone.
+    pub(crate) fn fork(&self, stream: R) -> Result<Self, TrajectoryIoError> {
+        Self::from_offsets(
+            stream,
+            Arc::clone(&self.inner.topology),
+            self.inner.options.clone(),
+            Arc::clone(&self.offsets),
+            self.precision_mixed,
+        )
+    }
+
+    /// The stream every read goes through.
+    pub(crate) fn stream(&self) -> &R {
+        &self.inner.reader
+    }
+
     /// The stream every read goes through.
     pub(crate) fn stream_mut(&mut self) -> &mut R {
         &mut self.inner.reader
+    }
+
+    /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
+    /// does and hands over its positions, velocities, and forces, each
+    /// written once as it was decoded.
+    pub(crate) fn read_decoded(
+        &mut self,
+        index: usize,
+    ) -> Result<DecodedSample, TrajectoryIoError> {
+        let decoded = self.read_indexed(index)?;
+        let atoms = self.inner.positions.len();
+        let take = |values: &mut Vec<Vector3>| std::mem::replace(values, Vec::with_capacity(atoms));
+        let positions = std::mem::replace(&mut self.inner.positions, Vec::with_capacity(atoms));
+        Ok(DecodedSample {
+            positions: Quantity::new(positions, NANOMETER),
+            cell: decoded.cell,
+            velocities: decoded
+                .header
+                .has_velocities()
+                .then(|| Quantity::new(take(&mut self.inner.velocities), NANOMETER_PER_PICOSECOND)),
+            forces: decoded.header.has_forces().then(|| {
+                Quantity::new(
+                    take(&mut self.inner.forces),
+                    KILOJOULE_PER_MOLE_PER_NANOMETER,
+                )
+            }),
+            owner: Some(self.inner.properties.clone()),
+        })
     }
 
     /// Bytes after the last indexed frame when the index last grew.
@@ -958,7 +1018,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         precision_mixed: bool,
         pending_bytes: u64,
     ) {
-        self.offsets.restore(mark);
+        Arc::make_mut(&mut self.offsets).restore(mark);
         self.precision_mixed = precision_mixed;
         self.pending_bytes = pending_bytes;
     }
@@ -1008,7 +1068,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                 Ok(pending)
             }
             Err(error) => {
-                self.offsets.restore(mark);
+                Arc::make_mut(&mut self.offsets).restore(mark);
                 Err(error)
             }
         }
@@ -1063,7 +1123,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                 }
             };
             let end = self.inner.position(TrajectoryIoOperation::Index)?;
-            self.offsets.push(
+            Arc::make_mut(&mut self.offsets).push(
                 offset,
                 end,
                 decoded.header.stamp(),
@@ -1125,6 +1185,22 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        let decoded = self.read_indexed(index)?;
+        self.inner.publish(
+            &self.inner.positions,
+            &self.inner.velocities,
+            &self.inner.forces,
+            &self.inner.properties,
+            &decoded,
+            destination,
+        )
+    }
+}
+
+impl<R: Read + Seek> IndexedTrrReader<R> {
+    /// Decodes and verifies frame `index` into the reader's buffers, then
+    /// puts the stream back where it was.
+    fn read_indexed(&mut self, index: usize) -> Result<TrrDecodedFrame, TrajectoryIoError> {
         let (offset, _) = self
             .offsets
             .frame(index)
@@ -1205,14 +1281,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         self.inner.precision_mixed = saved_precision_mixed;
         let decoded = result?;
         restore?;
-        self.inner.publish(
-            &self.inner.positions,
-            &self.inner.velocities,
-            &self.inner.forces,
-            &self.inner.properties,
-            &decoded,
-            destination,
-        )
+        Ok(decoded)
     }
 }
 
@@ -2053,6 +2122,34 @@ fn decode_triplets<T>(
             ));
         }
         *destination = construct(x, y, z);
+    }
+    Ok(())
+}
+
+/// As [`decode_triplets`], writing each triplet once into `destination`
+/// in place of what it held, so the buffer can be handed over.
+fn decode_triplets_into<T>(
+    raw: &[u8],
+    precision: TrrScalarPrecision,
+    destination: &mut Vec<T>,
+    construct: impl Fn(f64, f64, f64) -> T,
+    source_label: &str,
+    frame: usize,
+    field: &str,
+) -> Result<(), TrajectoryIoError> {
+    destination.clear();
+    for values in raw.chunks_exact(3 * precision.bytes()) {
+        let x = scalar_at(values, 0, precision);
+        let y = scalar_at(values, 1, precision);
+        let z = scalar_at(values, 2, precision);
+        if ![x, y, z].into_iter().all(f64::is_finite) {
+            return Err(frame_error(
+                source_label,
+                frame,
+                format!("A {field} value is not finite."),
+            ));
+        }
+        destination.push(construct(x, y, z));
     }
     Ok(())
 }

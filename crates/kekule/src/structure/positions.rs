@@ -98,13 +98,22 @@ impl Positions {
 
     /// Consumes a coordinate vector, converting and validating it in place.
     ///
-    /// The vector's allocation and capacity are retained. An incompatible unit
-    /// or non-finite converted coordinate returns an error.
+    /// The vector's allocation and capacity are retained, and coordinates in
+    /// the canonical unit are only checked. An incompatible unit or
+    /// non-finite converted coordinate returns an error.
     pub fn from_vec(positions: Quantity<Vec<Point3>>) -> Result<Self, DenseArrayError> {
         let factor = positions
             .unit()
             .conversion_factor_to(CANONICAL_LENGTH_UNIT)?;
         let mut values = positions.into_value();
+        if factor == 1.0 {
+            if let Some(index) = values.iter().position(|point| !point.is_finite()) {
+                return Err(DenseArrayError::NonFinite { index });
+            }
+            return Ok(Self {
+                values: Arc::new(values),
+            });
+        }
         for (index, point) in values.iter_mut().enumerate() {
             *point = Point3::new(point.x * factor, point.y * factor, point.z * factor);
             if !point.is_finite() {
@@ -224,6 +233,12 @@ impl Positions {
             }
         }
         Ok(factor)
+    }
+
+    /// The coordinates for writing in place, copied first when a clone
+    /// shares them. The caller keeps every value finite.
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [Point3] {
+        Arc::make_mut(&mut self.values).as_mut_slice()
     }
 
     pub(crate) fn copy_from_validated(&mut self, source: &[Point3], factor: f64) {

@@ -53,6 +53,20 @@ set read `SampleSet::weighted_samples`: the members, or every sample
 without a distribution; samples outside the distribution are left out.
 Superposition and RMSD act on every sample.
 
+Where the samples live is a type parameter. `SampleSet` (`SampleSet<InMemory>`)
+holds them and lends them by reference, so its accessors cannot fail.
+`SampleSet<IndexedFile>` holds none: it reads sample `i` from an indexed
+trajectory file as an owned `Sample`, and a read can fail. Both share the
+topology, properties, order, distribution, and the operations on them; only
+a set in memory edits samples or its order. A set of either storage reads
+through the object-safe `SampleRead` trait (topology, length, order,
+distribution, `peek`, `read`), which is open to the host. `peek` lends a
+sample the reader holds; `read` returns an owned one. Everything in kekule
+that reads many samples takes a `&dyn SampleRead`: the observation of
+statistics, RMSD of listed samples, pairwise fitted RMSD, and lazy
+processing. kekule keeps no samples a reader read and starts no threads:
+caching, read-ahead, and parallel observation belong to the host.
+
 `Ensemble`, `Trajectory`, and `Series` remain beside `SampleSet`. An ensemble
 is a distribution over all its samples without an order; a trajectory is a
 time order without a distribution, its frames without site fields; a series
@@ -84,9 +98,9 @@ own property. Coordinate kernels share code through the borrowed `ModelView`,
 not through a common owned payload.
 
 All four live in `kekule::structure`. `kekule::traj` owns file codecs, streaming
-reader and writer contracts, the reusable `FrameBuffer`, periodic
-preprocessing, and streaming superposition; it owns no second in-memory
-trajectory type.
+reader and writer contracts, the reusable `FrameBuffer`, the `IndexedFile`
+storage of sample sets, periodic preprocessing, streaming superposition, and
+lazy processing (`Processed`); it owns no second in-memory trajectory type.
 
 A salt, solvent box, or protein-ligand complex is a topology containing connected
 molecules. Covalent connectedness determines molecule boundaries; hierarchy and
@@ -531,6 +545,62 @@ under an explicit `FrameTimingPolicy::Number` and DCD numbers on its header's
 step sequence under an explicit `DcdFrameTimingPolicy::Number`, which reports
 each frame step and time it replaces.
 
+`open_indexed_sample_set` opens a file as a `SampleSet<IndexedFile>`, and
+`open_indexed_sample_set_from_index` opens it from a kept frame index. The
+set's order is the index's time axis, and it exposes the index and its
+fingerprint. Sample `i` is frame `i`, decoded on every read into a sample
+that holds the only copy of its coordinates: the codec decodes them once
+into the arrays the sample keeps. XTC decodes to single precision first,
+and DCD with fixed atoms fills a frame's array with the fixed atoms before
+its free ones. Reads take `&self` and run on any number of threads at once:
+each read takes an idle indexed reader from a pool, or forks one from the
+set's reader, and returns it, so no lock is held while decoding. Every
+reader reads the file object the set opened, through positional reads, and
+shares the set's frame index (`Arc`), so forking reads the start of the
+file alone and every reader gives the same sample. On Windows, reads of
+the one shared handle run one after another, so threads take turns reading
+the file and decode at once. A read decodes whatever bytes the file holds
+at the indexed offsets, and kekule does not watch the file. A file
+truncated while open fails every read of the frames it lost with one
+`IndexMismatch` error naming the frame. Bytes rewritten in place are read
+as they now are, without error when a frame keeps its size, until
+`refresh` finds the indexed bytes changed. A file replaced at its path
+keeps reading through the open file. `refresh` takes the frames a writer
+appended, through the set's reader's refresh, and fails without change
+otherwise; the pool's readers are kept and read by the new index. It opens
+the path again, so a replacement that begins with the indexed bytes is
+taken and every reader moves to it. A truncated or rewritten file fails
+`refresh`, and the host opens it again. A host that must know of changes
+between refreshes compares the fingerprint. A host keeping the frame index
+makes each growing refresh copy the offsets. A distribution over every
+sample becomes one over the samples it covered, so appended frames are not
+members. `load` reads every sample, or listed ones, into a set in memory
+that keeps their order values and restricts the distribution, as `select`
+does.
+
+`Processed` reads another `SampleRead` and runs `ProcessingSteps` on each
+sample as it is read: make whole or wrap, center, fit onto a sample of the
+same reader or onto given positions, smooth over an odd window, and project
+onto an atom subset, in that order. Each step is optional. Wrapping images
+the molecules around the anchors and moves the anchors' centroid to the
+cell center, so every molecule's center lies within the cell; centering on
+the anchors then keeps them there. Samples without a cell skip making
+whole and wrapping, where the in-memory functions fail with `MissingCell`.
+Centering moves the centroid to half the sum of all three cell vectors, or
+without a cell to where it lies in sample 0, so a reader mixing samples
+with and without cells centers them on different targets. Construction
+checks the steps and processes sample 0, so steps that cannot process the
+samples fail there. Making whole and wrapping call the same kernels as the
+in-memory periodic functions and `MoleculeImager`, and fitting the same as
+`FrameSuperposer`, so each step gives the same bits. The steps change the
+sample in place: a sample the reader below owns alone is not copied by
+them, and a shared one is copied once. Smoothing averages the window's
+samples after the steps before it, each molecule imaged onto the sample, so
+it expects whole molecules; it keeps everything else of the sample.
+Analyses read the same steps without smoothing, through a second reader
+with `ProcessingSteps::without_smoothing`. `Processed` keeps nothing it
+read, so a host caches in front of it.
+
 Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in
 place and stage all affected state before publication; clone first to keep the
@@ -567,6 +637,15 @@ structures into partial accumulators on any threads and merges them in range
 order, so a given split returns the same result on every executor, equal to
 serial observation up to rounding. Merging refuses mismatched accumulators
 with a typed error and, like observation, changes nothing when it fails.
+`SampleObservations` lists the samples of a reader to observe, every member
+or listed indices such as a range with a stride, with the distribution
+restricted to them as `select` restricts it, or weight one without a
+distribution. An accumulator's `observe_samples` reads a range of those
+observations in order, and `observe_samples_cancellable` stops on a
+`Cancellation`; a set's own statistics run the same loop, so a set read
+from a file gives the results of the set in memory. `alignment::sample_rmsd`
+and `alignment::sample_aligned_rmsd` measure listed samples of a reader
+through the kernels of a set's RMSD.
 Results retain atom/pair associations; observation
 indices are diagnostic labels. Preprocessing, including alignment or imaging,
 is explicit. These are separate analysis results, not new topology state or a
@@ -593,7 +672,11 @@ shape its clusters. Pairwise fits and leader clustering may run on a
 `parallel::Executor`, poll a `Cancellation`, and report progress through a
 `ClusteringRun`; fits split into contiguous ranges merged in a fixed order,
 and leader clustering still places members one at a time, so every executor
-and thread count returns the single-threaded result or error. See [clustering](crates/kekule/src/clustering.rs),
+and thread count returns the single-threaded result or error.
+`clustering::pairwise_fitted_rmsd` fits the members of any `SampleRead`,
+reading each member once and keeping only its fitted atoms, through the
+loop of a set's pairwise fits; clustering a matrix works for sets of either
+storage. See [clustering](crates/kekule/src/clustering.rs),
 [hierarchical clustering](crates/kekule/src/clustering/hierarchical.rs), and
 [k-medoids](crates/kekule/src/clustering/medoids.rs).
 
@@ -632,6 +715,9 @@ streaming sequence/reset contracts, see
 [collection alignment](crates/kekule/src/alignment/collection.rs),
 [frame buffers](crates/kekule/src/traj/trajectory/buffer.rs),
 [file I/O](crates/kekule/src/traj/io/mod.rs),
+[sample sets read from files](crates/kekule/src/traj/io/indexed_file.rs),
+[lazy processing](crates/kekule/src/traj/processed.rs),
+[sample readers](crates/kekule/src/structure/sample_set/read.rs),
 [periodic operations](crates/kekule/src/traj/periodic.rs),
 [streaming periodic operations](crates/kekule/src/traj/periodic/stream.rs), and
 [weighted statistics](crates/kekule/src/statistics.rs).

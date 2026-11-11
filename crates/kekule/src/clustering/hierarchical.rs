@@ -1,10 +1,15 @@
 //! Pairwise distance matrices and agglomerative hierarchical clustering.
 
 use crate::alignment::{
-    best_kabsch, check_fit_count, AlignmentOptions, FitAtoms, NormalizedWeights,
+    best_kabsch, check_fit_count, AlignmentOptions, Coordinates, FitAtoms, NormalizedWeights,
+    Pairs, PeriodicPolicy,
 };
+use crate::geometry::Point3;
 use crate::parallel::map_ranges;
-use crate::structure::{Ensemble, EnsemblePartition, SampleSet};
+use crate::structure::{
+    visit_sample, Ensemble, EnsemblePartition, Members, SampleRead, SampleSet, SampleStorage,
+};
+use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::run::{FirstFailure, Stop, Tracker};
@@ -314,7 +319,7 @@ impl Clustered<'_> {
         run: ClusteringRun<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
         let atoms = undirected(atoms)?;
-        let (views, samples) = (&self.views, self.samples);
+        let views = &self.views;
         let members = views.len();
         let expected = condensed_len(members)?;
         let Some(first) = views.first() else {
@@ -327,50 +332,17 @@ impl Clustered<'_> {
         let sets = atoms.pair_sets(*first, *first)?;
         check_fit_count(atoms.pair_count())?;
         let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
-        let policy = options.periodic_policy();
         let tracker = Tracker::start(run, expected, atoms.pair_count())?;
-        let failure = FirstFailure::new();
-        let ranges = map_ranges(
-            tracker.executor(),
-            expected,
-            tracker.fits_per_work_item(),
-            |pairs| {
-                let (mut moving, mut reference) = condensed_pair(members, pairs.start);
-                let mut values = Vec::with_capacity(pairs.len());
-                let mut fits = 0;
-                for pair in pairs {
-                    if failure.precedes(pair) {
-                        return Err(Stop::Superseded);
-                    }
-                    let fit = best_kabsch(views[moving], views[reference], &sets, weights, policy)
-                        .map_err(|source| {
-                            failure.record(pair);
-                            ClusteringError::PairFit {
-                                first: sample_index(samples, moving),
-                                second: sample_index(samples, reference),
-                                source: Box::new(source),
-                            }
-                        })?;
-                    values.push(fit.rmsd().into_value());
-                    fits += 1;
-                    if fits == tracker.fits_per_checkpoint() {
-                        tracker.checkpoint(fits)?;
-                        fits = 0;
-                    }
-                    reference += 1;
-                    if reference == members {
-                        moving += 1;
-                        reference = moving + 1;
-                    }
-                }
-                tracker.finish(fits);
-                Ok(values)
-            },
-        );
-        let mut values = Vec::with_capacity(expected);
-        for range in ranges {
-            values.extend(range.map_err(Stop::into_error)?);
-        }
+        let coordinates = views
+            .iter()
+            .map(|view| Coordinates::from(*view))
+            .collect::<Vec<_>>();
+        let fits = PairFits {
+            sets: &sets,
+            weights,
+            policy: options.periodic_policy(),
+        };
+        let values = fits.all_pairs(&coordinates, self.samples, &tracker)?;
         Ok(DistanceMatrix { members, values })
     }
 
@@ -399,6 +371,230 @@ impl Clustered<'_> {
         }
         Ok(())
     }
+}
+
+/// The fits between members: the pair sets, which index the members'
+/// coordinates, their weights, and the periodic policy.
+struct PairFits<'s, 'w> {
+    sets: &'s [Pairs],
+    weights: NormalizedWeights<'w>,
+    policy: PeriodicPolicy,
+}
+
+impl PairFits<'_, '_> {
+    /// The fitted RMSD of every unordered pair of `members`, in condensed
+    /// order, with failures naming sample indices of `samples`; the one loop
+    /// behind every pairwise matrix.
+    fn all_pairs(
+        &self,
+        members: &[Coordinates<'_>],
+        samples: &Members,
+        tracker: &Tracker<'_>,
+    ) -> Result<Vec<f64>, ClusteringError> {
+        let count = members.len();
+        let expected = condensed_len(count)?;
+        let failure = FirstFailure::new();
+        let ranges = map_ranges(
+            tracker.executor(),
+            expected,
+            tracker.fits_per_work_item(),
+            |pairs| {
+                let (mut moving, mut reference) = condensed_pair(count, pairs.start);
+                let mut values = Vec::with_capacity(pairs.len());
+                let mut fits = 0;
+                for pair in pairs {
+                    if failure.precedes(pair) {
+                        return Err(Stop::Superseded);
+                    }
+                    let fit = best_kabsch(
+                        members[moving],
+                        members[reference],
+                        self.sets,
+                        self.weights,
+                        self.policy,
+                    )
+                    .map_err(|source| {
+                        failure.record(pair);
+                        ClusteringError::PairFit {
+                            first: sample_index(samples, moving),
+                            second: sample_index(samples, reference),
+                            source: Box::new(source),
+                        }
+                    })?;
+                    values.push(fit.rmsd().into_value());
+                    fits += 1;
+                    if fits == tracker.fits_per_checkpoint() {
+                        tracker.checkpoint(fits)?;
+                        fits = 0;
+                    }
+                    reference += 1;
+                    if reference == count {
+                        moving += 1;
+                        reference = moving + 1;
+                    }
+                }
+                tracker.finish(fits);
+                Ok(values)
+            },
+        );
+        let mut values = Vec::with_capacity(expected);
+        for range in ranges {
+            values.extend(range.map_err(Stop::into_error)?);
+        }
+        Ok(values)
+    }
+}
+
+/// Members loaded by one work item at least: reading a sample costs about
+/// as much as many fits.
+const MEMBERS_PER_WORK_ITEM: usize = 16;
+
+/// Fitted RMSD between every pair of members of `reader`'s distribution, or
+/// of every pair of samples of a reader without one, as
+/// [`SampleSet::pairwise_fitted_rmsd_with`] computes it for a set in
+/// memory, with the same matrix and errors.
+///
+/// Only the fitted atoms of each member are kept: every member is lent or
+/// read once, on `run`'s executor, and its fitted positions copied out, so
+/// memory grows with the members times the fitted atoms rather than with
+/// whole samples. Sample 0 of the members is read once more to check
+/// `atoms`. Progress counts pairs fitted once the members are loaded;
+/// cancellation is polled before each member is loaded and while fitting.
+///
+/// To cluster a range of the samples, such as the frames after
+/// equilibration, give the reader a distribution whose members are that
+/// range ([`Members::Subset`]) and cluster its members.
+///
+/// ```
+/// use kekule::clustering::{pairwise_fitted_rmsd, ClusteringRun};
+/// use kekule::geometry::Point3;
+/// use kekule::structure::{Positions, Sample, SampleSet};
+/// use kekule::topology::AtomSelection;
+/// use kekule::units::{Quantity, ANGSTROM};
+///
+/// let topology = kekule::smiles::to_topology("CCO")?;
+/// let mut set = SampleSet::new(topology.clone());
+/// for stretch in [1.0, 1.1, 1.2] {
+///     let points = [
+///         Point3::new(0.0, 0.0, 0.0),
+///         Point3::new(1.5 * stretch, 0.0, 0.0),
+///         Point3::new(2.0, 1.2, 0.0),
+///     ];
+///     set.push(Sample::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
+/// }
+/// let atoms = AtomSelection::all(topology);
+/// let matrix = pairwise_fitted_rmsd(&set, &atoms, Default::default(), ClusteringRun::default())?;
+/// assert_eq!(matrix, set.pairwise_fitted_rmsd(&atoms, Default::default())?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// As [`SampleSet::pairwise_fitted_rmsd_with`], and
+/// [`ClusteringError::Read`] when a member cannot be read; a failed read
+/// reports the first failing member in member order.
+///
+/// # Panics
+///
+/// When a work item panics, which
+/// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
+/// the executor skips or repeats a work item.
+pub fn pairwise_fitted_rmsd<'a>(
+    reader: &dyn SampleRead,
+    atoms: impl Into<FitAtoms<'a>>,
+    options: AlignmentOptions<'_>,
+    run: ClusteringRun<'_>,
+) -> Result<DistanceMatrix, ClusteringError> {
+    let atoms = undirected(atoms.into())?;
+    let every_sample = Members::All;
+    let (samples, count) = match reader.distribution() {
+        Some(distribution) => (distribution.members(), distribution.member_count()),
+        None => (&every_sample, reader.len()),
+    };
+    let expected = condensed_len(count)?;
+    if count == 0 {
+        Tracker::start(run, 0, 0)?;
+        return Ok(DistanceMatrix {
+            members: 0,
+            values: Vec::new(),
+        });
+    }
+    let read_error = |error| ClusteringError::Read(Box::new(error));
+    let sets = visit_sample(reader, sample_index(samples, 0), read_error, |first| {
+        Ok(atoms.pair_sets(first, first)?)
+    })?;
+    check_fit_count(atoms.pair_count())?;
+    let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
+    // The fitted atoms, sorted, and the pair sets in their order.
+    let mut fitted = sets
+        .iter()
+        .flatten()
+        .flat_map(|(moving, reference)| [moving.index(), reference.index()])
+        .collect::<Vec<_>>();
+    fitted.sort_unstable();
+    fitted.dedup();
+    let compact = |atom: TopologyAtomIndex| {
+        let position = fitted
+            .binary_search(&atom.index())
+            .expect("every paired atom is fitted");
+        TopologyAtomIndex::new(u32::try_from(position).expect("no more fitted atoms than atoms"))
+    };
+    let sets = sets
+        .iter()
+        .map(|pairs| {
+            pairs
+                .iter()
+                .map(|(moving, reference)| (compact(*moving), compact(*reference)))
+                .collect()
+        })
+        .collect::<Vec<Pairs>>();
+    let tracker = Tracker::start(run, expected, atoms.pair_count())?;
+    let loaded = map_ranges(
+        tracker.executor(),
+        count,
+        MEMBERS_PER_WORK_ITEM,
+        |positions| {
+            positions
+                .map(|position| {
+                    tracker.poll()?;
+                    visit_sample(
+                        reader,
+                        sample_index(samples, position),
+                        read_error,
+                        |view| {
+                            let points = *view.positions().values().value();
+                            let points = fitted
+                                .iter()
+                                .map(|atom| points[*atom])
+                                .collect::<Vec<Point3>>();
+                            Ok((points, view.cell().is_some()))
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, ClusteringError>>()
+        },
+    );
+    let mut members = Vec::with_capacity(count);
+    for range in loaded {
+        members.extend(range?);
+    }
+    let coordinates = members
+        .iter()
+        .map(|(points, periodic)| Coordinates {
+            points,
+            periodic: *periodic,
+        })
+        .collect::<Vec<_>>();
+    let fits = PairFits {
+        sets: &sets,
+        weights,
+        policy: options.periodic_policy(),
+    };
+    let values = fits.all_pairs(&coordinates, samples, &tracker)?;
+    Ok(DistanceMatrix {
+        members: count,
+        values,
+    })
 }
 
 /// The weighted medoid of every cluster of `assignments`, whose clusters
@@ -517,7 +713,9 @@ impl SampleSet {
     ) -> Result<DistanceMatrix, ClusteringError> {
         Clustered::of_set(self).pairwise_fitted_rmsd(atoms.into(), options, run)
     }
+}
 
+impl<S: SampleStorage> SampleSet<S> {
     /// Hierarchical clustering of the members of the set's distribution, or
     /// of every sample of a set without one, on `distances` indexed by
     /// member position ([`Self::pairwise_fitted_rmsd`]), cut into flat
@@ -540,7 +738,8 @@ impl SampleSet {
         linkage: Linkage,
         cut: Cut,
     ) -> Result<EnsemblePartition, ClusteringError> {
-        Clustered::of_set(self).cluster_hierarchical(distances, linkage, cut)
+        Clustered::of_members(self.len(), self.distribution())
+            .cluster_hierarchical(distances, linkage, cut)
     }
 }
 

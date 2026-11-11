@@ -86,3 +86,7 @@ harness = false
 [[bench]]
 name = "frame_workflow"
 harness = false
+
+[[bench]]
+name = "sample_storage"
+harness = false

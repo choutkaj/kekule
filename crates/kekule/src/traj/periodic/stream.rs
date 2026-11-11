@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::Point3;
+use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::structure::{AsModelView, ModelView, Positions, TrajectoryError, TrajectoryFrameView};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
@@ -135,7 +135,7 @@ impl MoleculeImager {
         publish_buffer(frame, &positions)
     }
 
-    pub(super) fn reference_positions(
+    pub(crate) fn reference_positions(
         &self,
         frame_index: usize,
         source: ModelView<'_>,
@@ -156,7 +156,7 @@ impl MoleculeImager {
         positions(points, frame_index)
     }
 
-    pub(super) fn anchor_groups(
+    pub(crate) fn anchor_groups(
         &self,
         anchors: &AtomSelection,
     ) -> Result<Vec<bool>, PeriodicError> {
@@ -173,7 +173,7 @@ impl MoleculeImager {
         Ok(selected)
     }
 
-    pub(super) fn frame_positions(
+    pub(crate) fn frame_positions(
         &self,
         frame_index: usize,
         source: ModelView<'_>,
@@ -190,6 +190,52 @@ impl MoleculeImager {
             self.plan.image(&mut points, &lattice, anchors)?;
         }
         positions(points, frame_index)
+    }
+
+    /// Makes every molecule of `points` whole in place, the positions of
+    /// frame `frame_index` of the imager's layout in `cell`, and images
+    /// the molecules around `anchors` ([`Self::anchor_groups`]), as
+    /// [`Self::frame_positions`] does. On failure the points may have
+    /// moved, so the caller drops them.
+    pub(crate) fn whole_in_place(
+        &self,
+        frame_index: usize,
+        cell: PeriodicCell,
+        points: &mut [Point3],
+        anchors: Option<&[bool]>,
+    ) -> Result<(), PeriodicError> {
+        let lattice = Lattice::new(Some(cell), frame_index)?;
+        self.plan.make_whole_in_place(points, &lattice)?;
+        if let Some(anchors) = anchors {
+            self.plan.image(points, &lattice, anchors)?;
+        }
+        check_finite(points, frame_index)
+    }
+
+    /// Adds `points`, the positions of frame `frame_index` in `cell` with
+    /// each molecule moved to its image nearest `reference`, as
+    /// [`Self::reference_positions`] moves them, to `sum`, atom by atom.
+    pub(crate) fn add_imaged_onto(
+        &self,
+        frame_index: usize,
+        cell: PeriodicCell,
+        points: &[Point3],
+        reference: &[Point3],
+        sum: &mut [Vector3],
+    ) -> Result<(), PeriodicError> {
+        let lattice = Lattice::new(Some(cell), frame_index)?;
+        self.plan.add_imaged_onto(points, reference, &lattice, sum)
+    }
+}
+
+/// Fails unless every point is finite.
+fn check_finite(points: &[Point3], frame: usize) -> Result<(), PeriodicError> {
+    match points.iter().position(|point| !point.is_finite()) {
+        Some(index) => Err(PeriodicError::Position {
+            frame,
+            source: Box::new(crate::structure::DenseArrayError::NonFinite { index }),
+        }),
+        None => Ok(()),
     }
 }
 

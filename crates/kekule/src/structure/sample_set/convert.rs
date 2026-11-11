@@ -3,16 +3,87 @@
 
 use std::sync::Arc;
 
+use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::properties::{OwnerProperties, StructureProperties};
 use crate::structure::series::ItemPlace;
 use crate::structure::{
-    Ensemble, EnsembleSample, Series, SeriesAxis, SeriesItem, Trajectory, TrajectoryFrame,
+    DenseArrayError, Ensemble, EnsembleSample, Forces, Positions, Series, SeriesAxis, SeriesItem,
+    StructureError, Trajectory, TrajectoryFrame, Velocities,
 };
+use crate::topology::Topology;
 use crate::units::Quantity;
 
 use super::{
-    ConversionTarget, Distribution, Members, Order, Requirement, Sample, SampleSet, SampleSetError,
-    SampleStructure, TimeAxis, Unconvertible,
+    ConversionTarget, Distribution, InMemory, Members, Order, Requirement, Sample, SampleSet,
+    SampleSetError, SampleStructure, TimeAxis, Unconvertible,
 };
+
+/// The state of a frame a codec decoded, in the units it decoded them in:
+/// positions, cell, velocities, forces, and frame properties.
+pub(crate) struct DecodedSample {
+    pub(crate) positions: Quantity<Vec<Point3>>,
+    pub(crate) cell: Option<PeriodicCell>,
+    pub(crate) velocities: Option<Quantity<Vec<Vector3>>>,
+    pub(crate) forces: Option<Quantity<Vec<Vector3>>>,
+    pub(crate) owner: Option<OwnerProperties>,
+}
+
+impl Sample {
+    /// A trajectory frame's positions, cell, properties, velocities, and
+    /// forces as a sample, moving them without copying; the time and step
+    /// are dropped.
+    pub(crate) fn from_frame(frame: TrajectoryFrame) -> Self {
+        let mut structure =
+            SampleStructure::from_frame_state(frame.positions, frame.cell, frame.properties);
+        structure.velocities = frame.velocities;
+        structure.forces = frame.forces;
+        Self::from_structure(Arc::new(structure))
+    }
+
+    /// A decoded frame of `topology`'s atoms as a sample, keeping the
+    /// decoded arrays and converting them to canonical units in place.
+    pub(crate) fn from_decoded(
+        frame: DecodedSample,
+        topology: &Topology,
+    ) -> Result<Self, StructureError> {
+        let atoms = topology.atom_count();
+        let count = |actual: usize| {
+            if actual == atoms {
+                Ok(())
+            } else {
+                Err(StructureError::Array(DenseArrayError::CountMismatch {
+                    expected: atoms,
+                    actual,
+                }))
+            }
+        };
+        count(frame.positions.value().len())?;
+        let positions = Positions::from_vec(frame.positions)?;
+        let velocities = frame
+            .velocities
+            .map(|values| {
+                count(values.value().len())?;
+                Ok::<_, StructureError>(Velocities::from_vec(values)?)
+            })
+            .transpose()?;
+        let forces = frame
+            .forces
+            .map(|values| {
+                count(values.value().len())?;
+                Ok::<_, StructureError>(Forces::from_vec(values)?)
+            })
+            .transpose()?;
+        let mut properties = StructureProperties::new(atoms);
+        properties.bind_bond_rows(topology.bond_count());
+        if let Some(owner) = frame.owner {
+            *properties.owner_mut() = owner;
+        }
+        let mut structure = SampleStructure::from_frame_state(positions, frame.cell, properties);
+        structure.velocities = velocities;
+        structure.forces = forces;
+        Ok(Self::from_structure(Arc::new(structure)))
+    }
+}
 
 impl SampleSet {
     /// An unordered set of an ensemble's samples with a distribution over
@@ -38,7 +109,7 @@ impl SampleSet {
         Self {
             topology,
             properties,
-            samples,
+            storage: InMemory::new(samples),
             order: None,
             distribution: Some(distribution),
         }
@@ -61,23 +132,12 @@ impl SampleSet {
     pub fn from_trajectory(trajectory: Trajectory) -> Result<Self, SampleSetError> {
         let (topology, properties, frames) = trajectory.into_parts();
         let axis = TimeAxis::of_frames(&frames)?;
-        let samples = frames
-            .into_iter()
-            .map(|frame| {
-                let mut structure = SampleStructure::from_frame_state(
-                    frame.positions,
-                    frame.cell,
-                    frame.properties,
-                );
-                structure.velocities = frame.velocities;
-                structure.forces = frame.forces;
-                Sample::from_structure(Arc::new(structure))
-            })
-            .collect();
+        let samples = frames.into_iter().map(Sample::from_frame).collect();
+
         Ok(Self {
             topology,
             properties,
-            samples,
+            storage: InMemory::new(samples),
             order: Some(Order::Time(axis)),
             distribution: None,
         })
@@ -105,7 +165,7 @@ impl SampleSet {
         Self {
             topology,
             properties,
-            samples,
+            storage: InMemory::new(samples),
             order: Some(order),
             distribution: None,
         }
@@ -219,7 +279,7 @@ impl SampleSet {
         sites: bool,
         dynamics: bool,
     ) -> Result<(), SampleSetError> {
-        for (sample, payload) in self.samples.iter().enumerate() {
+        for (sample, payload) in self.storage.samples.iter().enumerate() {
             let structure = payload.structure();
             let content = if sites && structure.has_occupancies() {
                 Unconvertible::Occupancies { sample }
@@ -241,7 +301,7 @@ impl SampleSet {
         let Self {
             topology,
             properties,
-            samples,
+            storage: InMemory { samples },
             distribution,
             ..
         } = self;
@@ -274,7 +334,7 @@ impl SampleSet {
         let Self {
             topology,
             properties,
-            samples,
+            storage: InMemory { samples },
             order,
             ..
         } = self;
@@ -308,7 +368,7 @@ impl SampleSet {
         let Self {
             topology,
             properties,
-            samples,
+            storage: InMemory { samples },
             order,
             ..
         } = self;
@@ -353,7 +413,7 @@ impl SampleSet {
     /// Sample `index`, which must exist, copied as a trajectory frame with
     /// its place on a time order; occupancies and B-factors are dropped.
     pub(crate) fn frame(&self, index: usize) -> TrajectoryFrame {
-        let structure = self.samples[index].structure();
+        let structure = self.storage.samples[index].structure();
         let (time, step) = match &self.order {
             Some(Order::Time(axis)) => (axis.time(index), axis.step(index)),
             _ => (None, None),

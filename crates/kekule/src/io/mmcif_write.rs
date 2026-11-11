@@ -978,8 +978,8 @@ impl<'a> From<&'a SampleSet> for MmcifBlockSource<'a> {
     }
 }
 
-impl<'a> From<SampleView<'a>> for MmcifBlockSource<'a> {
-    fn from(sample: SampleView<'a>) -> Self {
+impl<'a, R: ?Sized> From<SampleView<'a, R>> for MmcifBlockSource<'a> {
+    fn from(sample: SampleView<'a, R>) -> Self {
         Self {
             content: BlockContent::Model(sample.as_model_view()),
             entities: EntitySemantics::Canonical,

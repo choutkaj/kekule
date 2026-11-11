@@ -12,6 +12,12 @@ impl DenseVectors {
     fn from_vec(values: Quantity<Vec<Vector3>>, unit: Unit) -> Result<Self, DenseArrayError> {
         let factor = values.unit().conversion_factor_to(unit)?;
         let mut values = values.into_value();
+        if factor == 1.0 {
+            if let Some(index) = values.iter().position(|vector| !vector.is_finite()) {
+                return Err(DenseArrayError::NonFinite { index });
+            }
+            return Ok(Self { values, unit });
+        }
         for (index, vector) in values.iter_mut().enumerate() {
             let converted = *vector * factor;
             if !converted.is_finite() {
@@ -65,6 +71,19 @@ impl DenseVectors {
     fn rotated(&self, rotate: impl Fn(Vector3) -> Vector3) -> Result<Self, DenseArrayError> {
         let values = self.values.iter().map(|vector| rotate(*vector)).collect();
         Self::from_vec(Quantity::new(values, self.unit), self.unit)
+    }
+
+    fn rotate_in_place(
+        &mut self,
+        rotate: impl Fn(Vector3) -> Vector3,
+    ) -> Result<(), DenseArrayError> {
+        for (index, vector) in self.values.iter_mut().enumerate() {
+            *vector = rotate(*vector);
+            if !vector.is_finite() {
+                return Err(DenseArrayError::NonFinite { index });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -154,6 +173,15 @@ macro_rules! vector_array {
                 rotate: impl Fn(Vector3) -> Vector3,
             ) -> Result<Self, DenseArrayError> {
                 Ok(Self(self.0.rotated(rotate)?))
+            }
+
+            /// Rotates every vector in place. On failure some vectors are
+            /// rotated, so the caller drops the array.
+            pub(crate) fn rotate_in_place(
+                &mut self,
+                rotate: impl Fn(Vector3) -> Vector3,
+            ) -> Result<(), DenseArrayError> {
+                self.0.rotate_in_place(rotate)
             }
         }
     };

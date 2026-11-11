@@ -13,16 +13,23 @@ mod convert;
 mod distribution;
 mod error;
 mod order;
+mod read;
 mod sample;
+mod storage;
 mod views;
 
 pub use context::{Membership, SampleContext};
+pub(crate) use convert::DecodedSample;
 pub(crate) use distribution::{boltzmann_weights, thermal_energy};
 pub use distribution::{Distribution, DistributionMut, Members};
 pub use error::{ConversionTarget, Requirement, SampleSetError, Unconvertible};
 pub use order::{Order, Place, TimeAxis};
+pub(crate) use read::visit_sample;
+pub use read::{SampleRead, SampleReadError};
 pub(crate) use sample::SampleStructure;
 pub use sample::{Sample, SampleMut};
+pub(crate) use storage::sealed;
+pub use storage::{InMemory, SampleStorage};
 pub use views::{SampleIter, SampleView, StateIter, StateView};
 
 /// Samples of one shared topology: many coordinate sets of one system,
@@ -46,6 +53,14 @@ pub use views::{SampleIter, SampleView, StateIter, StateView};
 /// order and with a distribution over every sample; a clustered trajectory
 /// has both. Operations ask for what they need and fail with
 /// [`SampleSetError::Missing`] naming it ([`Requirement`]).
+///
+/// The storage is the type parameter ([`SampleStorage`]). A set in memory,
+/// the default [`InMemory`], lends its samples by reference, and reading
+/// them cannot fail. A set over an indexed trajectory file,
+/// `SampleSet<`[`IndexedFile`](crate::traj::io::IndexedFile)`>`, holds no
+/// sample in memory: it is read through [`SampleRead`], which returns owned
+/// samples and can fail. Both share the topology, the set properties, the
+/// order, the distribution, and the operations on them.
 ///
 /// Each sample's structure is shared storage (see [`Sample`]), so cloning a
 /// set copies its order and distribution but no coordinates. A set held
@@ -99,69 +114,30 @@ pub use views::{SampleIter, SampleView, StateIter, StateView};
 /// }
 /// ```
 #[derive(Debug, Clone)]
-pub struct SampleSet {
+pub struct SampleSet<S = InMemory> {
     topology: Arc<Topology>,
     properties: OwnerProperties,
-    samples: Vec<Sample>,
+    storage: S,
     order: Option<Order>,
     distribution: Option<Distribution>,
 }
 
-impl SampleSet {
-    /// An empty, unordered set of one shared topology, without a
-    /// distribution.
-    pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
+impl<S: SampleStorage> SampleSet<S> {
+    /// A set of `storage`'s samples, whose order and distribution, already
+    /// checked against them, are given.
+    pub(crate) fn from_storage(
+        topology: Arc<Topology>,
+        storage: S,
+        order: Option<Order>,
+        distribution: Option<Distribution>,
+    ) -> Self {
         Self {
-            topology: topology.into(),
+            topology,
             properties: OwnerProperties::new(),
-            samples: Vec::new(),
-            order: None,
-            distribution: None,
+            storage,
+            order,
+            distribution,
         }
-    }
-
-    /// Validates and collects each sample in order, binding its bond
-    /// property rows, into an unordered set without a distribution; give it
-    /// one with [`Self::set_order`] and [`Self::set_distribution`]. Fails on
-    /// the first invalid sample.
-    pub fn from_samples(
-        topology: impl Into<Arc<Topology>>,
-        samples: impl IntoIterator<Item = Sample>,
-    ) -> Result<Self, SampleSetError> {
-        let mut set = Self::new(topology);
-        for mut sample in samples {
-            set.bind(&mut sample)?;
-            set.samples.push(sample);
-        }
-        Ok(set)
-    }
-
-    /// Collects models of one topology layout as the samples of an
-    /// unordered set without a distribution, on the first model's topology
-    /// snapshot. Each model's positions, cell, occupancies, B-factors, and
-    /// structure properties become its sample, moving without copying.
-    ///
-    /// Every model's topology must have the first one's layout
-    /// ([`Topology::same_layout`]), so models read from separate files are
-    /// accepted as well as models sharing one published layout. Only the
-    /// first topology is kept.
-    ///
-    /// # Errors
-    ///
-    /// [`SampleSetError::EmptySource`] without models and
-    /// [`SampleSetError::TopologyMismatch`] for a model of another layout.
-    pub fn from_models(models: impl IntoIterator<Item = Model>) -> Result<Self, SampleSetError> {
-        let mut models = models.into_iter();
-        let first = models.next().ok_or(SampleSetError::EmptySource)?;
-        let mut set = Self::new(first.shared_topology());
-        set.samples.push(Sample::from_model(first));
-        for model in models {
-            if !model.topology().same_layout(&set.topology) {
-                return Err(SampleSetError::TopologyMismatch);
-            }
-            set.samples.push(Sample::from_model(model));
-        }
-        Ok(set)
     }
 
     /// The topology shared by every sample.
@@ -175,13 +151,18 @@ impl SampleSet {
         Arc::clone(&self.topology)
     }
 
+    /// Where the samples are kept.
+    pub fn storage(&self) -> &S {
+        &self.storage
+    }
+
     /// Set-level annotations.
     pub fn properties(&self) -> &OwnerProperties {
         &self.properties
     }
 
-    /// Mutable set-level annotations. Sample properties are edited through
-    /// [`Self::get_mut`], state properties through
+    /// Mutable set-level annotations. Sample properties of a set in memory
+    /// are edited through [`SampleSet::get_mut`], state properties through
     /// [`DistributionMut::state_mut`].
     pub fn properties_mut(&mut self) -> &mut OwnerProperties {
         &mut self.properties
@@ -189,64 +170,17 @@ impl SampleSet {
 
     /// Number of samples.
     pub fn len(&self) -> usize {
-        self.samples.len()
+        self.storage.sample_count()
     }
 
     /// Whether the set has no samples.
     pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
-    }
-
-    /// One topology-bound sample by stable index.
-    pub fn get(&self, index: usize) -> Option<SampleView<'_>> {
-        (index < self.samples.len()).then_some(SampleView::new(self, index))
-    }
-
-    /// A dimension-preserving editor for one sample. Whole-sample
-    /// replacement goes through [`Self::replace`].
-    pub fn get_mut(&mut self, index: usize) -> Option<SampleMut<'_>> {
-        self.samples.get_mut(index).map(SampleMut::new)
-    }
-
-    /// Topology-bound samples in set order.
-    pub fn iter(&self) -> SampleIter<'_> {
-        SampleIter::new(self)
+        self.len() == 0
     }
 
     /// The order of the samples, or `None` when the set is unordered.
     pub fn order(&self) -> Option<&Order> {
         self.order.as_ref()
-    }
-
-    /// Replaces or clears the order. Failure changes nothing.
-    ///
-    /// # Errors
-    ///
-    /// [`SampleSetError::OrderLengthMismatch`] when the order has another
-    /// number of values than the set has samples, and
-    /// [`SampleSetError::NonFiniteOrderValue`] for a coordinate that is not
-    /// finite.
-    pub fn set_order(&mut self, order: Option<Order>) -> Result<(), SampleSetError> {
-        if let Some(order) = &order {
-            order.validate(self.samples.len())?;
-        }
-        self.order = order;
-        Ok(())
-    }
-
-    /// Moves one sample to `place` in the order; see [`Self::push`] for
-    /// what a place must state. Failure changes nothing.
-    pub fn set_place(&mut self, index: usize, place: Option<Place>) -> Result<(), SampleSetError> {
-        self.check_index(index)?;
-        match &mut self.order {
-            Some(order) => {
-                let stored = order.check(place, index)?;
-                order.set(index, stored);
-                Ok(())
-            }
-            None if place.is_none() => Ok(()),
-            None => Err(SampleSetError::PlaceMismatch { sample: index }),
-        }
     }
 
     /// Checks that every time is non-decreasing.
@@ -285,11 +219,11 @@ impl SampleSet {
     /// weight: the distribution's members ([`Distribution::weighted_members`])
     /// or, without a distribution, every sample with weight `1.0`. Items are
     /// sample indices, in increasing order. The set's own statistics, such
-    /// as [`Self::rmsf`], and its clusterings, such as
-    /// [`Self::cluster_by_radius`], read these samples alone.
+    /// as [`SampleSet::rmsf`], and its clusterings, such as
+    /// [`SampleSet::cluster_by_radius`], read these samples alone.
     pub fn weighted_samples(&self) -> impl ExactSizeIterator<Item = (usize, f64)> + '_ {
         let distribution = self.distribution.as_ref();
-        let count = distribution.map_or(self.samples.len(), Distribution::member_count);
+        let count = distribution.map_or(self.len(), Distribution::member_count);
         (0..count).map(move |position| {
             distribution.map_or((position, 1.0), |distribution| {
                 (
@@ -312,9 +246,10 @@ impl SampleSet {
         &mut self,
         distribution: Option<Distribution>,
     ) -> Result<(), SampleSetError> {
+        let len = self.len();
         let distribution = distribution
             .map(|mut distribution| {
-                distribution.bind(self.samples.len())?;
+                distribution.bind(len)?;
                 Ok::<_, SampleSetError>(distribution)
             })
             .transpose()?;
@@ -322,16 +257,206 @@ impl SampleSet {
         Ok(())
     }
 
+    /// Installs default perception through one new shared topology snapshot.
+    ///
+    /// Delegates to [`Topology::perceived`] once and keeps every sample, the
+    /// order, the distribution, and the set properties without copying.
+    /// Failure leaves the set unchanged. The new snapshot shares the
+    /// original layout, so selections, buffers, and prepared potentials stay
+    /// usable.
+    pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived()?);
+        Ok(())
+    }
+
+    /// [`Self::perceive`], stopping partway once `cancellation` is requested.
+    ///
+    /// Delegates to [`Topology::perceived_cancellable`]. A cancelled call
+    /// leaves the set unchanged; a completed one installs exactly what
+    /// [`Self::perceive`] would.
+    ///
+    /// # Errors
+    ///
+    /// As [`Topology::perceived_cancellable`].
+    pub fn perceive_cancellable(
+        &mut self,
+        cancellation: &Cancellation,
+    ) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived_cancellable(cancellation)?);
+        Ok(())
+    }
+
+    /// Length-preserving mutable access to the shared topology's static
+    /// annotations.
+    ///
+    /// A topology shared with other owners is first replaced by a snapshot of
+    /// it ([`Arc::make_mut`]), so those owners are unaffected. Either way the
+    /// layout is kept, so every sample, selection, buffer, and prepared
+    /// potential remains usable. See [`Topology::properties_mut`].
+    pub fn topology_properties_mut(&mut self) -> TopologyPropertiesMut<'_> {
+        Arc::make_mut(&mut self.topology).properties_mut()
+    }
+
+    /// The storage, for changing what it holds.
+    pub(crate) fn storage_mut(&mut self) -> &mut S {
+        &mut self.storage
+    }
+
+    /// The shared topology handle, with the set's lifetime.
+    pub(crate) fn topology_handle(&self) -> &Arc<Topology> {
+        &self.topology
+    }
+
+    /// Takes `order`, checked against the samples, after the storage grew
+    /// from `previous` samples: a distribution of every sample becomes one
+    /// of the samples it covered.
+    pub(crate) fn grown(&mut self, previous: usize, order: Option<Order>) {
+        debug_assert!(order
+            .as_ref()
+            .is_none_or(|order| order.validate(self.len()).is_ok()));
+        self.order = order;
+        if self.len() > previous {
+            if let Some(distribution) = &mut self.distribution {
+                distribution.push_non_member(previous);
+            }
+        }
+    }
+
+    /// An in-memory set of `samples`, read as the samples `indices` of this
+    /// set, with their order values and the distribution restricted to
+    /// them, as [`SampleSet::select`] gives them; set properties are kept.
+    pub(crate) fn loaded(&self, indices: &[usize], samples: Vec<Sample>) -> SampleSet {
+        debug_assert_eq!(indices.len(), samples.len());
+        SampleSet {
+            topology: self.shared_topology(),
+            properties: self.properties.clone(),
+            storage: InMemory::new(samples),
+            order: self.order.as_ref().map(|order| order.select(indices)),
+            distribution: self
+                .distribution
+                .as_ref()
+                .map(|distribution| distribution.select(indices)),
+        }
+    }
+}
+
+impl<S: SampleStorage> SampleSet<S>
+where
+    Self: SampleRead,
+{
     /// One state of the distribution by index, with its representative,
-    /// members, and population; `None` without a distribution or out of
-    /// range.
-    pub fn state(&self, index: usize) -> Option<StateView<'_>> {
-        (index < self.distribution.as_ref()?.state_count()).then_some(StateView::new(self, index))
+    /// members, and population; None without a distribution or out of
+    /// range. The state of a set in memory lends its representative sample
+    /// ([StateView::representative_sample]).
+    pub fn state(&self, index: usize) -> Option<StateView<'_, Self>> {
+        (index < self.distribution.as_ref()?.state_count()).then(|| StateView::new(self, index))
     }
 
     /// The states of the distribution in order; empty without one.
-    pub fn states(&self) -> StateIter<'_> {
+    pub fn states(&self) -> StateIter<'_, Self> {
         StateIter::new(self)
+    }
+}
+
+impl SampleSet {
+    /// An empty, unordered set of one shared topology, without a
+    /// distribution.
+    pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
+        Self::from_storage(topology.into(), InMemory::default(), None, None)
+    }
+
+    /// Validates and collects each sample in order, binding its bond
+    /// property rows, into an unordered set without a distribution; give it
+    /// one with [`Self::set_order`] and [`Self::set_distribution`]. Fails on
+    /// the first invalid sample.
+    pub fn from_samples(
+        topology: impl Into<Arc<Topology>>,
+        samples: impl IntoIterator<Item = Sample>,
+    ) -> Result<Self, SampleSetError> {
+        let mut set = Self::new(topology);
+        for mut sample in samples {
+            set.bind(&mut sample)?;
+            set.storage.samples.push(sample);
+        }
+        Ok(set)
+    }
+
+    /// Collects models of one topology layout as the samples of an
+    /// unordered set without a distribution, on the first model's topology
+    /// snapshot. Each model's positions, cell, occupancies, B-factors, and
+    /// structure properties become its sample, moving without copying.
+    ///
+    /// Every model's topology must have the first one's layout
+    /// ([`Topology::same_layout`]), so models read from separate files are
+    /// accepted as well as models sharing one published layout. Only the
+    /// first topology is kept.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::EmptySource`] without models and
+    /// [`SampleSetError::TopologyMismatch`] for a model of another layout.
+    pub fn from_models(models: impl IntoIterator<Item = Model>) -> Result<Self, SampleSetError> {
+        let mut models = models.into_iter();
+        let first = models.next().ok_or(SampleSetError::EmptySource)?;
+        let mut set = Self::new(first.shared_topology());
+        set.storage.samples.push(Sample::from_model(first));
+        for model in models {
+            if !model.topology().same_layout(&set.topology) {
+                return Err(SampleSetError::TopologyMismatch);
+            }
+            set.storage.samples.push(Sample::from_model(model));
+        }
+        Ok(set)
+    }
+
+    /// One topology-bound sample by stable index.
+    pub fn get(&self, index: usize) -> Option<SampleView<'_>> {
+        self.storage
+            .samples
+            .get(index)
+            .map(|sample| SampleView::of_set(self, index, sample))
+    }
+
+    /// A dimension-preserving editor for one sample. Whole-sample
+    /// replacement goes through [`Self::replace`].
+    pub fn get_mut(&mut self, index: usize) -> Option<SampleMut<'_>> {
+        self.storage.samples.get_mut(index).map(SampleMut::new)
+    }
+
+    /// Topology-bound samples in set order.
+    pub fn iter(&self) -> SampleIter<'_> {
+        SampleIter::new(self)
+    }
+
+    /// Replaces or clears the order. Failure changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::OrderLengthMismatch`] when the order has another
+    /// number of values than the set has samples, and
+    /// [`SampleSetError::NonFiniteOrderValue`] for a coordinate that is not
+    /// finite.
+    pub fn set_order(&mut self, order: Option<Order>) -> Result<(), SampleSetError> {
+        if let Some(order) = &order {
+            order.validate(self.storage.samples.len())?;
+        }
+        self.order = order;
+        Ok(())
+    }
+
+    /// Moves one sample to `place` in the order; see [`Self::push`] for
+    /// what a place must state. Failure changes nothing.
+    pub fn set_place(&mut self, index: usize, place: Option<Place>) -> Result<(), SampleSetError> {
+        self.check_index(index)?;
+        match &mut self.order {
+            Some(order) => {
+                let stored = order.check(place, index)?;
+                order.set(index, stored);
+                Ok(())
+            }
+            None if place.is_none() => Ok(()),
+            None => Err(SampleSetError::PlaceMismatch { sample: index }),
+        }
     }
 
     /// Validates and appends one sample at `place` in the order, outside
@@ -348,7 +473,7 @@ impl SampleSet {
         mut sample: Sample,
         place: Option<Place>,
     ) -> Result<usize, SampleSetError> {
-        let index = self.samples.len();
+        let index = self.storage.samples.len();
         let stored = self.check_place(place, index)?;
         self.bind(&mut sample)?;
         self.append(sample, stored);
@@ -378,7 +503,7 @@ impl SampleSet {
         state: usize,
         weight: Option<f64>,
     ) -> Result<usize, SampleSetError> {
-        let index = self.samples.len();
+        let index = self.storage.samples.len();
         let distribution = self
             .distribution
             .as_ref()
@@ -406,7 +531,7 @@ impl SampleSet {
         state: EnsembleState,
         weight: Option<f64>,
     ) -> Result<usize, SampleSetError> {
-        let index = self.samples.len();
+        let index = self.storage.samples.len();
         let distribution = self
             .distribution
             .as_ref()
@@ -428,7 +553,7 @@ impl SampleSet {
     pub fn replace(&mut self, index: usize, mut sample: Sample) -> Result<Sample, SampleSetError> {
         self.check_index(index)?;
         self.bind(&mut sample)?;
-        Ok(std::mem::replace(&mut self.samples[index], sample))
+        Ok(std::mem::replace(&mut self.storage.samples[index], sample))
     }
 
     /// Removes and returns one sample, with neither its place nor its
@@ -443,12 +568,12 @@ impl SampleSet {
         if let Some(distribution) = &self.distribution {
             distribution.check_remove(index)?;
         }
-        let sample = self.samples.remove(index);
+        let sample = self.storage.samples.remove(index);
         if let Some(order) = &mut self.order {
             order.remove(index);
         }
         if let Some(distribution) = &mut self.distribution {
-            distribution.remove(index, self.samples.len());
+            distribution.remove(index, self.storage.samples.len());
         }
         Ok(sample)
     }
@@ -460,9 +585,9 @@ impl SampleSet {
         positions: impl IntoIterator<Item = Positions>,
     ) -> Result<(), SampleSetError> {
         let positions = positions.into_iter().collect::<Vec<_>>();
-        if positions.len() != self.samples.len() {
+        if positions.len() != self.storage.samples.len() {
             return Err(SampleSetError::SampleCountMismatch {
-                expected: self.samples.len(),
+                expected: self.storage.samples.len(),
                 actual: positions.len(),
             });
         }
@@ -475,7 +600,7 @@ impl SampleSet {
                 .into());
             }
         }
-        for (sample, positions) in self.samples.iter_mut().zip(positions) {
+        for (sample, positions) in self.storage.samples.iter_mut().zip(positions) {
             SampleStructure::replace_positions(sample.structure_mut(), positions);
         }
         Ok(())
@@ -574,6 +699,7 @@ impl SampleSet {
         let subset = Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
         let samples = self
+            .storage
             .samples
             .iter()
             .map(|sample| {
@@ -585,7 +711,7 @@ impl SampleSet {
         Ok(Self {
             topology: subset.shared_topology(),
             properties: OwnerProperties::new(),
-            samples,
+            storage: InMemory::new(samples),
             order: self.order.clone(),
             distribution: self
                 .distribution
@@ -594,50 +720,10 @@ impl SampleSet {
         })
     }
 
-    /// Installs default perception through one new shared topology snapshot.
-    ///
-    /// Delegates to [`Topology::perceived`] once and keeps every sample, the
-    /// order, the distribution, and the set properties without copying.
-    /// Failure leaves the set unchanged. The new snapshot shares the
-    /// original layout, so selections, buffers, and prepared potentials stay
-    /// usable.
-    pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
-        self.topology = Arc::new(self.topology.perceived()?);
-        Ok(())
-    }
-
-    /// [`Self::perceive`], stopping partway once `cancellation` is requested.
-    ///
-    /// Delegates to [`Topology::perceived_cancellable`]. A cancelled call
-    /// leaves the set unchanged; a completed one installs exactly what
-    /// [`Self::perceive`] would.
-    ///
-    /// # Errors
-    ///
-    /// As [`Topology::perceived_cancellable`].
-    pub fn perceive_cancellable(
-        &mut self,
-        cancellation: &Cancellation,
-    ) -> Result<(), TopologyPerceptionError> {
-        self.topology = Arc::new(self.topology.perceived_cancellable(cancellation)?);
-        Ok(())
-    }
-
-    /// Length-preserving mutable access to the shared topology's static
-    /// annotations.
-    ///
-    /// A topology shared with other owners is first replaced by a snapshot of
-    /// it ([`Arc::make_mut`]), so those owners are unaffected. Either way the
-    /// layout is kept, so every sample, selection, buffer, and prepared
-    /// potential remains usable. See [`Topology::properties_mut`].
-    pub fn topology_properties_mut(&mut self) -> TopologyPropertiesMut<'_> {
-        Arc::make_mut(&mut self.topology).properties_mut()
-    }
-
     /// Consumes the set, returning its samples in order and dropping the
     /// topology, the order, the distribution, and the set properties.
     pub fn into_samples(self) -> Vec<Sample> {
-        self.samples
+        self.storage.samples
     }
 
     /// Applies one rigid transform per sample transactionally: positions
@@ -646,8 +732,9 @@ impl SampleSet {
         &mut self,
         transforms: &[RigidTransform],
     ) -> Result<(), StructureError> {
-        debug_assert_eq!(transforms.len(), self.samples.len());
+        debug_assert_eq!(transforms.len(), self.storage.samples.len());
         let samples = self
+            .storage
             .samples
             .iter()
             .zip(transforms)
@@ -657,7 +744,7 @@ impl SampleSet {
                 )))
             })
             .collect::<Result<Vec<_>, StructureError>>()?;
-        self.samples = samples;
+        self.storage.samples = samples;
         Ok(())
     }
 
@@ -672,10 +759,12 @@ impl SampleSet {
         Self {
             topology: self.shared_topology(),
             properties: self.properties.clone(),
-            samples: indices
-                .iter()
-                .map(|index| self.samples[*index].clone())
-                .collect(),
+            storage: InMemory::new(
+                indices
+                    .iter()
+                    .map(|index| self.storage.samples[*index].clone())
+                    .collect(),
+            ),
             order,
             distribution,
         }
@@ -696,17 +785,17 @@ impl SampleSet {
 
     /// Appends a bound sample at a checked place.
     fn append(&mut self, sample: Sample, place: Option<order::Stored>) {
-        self.samples.push(sample);
+        self.storage.samples.push(sample);
         if let (Some(order), Some(place)) = (&mut self.order, place) {
             order.push(place);
         }
     }
 
     fn check_index(&self, index: usize) -> Result<(), SampleSetError> {
-        if index >= self.samples.len() {
+        if index >= self.storage.samples.len() {
             return Err(SampleSetError::IndexOutOfRange {
                 index,
-                len: self.samples.len(),
+                len: self.storage.samples.len(),
             });
         }
         Ok(())
@@ -726,5 +815,38 @@ impl<'a> IntoIterator for &'a SampleSet {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl SampleRead for SampleSet {
+    fn topology(&self) -> &Arc<Topology> {
+        &self.topology
+    }
+
+    fn len(&self) -> usize {
+        self.storage.samples.len()
+    }
+
+    fn order(&self) -> Option<&Order> {
+        self.order.as_ref()
+    }
+
+    fn distribution(&self) -> Option<&Distribution> {
+        self.distribution.as_ref()
+    }
+
+    fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
+        self.get(index).map(SampleView::as_dyn)
+    }
+
+    fn read(&self, index: usize) -> Result<Sample, SampleReadError> {
+        self.storage
+            .samples
+            .get(index)
+            .cloned()
+            .ok_or(SampleReadError::IndexOutOfRange {
+                index,
+                len: self.storage.samples.len(),
+            })
     }
 }

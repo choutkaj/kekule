@@ -24,7 +24,7 @@ use crate::traj::{
 };
 
 use super::limits::index_hard_capacity;
-use super::{io_context, reserve_index_for_push, TrajectoryIoLimits};
+use super::{io_context, reserve_index_for_push, SharedFile, TrajectoryIoLimits};
 
 /// Files up to this size are hashed whole.
 const WHOLE_FILE_HASH_BYTES: u64 = 256 * 1024;
@@ -51,6 +51,23 @@ const FLAG_TIMES: u8 = 1 << 2;
 /// `NSET`, the frame count, and `NSTEP`, the last step, of the header record
 /// at the start of the file.
 const DCD_COUNT_FIELDS: [Range<u64>; 2] = [8..12, 20..24];
+
+/// An open file a fingerprint reads: a file, or a shared position in one.
+pub(crate) trait FingerprintSource: Read + Seek {
+    fn file_metadata(&self) -> std::io::Result<std::fs::Metadata>;
+}
+
+impl FingerprintSource for File {
+    fn file_metadata(&self) -> std::io::Result<std::fs::Metadata> {
+        self.metadata()
+    }
+}
+
+impl FingerprintSource for SharedFile {
+    fn file_metadata(&self) -> std::io::Result<std::fs::Metadata> {
+        self.metadata()
+    }
+}
 
 /// The identity of a trajectory file's content.
 ///
@@ -158,15 +175,15 @@ impl TrajectoryFileFingerprint {
 
     /// As [`Self::of_file`], labelling errors with `source_label`.
     pub(crate) fn of_labelled_file(
-        file: &mut File,
+        file: &mut impl FingerprintSource,
         source_label: &str,
     ) -> Result<Self, TrajectoryIoError> {
         Self::fingerprint(file)
             .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))
     }
 
-    fn fingerprint(file: &mut File) -> std::io::Result<Self> {
-        let byte_count = file.metadata()?.len();
+    fn fingerprint(file: &mut impl FingerprintSource) -> std::io::Result<Self> {
+        let byte_count = file.file_metadata()?.len();
         Self::fingerprint_prefix(file, byte_count)
     }
 
@@ -174,8 +191,11 @@ impl TrajectoryFileFingerprint {
     /// file ended there, with the file's modification time; the file is
     /// left positioned at its start. A file shorter than `byte_count` is an
     /// [`ErrorKind::UnexpectedEof`] error.
-    fn fingerprint_prefix(file: &mut File, byte_count: u64) -> std::io::Result<Self> {
-        let modified = file.metadata()?.modified().ok().and_then(unix_nanos);
+    fn fingerprint_prefix(
+        file: &mut impl FingerprintSource,
+        byte_count: u64,
+    ) -> std::io::Result<Self> {
+        let modified = file.file_metadata()?.modified().ok().and_then(unix_nanos);
         let masked = byte_count >= 8 && {
             let mut signature = [0_u8; 8];
             file.seek(SeekFrom::Start(0))?;
@@ -218,7 +238,7 @@ impl TrajectoryFileFingerprint {
     /// The fingerprint of the first `byte_count` bytes of `file`, labelling
     /// errors with `source_label`; see [`Self::fingerprint_prefix`].
     pub(crate) fn of_labelled_file_prefix(
-        file: &mut File,
+        file: &mut impl FingerprintSource,
         byte_count: u64,
         source_label: &str,
     ) -> Result<Self, TrajectoryIoError> {
@@ -269,15 +289,15 @@ impl TrajectoryFileFingerprint {
     /// As [`Self::is_prefix_of_file`], labelling errors with `source_label`.
     pub(crate) fn is_prefix_of_labelled_file(
         &self,
-        file: &mut File,
+        file: &mut impl FingerprintSource,
         source_label: &str,
     ) -> Result<bool, TrajectoryIoError> {
         self.is_prefix(file)
             .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))
     }
 
-    fn is_prefix(&self, file: &mut File) -> std::io::Result<bool> {
-        if file.metadata()?.len() < self.byte_count {
+    fn is_prefix(&self, file: &mut impl FingerprintSource) -> std::io::Result<bool> {
+        if file.file_metadata()?.len() < self.byte_count {
             file.seek(SeekFrom::Start(0))?;
             return Ok(false);
         }
@@ -1000,8 +1020,8 @@ pub(crate) fn index_mismatch(
 pub struct TrajectoryFrameIndex {
     format: TrajectoryFormat,
     fingerprint: TrajectoryFileFingerprint,
-    /// Ends at `fingerprint.byte_count`.
-    offsets: FrameOffsets,
+    /// Ends at `fingerprint.byte_count`; shared with the readers of the file.
+    offsets: Arc<FrameOffsets>,
     precision_mixed: bool,
 }
 
@@ -1020,7 +1040,7 @@ impl TrajectoryFrameIndex {
     pub(crate) fn new(
         format: TrajectoryFormat,
         fingerprint: TrajectoryFileFingerprint,
-        offsets: FrameOffsets,
+        offsets: Arc<FrameOffsets>,
         precision_mixed: bool,
     ) -> Self {
         debug_assert_eq!(offsets.end(), fingerprint.byte_count);
@@ -1032,7 +1052,7 @@ impl TrajectoryFrameIndex {
         }
     }
 
-    pub(crate) fn into_parts(self) -> (FrameOffsets, bool) {
+    pub(crate) fn into_parts(self) -> (Arc<FrameOffsets>, bool) {
         (self.offsets, self.precision_mixed)
     }
 
@@ -1264,12 +1284,12 @@ impl TrajectoryFrameIndex {
         };
         Ok(Self {
             format,
-            offsets: FrameOffsets {
+            offsets: Arc::new(FrameOffsets {
                 starts,
                 end: fingerprint.byte_count,
                 times,
                 steps,
-            },
+            }),
             fingerprint,
             precision_mixed: flags & FLAG_MIXED_PRECISION != 0,
         })
@@ -1378,7 +1398,7 @@ mod tests {
                 modified: Some(-1_500_000_000_123),
                 content_hash: 0x0123_4567_89ab_cdef,
             },
-            FrameOffsets {
+            Arc::new(FrameOffsets {
                 times: stamped.then(|| {
                     starts
                         .iter()
@@ -1388,7 +1408,7 @@ mod tests {
                 steps: stamped.then(|| starts.iter().map(|&start| start * 10).collect()),
                 starts,
                 end: byte_count,
-            },
+            }),
             true,
         )
     }
@@ -1441,7 +1461,7 @@ mod tests {
         }
         // DCD records steps, and times only under a header-delta policy.
         let mut stepped = index_of(TrajectoryFormat::Dcd, vec![0, 100], 400, true);
-        stepped.offsets.times = None;
+        Arc::make_mut(&mut stepped.offsets).times = None;
         for original in [
             stepped,
             index_of(TrajectoryFormat::Dcd, vec![0, 100], 400, true),

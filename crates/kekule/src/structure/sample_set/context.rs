@@ -6,7 +6,7 @@ use crate::structure::series::ItemPlace;
 use crate::structure::{Ensemble, Forces, SeriesItem, TrajectoryFrame, Velocities};
 use crate::units::Quantity;
 
-use super::{Place, SampleSet};
+use super::{Place, SampleRead, SampleView};
 
 /// What a borrowed sample carries besides its structure: its place in its
 /// set's order, its membership in the set's distribution, and its
@@ -30,17 +30,17 @@ pub struct SampleContext<'a> {
 /// Where a context reads the sample's state.
 #[derive(Clone, Copy)]
 enum Source<'a> {
-    Set(&'a SampleSet, usize),
+    Set(SampleView<'a, dyn SampleRead>),
     Ensemble(&'a Ensemble, usize),
     Frame(&'a TrajectoryFrame),
     Item(&'a SeriesItem),
 }
 
 impl<'a> SampleContext<'a> {
-    /// The context of sample `index` of `set`, which must exist.
-    pub(crate) const fn of_set(set: &'a SampleSet, index: usize) -> Self {
+    /// The context of a sample of a set or another reader.
+    pub(crate) const fn of_view(view: SampleView<'a, dyn SampleRead>) -> Self {
         Self {
-            source: Source::Set(set, index),
+            source: Source::Set(view),
         }
     }
 
@@ -65,8 +65,8 @@ impl<'a> SampleContext<'a> {
         }
     }
 
-    /// Whether the sample belongs to a [`SampleSet`], whose writers apply one
-    /// policy to all of its state.
+    /// Whether the sample belongs to a [`SampleSet`](super::SampleSet) or
+    /// another reader, whose writers apply one policy to all of its state.
     pub(crate) const fn is_of_set(self) -> bool {
         matches!(self.source, Source::Set(..))
     }
@@ -74,9 +74,10 @@ impl<'a> SampleContext<'a> {
     /// Whether the sample belongs to a set whose distribution leaves it out.
     pub(crate) fn is_outside_distribution(self) -> bool {
         match self.source {
-            Source::Set(set, index) => set
+            Source::Set(view) => view
+                .reader
                 .distribution()
-                .is_some_and(|distribution| distribution.membership(index).is_none()),
+                .is_some_and(|distribution| distribution.membership(view.index).is_none()),
             _ => false,
         }
     }
@@ -85,7 +86,7 @@ impl<'a> SampleContext<'a> {
     /// coordinate in the order's unit. `None` in an unordered set.
     pub fn place(self) -> Option<Place> {
         match self.source {
-            Source::Set(set, index) => set.order().map(|order| order.place(index)),
+            Source::Set(view) => view.place(),
             Source::Ensemble(..) => None,
             Source::Frame(frame) => Some(Place::Time {
                 time: frame.time,
@@ -102,9 +103,10 @@ impl<'a> SampleContext<'a> {
     /// the set has none or the sample is not a member.
     pub fn membership(self) -> Option<Membership> {
         match self.source {
-            Source::Set(set, index) => set
+            Source::Set(view) => view
+                .reader
                 .distribution()
-                .and_then(|distribution| distribution.membership(index)),
+                .and_then(|distribution| distribution.membership(view.index)),
             Source::Ensemble(ensemble, index) => Some(ensemble.membership(index)),
             Source::Frame(_) | Source::Item(_) => None,
         }
@@ -113,7 +115,7 @@ impl<'a> SampleContext<'a> {
     /// The sample's velocities, when present.
     pub fn velocities(self) -> Option<&'a Velocities> {
         match self.source {
-            Source::Set(set, index) => set.samples[index].velocities(),
+            Source::Set(view) => view.payload().velocities(),
             Source::Frame(frame) => frame.velocities.as_ref(),
             Source::Ensemble(..) | Source::Item(_) => None,
         }
@@ -122,7 +124,7 @@ impl<'a> SampleContext<'a> {
     /// The sample's forces, when present.
     pub fn forces(self) -> Option<&'a Forces> {
         match self.source {
-            Source::Set(set, index) => set.samples[index].forces(),
+            Source::Set(view) => view.payload().forces(),
             Source::Frame(frame) => frame.forces.as_ref(),
             Source::Ensemble(..) | Source::Item(_) => None,
         }

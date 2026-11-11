@@ -65,7 +65,8 @@ use std::sync::Arc;
 use crate::geometry::Point3;
 use crate::molecule::Element;
 use crate::structure::{
-    Ensemble, ModelView, Positions, SampleSet, Series, SeriesAxis, TrajectoryFrameView,
+    DecodedSample, Ensemble, ModelView, Positions, SampleSet, Series, SeriesAxis,
+    TrajectoryFrameView,
 };
 use crate::topology::Topology;
 use crate::traj::{
@@ -739,7 +740,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
     ) -> Result<IndexedXyzReader<R>, TrajectoryIoError> {
         let mut indexed = IndexedXyzReader {
             reader: self,
-            offsets: FrameOffsets::empty(stream_start),
+            offsets: Arc::new(FrameOffsets::empty(stream_start)),
             pending_bytes: 0,
         };
         indexed.extend(growing, control)?;
@@ -785,7 +786,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
 /// Fully scanned XYZ reader with verified frame offsets.
 pub struct IndexedXyzReader<R> {
     reader: XyzReader<R>,
-    offsets: FrameOffsets,
+    offsets: Arc<FrameOffsets>,
     /// Bytes after the last indexed frame when the index last grew.
     pending_bytes: u64,
 }
@@ -858,7 +859,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         mut reader: R,
         topology: Arc<Topology>,
         options: XyzReadOptions,
-        offsets: FrameOffsets,
+        offsets: Arc<FrameOffsets>,
         growing: bool,
     ) -> Result<Self, TrajectoryIoError> {
         let stream_start = reader.stream_position().map_err(|error| {
@@ -888,9 +889,61 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         &self.offsets
     }
 
+    pub(crate) fn shared_offsets(&self) -> &Arc<FrameOffsets> {
+        &self.offsets
+    }
+
+    /// Lets go of the index until [`Self::share_index`], so that a reader
+    /// extending it does not copy it.
+    pub(crate) fn release_index(&mut self) {
+        self.offsets = Arc::new(FrameOffsets::empty(self.offsets.end()));
+    }
+
+    /// Reads by the index of `other`, a reader of the same file, from now
+    /// on.
+    pub(crate) fn share_index(&mut self, other: &Self) {
+        self.offsets = Arc::clone(&other.offsets);
+    }
+
+    /// Another reader of the same frames over `stream`, which must read the
+    /// same file from its start; it shares the index and reads the first
+    /// frame alone.
+    pub(crate) fn fork(&self, stream: R) -> Result<Self, TrajectoryIoError> {
+        Self::from_offsets(
+            stream,
+            Arc::clone(&self.reader.topology),
+            self.reader.options.clone(),
+            Arc::clone(&self.offsets),
+            self.reader.growing,
+        )
+    }
+
+    /// The stream every read goes through.
+    pub(crate) fn stream(&self) -> &R {
+        &self.reader.reader
+    }
+
     /// The stream every read goes through.
     pub(crate) fn stream_mut(&mut self) -> &mut R {
         &mut self.reader.reader
+    }
+
+    /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
+    /// does and hands over its positions, written once as they were parsed.
+    pub(crate) fn read_decoded(
+        &mut self,
+        index: usize,
+    ) -> Result<DecodedSample, TrajectoryIoError> {
+        self.read_indexed(index)?;
+        let atoms = self.reader.positions.len();
+        let positions = std::mem::replace(&mut self.reader.positions, Vec::with_capacity(atoms));
+        Ok(DecodedSample {
+            positions: Quantity::new(positions, self.reader.options.length_unit),
+            cell: None,
+            velocities: None,
+            forces: None,
+            owner: None,
+        })
     }
 
     /// Bytes after the last indexed frame when the index last grew.
@@ -900,7 +953,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
 
     /// Drops the frames indexed after `mark`; see [`FrameOffsets::mark`].
     pub(crate) fn restore_index(&mut self, mark: (usize, u64), pending_bytes: u64) {
-        self.offsets.restore(mark);
+        Arc::make_mut(&mut self.offsets).restore(mark);
         self.pending_bytes = pending_bytes;
     }
 
@@ -942,7 +995,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 Ok(pending)
             }
             Err(error) => {
-                self.offsets.restore(mark);
+                Arc::make_mut(&mut self.offsets).restore(mark);
                 Err(error)
             }
         }
@@ -1002,7 +1055,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 Err(error) => return Err(error),
             }
             let end = self.reader.position(TrajectoryIoOperation::Index)?;
-            self.offsets.push(
+            Arc::make_mut(&mut self.offsets).push(
                 offset,
                 end,
                 FrameStamp::default(),
@@ -1061,6 +1114,15 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        self.read_indexed(index)?;
+        self.reader.publish(destination)
+    }
+}
+
+impl<R: BufRead + Seek> IndexedXyzReader<R> {
+    /// Parses and verifies frame `index` into the reader's buffer, then
+    /// puts the stream back where it was.
+    fn read_indexed(&mut self, index: usize) -> Result<(), TrajectoryIoError> {
         let (offset, _) = self
             .offsets
             .frame(index)
@@ -1113,8 +1175,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
         if !parsed? {
             return Err(TrajectoryIoError::frame_index_out_of_range(index));
         }
-        restore?;
-        self.reader.publish(destination)
+        restore.map(|_| ())
     }
 }
 

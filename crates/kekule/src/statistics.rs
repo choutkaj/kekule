@@ -32,6 +32,12 @@
 //! frames, for example after biased sampling, observe them through an
 //! accumulator with explicit weights.
 //!
+//! An accumulator also observes the samples of any
+//! [`SampleRead`], such as a set read from a
+//! file: [`SampleObservations`] lists the samples and their weights, and
+//! `observe_samples` reads a range of them in order, as a set's own
+//! statistics do.
+//!
 //! Coordinates are used as stored, ignoring cells. Align and perform any
 //! periodic preprocessing explicitly before observation. Lengths are reported
 //! in the canonical length unit (nm).
@@ -68,10 +74,15 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::ops::Range;
 use std::sync::Arc;
 
+use crate::diagnostics::{Cancellation, Cancelled};
 use crate::geometry::{Point3, PointGrid, Vector3};
-use crate::structure::{AsModelView, Ensemble, ModelView, SampleSet, Trajectory};
+use crate::structure::{
+    visit_sample, AsModelView, Ensemble, ModelView, SampleRead, SampleReadError, SampleSet,
+    SampleStorage, Trajectory,
+};
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
@@ -146,6 +157,17 @@ pub enum StatisticsError {
         /// The atom whose value overflowed.
         atom: InstanceAtomId,
     },
+    /// Observations past the last of [`SampleObservations`] were requested.
+    ObservationsOutOfRange {
+        /// The requested positions among the observations.
+        positions: Range<usize>,
+        /// The number of observations.
+        len: usize,
+    },
+    /// A sample cannot be read; see the source.
+    Read(SampleReadError),
+    /// The observation was cancelled.
+    Cancelled(Cancelled),
 }
 
 /// What differs between two accumulators that cannot be merged.
@@ -220,6 +242,15 @@ impl fmt::Display for StatisticsError {
             Self::MergeNumericalFailure { atom } => {
                 write!(f, "The merged statistic of {atom} overflows.")
             }
+            Self::ObservationsOutOfRange { positions, len } => write!(
+                f,
+                "Observations {}..{} do not exist. There are {}.",
+                positions.start,
+                positions.end,
+                crate::diagnostics::counted(*len, "observation", "observations")
+            ),
+            Self::Read(error) => fmt::Display::fmt(error, f),
+            Self::Cancelled(error) => fmt::Display::fmt(error, f),
         }
     }
 }
@@ -229,9 +260,222 @@ impl std::error::Error for StatisticsError {
         match self {
             Self::Selection(error) => Some(error),
             Self::Unit(error) => Some(error),
+            Self::Read(error) => std::error::Error::source(error),
             _ => None,
         }
     }
+}
+
+/// The samples of a reader that statistics observe, in order, each with its
+/// weight: what [`RmsfAccumulator::observe_samples`],
+/// [`ContactOccupancyAccumulator::observe_samples`], and
+/// [`GroupContactOccupancyAccumulator::observe_samples`] read.
+///
+/// The weights are fixed for the whole list, so a host that splits the list
+/// into ranges of positions, observes each range into its own accumulator,
+/// and merges them in range order gets what observing the whole list in one
+/// accumulator gives, up to rounding.
+///
+/// ```
+/// use kekule::structure::{Positions, Sample, SampleSet};
+/// use kekule::statistics::{RmsfAccumulator, SampleObservations};
+/// use kekule::topology::AtomSelection;
+///
+/// let topology = kekule::smiles::to_topology("O")?;
+/// let mut set = SampleSet::new(topology.clone());
+/// for _ in 0..10 {
+///     set.push(Sample::new(Positions::zeros(topology.atom_count())), None)?;
+/// }
+/// // Every other sample, observed in two ranges merged in order.
+/// let observations = SampleObservations::of(&set, (0..set.len()).step_by(2))?;
+/// let selection = AtomSelection::all(topology);
+/// let mut first = RmsfAccumulator::new(&selection)?;
+/// first.observe_samples(&set, &observations, 0..3)?;
+/// let mut second = RmsfAccumulator::new(&selection)?;
+/// second.observe_samples(&set, &observations, 3..observations.len())?;
+/// first.merge(&second)?;
+/// assert_eq!(first.observation_count(), 5);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SampleObservations {
+    samples: Vec<usize>,
+    weights: Vec<f64>,
+}
+
+impl SampleObservations {
+    /// The samples a set's statistics observe: the members of the reader's
+    /// distribution, each with its probability (its weight over the members'
+    /// total), or, without a distribution, every sample with weight one.
+    pub fn all(reader: &(impl SampleRead + ?Sized)) -> Self {
+        match reader.distribution() {
+            Some(distribution) => {
+                let (samples, weights): (Vec<_>, Vec<_>) = distribution.weighted_members().unzip();
+                Self::weighed(samples, weights)
+            }
+            None => Self {
+                samples: (0..reader.len()).collect(),
+                weights: vec![1.0; reader.len()],
+            },
+        }
+    }
+
+    /// The listed samples, in the listed order, with the distribution
+    /// restricted to them, as [`SampleSet::select`] restricts it: the listed
+    /// members, each with its weight over the listed members' total, and the
+    /// other listed samples left out. Without a distribution every listed
+    /// sample is observed with weight one. Ranges and strides are written as
+    /// `(start..end).step_by(stride)`.
+    ///
+    /// # Errors
+    ///
+    /// [`StatisticsError::Read`] with [`SampleReadError::IndexOutOfRange`]
+    /// for an index past the last sample.
+    pub fn of(
+        reader: &(impl SampleRead + ?Sized),
+        samples: impl IntoIterator<Item = usize>,
+    ) -> Result<Self, StatisticsError> {
+        let len = reader.len();
+        let samples = samples.into_iter().collect::<Vec<_>>();
+        if let Some(&index) = samples.iter().find(|index| **index >= len) {
+            return Err(StatisticsError::Read(SampleReadError::IndexOutOfRange {
+                index,
+                len,
+            }));
+        }
+        Ok(match reader.distribution() {
+            Some(distribution) => {
+                let (samples, weights): (Vec<_>, Vec<_>) = samples
+                    .into_iter()
+                    .filter_map(|index| distribution.weight(index).map(|weight| (index, weight)))
+                    .unzip();
+                Self::weighed(samples, weights)
+            }
+            None => Self {
+                weights: vec![1.0; samples.len()],
+                samples,
+            },
+        })
+    }
+
+    /// Members with their relative weights, as probabilities.
+    fn weighed(samples: Vec<usize>, weights: Vec<f64>) -> Self {
+        let largest = weights.iter().copied().reduce(f64::max).unwrap_or(1.0);
+        let weights = probabilities(weights.into_iter().map(|weight| weight / largest).collect());
+        Self { samples, weights }
+    }
+
+    /// The number of observations.
+    pub fn len(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Whether there is no observation.
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+
+    /// The observed sample indices, in order.
+    pub fn samples(&self) -> &[usize] {
+        &self.samples
+    }
+
+    /// The weight of each observation.
+    pub fn weights(&self) -> &[f64] {
+        &self.weights
+    }
+}
+
+/// Reads the observations at `positions` from `reader` in order, polling
+/// `cancellation` before each, and observes each through `observe` with
+/// its sample index, its structure, and its weight; the one reading loop
+/// behind every reduction over a reader. A sample the reader lends is not
+/// read.
+fn observe_samples_of(
+    reader: &dyn SampleRead,
+    observations: &SampleObservations,
+    positions: Range<usize>,
+    cancellation: Option<&Cancellation>,
+    mut observe: impl FnMut(usize, ModelView<'_>, f64) -> Result<(), StatisticsError>,
+) -> Result<(), StatisticsError> {
+    let (Some(samples), Some(weights)) = (
+        observations.samples.get(positions.clone()),
+        observations.weights.get(positions.clone()),
+    ) else {
+        return Err(StatisticsError::ObservationsOutOfRange {
+            positions,
+            len: observations.len(),
+        });
+    };
+    for (&index, &weight) in samples.iter().zip(weights) {
+        Cancellation::poll(cancellation).map_err(StatisticsError::Cancelled)?;
+        visit_sample(reader, index, StatisticsError::Read, |structure| {
+            observe(index, structure, weight)
+        })?;
+    }
+    Ok(())
+}
+
+/// Defines `observe_samples` and `observe_samples_cancellable` of an
+/// accumulator through [`observe_samples_of`], transactionally.
+macro_rules! observe_samples {
+    ($name:literal) => {
+        /// Observes the observations at `positions` (positions in
+        /// `observations`, not sample indices) from `reader`, in order, each
+        /// labelled by its sample index; a sample the reader lends is not
+        /// read. Failure changes nothing.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StatisticsError::ObservationsOutOfRange`] for positions
+        /// past the last observation, [`StatisticsError::Read`] when a sample
+        /// cannot be read, and the errors of
+        #[doc = concat!("[`", $name, "::observe`].")]
+        pub fn observe_samples(
+            &mut self,
+            reader: &dyn SampleRead,
+            observations: &SampleObservations,
+            positions: Range<usize>,
+        ) -> Result<(), StatisticsError> {
+            self.observe_samples_polling(reader, observations, positions, None)
+        }
+
+        /// [`Self::observe_samples`], stopping when `cancellation` is
+        /// requested.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StatisticsError::Cancelled`] when cancelled, and the
+        /// errors of [`Self::observe_samples`]. Either way nothing changes.
+        pub fn observe_samples_cancellable(
+            &mut self,
+            reader: &dyn SampleRead,
+            observations: &SampleObservations,
+            positions: Range<usize>,
+            cancellation: &Cancellation,
+        ) -> Result<(), StatisticsError> {
+            self.observe_samples_polling(reader, observations, positions, Some(cancellation))
+        }
+
+        fn observe_samples_polling(
+            &mut self,
+            reader: &dyn SampleRead,
+            observations: &SampleObservations,
+            positions: Range<usize>,
+            cancellation: Option<&Cancellation>,
+        ) -> Result<(), StatisticsError> {
+            let mut observed = self.clone();
+            observe_samples_of(
+                reader,
+                observations,
+                positions,
+                cancellation,
+                |index, structure, weight| observed.observe(index, &structure, weight),
+            )?;
+            *self = observed;
+            Ok(())
+        }
+    };
 }
 
 /// The total weight after observing `weight`, which must be finite and
@@ -477,6 +721,8 @@ pub struct RmsfAccumulator {
 }
 
 impl RmsfAccumulator {
+    observe_samples!("RmsfAccumulator");
+
     /// An empty accumulator over `selection`, which fixes the atoms and the
     /// topology layout of every observed structure.
     ///
@@ -729,6 +975,8 @@ pub struct ContactOccupancyAccumulator {
 }
 
 impl ContactOccupancyAccumulator {
+    observe_samples!("ContactOccupancyAccumulator");
+
     /// An empty accumulator for `pairs` of `topology` atoms in contact at
     /// distances up to `cutoff`, a length.
     ///
@@ -1129,6 +1377,8 @@ fn apart(
 }
 
 impl GroupContactOccupancyAccumulator {
+    observe_samples!("GroupContactOccupancyAccumulator");
+
     /// An empty accumulator for `pairs` of `groups`, atom selections of
     /// `topology` named by their index in `groups`, in contact at distances up
     /// to `cutoff`, a length.
@@ -1506,7 +1756,10 @@ fn probabilities(scaled: Vec<f64>) -> Vec<f64> {
     scaled.into_iter().map(|weight| weight / total).collect()
 }
 
-impl SampleSet {
+impl<S: SampleStorage> SampleSet<S>
+where
+    Self: SampleRead,
+{
     /// Per-atom weighted RMSF about each atom's weighted mean stored position,
     /// as defined by [`RmsfAccumulator`], over the samples statistics see
     /// ([`Self::weighted_samples`]): the members of the distribution, each
@@ -1523,7 +1776,13 @@ impl SampleSet {
     /// sample index of a member whose probability underflows to zero, and the
     /// errors of [`RmsfAccumulator::new`] and [`RmsfAccumulator::observe`].
     pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, StatisticsError> {
-        rmsf_of(&self.shared_topology(), selection, self.observations())
+        selection
+            .ensure_compatible(&self.shared_topology())
+            .map_err(StatisticsError::Selection)?;
+        let mut accumulator = RmsfAccumulator::new(selection)?;
+        let observations = SampleObservations::all(self);
+        accumulator.observe_samples(self, &observations, 0..observations.len())?;
+        accumulator.finish()
     }
 
     /// Weighted Cartesian contact occupancies, as defined by
@@ -1543,7 +1802,11 @@ impl SampleSet {
         pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
         cutoff: Quantity<f64>,
     ) -> Result<ContactOccupancyResult, StatisticsError> {
-        contact_occupancy_of(&self.shared_topology(), pairs, cutoff, self.observations())
+        let mut accumulator =
+            ContactOccupancyAccumulator::new(&self.shared_topology(), pairs, cutoff)?;
+        let observations = SampleObservations::all(self);
+        accumulator.observe_samples(self, &observations, 0..observations.len())?;
+        accumulator.finish()
     }
 
     /// Weighted Cartesian contact occupancies of pairs of atom groups, as
@@ -1563,30 +1826,11 @@ impl SampleSet {
         pairs: impl IntoIterator<Item = (usize, usize)>,
         cutoff: Quantity<f64>,
     ) -> Result<GroupContactOccupancyResult, StatisticsError> {
-        group_contact_occupancy_of(
-            &self.shared_topology(),
-            groups,
-            pairs,
-            cutoff,
-            self.observations(),
-        )
-    }
-
-    /// Each observed sample, labelled by its sample index, with its
-    /// observation weight: the members with their probabilities, or every
-    /// sample with weight one.
-    fn observations(&self) -> Vec<(usize, ModelView<'_>, f64)> {
-        let weights = match self.distribution() {
-            Some(distribution) => probabilities(distribution.scaled_weights()),
-            None => vec![1.0; self.len()],
-        };
-        self.weighted_samples()
-            .zip(weights)
-            .map(|((index, _), weight)| {
-                let sample = self.get(index).expect("weighted samples are in the set");
-                (index, sample.as_model_view(), weight)
-            })
-            .collect()
+        let mut accumulator =
+            GroupContactOccupancyAccumulator::new(&self.shared_topology(), groups, pairs, cutoff)?;
+        let observations = SampleObservations::all(self);
+        accumulator.observe_samples(self, &observations, 0..observations.len())?;
+        accumulator.finish()
     }
 }
 

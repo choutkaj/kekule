@@ -18,8 +18,8 @@ use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    buffer_snapshot, codec_error, codec_kind, topology as build_topology, x_coordinates as xs,
-    GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure,
+    buffer_snapshot, codec_error, codec_kind, fixed_atom_fixture, topology as build_topology,
+    x_coordinates as xs, GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure,
 };
 
 fn topology() -> Arc<Topology> {
@@ -977,54 +977,6 @@ fn independently_generated_mdanalysis_fixture_is_interoperable() {
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_xs_close(&buffer, &[0.1, 0.4, 0.7]);
     assert!(!reader.read_next(&mut buffer).unwrap());
-}
-
-fn fixed_atom_fixture(endian: DcdEndian) -> Vec<u8> {
-    let i32_bytes = |value: i32| match endian {
-        DcdEndian::Little => value.to_le_bytes(),
-        DcdEndian::Big => value.to_be_bytes(),
-    };
-    let f32_bytes = |value: f32| match endian {
-        DcdEndian::Little => value.to_le_bytes(),
-        DcdEndian::Big => value.to_be_bytes(),
-    };
-    let mut bytes = Vec::new();
-    let mut record = |payload: &[u8]| {
-        bytes.extend(i32_bytes(payload.len() as i32));
-        bytes.extend(payload);
-        bytes.extend(i32_bytes(payload.len() as i32));
-    };
-
-    let mut header = [0_u8; 84];
-    header[..4].copy_from_slice(b"CORD");
-    let mut controls = [0_i32; 20];
-    controls[0] = 2;
-    controls[2] = 1;
-    controls[8] = 2;
-    controls[19] = 24;
-    for (chunk, value) in header[4..].as_chunks_mut::<4>().0.iter_mut().zip(controls) {
-        chunk.copy_from_slice(&i32_bytes(value));
-    }
-    header[40..44].copy_from_slice(&f32_bytes(1.0));
-    record(&header);
-    let mut title = [0_u8; 84];
-    title[..4].copy_from_slice(&i32_bytes(1));
-    title[4..9].copy_from_slice(b"fixed");
-    record(&title);
-    record(&i32_bytes(3));
-    record(&i32_bytes(2));
-    for values in [
-        vec![0.0_f32, 1.0, 2.0],
-        vec![0.0, 1.0, 2.0],
-        vec![0.0, 1.0, 2.0],
-        vec![10.0],
-        vec![11.0],
-        vec![12.0],
-    ] {
-        let payload = values.into_iter().flat_map(f32_bytes).collect::<Vec<_>>();
-        record(&payload);
-    }
-    bytes
 }
 
 #[test]

@@ -1,15 +1,21 @@
 //! Superposition and RMSD over every sample of a [`SampleSet`] or an
-//! [`Ensemble`], frame of a [`Trajectory`], or item of a [`Series`], all
-//! through one implementation.
+//! [`Ensemble`], frame of a [`Trajectory`], or item of a [`Series`], and
+//! RMSD over listed samples of any [`SampleRead`], all through one
+//! implementation.
 
+use crate::diagnostics::Cancellation;
 use crate::geometry::RigidTransform;
-use crate::structure::{AsModelView, Ensemble, ModelView, SampleSet, Series, Trajectory};
+use crate::structure::{
+    visit_sample, AsModelView, Ensemble, ModelView, Sample, SampleRead, SampleSet, SampleView,
+    Series, Trajectory,
+};
 use crate::topology::{AtomSelection, Topology};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::{
     best_kabsch, best_measure, check_fit_count, check_measurement_count, AlignmentError,
-    AlignmentOptions, FitAtoms, NormalizedWeights, Pairs, RigidAlignment, Weighting,
+    AlignmentOptions, FitAtoms, NormalizedWeights, Pairs, PeriodicPolicy, RigidAlignment,
+    Weighting,
 };
 
 /// The reference of a collection-wide fit or RMSD.
@@ -126,7 +132,7 @@ fn fit_items<'a>(
         Reference::View(_) => None,
     };
     let reference = reference_view(items, reference)?;
-    let sets = item_pair_sets(topology, items, reference, atoms)?;
+    let sets = item_pair_sets(topology, items.first().copied(), reference, atoms)?;
     check_fit_count(atoms.pair_count())?;
     let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
     let alignments = items
@@ -143,6 +149,126 @@ fn fit_items<'a>(
     })
 }
 
+/// What an RMSD measures: direct RMSD over one pairing, or RMSD over one
+/// pairing after a fit over another.
+#[derive(Clone, Copy)]
+enum Measured<'a, 'w> {
+    Direct(FitAtoms<'a>, AlignmentOptions<'w>),
+    Aligned(FitAtoms<'a>, FitAtoms<'a>, AlignedRmsdOptions<'w>),
+}
+
+/// An RMSD to one reference, validated once and measured for many items.
+enum Measurement<'r, 'w> {
+    Direct {
+        reference: ModelView<'r>,
+        sets: Vec<Pairs>,
+        weights: NormalizedWeights<'w>,
+        policy: PeriodicPolicy,
+    },
+    Aligned {
+        reference: ModelView<'r>,
+        fit_sets: Vec<Pairs>,
+        fit_weights: NormalizedWeights<'w>,
+        measurement_sets: Vec<Pairs>,
+        measurement_weights: NormalizedWeights<'w>,
+        policy: PeriodicPolicy,
+    },
+}
+
+impl<'r, 'w> Measurement<'r, 'w> {
+    /// Validates the pairing against the first item, or the collection's
+    /// topology without items, and the weights.
+    fn new(
+        topology: &Topology,
+        first: Option<ModelView<'_>>,
+        reference: ModelView<'r>,
+        measured: Measured<'_, 'w>,
+    ) -> Result<Self, AlignmentError> {
+        match measured {
+            Measured::Direct(atoms, options) => {
+                let sets = item_pair_sets(topology, first, reference, atoms)?;
+                check_measurement_count(atoms.pair_count())?;
+                Ok(Self::Direct {
+                    reference,
+                    sets,
+                    weights: NormalizedWeights::new(options.weighting, atoms.pair_count())?,
+                    policy: options.periodic_policy,
+                })
+            }
+            Measured::Aligned(fit, measurement, options) => {
+                let fit_sets = item_pair_sets(topology, first, reference, fit)?;
+                let measurement_sets = item_pair_sets(topology, first, reference, measurement)?;
+                check_fit_count(fit.pair_count())?;
+                check_measurement_count(measurement.pair_count())?;
+                Ok(Self::Aligned {
+                    reference,
+                    fit_sets,
+                    fit_weights: NormalizedWeights::new(options.fit.weighting, fit.pair_count())?,
+                    measurement_sets,
+                    measurement_weights: NormalizedWeights::new(
+                        options.measurement_weighting,
+                        measurement.pair_count(),
+                    )?,
+                    policy: options.fit.periodic_policy,
+                })
+            }
+        }
+    }
+
+    /// The RMSD of `moving` to the reference.
+    fn measure(&self, moving: ModelView<'_>) -> Result<f64, AlignmentError> {
+        match self {
+            Self::Direct {
+                reference,
+                sets,
+                weights,
+                policy,
+            } => best_measure(moving, *reference, sets, *weights, *policy, None),
+            // The best fit fixes the transform; the measurement then takes
+            // its own best permutation under that transform.
+            Self::Aligned {
+                reference,
+                fit_sets,
+                fit_weights,
+                measurement_sets,
+                measurement_weights,
+                policy,
+            } => {
+                let alignment = best_kabsch(moving, *reference, fit_sets, *fit_weights, *policy)?;
+                best_measure(
+                    moving,
+                    *reference,
+                    measurement_sets,
+                    *measurement_weights,
+                    *policy,
+                    Some(alignment.transform()),
+                )
+            }
+        }
+    }
+}
+
+/// The RMSD of every item to the reference.
+fn item_values<'a>(
+    topology: &Topology,
+    items: &[ModelView<'a>],
+    reference: Reference<'a>,
+    measured: Measured<'_, '_>,
+) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    let reference = reference_view(items, reference)?;
+    let measurement = Measurement::new(topology, items.first().copied(), reference, measured)?;
+    let values = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            measurement
+                .measure(*item)
+                .map_err(|source| item_error(index, source))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
+}
+
 /// Direct RMSD from every item to the reference.
 fn item_rmsd<'a>(
     topology: &Topology,
@@ -151,26 +277,7 @@ fn item_rmsd<'a>(
     atoms: FitAtoms<'a>,
     options: AlignmentOptions<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-    let reference = reference_view(items, reference)?;
-    let sets = item_pair_sets(topology, items, reference, atoms)?;
-    check_measurement_count(atoms.pair_count())?;
-    let weights = NormalizedWeights::new(options.weighting, atoms.pair_count())?;
-    let values = items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            best_measure(
-                *item,
-                reference,
-                &sets,
-                weights,
-                options.periodic_policy,
-                None,
-            )
-            .map_err(|source| item_error(index, source))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
+    item_values(topology, items, reference, Measured::Direct(atoms, options))
 }
 
 /// RMSD over `measurement` pairs of every item after fitting it on `fit`.
@@ -182,34 +289,189 @@ fn item_aligned_rmsd<'a>(
     measurement: FitAtoms<'a>,
     options: AlignedRmsdOptions<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-    let reference = reference_view(items, reference)?;
-    let fit_sets = item_pair_sets(topology, items, reference, fit)?;
-    let measurement_sets = item_pair_sets(topology, items, reference, measurement)?;
-    check_fit_count(fit.pair_count())?;
-    check_measurement_count(measurement.pair_count())?;
-    let fit_weights = NormalizedWeights::new(options.fit.weighting, fit.pair_count())?;
-    let measurement_weights =
-        NormalizedWeights::new(options.measurement_weighting, measurement.pair_count())?;
-    let policy = options.fit.periodic_policy;
-    // The best fit fixes the transform; the measurement then takes its own
-    // best permutation under that transform.
-    let measure = |moving: ModelView<'_>| {
-        let alignment = best_kabsch(moving, reference, &fit_sets, fit_weights, policy)?;
-        best_measure(
-            moving,
-            reference,
-            &measurement_sets,
-            measurement_weights,
-            policy,
-            Some(alignment.transform()),
-        )
+    item_values(
+        topology,
+        items,
+        reference,
+        Measured::Aligned(fit, measurement, options),
+    )
+}
+
+/// The RMSD of each of `samples` of `reader` to the reference, each lent
+/// or read in turn, polling `cancellation` before each.
+fn sample_values(
+    reader: &dyn SampleRead,
+    samples: impl IntoIterator<Item = usize>,
+    reference: Reference<'_>,
+    measured: Measured<'_, '_>,
+    cancellation: Option<&Cancellation>,
+) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    let read_error = |error| AlignmentError::Read(Box::new(error));
+    let held: Sample;
+    let reference = match reference {
+        Reference::View(view) => view,
+        Reference::Index(index) => {
+            let len = reader.len();
+            if index >= len {
+                return Err(AlignmentError::ReferenceOutOfRange { index, len });
+            }
+            match reader.peek(index) {
+                Some(view) => view.as_model_view(),
+                None => {
+                    held = reader.read(index).map_err(read_error)?;
+                    SampleView::new(reader, index, &held)
+                        .map_err(read_error)?
+                        .as_model_view()
+                }
+            }
+        }
     };
-    let values = items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| measure(*item).map_err(|source| item_error(index, source)))
-        .collect::<Result<Vec<_>, _>>()?;
+    let topology = reader.topology();
+    let mut samples = samples.into_iter().peekable();
+    if samples.peek().is_none() {
+        Measurement::new(topology, None, reference, measured)?;
+        return Ok(Quantity::new(Vec::new(), CANONICAL_LENGTH_UNIT));
+    }
+    let mut measurement = None;
+    let mut values = Vec::with_capacity(samples.size_hint().0);
+    for index in samples {
+        Cancellation::poll(cancellation).map_err(AlignmentError::Cancelled)?;
+        let value = visit_sample(reader, index, read_error, |moving| {
+            let measurement = match &measurement {
+                Some(measurement) => measurement,
+                None => measurement.insert(Measurement::new(
+                    topology,
+                    Some(moving),
+                    reference,
+                    measured,
+                )?),
+            };
+            measurement
+                .measure(moving)
+                .map_err(|source| item_error(index, source))
+        })?;
+        values.push(value);
+    }
     Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
+}
+
+/// Direct RMSD from each of `samples` of `reader`, in the listed order, to
+/// `reference`, measured as stored, as [`SampleSet::rmsd`] measures every
+/// sample of a set in memory.
+///
+/// `reference` is a sample index of `reader` or any borrowed view. Each
+/// sample is lent when the reader lends it and read otherwise, one at a
+/// time, so memory stays that of one sample. Ranges and strides are written
+/// as `(start..end).step_by(stride)`. The samples are measured on the
+/// calling thread; to spread them over threads, split the list and measure
+/// each part.
+///
+/// ```
+/// use kekule::alignment::sample_rmsd;
+/// use kekule::geometry::Point3;
+/// use kekule::structure::{Positions, Sample, SampleSet};
+/// use kekule::topology::AtomSelection;
+/// use kekule::units::{Quantity, NANOMETER};
+///
+/// let topology = kekule::smiles::to_topology("CCO")?;
+/// let mut set = SampleSet::new(topology.clone());
+/// for x in [0.0, 0.1, 0.2, 0.3] {
+///     let points = [Point3::new(x, 0.0, 0.0), Point3::new(0.1, 0.0, 0.0), Point3::new(0.0, 0.1, 0.0)];
+///     set.push(Sample::new(Positions::new(Quantity::new(points, NANOMETER))?), None)?;
+/// }
+/// let atoms = AtomSelection::all(topology);
+/// let every_other = sample_rmsd(&set, (0..set.len()).step_by(2), 0, &atoms, Default::default())?;
+/// let all = set.rmsd(0, &atoms, Default::default())?;
+/// assert_eq!(every_other.value(), &[all.value()[0], all.value()[2]]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// [`AlignmentError::ReferenceOutOfRange`] for a reference index past the
+/// last sample, [`AlignmentError::Read`] when a sample cannot be read,
+/// [`AlignmentError::Item`] wrapping the failure of the first failing
+/// sample, named by its sample index, and otherwise the errors of
+/// [`rmsd`](super::rmsd) for the pairing and weights.
+pub fn sample_rmsd<'a>(
+    reader: &dyn SampleRead,
+    samples: impl IntoIterator<Item = usize>,
+    reference: impl Into<Reference<'a>>,
+    atoms: impl Into<FitAtoms<'a>>,
+    options: AlignmentOptions<'_>,
+) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    let measured = Measured::Direct(atoms.into(), options);
+    sample_values(reader, samples, reference.into(), measured, None)
+}
+
+/// [`sample_rmsd`], stopping when `cancellation` is requested.
+///
+/// # Errors
+///
+/// [`AlignmentError::Cancelled`] when cancelled, without partial values,
+/// and the errors of [`sample_rmsd`].
+pub fn sample_rmsd_cancellable<'a>(
+    reader: &dyn SampleRead,
+    samples: impl IntoIterator<Item = usize>,
+    reference: impl Into<Reference<'a>>,
+    atoms: impl Into<FitAtoms<'a>>,
+    options: AlignmentOptions<'_>,
+    cancellation: &Cancellation,
+) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    let measured = Measured::Direct(atoms.into(), options);
+    sample_values(
+        reader,
+        samples,
+        reference.into(),
+        measured,
+        Some(cancellation),
+    )
+}
+
+/// RMSD over `measurement` pairs of each of `samples` of `reader`, in the
+/// listed order, after fitting it onto `reference` over `fit` pairs, as
+/// [`SampleSet::aligned_rmsd`] measures every sample of a set in memory;
+/// samples are reached as [`sample_rmsd`] reaches them.
+///
+/// # Errors
+///
+/// As [`sample_rmsd`], with the errors of
+/// [`aligned_rmsd`](super::aligned_rmsd) for the pairings and weights.
+pub fn sample_aligned_rmsd<'a>(
+    reader: &dyn SampleRead,
+    samples: impl IntoIterator<Item = usize>,
+    reference: impl Into<Reference<'a>>,
+    fit: impl Into<FitAtoms<'a>>,
+    measurement: impl Into<FitAtoms<'a>>,
+    options: AlignedRmsdOptions<'_>,
+) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    let measured = Measured::Aligned(fit.into(), measurement.into(), options);
+    sample_values(reader, samples, reference.into(), measured, None)
+}
+
+/// [`sample_aligned_rmsd`], stopping when `cancellation` is requested.
+///
+/// # Errors
+///
+/// [`AlignmentError::Cancelled`] when cancelled, without partial values,
+/// and the errors of [`sample_aligned_rmsd`].
+pub fn sample_aligned_rmsd_cancellable<'a>(
+    reader: &dyn SampleRead,
+    samples: impl IntoIterator<Item = usize>,
+    reference: impl Into<Reference<'a>>,
+    fit: impl Into<FitAtoms<'a>>,
+    measurement: impl Into<FitAtoms<'a>>,
+    options: AlignedRmsdOptions<'_>,
+    cancellation: &Cancellation,
+) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    let measured = Measured::Aligned(fit.into(), measurement.into(), options);
+    sample_values(
+        reader,
+        samples,
+        reference.into(),
+        measured,
+        Some(cancellation),
+    )
 }
 
 fn reference_view<'a>(
@@ -230,15 +492,16 @@ fn reference_view<'a>(
     }
 }
 
-/// Validates the pairing once against the collection topology.
+/// Validates the pairing once against the first item, or without items
+/// against the collection topology.
 fn item_pair_sets(
     topology: &Topology,
-    items: &[ModelView<'_>],
+    first: Option<ModelView<'_>>,
     reference: ModelView<'_>,
     atoms: FitAtoms<'_>,
 ) -> Result<Vec<Pairs>, AlignmentError> {
-    match items.first() {
-        Some(item) => atoms.pair_sets(*item, reference),
+    match first {
+        Some(item) => atoms.pair_sets(item, reference),
         // Without items, validate against the collection topology itself.
         None => match atoms {
             FitAtoms::Selection(selection) => {
