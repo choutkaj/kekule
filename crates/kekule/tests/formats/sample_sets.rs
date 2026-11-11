@@ -14,7 +14,7 @@ use kekule::structure::{
     SeriesItem,
 };
 use kekule::topology::Topology;
-use kekule::units::{Dimension, Quantity, Unit, ANGSTROM, DEGREE, KILOJOULE_PER_MOLE};
+use kekule::units::{Quantity, Unit, ANGSTROM, DEGREE, KILOJOULE_PER_MOLE};
 
 const WATERS: &str = "3
 first
