@@ -70,8 +70,11 @@ impl TrajectoryIoLimits {
     }
 
     /// Combined retained capacities of private decode and validation buffers.
-    /// Sequential and indexed access share this budget; index offsets are
-    /// bounded separately by `max_index_entries` and `max_index_bytes`.
+    /// A frame's dense arrays count as one value per atom even when a read
+    /// allocates them anew, so a frame passes or fails the same way whatever
+    /// the reader read before. Sequential and indexed access share this
+    /// budget; index offsets are bounded separately by `max_index_entries`
+    /// and `max_index_bytes`.
     pub const fn max_scratch_bytes(&self) -> usize {
         self.max_scratch_bytes
     }
@@ -151,6 +154,17 @@ impl TrajectoryIoLimits {
 /// Retained vector storage, including spare capacity.
 pub(super) fn scratch_bytes<T>(values: &Vec<T>) -> Option<usize> {
     values.capacity().checked_mul(std::mem::size_of::<T>())
+}
+
+/// The storage of a dense array once a read fills it with `len` values: its
+/// capacity, or `len` values when the array is smaller, as it is after the
+/// reader gave its storage to a sample. A limit counted this way does not
+/// depend on what the reader read before.
+pub(super) fn filled_bytes<T>(values: &Vec<T>, len: usize) -> Option<usize> {
+    values
+        .capacity()
+        .max(len)
+        .checked_mul(std::mem::size_of::<T>())
 }
 
 /// Reserves only after accounting for every other simultaneously live buffer.

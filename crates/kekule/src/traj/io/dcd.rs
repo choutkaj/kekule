@@ -80,7 +80,7 @@ use crate::traj::{
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
 use super::frame_state::{record, unrepresentable_frame_state};
-use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
+use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
@@ -850,7 +850,9 @@ impl<R: Read + Seek> DcdReader<R> {
         &mut self,
         capture_fixed_reference: bool,
     ) -> Result<Option<DcdDecodedFrame>, TrajectoryIoError> {
-        let other_scratch_bytes = scratch_bytes(&self.positions)
+        // The position array holds one point per atom, whether it is kept or
+        // allocated by this read.
+        let other_scratch_bytes = filled_bytes(&self.positions, self.header.atom_count)
             .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.free_indices)?))
             .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.fixed_indices)?))
             .and_then(|bytes| bytes.checked_add(scratch_bytes(&self.fixed_reference)?));
@@ -1432,8 +1434,11 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
-        let decoded = self.read_indexed(index)?;
+        let read = self.read_indexed(index);
+        // Taken whether the read succeeds or fails, so that the reader keeps
+        // no array for a read on another thread.
         let positions = std::mem::take(&mut self.inner.positions);
+        let decoded = read?;
         Ok(DecodedSample {
             positions: Quantity::new(positions, ANGSTROM),
             cell: decoded.cell,

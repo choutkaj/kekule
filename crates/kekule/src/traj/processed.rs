@@ -323,17 +323,30 @@ impl From<SampleReadError> for ProcessingError {
 ///
 /// Reading sample `i` reads sample `i` of the reader below, and with
 /// smoothing the samples of its window, and runs the steps on them in the
-/// order [`ProcessingSteps`] gives. Only sample 0 is kept: [`Self::new`]
-/// processes it, and [`SampleRead::peek`] lends it, so a host's cache in
-/// front of this reader takes it without processing it again. A host
-/// caches the other samples in front of this reader when it reads them
-/// again. The order and the distribution are those of the reader below.
+/// order [`ProcessingSteps`] gives. A host caches samples in front of this
+/// reader when it reads them again. The order and the distribution are
+/// those of the reader below.
+///
+/// Only sample 0 is kept: [`Self::new`] processes it, [`SampleRead::peek`]
+/// lends it, and [`SampleRead::read`] returns it, so a host's cache in front
+/// of this reader takes it without processing it again. It stays as it was
+/// processed then:
+///
+/// - Over a file later cut short, sample 0 still reads while the samples
+///   after it fail.
+/// - With smoothing over a reader whose length grows, sample 0 keeps the
+///   window the reader's length allowed then.
+/// - It is returned shared, so a `Processed` reader on top of this one
+///   copies it once more when its steps change it.
+/// - Each reader keeps one whole sample, with its velocities and forces:
+///   about 72 MB at a million atoms, and as much again for a second reader
+///   with [`ProcessingSteps::without_smoothing`].
 ///
 /// The steps change the sample they read in place. A sample the reader
 /// below owns alone, as a set in a file returns it, is not copied by
 /// making whole, wrapping, centering, or fitting; one it shares, as a set
-/// in memory or a host's cache returns it, is copied once, by the first of
-/// them that runs. Smoothing adds the samples of its window into one sum
+/// in memory, a host's cache, or sample 0 of another `Processed` reader
+/// returns it, is copied once, by the first of them that runs. Smoothing adds the samples of its window into one sum
 /// without copying them, and the subset copies the atoms it keeps.
 ///
 /// Analyses read the samples without smoothing, which is for display,

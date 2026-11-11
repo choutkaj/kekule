@@ -1501,8 +1501,11 @@ are marked **Breaking:**.
   another thread, filled them, and that thread freed them. Allocators that
   do not promptly reuse memory freed by another thread, such as mimalloc,
   grew by gigabytes over a 100,000-atom trajectory read in bursts. A read
-  of XYZ, DCD, TRR, or XTC now allocates the sample's arrays on the thread
-  that reads it, and the readers keep none between reads.
+  of XYZ, DCD, TRR, or XTC through a set now allocates the sample's arrays
+  on the thread that reads it, and a set's pooled readers keep none between
+  reads, after a failed read too. The scratch limit counts the arrays a
+  read allocates, so a frame passes or fails it whatever the reader read
+  before.
 - Fitting speed (SeekDelta K73 follow-ups). Since K73 the rigid fit was
   inlined into each caller, where it compiled to slower code: the pairwise
   fitted RMSD matrix took about 40 % longer, and leader clustering and

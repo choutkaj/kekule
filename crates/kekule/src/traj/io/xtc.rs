@@ -787,7 +787,11 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         source_label: &str,
         frame: usize,
     ) -> Result<(), TrajectoryIoError> {
-        let position_bytes = positions_capacity.checked_mul(std::mem::size_of::<Point3>());
+        // The position array holds one point per atom, whether it is kept or
+        // allocated by this read.
+        let position_bytes = positions_capacity
+            .max(coordinate_scalars / 3)
+            .checked_mul(std::mem::size_of::<Point3>());
         let error = |detail: &str| resource_error(source_label, Some(frame), detail);
         // Include the forthcoming byte buffer before reserving scalar storage;
         // neither allocation may temporarily escape the aggregate limit.
@@ -1353,8 +1357,11 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
-        let info = self.read_indexed(index)?;
+        let read = self.read_indexed(index);
+        // Taken whether the read succeeds or fails, so that the reader keeps
+        // no array for a read on another thread.
         let positions = std::mem::take(&mut self.inner.positions);
+        let info = read?;
         Ok(DecodedSample {
             positions: Quantity::new(positions, NANOMETER),
             cell: info.cell,

@@ -301,7 +301,9 @@ impl SampleSet<IndexedFile> {
     ///
     /// The snapshot keeps its samples while this set follows the file:
     /// refreshing either adds frames to it alone. A host hands the snapshot
-    /// to an analysis and refreshes this set meanwhile.
+    /// to an analysis and refreshes this set meanwhile. While both share the
+    /// index, a refresh that finds new frames copies its whole offset table
+    /// first, one offset per frame.
     ///
     /// ```no_run
     /// use kekule::structure::SampleRead;

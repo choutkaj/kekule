@@ -76,7 +76,7 @@ use crate::traj::{
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::frame_state::{record, sample_field, unrepresentable_frame_state};
-use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
+use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
     require_nonempty_writer, FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
@@ -104,8 +104,8 @@ impl Default for XyzReadOptions {
 
 impl XyzReadOptions {
     /// Sets limits applied before allocation, scanning, and seeking.
-    /// `max_scratch_bytes` bounds the combined capacities of the dense position
-    /// array and the reusable line buffer, which grows to hold the longest
+    /// `max_scratch_bytes` bounds the dense position array, one point per
+    /// atom, and the reusable line buffer, which grows to hold the longest
     /// line read so far, terminator included, in both sequential and indexed
     /// modes. The frame index has its own `max_index_bytes` limit.
     #[must_use]
@@ -440,9 +440,10 @@ impl<R: BufRead> XyzReader<R> {
                 LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
             ));
         }
-        // The position array never grows after construction; the line buffer
-        // may grow only within what it leaves of the scratch budget.
-        let position_bytes = scratch_bytes(&self.positions);
+        // The position array holds one point per atom, whether it is kept or
+        // allocated by this read; the line buffer may grow only within what
+        // it leaves of the scratch budget.
+        let position_bytes = filled_bytes(&self.positions, self.topology().atom_count());
         let growing = self.growing;
         let Some((count_line, consumed)) = read_line(
             &mut self.reader,
@@ -939,8 +940,11 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         &mut self,
         index: usize,
     ) -> Result<DecodedSample, TrajectoryIoError> {
-        self.read_indexed(index)?;
+        let read = self.read_indexed(index);
+        // Taken whether the read succeeds or fails, so that the reader keeps
+        // no array for a read on another thread.
         let positions = std::mem::take(&mut self.reader.positions);
+        read?;
         Ok(DecodedSample {
             positions: Quantity::new(positions, self.reader.options.length_unit),
             cell: None,

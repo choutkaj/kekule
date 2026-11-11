@@ -577,12 +577,13 @@ otherwise; the pool's readers are kept and read by the new index. It opens
 the path again, so a replacement that begins with the indexed bytes is
 taken and every reader moves to it. A truncated or rewritten file fails
 `refresh`, and the host opens it again. A host that must know of changes
-between refreshes compares the fingerprint. A host keeping the frame index
-makes each growing refresh copy the offsets. A distribution over every
+between refreshes compares the fingerprint. A host keeping the frame index,
+or a live snapshot, makes each growing refresh copy the offsets. A distribution over every
 sample becomes one over the samples it covered, so appended frames are not
 members. `snapshot` makes a set of the samples indexed so far that forks
 the set's reader: it reads the same file object and shares the index, so a
-host hands it to an analysis while the set goes on refreshing. A failed
+host hands it to an analysis while the set goes on refreshing. Refreshing
+either one changes only that one. A failed
 read names the sample (`SampleReadError::Trajectory`). `load` reads every
 sample, or listed ones, into a set in memory that keeps their order values
 and restricts the distribution, as `select` does.
