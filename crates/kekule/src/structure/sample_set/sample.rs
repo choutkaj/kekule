@@ -245,6 +245,24 @@ impl Sample {
         self.structure
     }
 
+    /// This sample projected onto the dense atom and bond rows of a
+    /// topology subset.
+    pub(crate) fn projected(
+        &self,
+        atoms: &[usize],
+        bonds: &[usize],
+    ) -> Result<Self, StructureError> {
+        Ok(Self::from_structure(Arc::new(
+            self.structure.project(atoms, bonds)?,
+        )))
+    }
+
+    /// Replaces the positions without checking them again, copying the rest
+    /// of a shared structure but never the positions.
+    pub(crate) fn replace_checked_positions(&mut self, positions: Positions) {
+        SampleStructure::replace_positions(&mut self.structure, positions);
+    }
+
     /// Returns this sample with a periodic cell.
     #[must_use]
     pub fn with_cell(mut self, cell: PeriodicCell) -> Self {

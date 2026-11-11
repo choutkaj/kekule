@@ -15,6 +15,10 @@
 //! [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup),
 //! which changes no weight, or as a new distribution of every sample through
 //! [`SampleSet::set_distribution`]. Errors name sample indices.
+//! [`pairwise_fitted_rmsd`] fits the members of any
+//! [`SampleRead`](crate::structure::SampleRead), such as a set read from a
+//! file, through the same loop, and a set of either storage clusters a
+//! matrix.
 //!
 //! The examples below use an ensemble; the same calls work on a sample set.
 //!
@@ -97,7 +101,7 @@ use std::fmt;
 mod hierarchical;
 mod medoids;
 mod run;
-pub use hierarchical::{Cut, Dendrogram, DistanceMatrix, Linkage, Merge};
+pub use hierarchical::{pairwise_fitted_rmsd, Cut, Dendrogram, DistanceMatrix, Linkage, Merge};
 pub use run::{ClusteringProgress, ClusteringRun};
 
 use crate::alignment::{
@@ -106,8 +110,8 @@ use crate::alignment::{
 use crate::diagnostics::Cancelled;
 use crate::parallel::map_ranges;
 use crate::structure::{
-    Ensemble, EnsembleError, EnsemblePartition, Members, ModelView, Requirement, SampleSet,
-    SampleSetError, StructureError,
+    Distribution, Ensemble, EnsembleError, EnsemblePartition, Members, ModelView, Requirement,
+    SampleReadError, SampleSet, SampleSetError, StructureError,
 };
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 use run::{FirstFailure, Stop, Tracker};
@@ -196,27 +200,42 @@ impl<'a> Clustered<'a> {
     }
 
     fn of_set(set: &'a SampleSet) -> Self {
-        let Some(distribution) = set.distribution() else {
+        let mut clustered = Self::of_members(set.len(), set.distribution());
+        clustered.views = match set.distribution() {
+            None => set.iter().map(|sample| sample.as_model_view()).collect(),
+            Some(distribution) => distribution
+                .weighted_members()
+                .map(|(sample, _)| {
+                    let view = set.get(sample).expect("members are samples of the set");
+                    view.as_model_view()
+                })
+                .collect(),
+        };
+        clustered
+    }
+
+    /// The members of `distribution` over `len` samples, or every sample
+    /// without one, with their weights and energies but no views: what
+    /// clustering on a distance matrix needs.
+    fn of_members(len: usize, distribution: Option<&'a Distribution>) -> Self {
+        let Some(distribution) = distribution else {
             return Self {
-                views: set.iter().map(|sample| sample.as_model_view()).collect(),
+                views: Vec::new(),
                 samples: &EVERY_SAMPLE,
-                weights: vec![1.0; set.len()],
+                weights: vec![1.0; len],
                 energies: Err(SampleSetError::Missing(Requirement::Distribution).into()),
             };
         };
-        let (views, weights) = distribution
+        let weights = distribution
             .weighted_members()
-            .map(|(sample, weight)| {
-                let view = set.get(sample).expect("members are samples of the set");
-                (view.as_model_view(), weight)
-            })
-            .unzip();
+            .map(|(_, weight)| weight)
+            .collect();
         let energies = distribution
             .state_energies()
             .map(|energies| member_energies(&energies, distribution.partition()))
             .map_err(ClusteringError::from);
         Self {
-            views,
+            views: Vec::new(),
             samples: distribution.members(),
             weights,
             energies,
@@ -225,7 +244,7 @@ impl<'a> Clustered<'a> {
 
     /// The number of members.
     fn len(&self) -> usize {
-        self.views.len()
+        self.weights.len()
     }
 
     /// Weights divided by the largest one, so sums cannot overflow.
@@ -626,6 +645,8 @@ pub enum ClusteringError {
     /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
     /// it; no partial result is returned.
     Cancelled(Cancelled),
+    /// A member cannot be read; see the source.
+    Read(Box<SampleReadError>),
 }
 
 impl fmt::Display for ClusteringError {
@@ -673,6 +694,7 @@ impl fmt::Display for ClusteringError {
             Self::SampleSet(_) => formatter.write_str("Cannot cluster the sample set."),
             Self::Unit(_) => formatter.write_str("A clustering quantity has the wrong unit."),
             Self::Cancelled(_) => formatter.write_str("Clustering stopped."),
+            Self::Read(error) => fmt::Display::fmt(error, formatter),
         }
     }
 }
@@ -685,6 +707,7 @@ impl std::error::Error for ClusteringError {
             Self::SampleSet(error) => Some(error.as_ref()),
             Self::Unit(error) => Some(error.as_ref()),
             Self::Cancelled(cancelled) => Some(cancelled),
+            Self::Read(error) => std::error::Error::source(error.as_ref()),
             _ => None,
         }
     }

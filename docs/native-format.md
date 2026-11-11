@@ -311,8 +311,10 @@ so no state is empty.
 
 The samples section is inline, or tag `1` for samples stored elsewhere: such
 a record is a `SampleSetDescription`, whose `sample_count` bounds its order
-and distribution as stored samples would. An interpreted sample set stores
-its samples inline.
+and distribution as stored samples would. `SampleSetDescription::of`
+describes a set in memory or one read from a trajectory file, so a host
+stores a file's order and distribution beside the file. An interpreted
+sample set stores its samples inline.
 
 ### Interpretation reports
 

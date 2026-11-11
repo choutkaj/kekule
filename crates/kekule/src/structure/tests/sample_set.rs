@@ -1196,7 +1196,14 @@ fn the_distribution_guard_keeps_the_members() {
         .set_energy(kj(1.0))
         .unwrap();
     assert_eq!(set.distribution().unwrap().members(), &Members::All);
-    assert_eq!(set.state(1).unwrap().representative_sample().index(), 1);
+    assert_eq!(
+        set.state(1)
+            .unwrap()
+            .representative_sample()
+            .unwrap()
+            .index(),
+        1
+    );
     assert_eq!(set.state(1).unwrap().energy(), kj(1.0));
 }
 

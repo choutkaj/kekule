@@ -22,6 +22,10 @@
 //!   distribution; the set's operations fail with a [`SampleSetError`]. It
 //!   converts from and to the three older collections, refusing what the
 //!   other side cannot hold, so a conversion that succeeds loses nothing.
+//!   Its storage ([`SampleStorage`]) is a type parameter: [`InMemory`] by
+//!   default, or a file's ([`crate::traj::io::IndexedFile`]), whose samples
+//!   are read on demand. Sets of either storage, and a host's own readers,
+//!   read through [`SampleRead`], which fails with [`SampleReadError`].
 //! - Older collections of one shared topology: [`Ensemble`] is a distribution of
 //!   weighted samples ([`EnsembleSample`]) grouped into states
 //!   ([`EnsembleState`]) by an [`EnsemblePartition`]; [`Trajectory`] is a time-ordered
@@ -154,15 +158,18 @@ pub use model_editor::{
 };
 pub use partition::{EnsemblePartition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
+pub(crate) use sample_set::{sealed as sample_storage, visit_sample};
 pub use sample_set::{
-    ConversionTarget, Distribution, DistributionMut, Members, Membership, Order, Place,
-    Requirement, Sample, SampleContext, SampleIter, SampleMut, SampleSet, SampleSetError,
-    SampleView, StateIter, StateView, TimeAxis, Unconvertible,
+    ConversionTarget, Distribution, DistributionMut, InMemory, Members, Membership, Order, Place,
+    Requirement, Sample, SampleContext, SampleIter, SampleMut, SampleRead, SampleReadError,
+    SampleSet, SampleSetError, SampleStorage, SampleView, StateIter, StateView, TimeAxis,
+    Unconvertible,
 };
 pub use sampling::{TrajectorySampler, TrajectorySampling};
 pub use series::{
     Series, SeriesAxis, SeriesError, SeriesItem, SeriesItemMut, SeriesItemView, SeriesIter,
 };
+pub(crate) use state::subset_rows;
 pub use state::StructureError;
 pub use trajectory::{
     MissingTimePolicy, Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut,

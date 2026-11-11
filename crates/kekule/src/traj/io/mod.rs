@@ -14,7 +14,8 @@
 //! detect the format.
 //! Use [`open_trajectory`] for sequential processing with
 //! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access,
-//! [`create_trajectory_writer`] for atomic path-backed writing, or
+//! [`open_indexed_sample_set`] for a sample set that reads each sample from
+//! the file when asked ([`IndexedFile`]), [`create_trajectory_writer`] for atomic path-backed writing, or
 //! [`create_trajectory_stream_writer`] and [`write_trajectory_to`] for writing
 //! into a host's stream, so that the host places the file. Each operation
 //! takes a topology directly or from its trajectory. Path readers expose opening
@@ -175,6 +176,7 @@ mod file_reader;
 mod file_writer;
 mod frame_index;
 mod frame_state;
+mod indexed_file;
 mod limits;
 mod metadata;
 pub mod trr;
@@ -194,6 +196,7 @@ pub use file_writer::{
 };
 pub use frame_index::{TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryIndexProgress};
 pub use frame_state::FrameTimingPolicy;
+pub use indexed_file::{open_indexed_sample_set, open_indexed_sample_set_from_index, IndexedFile};
 pub use limits::TrajectoryIoLimits;
 pub use metadata::{
     detect_trajectory_format, CoordinateEncoding, FieldAvailability, FileTrajectoryMetadata,

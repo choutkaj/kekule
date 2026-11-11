@@ -135,7 +135,7 @@ impl MoleculeImager {
         publish_buffer(frame, &positions)
     }
 
-    pub(super) fn reference_positions(
+    pub(crate) fn reference_positions(
         &self,
         frame_index: usize,
         source: ModelView<'_>,
@@ -156,7 +156,7 @@ impl MoleculeImager {
         positions(points, frame_index)
     }
 
-    pub(super) fn anchor_groups(
+    pub(crate) fn anchor_groups(
         &self,
         anchors: &AtomSelection,
     ) -> Result<Vec<bool>, PeriodicError> {
@@ -173,7 +173,7 @@ impl MoleculeImager {
         Ok(selected)
     }
 
-    pub(super) fn frame_positions(
+    pub(crate) fn frame_positions(
         &self,
         frame_index: usize,
         source: ModelView<'_>,

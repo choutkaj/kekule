@@ -9,6 +9,7 @@ mod dssp;
 mod geometry;
 mod interactions;
 mod measurements;
+mod sample_readers;
 mod sample_sets;
 mod solvation;
 mod statistics;

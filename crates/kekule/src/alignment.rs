@@ -14,11 +14,15 @@
 //! - [`rmsd`] measures coordinates exactly as stored, without fitting.
 //! - [`aligned_rmsd`] fits on one set of pairs and measures another.
 //! - `superpose`, `rmsd`, and `aligned_rmsd` on
+//!   [`SampleSet`](crate::structure::SampleSet::superpose),
 //!   [`Ensemble`](crate::structure::Ensemble::superpose),
 //!   [`Trajectory`](crate::structure::Trajectory::superpose), and
 //!   [`Series`](crate::structure::Series::superpose) apply the same kernels
 //!   to every sample, frame, or item against a [`Reference`]: an item of the
 //!   collection or any external view.
+//! - [`sample_rmsd`] and [`sample_aligned_rmsd`] measure listed samples of
+//!   any [`SampleRead`](crate::structure::SampleRead), such as a set read
+//!   from a file, one at a time.
 //!
 //! Each takes its options, [`AlignmentOptions`] or [`AlignedRmsdOptions`], as
 //! a parameter. The returned transform maps moving coordinates into reference
@@ -79,15 +83,19 @@
 
 use std::fmt;
 
+use crate::diagnostics::Cancelled;
 use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
-use crate::structure::{ModelView, StructureError};
+use crate::structure::{ModelView, SampleReadError, StructureError};
 use crate::topology::{AtomSelection, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 mod collection;
 mod correspondence;
 mod symmetry;
-pub use collection::{AlignedRmsdOptions, Reference, SuperpositionReport};
+pub use collection::{
+    sample_aligned_rmsd, sample_aligned_rmsd_cancellable, sample_rmsd, sample_rmsd_cancellable,
+    AlignedRmsdOptions, Reference, SuperpositionReport,
+};
 pub use correspondence::{
     AmbiguousLabel, AtomCorrespondence, AtomCorrespondenceError, AtomLabel, CorrespondenceSide,
     LabelCorrespondence, LabelScheme,
@@ -332,15 +340,36 @@ pub fn aligned_rmsd<'a>(
     Ok(Quantity::new(value, CANONICAL_LENGTH_UNIT))
 }
 
+/// The positions of one structure as the fitting and measuring kernels
+/// read them: a structure's own, or the fitted atoms of one loaded alone,
+/// which pairs then index.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Coordinates<'a> {
+    /// Positions in the canonical length unit.
+    pub(crate) points: &'a [Point3],
+    /// Whether the structure has a periodic cell.
+    pub(crate) periodic: bool,
+}
+
+impl<'a> From<ModelView<'a>> for Coordinates<'a> {
+    fn from(view: ModelView<'a>) -> Self {
+        Self {
+            points: *view.positions().values().value(),
+            periodic: view.cell().is_some(),
+        }
+    }
+}
+
 /// The fit with the smallest RMSD over candidate pair sets; ties keep the
 /// earliest set. Any failing set fails the fit.
-pub(crate) fn best_kabsch(
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+pub(crate) fn best_kabsch<'m, 'r>(
+    moving: impl Into<Coordinates<'m>>,
+    reference: impl Into<Coordinates<'r>>,
     sets: &[Pairs],
     weights: NormalizedWeights<'_>,
     policy: PeriodicPolicy,
 ) -> Result<RigidAlignment, AlignmentError> {
+    let (moving, reference) = (moving.into(), reference.into());
     let mut best: Option<RigidAlignment> = None;
     for pairs in sets {
         let alignment = kabsch_pairs(moving, reference, pairs, weights, policy)?;
@@ -355,14 +384,15 @@ pub(crate) fn best_kabsch(
 }
 
 /// The smallest measured RMSD over candidate pair sets.
-pub(crate) fn best_measure(
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+pub(crate) fn best_measure<'m, 'r>(
+    moving: impl Into<Coordinates<'m>>,
+    reference: impl Into<Coordinates<'r>>,
     sets: &[Pairs],
     weights: NormalizedWeights<'_>,
     policy: PeriodicPolicy,
     transform: Option<RigidTransform>,
 ) -> Result<f64, AlignmentError> {
+    let (moving, reference) = (moving.into(), reference.into());
     let mut best = f64::INFINITY;
     for pairs in sets {
         best = best.min(measure_pairs(
@@ -376,12 +406,12 @@ pub(crate) fn best_measure(
 }
 
 fn check_periodic(
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+    moving: Coordinates<'_>,
+    reference: Coordinates<'_>,
     policy: PeriodicPolicy,
 ) -> Result<(), AlignmentError> {
-    let moving_periodic = moving.cell().is_some();
-    let reference_periodic = reference.cell().is_some();
+    let moving_periodic = moving.periodic;
+    let reference_periodic = reference.periodic;
     if policy == PeriodicPolicy::RejectPeriodic && (moving_periodic || reference_periodic) {
         return Err(AlignmentError::PeriodicCoordinates {
             moving: moving_periodic,
@@ -412,9 +442,9 @@ pub(crate) fn check_fit_count(pairs: usize) -> Result<(), AlignmentError> {
 
 /// Weighted RMSD over validated pairs, optionally after moving coordinates
 /// are transformed.
-pub(crate) fn measure_pairs(
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+fn measure_pairs(
+    moving: Coordinates<'_>,
+    reference: Coordinates<'_>,
     pairs: &[(TopologyAtomIndex, TopologyAtomIndex)],
     weights: NormalizedWeights<'_>,
     policy: PeriodicPolicy,
@@ -422,10 +452,8 @@ pub(crate) fn measure_pairs(
 ) -> Result<f64, AlignmentError> {
     check_measurement_count(pairs.len())?;
     check_periodic(moving, reference, policy)?;
-    let moving_positions = moving.positions().values();
-    let reference_positions = reference.positions().values();
-    let moving_positions = moving_positions.value();
-    let reference_positions = reference_positions.value();
+    let moving_positions = moving.points;
+    let reference_positions = reference.points;
     let mut squared_residual = CompensatedSum::default();
     let mut weight_sum = CompensatedSum::default();
     for (pair_index, (moving_index, reference_index)) in pairs.iter().enumerate() {
@@ -445,9 +473,9 @@ pub(crate) fn measure_pairs(
     Ok(mean_squared_residual.sqrt())
 }
 
-pub(crate) fn kabsch_pairs(
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+fn kabsch_pairs(
+    moving: Coordinates<'_>,
+    reference: Coordinates<'_>,
     pairs: &[(TopologyAtomIndex, TopologyAtomIndex)],
     weights: NormalizedWeights<'_>,
     policy: PeriodicPolicy,
@@ -456,10 +484,8 @@ pub(crate) fn kabsch_pairs(
     check_fit_count(selected_atom_count)?;
     check_periodic(moving, reference, policy)?;
 
-    let moving_positions = moving.positions().values();
-    let reference_positions = reference.positions().values();
-    let moving_positions = moving_positions.value();
-    let reference_positions = reference_positions.value();
+    let moving_positions = moving.points;
+    let reference_positions = reference.points;
 
     let mut moments = AlignmentMoments::default();
     for (pair_index, (moving_index, reference_index)) in pairs.iter().enumerate() {
@@ -669,6 +695,10 @@ pub enum AlignmentError {
     },
     /// A fitted transform could not be applied to one item's state.
     Transform(StructureError),
+    /// A sample cannot be read; see the source.
+    Read(Box<SampleReadError>),
+    /// The measurement was cancelled.
+    Cancelled(Cancelled),
 }
 
 impl fmt::Display for AlignmentError {
@@ -732,6 +762,8 @@ impl fmt::Display for AlignmentError {
             ),
             Self::Item { index, .. } => write!(formatter, "Cannot align structure {index}."),
             Self::Transform(_) => formatter.write_str("Cannot apply the fitted transform."),
+            Self::Read(error) => fmt::Display::fmt(error, formatter),
+            Self::Cancelled(error) => fmt::Display::fmt(error, formatter),
         }
     }
 }
@@ -753,6 +785,7 @@ impl std::error::Error for AlignmentError {
             Self::InvalidRigidTransform(error) => Some(error),
             Self::Item { source, .. } => Some(source.as_ref()),
             Self::Transform(error) => Some(error),
+            Self::Read(error) => std::error::Error::source(error.as_ref()),
             _ => None,
         }
     }

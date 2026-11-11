@@ -10,9 +10,22 @@ use crate::structure::{
 use crate::units::Quantity;
 
 use super::{
-    ConversionTarget, Distribution, Members, Order, Requirement, Sample, SampleSet, SampleSetError,
-    SampleStructure, TimeAxis, Unconvertible,
+    ConversionTarget, Distribution, InMemory, Members, Order, Requirement, Sample, SampleSet,
+    SampleSetError, SampleStructure, TimeAxis, Unconvertible,
 };
+
+impl Sample {
+    /// A trajectory frame's positions, cell, properties, velocities, and
+    /// forces as a sample, moving them without copying; the time and step
+    /// are dropped.
+    pub(crate) fn from_frame(frame: TrajectoryFrame) -> Self {
+        let mut structure =
+            SampleStructure::from_frame_state(frame.positions, frame.cell, frame.properties);
+        structure.velocities = frame.velocities;
+        structure.forces = frame.forces;
+        Self::from_structure(Arc::new(structure))
+    }
+}
 
 impl SampleSet {
     /// An unordered set of an ensemble's samples with a distribution over
@@ -38,7 +51,7 @@ impl SampleSet {
         Self {
             topology,
             properties,
-            samples,
+            storage: InMemory::new(samples),
             order: None,
             distribution: Some(distribution),
         }
@@ -61,23 +74,12 @@ impl SampleSet {
     pub fn from_trajectory(trajectory: Trajectory) -> Result<Self, SampleSetError> {
         let (topology, properties, frames) = trajectory.into_parts();
         let axis = TimeAxis::of_frames(&frames)?;
-        let samples = frames
-            .into_iter()
-            .map(|frame| {
-                let mut structure = SampleStructure::from_frame_state(
-                    frame.positions,
-                    frame.cell,
-                    frame.properties,
-                );
-                structure.velocities = frame.velocities;
-                structure.forces = frame.forces;
-                Sample::from_structure(Arc::new(structure))
-            })
-            .collect();
+        let samples = frames.into_iter().map(Sample::from_frame).collect();
+
         Ok(Self {
             topology,
             properties,
-            samples,
+            storage: InMemory::new(samples),
             order: Some(Order::Time(axis)),
             distribution: None,
         })
@@ -105,7 +107,7 @@ impl SampleSet {
         Self {
             topology,
             properties,
-            samples,
+            storage: InMemory::new(samples),
             order: Some(order),
             distribution: None,
         }
@@ -219,7 +221,7 @@ impl SampleSet {
         sites: bool,
         dynamics: bool,
     ) -> Result<(), SampleSetError> {
-        for (sample, payload) in self.samples.iter().enumerate() {
+        for (sample, payload) in self.storage.samples.iter().enumerate() {
             let structure = payload.structure();
             let content = if sites && structure.has_occupancies() {
                 Unconvertible::Occupancies { sample }
@@ -241,7 +243,7 @@ impl SampleSet {
         let Self {
             topology,
             properties,
-            samples,
+            storage: InMemory { samples },
             distribution,
             ..
         } = self;
@@ -274,7 +276,7 @@ impl SampleSet {
         let Self {
             topology,
             properties,
-            samples,
+            storage: InMemory { samples },
             order,
             ..
         } = self;
@@ -308,7 +310,7 @@ impl SampleSet {
         let Self {
             topology,
             properties,
-            samples,
+            storage: InMemory { samples },
             order,
             ..
         } = self;
@@ -353,7 +355,7 @@ impl SampleSet {
     /// Sample `index`, which must exist, copied as a trajectory frame with
     /// its place on a time order; occupancies and B-factors are dropped.
     pub(crate) fn frame(&self, index: usize) -> TrajectoryFrame {
-        let structure = self.samples[index].structure();
+        let structure = self.storage.samples[index].structure();
         let (time, step) = match &self.order {
             Some(Order::Time(axis)) => (axis.time(index), axis.step(index)),
             _ => (None, None),

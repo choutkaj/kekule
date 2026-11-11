@@ -11,6 +11,40 @@ are marked **Breaking:**.
 
 ### Added
 
+- Sample sets read from files, and lazy processing (SeekDelta K73).
+  `SampleSet<S = InMemory>` takes its storage as a type parameter.
+  `traj::io::open_indexed_sample_set` and
+  `open_indexed_sample_set_from_index` open an indexed XYZ, DCD, TRR, or XTC
+  file as a `SampleSet<IndexedFile>`, which holds no samples, has the time
+  order of the frame index, and exposes the index, its fingerprint, and the
+  path through `storage()`. Its samples are read through the
+  `structure::SampleRead` trait (`topology`, `len`, `order`,
+  `distribution`, `peek`, `read`), which sets in memory implement too and a
+  host can implement; `read` decodes one frame into an owned `Sample` and
+  runs from many threads at once, with a pool of indexed readers and no
+  lock held while decoding. `SampleSet<IndexedFile>::refresh` takes the
+  frames a writer appended; a distribution over every sample becomes one
+  over the samples it covered. `load` reads every sample, or listed ones,
+  into a set in memory that keeps order values and restricts the
+  distribution. `SampleView::new` checks a sample a host's reader lends.
+  `traj::Processed` runs `ProcessingSteps` on every sample of another
+  reader as it is read: make whole or wrap, center, fit (`FitReference`),
+  smooth over an odd window, and atom subset; `Processed::unsmoothed`
+  reads the layer below smoothing, and failures to set up are
+  `ProcessingError`s naming the `ProcessingStep`. Each step gives the bits
+  of the in-memory periodic functions, `MoleculeImager`, and
+  `FrameSuperposer`. `statistics::SampleObservations` lists every member or
+  listed samples of a reader with the distribution restricted to them;
+  `RmsfAccumulator`, `ContactOccupancyAccumulator`, and
+  `GroupContactOccupancyAccumulator` gain `observe_samples` and
+  `observe_samples_cancellable`. `alignment::sample_rmsd` and
+  `sample_aligned_rmsd` (each with a `_cancellable` form) measure listed
+  samples against a sample of the reader or a structure, and
+  `clustering::pairwise_fitted_rmsd` fits the members of a reader, keeping
+  only the fitted atoms. `SampleSet::rmsf`, `contact_occupancy`,
+  `group_contact_occupancy`, `cluster_hierarchical`, `cluster_k_medoids`,
+  and `native::SampleSetDescription::of` work for sets of either storage,
+  each equal to the result of the set in memory.
 - Sample sets (SeekDelta K72). `structure::SampleSet` holds many structures
   of one topology as `Sample`s, each shared and copied on write, with an
   optional `Order` and an optional `Distribution`. An order gives every
@@ -909,6 +943,11 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** `StateView::representative_sample` returns an
+  `Option<SampleView>` (SeekDelta K73): a state of a set read from a file
+  has no sample to lend. `StatisticsError`, `AlignmentError`, and
+  `ClusteringError` gain variants for samples that cannot be read and for
+  cancellation (`Read`, `Cancelled`, `ObservationsOutOfRange`).
 - **Breaking:** native format version 5 (SeekDelta K72c). Kind 9 stores a
   sample set and kind 10 a sample set with its reports; kinds 4, 5, 6, and 8
   (ensemble, trajectory, series, interpreted ensemble) are retired, and
