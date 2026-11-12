@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 use crate::support;
 use support::{
     buffer_snapshot, codec_error, codec_kind, topology as build_topology, x_coordinates as xs,
-    GuardedCursor, RestoreSeekFailure,
+    Frame, GuardedCursor, RestoreSeekFailure,
 };
 
 fn topology() -> Arc<Topology> {
@@ -59,7 +59,7 @@ fn assert_xs_close(buffer: &FrameBuffer, expected: &[f64]) {
 fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer {
     let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame
-        .frame_mut()
+        .sample_mut()
         .set_positions(Quantity::new(
             [
                 Point3::new(0.0 + shift, 1.0, 2.0),
@@ -89,7 +89,7 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
             CANONICAL_FORCE_UNIT,
         )))
         .unwrap();
-    frame.frame_mut().set_cell(Some(
+    frame.sample_mut().set_cell(Some(
         PeriodicCell::new(
             Quantity::new(
                 [
@@ -104,12 +104,11 @@ fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuff
         .unwrap(),
     ));
     frame
-        .frame_mut()
         .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))
         .unwrap();
-    frame.frame_mut().set_step(Some(step));
+    frame.set_step(Some(step));
     frame
-        .frame_mut()
+        .sample_mut()
         .properties_mut()
         .owner_mut()
         .insert(lambda_key(), lambda(0.125))
@@ -143,8 +142,8 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
         let mut frame = populated_frame(&topology, 0.0, 0);
         let ordinary_cell = frame.cell().copied();
         writer.write_frame(frame.frame_view()).unwrap();
-        frame.frame_mut().set_step(Some(1));
-        frame.frame_mut().set_cell(Some(cell));
+        frame.set_step(Some(1));
+        frame.sample_mut().set_cell(Some(cell));
         let before = writer.writer().clone();
         if precision == TrrScalarPrecision::Float32 {
             assert_eq!(
@@ -163,7 +162,7 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
                 ))
             );
             assert_eq!(writer.writer(), &before);
-            frame.frame_mut().set_cell(ordinary_cell);
+            frame.sample_mut().set_cell(ordinary_cell);
         }
         writer.write_frame(frame.frame_view()).unwrap();
         let mut reader = TrrReader::new(
@@ -202,12 +201,12 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
         .unwrap();
         let mut frame = populated_frame(&topology, step as f64, step);
         if step == 1 {
-            frame.frame_mut().set_cell(None);
+            frame.sample_mut().set_cell(None);
             frame.clear_velocities();
             frame.clear_forces();
         }
         frame
-            .frame_mut()
+            .sample_mut()
             .properties_mut()
             .owner_mut()
             .insert(lambda_key(), lambda(step as f64 * 0.125))
@@ -268,7 +267,7 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
     let mut sequential = open(f64_total).unwrap();
     let mut expected = Vec::new();
     while sequential.read_next(&mut destination).unwrap() {
-        expected.push(destination.frame_view().payload().clone());
+        expected.push(Frame::of(&destination));
     }
     let mut indexed = open_indexed(f64_total).unwrap();
     assert_eq!(indexed.frame_count(), Some(3));
@@ -276,9 +275,9 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
     // duplicate scratch, nor publish fields left over from the last read.
     for (random, next) in [(1, 0), (0, 1), (1, 2)] {
         indexed.read_frame(random, &mut destination).unwrap();
-        assert_eq!(destination.frame_view().payload().clone(), expected[random]);
+        assert_eq!(Frame::of(&destination), expected[random]);
         assert!(indexed.read_next(&mut destination).unwrap());
-        assert_eq!(destination.frame_view().payload().clone(), expected[next]);
+        assert_eq!(Frame::of(&destination), expected[next]);
     }
     indexed.read_frame(0, &mut destination).unwrap();
     assert!(!indexed.read_next(&mut destination).unwrap());
@@ -299,11 +298,11 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         let first = populated_frame(&topology, 0.0, 4);
         writer.write_frame(first.frame_view()).unwrap();
         let mut second = populated_frame(&topology, 1.0, 5);
-        second.frame_mut().set_cell(None);
+        second.sample_mut().set_cell(None);
         second.set_velocities::<&[Vector3]>(None).unwrap();
         second.set_forces::<&[Vector3]>(None).unwrap();
         second
-            .frame_mut()
+            .sample_mut()
             .properties_mut()
             .owner_mut()
             .insert(lambda_key(), lambda(0.25))
@@ -311,7 +310,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         writer.write_frame(second.frame_view()).unwrap();
         let mut third = populated_frame(&topology, 2.0, 6);
         third
-            .frame_mut()
+            .sample_mut()
             .properties_mut()
             .owner_mut()
             .insert(lambda_key(), lambda(0.375))
@@ -481,7 +480,7 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     .unwrap();
     let mut destination = populated_frame(&topology, 9.0, 99);
     destination
-        .frame_mut()
+        .sample_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -580,7 +579,7 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
         )
         .with_field(TrajectoryField::Properties))
     );
-    frame.frame_mut().properties_mut().owner_mut().clear();
+    frame.sample_mut().properties_mut().owner_mut().clear();
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     let mut reader = TrrReader::new(
@@ -717,7 +716,7 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
         let huge_vectors = [Vector3::new(0.0, 0.0, 1.0e39); 3];
         match field {
             "position" => frame
-                .frame_mut()
+                .sample_mut()
                 .set_positions(Quantity::new([Point3::new(0.0, 0.0, 1.0e39); 3], NANOMETER))
                 .unwrap(),
             "velocity" => frame
@@ -762,7 +761,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
     .unwrap();
     let mut frame = populated_frame(&topology, 0.0, 0);
     frame
-        .frame_mut()
+        .sample_mut()
         .set_positions(Quantity::new(
             [
                 Point3::new(1.0e39, 0.0, 0.0),
@@ -787,7 +786,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
 
     let mut bond_annotated = populated_frame(&topology, 0.0, 0);
     bond_annotated
-        .frame_mut()
+        .sample_mut()
         .properties_mut()
         .bonds_mut()
         .insert(

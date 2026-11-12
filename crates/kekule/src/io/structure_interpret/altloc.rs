@@ -139,7 +139,7 @@ impl AltLocSelection {
     }
 
     /// Select one `_atom_sites_alt_gen.ens_id` combination explicitly.
-    /// This identifier does not create or select an `Ensemble` member.
+    /// This identifier does not create or select a sample of a sample set.
     pub fn source_conformation(&self) -> Option<&str> {
         self.source_conformation.as_deref()
     }

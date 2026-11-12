@@ -1,6 +1,6 @@
 use kekule::geometry::Point3;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{DenseArrayError, Positions, TrajectoryFrame};
+use kekule::structure::{DenseArrayError, Positions, Sample};
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{Quantity, ANGSTROM, DIMENSIONLESS};
 
@@ -10,8 +10,8 @@ fn public_dense_containers_are_topology_free() {
     assert_eq!(positions.len(), 1);
     assert!((positions.values().value()[0].x - 1.0).abs() < 1.0e-15);
 
-    let mut frame = TrajectoryFrame::new(Positions::zeros(2));
-    let mut properties = frame.properties_mut();
+    let mut sample = Sample::new(Positions::zeros(2));
+    let mut properties = sample.properties_mut();
     let mut atoms = properties.atoms_mut();
     let key = PropertyKey::new("score").unwrap();
     atoms

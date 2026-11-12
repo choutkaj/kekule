@@ -9,7 +9,8 @@
 
 use std::{error::Error, fs};
 
-use kekule::traj::io::{read_trajectory, write_trajectory};
+use kekule::structure::{Order, Place};
+use kekule::traj::io::{read_sample_set, write_sample_set};
 use kekule::traj::periodic;
 use kekule::{
     mmcif,
@@ -48,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let document = mmcif::parse_str(&fs::read_to_string(topology_path)?, Default::default())?;
     let topology = document.interpret(Default::default())?.into_topology();
-    let mut trajectory = read_trajectory(trajectory_path, topology.clone(), Default::default())?;
+    let mut trajectory = read_sample_set(trajectory_path, topology.clone(), Default::default())?;
 
     println!("Frames: {}", trajectory.len());
     println!("Atoms: {}", topology.atom_count());
@@ -62,7 +63,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             .filter(|frame| frame.cell().is_some())
             .count()
     );
-    trajectory.validate_monotonic_time(kekule::structure::MissingTimePolicy::Skip)?;
+    if let Some(Order::Time(axis)) = trajectory.order() {
+        if axis.times().is_some() {
+            trajectory.validate_monotonic_time()?;
+        }
+    }
 
     if make_whole {
         periodic::make_molecules_whole(&mut trajectory)?;
@@ -86,18 +91,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         .value_in(ANGSTROM)?;
 
     for (index, (frame, rmsd)) in trajectory.iter().zip(rmsd).enumerate() {
-        let time_ps = frame
-            .time()
-            .map(|time| time.value_in(PICOSECOND))
-            .transpose()?;
-        println!(
-            "Frame {index}: time_ps={time_ps:?}, step={:?}, fitted RMSD={:.3} A",
-            frame.step(),
-            rmsd
-        );
+        let (time, step) = match frame.place() {
+            Some(Place::Time { time, step }) => (time, step),
+            _ => (None, None),
+        };
+        let time_ps = time.map(|time| time.value_in(PICOSECOND)).transpose()?;
+        println!("Frame {index}: time_ps={time_ps:?}, step={step:?}, fitted RMSD={rmsd:.3} A");
     }
     if let Some(path) = output {
-        write_trajectory(path, &trajectory, Default::default())?;
+        write_sample_set(path, &trajectory, Default::default())?;
     }
     Ok(())
 }

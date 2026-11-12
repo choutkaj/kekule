@@ -1,6 +1,6 @@
 //! Weighted k-medoids clustering by Partitioning Around Medoids.
 
-use crate::structure::{Ensemble, EnsemblePartition, SampleSet, SampleStorage};
+use crate::structure::{Partition, SampleSet, SampleStorage};
 
 use super::hierarchical::ObjectiveDistances;
 use super::{Clustered, ClusteringError, DistanceMatrix};
@@ -10,7 +10,7 @@ impl Clustered<'_> {
         &self,
         distances: &DistanceMatrix,
         clusters: usize,
-    ) -> Result<EnsemblePartition, ClusteringError> {
+    ) -> Result<Partition, ClusteringError> {
         self.check_matrix(distances)?;
         let members = self.len();
         let valid = if members == 0 {
@@ -38,9 +38,28 @@ impl<S: SampleStorage> SampleSet<S> {
     /// `distances` indexed by member position
     /// ([`Self::pairwise_fitted_rmsd`]).
     ///
-    /// The clustering is [`Ensemble::cluster_k_medoids`]'s, with the
-    /// members' weights (equal without weights or a distribution). The
-    /// partition groups the members by member position; install it with
+    /// It minimizes the weighted total distance `sum_i w_i d(i, m(i))` from
+    /// each member to its nearest medoid, with the members' weights (equal
+    /// without weights or a distribution).
+    ///
+    /// This is Partitioning Around Medoids (Kaufman and Rousseeuw): a greedy
+    /// BUILD adds, one at a time, the member that most lowers the total
+    /// distance, then SWAP repeatedly makes the single medoid exchange that
+    /// lowers it most, until none does. Swaps are evaluated as in FastPAM1
+    /// (Schubert and Rousseeuw 2019), which finds the same swaps as PAM in
+    /// `O(n^2)` time per swap instead of `O(k n^2)`; BUILD costs `O(k n^2)`.
+    /// The result is a local optimum, not necessarily the global one.
+    ///
+    /// Weights are relative, so heavier members pull medoids toward
+    /// themselves. Each member joins its nearest medoid, a medoid always
+    /// joins itself, and equal distances favor the medoid with the lowest
+    /// member position. Every choice breaks ties by lowest member position,
+    /// so the result is deterministic. Clusters are numbered in order of
+    /// their lowest member, and each is represented by its medoid.
+    /// `clusters` ranges from one to the member count (zero only for no
+    /// members).
+    ///
+    /// The partition groups the members by member position; install it with
     /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)
     /// or, without a distribution, as `Distribution::new(Members::All,
     /// partition)` through [`Self::set_distribution`].
@@ -54,46 +73,9 @@ impl<S: SampleStorage> SampleSet<S> {
         &self,
         distances: &DistanceMatrix,
         clusters: usize,
-    ) -> Result<EnsemblePartition, ClusteringError> {
+    ) -> Result<Partition, ClusteringError> {
         Clustered::of_members(self.len(), self.distribution())
             .cluster_k_medoids(distances, clusters)
-    }
-}
-
-impl Ensemble {
-    /// Partitions the members into `clusters` clusters around medoid
-    /// members, minimizing the weighted total distance
-    /// `sum_i w_i d(i, m(i))` from each member to its nearest medoid.
-    ///
-    /// This is Partitioning Around Medoids (Kaufman and Rousseeuw): a greedy
-    /// BUILD adds, one at a time, the member that most lowers the total
-    /// distance, then SWAP repeatedly makes the single medoid exchange that
-    /// lowers it most, until none does. Swaps are evaluated as in FastPAM1
-    /// (Schubert and Rousseeuw 2019), which finds the same swaps as PAM in
-    /// `O(n^2)` time per swap instead of `O(k n^2)`; BUILD costs `O(k n^2)`.
-    /// The result is a local optimum, not necessarily the global one.
-    ///
-    /// Weights are relative, so heavier members pull medoids toward
-    /// themselves. Each member joins its nearest medoid, a medoid always
-    /// joins itself, and equal distances favor the medoid with the lowest
-    /// member index. Every choice breaks ties by lowest member index, so the
-    /// result is deterministic. Clusters are numbered in order of their
-    /// lowest member, and each is represented by its medoid.
-    ///
-    /// `clusters` ranges from one to the member count (zero only for no
-    /// members).
-    ///
-    /// # Errors
-    ///
-    /// [`ClusteringError::MatrixMismatch`] when the matrix covers a different
-    /// member count, and [`ClusteringError::InvalidClusterCount`] when
-    /// `clusters` is out of range.
-    pub fn cluster_k_medoids(
-        &self,
-        distances: &DistanceMatrix,
-        clusters: usize,
-    ) -> Result<EnsemblePartition, ClusteringError> {
-        Clustered::of_ensemble(self).cluster_k_medoids(distances, clusters)
     }
 }
 
@@ -235,7 +217,7 @@ fn best_swap(
 
 /// Assigns members to their nearest medoid and numbers clusters by lowest
 /// member.
-fn partition(distances: &DistanceMatrix, medoids: &[usize]) -> EnsemblePartition {
+fn partition(distances: &DistanceMatrix, medoids: &[usize]) -> Partition {
     let members = distances.member_count();
     let mut slot_of = vec![usize::MAX; members];
     for (slot, medoid) in medoids.iter().enumerate() {
@@ -267,7 +249,7 @@ fn partition(distances: &DistanceMatrix, medoids: &[usize]) -> EnsemblePartition
         }
         assignments.push(labels[slot]);
     }
-    EnsemblePartition::from_parts_unchecked(assignments, representatives)
+    Partition::from_parts_unchecked(assignments, representatives)
 }
 
 #[cfg(test)]

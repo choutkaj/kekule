@@ -242,10 +242,9 @@ struct Kept {
 ///     report.dropped_frames(),
 ///     report.dropped_bytes()
 /// );
-/// # let frames: Vec<kekule::structure::TrajectoryFrame> = Vec::new();
-/// # let trajectory = kekule::structure::Trajectory::from_items(writer.shared_topology(), frames)?;
-/// for frame in &trajectory {
-///     writer.write_frame(frame)?;
+/// # let frames = kekule::structure::SampleSet::new(writer.shared_topology());
+/// for sample in &frames {
+///     writer.write_frame(kekule::traj::FrameView::from_sample(sample)?)?;
 ///     writer.flush()?;
 /// }
 /// writer.finish()?;

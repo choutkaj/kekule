@@ -85,7 +85,7 @@ pub(super) struct EntityPlan {
     pub(super) omitted_coordination: usize,
 }
 
-pub(super) fn ensemble_entity_plan(
+pub(super) fn multi_model_entity_plan(
     model: ModelView<'_>,
     classifications: Option<&MmcifEntityClassifications>,
     report: Option<&StructureInterpretationReport>,

@@ -13,24 +13,27 @@ use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
     Distribution, Forces, Model, Order, Positions, Sample, SampleRead, SampleReadError, SampleSet,
-    SampleView, Trajectory, TrajectoryFrame, Velocities,
+    SampleView, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
 use kekule::traj::analysis::FrameSuperposer;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
-use kekule::traj::io::{open_indexed_sample_set, write_trajectory, TrajectoryWriteOptions};
+use kekule::traj::io::{open_indexed_sample_set, write_sample_set, TrajectoryWriteOptions};
 use kekule::traj::periodic::{self, MoleculeImager};
 use kekule::traj::{
-    FitReference, FrameBuffer, Processed, ProcessingError, ProcessingStep, ProcessingSteps,
-    TrajectoryFormat,
+    FitReference, FrameBuffer, FrameView, Processed, ProcessingError, ProcessingStep,
+    ProcessingSteps, TrajectoryFormat,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
-use crate::support::linear_carbon_topology;
+use crate::support::{
+    contents, fingerprint_bytes, linear_carbon_topology, reads, time_ordered, Frame, Recorded,
+};
 
 /// Seven frames of two three-atom chains crossing the faces of a 1 nm cell,
-/// turning a little, with velocities, forces, and a property.
-fn source() -> Trajectory {
+/// turning a little, with velocities, forces, and a property, in a time
+/// order.
+fn source() -> SampleSet {
     let mut graph = MoleculeEditor::new();
     let chain = ["C", "C", "O"].map(|symbol| {
         graph
@@ -46,7 +49,7 @@ fn source() -> Trajectory {
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let topology = Arc::new(builder.build().unwrap());
-    let mut trajectory = Trajectory::new(topology);
+    let mut frames = Vec::new();
     for index in 0..7 {
         let t = index as f64;
         let x = (0.85 + 0.07 * t) % 1.0;
@@ -61,15 +64,14 @@ fn source() -> Trajectory {
             wrap(Point3::new(0.6 + turn, y + 0.15, 0.7)),
             wrap(Point3::new(0.72, y + 0.24, 0.75 - turn)),
         ];
-        let mut frame =
-            TrajectoryFrame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
-                .with_cell(
-                    PeriodicCell::orthorhombic(
-                        Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
-                        [true; 3],
-                    )
-                    .unwrap(),
-                );
+        let mut frame = Frame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
+            .with_cell(
+                PeriodicCell::orthorhombic(
+                    Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
+                    [true; 3],
+                )
+                .unwrap(),
+            );
         frame.set_time(Some(Quantity::new(t, PICOSECOND))).unwrap();
         frame.set_step(Some(index * 10));
         frame.set_velocities(Some(Velocities::zeros(6))).unwrap();
@@ -82,25 +84,21 @@ fn source() -> Trajectory {
                 PropertyValue::Int(index as i64),
             )
             .unwrap();
-        trajectory.push(frame).unwrap();
+        frames.push(frame);
     }
-    trajectory
+    time_ordered(topology, frames)
 }
 
-fn set_of(trajectory: &Trajectory) -> SampleSet {
-    SampleSet::from_trajectory(trajectory.clone()).unwrap()
-}
-
-fn atoms(trajectory: &Trajectory, indices: &[u32]) -> AtomSelection {
+fn atoms(set: &SampleSet, indices: &[u32]) -> AtomSelection {
     AtomSelection::from_indices(
-        trajectory.shared_topology(),
+        set.shared_topology(),
         indices.iter().map(|&index| TopologyAtomIndex::new(index)),
     )
     .unwrap()
 }
 
 /// Checks that `sample` holds everything `frame` does.
-fn assert_sample(sample: &Sample, frame: &TrajectoryFrame, context: &str) {
+fn assert_sample(sample: &Sample, frame: &Sample, context: &str) {
     assert_eq!(sample.positions(), frame.positions(), "{context}");
     assert_eq!(sample.cell(), frame.cell(), "{context}");
     assert_eq!(sample.velocities(), frame.velocities(), "{context}");
@@ -108,8 +106,15 @@ fn assert_sample(sample: &Sample, frame: &TrajectoryFrame, context: &str) {
     assert_eq!(sample.properties(), frame.properties(), "{context}");
 }
 
-/// Checks that every sample of `reader` is the frame of `expected`.
-fn assert_reads(reader: &dyn SampleRead, expected: &Trajectory, context: &str) {
+/// Checks that every sample of `reader` is the sample of `expected`, and
+/// that the samples read are the next recorded ones.
+fn assert_reads(
+    reader: &dyn SampleRead,
+    expected: &SampleSet,
+    context: &str,
+    recorded: &mut Recorded,
+) {
+    recorded.check(&reads(reader));
     assert_eq!(reader.len(), expected.len(), "{context}");
     for (index, frame) in expected.iter().enumerate() {
         let sample = reader.read(index).unwrap();
@@ -121,16 +126,16 @@ fn assert_reads(reader: &dyn SampleRead, expected: &Trajectory, context: &str) {
     }
 }
 
-/// `trajectory` with every molecule made whole.
-fn whole(trajectory: &Trajectory) -> Trajectory {
-    let mut whole = trajectory.clone();
+/// `set` with every molecule made whole.
+fn whole(set: &SampleSet) -> SampleSet {
+    let mut whole = set.clone();
     periodic::make_molecules_whole(&mut whole).unwrap();
     whole
 }
 
-/// `trajectory` with the centroid of `atoms` moved to the cell's center.
-fn centered(trajectory: &Trajectory, atoms: &AtomSelection) -> Trajectory {
-    let mut centered = trajectory.clone();
+/// `set` with the centroid of `atoms` moved to the cell's center.
+fn centered(set: &SampleSet, atoms: &AtomSelection) -> SampleSet {
+    let mut centered = set.clone();
     for index in 0..centered.len() {
         let mut frame = centered.get_mut(index).unwrap();
         let [a, b, c] = frame.cell().unwrap().vectors().into_value();
@@ -149,41 +154,56 @@ fn centered(trajectory: &Trajectory, atoms: &AtomSelection) -> Trajectory {
     centered
 }
 
-/// `trajectory` superposed onto its frame 0 through `atoms`.
-fn fitted(trajectory: &Trajectory, atoms: &AtomSelection) -> Trajectory {
-    let mut fitted = trajectory.clone();
+/// `set` superposed onto its frame 0 through `atoms`.
+fn fitted(set: &SampleSet, atoms: &AtomSelection) -> SampleSet {
+    let mut fitted = set.clone();
     fitted.superpose(0, atoms, Default::default()).unwrap();
     fitted
 }
 
 #[test]
 fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
-    let trajectory = source();
-    let topology = trajectory.shared_topology();
-    let set = set_of(&trajectory);
+    let mut recorded = Recorded::new(&[
+        0xa549_77de_911b_bb78, // the source
+        0xb309_664f_9f45_1e52, // whole
+        0xdb65_e88b_76ff_1106, // wrap
+        0xdb65_e88b_76ff_1106, // whole and wrap
+        0xb079_5215_fe05_ca8c, // center
+        0xbd59_005d_be9e_672f, // fit
+        0xd87d_000f_0650_7b67, // fit onto positions
+        0x5d79_7569_13b9_f2f7, // subset
+        0xcf9e_8746_f544_05c8, // no step
+    ]);
+    let set = source();
+    recorded.check(&contents(&set));
+    let topology = set.shared_topology();
     let all = AtomSelection::all(Arc::clone(&topology));
-    let first = atoms(&trajectory, &[0, 1, 2]);
+    let first = atoms(&set, &[0, 1, 2]);
     let imager = MoleculeImager::new(Arc::clone(&topology));
 
     // Making whole.
-    let expected = whole(&trajectory);
+    let expected = whole(&set);
     let processed = Processed::new(&set, ProcessingSteps::default().with_whole(true)).unwrap();
-    assert_reads(&processed, &expected, "whole");
+    assert_reads(&processed, &expected, "whole", &mut recorded);
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
-    for (index, frame) in trajectory.iter().enumerate() {
-        buffer.copy_from(frame).unwrap();
+    for (index, frame) in set.iter().enumerate() {
+        buffer
+            .copy_from(FrameView::from_sample(frame).unwrap())
+            .unwrap();
         imager.make_whole(index, &mut buffer).unwrap();
         assert_sample(&processed.read(index).unwrap(), &buffer, "streamed whole");
     }
 
     // Wrapping around the first chain.
-    let mut expected = trajectory.clone();
+    let mut expected = set.clone();
     periodic::image_molecules(&mut expected, &first).unwrap();
     let processed =
         Processed::new(&set, ProcessingSteps::default().with_wrap(first.clone())).unwrap();
-    assert_reads(&processed, &expected, "wrap");
-    for (index, frame) in trajectory.iter().enumerate() {
-        buffer.copy_from(frame).unwrap();
+    assert_reads(&processed, &expected, "wrap", &mut recorded);
+    for (index, frame) in set.iter().enumerate() {
+        buffer
+            .copy_from(FrameView::from_sample(frame).unwrap())
+            .unwrap();
         imager.image(index, &mut buffer, &first).unwrap();
         assert_sample(&processed.read(index).unwrap(), &buffer, "streamed wrap");
     }
@@ -195,50 +215,54 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
         &Processed::new(&set, both).unwrap(),
         &expected,
         "whole and wrap",
+        &mut recorded,
     );
 
     // Centering.
-    let expected = centered(&trajectory, &first);
+    let expected = centered(&set, &first);
     let processed =
         Processed::new(&set, ProcessingSteps::default().with_center(first.clone())).unwrap();
-    assert_reads(&processed, &expected, "center");
+    assert_reads(&processed, &expected, "center", &mut recorded);
 
     // Fitting onto sample 0 and onto given positions.
-    let expected = fitted(&trajectory, &all);
+    let expected = fitted(&set, &all);
     let processed = Processed::new(
         &set,
         ProcessingSteps::default().with_fit(all.clone(), FitReference::Sample(0)),
     )
     .unwrap();
-    assert_reads(&processed, &expected, "fit");
-    let reference = trajectory.get(0).unwrap();
+    assert_reads(&processed, &expected, "fit", &mut recorded);
+    let reference = set.get(0).unwrap();
     let superposer = FrameSuperposer::new(&reference, &all, Default::default());
-    for (index, frame) in trajectory.iter().enumerate() {
-        buffer.copy_from(frame).unwrap();
+    for (index, frame) in set.iter().enumerate() {
+        buffer
+            .copy_from(FrameView::from_sample(frame).unwrap())
+            .unwrap();
         superposer.superpose(index, &mut buffer).unwrap();
         assert_sample(&processed.read(index).unwrap(), &buffer, "streamed fit");
     }
-    let positions = trajectory.get(3).unwrap().positions().clone();
+    let positions = set.get(3).unwrap().positions().clone();
     let processed = Processed::new(
         &set,
         ProcessingSteps::default().with_fit(first.clone(), FitReference::Positions(positions)),
     )
     .unwrap();
-    let mut expected = trajectory.clone();
+    let mut expected = set.clone();
     let model = Model::new(
         Arc::clone(&topology),
-        trajectory.get(3).unwrap().positions().clone(),
+        set.get(3).unwrap().positions().clone(),
     )
     .unwrap();
     expected
         .superpose(&model, &first, Default::default())
         .unwrap();
-    assert_reads(&processed, &expected, "fit onto positions");
+    assert_reads(&processed, &expected, "fit onto positions", &mut recorded);
 
     // The subset.
     let expected = set.subset(&first).unwrap();
     let processed =
         Processed::new(&set, ProcessingSteps::default().with_subset(first.clone())).unwrap();
+    recorded.check(&reads(&processed));
     assert_eq!(processed.topology().atom_count(), 3);
     assert_eq!(expected.topology().atom_count(), 3);
     for index in 0..set.len() {
@@ -251,25 +275,28 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
     // No step reads the samples as stored.
     let processed = Processed::new(&set, ProcessingSteps::default()).unwrap();
     assert!(processed.steps().is_empty());
-    assert_reads(&processed, &trajectory, "no step");
+    assert_reads(&processed, &set, "no step", &mut recorded);
     assert_eq!(processed.order(), set.order());
 }
 
 #[test]
 fn every_step_together_equals_the_functions_in_order() {
-    let trajectory = source();
-    let set = set_of(&trajectory);
-    let first = atoms(&trajectory, &[0, 1, 2]);
-    let second = atoms(&trajectory, &[3, 4, 5]);
-    let fit = atoms(&trajectory, &[0, 1, 2, 4]);
+    let mut recorded = Recorded::new(&[
+        0xa549_77de_911b_bb78, // the source
+        0x1585_a1a0_e321_46c4, // the functions in order
+        0x2c30_0947_d5eb_c322, // processed
+    ]);
+    let set = source();
+    recorded.check(&contents(&set));
+    let first = atoms(&set, &[0, 1, 2]);
+    let second = atoms(&set, &[3, 4, 5]);
+    let fit = atoms(&set, &[0, 1, 2, 4]);
 
-    let mut expected = trajectory.clone();
+    let mut expected = set.clone();
     periodic::image_molecules(&mut expected, &second).unwrap();
     let expected = fitted(&centered(&expected, &first), &fit);
-    let expected = SampleSet::from_trajectory(expected)
-        .unwrap()
-        .subset(&second)
-        .unwrap();
+    let expected = expected.subset(&second).unwrap();
+    recorded.check(&contents(&expected));
 
     let steps = ProcessingSteps::default()
         .with_whole(true)
@@ -282,6 +309,7 @@ fn every_step_together_equals_the_functions_in_order() {
         let sample = processed.read(index).unwrap();
         assert_eq!(&sample, expected.get(index).unwrap().payload(), "{index}");
     }
+    recorded.check(&reads(&processed));
     // Without smoothing, the steps read as before.
     let smoothed = steps.with_smoothing(3).unwrap();
     assert_eq!(smoothed.smoothing(), Some(3));
@@ -317,18 +345,25 @@ fn molecule_centers_from_cell_center(topology: &Topology, sample: &Sample) -> Ve
 
 #[test]
 fn wrapping_then_centering_on_the_anchors_keeps_every_molecule_in_the_cell() {
-    let trajectory = source();
-    let topology = trajectory.shared_topology();
-    let set = set_of(&trajectory);
+    let mut recorded = Recorded::new(&[
+        0xa549_77de_911b_bb78, // the source
+        0xf586_3c36_0dbd_08a7, // the first chain
+        0x5282_d536_197f_f0bd, // the second chain
+        0x2f4b_73d8_061b_8ff1, // every atom
+    ]);
+    let set = source();
+    recorded.check(&contents(&set));
+    let topology = set.shared_topology();
     for anchors in [
-        atoms(&trajectory, &[0, 1, 2]),
-        atoms(&trajectory, &[3, 4, 5]),
+        atoms(&set, &[0, 1, 2]),
+        atoms(&set, &[3, 4, 5]),
         AtomSelection::all(Arc::clone(&topology)),
     ] {
         let steps = ProcessingSteps::default()
             .with_wrap(anchors.clone())
             .with_center(anchors);
         let processed = Processed::new(&set, steps).unwrap();
+        recorded.check(&reads(&processed));
         for index in 0..set.len() {
             let sample = processed.read(index).unwrap();
             for center in molecule_centers_from_cell_center(&topology, &sample) {
@@ -344,7 +379,7 @@ fn wrapping_then_centering_on_the_anchors_keeps_every_molecule_in_the_cell() {
 /// What smoothing over `window` samples gives for `stepped`, the samples
 /// after the other steps, as the host computed it: the window imaged onto
 /// sample `index` and averaged.
-fn smoothed_by_hand(stepped: &Trajectory, window: usize, index: usize) -> Vec<Point3> {
+fn smoothed_by_hand(stepped: &SampleSet, window: usize, index: usize) -> Vec<Point3> {
     let half = window / 2;
     let imager = MoleculeImager::new(stepped.shared_topology());
     let center = stepped.get(index).unwrap();
@@ -362,7 +397,9 @@ fn smoothed_by_hand(stepped: &Trajectory, window: usize, index: usize) -> Vec<Po
         if other == index {
             continue;
         }
-        buffer.copy_from(stepped.get(other).unwrap()).unwrap();
+        buffer
+            .copy_from(FrameView::from_sample(stepped.get(other).unwrap()).unwrap())
+            .unwrap();
         imager.image_onto(other, &mut buffer, &center).unwrap();
         for (total, point) in sum.iter_mut().zip(*buffer.positions().values().value()) {
             *total += *point - Point3::origin();
@@ -374,10 +411,22 @@ fn smoothed_by_hand(stepped: &Trajectory, window: usize, index: usize) -> Vec<Po
 
 #[test]
 fn smoothing_averages_the_window_imaged_onto_each_sample() {
-    let trajectory = source();
-    let set = set_of(&trajectory);
-    let all = AtomSelection::all(trajectory.shared_topology());
-    let stepped = fitted(&whole(&trajectory), &all);
+    let mut recorded = Recorded::new(&[
+        0xa549_77de_911b_bb78, // the source
+        0x738f_0850_1fc8_470d, // window 1
+        0x738f_0850_1fc8_470d, // window 1 unsmoothed
+        0xd0f2_4d0b_fe3a_89dd, // window 3
+        0x738f_0850_1fc8_470d, // window 3 unsmoothed
+        0xf805_325f_129d_8c29, // window 5
+        0x738f_0850_1fc8_470d, // window 5 unsmoothed
+        0xc14d_ba4b_c065_ca6b, // window 15
+        0x738f_0850_1fc8_470d, // window 15 unsmoothed
+        0x1c81_cd72_f135_b300, // smoothing alone
+    ]);
+    let set = source();
+    recorded.check(&contents(&set));
+    let all = AtomSelection::all(set.shared_topology());
+    let stepped = fitted(&whole(&set), &all);
     for window in [1, 3, 5, 15] {
         let steps = ProcessingSteps::default()
             .with_whole(true)
@@ -386,6 +435,8 @@ fn smoothing_averages_the_window_imaged_onto_each_sample() {
             .unwrap();
         let processed = Processed::new(&set, steps.clone()).unwrap();
         let plain = Processed::new(&set, steps.without_smoothing()).unwrap();
+        recorded.check(&reads(&processed));
+        recorded.check(&reads(&plain));
         for index in 0..set.len() {
             let sample = processed.read(index).unwrap();
             let frame = stepped.get(index).unwrap();
@@ -404,27 +455,33 @@ fn smoothing_averages_the_window_imaged_onto_each_sample() {
     // Smoothing alone averages the samples as stored, imaged.
     let processed =
         Processed::new(&set, ProcessingSteps::default().with_smoothing(3).unwrap()).unwrap();
+    recorded.check(&reads(&processed));
     for index in 0..set.len() {
         assert_eq!(
             *processed.read(index).unwrap().positions().values().value(),
-            &smoothed_by_hand(&trajectory, 3, index)[..]
+            &smoothed_by_hand(&set, 3, index)[..]
         );
     }
 }
 
 #[test]
 fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
-    let trajectory = source();
-    let set = set_of(&trajectory);
-    let second = atoms(&trajectory, &[3, 4, 5]);
+    let mut recorded = Recorded::new(&[
+        0xa549_77de_911b_bb78, // the source
+        0x50f9_dbed_b335_a8a2, // processed
+    ]);
+    let set = source();
+    recorded.check(&contents(&set));
+    let second = atoms(&set, &[3, 4, 5]);
     let steps = ProcessingSteps::default()
         .with_whole(true)
         .with_smoothing(3)
         .unwrap()
         .with_subset(second);
     let processed = Processed::new(&set, steps).unwrap();
+    recorded.check(&reads(&processed));
     assert_eq!(processed.topology().atom_count(), 3);
-    let stepped = whole(&trajectory);
+    let stepped = whole(&set);
     for index in 0..set.len() {
         assert_eq!(
             *processed.read(index).unwrap().positions().values().value(),
@@ -436,24 +493,30 @@ fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
 
 #[test]
 fn smoothing_images_each_sample_of_the_window_in_its_own_cell() {
-    let mut trajectory = source();
-    for index in 0..trajectory.len() {
+    let mut recorded = Recorded::new(&[
+        0x9e0a_7a50_c2a0_9c34, // the source in growing cells
+        0xf831_92cf_db4e_6b20, // window 3
+        0x4311_3f0f_d9d6_1209, // window 5
+    ]);
+    let mut set = source();
+    for index in 0..set.len() {
         let edge = 1.0 + 0.03 * index as f64;
         let cell = PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(edge, edge, 1.0), NANOMETER),
             [true; 3],
         )
         .unwrap();
-        trajectory.get_mut(index).unwrap().set_cell(Some(cell));
+        set.get_mut(index).unwrap().set_cell(Some(cell));
     }
-    let set = set_of(&trajectory);
+    recorded.check(&contents(&set));
     for window in [3, 5] {
         let steps = ProcessingSteps::default()
             .with_whole(true)
             .with_smoothing(window)
             .unwrap();
         let processed = Processed::new(&set, steps).unwrap();
-        let stepped = whole(&trajectory);
+        recorded.check(&reads(&processed));
+        let stepped = whole(&set);
         for index in 0..set.len() {
             let sample = processed.read(index).unwrap();
             assert_eq!(
@@ -461,19 +524,23 @@ fn smoothing_images_each_sample_of_the_window_in_its_own_cell() {
                 &smoothed_by_hand(&stepped, window, index)[..],
                 "window {window}, sample {index}"
             );
-            assert_eq!(sample.cell(), trajectory.get(index).unwrap().cell());
+            assert_eq!(sample.cell(), set.get(index).unwrap().cell());
         }
     }
 }
 
 #[test]
 fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
-    let mut trajectory = source();
-    for index in 0..trajectory.len() {
-        trajectory.get_mut(index).unwrap().set_cell(None);
+    let mut recorded = Recorded::new(&[
+        0x45cf_5136_e607_3f68, // the source without cells
+        0x4c6d_9a00_90c7_bb02, // processed
+    ]);
+    let mut set = source();
+    for index in 0..set.len() {
+        set.get_mut(index).unwrap().set_cell(None);
     }
-    let set = set_of(&trajectory);
-    let first = atoms(&trajectory, &[0, 1, 2]);
+    recorded.check(&contents(&set));
+    let first = atoms(&set, &[0, 1, 2]);
     let steps = ProcessingSteps::default()
         .with_whole(true)
         .with_wrap(first.clone())
@@ -483,6 +550,7 @@ fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
     // Smoothing reads the samples, so construction checks it too.
     Processed::new(&set, steps.clone()).unwrap();
     let processed = Processed::new(&set, steps.without_smoothing()).unwrap();
+    recorded.check(&reads(&processed));
     let centroid = |sample: &Sample| {
         let values = sample.positions().values();
         let points = values.value();
@@ -502,13 +570,16 @@ fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
 
 #[test]
 fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
-    let trajectory = source();
+    let mut recorded = Recorded::new(&[
+        0x4b7f_d20b_0ee3_d80c, // processed from the file
+    ]);
+    let set = source();
     let directory = std::env::temp_dir().join(format!("kekule-processing-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join("run.trr");
-    write_trajectory(
+    write_sample_set(
         &path,
-        &trajectory,
+        &set,
         TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
             TrrWriteOptions::default()
                 .with_lambda_policy(TrrLambdaPolicy::RequireZero)
@@ -516,10 +587,14 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
         ),
     )
     .unwrap();
-    let file =
-        open_indexed_sample_set(&path, trajectory.shared_topology(), Default::default()).unwrap();
+    // The bytes the trajectory of these frames wrote.
+    assert_eq!(
+        fingerprint_bytes(&std::fs::read(&path).unwrap()),
+        0xcb70_4f4e_30e5_b7f1
+    );
+    let file = open_indexed_sample_set(&path, set.shared_topology(), Default::default()).unwrap();
     let memory = file.load(0..file.len()).unwrap();
-    let first = atoms(&trajectory, &[0, 1, 2]);
+    let first = atoms(&set, &[0, 1, 2]);
     let steps = ProcessingSteps::default()
         .with_wrap(first.clone())
         .with_fit(first, FitReference::Sample(2))
@@ -527,6 +602,7 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
         .unwrap();
     let from_file = Processed::new(Arc::new(file), steps.clone()).unwrap();
     let from_memory = Processed::new(memory, steps).unwrap();
+    recorded.check(&reads(&from_file));
     for index in 0..from_file.len() {
         assert_eq!(
             from_file.read(index).unwrap(),
@@ -541,11 +617,10 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
 
 #[test]
 fn steps_that_cannot_process_the_samples_fail_on_construction() {
-    let trajectory = source();
-    let set = set_of(&trajectory);
+    let set = source();
     let foreign = AtomSelection::all(linear_carbon_topology(6));
-    let none = AtomSelection::empty(trajectory.shared_topology());
-    let all = AtomSelection::all(trajectory.shared_topology());
+    let none = AtomSelection::empty(set.shared_topology());
+    let all = AtomSelection::all(set.shared_topology());
 
     assert_eq!(
         ProcessingSteps::default().with_smoothing(4).unwrap_err(),
@@ -682,10 +757,12 @@ impl SampleRead for Panicking {
 
 #[test]
 fn a_panic_in_the_reader_below_leaves_the_other_samples_readable() {
-    let trajectory = source();
-    let set = set_of(&trajectory);
-    let panicking = Panicking(set_of(&trajectory));
-    let first = atoms(&trajectory, &[0, 1, 2]);
+    let mut recorded = Recorded::new(&[
+        0x8131_df28_bb39_9479, // processed from the set
+    ]);
+    let set = source();
+    let panicking = Panicking(set.clone());
+    let first = atoms(&set, &[0, 1, 2]);
     let steps = ProcessingSteps::default()
         .with_wrap(first.clone())
         .with_center(first.clone())
@@ -694,6 +771,7 @@ fn a_panic_in_the_reader_below_leaves_the_other_samples_readable() {
         .unwrap();
     let processed = Processed::new(&panicking, steps.clone()).unwrap();
     let expected = Processed::new(&set, steps).unwrap();
+    recorded.check(&reads(&expected));
     for _ in 0..2 {
         // Samples 3 and 5 smooth over sample 4.
         for index in [3, 4, 5] {
@@ -759,21 +837,24 @@ impl SampleRead for Unique {
 
 #[test]
 fn the_steps_change_a_unique_sample_in_place_and_copy_a_shared_one() {
-    let trajectory = source();
-    let topology = trajectory.shared_topology();
-    let set = set_of(&trajectory);
-    let first = atoms(&trajectory, &[0, 1, 2]);
+    let mut recorded = Recorded::new(&[
+        0x5a14_dfd8_4689_5cb5, // processed from the set
+    ]);
+    let set = source();
+    let topology = set.shared_topology();
+    let first = atoms(&set, &[0, 1, 2]);
     let steps = ProcessingSteps::default()
         .with_whole(true)
         .with_wrap(first.clone())
         .with_center(first)
         .with_fit(AtomSelection::all(topology), FitReference::Sample(0));
     let unique = Unique {
-        set: set_of(&trajectory),
+        set: set.clone(),
         addresses: Mutex::new(HashMap::new()),
     };
     let from_unique = Processed::new(&unique, steps.clone()).unwrap();
     let from_shared = Processed::new(&set, steps).unwrap();
+    recorded.check(&reads(&from_shared));
     for index in 0..set.len() {
         // A unique sample is processed in the allocation it was read into.
         let sample = from_unique.read(index).unwrap();
@@ -788,15 +869,15 @@ fn the_steps_change_a_unique_sample_in_place_and_copy_a_shared_one() {
         let stored = set.read(index).unwrap();
         assert!(!shared.shares_structure_with(&stored), "sample {index}");
         assert_ne!(address(&shared), address(&stored), "sample {index}");
-        assert_sample(&stored, trajectory.get(index).unwrap().payload(), "stored");
+        assert_sample(&stored, set.get(index).unwrap().payload(), "stored");
     }
 }
 
 #[test]
 fn samples_of_another_layout_fail_instead_of_being_processed() {
-    let trajectory = source();
-    let first = atoms(&trajectory, &[0, 1, 2]);
-    let short = Short(set_of(&trajectory));
+    let set = source();
+    let first = atoms(&set, &[0, 1, 2]);
+    let short = Short(set.clone());
     assert!(matches!(
         Processed::new(&short, ProcessingSteps::default().with_center(first)),
         Err(ProcessingError::Sample(SampleReadError::Structure {
@@ -849,24 +930,28 @@ impl SampleRead for Counting {
 
 #[test]
 fn the_reader_lends_sample_0_it_processed_on_construction() {
-    let trajectory = source();
-    let first = atoms(&trajectory, &[0, 1, 2]);
+    let mut recorded = Recorded::new(&[
+        0x2242_d7ac_7251_1755, // processed from the set
+    ]);
+    let set = source();
+    let first = atoms(&set, &[0, 1, 2]);
     let steps = ProcessingSteps::default()
         .with_wrap(first.clone())
         .with_center(first.clone())
         .with_fit(
             first,
-            FitReference::Positions(trajectory.get(3).unwrap().payload().positions().clone()),
+            FitReference::Positions(set.get(3).unwrap().payload().positions().clone()),
         )
         .with_smoothing(3)
         .unwrap()
-        .with_subset(atoms(&trajectory, &[0, 1, 2, 3]));
+        .with_subset(atoms(&set, &[0, 1, 2, 3]));
     let counting = Counting {
-        set: set_of(&trajectory),
+        set: set.clone(),
         reads: Mutex::new(HashMap::new()),
     };
     let processed = Processed::new(&counting, steps.clone()).unwrap();
-    let expected = Processed::new(set_of(&trajectory), steps).unwrap();
+    let expected = Processed::new(set.clone(), steps).unwrap();
+    recorded.check(&reads(&expected));
     let reads = counting.reads(0);
     assert!(reads > 0);
 
@@ -879,7 +964,7 @@ fn the_reader_lends_sample_0_it_processed_on_construction() {
     assert!(processed.peek(1).is_none());
     assert_eq!(processed.read(1).unwrap(), expected.read(1).unwrap());
 
-    let empty = SampleSet::new(trajectory.shared_topology());
+    let empty = SampleSet::new(set.shared_topology());
     let processed = Processed::new(&empty, ProcessingSteps::default().with_whole(true)).unwrap();
     assert!(processed.peek(0).is_none());
 }

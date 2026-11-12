@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+use kekule::structure::{Positions, Sample, SampleSet};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
@@ -24,12 +24,12 @@ use kekule::traj::io::{
     TrajectoryWriteOptions,
 };
 use kekule::traj::{
-    SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryReader,
+    FrameView, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryReader,
     TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
-use crate::support::{self, linear_carbon_topology};
+use crate::support::{self, linear_carbon_topology, time_ordered, Frame};
 
 const FORMATS: [TrajectoryFormat; 4] = [
     TrajectoryFormat::Xtc,
@@ -73,7 +73,7 @@ fn topology() -> Arc<Topology> {
 }
 
 /// Frame `step` of a moving chain, with the time, step, and cell XTC needs.
-fn frame(step: u64) -> TrajectoryFrame {
+fn frame(step: u64) -> Frame {
     let shift = step as f64;
     let points = (0..12)
         .map(|atom| {
@@ -91,8 +91,7 @@ fn frame(step: u64) -> TrajectoryFrame {
     )
     .unwrap();
     let mut frame =
-        TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
-            .with_cell(cell);
+        Frame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap()).with_cell(cell);
     frame.set_step(Some(step));
     frame
         .set_time(Some(Quantity::new(0.5 * shift, PICOSECOND)))
@@ -100,13 +99,13 @@ fn frame(step: u64) -> TrajectoryFrame {
     frame
 }
 
-fn trajectory(steps: std::ops::Range<u64>) -> Trajectory {
-    Trajectory::from_items(topology(), steps.map(frame)).unwrap()
+fn trajectory(steps: std::ops::Range<u64>) -> SampleSet {
+    time_ordered(topology(), steps.map(frame))
 }
 
 /// Frame `step` with every atom at one point, which XTC and XYZ write in
 /// fewer bytes than [`frame`].
-fn squeezed(step: u64) -> TrajectoryFrame {
+fn squeezed(step: u64) -> Frame {
     let mut squeezed = frame(step);
     squeezed
         .set_positions(Quantity::new([Point3::new(0.1, 0.1, 0.1); 12], NANOMETER))
@@ -136,26 +135,26 @@ fn growing() -> TrajectoryOpenOptions {
     TrajectoryOpenOptions::default().with_growing(true)
 }
 
-/// The complete encoding of `trajectory` in `format`.
-fn encoded(format: TrajectoryFormat, trajectory: &Trajectory) -> Vec<u8> {
+/// The complete encoding of `set` in `format`.
+fn encoded(format: TrajectoryFormat, set: &SampleSet) -> Vec<u8> {
     let mut stream = Cursor::new(Vec::new());
-    kekule::traj::io::write_trajectory_to(&mut stream, trajectory, options(format)).unwrap();
+    kekule::traj::io::write_sample_set_to(&mut stream, set, options(format)).unwrap();
     stream.into_inner()
 }
 
 /// Every indexed frame, read at random.
-fn frames(reader: &mut IndexedFileTrajectoryReader) -> Vec<TrajectoryFrame> {
+fn frames(reader: &mut IndexedFileTrajectoryReader) -> Vec<Frame> {
     let mut buffer = reader.frame_buffer();
     (0..reader.frame_count().unwrap())
         .map(|index| {
             reader.read_frame(index, &mut buffer).unwrap();
-            buffer.frame_view().payload().clone()
+            Frame::of(&buffer)
         })
         .collect()
 }
 
 /// The frames a strict reader finds in the complete file at `path`.
-fn scanned(path: &Path) -> Vec<TrajectoryFrame> {
+fn scanned(path: &Path) -> Vec<Frame> {
     frames(&mut open_indexed_trajectory(path, topology(), Default::default()).unwrap())
 }
 
@@ -165,7 +164,7 @@ fn append(path: &Path, bytes: &[u8]) {
 }
 
 /// The x coordinates of frame `frame`, to the precision every format keeps.
-fn assert_close(read: &TrajectoryFrame, step: u64, context: &str) {
+fn assert_close(read: &Sample, step: u64, context: &str) {
     let expected = frame(step);
     let pairs = read
         .positions()
@@ -196,7 +195,9 @@ fn every_format_follows_a_file_its_writer_appends_to() {
         )
         .unwrap();
         for frame in written.iter().take(2) {
-            writer.write_frame(frame).unwrap();
+            writer
+                .write_frame(FrameView::from_sample(frame).unwrap())
+                .unwrap();
         }
         writer.flush().unwrap();
 
@@ -211,7 +212,9 @@ fn every_format_follows_a_file_its_writer_appends_to() {
         assert_eq!(reader.refresh().unwrap(), 0, "{format}");
 
         for frame in written.iter().skip(2) {
-            writer.write_frame(frame).unwrap();
+            writer
+                .write_frame(FrameView::from_sample(frame).unwrap())
+                .unwrap();
         }
         writer.flush().unwrap();
         assert_eq!(reader.refresh().unwrap(), 4, "{format}");
@@ -220,11 +223,7 @@ fn every_format_follows_a_file_its_writer_appends_to() {
         // Sequential reads continue into the new frames.
         let mut sequential = 2;
         while reader.read_next(&mut buffer).unwrap() {
-            assert_close(
-                buffer.frame_view().payload(),
-                sequential,
-                &format.to_string(),
-            );
+            assert_close(&buffer, sequential, &format.to_string());
             sequential += 1;
         }
         assert_eq!(sequential, 6, "{format}");
@@ -444,7 +443,7 @@ fn a_pending_frame_is_read_again_though_the_file_kept_its_length() {
         let bytes = encoded(format, &trajectory(0..3));
         let shorter = encoded(
             format,
-            &Trajectory::from_items(topology(), [frame(0), frame(1), squeezed(2)]).unwrap(),
+            &time_ordered(topology(), [frame(0), frame(1), squeezed(2)]),
         );
         let (_, starts) = frame_bounds(format, &bytes);
         let third = usize::try_from(starts[2]).unwrap();
@@ -494,11 +493,10 @@ fn refresh_reads_a_file_moved_into_the_path_when_it_holds_the_indexed_bytes() {
         // Another trajectory does not, and the reader keeps reading the
         // file it had.
         let index = reader.to_frame_index();
-        let other = Trajectory::from_items(
+        let other = time_ordered(
             topology(),
             [squeezed(0)].into_iter().chain((1..6).map(frame)),
-        )
-        .unwrap();
+        );
         fs::write(&moved, encoded(format, &other)).unwrap();
         fs::rename(&moved, &path).unwrap();
         let error = reader.refresh().unwrap_err();
@@ -564,9 +562,9 @@ fn files_without_a_complete_frame_or_header_are_incomplete() {
     let mut reader = open_indexed_trajectory(&path, topology(), growing()).unwrap();
     assert_eq!(reader.frame_count(), Some(0));
     assert_eq!(reader.metadata().declared_frame_count(), Some(0));
-    writer
-        .write_frame(trajectory(0..1).get(0).unwrap())
-        .unwrap();
+    let shared = topology();
+    let first = frame(0).bound(&shared);
+    writer.write_frame(first.view(&shared)).unwrap();
     writer.flush().unwrap();
     assert_eq!(reader.refresh().unwrap(), 1);
     assert_eq!(reader.metadata().declared_frame_count(), Some(1));
@@ -669,7 +667,9 @@ fn every_flush_leaves_a_complete_trajectory_a_strict_reader_opens() {
         )
         .unwrap();
         for (count, frame) in written.iter().enumerate() {
-            writer.write_frame(frame).unwrap();
+            writer
+                .write_frame(FrameView::from_sample(frame).unwrap())
+                .unwrap();
             writer.flush().unwrap();
             let read = scanned(&path);
             assert_eq!(read.len(), count + 1, "{format}");
@@ -704,7 +704,9 @@ fn a_reader_refreshing_while_a_writer_appends_sees_every_frame_whole() {
             .unwrap();
             let written = trajectory(0..FRAMES);
             for (index, frame) in written.iter().enumerate() {
-                writer.write_frame(frame).unwrap();
+                writer
+                    .write_frame(FrameView::from_sample(frame).unwrap())
+                    .unwrap();
                 if index % 3 != 1 {
                     writer.flush().unwrap();
                 }
@@ -729,11 +731,7 @@ fn a_reader_refreshing_while_a_writer_appends_sees_every_frame_whole() {
             let count = reader.frame_count().unwrap();
             for index in seen..count {
                 reader.read_frame(index, &mut buffer).unwrap();
-                assert_close(
-                    buffer.frame_view().payload(),
-                    index as u64,
-                    &format.to_string(),
-                );
+                assert_close(&buffer, index as u64, &format.to_string());
             }
             seen = count;
             if finished && count == FRAMES as usize {

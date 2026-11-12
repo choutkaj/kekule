@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::error_detail;
+use super::{debug_fingerprint, error_detail};
 use crate::diagnostics::{FormatError, FormatErrorDetail};
 use crate::macromolecular::*;
 use crate::mmcif::*;
@@ -313,14 +313,9 @@ fn mmcif_altloc_source_combinations_constrain_default_and_exact_selection() {
         (ids[1].residue.clone(), "D".into()),
     ]));
     assert!(selected(&source, AltLocPolicy::Configured(conflict)).is_err());
-    assert_eq!(
-        source
-            .interpret_ensemble(Default::default())
-            .unwrap()
-            .ensemble()
-            .len(),
-        1
-    );
+    let interpreted = source.interpret_sample_set(Default::default()).unwrap();
+    assert_eq!(interpreted.sample_set().len(), 1);
+    assert_eq!(debug_fingerprint(&interpreted), 0xc68a_19fe_a15d_8066);
 }
 
 #[test]
@@ -357,11 +352,12 @@ fn mmcif_altloc_invalid_source_combinations_fail() {
 }
 
 #[test]
-fn mmcif_altloc_ensemble_uses_source_models_and_stable_site_order() {
+fn mmcif_altloc_sample_set_uses_source_models_and_stable_site_order() {
     let rows = "1 C C1 LIG X 1 1 . A 0.9 0 0 0 1\n2 O O1 LIG X 1 1 . A 0.9 1.2 0 0 1\n3 O O1 LIG X 1 1 . B 0.1 6.2 0 0 1\n4 C C1 LIG X 1 1 . B 0.1 5 0 0 1\n5 C C1 LIG X 1 1 . A 0.1 10 0 0 2\n6 O O1 LIG X 1 1 . A 0.1 11.2 0 0 2\n7 O O1 LIG X 1 1 . B 0.9 16.2 0 0 2\n8 C C1 LIG X 1 1 . B 0.9 15 0 0 2";
     let source = document(rows);
-    let result = source.interpret_ensemble(Default::default()).unwrap();
-    assert_eq!(result.ensemble().len(), 2);
+    let result = source.interpret_sample_set(Default::default()).unwrap();
+    assert_eq!(result.sample_set().len(), 2);
+    assert_eq!(debug_fingerprint(&result), 0x90e6_ee77_3819_41a7);
     assert_eq!(
         result.reports()[0].alternate_locations()[0].selected_labels,
         ["A"]
@@ -392,8 +388,8 @@ fn mmcif_altloc_ensemble_uses_source_models_and_stable_site_order() {
         .map(|residue| residue.residue)
         .collect::<Vec<_>>();
     let result = source
-        .interpret_ensemble(
-            StructureEnsembleInterpretOptions::default().with_altloc_policy(
+        .interpret_sample_set(
+            StructureSampleSetInterpretOptions::default().with_altloc_policy(
                 AltLocPolicy::Configured(
                     AltLocSelection::default()
                         .with_overrides(BTreeMap::from([(ids[1].clone(), "A".into())])),
@@ -405,9 +401,10 @@ fn mmcif_altloc_ensemble_uses_source_models_and_stable_site_order() {
         result.reports()[1].alternate_locations()[0].selected_labels,
         ["A"]
     );
+    assert_eq!(debug_fingerprint(&result), 0x11e5_5666_c8fb_fbc2);
     assert!(source
-        .interpret_ensemble(
-            StructureEnsembleInterpretOptions::default().with_altloc_policy(
+        .interpret_sample_set(
+            StructureSampleSetInterpretOptions::default().with_altloc_policy(
                 AltLocPolicy::Configured(AltLocSelection::default().with_groups(vec![ids]))
             )
         )
@@ -415,33 +412,29 @@ fn mmcif_altloc_ensemble_uses_source_models_and_stable_site_order() {
 }
 
 #[test]
-fn mmcif_altloc_ensemble_rejects_changed_chemistry_and_keeps_single_plain_model() {
+fn mmcif_altloc_sample_set_rejects_changed_chemistry_and_keeps_single_plain_model() {
     let source = document("1 C CA GLY X 1 1 . A 0.9 0 0 0 1\n2 C CA ALA X 1 1 . B 0.1 5 0 0 1\n3 C CB ALA X 1 1 . B 0.1 6.5 0 0 1\n4 C CA GLY X 1 1 . A 0.1 0 0 0 2\n5 C CA ALA X 1 1 . B 0.9 5 0 0 2\n6 C CB ALA X 1 1 . B 0.9 6.5 0 0 2");
     assert!(matches!(
-        error_detail(source.interpret_ensemble(Default::default())),
+        error_detail(source.interpret_sample_set(Default::default())),
         Some(FormatErrorDetail::InconsistentAtomSet { .. })
     ));
     let plain = document("1 C C1 LIG X 1 1 . . 1 0 0 0 1");
     assert!(plain.blocks()[0].alternate_locations().unwrap().is_empty());
-    assert_eq!(
-        plain
-            .interpret_ensemble(Default::default())
-            .unwrap()
-            .ensemble()
-            .len(),
-        1
-    );
+    let interpreted = plain.interpret_sample_set(Default::default()).unwrap();
+    assert_eq!(interpreted.sample_set().len(), 1);
+    assert_eq!(debug_fingerprint(&interpreted), 0x0a17_8230_7238_9c88);
 }
 
 #[test]
-fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() {
+fn mmcif_altloc_explicit_conformer_sample_set_is_unweighted_and_preserves_order() {
     let source = document(CROSSED);
     let options = ["B", "A", "B"].map(|label| {
         StructureInterpretOptions::default()
             .with_altloc_policy(AltLocPolicy::SelectLabel(label.into()))
     });
     let result = source.interpret_conformations(&options).unwrap();
-    assert_eq!(result.ensemble().len(), 3);
+    assert_eq!(result.sample_set().len(), 3);
+    assert_eq!(debug_fingerprint(&result), 0x95cc_4357_8e04_a9be);
     let detached = document(
         &CROSSED
             .replace("B 0.1 2.4 2.4 0 1", "B 0.1 10 0 0 1")
@@ -451,10 +444,12 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
         error_detail(detached.interpret_conformations(&options)),
         Some(FormatErrorDetail::InconsistentTopology { .. })
     ));
+    let distribution = result.sample_set().distribution().unwrap();
+    assert_eq!(distribution.weights(), None);
     assert!(result
-        .ensemble()
+        .sample_set()
         .iter()
-        .all(|member| member.weight() == 1.0));
+        .all(|member| member.weight() == Some(1.0)));
     assert_eq!(
         result
             .reports()
@@ -471,10 +466,11 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
         .interpret_conformations(&options)
         .unwrap();
     assert_eq!(block.reports(), result.reports());
+    assert_eq!(debug_fingerprint(&block), 0x95cc_4357_8e04_a9be);
     assert!(block
-        .ensemble()
+        .sample_set()
         .topology()
-        .same_layout(result.ensemble().topology()));
+        .same_layout(result.sample_set().topology()));
     assert!(matches!(
         error_detail(source.interpret_conformations(&[])),
         Some(FormatErrorDetail::EmptyConformationSelection)
@@ -488,7 +484,7 @@ fn mmcif_altloc_explicit_conformer_ensemble_is_unweighted_and_preserves_order() 
 }
 
 #[test]
-fn mmcif_altloc_explicit_conformer_ensemble_rejects_microheterogeneity() {
+fn mmcif_altloc_explicit_conformer_sample_set_rejects_microheterogeneity() {
     let source = document("1 C CA GLY X 1 1 . A 0.4 0 0 0 1\n2 C CA ALA X 1 1 . B 0.6 5 0 0 1\n3 C CB ALA X 1 1 . B 0.6 6.5 0 0 1");
     let options = ["A", "B"].map(|label| {
         StructureInterpretOptions::default()

@@ -6,8 +6,8 @@
 //! than nine atoms are compressed with nominal resolution `1 / precision`
 //! nanometres, smaller frames are stored as plain f32. The box follows an
 //! [`XtcCellPolicy`]. A frame without a time or step can be numbered under
-//! [`XtcWriteOptions::frame_timing`]; the velocities, forces, and
-//! properties XTC cannot carry are rejected unless
+//! [`XtcWriteOptions::frame_timing`]; the velocities, forces, occupancies,
+//! B-factors, and properties XTC cannot carry are rejected unless
 //! [`XtcWriteOptions::frame_metadata`] and
 //! [`XtcWriteOptions::frame_properties`] omit them, as
 //! [`XtcWriter::report`] then reports.
@@ -19,27 +19,25 @@
 //! use std::sync::Arc;
 //!
 //! use kekule::geometry::Point3;
-//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
 //! use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::xtc::{
 //!     XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
 //! };
-//! use kekule::traj::{TrajectoryReader, TrajectoryWriter};
+//! use kekule::traj::{FrameBuffer, TrajectoryReader, TrajectoryWriter};
 //!
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let mut frame = FrameBuffer::new(Arc::clone(&topology));
 //! let points = vec![Point3::new(0.25, 0.5, 0.0)];
-//! let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
-//! let mut frame = TrajectoryFrame::new(positions);
+//! frame.sample_mut().set_positions(Quantity::new(points, NANOMETER))?;
 //! frame.set_step(Some(100));
 //! frame.set_time(Some(Quantity::new(0.5, PICOSECOND)))?;
-//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
 //!
 //! // A frame without a cell is written as the GROMACS zero box.
 //! let options = XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
 //! let mut writer = XtcWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
-//! writer.write_frame(trajectory.get(0).unwrap())?;
+//! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
 //!
 //! let read_options =
@@ -56,14 +54,14 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::traj::TrajectoryField;
+use crate::traj::{FrameView, TrajectoryField};
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::structure::{DecodedSample, TrajectoryFrameView};
+use crate::structure::DecodedSample;
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -71,7 +69,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 
-use super::frame_state::{record, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
@@ -304,11 +302,13 @@ impl XtcWriteOptions {
         self.cell_policy
     }
 
-    /// A trajectory frame's velocities and forces, which XTC cannot carry:
-    /// by default a frame with either fails to write;
-    /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
-    /// reports a
-    /// [`WriteOmission::StructureState`](crate::diagnostics::WriteOmission::StructureState)
+    /// A trajectory frame's velocities, forces, occupancies, and B-factors,
+    /// which XTC cannot carry: by default a frame with any of them fails to
+    /// write; [`UnrepresentablePolicy::Omit`] writes the frame without them
+    /// and reports a
+    /// [`WriteOmission::StructureState`](crate::diagnostics::WriteOmission::StructureState),
+    /// [`WriteOmission::Occupancies`](crate::diagnostics::WriteOmission::Occupancies),
+    /// or [`WriteOmission::BFactors`](crate::diagnostics::WriteOmission::BFactors)
     /// for each kind left out (see [`XtcWriter::report`]).
     pub const fn frame_metadata(self) -> UnrepresentablePolicy {
         self.frame_metadata
@@ -1778,7 +1778,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         require_no_partial_frame(
             self.partial,
             TrajectoryIoOperation::WriteFrame,
@@ -1790,6 +1790,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        let (occupancies, b_factors) = site_fields(&frame);
         let omitted = unrepresentable_frame_state(
             [
                 (
@@ -1800,6 +1801,16 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 (
                     frame.forces().is_some(),
                     TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    occupancies,
+                    TrajectoryField::Occupancies,
+                    self.options.frame_metadata,
+                ),
+                (
+                    b_factors,
+                    TrajectoryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (

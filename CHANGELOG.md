@@ -11,6 +11,12 @@ are marked **Breaking:**.
 
 ### Added
 
+- `SampleSet::clear_velocities_and_forces` removes every sample's
+  velocities and forces; a sample without them stays shared (SeekDelta
+  K74).
+- `TrajectoryField::Occupancies` and `TrajectoryField::BFactors`, and
+  `TrrWriteOptions::frame_metadata` with `with_frame_metadata` (SeekDelta
+  K74).
 - Store follow-ups (SeekDelta K73).
   `IndexedFileTrajectoryReader::into_sample_set` makes a
   `SampleSet<IndexedFile>` from a reader the host opened, so a host that
@@ -36,8 +42,10 @@ are marked **Breaking:**.
   `structure::SampleRead` trait (`topology`, `len`, `order`,
   `distribution`, `peek`, `read`), which sets in memory implement too and a
   host can implement; `SampleReadError::reader` carries a host reader's own
-  error. `read` decodes one frame once into the arrays of an owned `Sample`
-  and runs from many threads at once, with a pool of indexed readers that
+  error, and `SampleReadError::Trajectory { sample, source }` names the
+  sample a trajectory codec fails on ("Cannot read sample 7."). `read`
+  decodes one frame once into the arrays of an owned `Sample` and runs
+  from many threads at once, with a pool of indexed readers that
   read the one open file and share the frame index, and no lock held while
   decoding. A file truncated while open fails the reads of the frames it
   lost with one error. `SampleSet<IndexedFile>::refresh` takes the frames a
@@ -72,7 +80,7 @@ are marked **Breaking:**.
   sample a place: a `TimeAxis` of times and steps, steps, or values of one
   coordinate in a unit. A distribution covers all samples or a sorted
   subset (`Members`), with optional finite positive weights, a partition
-  into states, one `EnsembleState` per state, and a temperature. Every
+  into states (`Partition`), one `State` per state, and a temperature. Every
   sample may carry occupancies, B factors, velocities, and forces.
   Selecting keeps each sample's order value and remaps the members;
   `select_states` keeps whole states, and `collapse` keeps one
@@ -85,12 +93,12 @@ are marked **Breaking:**.
   the samples statistics see, with their weights. The set's operations fail
   with one `SampleSetError`, and `SampleSetError::Missing` names the
   `Requirement` that is absent, such as a time order.
-  `SampleSet::from_ensemble`, `from_trajectory`, and `from_series` convert,
-  sharing every structure, and `to_ensemble`, `to_trajectory`, and
-  `to_series` (and their `into_` forms) convert back; each refuses what the
-  other side cannot hold (`SampleSetError::NotConvertible`, or frames that
-  record a time or step only in part), so a conversion that succeeds loses
-  nothing.
+  `SampleSet::from_models` takes models whose topologies have equal layouts
+  (`Topology::same_layout`), so models read from separate files become
+  samples, each keeping its model's positions, cell, occupancies,
+  B-factors, and structure properties, bound to the first model's
+  topology. A model of another layout fails with
+  `SampleSetError::TopologyMismatch`.
 - Sample sets in formats (SeekDelta K72c). `native::read` and `write` store
   a `SampleSet` (`NativeKind::SampleSet`) and a sample set with one report
   per sample (`NativeKind::SampleSetInterpretation`, read as
@@ -99,23 +107,25 @@ are marked **Breaking:**.
   set record that stores only the number of its samples, with its topology,
   properties, order, and distribution, for samples kept elsewhere;
   `NativeObject::into_sample_set_description` reads it from any sample set
-  record. `pdb::PdbDocument::interpret_sample_set` and the mmCIF document's
-  and block's `interpret_sample_set` give a
+  record, and `into_sample_set` fails on such a record with
+  `FormatErrorDetail::NativeExternalSamples`.
+  `pdb::PdbDocument::interpret_sample_set` and the mmCIF document's and
+  block's `interpret_sample_set` give a
   `macromolecular::StructureSampleSetInterpretation` of one state without
   weights and one report per sample; `sdf::sample_set` assembles records
-  into a set ordered by their steps or coordinates, with the distribution
-  `sdf::ensemble` reads only when a record has an ensemble field; `xyz::XyzDocument::interpret_sample_set` gives an
+  into a set ordered by their steps or coordinates, with a distribution
+  only when a record has a weight, state, representative, energy, or
+  temperature field; `xyz::XyzDocument::interpret_sample_set` gives an
   `xyz::XyzSampleSetInterpretation` without order or distribution; and
   `traj::io::read_sample_set` reads a trajectory file as a set of a time
   order. `pdb::PdbSource`, `mmcif::MmcifBlockSource`, and
   `sdf::SdfRecordSource` take a `SampleSet` (SDF one record per sample) or a
   `SampleView`, and `pdb::write`, `mmcif::write`, and `sdf::write` take a
-  set directly. `XyzWriter::write_sample_set` writes one frame per sample,
-  and `traj::io::write_sample_set` and `write_sample_set_to` write a set of
-  a time order or of none, without a distribution, as the trajectory it
-  converts to. The new `sample_metadata` option of the Molfile, SDF, PDB,
-  mmCIF, and XYZ writers decides what happens to the state of a sample-set
-  sample a format cannot carry, including a sample outside the
+  set directly. `traj::io::write_sample_set` and `write_sample_set_to`
+  write a set of a time order or of none, without a distribution or set
+  properties, one frame per sample. The new `sample_metadata` option of the
+  Molfile, SDF, PDB, mmCIF, and XYZ writers decides what happens to the
+  state of a sample a format cannot carry, including a sample outside the
   distribution (`StructureField::Membership`). The PDB, mmCIF, and XYZ
   writers also refuse or report state properties, a lone state's
   representative that is not its first member, and a time order without
@@ -125,10 +135,7 @@ are marked **Breaking:**.
   take from one table; a set's coordinate in another unit fails to write
   unless `sample_metadata` omits it. `PdbWriteIssue` and `MmcifWriteIssue`
   gain `UnrepresentableSample` and `EmptySampleSet`, and `TrajectoryField`
-  gains `Membership` and `Distribution`. A converted set writes what the
-  ensemble, trajectory, or series it came from writes, and also refuses or
-  reports the state properties and representatives the ensemble writers
-  leave out.
+  gains `Membership` and `Distribution`.
 - Analysis of sample sets (SeekDelta K72b). `SampleSet::superpose`, `rmsd`,
   and `aligned_rmsd` act on every sample. `SampleSet::rmsf`,
   `contact_occupancy`, and `group_contact_occupancy` observe the members of
@@ -143,8 +150,7 @@ are marked **Breaking:**.
   from state energies and records the temperature, refusing with
   `Missing(StateEnergies)`. `ClusteringError::SampleSet` wraps what a set
   lacks for clustering, such as the state energies `ClusterOrder::Energy`
-  needs. The ensemble, trajectory, and series methods share these
-  implementations, so a converted collection gives identical results.
+  needs.
 - Biological assemblies (SeekDelta K66, K67). Interpretation reports list
   the assemblies an entry states: `StructureInterpretationReport::assemblies`
   reads mmCIF `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
@@ -167,39 +173,34 @@ are marked **Breaking:**.
   and PDB writers name each copy. Copies share their molecules'
   definitions. `Assembly::atom_count` gives the size before building.
   Reports keep their assemblies in native files.
-- **Breaking:** native format version 4. Interpretation reports store their
-  assemblies; readers reject version 3 files.
-
-- Interpretation reports in native files. A model or ensemble keeps its
+- Interpretation reports in native files. A model or sample set keeps its
   structure interpretation reports through native write and read, so an
   application that saves structures in native files keeps what the source
   stated beyond the structure: metal coordination, which the mmCIF and PDB
-  writers state again, polymer entities with their canonical sequences, provenance,
-  alternate-location decisions, and issues. `native::write` takes a
-  `StructureInterpretation` or `StructureEnsembleInterpretation`, or
-  `NativeSource::interpreted_model` and `NativeSource::interpreted_ensemble`
-  pair a model or ensemble with reports held apart from it.
-  `NativeObject::into_interpretation` and
-  `NativeObject::into_ensemble_interpretation` read them back, and the
-  reports compare equal to those written. `into_model` and `into_ensemble`
-  also read these files and drop the reports. They are the new
-  `NativeKind`s `StructureInterpretation` (kind 7) and
-  `StructureEnsembleInterpretation` (kind 8) of native format version 3.
-  Files of the other kinds are unchanged, and readers that predate the new
-  kinds reject them as unknown kinds. Report columns store each repeated
+  writers state again, polymer entities with their canonical sequences,
+  provenance, alternate-location decisions, assemblies, and issues.
+  `native::write` takes a `StructureInterpretation` or
+  `StructureSampleSetInterpretation`, or `NativeSource::interpreted_model`
+  and `NativeSource::interpreted_sample_set` pair a model or set with
+  reports held apart from it. `NativeObject::into_interpretation` and
+  `NativeObject::into_sample_set_interpretation` read them back, and the
+  reports compare equal to those written. `into_model` and
+  `into_sample_set` also read these files and drop the reports. They are
+  the `NativeKind`s `StructureInterpretation` (kind 7) and
+  `SampleSetInterpretation` (kind 10). Report columns store each repeated
   string once. The report of PDB 7K00 (149,338 atoms) adds 8.1 MB to its
   15.8 MB model, about 70 ms to writing, and about 130 ms to reading. The
   `native_interpretation` benchmark measures an entry.
 - PDB export of metal coordination (SeekDelta K65). The PDB writer takes
   interpretation reports as the mmCIF writer does:
   `PdbSource::with_reports` takes one report for a structure and one per
-  sample or item for an ensemble or series, and `PdbSource` converts from
-  `&StructureInterpretation` and `&StructureEnsembleInterpretation`. The
+  sample for a sample set, and `PdbSource` converts from
+  `&StructureInterpretation` and `&StructureSampleSetInterpretation`. The
   writer states the reports' coordination as `LINK` records before the
   coordinates, in the columns of PDB format version 3.3: each partner as
   its atom record names it, the symmetry operator `1555`, and the distance
-  in the first structure. `LINK` records belong to the entry, so an
-  ensemble or series states the coordination every report states.
+  in the first structure. `LINK` records belong to the entry, so a sample
+  set states the coordination every report states.
   `WriteOmission::Coordination` counts the records left out: those that no
   longer match the structure, those another sample does not state, those
   that name a chain written as a segment identifier, those whose partners
@@ -256,7 +257,7 @@ are marked **Breaking:**.
   sequence view can mark modified residues.
 - Continuing a trajectory file after a restart (SeekDelta K60), as a
   simulation restarted from a checkpoint does.
-  `kekule_traj::io::append_trajectory` verifies and indexes the frames a
+  `traj::io::append_trajectory` verifies and indexes the frames a
   file holds as a reader of a growing file does, keeps those `KeepFrames`
   selects (the first `n`, or the frames before the first whose step exceeds
   the checkpoint's), cuts the file after them, and returns the
@@ -282,34 +283,22 @@ are marked **Breaking:**.
   `WriteOmission::ChainIds`. Each such chain's polymer still ends in its own
   `TER` record. By default these identifiers still fail, and
   `PdbWriteIssue::ChainIdTooLong` names the policy.
-- Ordered series of structures (SeekDelta K7), for optimization histories,
-  relaxed scans, and reaction paths. `kekule::structure::Series` holds
-  `SeriesItem`s of one shared topology in the order a computation produced
-  them, each with positions, an optional periodic cell, structure
-  properties, and its place on the series' `SeriesAxis`: a step
-  (`SeriesAxis::Step`, `SeriesItem::at_step`) or a value of one coordinate
-  (`SeriesAxis::Coordinate(unit)`, `SeriesItem::at_coordinate`), stored in
-  the axis unit and finite; values need not increase, as a scan swept back
-  and forth shows. An item's scalar results, such as its energy or gradient
-  norm, are owner properties of its structure properties. As for
-  trajectories and ensembles, items borrow as `ModelView`s, whose
-  `StructureKind` carries the step or coordinate, copy out as models
-  (`SeriesItemView::to_model`), and a series is built from models of one
-  layout (`Series::from_models`, on steps 0, 1, …); series select, subset,
-  perceive, transform, superpose, and measure RMSD item by item. The native
-  format stores a series as kind 6 within version 2 (`NativeKind::Series`,
-  `NativeObject::into_series`), so earlier files read as before. PDB writes
-  a series as one `MODEL` per item (`PdbSource::series`) and XYZ as one
-  frame per item (`XyzWriter::write_series`); both fail on the items' steps
-  or coordinates unless `with_series_metadata` omits them with a report, as
-  Molfile and mmCIF do for a lone item, and the XYZ writer treats item
-  properties and cells as it treats a frame's. SDF writes an item's step as
-  the `kekule.step` data field, or its coordinate as `kekule.coordinate`
-  with its unit as `kekule.coordinate.unit` (`sdf::STEP_FIELD`,
-  `sdf::COORDINATE_FIELD`, `sdf::COORDINATE_UNIT_FIELD`). New
-  `StructureField::ItemStep` and `ItemCoordinate`, `TrajectoryField::ItemStep`
-  and `ItemCoordinate`, `PdbWriteIssue::UnrepresentableSeriesItem` and
-  `EmptySeries`, `SeriesError`, and `StructureError::NonFiniteCoordinate`.
+- Sample sets ordered by step or coordinate (SeekDelta K7), for
+  optimization histories, relaxed scans, and reaction paths. `Order::Step`
+  gives each sample its step in the order a computation produced them, and
+  `Order::Coordinate { unit, values }` the value of one coordinate, stored
+  in the unit and finite (`SampleSetError::NonFiniteOrderValue`); values
+  need not increase, as a scan swept back and forth shows. A sample's
+  scalar results, such as its energy or gradient norm, are owner properties
+  of its structure properties. PDB writes such a set as one `MODEL` per
+  sample and XYZ as one frame per sample; both fail on the steps or
+  coordinates unless `sample_metadata` omits them with a report
+  (`StructureField::OrderStep` and `OrderCoordinate`,
+  `TrajectoryField::OrderStep` and `OrderCoordinate`), as Molfile and mmCIF
+  do for a lone sample. SDF writes a sample's step as the `kekule.step`
+  data field, or its coordinate as `kekule.coordinate` with its unit as
+  `kekule.coordinate.unit` (`sdf::STEP_FIELD`, `sdf::COORDINATE_FIELD`,
+  `sdf::COORDINATE_UNIT_FIELD`).
 - Reading trajectory files that are still being written (SeekDelta K13), so
   a host shows the trajectory of a running simulation as it grows.
   `IndexedFileTrajectoryReader::refresh` indexes the frames appended since
@@ -480,7 +469,7 @@ are marked **Breaking:**.
   Gaussian cube file lists beside its grids, has it interpreted as XYZ
   without writing XYZ text. `XyzAtom::new` takes an element and a position,
   `XyzFrame::new` a comment and atoms, and `XyzDocument::new` frames;
-  `XyzDocument::interpret` and `interpret_ensemble` then infer bonds from
+  `XyzDocument::interpret` and `interpret_sample_set` then infer bonds from
   distances and report them as for a parsed file. A built atom's location is
   its 1-based position in its frame, and a built frame's its 1-based position
   in its document; parsed atoms and frames keep their lines. Interpretation
@@ -504,8 +493,9 @@ are marked **Breaking:**.
   `Time`, `Step`, `Velocities`, or `Forces`. A frame left without its time
   writes the same bytes as one that never had it.
   `TrajectoryWriteOptions::with_frame_metadata` and `with_frame_properties`
-  set the policy of every codec that has it, and `FileTrajectoryWriter::report`
-  and `write_trajectory` now return each codec's report.
+  set the policy of every codec that has it, and
+  `FileTrajectoryWriter::report`, `write_sample_set`, and
+  `write_sample_set_to` return each codec's report.
 - XTC and TRR frames numbered when they have no time or step (SeekDelta
   K52), as frames read from DCD or XYZ do not. Under the new
   `FrameTimingPolicy::Number { interval }`, set through
@@ -537,8 +527,8 @@ are marked **Breaking:**.
   `create_trajectory_stream_writer` writes the format `TrajectoryWriteOptions`
   names into any `Write + Seek` stream from its current position, and
   `TrajectoryStreamWriter::finish` finalizes and flushes it (patching the DCD
-  frame count) and returns it; `write_trajectory_to` writes a loaded
-  trajectory, as `mmcif::write_to` writes structures, and returns the report.
+  frame count) and returns it; `write_sample_set_to` writes a set in
+  memory, as `mmcif::write_to` writes structures, and returns the report.
   A stream writer writes the bytes the path writer publishes and, like it,
   refuses to continue or finish after a failed frame write. The path writer
   is unchanged and now writes through it.
@@ -577,9 +567,9 @@ are marked **Breaking:**.
   the pairs as indices into them, observes structures with explicit weights
   as `ContactOccupancyAccumulator` does, and finishes with a
   `GroupContactOccupancyResult` of contact weights and occupancies in pair
-  order. `Ensemble::group_contact_occupancy` observes each sample with its
-  probability and `Trajectory::group_contact_occupancy` every frame with
-  weight one. A pair of one-atom groups has its atom pair's occupancy. State
+  order. `SampleSet::group_contact_occupancy` observes each member of the
+  distribution with its probability, or every sample with weight one
+  without a distribution. A pair of one-atom groups has its atom pair's occupancy. State
   is one sum per pair plus scratch for the grouped atoms, whatever the number
   of observations. An observation reads only the grouped atoms, rejects
   pairs whose bounding boxes lie farther apart than the cutoff, and searches
@@ -636,16 +626,9 @@ are marked **Breaking:**.
   constant time without reading the atom (SeekDelta K44). On 973,824 atoms,
   the dense indices of every residue's sites take 1.0 ms, as does the
   residue of every dense index.
-- `FrameBuffer::into_trajectory` hands the buffered frame out, without
-  copying it, as a one-frame `Trajectory` bound to the buffer's topology, so a
-  host can keep decoded frames (in a frame cache, for example) and view them
-  through `Trajectory::get` without validating them again.
-  `FrameBuffer::from_frame` makes a buffer of a frame, validating it and
-  binding its bond rows once, so storage no longer needed takes the next
-  decoded frame without allocating.
 - Native binary serialization in the new `kekule::native` format module:
-  exact, versioned persistence of a `Molecule`, `Topology`, `Model`,
-  `Ensemble`, or in-memory `Trajectory`. `native::write_to` streams to a
+  exact, versioned persistence of a `Molecule`, `Topology`, `Model`, or
+  in-memory `SampleSet`, in format version 5. `native::write_to` streams to a
   `Write` and `native::read` reads exactly one object from a `Read`. A round
   trip keeps represented chemistry, adjacency order, definitions and
   instances, semantic IDs, dense order, hierarchy, explicit and inferred
@@ -721,27 +704,26 @@ are marked **Breaking:**.
 - XYZ structure interpretation in the new `kekule::xyz` format module.
   `xyz::parse_str` and `xyz::parse_reader` return an `XyzDocument` of typed
   frames. `XyzDocument::interpret` builds a `Model` from one frame, and
-  `interpret_ensemble` builds an equally weighted `Ensemble` from frames of
-  the same atoms.
+  `interpret_sample_set` builds a `SampleSet` from frames of the same
+  atoms.
   - Connectivity is inferred from distances with the macromolecular
     resolver's rule: covalent radii plus 0.45 Å.
   - Every bond is single, or dative between a metal and a non-metal, and
     implicit hydrogens are fixed at zero.
   - Bond orders, charges and stereo are not assigned.
-  - Frames of an ensemble must infer the same bonds.
+  - Frames of a sample set must infer the same bonds.
   - `XyzInterpretationReport` lists every inferred bond with its distance and
     cutoff, plus fallback radii, close contacts and omitted columns.
   - Extended XYZ columns are rejected unless reported as omitted.
   - Errors are `FormatError`s of the new `Format::Xyz`.
-  - Atom-line order is dense order, so `kekule-traj` streams the same file
+  - Atom-line order is dense order, so `kekule::traj` streams the same file
     against the interpreted topology when its element tokens are symbols in
     standard letter case, the only form that reader accepts.
   - The new `xyz` fuzz target covers the parser and interpretation.
-- The PDB writer: `pdb::write` and `pdb::write_to` write a model, an ensemble
-  member or trajectory frame view (`PdbSource::structure`), or an ensemble
-  (one `MODEL` per member) as one entry that reads back with the same atoms,
-  identities, bonds, coordinates, occupancies, and B factors at PDB
-  precision.
+- The PDB writer: `pdb::write` and `pdb::write_to` write a model, a
+  sample's view (`PdbSource::structure`), or a sample set (one `MODEL` per
+  sample) as one entry that reads back with the same atoms, identities,
+  bonds, coordinates, occupancies, and B factors at PDB precision.
   - Records follow dense atom order.
   - Standard polymer residues are `ATOM` records with a `TER` after each
     chain's polymer; everything else is `HETATM`.
@@ -757,19 +739,19 @@ are marked **Breaking:**.
   - Chemistry PDB cannot carry fails unless `PdbWriteOptions` omits it:
     isotopes, radicals, fixed implicit hydrogens, atom maps, stereo, bonds
     `CONECT` cannot state, and residues whose bonds differ from the
-    dictionary template a reader applies. So do member weights and energies,
-    frame state, and cells `CRYST1` cannot carry.
+    dictionary template a reader applies. So do sample state and cells
+    `CRYST1` cannot carry.
   - The curated `bio` benchmark entries round-trip in a new acceptance test,
     and the `pdb` fuzz target checks that written entries read back.
 - Cooperative cancellation of long-running structure work. A
   `diagnostics::Cancellation` wraps a host check, such as
   `Cancellation::from_flag` over an `AtomicBool`.
   - `StructureInterpretOptions::with_cancellation` and
-    `StructureEnsembleInterpretOptions::with_cancellation` make mmCIF and PDB
+    `StructureSampleSetInterpretOptions::with_cancellation` make mmCIF and PDB
     interpretation poll it between stages and periodically inside them.
     Once it turns true, interpretation fails with a `FormatError` of the new
     `DiagnosticKind::Cancelled`, whose source is `diagnostics::Cancelled`.
-  - `Model::perceive_cancellable`, `Ensemble::perceive_cancellable`, and
+  - `Model::perceive_cancellable`, `SampleSet::perceive_cancellable`, and
     `Topology::perceived_cancellable` poll it between definitions and
     stages and during ring perception. They fail with the new
     `PerceptionError::Cancelled` and leave the owner unchanged.
@@ -785,7 +767,7 @@ are marked **Breaking:**.
   names are, and two blocks whose names match case-insensitively, including
   the `{block_name}_n` names unnamed blocks keep, fail the write with the new
   `MmcifWriteIssue::DuplicateBlockName` before anything is written.
-- `kekule-traj`'s XYZ writer reports the topology content its files leave
+- The trajectory XYZ writer reports the topology content its files leave
   out, as `XyzWriter::report` and `FileTrajectoryWriter::report`, in the
   `WriteReport` vocabulary of the PDB and mmCIF writers: bonds, implicit
   hydrogens XYZ readers would not recover (nonzero or unperceived counts),
@@ -795,40 +777,37 @@ are marked **Breaking:**.
   separately. `WriteOmission` gains `FormalCharges` and `AtomSites`, and
   `WriteReport` gains `is_empty`, `Default`, and `FromIterator`, which merges
   repeated kinds as writers do.
-- `XyzWriter::write_ensemble` writes an `Ensemble` as XYZ, one frame per
+- `XyzWriter::write_sample_set` writes a `SampleSet` as XYZ, one frame per
   sample in sample order (SeekDelta K33), so a host no longer turns samples
-  into frames and reports the loss itself. The whole ensemble is checked
-  before its first frame. Sample state follows the PDB and mmCIF ensemble
-  rules under the new `XyzWriteOptions::ensemble_metadata`: unequal weights,
-  more than one state, state energies, and a temperature fail by default
+  into frames and reports the loss itself. The whole set is checked before
+  its first frame. Sample state follows the PDB and mmCIF rules under the
+  new `XyzWriteOptions::sample_metadata`: unequal weights, more than one
+  state, state energies, and a temperature fail by default
   (`TrajectoryIoErrorKind::UnsupportedField`, naming the sample's frame) and
   are reported as `WriteOmission::StructureState` under
   `UnrepresentablePolicy::Omit`; the file reads back as one state of equally
   weighted samples. The new `XyzWriteOptions::cell` lets frames and samples
   with a periodic cell be written without it, reported as
-  `WriteOmission::Cell`; cells still fail by default. Occupancies and B
-  factors are always left out and reported, as the new
-  `WriteOmission::Occupancies` and `WriteOmission::BFactors`; ensemble,
-  state, and sample properties fail. `XyzWriter::report` and
-  `FileTrajectoryWriter::report` now cover everything written so far.
-  `TrajectoryField` gains `Weight`, `Energy`, `State`, `Temperature`, and
-  `StateProperties`. The shared rules are public as
-  `diagnostics::check_multi_model_ensemble`, which returns the report of
-  what a multi-model file would lose or the first
-  `UnrepresentableSampleState`.
-- Imaging a frame onto a reference structure in `kekule_traj::periodic`:
+  `WriteOmission::Cell`; cells still fail by default. A sample's
+  occupancies and B factors are always left out and reported, as the new
+  `WriteOmission::Occupancies` and `WriteOmission::BFactors`; set and state
+  properties fail, and a sample's own properties follow `frame_properties`.
+  `XyzWriter::report` and `FileTrajectoryWriter::report` cover everything
+  written so far. `TrajectoryField` gains `Weight`, `Energy`, `State`,
+  `Temperature`, and `StateProperties`.
+- Imaging a frame onto a reference structure in `kekule::traj::periodic`:
   `MoleculeImager::image_onto` moves each whole molecule of a buffered frame
   by the lattice vector of the frame's cell that brings its center nearest the
   same molecule in a borrowed reference of the same layout, using the exact
   nearest-image search for triclinic and partially periodic cells. Frames can
   be imaged onto references before or after them, in any order, so a window of
   frames can be brought onto one frame, for example before averaging them for
-  display. `image_onto` is the in-memory form for every frame of a
-  trajectory. The frame's cell defines the images, and the reference's cell is
-  not used; a frame without a cell fails with `MissingCell`. Only positions
-  change, and failures leave the buffer or trajectory unchanged.
+  display. `traj::periodic::image_onto` is the in-memory form for every
+  sample of a set. The frame's cell defines the images, and the reference's
+  cell is not used; a frame without a cell fails with `MissingCell`. Only
+  positions change, and failures leave the buffer or set unchanged.
   `PeriodicError` gains `ReferenceTopologyMismatch`.
-- Reusable frame indexes in `kekule-traj`, so a large trajectory is scanned
+- Reusable trajectory frame indexes, so a large trajectory is scanned
   once rather than on every open.
   - `IndexedFileTrajectoryReader::to_frame_index` exports the verified frame
     offsets as a `TrajectoryFrameIndex`: the format, the frame count and
@@ -879,31 +858,6 @@ are marked **Breaking:**.
     and cache keys.
     Decoding either form rejects anything else with `InvalidIndex`, never a
     panic, and the `trajectory_index` fuzz target covers both decoders.
-- Sampling a trajectory into an ensemble of one state, without consuming it.
-  - `TrajectorySampling` chooses the frames, in sample order, so sample `i`
-    is frame `frames()[i]`; ranges and strides are
-    `(start..end).step_by(stride)`, and reordering and duplicates are
-    allowed. `with_weights` gives each sample a finite, positive weight
-    (`1.0` by default), and `with_atoms` an `AtomSelection` whose induced
-    subset topology the ensemble gets, as `Trajectory::subset` publishes it.
-  - `Trajectory::to_ensemble` copies only the requested frames. Samples keep
-    positions, cells, and structure properties; time, step, velocities, and
-    forces are dropped, as `into_ensemble` drops them. Trajectory properties
-    are kept without an atom subset and dropped with one, together with
-    per-frame owner properties.
-  - `TrajectorySampler` prepares a sampling against a topology and collects
-    frames that arrive one at a time, in any order, for frames that are not
-    loaded.
-  - In `kekule-traj`, `read_ensemble` reads a `TrajectoryReader`
-    sequentially and stops after the last requested frame, and
-    `read_ensemble_seekable` reads only the requested frames of a
-    `SeekableTrajectoryReader`, keeping its cursor. Memory beyond the
-    ensemble is one `FrameBuffer`. `EnsembleReadOptions` polls a
-    `diagnostics::Cancellation` and reports an `EnsembleReadProgress` before
-    the first frame and after every frame; a cancelled read fails with
-    `TrajectoryIoErrorKind::Cancelled` and returns no ensemble.
-  - `TrajectoryError` gains `WeightCountMismatch`, `InvalidWeight`,
-    `TopologyMismatch`, and `FrameNotSampled`.
 - DSSP assignment runs on several threads (SeekDelta K34), so per-frame
   secondary structure of large systems keeps up with playback.
   `DsspOptions::with_threads` runs `dssp::assign` on scoped
@@ -929,7 +883,7 @@ are marked **Breaking:**.
   123 ms. Starting scoped threads costs a fraction of a millisecond per
   stage, which a host pool passed to `assign_with` avoids.
 - `dssp::DsspPlan` prepares DSSP assignment once per topology layout, for
-  the frames of a trajectory or the samples of an ensemble (SeekDelta K45).
+  the samples of a set, such as the frames of a trajectory (SeekDelta K45).
   `DsspPlan::new(topology, options)` (or `new_with` on an executor) reads
   which instances the hierarchy leaves out, the chains and residues in DSSP
   order, and each residue's backbone atoms; `assign` and `assign_with` then
@@ -941,7 +895,7 @@ are marked **Breaking:**.
   before this change) and 1,000,000 atoms in 69 ms (103 ms).
 - Pairwise fitted RMSD and leader clustering run on several threads, report
   progress, and can be cancelled (SeekDelta K38).
-  `Ensemble::pairwise_fitted_rmsd_with` and `Ensemble::cluster_by_radius_with`
+  `SampleSet::pairwise_fitted_rmsd_with` and `SampleSet::cluster_by_radius_with`
   take a `clustering::ClusteringRun` naming a `parallel::Executor`, a
   `diagnostics::Cancellation`, and a callback of `ClusteringProgress` (pairs
   fitted or members placed, of the total), called one at a time with
@@ -964,50 +918,114 @@ are marked **Breaking:**.
 
 ### Changed
 
-- **Breaking:** `SampleReadError::Trajectory` is a struct variant naming the
-  sample, `Trajectory { sample, source }`, and displays "Cannot read sample
-  7." with the trajectory error as its source (SeekDelta K73 follow-ups).
-  `SampleReadError` no longer converts from `TrajectoryIoError`.
+- **Breaking:** one container for many structures (SeekDelta K74).
+  `SampleSet` replaces `Ensemble` and `Trajectory`, which are removed with
+  everything that existed only for them (see Removed).
+  Renames: `StructureEnsembleInterpretOptions` is
+  `StructureSampleSetInterpretOptions`, `MmcifWriteIssue`'s
+  `IncompatibleEnsembleMember` and `UnrepresentableEnsembleMember` are
+  `IncompatibleSample` and `UnrepresentableSample`, `MmcifMemberField` is
+  `MmcifSampleField` (without `Weight` and `Energy`), and
+  `MmcifCellReason::MemberCellsDiffer` is `SampleCellsDiffer`.
+- **Breaking:** trajectory writers take a `FrameView`, a borrowed `Sample`
+  with its time and step (SeekDelta K74). `FrameView::new(topology, sample,
+  time, step)` lends a sample held apart from a set and
+  `FrameView::from_sample` one of a time-ordered set, neither copying
+  arrays; `to_model` copies a frame out as a model. A `FrameBuffer` holds a
+  `Sample`: `FrameBuffer::from_sample` binds one, `sample_mut` edits it,
+  and `set_time` and `set_step` set the frame's place. `into_sample`
+  returns the sample with its `Place` without copying, so a host keeps
+  decoded frames, in a frame cache for example. Its `Deref` target is
+  `Sample`.
+  `MemoryTrajectoryWriter` collects frames into a time-ordered `SampleSet`
+  (`into_sample_set`), sharing each frame's structure without a copy.
+- `FrameBuffer::replace_from_data` and `reset_dynamic_state` clear
+  occupancies and B-factors, and `copy_from` takes the source frame's
+  (`FrameData::from_frame_view` carries them), so a buffer never keeps a
+  previous frame's (SeekDelta K74).
+- **Breaking:** the XYZ, DCD, TRR, and XTC writers refuse a frame's
+  occupancies and B-factors, which no trajectory format stores, under their
+  `frame_metadata` policy (SeekDelta K74). By default such a frame fails to
+  write ("DCD cannot store the occupancies."); `UnrepresentablePolicy::Omit`
+  writes the frame without them and reports `WriteOmission::Occupancies`
+  and `WriteOmission::BFactors`. `TrajectoryWriteOptions::with_frame_metadata`
+  sets TRR's policy too. `write_sample_set` and `write_sample_set_to`
+  return the codec's report as it is and add no occupancies or B-factors
+  themselves, so under the default policy a set with occupancies fails to
+  save. `XyzWriter::write_sample_set` still leaves a sample's occupancies
+  and B-factors out and reports them under every policy.
+- **Breaking:** `MemoryTrajectoryWriter` and `read_sample_set` refuse a
+  frame whose time or step columns differ from the first frame's
+  (SeekDelta K74). The error names the frame (`TrajectoryIoError::frame`)
+  and reads "Cannot write frame 1 of the trajectory. The frame has a time
+  or step the first frame lacks, or lacks one it has." (`read_sample_set`:
+  "Cannot read frame 1 of the XYZ trajectory …").
+- **Breaking:** `SampleSet::from_reader(reader, indices)` loads the chosen
+  samples of any `SampleRead`, in the order given, as a faithful copy: each
+  sample whole (velocities, forces, occupancies, B-factors), the reader's
+  order values and its distribution for the picked samples (SeekDelta
+  K74). It keeps no set properties. Indices may repeat and come in any
+  order; a repeated index is read once and its sample shared; every index
+  is checked against the reader's length before anything is read. Samples
+  picked out of ascending order keep their times, so
+  `validate_monotonic_time` refuses the set when a time decreases. Removed
+  shows how it builds an ensemble of trajectory frames. A host that
+  needs progress or cancellation reads sample by sample through
+  `SampleRead`. Reading through `Processed` loads processed samples.
+- **Breaking:** the Molfile, SDF, PDB, and mmCIF writers hold a sample to
+  one policy, `sample_metadata`, whether it belongs to a set or is a
+  trajectory frame (SeekDelta K74). XYZ keeps `frame_metadata` for the
+  frames it streams and `sample_metadata` for the sample state of a set.
+- **Breaking:** writer failure texts name samples (SeekDelta K74). A sample
+  state a format cannot carry reads "The {field} of sample {n} has no
+  {format} representation." ("of the sample" for one sample). Plural
+  fields take "have": "The velocities of sample 1 have no PDB
+  representation." (velocities, forces, state properties, and per-atom,
+  per-bond, and structure properties). The temperature reads "The ensemble
+  temperature has no {format} representation.", and the order "The sample
+  order has no {format} representation." mmCIF's "Sample {n} has a
+  different {field} from the first sample." and PDB's and mmCIF's "The
+  samples have different cells." replace the ensemble wordings, SDF
+  reserves a field "of the sample", and interpretation fails with "The
+  records do not form a sample set.", "Cannot assemble the sample set.", or
+  "Cannot add the frame to the sample set." In SDF, an invalid
+  `kekule.weight` names only its record ("Cannot interpret the SDF input in
+  record 2. The data field "kekule.weight" holds an invalid weight.", with
+  no source error), and a missing state field reads "… is missing. Other
+  records have it." The XYZ writer says "XYZ cannot store the {field}." for
+  a weight, state, state energy, temperature, state properties, order
+  step, or order coordinate. `StructureError::NonFiniteEnergy` reads "The
+  state energy is not finite."
+- **Breaking:** `interpret_conformations` of mmCIF and PDB gives a sample
+  set of one state without weights; `sdf::sample_set` of records without
+  any distribution field gives a set without a distribution
+  (SeekDelta K74).
 - `StatisticsError`, `AlignmentError`, and `ClusteringError` gain variants
   for samples that cannot be read and for cancellation (`Read`,
   `Cancelled`, `ObservationsOutOfRange`) (SeekDelta K73).
 - `IndexedFileTrajectoryReader::refresh` of a file whose indexed bytes
   changed says to open the file again (SeekDelta K73).
-- **Breaking:** native format version 5 (SeekDelta K72c). Kind 9 stores a
-  sample set and kind 10 a sample set with its reports; kinds 4, 5, 6, and 8
-  (ensemble, trajectory, series, interpreted ensemble) are retired, and
-  readers reject version 4 files. `NativeKind` and `NativeObject` lose their
-  `Ensemble`, `Trajectory`, `Series`, and `StructureEnsembleInterpretation`
-  variants and gain the sample set ones. An ensemble, in-memory trajectory,
-  or series is written as the sample set it converts to; `into_ensemble`,
-  `into_ensemble_interpretation`, `into_trajectory`, and `into_series`
-  convert a decoded sample set back and fail with
-  `FormatErrorDetail::NativeSampleSetShape` when it is no such collection,
-  and `FormatErrorDetail::NativeExternalSamples` when its samples are stored
-  elsewhere. Trajectory frames of which some state a time or step and
-  others do not no longer write natively.
-- Clustering error texts name what applies to sample sets as well as
-  ensembles (SeekDelta K72b): `ClusteringError::PairFit` reads "Cannot fit
-  samples 0 and 4." and `ClusteringError::MatrixMismatch` "The distance
-  matrix covers 2 members, but there are 3 to cluster."
+- Clustering error texts name samples and members (SeekDelta K72b):
+  `ClusteringError::PairFit` reads "Cannot fit samples 0 and 4." and
+  `ClusteringError::MatrixMismatch` "The distance matrix covers 2 members,
+  but there are 3 to cluster."
 - **Breaking:** `StructureKind` has two variants (SeekDelta K72):
   `StructureKind::Model`, and `StructureKind::Sample` with a
   `SampleContext`. The context reports the sample's place in its order
   (`Place`), its membership in a distribution (`Membership`: weight, state,
   whether it represents the state, `state_energy`, and the temperature),
-  and its velocities and forces. Views of ensemble samples,
-  trajectory frames, and series items report their state through it, so
-  match `StructureKind::Sample(context)` where code matched
-  `StructureKind::Sample { .. }`, `Frame { .. }`, or `Item { .. }`. Every
+  and its velocities and forces. Sample views and frame buffers report
+  their state through it, so match `StructureKind::Sample(context)` where
+  code matched `StructureKind::Member { .. }` or `Frame { .. }`. Every
   writer writes byte for byte as before.
 - **Breaking:** the `kekule-traj` crate is now the `kekule::traj` module
-  (SeekDelta K71), and the crate is gone. Every item keeps its name and
-  signature under the new path: `kekule_traj::io::read_trajectory` is
-  `kekule::traj::io::read_trajectory`, and `kekule_traj::FrameBuffer` is
-  `kekule::traj::FrameBuffer`. The `io` (with `xyz`, `dcd`, `trr` and `xtc`),
-  `periodic` and `analysis` modules and the root items move together. Replace
-  the `kekule-traj` dependency with `kekule`. Files are written byte for byte
-  as before.
+  (SeekDelta K71), and the crate is gone. Items keep their names under the
+  new path, except those K74 replaces (see Removed):
+  `kekule_traj::io::open_indexed_trajectory` is
+  `kekule::traj::io::open_indexed_trajectory`, and `kekule_traj::FrameBuffer`
+  is `kekule::traj::FrameBuffer`. The `io` (with `xyz`, `dcd`, `trr` and
+  `xtc`), `periodic` and `analysis` modules and the root items move
+  together. Replace the `kekule-traj` dependency with `kekule`.
 - The mmCIF writer leaves out a coordination record whose partner no
   longer has the atom names, type symbol, or component the report recorded,
   as the PDB writer does, and counts it as `WriteOmission::Coordination`.
@@ -1059,8 +1077,8 @@ are marked **Breaking:**.
   insertion code "A" of chain "B" in model "1"`. A cancelled interpretation
   has an empty message and keeps `Cancelled` as its source.
 - **Breaking:** error messages are sentences (SeekDelta K62). The `Display`
-  text of every public error and issue in `kekule`, `kekule-traj`,
-  `kekule-openff` and `kekule-potentials` is one or two short sentences with
+  text of every public error and issue in `kekule`, `kekule-openff` and
+  `kekule-potentials` is one or two short sentences with
   a capital letter and a full stop: what failed and why, naming the atoms,
   bonds, residues, records, lines, files and values with units, then the
   one action if there is an obvious one. Texts name no Rust API; the
@@ -1073,7 +1091,7 @@ are marked **Breaking:**.
   - Limits name their operation, limit, observed value and bound:
     `Ring perception exceeded its work limit: 69,400,898 steps of
     69,248,000.` A bare `LimitExceeded` writes `Exceeded the work limit: …`.
-    `kekule-traj`'s limit failures now carry these values too.
+    The trajectory codecs' limit failures carry these values too.
   - `Cancelled` writes `The operation was cancelled.`, and the cancelled
     variants of ring, resonance and default perception and of clustering
     write `… stopped.` and return `Cancelled` from `source()`.
@@ -1090,7 +1108,7 @@ are marked **Breaking:**.
   that were written into a message are now typed sources: in CXSMILES and
   V3000 stereo groups, Molfile writing, XYZ interpretation,
   `ClusteringError::PairFit`, the selection language's SMARTS term,
-  `kekule-openff`'s unit conversions and `kekule-traj`'s codecs and cell
+  `kekule-openff`'s unit conversions and the trajectory codecs and cell
   checks. `TopologyPerceptionError` no longer repeats its source. Variants
   that add nothing to their cause are transparent: they display the cause
   and return the cause's own source. These are `DraftError`, whose cause
@@ -1100,7 +1118,7 @@ are marked **Breaking:**.
   `PlacementError::Edit`, `TopologyEditError::Property`,
   `TopologyBuildError::Property`, `TopologySubsetError::Selection`,
   `MeasurementError::{Selection, Unit}`, `BondDihedralError::Measurement`,
-  `GeometryEditError::Unit`, `EnsembleError::Unit`, `SeriesError::Unit`,
+  `GeometryEditError::Unit`, `SampleSetError::Unit`,
   `PeriodicBoxError::{Cell, Geometry}`, `SolvationError::{Unit, Geometry,
   Position}`, `StagedCoordinateError::{Unit, Position}`,
   `InteractionError::Selection`, `TaggedMatchError::Match`,
@@ -1130,10 +1148,6 @@ are marked **Breaking:**.
   aromaticity rather than as a partition of conjugation, and
   `DelocalizationIssue` changed accordingly. Replacing conjugation no longer
   clears resonance.
-- **Breaking:** the native format moves to version 3 (SeekDelta K19). Its
-  resonance section stores the resonance model before the groups. Readers
-  refuse version 2 files with `FormatErrorDetail::NativeVersion { found: 2,
-  supported: 3 }`, and the message names version 2.
 - **Breaking:** mmCIF, PDB, and XYZ interpretation gives identical molecules
   one definition (SeekDelta K23), so instances map atom for atom and default
   perception runs once per distinct molecule. Molecules are identical when,
@@ -1191,9 +1205,6 @@ are marked **Breaking:**.
   (`NA`, `CL`, `K`, `LI`, `RB`, `CS`, `F`, `BR`, and `IOD` with atom `I`),
   which the readers check, rather than by its element symbol (`Na`, and
   residue `I` for iodide).
-- `StructureField::AtomProperties`, `BondProperties`, and `Properties`
-  display as per-atom, per-bond, and structure properties rather than a
-  trajectory frame's, since series items report them too.
 - **Breaking:** trajectory frame indexes and fingerprints follow files that
   grow by appending (SeekDelta K13). A `TrajectoryFrameIndex` is bound to
   the fingerprint of the bytes it covers, the file up to the end of its last
@@ -1253,8 +1264,8 @@ are marked **Breaking:**.
   K56). Publishing a topology or model draft shares every definition the
   edit left untouched with the source snapshot, with its perception, even
   while the source is still shared, as by an undo history; before, it cloned
-  them. Perceiving the result (`Topology::perceived` and model, ensemble, and
-  trajectory perception) perceives only the definitions whose perception the
+  them. Perceiving the result (`Topology::perceived` and model and sample
+  set perception) perceives only the definitions whose perception the
   edit cleared and shares the others, with the same result as perceiving
   every definition. Editors index source atoms, bonds, and hierarchy nodes in
   vectors rather than ordered maps, snapshots share atom-site and residue
@@ -1351,27 +1362,6 @@ are marked **Breaking:**.
   78 ms, their chains 0.2 ms instead of 99 ms, the atoms of every residue's
   sites 8 ms instead of 18 ms, and the residue of every atom 6 ms instead of
   57 ms. Building the index adds about 45 ms to publishing those atoms.
-- `Ensemble::from_models` accepts models whose topologies have equal layouts
-  (`Topology::same_layout`), not only models sharing one published layout
-  (SeekDelta K39), so models read from separate files become samples keeping
-  each model's positions, cell, occupancies, B-factors, and structure
-  properties, bound to the first model's topology. Different layouts still
-  fail with `EnsembleError::TopologyMismatch`.
-- Ensemble samples share their structure storage (SeekDelta K40). An
-  `EnsembleSample`'s positions, cell, occupancies, B-factors, and properties
-  sit behind shared storage that is copied on write, one sample at a time,
-  while its weight stays its own. Cloning an ensemble therefore copies no
-  coordinates, so an ensemble held elsewhere behind an `Arc` can be regrouped
-  or reweighted through `Arc::make_mut` cheaply, and editing one sample's
-  structure copies that sample alone without affecting the other holders.
-  `select`, `select_states`, and `collapse` share the structures they keep,
-  and a bound sample pushed into another ensemble of the same topology stays
-  shared. The new `EnsembleSample::shares_structure_with` tells whether two
-  samples share storage. The API and the native format are otherwise
-  unchanged. On 1,000 samples of a 9,958-atom protein (3KMF) held twice,
-  regrouping takes 0.03 ms and allocates 0.1 MB instead of 471 ms and
-  558 MB, and reweighting 0.02 ms and under 0.1 MB instead of 281 ms and
-  558 MB.
 - DSSP assignment is faster on one thread with unchanged results: candidate
   pairs come from a dense cell grid that keeps its `CA` coordinates in cell
   order, each residue's hydrogen bonds are installed from its own pairs,
@@ -1381,18 +1371,18 @@ are marked **Breaking:**.
   grows quadratically with the number of ladders: 1,000,000 atoms take
   0.22 s instead of 1.4 s.
 - **Breaking:** RMSF and contact occupancy are weighted statistics in the new
-  `kekule::statistics` module (SeekDelta K28), so ensembles can be reduced
+  `kekule::statistics` module (SeekDelta K28), so sample sets are reduced
   with their weights and trajectory reductions become the equal-weight case.
   - `RmsfAccumulator::observe` and `ContactOccupancyAccumulator::observe`
     take any `AsModelView` structure and an explicit, finite, positive
     weight. Weighted RMSF is `√(Σ wₖ |xₖ − μ|² / Σ wₖ)` about the weighted
     mean, the population RMSF for equal weights; contact occupancy is the
     fraction of the total weight in contact.
-  - The new `Ensemble::rmsf` and `Ensemble::contact_occupancy` observe each
-    sample with its probability. `kekule_traj::analysis::rmsf` and
-    `contact_occupancy` become `Trajectory::rmsf` and
-    `Trajectory::contact_occupancy`, which observe every frame with weight
-    one; reweighted frames go through the accumulators.
+  - `kekule_traj::analysis::rmsf` and `contact_occupancy` are
+    `SampleSet::rmsf` and `SampleSet::contact_occupancy`, which observe each
+    member of the distribution with its probability, or every sample with
+    weight one without a distribution; reweighted frames go through the
+    accumulators.
   - Streamed frames are observed through `buffer.as_model_view()`; the
     sealed `kekule_traj::analysis::AsFrameView` is removed.
   - `ReductionError` becomes `StatisticsError`: `NoFrames` becomes
@@ -1401,74 +1391,47 @@ are marked **Breaking:**.
     Results report `observation_count` and `total_weight` in place of
     `frame_count`, and `ContactOccupancyResult::contact_weights` replaces
     `hit_counts`; with weights of one it holds the frame counts.
-- **Breaking:** an `Ensemble` holds samples grouped into states (SeekDelta
-  K27). A member was a sample in one ensemble and a state in another, so its
-  weight and energy meant different things, Boltzmann weighting counted the
-  Boltzmann factor twice for simulation samples, and `collapse` folded
-  degeneracy into weights that the next weighting discarded.
-  - `EnsembleMember`, `EnsembleMemberView`, and `EnsembleMemberMut` become
-    `EnsembleSample`, `EnsembleSampleView`, and `EnsembleSampleMut`. A sample
-    has a weight and no energy; `EnsembleSampleView::new` is removed, and a
-    view knows its `index`, its `state`, and whether it `is_representative`.
-  - The new `EnsembleState` holds an optional energy, on one scale per
-    ensemble, and owner properties; `EnsembleStateView` adds its
-    representative, samples, and `population`, the total weight of its
-    samples, which is derived and never stored. `Ensemble::state`,
-    `state_mut`, `states`, and `state_count` reach them.
-  - The ensemble owns its grouping as an `EnsemblePartition` (`partition`),
-    which moves with `PartitionError` from `clustering` to `structure`, with
-    state vocabulary (`sample_count`, `state_count`, `samples`,
-    `StateOutOfRange`, `RepresentativeNotInState`) and the constructors
-    `one_state` and `state_per_sample`. Every sample is in exactly one state,
-    and every state contains its representative. Regrouping, weighting, and
-    state edits never reorder samples.
-  - The ensemble records an optional `temperature`, the one its populations
-    describe.
-  - `assign_boltzmann_weights` becomes `assign_boltzmann_populations`: it sets
-    state populations in proportion to exp(-ΔE/RT), scaling each state's
-    samples together and keeping the total weight, so a one-state ensemble is
+- **Breaking:** samples grouped into states (SeekDelta K27). An ensemble
+  member was a sample in one ensemble and a state in another, so its
+  weight and energy meant different things. A `Distribution` groups
+  samples into states: a sample has a weight and no energy, and a `State`
+  holds an optional energy, on one scale per distribution, and owner
+  properties. Boltzmann weighting counts the Boltzmann factor once for
+  simulation samples, and collapsing keeps each state's population.
+  - `clustering::EnsemblePartition` is `structure::Partition`, and
+    `PartitionError` moves with it, with state vocabulary (`sample_count`,
+    `state_count`, `samples`, `StateOutOfRange`,
+    `RepresentativeNotInState`) and the constructors `one_state` and
+    `state_per_sample`. Every sample is in exactly one state, and every
+    state contains its representative. Regrouping, weighting, and state
+    edits never reorder samples.
+  - `assign_boltzmann_weights` is
+    `DistributionMut::assign_boltzmann_populations`: it sets state
+    populations in proportion to exp(-ΔE/RT), scaling each state's samples
+    together and keeping the total weight, so a one-state distribution is
     unchanged; it refuses a state without an energy and records the
     temperature. `ranked_by_energy` and `within_energy_window` rank states;
-    `covering_weight` becomes `covering_population`, and `ranked_by_population`
+    `covering_weight` is `covering_population`, and `ranked_by_population`
     and `state_probabilities` are new. `probabilities`,
     `effective_sample_size`, and `ranked_by_weight` stay over samples.
-  - `Ensemble::regroup` applies a partition, such as a clustering result,
-    without changing any weight. A new state that contains every sample of an
-    old state keeps the energy and properties of its representative's old
-    state; a state split apart loses them. `Ensemble::collapse` takes no
-    partition and makes a new ensemble of each state's representative
-    carrying its population; `ClusteringError::PartitionMismatch` is replaced
-    by `EnsembleError::PartitionMismatch`. `ClusterOrder::Energy` orders
+  - `DistributionMut::regroup` applies a partition, such as a clustering
+    result, without changing any weight. A new state that contains every
+    sample of an old state keeps the energy and properties of its
+    representative's old state; a state split apart loses them.
+    `SampleSet::collapse` takes no partition and makes a new set of each
+    state's representative carrying its population;
+    `ClusteringError::PartitionMismatch` is
+    `SampleSetError::PartitionMismatch`. `ClusterOrder::Energy` orders
     samples by their state's energy.
-  - `from_items` becomes `from_samples`, and it, `from_models`, and
-    `from_molecule_positions` take the partition saying what the samples are.
-    `push` is replaced by `push_state` and `push_sample`; `remove` removes a
-    state with its last sample and refuses a representative of a state with
-    other samples. `select` keeps whole states' energies, `select_states`
-    copies whole states, and `into_items` becomes `into_samples`.
-  - `Trajectory::into_ensemble`, multi-model PDB and mmCIF, and multi-frame
-    XYZ give one state. `sdf::ensemble` gives one state per record unless the
-    records name their states.
-  - `StructureKind::Member` becomes `StructureKind::Sample`, with the sample's
-    state, whether it represents it, the state's energy, and the temperature.
-    `StructureField` gains `State` and `Temperature`.
+  - `StructureField` gains `State` and `Temperature`.
   - SDF writes each sample's weight and state (`sdf::STATE_FIELD`), marks
     representatives (`sdf::REPRESENTATIVE_FIELD`), writes a state's energy on
     its representative's record, and writes the temperature
-    (`sdf::TEMPERATURE_FIELD`), so ensembles of one state, of one state per
-    sample, and of clustered states round-trip.
-  - PDB and mmCIF ensembles, which read back as one state of equal weights
-    without an energy, also fail on several states or a temperature unless
-    omitted. `PdbWriteIssue::UnrepresentableEnsembleMember`,
-    `MmcifWriteIssue::UnrepresentableEnsembleMember`, and
-    `IncompatibleEnsembleMember` become `...EnsembleSample { sample, field }`,
-    `MmcifMemberField` becomes `MmcifSampleField` with `State` and
-    `Temperature`, and `MemberCellsDiffer` becomes `SampleCellsDiffer`.
-  - The native format moves to version 2: it stores samples with their state,
-    states with their representative, energy, and properties, and the
-    temperature. Version 1 input is rejected.
-- **Breaking:** `kekule_traj::io::write_trajectory` returns the
-  `WriteReport` of the written file instead of `()`.
+    (`sdf::TEMPERATURE_FIELD`), so distributions of one state, of one state
+    per sample, and of clustered states round-trip.
+  - PDB and mmCIF sample sets, which read back as one state of equal
+    weights without an energy, also fail on several states or a temperature
+    unless `sample_metadata` omits them.
 - **Breaking:** `pdb::write` and `mmcif::write` return the text together with
   a `diagnostics::WriteReport`, and `pdb::write_to` and `mmcif::write_to`
   return the report. The report lists every omission an
@@ -1492,6 +1455,57 @@ are marked **Breaking:**.
   `CONECT`. Coordination is a `Dative` bond, so heme Fe–N and iron–sulfur Fe–S
   bonds are now dative from mmCIF, as they already were from PDB. A stated
   flag still decides.
+
+### Removed
+
+- **Breaking:** `Ensemble`, `Trajectory`, `Series`, and their payloads,
+  views, guards, iterators, and errors (SeekDelta K74). A host migrates as
+  follows:
+
+  | Removed | Instead |
+  | --- | --- |
+  | `Ensemble`, `EnsembleSample`, `EnsembleSampleView`, `EnsembleSampleMut`, `EnsembleIter`, `EnsembleStateView`, `EnsembleStateIter`, `EnsembleError` | `SampleSet` with a `Distribution`; `Sample`, `SampleView`, `SampleMut`, `StateView`, `SampleSetError` |
+  | `Trajectory`, `TrajectoryFrame`, `TrajectoryFrameView`, `TrajectoryFrameMut`, `TrajectoryIter`, `TrajectoryError` | `SampleSet` with `Order::Time(TimeAxis)`; `Sample` and its `Place::Time { time, step }`; `FrameView` for writers |
+  | `Series`, `SeriesItem`, `SeriesItemView`, `SeriesItemMut`, `SeriesIter`, `SeriesAxis`, `SeriesError` | `SampleSet` with `Order::Step` or `Order::Coordinate`; `Place::Step` or `Place::Coordinate` |
+  | `EnsemblePartition`, `EnsembleState` | `Partition`, `State` |
+  | `Ensemble::from_models(models, partition)` | `SampleSet::from_models(models)` then `set_distribution(Some(Distribution::new(Members::All, partition)?))` |
+  | `Ensemble::from_molecule_positions` | `Topology::from_molecule`, `SampleSet::from_samples` of `Sample::new(positions)`, then `set_distribution` |
+  | `Ensemble` and `Trajectory` methods (`select`, `subset`, `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, `contact_occupancy`, `group_contact_occupancy`, clustering, `pairwise_fitted_rmsd`, populations, rankings, `collapse`, `assign_boltzmann_populations`) | The `SampleSet` and `DistributionMut` methods of the same names |
+  | `Trajectory::validate_monotonic_time(MissingTimePolicy)` | `SampleSet::validate_monotonic_time()`, which fails with `Missing(Times)` on an axis without times |
+  | `TrajectorySampler`, `TrajectorySampling`, `Trajectory::to_ensemble`, `Trajectory::into_ensemble`, `traj::read_ensemble`, `read_ensemble_seekable`, `EnsembleReadOptions`, `EnsembleReadProgress` | `SampleSet::from_reader(&reader, indices)`; see the migration below |
+  | `SampleSet::from_ensemble`, `from_trajectory`, `from_series`, `to_ensemble`, `into_ensemble`, `to_trajectory`, `into_trajectory`, `to_series`, `into_series`, `ConversionTarget`, `Unconvertible`, `SampleSetError::NotConvertible` | Build the `SampleSet` directly |
+  | `NativeObject::into_ensemble`, `into_ensemble_interpretation`, `into_trajectory`, `into_series`, `NativeSource::interpreted_ensemble`, `FormatErrorDetail::NativeSampleSetShape` | `NativeObject::into_sample_set`, `into_sample_set_interpretation`; `NativeSource::interpreted_sample_set` |
+  | `traj::io::read_trajectory`, `write_trajectory`, `write_trajectory_to` | `read_sample_set`, `write_sample_set`, `write_sample_set_to` |
+  | `FrameBuffer::from_frame`, `into_trajectory`, `frame_mut` | `FrameBuffer::from_sample`, `into_sample`, `sample_mut` (time and step through `set_time` and `set_step`) |
+  | `XyzWriter::write_ensemble`, `write_series` | `XyzWriter::write_sample_set` |
+  | `MmcifDocument::interpret_ensemble`, `PdbDocument::interpret_ensemble`, `XyzDocument::interpret_ensemble`, `StructureEnsembleInterpretation`, `XyzEnsembleInterpretation` | `interpret_sample_set`, `StructureSampleSetInterpretation`, `XyzSampleSetInterpretation` |
+  | `sdf::ensemble` | `sdf::sample_set` |
+  | `PdbSource::ensemble`, `series`, `MmcifBlockSource::ensemble`, and the conversions from `&Ensemble`, `&Series`, `&StructureEnsembleInterpretation` | `PdbSource::sample_set`, `MmcifBlockSource::sample_set`, and the conversions from `&SampleSet` and `&StructureSampleSetInterpretation` |
+  | `ensemble_metadata`, `series_metadata`, and the Molfile, SDF, PDB, and mmCIF `frame_metadata` writer options with their `with_` setters | `sample_metadata` and `with_sample_metadata` |
+  | `PdbWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`, `UnrepresentableSeriesItem`, `EmptySeries`; `MmcifWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`; `MmcifSampleField::Weight`, `Energy`, `State`, `Temperature` | `UnrepresentableSample`, `EmptySampleSet` |
+  | `diagnostics::check_multi_model_ensemble`, `UnrepresentableSampleState` | none: writers check sample state themselves |
+  | `StructureError::InvalidWeight`, `NonFiniteCoordinate` | `SampleSetError::InvalidWeight`, `NonFiniteOrderValue` |
+
+  An ensemble of trajectory frames, as `Trajectory::to_ensemble` made it
+  from a `TrajectorySampling` of `indices` with `weights` and `atoms`, is now
+  these calls:
+
+  ```rust
+  let mut ensemble = SampleSet::from_reader(&frames, indices)?;
+  ensemble.set_order(None)?; // drop the times and steps
+  ensemble.clear_velocities_and_forces();
+  let mut ensemble = ensemble.subset(&atoms)?; // only for an atom subset
+  ensemble.set_distribution(Some(
+      Distribution::new(Members::All, Partition::one_state(ensemble.len()))?
+          .with_weights(weights)?, // without weights, every sample weighs 1
+  ))?;
+  ```
+
+  `from_reader` keeps each sample whole, so the order and the velocities and
+  forces are dropped explicitly. Without an atom subset, `to_ensemble` kept
+  the trajectory properties, which `from_reader` does not: copy them with
+  `*ensemble.properties_mut() = frames.properties().clone()`. These calls
+  write the same PDB and mmCIF bytes as `to_ensemble` did.
 
 ### Fixed
 

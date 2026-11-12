@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::structure::TrajectoryFrame;
+use kekule::structure::{Place, Sample};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, TrajectoryFileFingerprint,
@@ -21,7 +21,7 @@ struct Case {
     path: PathBuf,
     topology: Arc<Topology>,
     index: TrajectoryFrameIndex,
-    frames: Vec<TrajectoryFrame>,
+    frames: Vec<(Sample, Place)>,
 }
 
 fn topology(symbols: &[&str]) -> Arc<Topology> {
@@ -92,7 +92,8 @@ fn cases() -> &'static [Case] {
                 let mut buffer = reader.frame_buffer();
                 let mut frames = Vec::new();
                 while reader.read_next(&mut buffer).expect("fixture frame") {
-                    frames.push(buffer.frame_view().payload().clone());
+                    let frame = buffer.frame_view();
+                    frames.push((frame.payload().clone(), frame.place()));
                 }
                 Case {
                     path,
@@ -195,7 +196,10 @@ fuzz_target!(|data: &[u8]| {
     let mut buffer = reader.frame_buffer();
     for frame in 0..reader.frame_count().unwrap_or(0) {
         if reader.read_frame(frame, &mut buffer).is_ok() {
-            assert!(case.frames.contains(buffer.frame_view().payload()));
+            let frame = buffer.frame_view();
+            assert!(case
+                .frames
+                .contains(&(frame.payload().clone(), frame.place())));
         }
     }
 });

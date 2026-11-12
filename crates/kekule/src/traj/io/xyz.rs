@@ -3,15 +3,13 @@
 //! [`XyzReader`] and [`IndexedXyzReader`] read constant-count
 //! element/x/y/z frames whose atom lines follow the topology's dense order and
 //! elements; [`XyzWriter`] writes them deterministically, from trajectory
-//! frames, one frame per sample from an ensemble
-//! ([`XyzWriter::write_ensemble`]) or a sample set
-//! ([`XyzWriter::write_sample_set`]), or one frame per item from a series
-//! ([`XyzWriter::write_series`]). XYZ stores positions only: the writer
-//! rejects a frame's velocities, forces, time, step and properties, its
-//! cell, ensemble sample state, series item steps, coordinates, and
-//! properties, and sample set state unless its options omit them, and
-//! reports everything it leaves out, such as bonds, charges and omitted
-//! cells, in [`XyzWriter::report`]. To
+//! frames or one frame per sample of a sample set
+//! ([`XyzWriter::write_sample_set`]). XYZ stores positions only: the writer
+//! rejects a frame's velocities, forces, time, step, occupancies, B-factors
+//! and properties, its
+//! cell, and sample set state unless its options omit them, and reports
+//! everything it leaves out, such as bonds, charges and omitted cells, in
+//! [`XyzWriter::report`]. To
 //! obtain a topology from an XYZ file itself, interpret one of its frames
 //! with `kekule::xyz`, which keeps atom-line order as dense order and infers
 //! bonds from distances. This reader accepts element symbols in their
@@ -25,21 +23,19 @@
 //! use std::sync::Arc;
 //!
 //! use kekule::geometry::Point3;
-//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
-//! use kekule::traj::{TrajectoryReader, TrajectoryWriter};
+//! use kekule::traj::{FrameBuffer, TrajectoryReader, TrajectoryWriter};
 //!
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
-//! let positions = Positions::from_vec(Quantity::new(vec![Point3::new(1.5, 0.0, 0.0)], ANGSTROM))?;
-//! let frame = TrajectoryFrame::new(positions);
-//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
+//! let mut frame = FrameBuffer::new(Arc::clone(&topology));
+//! frame.sample_mut().set_positions(Quantity::new(vec![Point3::new(1.5, 0.0, 0.0)], ANGSTROM))?;
 //!
 //! let options = XyzWriteOptions::default().with_decimal_places(3).with_comment("helium");
 //! let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
-//! writer.write_frame(trajectory.get(0).unwrap())?;
+//! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
 //! assert_eq!(String::from_utf8(bytes.clone())?, "1\nhelium\nHe 1.500 0.000 0.000\n");
 //!
@@ -53,21 +49,17 @@
 //! ```
 
 use crate::diagnostics::{
-    check_multi_model_ensemble, LimitExceeded, Resource, StructureField, UnrepresentablePolicy,
-    WriteOmission, WriteReport,
+    LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::io::write_error::{record_multi_model_sample_set, Omissions};
-use crate::traj::TrajectoryField;
+use crate::traj::{FrameView, TrajectoryField};
 use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::geometry::Point3;
 use crate::molecule::Element;
-use crate::structure::{
-    DecodedSample, Ensemble, ModelView, Positions, SampleSet, Series, SeriesAxis,
-    TrajectoryFrameView,
-};
+use crate::structure::{DecodedSample, ModelView, Positions, SampleSet};
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -75,7 +67,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
-use super::frame_state::{record, sample_field, unrepresentable_frame_state};
+use super::frame_state::{record, sample_field, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
@@ -147,8 +139,8 @@ impl XyzReadOptions {
 
 /// Deterministic strict XYZ writer options.
 ///
-/// The default fails on every cell, frame state, ensemble sample state, and
-/// series item state XYZ cannot carry.
+/// The default fails on every cell, frame state, and sample set state XYZ
+/// cannot carry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XyzWriteOptions {
     length_unit: Unit,
@@ -157,8 +149,6 @@ pub struct XyzWriteOptions {
     cell: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
     frame_properties: UnrepresentablePolicy,
-    ensemble_metadata: UnrepresentablePolicy,
-    series_metadata: UnrepresentablePolicy,
     sample_metadata: UnrepresentablePolicy,
 }
 
@@ -171,8 +161,6 @@ impl Default for XyzWriteOptions {
             cell: UnrepresentablePolicy::Fail,
             frame_metadata: UnrepresentablePolicy::Fail,
             frame_properties: UnrepresentablePolicy::Fail,
-            ensemble_metadata: UnrepresentablePolicy::Fail,
-            series_metadata: UnrepresentablePolicy::Fail,
             sample_metadata: UnrepresentablePolicy::Fail,
         }
     }
@@ -221,23 +209,6 @@ impl XyzWriteOptions {
         self
     }
 
-    /// Sets [`Self::ensemble_metadata`].
-    #[must_use]
-    pub const fn with_ensemble_metadata(
-        mut self,
-        ensemble_metadata: UnrepresentablePolicy,
-    ) -> Self {
-        self.ensemble_metadata = ensemble_metadata;
-        self
-    }
-
-    /// Sets [`Self::series_metadata`].
-    #[must_use]
-    pub const fn with_series_metadata(mut self, series_metadata: UnrepresentablePolicy) -> Self {
-        self.series_metadata = series_metadata;
-        self
-    }
-
     /// Sets [`Self::sample_metadata`].
     #[must_use]
     pub const fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
@@ -261,49 +232,30 @@ impl XyzWriteOptions {
         &self.comment
     }
 
-    /// The periodic cell of a frame, ensemble sample, or series item, which
-    /// XYZ cannot carry: by default a structure with a cell fails to write;
+    /// The periodic cell of a frame or sample, which XYZ cannot carry: by default a structure with a cell fails to write;
     /// [`UnrepresentablePolicy::Omit`] writes its positions and reports
     /// [`WriteOmission::Cell`].
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
     }
 
-    /// A trajectory frame's velocities, forces, time, and step, which XYZ
-    /// cannot carry: by default a frame with any of them fails to write;
-    /// [`UnrepresentablePolicy::Omit`] writes its positions and reports a
-    /// [`WriteOmission::StructureState`] for each kind left out.
+    /// A trajectory frame's velocities, forces, time, step, occupancies, and
+    /// B-factors, which XYZ cannot carry: by default a frame with any of them
+    /// fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
+    /// and reports a [`WriteOmission::StructureState`],
+    /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
+    /// each kind left out. [`XyzWriter::write_sample_set`] leaves a sample's
+    /// occupancies and B-factors out under every policy.
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
         self.frame_metadata
     }
 
-    /// A trajectory frame's or series item's atom, bond, and own properties,
-    /// which XYZ cannot carry: by default a frame or item with any of them
-    /// fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
+    /// A frame's or sample's atom, bond, and own properties, which XYZ cannot
+    /// carry: by default a frame or sample with any of them fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
     /// and reports a [`WriteOmission::StructureState`] for each kind left
     /// out.
     pub const fn frame_properties(&self) -> UnrepresentablePolicy {
         self.frame_properties
-    }
-
-    /// Ensemble sample weights, states, state energies, and the temperature,
-    /// under the rules of `kekule`'s PDB and mmCIF ensemble writers: an XYZ
-    /// file reads back as one state of equally weighted samples, so by
-    /// default [`XyzWriter::write_ensemble`] fails for an ensemble with
-    /// unequal weights, more than one state, any energy, or a temperature;
-    /// [`UnrepresentablePolicy::Omit`] writes it and reports each kind of
-    /// [`WriteOmission::StructureState`] left out (see
-    /// [`check_multi_model_ensemble`]).
-    pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
-        self.ensemble_metadata
-    }
-
-    /// The steps or coordinates of a series' items, which XYZ cannot carry:
-    /// by default [`XyzWriter::write_series`] fails, since every item has
-    /// one; [`UnrepresentablePolicy::Omit`] writes the items' positions and
-    /// reports a [`WriteOmission::StructureState`] for every item.
-    pub const fn series_metadata(&self) -> UnrepresentablePolicy {
-        self.series_metadata
     }
 
     /// The state of a sample set's samples beyond their positions, cells,
@@ -313,8 +265,9 @@ impl XyzWriteOptions {
     /// sample outside its distribution, unequal weights, more than one
     /// state, a state energy, a representative that is not its state's
     /// first member, a temperature, or an order, a time order without times
-    /// or steps among them, or a sample with velocities or forces; [`UnrepresentablePolicy::Omit`] writes it and
-    /// reports each kind of [`WriteOmission::StructureState`] left out.
+    /// or steps among them, or a sample with velocities or forces;
+    /// [`UnrepresentablePolicy::Omit`] writes it and reports each kind of
+    /// [`WriteOmission::StructureState`] left out.
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
         self.sample_metadata
     }
@@ -1355,12 +1308,12 @@ impl<W: Write> XyzWriter<W> {
     /// such as the synthetic `UNL` residues `kekule::xyz` gives an
     /// interpreted file, are not counted.
     ///
-    /// Each frame or ensemble written then adds what it left out, counted
+    /// Each frame or sample set written then adds what it left out, counted
     /// over every frame written: cells omitted under
     /// [`XyzWriteOptions::cell`], frame state omitted under
     /// [`XyzWriteOptions::frame_metadata`] and
     /// [`XyzWriteOptions::frame_properties`], sample state omitted under
-    /// [`XyzWriteOptions::ensemble_metadata`], and samples' occupancies and
+    /// [`XyzWriteOptions::sample_metadata`], and samples' occupancies and
     /// B factors. The writer writes the same text whatever it reports.
     pub fn report(&self) -> &WriteReport {
         &self.report
@@ -1423,7 +1376,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         require_no_partial_frame(
             self.partial,
             TrajectoryIoOperation::WriteFrame,
@@ -1442,6 +1395,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 TrajectoryField::PeriodicCell,
             ));
         }
+        let (occupancies, b_factors) = site_fields(&frame);
         let omitted = unrepresentable_frame_state(
             [
                 (
@@ -1452,6 +1406,16 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 (
                     frame.forces().is_some(),
                     TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    occupancies,
+                    TrajectoryField::Occupancies,
+                    self.options.frame_metadata,
+                ),
+                (
+                    b_factors,
+                    TrajectoryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (
@@ -1515,237 +1479,6 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
 }
 
 impl<W: Write> XyzWriter<W> {
-    /// Writes one frame per sample of `ensemble`, in sample order, with the
-    /// sample's positions; reading the file back gives one state of equally
-    /// weighted samples, as `kekule::xyz` interprets it.
-    ///
-    /// The whole ensemble is checked before its first frame is written.
-    /// Sample weights, states, state energies, and the temperature follow
-    /// [`XyzWriteOptions::ensemble_metadata`] and cells follow
-    /// [`XyzWriteOptions::cell`]; occupancies and B factors are always left
-    /// out. [`Self::report`] gains everything left out.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrajectoryIoErrorKind::TopologyMismatch`] when the ensemble
-    /// does not share the writer's topology layout;
-    /// [`TrajectoryIoErrorKind::InvalidFrame`] for an empty ensemble, for a
-    /// coordinate that is not finite after conversion, or after an earlier
-    /// write left a partial frame; [`TrajectoryIoErrorKind::UnsupportedField`]
-    /// naming the [`TrajectoryField`] for ensemble, state, or sample
-    /// properties and for a cell or sample state the options do not omit,
-    /// with [`TrajectoryIoError::frame`] the frame of the first sample
-    /// concerned; and [`TrajectoryIoErrorKind::Io`] when the stream fails.
-    pub fn write_ensemble(&mut self, ensemble: &Ensemble) -> Result<(), TrajectoryIoError> {
-        require_no_partial_frame(
-            self.partial,
-            TrajectoryIoOperation::WriteFrame,
-            TrajectoryFormat::Xyz,
-            &self.source_label,
-        )?;
-        if !self.topology().shares_layout(ensemble.topology()) {
-            return Err(TrajectoryIoError::new(
-                TrajectoryIoErrorKind::TopologyMismatch,
-            ));
-        }
-        if ensemble.is_empty() {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::InvalidFrame,
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xyz),
-                &self.source_label,
-                "The ensemble has no samples.",
-            ));
-        }
-        // The frame a sample is written as, for errors.
-        let frame = |sample: usize| self.frame_count.saturating_add(sample);
-        if !ensemble.properties().is_empty() {
-            return Err(writer_field_error(
-                &self.source_label,
-                frame(0),
-                TrajectoryField::CollectionProperties,
-            ));
-        }
-        if let Some(state) = ensemble
-            .states()
-            .find(|state| !state.payload().properties().is_empty())
-        {
-            return Err(writer_field_error(
-                &self.source_label,
-                frame(state.representative()),
-                TrajectoryField::StateProperties,
-            ));
-        }
-        let factor = self.output_factor()?;
-        for sample in ensemble {
-            let view = sample.as_model_view();
-            let properties = view.properties();
-            let unsupported = [
-                (
-                    view.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail,
-                    TrajectoryField::PeriodicCell,
-                ),
-                (
-                    properties.atoms().has_data(),
-                    TrajectoryField::AtomProperties,
-                ),
-                (
-                    properties.bonds().has_data(),
-                    TrajectoryField::BondProperties,
-                ),
-                (!properties.owner().is_empty(), TrajectoryField::Properties),
-            ];
-            if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {
-                return Err(writer_field_error(
-                    &self.source_label,
-                    frame(sample.index()),
-                    field,
-                ));
-            }
-            self.check_positions(view.positions(), factor)?;
-        }
-        let state = check_multi_model_ensemble(ensemble, self.options.ensemble_metadata).map_err(
-            |unrepresentable| {
-                let field = match unrepresentable.field() {
-                    StructureField::Weight => TrajectoryField::Weight,
-                    StructureField::Energy => TrajectoryField::Energy,
-                    StructureField::State => TrajectoryField::State,
-                    _ => TrajectoryField::Temperature,
-                };
-                writer_field_error(&self.source_label, frame(unrepresentable.sample()), field)
-            },
-        )?;
-
-        for sample in ensemble {
-            self.write_positions(sample.as_model_view().positions(), factor)?;
-        }
-        let count = |present: fn(ModelView<'_>) -> bool| {
-            ensemble
-                .iter()
-                .filter(|sample| present(sample.as_model_view()))
-                .count()
-        };
-        let omitted = [
-            WriteOmission::Cell {
-                structures: count(|view| view.cell().is_some()),
-            },
-            WriteOmission::Occupancies {
-                structures: count(|view| {
-                    view.occupancies()
-                        .is_some_and(|values| values.iter().any(Option::is_some))
-                }),
-            },
-            WriteOmission::BFactors {
-                structures: count(|view| {
-                    view.b_factors()
-                        .is_some_and(|values| values.value().iter().any(Option::is_some))
-                }),
-            },
-        ];
-        self.record(state.omissions().iter().copied().chain(omitted));
-        Ok(())
-    }
-
-    /// Writes one frame per item of `series`, in series order, with the
-    /// item's positions.
-    ///
-    /// The whole series is checked before its first frame is written. The
-    /// items' steps or coordinates follow [`XyzWriteOptions::series_metadata`],
-    /// their atom, bond, and own properties, such as their energies,
-    /// [`XyzWriteOptions::frame_properties`], and their cells
-    /// [`XyzWriteOptions::cell`]. [`Self::report`] gains everything left out.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrajectoryIoErrorKind::TopologyMismatch`] when the series
-    /// does not share the writer's topology layout;
-    /// [`TrajectoryIoErrorKind::InvalidFrame`] for an empty series, for a
-    /// coordinate that is not finite after conversion, or after an earlier
-    /// write left a partial frame; [`TrajectoryIoErrorKind::UnsupportedField`]
-    /// naming the [`TrajectoryField`] for series properties and for a cell,
-    /// item property, step, or coordinate the options do not omit, with
-    /// [`TrajectoryIoError::frame`] the frame of the first item concerned;
-    /// and [`TrajectoryIoErrorKind::Io`] when the stream fails.
-    pub fn write_series(&mut self, series: &Series) -> Result<(), TrajectoryIoError> {
-        require_no_partial_frame(
-            self.partial,
-            TrajectoryIoOperation::WriteFrame,
-            TrajectoryFormat::Xyz,
-            &self.source_label,
-        )?;
-        if !self.topology().shares_layout(series.topology()) {
-            return Err(TrajectoryIoError::new(
-                TrajectoryIoErrorKind::TopologyMismatch,
-            ));
-        }
-        if series.is_empty() {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::InvalidFrame,
-                TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xyz),
-                &self.source_label,
-                "The series has no items.",
-            ));
-        }
-        // The frame an item is written as, for errors.
-        let frame = |item: usize| self.frame_count.saturating_add(item);
-        if !series.properties().is_empty() {
-            return Err(writer_field_error(
-                &self.source_label,
-                frame(0),
-                TrajectoryField::CollectionProperties,
-            ));
-        }
-        let place = match series.axis() {
-            SeriesAxis::Step => TrajectoryField::ItemStep,
-            _ => TrajectoryField::ItemCoordinate,
-        };
-        let factor = self.output_factor()?;
-        let mut omitted = Vec::new();
-        for item in series {
-            let view = item.as_model_view();
-            let properties = view.properties();
-            if view.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail {
-                return Err(writer_field_error(
-                    &self.source_label,
-                    frame(item.index()),
-                    TrajectoryField::PeriodicCell,
-                ));
-            }
-            let state = unrepresentable_frame_state(
-                [
-                    (true, place, self.options.series_metadata),
-                    (
-                        properties.atoms().has_data(),
-                        TrajectoryField::AtomProperties,
-                        self.options.frame_properties,
-                    ),
-                    (
-                        properties.bonds().has_data(),
-                        TrajectoryField::BondProperties,
-                        self.options.frame_properties,
-                    ),
-                    (
-                        !properties.owner().is_empty(),
-                        TrajectoryField::Properties,
-                        self.options.frame_properties,
-                    ),
-                ],
-                |field| writer_field_error(&self.source_label, frame(item.index()), field),
-            )?;
-            self.check_positions(view.positions(), factor)?;
-            omitted.extend(state);
-            omitted.push(WriteOmission::Cell {
-                structures: usize::from(view.cell().is_some()),
-            });
-        }
-        for item in series {
-            self.write_positions(item.as_model_view().positions(), factor)?;
-        }
-        self.record(omitted);
-        Ok(())
-    }
-
     /// Writes one frame per sample of `set`, in sample order, with the
     /// sample's positions.
     ///

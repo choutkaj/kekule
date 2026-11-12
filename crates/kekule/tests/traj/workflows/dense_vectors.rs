@@ -120,7 +120,7 @@ fn owned_vector_construction_keeps_allocations_and_validates_converted_values() 
 #[test]
 fn buffer_vector_clear_methods_need_no_type_annotations_and_preserve_other_state() {
     let mut buffer = FrameBuffer::new(support::linear_carbon_topology(1));
-    buffer.frame_mut().set_step(Some(42));
+    buffer.set_step(Some(42));
     buffer
         .set_velocities(Some(Quantity::new(
             [Vector3::new(1.0, 2.0, 3.0)],

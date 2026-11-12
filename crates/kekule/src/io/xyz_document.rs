@@ -17,9 +17,9 @@ use crate::diagnostics::{
 use crate::geometry::Point3;
 use crate::molecule::Element;
 
-use super::xyz_interpret::{interpret_xyz, interpret_xyz_ensemble, interpret_xyz_sample_set};
+use super::xyz_interpret::{interpret_xyz, interpret_xyz_sample_set};
 use super::{
-    XyzEnsembleInterpretOptions, XyzEnsembleInterpretation, XyzInterpretOptions, XyzInterpretation,
+    XyzInterpretOptions, XyzInterpretation, XyzSampleSetInterpretOptions,
     XyzSampleSetInterpretation,
 };
 
@@ -192,7 +192,7 @@ pub struct XyzDocument {
 impl XyzDocument {
     /// A document of `frames` in order, as a host that holds atoms rather
     /// than XYZ text builds it, to interpret with [`Self::interpret`] or
-    /// [`Self::interpret_ensemble`] as a parsed file.
+    /// [`Self::interpret_sample_set`] as a parsed file.
     ///
     /// Each frame from [`XyzFrame::new`] takes its 1-based position in
     /// `frames` as its location; a parsed frame keeps its line. A document
@@ -250,8 +250,10 @@ impl XyzDocument {
         interpret_xyz(self, &options)
     }
 
-    /// Interprets several frames over the same atoms as one equally weighted
-    /// [`Ensemble`](crate::structure::Ensemble). Each frame infers its own
+    /// Interprets several frames over the same atoms as an unordered
+    /// [`SampleSet`](crate::structure::SampleSet) without a distribution,
+    /// one sample per selected frame with one report each: an XYZ file
+    /// states no weights, states, or order. Each frame infers its own
     /// connectivity, and every frame must infer the same bonds as the first.
     ///
     /// # Errors
@@ -262,25 +264,9 @@ impl XyzDocument {
     /// and one whose distances infer different bonds fails with
     /// [`FormatErrorDetail::InconsistentTopology`](crate::diagnostics::FormatErrorDetail::InconsistentTopology);
     /// both name the frame by its zero-based index as the model ID.
-    pub fn interpret_ensemble(
-        &self,
-        options: XyzEnsembleInterpretOptions,
-    ) -> Result<XyzEnsembleInterpretation, FormatError> {
-        interpret_xyz_ensemble(self, &options)
-    }
-
-    /// Interprets several frames over the same atoms, as
-    /// [`Self::interpret_ensemble`] does, as an unordered
-    /// [`SampleSet`](crate::structure::SampleSet) without a distribution,
-    /// with one report per sample: an XYZ file states no weights, states,
-    /// or order.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::interpret_ensemble`].
     pub fn interpret_sample_set(
         &self,
-        options: XyzEnsembleInterpretOptions,
+        options: XyzSampleSetInterpretOptions,
     ) -> Result<XyzSampleSetInterpretation, FormatError> {
         interpret_xyz_sample_set(self, &options)
     }

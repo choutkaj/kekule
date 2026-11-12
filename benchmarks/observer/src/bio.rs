@@ -317,10 +317,10 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
 /// Cα RMSD of every coordinate model after fitting it onto the first.
 fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = document
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .map_err(|e| Failure::new("interpret", e))?;
-    let ensemble = interpretation.ensemble();
-    let topology: Arc<_> = ensemble.shared_topology();
+    let models = interpretation.sample_set();
+    let topology: Arc<_> = models.shared_topology();
     let first = &interpretation.reports()[0];
     let alpha = first
         .instances()
@@ -337,7 +337,7 @@ fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
     let count = alpha.len();
     let selection = AtomSelection::from_atoms(Arc::clone(&topology), alpha)
         .map_err(|e| Failure::new("selection", e))?;
-    let rmsd = ensemble
+    let rmsd = models
         .aligned_rmsd(0usize, &selection, &selection, Default::default())
         .map_err(|e| Failure::new("superposition", e))?
         .value_in(ANGSTROM)

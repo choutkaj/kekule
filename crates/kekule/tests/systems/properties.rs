@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use kekule::molecule::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
-use kekule::structure::{
-    Ensemble, EnsemblePartition, EnsembleSample, Model, Positions, StructureError, Trajectory,
-    TrajectoryFrame,
-};
+use kekule::structure::{Model, Positions, Sample, SampleSet, StructureError};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, Topology,
     TopologyBuildError, TopologyBuilder,
@@ -169,7 +166,7 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     assert_eq!(model.properties(), &original);
 
     // A detached sample has no bond rows yet.
-    let mut member = EnsembleSample::new(Positions::zeros(2), 1.0).unwrap();
+    let mut member = Sample::new(Positions::zeros(2));
     let detached = member.properties().clone();
     assert_eq!(
         member.set_properties(bound.clone()),
@@ -180,25 +177,15 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     );
     assert_eq!(member.properties(), &detached);
 
-    let mut ensemble = Ensemble::from_samples(
-        Arc::clone(&ethane),
-        [member],
-        EnsemblePartition::one_state(1),
-    )
-    .unwrap();
-    assert_eq!(ensemble.get(0).unwrap().properties().bonds().len(), 1);
-    ensemble
-        .get_mut(0)
+    let mut set = SampleSet::from_samples(Arc::clone(&ethane), [member]).unwrap();
+    assert_eq!(set.get(0).unwrap().properties().bonds().len(), 1);
+    set.get_mut(0)
         .unwrap()
         .set_properties(bound.clone())
         .unwrap();
-    assert_eq!(ensemble.get(0).unwrap().properties(), &bound);
-    assert!(ensemble
-        .get_mut(0)
-        .unwrap()
-        .set_properties(original)
-        .is_err());
-    assert_eq!(ensemble.get(0).unwrap().properties(), &bound);
+    assert_eq!(set.get(0).unwrap().properties(), &bound);
+    assert!(set.get_mut(0).unwrap().set_properties(original).is_err());
+    assert_eq!(set.get(0).unwrap().properties(), &bound);
 }
 
 #[test]
@@ -236,36 +223,29 @@ fn owner_topology_property_edits_keep_layout_without_touching_other_holders() {
         Some(&PropertyValue::Int(2))
     );
 
-    let mut ensemble = Ensemble::from_samples(
-        Arc::clone(&topology),
-        [EnsembleSample::new(Positions::zeros(3), 1.0).unwrap()],
-        EnsemblePartition::one_state(1),
-    )
-    .unwrap();
-    ensemble
+    let set = || {
+        SampleSet::from_samples(Arc::clone(&topology), [Sample::new(Positions::zeros(3))]).unwrap()
+    };
+    let (mut first, mut second) = (set(), set());
+    first
         .topology_properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(3))
         .unwrap();
-    let mut trajectory = Trajectory::from_items(
-        Arc::clone(&topology),
-        [TrajectoryFrame::new(Positions::zeros(3))],
-    )
-    .unwrap();
-    trajectory
+    second
         .topology_properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(4))
         .unwrap();
 
-    assert!(ensemble.topology().shares_layout(&topology));
-    assert!(trajectory.topology().shares_layout(&topology));
+    assert!(first.topology().shares_layout(&topology));
+    assert!(second.topology().shares_layout(&topology));
     assert_eq!(
-        ensemble.topology().properties().owner().get(&key()),
+        first.topology().properties().owner().get(&key()),
         Some(&PropertyValue::Int(3))
     );
     assert_eq!(
-        trajectory.topology().properties().owner().get(&key()),
+        second.topology().properties().owner().get(&key()),
         Some(&PropertyValue::Int(4))
     );
     assert_eq!(topology.properties().owner().get(&key()), None);

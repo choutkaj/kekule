@@ -6,9 +6,11 @@
 //! time; GROMACS nanometre, picosecond and kJ/(mol nm) units are converted at
 //! the codec boundary. The lambda scalar follows a [`TrrLambdaPolicy`]. A
 //! frame without a time or step can be numbered under
-//! [`TrrWriteOptions::frame_timing`]; the properties TRR cannot carry are
-//! rejected unless [`TrrWriteOptions::frame_properties`] omits them, as
-//! [`TrrWriter::report`] then reports.
+//! [`TrrWriteOptions::frame_timing`]; the occupancies, B-factors, and
+//! properties TRR cannot carry are rejected unless
+//! [`TrrWriteOptions::frame_metadata`] and
+//! [`TrrWriteOptions::frame_properties`] omit them, as [`TrrWriter::report`]
+//! then reports.
 //!
 //! # Examples
 //!
@@ -17,30 +19,27 @@
 //! use std::sync::Arc;
 //!
 //! use kekule::geometry::{Point3, Vector3};
-//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame, Velocities};
 //! use kekule::units::{Quantity, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::trr::{
 //!     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter,
 //! };
-//! use kekule::traj::{TrajectoryReader, TrajectoryWriter};
+//! use kekule::traj::{FrameBuffer, TrajectoryReader, TrajectoryWriter};
 //!
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let mut frame = FrameBuffer::new(Arc::clone(&topology));
 //! let points = vec![Point3::new(0.25, 0.5, 0.0)];
-//! let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
+//! frame.sample_mut().set_positions(Quantity::new(points, NANOMETER))?;
 //! let velocity = Vector3::new(1.0, 0.0, 0.0);
-//! let mut frame = TrajectoryFrame::new(positions);
-//! let velocities = Velocities::new(Quantity::new([velocity], NANOMETER_PER_PICOSECOND))?;
-//! frame.set_velocities(Some(velocities))?;
+//! frame.set_velocities(Some(Quantity::new([velocity], NANOMETER_PER_PICOSECOND)))?;
 //! frame.set_step(Some(500));
 //! frame.set_time(Some(Quantity::new(1.0, PICOSECOND)))?;
-//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
 //!
 //! // Frames without a lambda property need the RequireZero policy.
 //! let options = TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
 //! let mut writer = TrrWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
-//! writer.write_frame(trajectory.get(0).unwrap())?;
+//! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
 //!
 //! let read_options = TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
@@ -59,7 +58,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::traj::TrajectoryField;
+use crate::traj::{FrameView, TrajectoryField};
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
@@ -67,7 +66,7 @@ use std::sync::Arc;
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::properties::{OwnerProperties, PropertyKey, PropertyValue, StructureProperties};
-use crate::structure::{DecodedSample, TrajectoryFrameView};
+use crate::structure::DecodedSample;
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -78,7 +77,7 @@ use crate::units::{
     NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
 
-use super::frame_state::{record, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
@@ -192,6 +191,7 @@ impl TrrReadOptions {
 pub struct TrrWriteOptions {
     precision: TrrScalarPrecision,
     lambda_policy: TrrLambdaPolicy,
+    frame_metadata: UnrepresentablePolicy,
     frame_properties: UnrepresentablePolicy,
     frame_timing: FrameTimingPolicy,
 }
@@ -201,6 +201,7 @@ impl Default for TrrWriteOptions {
         Self {
             precision: TrrScalarPrecision::Float32,
             lambda_policy: TrrLambdaPolicy::FrameProperty,
+            frame_metadata: UnrepresentablePolicy::Fail,
             frame_properties: UnrepresentablePolicy::Fail,
             frame_timing: FrameTimingPolicy::Require,
         }
@@ -221,6 +222,13 @@ impl TrrWriteOptions {
     #[must_use]
     pub const fn with_lambda_policy(mut self, lambda_policy: TrrLambdaPolicy) -> Self {
         self.lambda_policy = lambda_policy;
+        self
+    }
+
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
         self
     }
 
@@ -248,6 +256,18 @@ impl TrrWriteOptions {
     /// [`TRR_LAMBDA_PROPERTY`] frame property.
     pub const fn lambda_policy(&self) -> TrrLambdaPolicy {
         self.lambda_policy
+    }
+
+    /// A trajectory frame's occupancies and B-factors, which TRR cannot
+    /// carry: by default a frame with either fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
+    /// reports a
+    /// [`WriteOmission::Occupancies`](crate::diagnostics::WriteOmission::Occupancies)
+    /// or
+    /// [`WriteOmission::BFactors`](crate::diagnostics::WriteOmission::BFactors)
+    /// for each kind left out (see [`TrrWriter::report`]).
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
     }
 
     /// A trajectory frame's atom and bond properties, and its frame
@@ -1354,6 +1374,7 @@ impl<W: Write> TrrWriter<W> {
     }
 
     /// The frame state the frames written so far leave out under
+    /// [`TrrWriteOptions::frame_metadata`] and
     /// [`TrrWriteOptions::frame_properties`], counted over every frame
     /// written. TRR stores coordinates for a topology its readers receive
     /// separately, so nothing else is reported.
@@ -1418,7 +1439,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         require_no_partial_frame(
             self.partial,
             TrajectoryIoOperation::WriteFrame,
@@ -1431,8 +1452,19 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             ));
         }
         let properties = frame.properties();
+        let (occupancies, b_factors) = site_fields(&frame);
         let omitted = unrepresentable_frame_state(
             [
+                (
+                    occupancies,
+                    TrajectoryField::Occupancies,
+                    self.options.frame_metadata,
+                ),
+                (
+                    b_factors,
+                    TrajectoryField::BFactors,
+                    self.options.frame_metadata,
+                ),
                 (
                     properties.atoms().has_data(),
                     TrajectoryField::AtomProperties,

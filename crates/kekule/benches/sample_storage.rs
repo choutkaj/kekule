@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif;
-use kekule::structure::{SampleRead, TrajectoryFrame};
+use kekule::structure::{Sample, SampleRead};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::analysis::FrameSuperposer;
 use kekule::traj::io::{
@@ -25,8 +25,8 @@ use kekule::traj::io::{
 };
 use kekule::traj::periodic::MoleculeImager;
 use kekule::traj::{
-    FitReference, Processed, ProcessingSteps, SeekableTrajectoryReader, TrajectoryFormat,
-    TrajectoryReader, TrajectoryWriter,
+    FitReference, FrameBuffer, Processed, ProcessingSteps, SeekableTrajectoryReader,
+    TrajectoryFormat, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
@@ -62,7 +62,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => {
             std::fs::create_dir_all(&scratch)?;
             let path = scratch.join("repeated.xtc");
-            let mut frame = TrajectoryFrame::new(model.positions().clone()).with_cell(cell);
+            let mut frame = FrameBuffer::from_sample(
+                Arc::clone(&topology),
+                Sample::new(model.positions().clone()).with_cell(cell),
+            )?;
             let file = std::io::BufWriter::new(std::fs::File::create(&path)?);
             let mut writer = create_trajectory_stream_writer(
                 file,
@@ -70,18 +73,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 TrajectoryWriteOptions::new(TrajectoryFormat::Xtc),
                 "bench.xtc",
             )?;
-            let trajectory = kekule::structure::Trajectory::from_items(
-                Arc::clone(&topology),
-                (0..FRAMES).map(|index| {
-                    frame.set_step(Some(index as u64));
-                    frame
-                        .set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))
-                        .expect("finite time");
-                    frame.clone()
-                }),
-            )?;
-            for frame in trajectory.iter() {
-                writer.write_frame(frame)?;
+            for index in 0..FRAMES {
+                frame.set_step(Some(index as u64));
+                frame.set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))?;
+                writer.write_frame(frame.frame_view())?;
             }
             writer.finish()?;
             path

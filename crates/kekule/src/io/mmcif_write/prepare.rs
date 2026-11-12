@@ -181,7 +181,7 @@ pub(super) fn prepare_model(
         order: BondOrder::Dative,
         implied: None,
     }));
-    // A polymer link another ensemble sample stretches beyond bonding
+    // A polymer link another sample stretches beyond bonding
     // distance is stated after all, so its partners are checked too.
     let selectors = ConnectionSelectors::new(&atoms);
     for connection in connections
@@ -597,19 +597,19 @@ fn invalid_b_factor(atom: InstanceAtomId) -> FormatError {
     invalid_model(format!("The B factor of {atom} is invalid."))
 }
 
-pub(super) fn validate_ensemble_sample(
+pub(super) fn validate_sample(
     model: &PreparedModel,
     candidate: &PreparedModel,
     sample: usize,
 ) -> Result<(), FormatError> {
     if candidate.entities != model.entities {
-        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
+        return Err(fail(MmcifWriteIssue::IncompatibleSample {
             sample,
             field: MmcifSampleField::Entities,
         }));
     }
     if candidate.asyms != model.asyms {
-        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
+        return Err(fail(MmcifWriteIssue::IncompatibleSample {
             sample,
             field: MmcifSampleField::StructuralAsymmetry,
         }));
@@ -622,7 +622,7 @@ pub(super) fn validate_ensemble_sample(
             .collect::<Vec<_>>()
     };
     if bonds(candidate) != bonds(model) {
-        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
+        return Err(fail(MmcifWriteIssue::IncompatibleSample {
             sample,
             field: MmcifSampleField::Connectivity,
         }));
@@ -634,7 +634,7 @@ pub(super) fn validate_ensemble_sample(
             .zip(&model.atoms)
             .any(|(left, right)| !same_static_atom_row(left, right))
     {
-        return Err(fail(MmcifWriteIssue::IncompatibleEnsembleSample {
+        return Err(fail(MmcifWriteIssue::IncompatibleSample {
             sample,
             field: MmcifSampleField::AtomSites,
         }));

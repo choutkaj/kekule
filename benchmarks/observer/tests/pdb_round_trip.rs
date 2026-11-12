@@ -17,7 +17,7 @@ use kekule::diagnostics::{DiagnosticKind, FormatErrorDetail};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
 use kekule::pdb::{self, PdbWriteIssue};
-use kekule::structure::{Ensemble, Model, ModelView};
+use kekule::structure::{Model, ModelView, SampleSet};
 use kekule::topology::{Topology, TopologyAtomIndex};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
 
@@ -214,36 +214,33 @@ fn round_trip_model(model: &Model, label: &str) -> Result<Model, String> {
     Ok(reread)
 }
 
-fn round_trip_ensemble(ensemble: &Ensemble, label: &str) {
-    let written = pdb::write(ensemble, Default::default())
+fn round_trip_models(models: &SampleSet, label: &str) {
+    let written = pdb::write(models, Default::default())
         .map(|(text, _)| text)
-        .unwrap_or_else(|error| panic!("{label}: ensemble does not write: {error}"));
+        .unwrap_or_else(|error| panic!("{label}: models do not write: {error}"));
     let reread = pdb::parse_str(&written, Default::default())
-        .and_then(|document| document.interpret_ensemble(Default::default()))
-        .unwrap_or_else(|error| panic!("{label}: written ensemble does not read back: {error}"))
-        .into_ensemble();
-    assert_eq!(reread.len(), ensemble.len(), "{label}: members");
-    for (index, (left, right)) in reread.iter().zip(ensemble.iter()).enumerate() {
+        .and_then(|document| document.interpret_sample_set(Default::default()))
+        .unwrap_or_else(|error| panic!("{label}: written models do not read back: {error}"))
+        .into_sample_set();
+    assert_eq!(reread.len(), models.len(), "{label}: models");
+    for (index, (left, right)) in reread.iter().zip(models.iter()).enumerate() {
         assert_same_structure(
             left.as_model_view(),
             right.as_model_view(),
-            &format!("{label} member {index}"),
+            &format!("{label} model {index}"),
         );
     }
     let again = pdb::write(&reread, Default::default())
         .map(|(text, _)| text)
-        .unwrap_or_else(|error| panic!("{label}: reread ensemble does not write: {error}"));
-    assert!(
-        again == written,
-        "{label}: ensemble text changed on rewrite"
-    );
+        .unwrap_or_else(|error| panic!("{label}: reread models do not write: {error}"));
+    assert!(again == written, "{label}: models text changed on rewrite");
 }
 
 #[test]
 fn curated_biomolecules_round_trip_through_pdb() {
     let mut written = 0;
     let mut unrepresentable = Vec::new();
-    let mut ensembles = 0;
+    let mut multi_model = 0;
     for path in curated_bio() {
         let label = path.file_name().unwrap().to_string_lossy().into_owned();
         let Ok(document) = mmcif::parse_str(&read_gzip(&path), Default::default()) else {
@@ -261,15 +258,15 @@ fn curated_biomolecules_round_trip_through_pdb() {
                 continue;
             }
         }
-        if let Ok(interpretation) = document.interpret_ensemble(Default::default()) {
-            if interpretation.ensemble().len() > 1 {
-                round_trip_ensemble(interpretation.ensemble(), &label);
-                ensembles += 1;
+        if let Ok(interpretation) = document.interpret_sample_set(Default::default()) {
+            if interpretation.sample_set().len() > 1 {
+                round_trip_models(interpretation.sample_set(), &label);
+                multi_model += 1;
             }
         }
     }
     eprintln!(
-        "{written} entries round-tripped, {ensembles} as ensembles; unrepresentable: {unrepresentable:#?}"
+        "{written} entries round-tripped, {multi_model} with every model; unrepresentable: {unrepresentable:#?}"
     );
     assert!(written >= 15, "only {written} entries round-tripped");
     // mmCIF and PDB readings agree on metal coordination, so every curated

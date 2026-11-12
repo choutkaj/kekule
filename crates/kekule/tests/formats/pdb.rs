@@ -936,7 +936,7 @@ fn dative_bonds_between_residues_write_as_coordination() {
 }
 
 #[test]
-fn coordinate_models_become_ensemble_members() {
+fn coordinate_models_become_samples() {
     let text = entry(
         &[
             vec!["MODEL        1".to_owned()],
@@ -968,9 +968,10 @@ fn coordinate_models_become_ensemble_members() {
     assert_eq!(second.topology().atom_count(), 3);
     assert_eq!(second.topology().bond_count(), 2);
 
-    let ensemble = document.interpret_ensemble(Default::default()).unwrap();
-    assert_eq!(ensemble.ensemble().len(), 2);
-    let models = ensemble
+    let set = document.interpret_sample_set(Default::default()).unwrap();
+    assert_eq!(set.sample_set().len(), 2);
+    assert_eq!(crate::native_fingerprint(&set), 0x1cd5_e03e_d0b4_e079);
+    let models = set
         .reports()
         .iter()
         .map(|report| report.selected_model())
@@ -1188,11 +1189,12 @@ fn a_ter_record_ends_the_residue_it_follows() {
         ]
         .concat(),
     );
-    let ensemble = (pdb::parse_str(&models, Default::default()).unwrap())
-        .interpret_ensemble(Default::default())
+    let set = (pdb::parse_str(&models, Default::default()).unwrap())
+        .interpret_sample_set(Default::default())
         .unwrap();
-    assert_eq!(ensemble.ensemble().len(), 2);
-    let occurrences = ensemble
+    assert_eq!(set.sample_set().len(), 2);
+    assert_eq!(crate::native_fingerprint(&set), 0xd3e5_ee11_62ce_d370);
+    let occurrences = set
         .reports()
         .iter()
         .map(|report| {
@@ -2058,7 +2060,7 @@ fn read_model(text: &str) -> kekule::structure::Model {
 fn separately_read_models_become_samples_with_their_own_state() {
     use kekule::geometry::{PeriodicCell, Point3, Vector3};
     use kekule::properties::{PropertyKey, PropertyValue};
-    use kekule::structure::{Ensemble, EnsembleError, EnsemblePartition};
+    use kekule::structure::{Distribution, Members, Partition, SampleSet, SampleSetError};
     use kekule::topology::{TopologyAtomIndex, TopologyBondIndex};
     use kekule::units::{Quantity, ANGSTROM, SQUARE_NANOMETER};
 
@@ -2101,24 +2103,30 @@ fn separately_read_models_become_samples_with_their_own_state() {
         .unwrap();
     let expected = [first.clone(), second.clone()];
 
-    let ensemble = Ensemble::from_models([first, second], EnsemblePartition::one_state(2)).unwrap();
-    assert!(std::sync::Arc::ptr_eq(
-        &ensemble.shared_topology(),
-        &topology
-    ));
-    assert_eq!(ensemble.state_count(), 1);
-    for (sample, model) in ensemble.iter().zip(&expected) {
-        assert_eq!(sample.weight(), 1.0);
+    let one_state = |set: SampleSet, partition| {
+        let mut set = set;
+        set.set_distribution(Some(Distribution::new(Members::All, partition).unwrap()))
+            .unwrap();
+        set
+    };
+    let set = one_state(
+        SampleSet::from_models([first, second]).unwrap(),
+        Partition::one_state(2),
+    );
+    assert!(std::sync::Arc::ptr_eq(&set.shared_topology(), &topology));
+    assert_eq!(set.distribution().unwrap().state_count(), 1);
+    for (sample, model) in set.iter().zip(&expected) {
+        assert_eq!(sample.weight(), Some(1.0));
         assert_eq!(sample.positions(), model.positions());
         assert_eq!(sample.cell(), model.cell());
         assert_eq!(sample.occupancies(), model.occupancies());
         assert_eq!(sample.b_factors(), model.b_factors());
         assert_eq!(sample.properties(), model.properties());
     }
-    let second = ensemble.get(1).unwrap();
+    let second = set.get(1).unwrap();
     assert_eq!(second.cell(), Some(&cell));
     assert_eq!(second.occupancy(atom), Some(0.25));
-    assert_ne!(second.occupancies(), ensemble.get(0).unwrap().occupancies());
+    assert_ne!(second.occupancies(), set.get(0).unwrap().occupancies());
     assert_eq!(
         second.properties().bonds().value(&note, bond).unwrap(),
         Some(PropertyValue::Int(3))
@@ -2129,20 +2137,15 @@ fn separately_read_models_become_samples_with_their_own_state() {
     assert_eq!(projected.atom_at(atom).unwrap().occupancy(), Some(0.25));
 
     // The partition the caller passes is kept.
-    let conformers = Ensemble::from_models(
-        [read_model(CRAMBIN), read_model(CRAMBIN)],
-        EnsemblePartition::state_per_sample(2),
-    )
-    .unwrap();
-    assert_eq!(conformers.state_count(), 2);
+    let conformers = one_state(
+        SampleSet::from_models([read_model(CRAMBIN), read_model(CRAMBIN)]).unwrap(),
+        Partition::state_per_sample(2),
+    );
+    assert_eq!(conformers.distribution().unwrap().state_count(), 2);
 
     // A different topology is refused.
     assert_eq!(
-        Ensemble::from_models(
-            [read_model(CRAMBIN), read_model(ADENYLATE_KINASE)],
-            EnsemblePartition::one_state(2),
-        )
-        .unwrap_err(),
-        EnsembleError::TopologyMismatch
+        SampleSet::from_models([read_model(CRAMBIN), read_model(ADENYLATE_KINASE)]).unwrap_err(),
+        SampleSetError::TopologyMismatch
     );
 }

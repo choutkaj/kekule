@@ -1,23 +1,27 @@
-use crate::traj::TrajectoryIoErrorKind;
 use std::sync::Arc;
 
 use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::properties::{OwnerProperties, StructureProperties};
+use crate::properties::{OwnerProperties, StructureProperties, StructurePropertiesMut};
+use crate::structure::scalars::AtomScalars;
 use crate::structure::{
-    Forces, ModelView, Positions, StructureError, Trajectory, TrajectoryFrame, TrajectoryFrameMut,
-    TrajectoryFrameView, Velocities,
+    DenseArrayError, Forces, ModelView, Place, Positions, Sample, SampleMut, StructureError,
+    Velocities,
 };
 use crate::topology::Topology;
+use crate::traj::TrajectoryIoErrorKind;
 use crate::units::Quantity;
 
-use super::TrajectoryIoError;
+use super::frame::canonical_time;
+use super::{FrameView, TrajectoryIoError};
 
 /// Complete borrowed frame state ready for transactional publication.
 ///
 /// A decoder builds this value only after it has read one complete frame into
 /// reusable scratch. [`FrameBuffer::replace_from_data`] validates every field
 /// before changing the destination, converts units once, reuses dense-array
-/// allocations, and clears optional fields omitted from this value.
+/// allocations, and clears optional fields omitted from this value. Only
+/// [`Self::from_frame_view`] carries occupancies and B-factors, so a decoded
+/// frame has none.
 #[derive(Debug, Clone, Copy)]
 pub struct FrameData<'a> {
     positions: Quantity<&'a [Point3]>,
@@ -28,6 +32,8 @@ pub struct FrameData<'a> {
     step: Option<u64>,
     owner: Option<&'a OwnerProperties>,
     annotations: Option<&'a StructureProperties>,
+    /// Occupancies and B-factors, shared rather than copied.
+    sites: Option<(&'a AtomScalars, &'a AtomScalars)>,
 }
 
 impl<'a> FrameData<'a> {
@@ -42,22 +48,25 @@ impl<'a> FrameData<'a> {
             step: None,
             owner: None,
             annotations: None,
+            sites: None,
         }
     }
 
-    /// Borrows every field, including all structure properties, from a
-    /// topology-bound frame.
-    pub fn from_frame_view(frame: TrajectoryFrameView<'a>) -> Self {
-        let frame = frame.payload();
+    /// Borrows every field, including occupancies, B-factors, and all
+    /// structure properties, from a topology-bound frame.
+    pub fn from_frame_view(frame: FrameView<'a>) -> Self {
+        let sample = frame.payload();
+        let structure = sample.structure();
         Self {
-            positions: frame.positions().values(),
-            cell: frame.cell().copied(),
-            velocities: frame.velocities().map(Velocities::values),
-            forces: frame.forces().map(Forces::values),
+            positions: sample.positions().values(),
+            cell: sample.cell().copied(),
+            velocities: sample.velocities().map(Velocities::values),
+            forces: sample.forces().map(Forces::values),
             time: frame.time(),
             step: frame.step(),
             owner: None,
-            annotations: Some(frame.properties()),
+            annotations: Some(sample.properties()),
+            sites: Some((&structure.occupancies, &structure.b_factors)),
         }
     }
 
@@ -101,33 +110,42 @@ impl<'a> FrameData<'a> {
     }
 }
 
-/// Reusable caller-owned frame storage bound to one topology snapshot.
+/// Reusable caller-owned frame storage bound to one topology snapshot: one
+/// [`Sample`] with its time and MD step.
 ///
 /// It accepts frames and readers of any snapshot sharing that layout. Frame
 /// state reads through `Deref` (`buffer.positions()`, `buffer.velocities()`,
-/// ...); edit it through [`Self::frame_mut`] or publish a complete frame with
-/// [`Self::replace_from_data`]. Velocity and force allocations are reused
-/// across frames.
+/// ...) and [`Self::time`] and [`Self::step`]; edit it through
+/// [`Self::sample_mut`], [`Self::set_time`], and [`Self::set_step`], or
+/// publish a complete frame with [`Self::replace_from_data`]. Velocity and
+/// force allocations are reused across frames. [`Self::frame_view`] lends
+/// the frame to a [`TrajectoryWriter`](super::TrajectoryWriter).
 ///
-/// To keep a decoded frame, for example in a frame cache, take it out with
-/// [`Self::into_trajectory`] rather than copying it: the one-frame
-/// [`Trajectory`] it returns is bound to the buffer's topology, so its
-/// [`Trajectory::get`] views the frame without validating it again. Storage
-/// that is no longer needed becomes a buffer again with [`Self::from_frame`],
-/// so the next frame decodes into it without allocating.
+/// To keep a decoded frame, for example in a sample set or a frame cache,
+/// take it out with [`Self::into_sample`] rather than copying it: the sample
+/// is bound to the buffer's topology, and its place goes with it into a
+/// time-ordered set ([`SampleSet::push`](crate::structure::SampleSet::push)).
+/// A sample that is no longer needed becomes a buffer again with
+/// [`Self::from_sample`], so the next frame decodes into it without
+/// allocating. A buffer whose sample is shared, such as one cloned out of
+/// it, copies the sample once on the next edit.
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
-    /// Exactly one frame; the collection binds and validates it.
-    storage: Trajectory,
+    topology: Arc<Topology>,
+    /// Bound to `topology`.
+    sample: Sample,
+    /// In the canonical time unit.
+    time: Option<Quantity<f64>>,
+    step: Option<u64>,
     spare_velocities: Option<Velocities>,
     spare_forces: Option<Forces>,
 }
 
 impl std::ops::Deref for FrameBuffer {
-    type Target = TrajectoryFrame;
+    type Target = Sample;
 
     fn deref(&self) -> &Self::Target {
-        self.frame_view().payload()
+        &self.sample
     }
 }
 
@@ -136,61 +154,65 @@ impl FrameBuffer {
     /// the origin and no optional state.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         let topology = topology.into();
-        let frame = TrajectoryFrame::new(Positions::zeros(topology.atom_count()));
-        let storage = Trajectory::from_items(topology, [frame])
-            .expect("zero positions match the topology atom count");
-        Self {
-            storage,
-            spare_velocities: None,
-            spare_forces: None,
-        }
+        let sample = Sample::new(Positions::zeros(topology.atom_count()));
+        Self::from_sample(topology, sample).expect("zero positions match the topology atom count")
     }
 
-    /// A buffer holding `frame`, bound to `topology` without copying it.
+    /// A buffer holding `sample` without copying it, bound to `topology`,
+    /// without a time or step.
     ///
-    /// The frame is validated and its bond property rows bound once, as
-    /// [`Trajectory::push`] does; it is the buffered frame until the next
-    /// read replaces it, reusing its allocations.
+    /// The sample is validated and its bond property rows bound once, as
+    /// [`SampleSet::push`](crate::structure::SampleSet::push) does; it is
+    /// the buffered frame until the next read replaces it, reusing its
+    /// allocations.
     ///
     /// # Errors
     ///
-    /// Returns [`TrajectoryIoErrorKind::InvalidStructure`] when the frame's
-    /// atom count or bond property rows do not match `topology`.
-    pub fn from_frame(
+    /// Returns [`TrajectoryIoErrorKind::InvalidStructure`] when the sample's
+    /// atom count or property rows do not match `topology`.
+    pub fn from_sample(
         topology: impl Into<Arc<Topology>>,
-        frame: TrajectoryFrame,
+        mut sample: Sample,
     ) -> Result<Self, TrajectoryIoError> {
+        let topology = topology.into();
+        sample.bind(&topology)?;
         Ok(Self {
-            storage: Trajectory::from_items(topology, [frame])?,
+            topology,
+            sample,
+            time: None,
+            step: None,
             spare_velocities: None,
             spare_forces: None,
         })
     }
 
-    /// The buffered frame, without copying it, as a one-frame [`Trajectory`]
-    /// bound to the buffer's topology.
+    /// The buffered frame, without copying it: its sample, bound to the
+    /// buffer's topology, and its place on a time order.
     ///
-    /// The trajectory shares the buffer's topology handle; its frame keeps
-    /// every field of the buffered frame. Spare velocity and force
-    /// allocations are dropped; clear velocities or forces first to drop
-    /// those of the frame as well.
-    pub fn into_trajectory(self) -> Trajectory {
-        self.storage
+    /// The sample keeps every field of the buffered frame. Spare velocity
+    /// and force allocations are dropped; clear velocities or forces first
+    /// to drop those of the frame as well.
+    pub fn into_sample(self) -> (Sample, Place) {
+        let place = Place::Time {
+            time: self.time,
+            step: self.step,
+        };
+        (self.sample, place)
     }
 
     /// The topology snapshot the buffer is bound to.
     pub fn topology(&self) -> &Topology {
-        self.storage.topology()
+        &self.topology
     }
 
     /// A shared handle to [`Self::topology`].
     pub fn shared_topology(&self) -> Arc<Topology> {
-        self.storage.shared_topology()
+        Arc::clone(&self.topology)
     }
 
     /// The buffered frame bound to its topology.
-    pub fn frame_view(&self) -> TrajectoryFrameView<'_> {
-        self.storage.get(0).expect("frame buffer holds one frame")
+    pub fn frame_view(&self) -> FrameView<'_> {
+        FrameView::bound(&self.topology, &self.sample, self.time, self.step)
     }
 
     /// The buffered frame as a [`ModelView`], so model analyses apply to it.
@@ -198,11 +220,35 @@ impl FrameBuffer {
         self.frame_view().as_model_view()
     }
 
-    /// Dimension-preserving editor for the buffered frame.
-    pub fn frame_mut(&mut self) -> TrajectoryFrameMut<'_> {
-        self.storage
-            .get_mut(0)
-            .expect("frame buffer holds one frame")
+    /// The simulation time in the canonical time unit, when known.
+    pub const fn time(&self) -> Option<Quantity<f64>> {
+        self.time
+    }
+
+    /// The MD step, when known.
+    pub const fn step(&self) -> Option<u64> {
+        self.step
+    }
+
+    /// Dimension-preserving editor for the buffered sample.
+    pub fn sample_mut(&mut self) -> SampleMut<'_> {
+        SampleMut::new(&mut self.sample)
+    }
+
+    /// Sets or clears a finite time, converted to the canonical time unit.
+    ///
+    /// # Errors
+    ///
+    /// [`StructureError::NonFiniteTime`] or [`StructureError::Unit`] for an
+    /// invalid time; the buffer is then unchanged.
+    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), StructureError> {
+        self.time = canonical_time(time)?;
+        Ok(())
+    }
+
+    /// Sets or clears the MD step.
+    pub fn set_step(&mut self, step: Option<u64>) {
+        self.step = step;
     }
 
     /// Copies velocities into reusable storage, or clears them with `None`.
@@ -253,22 +299,25 @@ impl FrameBuffer {
     }
 
     /// Clears all per-frame state except positions, keeping allocations and
-    /// the bound topology.
+    /// the bound topology: velocities, forces, time, step, cell, occupancies,
+    /// B-factors, and properties.
     pub fn reset_dynamic_state(&mut self) {
         self.publish_velocities(None);
         self.publish_forces(None);
-        let mut frame = self.frame_mut();
-        frame.set_step(None);
-        frame.set_time(None).expect("clearing time is always valid");
-        frame.set_cell(None);
-        frame.properties_mut().clear();
+        self.step = None;
+        self.time = None;
+        let structure = self.sample.structure_in_place();
+        structure.cell = None;
+        structure.occupancies = AtomScalars::default();
+        structure.b_factors = AtomScalars::default();
+        StructurePropertiesMut::new(&mut structure.properties).clear();
     }
 
     /// Replaces the complete visible frame transactionally.
     ///
     /// All count, unit, finite-value, and annotation validation completes
     /// before any field changes. Optional fields absent from `data`, including
-    /// annotations, are cleared.
+    /// annotations, occupancies, and B-factors, are cleared.
     ///
     /// # Errors
     ///
@@ -280,15 +329,13 @@ impl FrameBuffer {
     /// invalid time. On error the buffer is unchanged.
     pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), StructureError> {
         self.positions().validate_all(&data.positions)?;
-        let time = validated_time(data.time)?;
+        let time = canonical_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
-                return Err(StructureError::Array(
-                    crate::structure::DenseArrayError::CountMismatch {
-                        expected: self.atom_count(),
-                        actual: source.atoms().len(),
-                    },
-                ));
+                return Err(StructureError::Array(DenseArrayError::CountMismatch {
+                    expected: self.atom_count(),
+                    actual: source.atoms().len(),
+                }));
             }
             if source.bonds().len() != self.properties().bonds().len() {
                 return Err(StructureError::BondCountMismatch {
@@ -316,19 +363,28 @@ impl FrameBuffer {
         // Every check passed; publication cannot fail from here on.
         self.publish_velocities(velocities);
         self.publish_forces(forces);
-        let mut frame = self.frame_mut();
-        frame.set_step(data.step);
-        frame.set_time(time).expect("time was validated");
-        frame
-            .set_positions(data.positions)
+        self.step = data.step;
+        self.time = time;
+        let structure = self.sample.structure_in_place();
+        structure
+            .positions
+            .set_all(data.positions)
             .expect("positions were validated");
-        frame.set_cell(data.cell);
-        match data.annotations {
-            Some(source) => frame
-                .set_properties(source.clone())
-                .expect("annotation dimensions were validated"),
+        structure.cell = data.cell;
+        match data.sites {
+            Some((occupancies, b_factors)) => {
+                structure.occupancies.clone_from(occupancies);
+                structure.b_factors.clone_from(b_factors);
+            }
             None => {
-                let mut properties = frame.properties_mut();
+                structure.occupancies = AtomScalars::default();
+                structure.b_factors = AtomScalars::default();
+            }
+        }
+        match data.annotations {
+            Some(source) => structure.properties.clone_from(source),
+            None => {
+                let mut properties = StructurePropertiesMut::new(&mut structure.properties);
                 properties.clear();
                 if let Some(owner) = data.owner {
                     *properties.owner_mut() = owner.clone();
@@ -338,14 +394,15 @@ impl FrameBuffer {
         Ok(())
     }
 
-    /// Copies a complete frame of any snapshot sharing this buffer's layout.
+    /// Copies a complete frame of any snapshot sharing this buffer's layout,
+    /// every field of it: what the frame lacks, the buffer then lacks too.
     ///
     /// # Errors
     ///
     /// Returns [`TrajectoryIoErrorKind::TopologyMismatch`] when the frame's
     /// topology does not share this buffer's layout; the buffer is then
     /// unchanged.
-    pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    pub fn copy_from(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryIoError::new(
                 TrajectoryIoErrorKind::TopologyMismatch,
@@ -392,34 +449,23 @@ impl FrameBuffer {
 
     /// Swaps staged storage in; the previous allocation becomes the spare.
     fn publish_velocities(&mut self, velocities: Option<Velocities>) {
-        let mut frame = self.frame_mut();
-        let previous = frame.take_velocities();
-        if velocities.is_some() {
-            frame
-                .set_velocities(velocities)
-                .expect("staged velocities have one vector per atom");
+        if velocities.is_none() && self.sample.velocities().is_none() {
+            return;
         }
+        let previous =
+            std::mem::replace(&mut self.sample.structure_in_place().velocities, velocities);
         if previous.is_some() {
             self.spare_velocities = previous;
         }
     }
 
     fn publish_forces(&mut self, forces: Option<Forces>) {
-        let mut frame = self.frame_mut();
-        let previous = frame.take_forces();
-        if forces.is_some() {
-            frame
-                .set_forces(forces)
-                .expect("staged forces have one vector per atom");
+        if forces.is_none() && self.sample.forces().is_none() {
+            return;
         }
+        let previous = std::mem::replace(&mut self.sample.structure_in_place().forces, forces);
         if previous.is_some() {
             self.spare_forces = previous;
         }
     }
-}
-
-fn validated_time(time: Option<Quantity<f64>>) -> Result<Option<Quantity<f64>>, StructureError> {
-    let mut probe = TrajectoryFrame::new(Positions::zeros(0));
-    probe.set_time(time)?;
-    Ok(probe.time())
 }

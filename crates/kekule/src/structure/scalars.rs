@@ -8,16 +8,13 @@ use super::state::atom_row;
 use super::StructureError;
 
 /// One optional per-atom scalar column in dense atom order, such as the
-/// occupancies or B-factors of a model or ensemble sample.
+/// occupancies or B-factors of a model or sample.
 ///
 /// The column is allocated on its first recorded value; a column whose values
 /// are all missing equals one that was never recorded. Atom indices are checked
 /// against the owner's atom count `len`.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AtomScalars(Option<Arc<Vec<Option<f64>>>>);
-
-/// The column of an owner that never records one, such as a trajectory frame.
-pub(crate) static ABSENT: AtomScalars = AtomScalars(None);
 
 impl PartialEq for AtomScalars {
     fn eq(&self, other: &Self) -> bool {

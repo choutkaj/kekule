@@ -11,7 +11,7 @@ use std::sync::{Arc, OnceLock};
 use kekule::diagnostics::{Cancellation, UnrepresentablePolicy};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+use kekule::structure::Positions;
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions};
@@ -23,12 +23,12 @@ use kekule::traj::io::{
     TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
-    SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryReader,
+    FrameView, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryReader,
     TrajectoryWriter,
 };
 use kekule::units::{Quantity, DIMENSIONLESS, NANOMETER, PER_NANOMETER, PICOSECOND};
 
-use crate::support::linear_carbon_topology;
+use crate::support::{linear_carbon_topology, time_ordered, Frame};
 
 const FORMATS: [TrajectoryFormat; 4] = [
     TrajectoryFormat::Xtc,
@@ -76,7 +76,7 @@ fn topology() -> Arc<Topology> {
 
 /// Saved frame `index` of a run, at step `index × INTERVAL`, its atoms
 /// displaced by `shift`.
-fn frame_with(index: u64, shift: f64) -> TrajectoryFrame {
+fn frame_with(index: u64, shift: f64) -> Frame {
     let moved = index as f64 + shift;
     let points = (0..12)
         .map(|atom| {
@@ -94,8 +94,7 @@ fn frame_with(index: u64, shift: f64) -> TrajectoryFrame {
     )
     .unwrap();
     let mut frame =
-        TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
-            .with_cell(cell);
+        Frame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap()).with_cell(cell);
     let step = index * INTERVAL;
     frame.set_step(Some(step));
     frame
@@ -104,7 +103,7 @@ fn frame_with(index: u64, shift: f64) -> TrajectoryFrame {
     frame
 }
 
-fn frame(index: u64) -> TrajectoryFrame {
+fn frame(index: u64) -> Frame {
     frame_with(index, 0.0)
 }
 
@@ -128,14 +127,12 @@ fn options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
 }
 
 /// Writes `frames` to `writer`, flushing after each as a live run does.
-fn write_frames(
-    writer: &mut impl TrajectoryWriter,
-    frames: impl IntoIterator<Item = TrajectoryFrame>,
-) {
-    let frames = frames.into_iter().collect::<Vec<_>>();
-    let trajectory = Trajectory::from_items(topology(), frames).unwrap();
-    for frame in &trajectory {
-        writer.write_frame(frame).unwrap();
+fn write_frames(writer: &mut impl TrajectoryWriter, frames: impl IntoIterator<Item = Frame>) {
+    let set = time_ordered(topology(), frames);
+    for frame in &set {
+        writer
+            .write_frame(FrameView::from_sample(frame).unwrap())
+            .unwrap();
         writer.flush().unwrap();
     }
 }
@@ -414,15 +411,13 @@ fn a_reader_following_the_file_sees_the_cut_and_then_the_appended_frames() {
         assert_eq!(reader.refresh().unwrap(), 0, "{format}");
 
         let mut buffer = reader.frame_buffer();
-        let expected = Trajectory::from_items(
-            topology(),
-            (0..6).map(|index| frame_with(index, if index < 2 { 0.0 } else { 0.5 })),
-        )
-        .unwrap();
-        for index in 0..6 {
+        let expected = (0..6)
+            .map(|index| frame_with(index, if index < 2 { 0.0 } else { 0.5 }))
+            .collect::<Vec<_>>();
+        for (index, expected) in expected.iter().enumerate() {
             reader.read_frame(index, &mut buffer).unwrap();
             let read = buffer.frame_view().positions().values().value()[3];
-            let written = expected.get(index).unwrap().positions().values().value()[3];
+            let written = expected.positions().values().value()[3];
             assert!(
                 (read - written).norm() < 2e-3,
                 "{format} frame {index}: {read:?} != {written:?}"

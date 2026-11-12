@@ -22,6 +22,26 @@ pub(super) fn error_detail<T>(
     result.err()?.detail().cloned()
 }
 
+/// The FNV-1a 64 hash of `value`'s `Debug` text.
+///
+/// Topology layout identities are masked: they count the layouts published
+/// so far and so differ between runs.
+pub(crate) fn debug_fingerprint(value: &impl std::fmt::Debug) -> u64 {
+    let text = format!("{value:?}");
+    let mut masked = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find("LayoutId(") {
+        let end = at + "LayoutId(".len();
+        masked.push_str(&rest[..end]);
+        masked.push('_');
+        rest = rest[end..].trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    masked.push_str(rest);
+    masked.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
 /// The messages of `error` and its sources, joined by `: `.
 pub(super) fn chain_text(error: &(dyn std::error::Error + 'static)) -> String {
     let mut text = error.to_string();

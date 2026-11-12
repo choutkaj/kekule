@@ -92,7 +92,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     support::assert_rejects_unrelated_buffer(&mut reader);
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let pointer = buffer.positions().values().value().as_ptr();
-    buffer.frame_mut().set_cell(Some(
+    buffer.sample_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true; 3],
@@ -106,12 +106,11 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
         )))
         .unwrap();
     buffer
-        .frame_mut()
         .set_time(Some(Quantity::new(1.0, PICOSECOND)))
         .unwrap();
-    buffer.frame_mut().set_step(Some(7));
+    buffer.set_step(Some(7));
     buffer
-        .frame_mut()
+        .sample_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -313,7 +312,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     assert!(reader.read_next(&mut decoded).unwrap());
     assert!(!reader.read_next(&mut decoded).unwrap());
 
-    buffer.frame_mut().set_step(Some(1));
+    buffer.set_step(Some(1));
     let mut strict = XyzWriter::new(
         Vec::new(),
         topology,
@@ -325,9 +324,9 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
         codec_kind(&strict.write_frame(buffer.frame_view()).unwrap_err()),
         Some(TrajectoryIoErrorKind::UnsupportedField)
     );
-    buffer.frame_mut().set_step(None);
+    buffer.set_step(None);
     buffer
-        .frame_mut()
+        .sample_mut()
         .properties_mut()
         .bonds_mut()
         .insert(
@@ -972,7 +971,7 @@ H -0.24 0.927 0
     let (_, report) = write_one_frame(Arc::clone(&topology));
     assert_eq!(report.omissions(), bonds);
 
-    // Path writers and `write_trajectory` return the codec's report; DCD
+    // Path writers and `write_sample_set` return the codec's report; DCD
     // stores coordinates for a separately supplied topology, so it omits
     // nothing.
     for (extension, expected) in [("xyz", &bonds[..]), ("dcd", &[])] {
@@ -981,15 +980,14 @@ H -0.24 0.927 0
             create_trajectory_writer(&path, Arc::clone(&topology), Default::default()).unwrap();
         assert_eq!(writer.report().omissions(), expected);
     }
-    let trajectory = kekule::structure::Trajectory::from_items(
+    let set = support::time_ordered(
         Arc::clone(&topology),
-        [kekule::structure::TrajectoryFrame::new(
+        [support::Frame::new(
             interpretation.model().positions().clone(),
         )],
-    )
-    .unwrap();
+    );
     let path = temporary_path(Some("xyz"));
-    let saved = kekule::traj::io::write_trajectory(&path, &trajectory, Default::default());
+    let saved = kekule::traj::io::write_sample_set(&path, &set, Default::default());
     let _ = std::fs::remove_file(&path);
     assert_eq!(saved.unwrap().omissions(), bonds);
 }

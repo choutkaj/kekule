@@ -633,7 +633,7 @@ impl TrajectoryOpenOptions {
     /// header, fails to open with [`TrajectoryIoErrorKind::Incomplete`].
     ///
     /// Without it, a partial final frame is an error, as for a complete
-    /// file. Sequential readers and [`read_trajectory`](super::read_trajectory)
+    /// file. Sequential readers and [`read_sample_set`](super::read_sample_set)
     /// ignore it.
     ///
     /// [`TrajectoryIoErrorKind::Incomplete`]: crate::traj::TrajectoryIoErrorKind::Incomplete

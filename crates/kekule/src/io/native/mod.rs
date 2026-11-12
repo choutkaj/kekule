@@ -14,13 +14,10 @@ use std::fmt;
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::io::{
-    StructureEnsembleInterpretation, StructureInterpretation, StructureInterpretationReport,
-    StructureSampleSetInterpretation,
+    StructureInterpretation, StructureInterpretationReport, StructureSampleSetInterpretation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{
-    ConversionTarget, Ensemble, Model, SampleSet, SampleSetError, Series, Trajectory,
-};
+use crate::structure::{Model, SampleSet};
 use crate::topology::Topology;
 
 pub(crate) use decode::read_native;
@@ -123,14 +120,9 @@ impl fmt::Display for NativeKind {
 ///
 /// Converts from a borrowed [`Molecule`], [`Topology`], [`Model`],
 /// [`SampleSet`], [`SampleSetDescription`], [`StructureInterpretation`], or
-/// [`StructureSampleSetInterpretation`]. An [`Ensemble`], [`Trajectory`], or
-/// [`Series`] is written as the sample set it converts to
-/// ([`SampleSet::from_ensemble`], [`SampleSet::from_trajectory`],
-/// [`SampleSet::from_series`]) without copying it, and a
-/// [`StructureEnsembleInterpretation`] as an interpreted sample set.
-/// [`Self::interpreted_model`], [`Self::interpreted_sample_set`], and
-/// [`Self::interpreted_ensemble`] pair a model, sample set, or ensemble with
-/// reports held apart from it.
+/// [`StructureSampleSetInterpretation`]. [`Self::interpreted_model`] and
+/// [`Self::interpreted_sample_set`] pair a model or sample set with reports
+/// held apart from it.
 #[derive(Debug, Clone, Copy)]
 pub struct NativeSource<'a> {
     pub(super) content: NativeContent<'a>,
@@ -145,10 +137,6 @@ pub(super) enum NativeContent<'a> {
     SampleSet(&'a SampleSet),
     InterpretedSampleSet(&'a SampleSet, &'a [StructureInterpretationReport]),
     SampleSetDescription(&'a SampleSetDescription),
-    Ensemble(&'a Ensemble),
-    InterpretedEnsemble(&'a Ensemble, &'a [StructureInterpretationReport]),
-    Trajectory(&'a Trajectory),
-    Series(&'a Series),
 }
 
 impl<'a> NativeSource<'a> {
@@ -179,21 +167,6 @@ impl<'a> NativeSource<'a> {
         }
     }
 
-    /// An ensemble with one interpretation report per sample, in sample
-    /// order, as [`StructureEnsembleInterpretation::reports`] gives them,
-    /// written as the interpreted sample set it converts to.
-    ///
-    /// Writing fails with [`DiagnosticKind::Inconsistent`] unless there is
-    /// one report per sample.
-    pub const fn interpreted_ensemble(
-        ensemble: &'a Ensemble,
-        reports: &'a [StructureInterpretationReport],
-    ) -> Self {
-        Self {
-            content: NativeContent::InterpretedEnsemble(ensemble, reports),
-        }
-    }
-
     /// The kind of object this source encodes.
     pub const fn kind(&self) -> NativeKind {
         match self.content {
@@ -201,14 +174,10 @@ impl<'a> NativeSource<'a> {
             NativeContent::Topology(_) => NativeKind::Topology,
             NativeContent::Model(_) => NativeKind::Model,
             NativeContent::InterpretedModel(..) => NativeKind::StructureInterpretation,
-            NativeContent::SampleSet(_)
-            | NativeContent::SampleSetDescription(_)
-            | NativeContent::Ensemble(_)
-            | NativeContent::Trajectory(_)
-            | NativeContent::Series(_) => NativeKind::SampleSet,
-            NativeContent::InterpretedSampleSet(..) | NativeContent::InterpretedEnsemble(..) => {
-                NativeKind::SampleSetInterpretation
+            NativeContent::SampleSet(_) | NativeContent::SampleSetDescription(_) => {
+                NativeKind::SampleSet
             }
+            NativeContent::InterpretedSampleSet(..) => NativeKind::SampleSetInterpretation,
         }
     }
 }
@@ -225,16 +194,7 @@ macro_rules! native_source_from {
     )*};
 }
 
-native_source_from!(
-    Molecule,
-    Topology,
-    Model,
-    SampleSet,
-    SampleSetDescription,
-    Ensemble,
-    Trajectory,
-    Series
-);
+native_source_from!(Molecule, Topology, Model, SampleSet, SampleSetDescription);
 
 impl<'a> From<&'a StructureInterpretation> for NativeSource<'a> {
     fn from(value: &'a StructureInterpretation) -> Self {
@@ -245,12 +205,6 @@ impl<'a> From<&'a StructureInterpretation> for NativeSource<'a> {
 impl<'a> From<&'a StructureSampleSetInterpretation> for NativeSource<'a> {
     fn from(value: &'a StructureSampleSetInterpretation) -> Self {
         Self::interpreted_sample_set(value.sample_set(), value.reports())
-    }
-}
-
-impl<'a> From<&'a StructureEnsembleInterpretation> for NativeSource<'a> {
-    fn from(value: &'a StructureEnsembleInterpretation) -> Self {
-        Self::interpreted_ensemble(value.ensemble(), value.reports())
     }
 }
 
@@ -413,68 +367,6 @@ impl NativeObject {
             other => Err(other.kind_error(NativeKind::SampleSet)),
         }
     }
-
-    /// The decoded sample set as an ensemble, of a sample set or of an
-    /// interpreted sample set, whose reports it drops; see
-    /// [`SampleSet::into_ensemble`].
-    ///
-    /// # Errors
-    ///
-    /// The errors of [`Self::into_sample_set`], and a [`FormatError`] of
-    /// kind [`DiagnosticKind::Inconsistent`] with
-    /// [`FormatErrorDetail::NativeSampleSetShape`] when the set is not an
-    /// ensemble, such as an ordered one; its source says why.
-    pub fn into_ensemble(self) -> Result<Ensemble, FormatError> {
-        self.into_sample_set()?
-            .into_ensemble()
-            .map_err(|error| shape_error(ConversionTarget::Ensemble, error))
-    }
-
-    /// The decoded sample set as an ensemble with one interpretation report
-    /// per sample; see [`SampleSet::into_ensemble`].
-    ///
-    /// # Errors
-    ///
-    /// The errors of [`Self::into_sample_set_interpretation`], and those of
-    /// [`Self::into_ensemble`] for a set that is not an ensemble.
-    pub fn into_ensemble_interpretation(
-        self,
-    ) -> Result<StructureEnsembleInterpretation, FormatError> {
-        let (set, reports) = self.into_sample_set_interpretation()?.into_parts();
-        let ensemble = set
-            .into_ensemble()
-            .map_err(|error| shape_error(ConversionTarget::Ensemble, error))?;
-        Ok(StructureEnsembleInterpretation { ensemble, reports })
-    }
-
-    /// The decoded sample set as a trajectory; see
-    /// [`SampleSet::into_trajectory`].
-    ///
-    /// # Errors
-    ///
-    /// The errors of [`Self::into_sample_set`], and a [`FormatError`] of
-    /// kind [`DiagnosticKind::Inconsistent`] with
-    /// [`FormatErrorDetail::NativeSampleSetShape`] when the set is not a
-    /// trajectory, such as one without a time order.
-    pub fn into_trajectory(self) -> Result<Trajectory, FormatError> {
-        self.into_sample_set()?
-            .into_trajectory()
-            .map_err(|error| shape_error(ConversionTarget::Trajectory, error))
-    }
-
-    /// The decoded sample set as a series; see [`SampleSet::into_series`].
-    ///
-    /// # Errors
-    ///
-    /// The errors of [`Self::into_sample_set`], and a [`FormatError`] of
-    /// kind [`DiagnosticKind::Inconsistent`] with
-    /// [`FormatErrorDetail::NativeSampleSetShape`] when the set is not a
-    /// series, such as one without a step or coordinate order.
-    pub fn into_series(self) -> Result<Series, FormatError> {
-        self.into_sample_set()?
-            .into_series()
-            .map_err(|error| shape_error(ConversionTarget::Series, error))
-    }
 }
 
 fn external_samples(description: &SampleSetDescription) -> FormatError {
@@ -488,16 +380,6 @@ fn external_samples(description: &SampleSetDescription) -> FormatError {
         ),
     )
     .with_detail(FormatErrorDetail::NativeExternalSamples { samples })
-}
-
-fn shape_error(target: ConversionTarget, error: SampleSetError) -> FormatError {
-    FormatError::interpret(
-        Format::Native,
-        DiagnosticKind::Inconsistent,
-        format!("The input's sample set is not {target}."),
-    )
-    .with_detail(FormatErrorDetail::NativeSampleSetShape { target })
-    .with_source(error)
 }
 
 /// Options of the native writer.

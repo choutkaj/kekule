@@ -13,7 +13,7 @@ use crate::diagnostics::{
     FormatError, FormatErrorDetail, SourceLocation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{Ensemble, Model, SampleSet};
+use crate::structure::{Model, SampleSet};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 /// Which coordinate model of a source one interpretation reads.
@@ -1515,8 +1515,8 @@ pub(in crate::io) fn poll_every(
     Cancellation::poll_every(cancellation, step).map_err(cancelled)
 }
 
-/// An ensemble-level failure with typed `detail`.
-pub(in crate::io) fn ensemble_error(
+/// A sample-set-level failure with typed `detail`.
+pub(in crate::io) fn sample_set_error(
     kind: DiagnosticKind,
     message: impl Into<String>,
     detail: FormatErrorDetail,
@@ -1524,11 +1524,11 @@ pub(in crate::io) fn ensemble_error(
     FormatError::interpret(Format::Mmcif, kind, message).with_detail(detail)
 }
 
-/// Converts deposited coordinate models to members, applying `altloc_policy`
-/// within each model. Alternate locations never generate additional members or
-/// statistical weights. A single coordinate model yields a single member.
+/// Converts deposited coordinate models to samples, applying `altloc_policy`
+/// within each model. Alternate locations never generate additional samples or
+/// statistical weights. A single coordinate model yields a single sample.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructureEnsembleInterpretOptions {
+pub struct StructureSampleSetInterpretOptions {
     entity_metadata: EntityMetadataPolicy,
     altloc_policy: AltLocPolicy,
     connectivity: ConnectivityOptions,
@@ -1536,7 +1536,7 @@ pub struct StructureEnsembleInterpretOptions {
     cancellation: Option<Cancellation>,
 }
 
-impl StructureEnsembleInterpretOptions {
+impl StructureSampleSetInterpretOptions {
     /// Whether missing entity types are inferred or rejected.
     pub const fn entity_metadata(&self) -> EntityMetadataPolicy {
         self.entity_metadata
@@ -1591,7 +1591,7 @@ impl StructureEnsembleInterpretOptions {
     /// An interpretation [`FormatError`] with [`FormatErrorDetail::EmptyModelSelection`](crate::diagnostics::FormatErrorDetail::EmptyModelSelection) for `Some` of an empty list.
     pub fn with_model_ids(mut self, model_ids: Option<Vec<String>>) -> Result<Self, FormatError> {
         if model_ids.as_ref().is_some_and(Vec::is_empty) {
-            return Err(super::ensemble::empty_model_selection());
+            return Err(super::sample_set::empty_model_selection());
         }
         self.model_ids = model_ids;
         Ok(self)
@@ -1600,9 +1600,9 @@ impl StructureEnsembleInterpretOptions {
     /// The cancellation interpretation polls, if any; `None` by default.
     ///
     /// Interpretation polls it between its stages and periodically inside
-    /// them, for every member, and once it is requested fails with a
+    /// them, for every sample, and once it is requested fails with a
     /// [`FormatError`] of kind [`DiagnosticKind::Cancelled`] instead of
-    /// returning a partial ensemble. It does not change what a completed
+    /// returning a partial sample set. It does not change what a completed
     /// interpretation returns.
     pub fn cancellation(&self) -> Option<&Cancellation> {
         self.cancellation.as_ref()
@@ -1616,7 +1616,7 @@ impl StructureEnsembleInterpretOptions {
     }
 }
 
-impl Default for StructureEnsembleInterpretOptions {
+impl Default for StructureSampleSetInterpretOptions {
     fn default() -> Self {
         Self {
             entity_metadata: EntityMetadataPolicy::InferMissing,
@@ -1625,40 +1625,6 @@ impl Default for StructureEnsembleInterpretOptions {
             model_ids: None,
             cancellation: None,
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-/// One shared-topology ensemble and one report per selected conformation.
-pub struct StructureEnsembleInterpretation {
-    pub(crate) ensemble: Ensemble,
-    pub(crate) reports: Vec<StructureInterpretationReport>,
-}
-
-impl StructureEnsembleInterpretation {
-    /// The interpreted ensemble, one member per selected model or conformation.
-    pub fn ensemble(&self) -> &Ensemble {
-        &self.ensemble
-    }
-
-    /// One report per member, in member order.
-    pub fn reports(&self) -> &[StructureInterpretationReport] {
-        &self.reports
-    }
-
-    /// The topology all members share.
-    pub fn topology(&self) -> &Topology {
-        self.ensemble.topology()
-    }
-
-    /// The interpreted ensemble, discarding the reports.
-    pub fn into_ensemble(self) -> Ensemble {
-        self.ensemble
-    }
-
-    /// The ensemble and its per-member reports.
-    pub fn into_parts(self) -> (Ensemble, Vec<StructureInterpretationReport>) {
-        (self.ensemble, self.reports)
     }
 }
 
@@ -1695,29 +1661,6 @@ impl StructureSampleSetInterpretation {
     pub fn into_parts(self) -> (SampleSet, Vec<StructureInterpretationReport>) {
         (self.set, self.reports)
     }
-}
-
-impl StructureSampleSetInterpretation {
-    /// The set of an interpreted ensemble's samples, with its distribution
-    /// of equally weighted members and no stored weights.
-    pub(crate) fn from_ensemble(interpretation: StructureEnsembleInterpretation) -> Self {
-        let StructureEnsembleInterpretation { ensemble, reports } = interpretation;
-        Self {
-            set: equally_weighted_set(ensemble),
-            reports,
-        }
-    }
-}
-
-/// The set of an ensemble whose members weigh the same, without stored
-/// weights.
-fn equally_weighted_set(ensemble: Ensemble) -> SampleSet {
-    let mut set = SampleSet::from_ensemble(ensemble);
-    set.distribution_mut()
-        .expect("an ensemble's set has a distribution")
-        .set_weights(None)
-        .expect("clearing weights cannot fail");
-    set
 }
 
 #[cfg(test)]

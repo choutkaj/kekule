@@ -3,7 +3,7 @@
 `MmcifDocument` preserves atom-site rows, labels, occupancies, coordinate-model
 numbers and other source categories. Interpretation selects coordinates without
 changing this document. Alternate-location choices and source lines belong to the
-interpretation report; canonical `Model` and `Ensemble` keep their existing roles.
+interpretation report; canonical `Model` and `SampleSet` keep their existing roles.
 
 ## Representative models
 
@@ -24,7 +24,7 @@ An alternative missing sites present in another alternative of that component is
 excluded and reported. Exact selection of an incomplete alternative fails. Atoms
 are never borrowed from a different label to complete it. Alternative component
 identities at a numbered residue position are mutually exclusive; they can produce
-separate Models but may be incompatible with a shared-topology Ensemble.
+separate Models but may be incompatible with a shared-topology sample set.
 
 Source occupancies are site fractions, not probabilities of whole structures.
 Independent residue choices do not establish global physical compatibility or a
@@ -64,23 +64,23 @@ selection reason and selected/omitted source lines for the selected coordinate
 model. `report.issues()` records ties, missing occupancies, incomplete alternatives
 and omissions. All source rows remain validated, even in unselected models.
 
-## Ensembles
+## Sample sets
 
-`interpret_ensemble` creates one member per deposited coordinate model, applying
+`interpret_sample_set` creates one sample per deposited coordinate model, applying
 the altloc policy within each. A file with one coordinate model produces one
-member, whether or not it has alternate locations. No A/B expansion occurs.
+sample, whether or not it has alternate locations. No A/B expansion occurs.
 
 `interpret_conformations(&[options_a, options_b])` explicitly interprets the
-caller-supplied selections as an unweighted ensemble in that order. It permits
+caller-supplied selections as a sample set of one unweighted state in that order. It permits
 repeated selections and selecting several alternatives of the same source model.
 Each selection must produce the same atom identities, chemistry, connectivity and
 compatible topology layout. Changed chemistry or atom sets produce an error;
 atoms are never padded or discarded to force compatibility. Occupancy is retained
-on selected atoms and never converted into member weights.
+on selected atoms and never converted into weights.
 
 Dense atom and hierarchy order follow the first source occurrence of each site,
 so selecting another alternative does not itself reorder identities. True source
-model ordering differences remain subject to the existing ensemble checks.
+model ordering differences remain subject to the existing sample set checks.
 
 The API contract lives beside [alternate-location types](../crates/kekule/src/io/structure_interpret/altloc.rs)
-and [ensemble interpretation](../crates/kekule/src/io/structure_interpret/ensemble.rs).
+and [sample set interpretation](../crates/kekule/src/io/structure_interpret/sample_set.rs).

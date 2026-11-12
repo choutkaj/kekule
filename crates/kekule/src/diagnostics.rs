@@ -29,10 +29,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-pub use crate::io::{
-    check_multi_model_ensemble, UnrepresentablePolicy, UnrepresentableSampleState, WriteOmission,
-    WriteReport,
-};
+pub use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 
 /// A position in the original input text.
 ///
@@ -760,7 +757,7 @@ pub enum FormatStage {
     /// Reading text into a typed document, without assigning chemical meaning.
     Parse,
     /// Assigning canonical meaning to a parsed document: molecules,
-    /// topologies, models and ensembles.
+    /// topologies, models and sample sets.
     Interpret,
     /// Encoding canonical values as text, including writing to the sink.
     Write,
@@ -852,7 +849,7 @@ pub enum FormatErrorDetail {
     MmcifWrite(crate::io::MmcifWriteIssue),
     /// A failure specific to the PDB writer.
     PdbWrite(crate::io::PdbWriteIssue),
-    /// The written structure is an ensemble sample or a trajectory frame
+    /// The written structure is a sample or a trajectory frame
     /// with this state, which the format cannot carry, and the writer's
     /// policy for it is [`UnrepresentablePolicy::Fail`].
     UnrepresentableState(StructureField),
@@ -892,29 +889,20 @@ pub enum FormatErrorDetail {
         /// The number of samples the record describes.
         samples: usize,
     },
-    /// A native sample set does not convert to the collection a projection
-    /// requested, such as an ordered set to an ensemble; the kind is
-    /// [`DiagnosticKind::Inconsistent`], and the source is the
-    /// [`SampleSetError`](crate::structure::SampleSetError).
-    NativeSampleSetShape {
-        /// The collection the projection requires.
-        target: crate::structure::ConversionTarget,
-    },
 }
 
-/// Ensemble sample, trajectory frame, or series item state named by
+/// Sample or trajectory frame state named by
 /// [`FormatErrorDetail::UnrepresentableState`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StructureField {
-    /// An ensemble sample's relative weight.
+    /// A sample's relative weight in its set's distribution.
     Weight,
-    /// The energy of an ensemble sample's state.
+    /// The energy of a sample's state.
     Energy,
-    /// The state an ensemble sample belongs to: the grouping of samples
-    /// into states.
+    /// The state a sample belongs to: the grouping of samples into states.
     State,
-    /// The temperature an ensemble's populations describe.
+    /// The temperature a distribution's populations describe.
     Temperature,
     /// The properties of a sample set's state.
     StateProperties,
@@ -923,24 +911,24 @@ pub enum StructureField {
     Representative,
     /// A sample set's time order without times or steps.
     Order,
-    /// A trajectory frame's time.
+    /// A sample's or frame's time in a time order.
     Time,
-    /// A trajectory frame's step.
+    /// A sample's or frame's MD step in a time order.
     Step,
-    /// A trajectory frame's velocities.
+    /// A sample's or frame's velocities.
     Velocities,
-    /// A trajectory frame's forces.
+    /// A sample's or frame's forces.
     Forces,
-    /// A trajectory frame's or series item's per-atom properties.
+    /// A sample's or frame's per-atom properties.
     AtomProperties,
-    /// A trajectory frame's or series item's per-bond properties.
+    /// A sample's or frame's per-bond properties.
     BondProperties,
-    /// A trajectory frame's or series item's own properties.
+    /// A sample's or frame's own properties.
     Properties,
-    /// A series item's step on its series' axis.
-    ItemStep,
-    /// A series item's coordinate on its series' axis.
-    ItemCoordinate,
+    /// A sample's step in a step order.
+    OrderStep,
+    /// A sample's coordinate in a coordinate order.
+    OrderCoordinate,
     /// A sample set's sample that is outside its distribution, which a file
     /// whose every structure is a member cannot tell apart.
     Membership,
@@ -949,22 +937,22 @@ pub enum StructureField {
 impl fmt::Display for StructureField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Weight => "ensemble sample weight",
-            Self::Energy => "ensemble state energy",
-            Self::State => "ensemble state",
-            Self::Temperature => "ensemble temperature",
-            Self::StateProperties => "ensemble state properties",
+            Self::Weight => "weight",
+            Self::Energy => "state energy",
+            Self::State => "state",
+            Self::Temperature => "temperature",
+            Self::StateProperties => "state properties",
             Self::Representative => "state representative",
             Self::Order => "sample order",
-            Self::Time => "trajectory frame time",
-            Self::Step => "trajectory frame step",
-            Self::Velocities => "trajectory frame velocities",
-            Self::Forces => "trajectory frame forces",
+            Self::Time => "time",
+            Self::Step => "MD step",
+            Self::Velocities => "velocities",
+            Self::Forces => "forces",
             Self::AtomProperties => "per-atom structure properties",
             Self::BondProperties => "per-bond structure properties",
             Self::Properties => "structure properties",
-            Self::ItemStep => "series item step",
-            Self::ItemCoordinate => "series item coordinate",
+            Self::OrderStep => "order step",
+            Self::OrderCoordinate => "order coordinate",
             Self::Membership => "distribution membership",
         })
     }

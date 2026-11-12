@@ -28,7 +28,7 @@ use super::{DenseArrayError, Positions, SampleContext, StructureError};
 /// topology's dense atom order: a position for every atom, an optional
 /// [`PeriodicCell`], optional crystallographic occupancies and B-factors, and
 /// structure properties. The topology stays coordinate-free and may be
-/// shared with other models, ensemble samples, trajectory frames, selections,
+/// shared with other models, samples, trajectory frames, selections,
 /// and prepared potentials.
 ///
 /// Read and change structure state through the model's own
@@ -175,7 +175,7 @@ impl Model {
     }
 
     /// Applies a rigid transform to the whole model transactionally:
-    /// positions move and the cell rotates, as for ensemble samples and
+    /// positions move and the cell rotates, as for samples and
     /// trajectory frames. Use [`Self::transform_atoms`] to move a selection
     /// while keeping the cell.
     ///
@@ -390,7 +390,7 @@ pub(crate) mod sealed {
 }
 
 /// Anything that can be borrowed as a [`ModelView`] without copying: models,
-/// views, ensemble samples, trajectory frames, and series items.
+/// views, samples, and trajectory frames.
 ///
 /// Each implementor also has an inherent `as_model_view` method, so the trait
 /// only needs importing for generic code. This trait is sealed; other
@@ -433,21 +433,19 @@ impl<'a> From<&'a Model> for ModelView<'a> {
 pub enum StructureKind<'a> {
     /// A [`Model`], or a view materialized as one.
     Model,
-    /// A sample of a [`SampleSet`](super::SampleSet), an ensemble sample, a
-    /// trajectory frame or frame buffer, or a series item, with its
-    /// [`SampleContext`].
+    /// A sample of a [`SampleSet`](super::SampleSet), a trajectory frame, or
+    /// a frame buffer, with its [`SampleContext`].
     Sample(SampleContext<'a>),
 }
 
 /// A borrowed topology plus the structure state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
-/// Models, samples, ensemble samples, trajectory frames, series items, and
-/// frame buffers all borrow as a view, and [`Self::kind`] says whether it is
-/// a model or a sample.
+/// Models, samples, trajectory frames, and frame buffers all borrow as a
+/// view, and [`Self::kind`] says whether it is a model or a sample.
 /// Accessors return borrows with the view's full lifetime. A view of a
-/// trajectory frame or series item has no occupancies or B-factors. Views
-/// preserve exact topology identity.
+/// trajectory frame has no occupancies or B-factors. Views preserve exact
+/// topology identity.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,

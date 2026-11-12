@@ -6,5 +6,5 @@ mod trr;
 mod writers;
 mod xtc;
 mod xyz;
-mod xyz_ensembles;
-mod xyz_series;
+mod xyz_distribution_sets;
+mod xyz_ordered_sets;

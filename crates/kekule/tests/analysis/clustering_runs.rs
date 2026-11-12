@@ -11,7 +11,7 @@ use kekule::clustering::{ClusteringError, ClusteringProgress, ClusteringRun};
 use kekule::diagnostics::Cancellation;
 use kekule::geometry::Point3;
 use kekule::parallel::{Executor, ScopedThreads};
-use kekule::structure::{Ensemble, EnsemblePartition, EnsembleSample, Positions};
+use kekule::structure::{Distribution, Members, Partition, Positions, Sample, SampleSet};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
@@ -38,19 +38,30 @@ fn topology(atoms: usize) -> Arc<Topology> {
     kekule::smiles::to_topology(&"C".repeat(atoms)).unwrap()
 }
 
-fn sample(points: Vec<Point3>, weight: f64) -> EnsembleSample {
-    EnsembleSample::new(
-        Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
-        weight,
-    )
-    .unwrap()
+/// A sample at `points` and its weight.
+fn sample(points: Vec<Point3>, weight: f64) -> (Sample, f64) {
+    let sample = Sample::new(Positions::new(Quantity::new(points, ANGSTROM)).unwrap());
+    (sample, weight)
+}
+
+/// Weighted samples, each its own state.
+fn conformers(topology: Arc<Topology>, members: Vec<(Sample, f64)>) -> SampleSet {
+    let (samples, weights): (Vec<_>, Vec<_>) = members.into_iter().unzip();
+    let partition = Partition::state_per_sample(samples.len());
+    let distribution = Distribution::new(Members::All, partition)
+        .unwrap()
+        .with_weights(weights)
+        .unwrap();
+    let mut set = SampleSet::from_samples(topology, samples).unwrap();
+    set.set_distribution(Some(distribution)).unwrap();
+    set
 }
 
 /// `distinct` random structures, then `copies` of them perturbed by a
 /// hundredth of an angstrom, interleaved, with distinct weights. With
 /// `collinear`, those members lie on a line instead, so no fit to them
 /// succeeds.
-fn ensemble(distinct: usize, copies: usize, collinear: &[usize]) -> Ensemble {
+fn ensemble(distinct: usize, copies: usize, collinear: &[usize]) -> SampleSet {
     let topology = topology(ATOMS);
     let mut random = Lcg(7);
     let bases = (0..distinct)
@@ -91,14 +102,13 @@ fn ensemble(distinct: usize, copies: usize, collinear: &[usize]) -> Ensemble {
         next_base += usize::from(!copy);
         samples.push(sample(points, 1.0 + random.next()));
     }
-    let partition = EnsemblePartition::state_per_sample(samples.len());
-    Ensemble::from_samples(topology, samples, partition).unwrap()
+    conformers(topology, samples)
 }
 
 /// `members` copies of `bases` random structures of `atoms` atoms, each
 /// displaced by up to its own amplitude of zero to two angstroms, with
 /// distinct weights.
-fn jittered(atoms: usize, bases: usize, members: usize) -> Ensemble {
+fn jittered(atoms: usize, bases: usize, members: usize) -> SampleSet {
     let mut random = Lcg(3);
     let bases = (0..bases)
         .map(|_| {
@@ -129,23 +139,18 @@ fn jittered(atoms: usize, bases: usize, members: usize) -> Ensemble {
             sample(points, 1.0 + random.next())
         })
         .collect::<Vec<_>>();
-    let partition = EnsemblePartition::state_per_sample(samples.len());
-    Ensemble::from_samples(topology(atoms), samples, partition).unwrap()
+    conformers(topology(atoms), samples)
 }
 
 /// Leader clustering as documented, one fit at a time: members by
 /// descending weight join the nearest earlier representative within
 /// `radius`, the first on ties, or found a cluster.
-fn naive_leaders(
-    ensemble: &Ensemble,
-    atoms: &AtomSelection,
-    radius: Quantity<f64>,
-) -> EnsemblePartition {
+fn naive_leaders(ensemble: &SampleSet, atoms: &AtomSelection, radius: Quantity<f64>) -> Partition {
     let radius = radius.value_in(CANONICAL_LENGTH_UNIT).unwrap();
     let view = |member: usize| ensemble.get(member).unwrap().as_model_view();
     let mut assignments = vec![0; ensemble.len()];
     let mut representatives: Vec<usize> = Vec::new();
-    for member in ensemble.ranked_by_weight() {
+    for member in ensemble.distribution().unwrap().ranked_by_weight() {
         let mut nearest: Option<(usize, f64)> = None;
         for (cluster, representative) in representatives.iter().enumerate() {
             let rmsd = alignment::fit(
@@ -170,7 +175,7 @@ fn naive_leaders(
             }
         };
     }
-    EnsemblePartition::new(assignments, representatives).unwrap()
+    Partition::new(assignments, representatives).unwrap()
 }
 
 /// [`ScopedThreads`] that records the most work items one call ran.
@@ -412,7 +417,7 @@ fn cancelled_runs_return_no_result() {
         run
     )));
     assert!(cancelled(
-        Ensemble::new(ensemble.shared_topology()).pairwise_fitted_rmsd_with(
+        SampleSet::new(ensemble.shared_topology()).pairwise_fitted_rmsd_with(
             &atoms,
             Default::default(),
             run
@@ -486,7 +491,7 @@ fn an_executor_that_skips_work_items_panics() {
 
 /// 1,000 samples of the first 352 alpha carbons of RCSB 1AKE, each atom
 /// displaced by up to a sample's own amplitude of 0.2 to 1.5 angstroms.
-fn adenylate_kinase_samples() -> (Ensemble, AtomSelection) {
+fn adenylate_kinase_samples() -> (SampleSet, AtomSelection) {
     let model = kekule::mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
         Default::default(),
@@ -507,7 +512,7 @@ fn adenylate_kinase_samples() -> (Ensemble, AtomSelection) {
     let unit = model.positions().values().unit();
     let angstrom = Quantity::new(1.0, ANGSTROM).value_in(unit).unwrap();
     let mut random = Lcg(11);
-    let mut ensemble = Ensemble::new(topology);
+    let mut samples = Vec::new();
     for _ in 0..1000 {
         let amplitude = angstrom * (0.2 + 1.3 * random.next());
         let mut jiggle = || amplitude * (2.0 * random.next() - 1.0);
@@ -516,14 +521,9 @@ fn adenylate_kinase_samples() -> (Ensemble, AtomSelection) {
             .map(|point| Point3::new(point.x + jiggle(), point.y + jiggle(), point.z + jiggle()))
             .collect::<Vec<_>>();
         let positions = Positions::new(Quantity::new(moved, unit)).unwrap();
-        ensemble
-            .push_state(
-                EnsembleSample::new(positions, 1.0).unwrap(),
-                Default::default(),
-            )
-            .unwrap();
+        samples.push((Sample::new(positions), 1.0));
     }
-    (ensemble, atoms)
+    (conformers(topology, samples), atoms)
 }
 
 #[test]

@@ -13,11 +13,11 @@ use crate::diagnostics::{
 use crate::geometry::Point3;
 
 use super::structure_interpret::{
-    interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
+    interpret_pdb, interpret_pdb_conformations, interpret_pdb_sample_set, pdb_alternate_locations,
 };
 use super::{
-    AltLocResidue, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
-    StructureInterpretOptions, StructureInterpretation, StructureSampleSetInterpretation,
+    AltLocResidue, StructureInterpretOptions, StructureInterpretation,
+    StructureSampleSetInterpretOptions, StructureSampleSetInterpretation,
 };
 
 /// Syntax and resource limits for parsing a PDB entry.
@@ -607,39 +607,26 @@ impl PdbDocument {
     }
 
     /// Interprets the coordinate models that `options` selects, by default
-    /// all of them, as an ensemble of equally weighted members (weight `1.0`);
-    /// occupancy is not converted into a weight.
+    /// all of them, as an unordered sample set with one report per sample.
+    /// Its distribution covers every sample in one state and stores no
+    /// weights, as the models weigh the same; occupancy is not converted
+    /// into a weight.
     ///
     /// # Errors
     ///
     /// As
-    /// [`MmcifDocument::interpret_ensemble`](super::MmcifDocument::interpret_ensemble),
+    /// [`MmcifDocument::interpret_sample_set`](super::MmcifDocument::interpret_sample_set),
     /// in [`Format::Pdb`].
-    pub fn interpret_ensemble(
-        &self,
-        options: StructureEnsembleInterpretOptions,
-    ) -> Result<StructureEnsembleInterpretation, FormatError> {
-        interpret_pdb_ensemble(self, options).map_err(pdb)
-    }
-
-    /// Interprets the coordinate models that `options` selects, as
-    /// [`Self::interpret_ensemble`] does, as an unordered sample set with
-    /// one report per sample. Its distribution covers every sample in one
-    /// state and stores no weights, as the members weigh the same.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::interpret_ensemble`].
     pub fn interpret_sample_set(
         &self,
-        options: StructureEnsembleInterpretOptions,
+        options: StructureSampleSetInterpretOptions,
     ) -> Result<StructureSampleSetInterpretation, FormatError> {
-        self.interpret_ensemble(options)
-            .map(StructureSampleSetInterpretation::from_ensemble)
+        interpret_pdb_sample_set(self, options).map_err(pdb)
     }
 
     /// Interprets explicit model and alternate-location selections, in the
-    /// supplied order, as an unweighted ensemble. Atom identities, chemistry,
+    /// supplied order, as a sample set, as
+    /// [`Self::interpret_sample_set`] gives one. Atom identities, chemistry,
     /// and topology layout must agree between selections.
     ///
     /// # Errors
@@ -650,7 +637,7 @@ impl PdbDocument {
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
-    ) -> Result<StructureEnsembleInterpretation, FormatError> {
+    ) -> Result<StructureSampleSetInterpretation, FormatError> {
         interpret_pdb_conformations(self, selections).map_err(pdb)
     }
 

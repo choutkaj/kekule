@@ -1,4 +1,6 @@
-use super::{deterministic_text_mutations, error_detail, mmcif_issue, test_positions};
+use super::{
+    debug_fingerprint, deterministic_text_mutations, error_detail, mmcif_issue, test_positions,
+};
 use crate::diagnostics::FormatErrorDetail;
 use crate::geometry::Point3;
 use crate::macromolecular::{
@@ -169,7 +171,7 @@ N N1 TWO B 5.0 0.0 0.0
 O O1 THREE C 10.0 0.0 0.0
 "#;
 
-const REPEATED_RESIDUE_ENSEMBLE: &str = r#"
+const REPEATED_RESIDUE_MODELS: &str = r#"
 data_repeated_residues
 loop_
 _entity.id
@@ -204,7 +206,7 @@ ATOM 5 C CA GLY A X 1 7 100 A . 12.0 0.0 0.0 2
 ATOM 6 C CA GLY A X 1 8 101 . . 14.0 0.0 0.0 2
 "#;
 
-const REPEATED_NONPOLYMER_ENSEMBLE: &str = r#"
+const REPEATED_NONPOLYMER_MODELS: &str = r#"
 data_repeated_nonpolymer
 loop_
 _entity.id
@@ -450,7 +452,7 @@ fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
                     StructureInterpretOptions::default()
                         .with_model_selection(ModelSelection::First),
                 );
-                let _ = document.interpret_ensemble(Default::default());
+                let _ = document.interpret_sample_set(Default::default());
             })
             .expect("mmCIF parser or interpreter smoke mutation panicked");
         }
@@ -522,7 +524,7 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
         .expect_err("metadata block has no model");
     assert!(model_error.message().contains("no _atom_site category"));
     assert_eq!(
-        error_detail(block.interpret_ensemble(Default::default())),
+        error_detail(block.interpret_sample_set(Default::default())),
         Some(FormatErrorDetail::NoCoordinateModels)
     );
 }
@@ -1153,8 +1155,8 @@ fn multiple_coordinate_models_require_explicit_selection() {
 }
 
 #[test]
-fn ensemble_options_reject_an_empty_explicit_model_selection() {
-    let result = macromolecular::StructureEnsembleInterpretOptions::default()
+fn sample_set_options_reject_an_empty_explicit_model_selection() {
+    let result = macromolecular::StructureSampleSetInterpretOptions::default()
         .with_model_ids(Some(Vec::new()));
     assert_eq!(
         result.err().and_then(|error| error.detail().cloned()),
@@ -1172,28 +1174,30 @@ fn document_interpreters_reject_multiple_atom_site_blocks() {
         .message()
         .contains("More than one data block has _atom_site data."));
     assert_eq!(
-        error_detail(document.interpret_ensemble(Default::default())),
+        error_detail(document.interpret_sample_set(Default::default())),
         Some(FormatErrorDetail::MultipleAtomSiteBlocks)
     );
 }
 
 #[test]
-fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
+fn sample_set_block_interpretation_matches_exactly_one_document_helper() {
     let document = parse(MULTI_MODEL);
     let from_document = document
-        .interpret_ensemble(Default::default())
-        .expect("document ensemble interprets");
+        .interpret_sample_set(Default::default())
+        .expect("document sample set interprets");
     let from_block = document.blocks()[0]
-        .interpret_ensemble(Default::default())
-        .expect("block ensemble interprets");
+        .interpret_sample_set(Default::default())
+        .expect("block sample set interprets");
+    assert_eq!(debug_fingerprint(&from_document), 0x8f27_63a5_f370_c651);
+    assert_eq!(debug_fingerprint(&from_block), 0x8f27_63a5_f370_c651);
     let method_default = document.blocks()[0]
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .expect("default block method interprets");
     let method_explicit = document.blocks()[0]
-        .interpret_ensemble(macromolecular::StructureEnsembleInterpretOptions::default())
+        .interpret_sample_set(macromolecular::StructureSampleSetInterpretOptions::default())
         .expect("explicit block method interprets");
     let document_method = document
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .expect("document method delegates to its structural block");
 
     assert_eq!(from_document.reports(), from_block.reports());
@@ -1201,21 +1205,24 @@ fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
     assert_eq!(document_method.reports(), method_default.reports());
     assert!(method_default
         .topology()
-        .same_layout(method_default.ensemble().topology()));
+        .same_layout(method_default.sample_set().topology()));
     assert!(method_default
         .clone()
-        .into_ensemble()
+        .into_sample_set()
         .topology()
         .same_layout(method_default.topology()));
     assert!(from_document
-        .ensemble()
+        .sample_set()
         .topology()
-        .same_layout(from_block.ensemble().topology()));
-    assert_eq!(from_document.ensemble().len(), from_block.ensemble().len());
+        .same_layout(from_block.sample_set().topology()));
+    assert_eq!(
+        from_document.sample_set().len(),
+        from_block.sample_set().len()
+    );
     for (document_member, block_member) in from_document
-        .ensemble()
+        .sample_set()
         .iter()
-        .zip(from_block.ensemble().iter())
+        .zip(from_block.sample_set().iter())
     {
         assert_eq!(document_member.positions(), block_member.positions());
         assert_eq!(document_member.properties(), block_member.properties());
@@ -1225,18 +1232,19 @@ fn ensemble_block_interpretation_matches_exactly_one_document_helper() {
 #[test]
 fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     let interpreted = (parse(MULTI_MODEL))
-        .interpret_ensemble(Default::default())
-        .expect("consistent coordinate models form an ensemble");
-    let ensemble = interpreted.ensemble();
-    assert_eq!(ensemble.len(), 2);
+        .interpret_sample_set(Default::default())
+        .expect("consistent coordinate models form a sample set");
+    assert_eq!(debug_fingerprint(&interpreted), 0x8f27_63a5_f370_c651);
+    let set = interpreted.sample_set();
+    assert_eq!(set.len(), 2);
     assert_eq!(interpreted.reports().len(), 2);
-    let shared_topology = ensemble.shared_topology();
-    assert!(ensemble.iter().all(|member| {
+    let shared_topology = set.shared_topology();
+    assert!(set.iter().all(|member| {
         member.positions().len() == shared_topology.atom_count()
             && member.properties().atoms().len() == shared_topology.atom_count()
             && member.properties().bonds().len() == shared_topology.bond_count()
     }));
-    let first_positions = ensemble
+    let first_positions = set
         .iter()
         .map(|member| member.positions().values().value()[0].x)
         .collect::<Vec<_>>();
@@ -1245,7 +1253,7 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
 
     assert_eq!(interpreted.reports()[0].selected_model(), Some("1"));
     assert_eq!(interpreted.reports()[1].selected_model(), Some("2"));
-    let member_properties = ensemble.iter().collect::<Vec<_>>();
+    let member_properties = set.iter().collect::<Vec<_>>();
     for (member, expected_occupancies, expected_b_factors) in [
         (member_properties[0], [0.4, 0.5], [0.1, 0.11]),
         (member_properties[1], [0.8, 0.9], [0.2, 0.21]),
@@ -1261,18 +1269,22 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
 }
 
 #[test]
-fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity() {
+fn sample_set_preparation_preserves_selected_order_reports_and_shared_connectivity() {
     let input = format!("{MULTI_MODEL}\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nLIG C1 O1 DOUB\n");
     let document = parse(&input);
-    for model_ids in [vec!["2", "1"], vec!["2"]] {
+    for (model_ids, fingerprint) in [
+        (vec!["2", "1"], 0x84d7_9c91_08f3_31c3),
+        (vec!["2"], 0x5fa3_68eb_2b13_7995),
+    ] {
         let interpreted = document
-            .interpret_ensemble(
-                macromolecular::StructureEnsembleInterpretOptions::default()
+            .interpret_sample_set(
+                macromolecular::StructureSampleSetInterpretOptions::default()
                     .with_model_ids(Some(model_ids.iter().map(|id| (*id).to_owned()).collect()))
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(interpreted.ensemble().len(), model_ids.len());
+        assert_eq!(debug_fingerprint(&interpreted), fingerprint);
+        assert_eq!(interpreted.sample_set().len(), model_ids.len());
         assert_eq!(interpreted.topology().bond_count(), 1);
         assert_eq!(
             interpreted
@@ -1289,7 +1301,7 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
             BondOrder::Double
         );
         for ((member, report), model_id) in interpreted
-            .ensemble()
+            .sample_set()
             .iter()
             .zip(interpreted.reports())
             .zip(model_ids)
@@ -1310,18 +1322,18 @@ fn ensemble_preparation_preserves_selected_order_reports_and_shared_connectivity
 }
 
 #[test]
-fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
+fn sample_set_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
     let changed = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 N C1");
     assert_eq!(
-        error_detail(parse(&changed).interpret_ensemble(Default::default())),
+        error_detail(parse(&changed).interpret_sample_set(Default::default())),
         Some(FormatErrorDetail::InconsistentTopology {
             model_id: "2".to_owned()
         })
     );
     let invalid = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 Xx C1");
     let error = (parse(&invalid))
-        .interpret_ensemble(
-            macromolecular::StructureEnsembleInterpretOptions::default()
+        .interpret_sample_set(
+            macromolecular::StructureSampleSetInterpretOptions::default()
                 .with_model_ids(Some(vec!["1".into()]))
                 .unwrap(),
         )
@@ -1339,7 +1351,7 @@ fn ensemble_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
 fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
     let inconsistent = MULTI_MODEL.replace("HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2\n", "");
     assert_eq!(
-        error_detail((parse(&inconsistent)).interpret_ensemble(Default::default())),
+        error_detail((parse(&inconsistent)).interpret_sample_set(Default::default())),
         Some(FormatErrorDetail::InconsistentAtomSet {
             model_id: "2".to_owned()
         })
@@ -1347,13 +1359,14 @@ fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
 }
 
 #[test]
-fn ensemble_identity_distinguishes_repeated_residues_and_insertion_codes() {
-    let interpreted = (parse(REPEATED_RESIDUE_ENSEMBLE))
-        .interpret_ensemble(Default::default())
-        .expect("stable repeated-residue identities form an ensemble");
+fn sample_set_identity_distinguishes_repeated_residues_and_insertion_codes() {
+    let interpreted = (parse(REPEATED_RESIDUE_MODELS))
+        .interpret_sample_set(Default::default())
+        .expect("stable repeated-residue identities form a sample set");
+    assert_eq!(debug_fingerprint(&interpreted), 0xe848_fc76_cff3_8d8d);
 
-    assert_eq!(interpreted.ensemble().len(), 2);
-    assert_eq!(interpreted.ensemble().topology().atom_count(), 3);
+    assert_eq!(interpreted.sample_set().len(), 2);
+    assert_eq!(interpreted.sample_set().topology().atom_count(), 3);
     let atoms = interpreted.reports()[0]
         .instances()
         .iter()
@@ -1371,13 +1384,14 @@ fn ensemble_identity_distinguishes_repeated_residues_and_insertion_codes() {
 }
 
 #[test]
-fn ensemble_identity_preserves_repeated_nonpolymer_occurrences() {
-    let interpreted = (parse(REPEATED_NONPOLYMER_ENSEMBLE))
-        .interpret_ensemble(Default::default())
-        .expect("stable occurrence discriminators form an ensemble");
+fn sample_set_identity_preserves_repeated_nonpolymer_occurrences() {
+    let interpreted = (parse(REPEATED_NONPOLYMER_MODELS))
+        .interpret_sample_set(Default::default())
+        .expect("stable occurrence discriminators form a sample set");
+    assert_eq!(debug_fingerprint(&interpreted), 0x97f8_15c1_df5a_2a60);
 
-    assert_eq!(interpreted.ensemble().len(), 2);
-    assert_eq!(interpreted.ensemble().topology().instance_count(), 2);
+    assert_eq!(interpreted.sample_set().len(), 2);
+    assert_eq!(interpreted.sample_set().topology().instance_count(), 2);
     for report in interpreted.reports() {
         let occurrences = report
             .instances()
@@ -1390,7 +1404,7 @@ fn ensemble_identity_preserves_repeated_nonpolymer_occurrences() {
 }
 
 #[test]
-fn ensemble_identity_classifies_reordered_rows_as_dense_order_mismatch() {
+fn sample_set_identity_classifies_reordered_rows_as_dense_order_mismatch() {
     let reordered = r#"
 data_reordered_instances
 loop_
@@ -1421,7 +1435,7 @@ HETATM 3 C C1 LIG B XB 1 15.0 0.0 0.0 2
 HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
 "#;
     assert_eq!(
-        error_detail((parse(reordered)).interpret_ensemble(Default::default())),
+        error_detail((parse(reordered)).interpret_sample_set(Default::default())),
         Some(FormatErrorDetail::InconsistentDenseAtomOrder {
             model_id: "2".to_owned()
         })
@@ -1429,13 +1443,13 @@ HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
 }
 
 #[test]
-fn ensemble_identity_detects_true_repeated_atom_set_mismatch() {
-    let mismatched = REPEATED_RESIDUE_ENSEMBLE.replace(
+fn sample_set_identity_detects_true_repeated_atom_set_mismatch() {
+    let mismatched = REPEATED_RESIDUE_MODELS.replace(
         "ATOM 6 C CA GLY A X 1 8 101 . . 14.0 0.0 0.0 2",
         "ATOM 6 C CA GLY A X 1 9 101 . . 14.0 0.0 0.0 2",
     );
     assert_eq!(
-        error_detail((parse(&mismatched)).interpret_ensemble(Default::default())),
+        error_detail((parse(&mismatched)).interpret_sample_set(Default::default())),
         Some(FormatErrorDetail::InconsistentAtomSet {
             model_id: "2".to_owned()
         })
@@ -1443,7 +1457,7 @@ fn ensemble_identity_detects_true_repeated_atom_set_mismatch() {
 }
 
 #[test]
-fn ensemble_identity_excludes_selected_alternate_location_but_reports_preserve_it() {
+fn sample_set_identity_excludes_selected_alternate_location_but_reports_preserve_it() {
     let input = r#"
 data_altloc_models
 loop_
@@ -1471,12 +1485,13 @@ ATOM 3 C CA GLY A 1 1 A 0.1 10.0 0.0 0.0 2
 ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
 "#;
     let interpreted = (parse(input))
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .expect("selected altloc is provenance rather than atom identity");
-    let ensemble = interpreted.ensemble();
-    assert_eq!(ensemble.len(), 2);
-    assert_eq!(ensemble.topology().atom_count(), 1);
-    let selected_positions = ensemble
+    assert_eq!(debug_fingerprint(&interpreted), 0x7eac_7cde_ef5e_0950);
+    let set = interpreted.sample_set();
+    assert_eq!(set.len(), 2);
+    assert_eq!(set.topology().atom_count(), 1);
+    let selected_positions = set
         .iter()
         .map(|member| member.positions().values().value()[0].x)
         .collect::<Vec<_>>();
@@ -1487,17 +1502,11 @@ ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
         interpreted.reports()[1].instances()[0].atoms()[0].atom()
     );
     assert_eq!(
-        ensemble
-            .get(0)
-            .unwrap()
-            .occupancy(TopologyAtomIndex::new(0)),
+        set.get(0).unwrap().occupancy(TopologyAtomIndex::new(0)),
         Some(0.8)
     );
     assert_eq!(
-        ensemble
-            .get(1)
-            .unwrap()
-            .occupancy(TopologyAtomIndex::new(0)),
+        set.get(1).unwrap().occupancy(TopologyAtomIndex::new(0)),
         Some(0.9)
     );
     let selected_altlocs = interpreted

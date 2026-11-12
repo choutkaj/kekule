@@ -1,19 +1,18 @@
-//! XYZ writing of ensembles, one frame per sample.
+//! XYZ writing of sample sets with a distribution, one frame per sample.
 
 use std::sync::Arc;
 
 use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use kekule::geometry::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{
-    Distribution, Ensemble, EnsemblePartition, Members, Order, SampleSet, TimeAxis,
-    TrajectoryFrame, Velocities,
-};
+use kekule::structure::{Distribution, Members, Order, Partition, SampleSet, TimeAxis, Velocities};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{
     Quantity, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
+
+use crate::support::{self, Frame, Recorded};
 
 const WATERS: &str = "3
 first
@@ -32,14 +31,22 @@ H 0.957 0.0 0.2
 H -0.24 0.927 0.2
 ";
 
-/// The three-sample, one-state, equally weighted ensemble `kekule::xyz`
-/// interprets from [`WATERS`].
-fn waters() -> Ensemble {
-    kekule::xyz::parse_str(WATERS, Default::default())
+/// The three samples `kekule::xyz` interprets from [`WATERS`] in one state
+/// of equally weighted members.
+fn waters() -> SampleSet {
+    let mut set = kekule::xyz::parse_str(WATERS, Default::default())
         .unwrap()
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap()
-        .into_ensemble()
+        .into_sample_set();
+    set.set_distribution(Some(
+        Distribution::new(Members::All, Partition::one_state(3))
+            .unwrap()
+            .with_weights(vec![1.0; 3])
+            .unwrap(),
+    ))
+    .unwrap();
+    set
 }
 
 /// What any XYZ file of [`waters`] leaves out: the inferred bonds.
@@ -51,43 +58,52 @@ fn options() -> XyzWriteOptions {
         .with_comment("sample")
 }
 
-/// Writes `ensemble` and returns the text and report.
+fn omit() -> XyzWriteOptions {
+    options().with_sample_metadata(UnrepresentablePolicy::Omit)
+}
+
+/// Writes `set` and returns the text and report.
 fn write(
-    ensemble: &Ensemble,
+    set: &SampleSet,
     options: XyzWriteOptions,
 ) -> Result<(String, WriteReport), TrajectoryIoError> {
-    let mut writer = XyzWriter::new(Vec::new(), ensemble.shared_topology(), options, "e.xyz")?;
-    writer.write_ensemble(ensemble)?;
+    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz")?;
+    writer.write_sample_set(set)?;
     let report = writer.report().clone();
     Ok((String::from_utf8(writer.finish()?).unwrap(), report))
 }
 
-/// Asserts that writing `ensemble` with `options` fails before any byte for
-/// `field` at `frame`.
+/// Asserts that writing `set` with `options` fails before any byte for
+/// `field` at `frame`, and returns the error.
 fn assert_rejects(
-    ensemble: &Ensemble,
+    set: &SampleSet,
     options: XyzWriteOptions,
     field: TrajectoryField,
     frame: usize,
-) {
-    let mut writer =
-        XyzWriter::new(Vec::new(), ensemble.shared_topology(), options, "e.xyz").unwrap();
-    let error = writer.write_ensemble(ensemble).unwrap_err();
+) -> TrajectoryIoError {
+    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz").unwrap();
+    let error = writer.write_sample_set(set).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
     assert_eq!(error.field(), Some(field));
     assert_eq!(error.frame(), Some(frame));
     assert!(writer.writer().is_empty());
     assert_eq!(writer.report().omissions(), [BONDS]);
+    error
 }
 
 fn state_omission(field: StructureField, structures: usize) -> WriteOmission {
     WriteOmission::StructureState { field, structures }
 }
 
+/// The text of [`waters`] under [`options`].
+fn plain() -> String {
+    write(&waters(), options()).unwrap().0
+}
+
 #[test]
-fn an_equally_weighted_ensemble_writes_one_frame_per_sample_and_reads_back() {
-    let ensemble = waters();
-    let (text, report) = write(&ensemble, options()).unwrap();
+fn an_equally_weighted_set_writes_one_frame_per_sample_and_reads_back() {
+    let set = waters();
+    let (text, report) = write(&set, options()).unwrap();
     assert_eq!(report.omissions(), [BONDS]);
     assert_eq!(
         text,
@@ -96,20 +112,19 @@ fn an_equally_weighted_ensemble_writes_one_frame_per_sample_and_reads_back() {
          3\nsample\nO 0.000 0.000 0.200\nH 0.957 0.000 0.200\nH -0.240 0.927 0.200\n"
     );
 
-    // Reading the file back gives one state of equally weighted samples.
+    // Reading the file back gives the samples without an order or a
+    // distribution: one state of equally weighted samples.
     let read = kekule::xyz::parse_str(&text, Default::default())
         .unwrap()
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap()
-        .into_ensemble();
-    assert_eq!(read.len(), ensemble.len());
-    assert_eq!(read.state_count(), 1);
-    assert_eq!(read.temperature(), None);
-    for (written, read) in ensemble.iter().zip(&read) {
-        assert_eq!(read.weight(), 1.0);
-        assert_eq!(read.state().payload().energy(), None);
-        let written = written.as_model_view().positions().values();
-        let read = read.as_model_view().positions().values();
+        .into_sample_set();
+    assert_eq!(read.len(), set.len());
+    assert_eq!(read.distribution(), None);
+    assert_eq!(read.order(), None);
+    for (written, read) in set.iter().zip(&read) {
+        let written = written.positions().values();
+        let read = read.positions().values();
         for (a, b) in written.value().iter().zip(read.value().iter()) {
             assert!((*a - *b).norm() < 1e-12);
         }
@@ -118,12 +133,12 @@ fn an_equally_weighted_ensemble_writes_one_frame_per_sample_and_reads_back() {
 
 #[test]
 fn unequal_weights_are_rejected_or_omitted_with_a_report() {
-    let mut ensemble = waters();
-    ensemble.get_mut(2).unwrap().set_weight(3.0).unwrap();
-    assert_rejects(&ensemble, options(), TrajectoryField::Weight, 2);
-    let omit = options().with_ensemble_metadata(UnrepresentablePolicy::Omit);
-    let (text, report) = write(&ensemble, omit).unwrap();
-    assert_eq!(text, write(&waters(), options()).unwrap().0);
+    let mut set = waters();
+    set.distribution_mut().unwrap().set_weight(2, 3.0).unwrap();
+    let error = assert_rejects(&set, options(), TrajectoryField::Weight, 2);
+    assert_eq!(error.detail(), Some("XYZ cannot store the weight."));
+    let (text, report) = write(&set, omit()).unwrap();
+    assert_eq!(text, plain());
     assert_eq!(
         report.omissions(),
         [BONDS, state_omission(StructureField::Weight, 3)]
@@ -132,13 +147,14 @@ fn unequal_weights_are_rejected_or_omitted_with_a_report() {
 
 #[test]
 fn several_states_are_rejected_or_omitted_with_a_report() {
-    let mut ensemble = waters();
-    ensemble
-        .regroup(EnsemblePartition::new(vec![0, 1, 1], vec![0, 1]).unwrap())
+    let mut set = waters();
+    set.distribution_mut()
+        .unwrap()
+        .regroup(Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap())
         .unwrap();
-    assert_rejects(&ensemble, options(), TrajectoryField::State, 1);
-    let omit = options().with_ensemble_metadata(UnrepresentablePolicy::Omit);
-    let (_, report) = write(&ensemble, omit).unwrap();
+    let error = assert_rejects(&set, options(), TrajectoryField::State, 1);
+    assert_eq!(error.detail(), Some("XYZ cannot store the state."));
+    let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
         [BONDS, state_omission(StructureField::State, 3)]
@@ -147,19 +163,20 @@ fn several_states_are_rejected_or_omitted_with_a_report() {
 
 #[test]
 fn energies_are_rejected_or_omitted_with_a_report() {
-    let mut ensemble = waters();
-    ensemble
-        .regroup(EnsemblePartition::new(vec![0, 1, 1], vec![0, 1]).unwrap())
+    let mut set = waters();
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution
+        .regroup(Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap())
         .unwrap();
     // Only the second state, of the last two samples, has an energy.
-    ensemble
+    distribution
         .state_mut(1)
         .unwrap()
         .set_energy(Some(Quantity::new(-1.5, KILOJOULE_PER_MOLE)))
         .unwrap();
-    assert_rejects(&ensemble, options(), TrajectoryField::Energy, 1);
-    let omit = options().with_ensemble_metadata(UnrepresentablePolicy::Omit);
-    let (_, report) = write(&ensemble, omit).unwrap();
+    let error = assert_rejects(&set, options(), TrajectoryField::Energy, 1);
+    assert_eq!(error.detail(), Some("XYZ cannot store the state energy."));
+    let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
         [
@@ -172,13 +189,14 @@ fn energies_are_rejected_or_omitted_with_a_report() {
 
 #[test]
 fn a_temperature_is_rejected_or_omitted_with_a_report() {
-    let mut ensemble = waters();
-    ensemble
+    let mut set = waters();
+    set.distribution_mut()
+        .unwrap()
         .set_temperature(Some(Quantity::new(298.15, KELVIN)))
         .unwrap();
-    assert_rejects(&ensemble, options(), TrajectoryField::Temperature, 0);
-    let omit = options().with_ensemble_metadata(UnrepresentablePolicy::Omit);
-    let (_, report) = write(&ensemble, omit).unwrap();
+    let error = assert_rejects(&set, options(), TrajectoryField::Temperature, 0);
+    assert_eq!(error.detail(), Some("XYZ cannot store the temperature."));
+    let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
         [BONDS, state_omission(StructureField::Temperature, 3)]
@@ -195,20 +213,14 @@ fn cell() -> PeriodicCell {
 
 #[test]
 fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
-    let mut ensemble = waters();
-    ensemble.get_mut(1).unwrap().set_cell(Some(cell()));
-    ensemble.get_mut(2).unwrap().set_cell(Some(cell()));
-    assert_rejects(&ensemble, options(), TrajectoryField::PeriodicCell, 1);
-    // A cell is not ensemble metadata.
-    assert_rejects(
-        &ensemble,
-        options().with_ensemble_metadata(UnrepresentablePolicy::Omit),
-        TrajectoryField::PeriodicCell,
-        1,
-    );
-    let (text, report) =
-        write(&ensemble, options().with_cell(UnrepresentablePolicy::Omit)).unwrap();
-    assert_eq!(text, write(&waters(), options()).unwrap().0);
+    let mut set = waters();
+    set.get_mut(1).unwrap().set_cell(Some(cell()));
+    set.get_mut(2).unwrap().set_cell(Some(cell()));
+    assert_rejects(&set, options(), TrajectoryField::PeriodicCell, 1);
+    // A cell is not sample metadata.
+    assert_rejects(&set, omit(), TrajectoryField::PeriodicCell, 1);
+    let (text, report) = write(&set, options().with_cell(UnrepresentablePolicy::Omit)).unwrap();
+    assert_eq!(text, plain());
     assert_eq!(
         report.omissions(),
         [BONDS, WriteOmission::Cell { structures: 2 }]
@@ -216,27 +228,26 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
 
     // Frames follow the same policy, and the report counts every frame and
     // sample written.
-    let topology = ensemble.shared_topology();
-    let frame = TrajectoryFrame::new(ensemble.get(0).unwrap().as_model_view().positions().clone())
-        .with_cell(cell());
-    let trajectory =
-        kekule::structure::Trajectory::from_items(Arc::clone(&topology), [frame]).unwrap();
+    let topology = set.shared_topology();
+    let frame = Frame::new(set.get(0).unwrap().positions().clone())
+        .with_cell(cell())
+        .bound(&topology);
     let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options(), "f.xyz").unwrap();
-    let error = writer.write_frame(trajectory.get(0).unwrap()).unwrap_err();
+    let error = writer.write_frame(frame.view(&topology)).unwrap_err();
     assert_eq!(error.field(), Some(TrajectoryField::PeriodicCell));
     let mut writer = XyzWriter::new(
         Vec::new(),
-        topology,
+        Arc::clone(&topology),
         options().with_cell(UnrepresentablePolicy::Omit),
         "f.xyz",
     )
     .unwrap();
-    writer.write_frame(trajectory.get(0).unwrap()).unwrap();
+    writer.write_frame(frame.view(&topology)).unwrap();
     assert_eq!(
         writer.report().omissions(),
         [BONDS, WriteOmission::Cell { structures: 1 }]
     );
-    writer.write_ensemble(&ensemble).unwrap();
+    writer.write_sample_set(&set).unwrap();
     assert_eq!(
         writer.report().omissions(),
         [BONDS, WriteOmission::Cell { structures: 3 }]
@@ -254,23 +265,23 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
 
 #[test]
 fn every_kind_of_sample_state_is_reported_together() {
-    let mut ensemble = waters();
-    ensemble
-        .regroup(EnsemblePartition::state_per_sample(3))
+    let mut set = waters();
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution
+        .regroup(Partition::state_per_sample(3))
         .unwrap();
-    ensemble.get_mut(0).unwrap().set_weight(2.0).unwrap();
-    ensemble
+    distribution.set_weight(0, 2.0).unwrap();
+    distribution
         .state_mut(0)
         .unwrap()
         .set_energy(Some(Quantity::new(0.0, KILOJOULE_PER_MOLE)))
         .unwrap();
-    ensemble
+    distribution
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
     // The first sample's energy comes before its weight.
-    assert_rejects(&ensemble, options(), TrajectoryField::Energy, 0);
-    let omit = options().with_ensemble_metadata(UnrepresentablePolicy::Omit);
-    let (_, report) = write(&ensemble, omit).unwrap();
+    assert_rejects(&set, options(), TrajectoryField::Energy, 0);
+    let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
         [
@@ -285,8 +296,8 @@ fn every_kind_of_sample_state_is_reported_together() {
 
 #[test]
 fn occupancies_and_b_factors_are_always_omitted_with_a_report() {
-    let mut ensemble = waters();
-    let mut sample = ensemble.get_mut(0).unwrap();
+    let mut set = waters();
+    let mut sample = set.get_mut(0).unwrap();
     sample
         .set_occupancies(Some(vec![Some(1.0), Some(0.5), None]))
         .unwrap();
@@ -296,13 +307,12 @@ fn occupancies_and_b_factors_are_always_omitted_with_a_report() {
             kekule::units::SQUARE_ANGSTROM,
         )))
         .unwrap();
-    ensemble
-        .get_mut(1)
+    set.get_mut(1)
         .unwrap()
         .set_occupancies(Some(vec![Some(1.0); 3]))
         .unwrap();
-    let (text, report) = write(&ensemble, options()).unwrap();
-    assert_eq!(text, write(&waters(), options()).unwrap().0);
+    let (text, report) = write(&set, options()).unwrap();
+    assert_eq!(text, plain());
     assert_eq!(
         report.omissions(),
         [
@@ -318,77 +328,72 @@ fn properties_are_rejected_at_every_level() {
     let key = || PropertyKey::new("label").unwrap();
     let value = || PropertyValue::Bool(true);
 
-    let mut ensemble = waters();
-    ensemble.properties_mut().insert(key(), value()).unwrap();
-    assert_rejects(
-        &ensemble,
-        options(),
-        TrajectoryField::CollectionProperties,
-        0,
-    );
+    let mut set = waters();
+    set.properties_mut().insert(key(), value()).unwrap();
+    assert_rejects(&set, options(), TrajectoryField::CollectionProperties, 0);
 
-    let mut ensemble = waters();
-    ensemble
-        .regroup(EnsemblePartition::new(vec![0, 1, 1], vec![0, 2]).unwrap())
+    let mut set = waters();
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution
+        .regroup(Partition::new(vec![0, 1, 1], vec![0, 2]).unwrap())
         .unwrap();
-    ensemble
+    distribution
         .state_mut(1)
         .unwrap()
         .properties_mut()
         .insert(key(), value())
         .unwrap();
     // Named by the state's representative.
-    assert_rejects(&ensemble, options(), TrajectoryField::StateProperties, 2);
+    let error = assert_rejects(&set, options(), TrajectoryField::StateProperties, 2);
+    assert_eq!(
+        error.detail(),
+        Some("XYZ cannot store the state properties.")
+    );
 
-    let mut ensemble = waters();
-    ensemble
-        .get_mut(1)
+    let mut set = waters();
+    set.get_mut(1)
         .unwrap()
         .properties_mut()
         .owner_mut()
         .insert(key(), value())
         .unwrap();
-    assert_rejects(&ensemble, options(), TrajectoryField::Properties, 1);
+    assert_rejects(&set, options(), TrajectoryField::Properties, 1);
 }
 
 #[test]
-fn foreign_and_empty_ensembles_are_rejected() {
-    let ensemble = waters();
+fn foreign_and_empty_sets_are_rejected() {
+    let set = waters();
     let other = kekule::smiles::to_topology("O").unwrap();
     let mut writer = XyzWriter::new(Vec::new(), other, options(), "e.xyz").unwrap();
-    let error = writer.write_ensemble(&ensemble).unwrap_err();
+    let error = writer.write_sample_set(&set).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::TopologyMismatch);
 
-    let empty = Ensemble::new(ensemble.shared_topology());
-    let mut writer =
-        XyzWriter::new(Vec::new(), ensemble.shared_topology(), options(), "e.xyz").unwrap();
-    let error = writer.write_ensemble(&empty).unwrap_err();
+    let empty = SampleSet::new(set.shared_topology());
+    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options(), "e.xyz").unwrap();
+    let error = writer.write_sample_set(&empty).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
     assert!(writer.writer().is_empty());
 }
 
 #[test]
-fn ensemble_rules_match_the_pdb_writer() {
+fn sample_state_rules_match_the_pdb_writer() {
     // The XYZ writer's sample-state rules are kekule's PDB and mmCIF ones.
     // PDB omits the fixed implicit-hydrogen counts XYZ interpretation gives.
-    let mut ensemble = waters();
-    ensemble.get_mut(1).unwrap().set_weight(0.5).unwrap();
-    ensemble
+    let mut set = waters();
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution.set_weight(1, 0.5).unwrap();
+    distribution
         .set_temperature(Some(Quantity::new(310.0, KELVIN)))
         .unwrap();
     let pdb = kekule::pdb::write(
-        &ensemble,
+        &set,
         kekule::pdb::PdbWriteOptions::default()
-            .with_ensemble_metadata(UnrepresentablePolicy::Omit)
+            .with_sample_metadata(UnrepresentablePolicy::Omit)
             .with_implicit_hydrogens(UnrepresentablePolicy::Omit),
     )
     .unwrap()
     .1;
-    let (_, xyz) = write(
-        &ensemble,
-        options().with_ensemble_metadata(UnrepresentablePolicy::Omit),
-    )
-    .unwrap();
+    let (_, xyz) = write(&set, omit()).unwrap();
     let state = |report: &WriteReport| {
         report
             .omissions()
@@ -407,17 +412,6 @@ fn ensemble_rules_match_the_pdb_writer() {
     );
 }
 
-/// Writes `set` and returns the text and report.
-fn write_set(
-    set: &SampleSet,
-    options: XyzWriteOptions,
-) -> Result<(String, WriteReport), TrajectoryIoError> {
-    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz")?;
-    writer.write_sample_set(set)?;
-    let report = writer.report().clone();
-    Ok((String::from_utf8(writer.finish()?).unwrap(), report))
-}
-
 /// The text and report, or the error's kind, field, and frame.
 type Outcome = Result<
     (String, WriteReport),
@@ -432,20 +426,28 @@ fn outcome(result: Result<(String, WriteReport), TrajectoryIoError>) -> Outcome 
     result.map_err(|error| (error.kind(), error.field(), error.frame()))
 }
 
+/// Each set, and what it writes under each policy, is what the ensemble it
+/// replaces converted to and wrote, as recorded before ensembles became
+/// sample sets.
 #[test]
-fn a_sample_set_writes_what_the_ensemble_it_converts_from_writes() {
+fn sets_with_a_distribution_hold_and_write_what_the_ensembles_they_replace_did() {
     let mut weighted = waters();
-    weighted.get_mut(2).unwrap().set_weight(3.0).unwrap();
-    let mut clustered = waters();
-    clustered
-        .regroup(EnsemblePartition::new(vec![0, 1, 1], vec![0, 1]).unwrap())
+    weighted
+        .distribution_mut()
+        .unwrap()
+        .set_weight(2, 3.0)
         .unwrap();
-    clustered
+    let mut clustered = waters();
+    let mut distribution = clustered.distribution_mut().unwrap();
+    distribution
+        .regroup(Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap())
+        .unwrap();
+    distribution
         .state_mut(1)
         .unwrap()
         .set_energy(Some(Quantity::new(-1.5, KILOJOULE_PER_MOLE)))
         .unwrap();
-    clustered
+    distribution
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
     let mut boxed = waters();
@@ -467,47 +469,50 @@ fn a_sample_set_writes_what_the_ensemble_it_converts_from_writes() {
             PropertyValue::Bool(true),
         )
         .unwrap();
-    for (index, ensemble) in [waters(), weighted, clustered, boxed, occupied, labelled]
-        .into_iter()
-        .enumerate()
-    {
-        let set = SampleSet::from_ensemble(ensemble.clone());
+    let mut recorded = Recorded::new(&[
+        0x66fd_f771_a788_11af, // waters
+        0x4939_b251_4e51_e9cb, // waters, fail
+        0x4939_b251_4e51_e9cb, // waters, omit
+        0x7318_e53a_76d8_e6bd, // weighted
+        0x6c2d_94d0_1919_47c1, // weighted, fail
+        0x6d81_8fec_dcfd_575a, // weighted, omit
+        0xd213_6ff6_981e_da48, // clustered
+        0x3ebe_6cee_6493_523a, // clustered, fail
+        0x2e5e_8bc9_b17e_38b8, // clustered, omit
+        0x1ec6_bcd7_133f_6010, // boxed
+        0x0ebd_2b21_c872_bfdf, // boxed, fail
+        0x03c3_ae9e_91dc_8c0c, // boxed, omit
+        0x755a_0a00_9b04_f60a, // occupied
+        0x447b_f888_5d4d_1835, // occupied, fail
+        0x447b_f888_5d4d_1835, // occupied, omit
+        0x523d_28cd_6097_828b, // labelled
+        0x5001_e09a_cc79_1f23, // labelled, fail
+        0x5001_e09a_cc79_1f23, // labelled, omit
+    ]);
+    for set in [waters(), weighted, clustered, boxed, occupied, labelled] {
+        recorded.check(&support::contents(&set));
         for policy in [UnrepresentablePolicy::Fail, UnrepresentablePolicy::Omit] {
-            let old = write(
-                &ensemble,
-                options().with_ensemble_metadata(policy).with_cell(policy),
-            );
-            let new = write_set(
+            recorded.check(&outcome(write(
                 &set,
                 options().with_sample_metadata(policy).with_cell(policy),
-            );
-            assert_eq!(outcome(new), outcome(old), "ensemble {index}, {policy:?}");
+            )));
         }
     }
 }
 
 #[test]
 fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
-    let omit = options().with_sample_metadata(UnrepresentablePolicy::Omit);
-    let assert_set_rejects = |set: &SampleSet, field: TrajectoryField, frame: usize| {
-        let mut writer =
-            XyzWriter::new(Vec::new(), set.shared_topology(), options(), "e.xyz").unwrap();
-        let error = writer.write_sample_set(set).unwrap_err();
-        assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
-        assert_eq!((error.field(), error.frame()), (Some(field), Some(frame)));
-        assert!(writer.writer().is_empty());
-    };
-    let plain = write(&waters(), options()).unwrap().0;
+    let plain = plain();
 
     // A time order.
-    let mut timed = SampleSet::from_ensemble(waters());
+    let mut timed = waters();
     timed
         .set_order(Some(Order::Time(
             TimeAxis::new(Some(Quantity::new(vec![0.0, 1.0, 2.0], PICOSECOND)), None).unwrap(),
         )))
         .unwrap();
-    assert_set_rejects(&timed, TrajectoryField::Time, 0);
-    let (text, report) = write_set(&timed, omit.clone()).unwrap();
+    assert_rejects(&timed, options(), TrajectoryField::Time, 0);
+    let (text, report) = write(&timed, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
@@ -515,11 +520,11 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     );
 
     // A time order without times or steps reads back unordered.
-    let mut bare = SampleSet::from_ensemble(waters());
+    let mut bare = waters();
     bare.set_order(Some(Order::Time(TimeAxis::new(None, None).unwrap())))
         .unwrap();
-    assert_set_rejects(&bare, TrajectoryField::Order, 0);
-    let (text, report) = write_set(&bare, omit.clone()).unwrap();
+    assert_rejects(&bare, options(), TrajectoryField::Order, 0);
+    let (text, report) = write(&bare, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
@@ -527,17 +532,17 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     );
 
     // A lone state represented by its second member.
-    let mut late = SampleSet::from_ensemble(waters());
+    let mut late = waters();
     late.set_distribution(Some(
         Distribution::new(
             Members::All,
-            EnsemblePartition::new(vec![0, 0, 0], vec![1]).unwrap(),
+            Partition::new(vec![0, 0, 0], vec![1]).unwrap(),
         )
         .unwrap(),
     ))
     .unwrap();
-    assert_set_rejects(&late, TrajectoryField::Representative, 1);
-    let (text, report) = write_set(&late, omit.clone()).unwrap();
+    assert_rejects(&late, options(), TrajectoryField::Representative, 1);
+    let (text, report) = write(&late, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
@@ -545,7 +550,7 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     );
 
     // Velocities on one sample.
-    let mut moving = SampleSet::from_ensemble(waters());
+    let mut moving = waters();
     moving
         .get_mut(1)
         .unwrap()
@@ -557,8 +562,8 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
             .unwrap(),
         ))
         .unwrap();
-    assert_set_rejects(&moving, TrajectoryField::Velocities, 1);
-    let (text, report) = write_set(&moving, omit.clone()).unwrap();
+    assert_rejects(&moving, options(), TrajectoryField::Velocities, 1);
+    let (text, report) = write(&moving, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
@@ -567,15 +572,14 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
 
     // A sample outside the distribution: XYZ reads every frame back as a
     // member.
-    let mut subset = SampleSet::from_ensemble(waters());
+    let mut subset = waters();
     subset
         .set_distribution(Some(
-            Distribution::new(Members::Subset(vec![0, 2]), EnsemblePartition::one_state(2))
-                .unwrap(),
+            Distribution::new(Members::Subset(vec![0, 2]), Partition::one_state(2)).unwrap(),
         ))
         .unwrap();
-    assert_set_rejects(&subset, TrajectoryField::Membership, 1);
-    let (text, report) = write_set(&subset, omit).unwrap();
+    assert_rejects(&subset, options(), TrajectoryField::Membership, 1);
+    let (text, report) = write(&subset, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
@@ -583,29 +587,23 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     );
 
     // Without a distribution, the frames read back as one state of equally
-    // weighted samples, as from an ensemble of one.
-    let mut alone = SampleSet::from_ensemble(waters());
+    // weighted samples, as from a set with one.
+    let mut alone = waters();
     alone.set_distribution(None).unwrap();
-    assert_eq!(write_set(&alone, options()).unwrap().0, plain);
-    let empty = SampleSet::new(alone.shared_topology());
-    let mut writer =
-        XyzWriter::new(Vec::new(), alone.shared_topology(), options(), "e.xyz").unwrap();
-    let error = writer.write_sample_set(&empty).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
+    assert_eq!(write(&alone, options()).unwrap().0, plain);
 }
 
 #[test]
 fn path_writers_report_the_cells_their_frames_omit() {
-    let ensemble = waters();
-    let topology = ensemble.shared_topology();
-    let frames = ensemble.iter().map(|sample| {
-        TrajectoryFrame::new(sample.as_model_view().positions().clone()).with_cell(cell())
-    });
-    let trajectory = kekule::structure::Trajectory::from_items(topology, frames).unwrap();
+    let set = waters();
+    let frames = set
+        .iter()
+        .map(|sample| Frame::new(sample.positions().clone()).with_cell(cell()));
+    let frames = support::time_ordered(set.shared_topology(), frames);
     let path = std::env::temp_dir().join(format!("kekule-traj-{}-cells.xyz", std::process::id()));
-    let saved = kekule::traj::io::write_trajectory(
+    let saved = kekule::traj::io::write_sample_set(
         &path,
-        &trajectory,
+        &frames,
         kekule::traj::io::TrajectoryWriteOptions::default()
             .with_xyz_options(options().with_cell(UnrepresentablePolicy::Omit)),
     );

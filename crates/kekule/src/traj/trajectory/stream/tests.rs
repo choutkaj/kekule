@@ -3,16 +3,16 @@
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use crate::structure::{Forces, Positions, TrajectoryFrame, Velocities};
+use crate::structure::{Forces, Place, Positions, Sample, Velocities};
 use crate::topology::TopologyBuilder;
 use crate::traj::TrajectoryIoErrorKind;
 use crate::units::{Quantity, NANOMETER, PICOSECOND};
 
 use super::*;
 
-/// Sequential and seekable reader over an in-memory trajectory.
+/// Sequential and seekable reader over the samples of a time-ordered set.
 struct MemoryTrajectoryReader<'a> {
-    trajectory: &'a Trajectory,
+    set: &'a SampleSet,
     cursor: usize,
 }
 
@@ -20,35 +20,32 @@ impl fmt::Debug for MemoryTrajectoryReader<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MemoryTrajectoryReader")
-            .field("frame_count", &self.trajectory.len())
+            .field("frame_count", &self.set.len())
             .field("cursor", &self.cursor)
             .finish_non_exhaustive()
     }
 }
 
 impl<'a> MemoryTrajectoryReader<'a> {
-    fn new(trajectory: &'a Trajectory) -> Self {
-        Self {
-            trajectory,
-            cursor: 0,
-        }
+    fn new(set: &'a SampleSet) -> Self {
+        Self { set, cursor: 0 }
     }
 }
 
 impl TrajectoryReader for MemoryTrajectoryReader<'_> {
     fn topology(&self) -> &Topology {
-        self.trajectory.topology()
+        self.set.topology()
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        self.trajectory.shared_topology()
+        self.set.shared_topology()
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
-        let Some(frame) = self.trajectory.get(self.cursor) else {
+        let Some(sample) = self.set.get(self.cursor) else {
             return Ok(false);
         };
-        destination.copy_from(frame)?;
+        destination.copy_from(FrameView::from_sample(sample)?)?;
         self.cursor += 1;
         Ok(true)
     }
@@ -56,7 +53,7 @@ impl TrajectoryReader for MemoryTrajectoryReader<'_> {
 
 impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
     fn frame_count(&self) -> Option<usize> {
-        Some(self.trajectory.len())
+        Some(self.set.len())
     }
 
     fn read_frame(
@@ -64,11 +61,11 @@ impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
         index: usize,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
-        let frame = self
-            .trajectory
+        let sample = self
+            .set
             .get(index)
             .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
-        destination.copy_from(frame)?;
+        destination.copy_from(FrameView::from_sample(sample)?)?;
         Ok(())
     }
 }
@@ -93,14 +90,20 @@ fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
     Arc::new(builder.build().unwrap())
 }
 
-fn annotated() -> Trajectory {
-    let mut trajectory = Trajectory::new(linear_carbon_topology(3));
-    trajectory
-        .properties_mut()
+/// Four frames carrying every kind of frame state, at times `0.5 i` ps and
+/// steps `10 i`.
+fn annotated() -> SampleSet {
+    let mut set = SampleSet::new(linear_carbon_topology(3));
+    let times = Quantity::new(Vec::new(), PICOSECOND);
+    set.set_order(Some(Order::Time(
+        TimeAxis::new(Some(times), Some(Vec::new())).unwrap(),
+    )))
+    .unwrap();
+    set.properties_mut()
         .insert(PropertyKey::new("run").unwrap(), PropertyValue::Int(7))
         .unwrap();
     for index in 0..4 {
-        let mut frame = TrajectoryFrame::new(
+        let mut sample = Sample::new(
             Positions::new(Quantity::new(
                 [
                     Point3::new(index as f64, 0.0, 0.0),
@@ -111,20 +114,16 @@ fn annotated() -> Trajectory {
             ))
             .unwrap(),
         );
-        frame
-            .set_time(Some(Quantity::new(index as f64 * 0.5, PICOSECOND)))
-            .unwrap();
-        frame.set_step(Some(index * 10));
-        frame.set_velocities(Some(Velocities::zeros(3))).unwrap();
-        frame.set_forces(Some(Forces::zeros(3))).unwrap();
-        frame.set_cell(Some(
+        sample.set_velocities(Some(Velocities::zeros(3))).unwrap();
+        sample.set_forces(Some(Forces::zeros(3))).unwrap();
+        sample.set_cell(Some(
             PeriodicCell::orthorhombic(
                 Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
                 [true; 3],
             )
             .unwrap(),
         ));
-        let mut properties = frame.properties_mut();
+        let mut properties = sample.properties_mut();
         properties
             .owner_mut()
             .insert(
@@ -139,9 +138,12 @@ fn annotated() -> Trajectory {
                 PropertyColumn::Int(vec![Some(1), None, Some(3)]),
             )
             .unwrap();
-        trajectory.push(frame).unwrap();
-        trajectory
-            .get_mut(index as usize)
+        let place = Place::Time {
+            time: Some(Quantity::new(index as f64 * 0.5, PICOSECOND)),
+            step: Some(index * 10),
+        };
+        set.push(sample, Some(place)).unwrap();
+        set.get_mut(index as usize)
             .unwrap()
             .properties_mut()
             .bonds_mut()
@@ -151,48 +153,51 @@ fn annotated() -> Trajectory {
             )
             .unwrap();
     }
-    trajectory
+    set
+}
+
+/// The buffered frame's sample and place.
+fn buffered(buffer: &FrameBuffer) -> (Sample, Place) {
+    let frame = buffer.frame_view();
+    (frame.payload().clone(), frame.place())
+}
+
+/// Sample `index` of `set` with its place.
+fn stored(set: &SampleSet, index: usize) -> (Sample, Place) {
+    let sample = set.get(index).unwrap();
+    (sample.payload().clone(), sample.place().unwrap())
 }
 
 #[test]
 fn memory_random_reads_preserve_sequential_cursor_and_error_destinations() {
-    let trajectory = annotated();
-    let mut reader = MemoryTrajectoryReader::new(&trajectory);
+    let set = annotated();
+    let mut reader = MemoryTrajectoryReader::new(&set);
     let mut destination = reader.frame_buffer();
     reader.read_frame(3, &mut destination).unwrap();
-    assert_eq!(
-        (*destination).clone(),
-        trajectory.get(3).unwrap().payload().clone()
-    );
+    assert_eq!(buffered(&destination), stored(&set, 3));
     assert!(reader.read_next(&mut destination).unwrap());
-    assert_eq!(
-        (*destination).clone(),
-        trajectory.get(0).unwrap().payload().clone()
-    );
+    assert_eq!(buffered(&destination), stored(&set, 0));
 
     reader.read_frame(2, &mut destination).unwrap();
-    let before = (*destination).clone();
+    let before = buffered(&destination);
     assert_eq!(
         reader.read_frame(99, &mut destination),
         Err(TrajectoryIoError::frame_index_out_of_range(99))
     );
-    assert_eq!((*destination).clone(), before);
+    assert_eq!(buffered(&destination), before);
     let unrelated = annotated();
     let mut unrelated_buffer = MemoryTrajectoryReader::new(&unrelated).frame_buffer();
-    let unrelated_before = (*unrelated_buffer).clone();
+    let unrelated_before = buffered(&unrelated_buffer);
     assert_eq!(
         reader.read_frame(0, &mut unrelated_buffer),
         Err(TrajectoryIoError::new(
             TrajectoryIoErrorKind::TopologyMismatch
         ))
     );
-    assert_eq!((*unrelated_buffer).clone(), unrelated_before);
+    assert_eq!(buffered(&unrelated_buffer), unrelated_before);
     for index in 1..4 {
         assert!(reader.read_next(&mut destination).unwrap());
-        assert_eq!(
-            (*destination).clone(),
-            trajectory.get(index).unwrap().payload().clone()
-        );
+        assert_eq!(buffered(&destination), stored(&set, index));
     }
     reader.read_frame(0, &mut destination).unwrap();
     assert!(!reader.read_next(&mut destination).unwrap());
@@ -200,106 +205,141 @@ fn memory_random_reads_preserve_sequential_cursor_and_error_destinations() {
 
 #[test]
 fn memory_streams_debug_their_progress_without_their_frames() {
-    let trajectory = annotated();
-    let mut reader = MemoryTrajectoryReader::new(&trajectory);
+    let set = annotated();
+    let mut reader = MemoryTrajectoryReader::new(&set);
     let mut destination = reader.frame_buffer();
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         format!("{reader:?}"),
         "MemoryTrajectoryReader { frame_count: 4, cursor: 1, .. }"
     );
-    let writer = MemoryTrajectoryWriter::new(trajectory.shared_topology());
+    let writer = MemoryTrajectoryWriter::new(set.shared_topology());
     assert_eq!(
         format!("{writer:?}"),
         "MemoryTrajectoryWriter { frame_count: 0, .. }"
     );
 }
 
-fn sample_payloads(ensemble: &crate::structure::Ensemble) -> Vec<crate::structure::EnsembleSample> {
-    ensemble
-        .iter()
-        .map(|sample| sample.payload().clone())
-        .collect()
+#[test]
+fn members_and_samples_off_a_time_order_are_not_frames() {
+    let mut set = annotated();
+    set.set_distribution(Some(
+        crate::structure::Distribution::new(
+            crate::structure::Members::Subset(vec![1]),
+            crate::structure::Partition::one_state(1),
+        )
+        .unwrap(),
+    ))
+    .unwrap();
+    let mut reader = MemoryTrajectoryReader::new(&set);
+    let mut destination = reader.frame_buffer();
+    assert!(reader.read_next(&mut destination).unwrap());
+    let before = buffered(&destination);
+    let error = reader.read_next(&mut destination).unwrap_err();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
+    assert_eq!(buffered(&destination), before);
+    let mut stepped = annotated();
+    stepped
+        .set_order(Some(Order::Step(vec![0, 10, 20, 30])))
+        .unwrap();
+    let error = MemoryTrajectoryReader::new(&stepped)
+        .read_frame(0, &mut destination)
+        .unwrap_err();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
+    assert_eq!(buffered(&destination), before);
 }
 
-fn read_both(
-    trajectory: &Trajectory,
-    sampling: &crate::structure::TrajectorySampling,
-) -> [Result<crate::structure::Ensemble, TrajectoryIoError>; 2] {
-    [
-        crate::traj::read_ensemble(
-            &mut MemoryTrajectoryReader::new(trajectory),
-            sampling,
-            Default::default(),
-        ),
-        crate::traj::read_ensemble_seekable(
-            &mut MemoryTrajectoryReader::new(trajectory),
-            sampling,
-            Default::default(),
-        ),
-    ]
+/// The sample payloads of `set` in order.
+fn payloads(set: &SampleSet) -> Vec<Sample> {
+    set.iter().map(|sample| sample.payload().clone()).collect()
 }
 
 #[test]
-fn sampled_ensembles_are_the_same_in_memory_and_streamed() {
-    use crate::structure::TrajectorySampling;
+fn sampled_sets_are_the_same_in_memory_and_streamed() {
     use crate::topology::AtomSelection;
 
-    let trajectory = annotated();
-    let ids = trajectory.topology().atom_ids();
-    let atoms = AtomSelection::from_atoms(trajectory.shared_topology(), [ids[0], ids[1]]).unwrap();
+    let set = annotated();
+    let mut reader = MemoryTrajectoryReader::new(&set);
+    let mut buffer = reader.frame_buffer();
+    let mut writer = MemoryTrajectoryWriter::new(reader.shared_topology());
+    while reader.read_next(&mut buffer).unwrap() {
+        writer.write_frame(buffer.frame_view()).unwrap();
+    }
+    let streamed = writer.into_sample_set();
+    assert_eq!(streamed.order(), set.order());
+    assert_eq!(payloads(&streamed), payloads(&set));
+    // A reader has no set properties to keep.
+    assert!(streamed.properties().is_empty());
+    let ids = set.topology().atom_ids();
+    let atoms = AtomSelection::from_atoms(set.shared_topology(), [ids[0], ids[1]]).unwrap();
 
     // Every atom, requested out of order and with a duplicate.
-    let sampling = TrajectorySampling::new([3, 1, 3]);
-    let loaded = trajectory.to_ensemble(&sampling).unwrap();
+    let loaded = SampleSet::from_reader(&set, [3, 1, 3]).unwrap();
+    assert_eq!(
+        crate::tests::debug_fingerprint(
+            &loaded
+                .iter()
+                .map(|s| (
+                    s.positions().clone(),
+                    s.cell().cloned(),
+                    s.properties().clone()
+                ))
+                .collect::<Vec<_>>()
+        ),
+        0x8ed5_23b8_b5e0_48e6
+    );
     assert_eq!(loaded.len(), 3);
-    assert_eq!(loaded.state_count(), 1);
-    assert!(loaded.topology().shares_layout(trajectory.topology()));
-    assert_eq!(loaded.properties(), trajectory.properties());
+    assert!(loaded.topology().shares_layout(set.topology()));
+    assert_eq!(loaded.get(0).unwrap().place(), set.get(3).unwrap().place());
     let positions = |sample: usize| loaded.get(sample).unwrap().positions().clone();
-    assert_eq!(positions(0), *trajectory.get(3).unwrap().positions());
-    assert_eq!(positions(1), *trajectory.get(1).unwrap().positions());
+    assert_eq!(positions(0), *set.get(3).unwrap().positions());
+    assert_eq!(positions(1), *set.get(1).unwrap().positions());
     assert_eq!(positions(2), positions(0));
     let first = loaded.get(0).unwrap();
-    let frame = trajectory.get(3).unwrap();
-    assert_eq!(first.weight(), 1.0);
+    let frame = set.get(3).unwrap();
     assert_eq!(first.cell(), frame.cell());
     assert_eq!(first.properties(), frame.properties());
-    for streamed in read_both(&trajectory, &sampling) {
-        let streamed = streamed.unwrap();
-        assert_eq!(sample_payloads(&streamed), sample_payloads(&loaded));
-        assert_eq!(streamed.partition(), loaded.partition());
-        assert!(streamed.topology().shares_layout(trajectory.topology()));
-        // A reader has no collection properties to keep.
-        assert!(streamed.properties().is_empty());
-    }
+    let from_stream = SampleSet::from_reader(&streamed, [3, 1, 3]).unwrap();
+    assert_eq!(payloads(&from_stream), payloads(&loaded));
 
-    // An atom subset with a stride and explicit weights.
-    let sampling = TrajectorySampling::new((1..4).step_by(2))
-        .with_weights([0.25, 2.0])
+    // An atom subset with a stride.
+    let loaded = SampleSet::from_reader(&set, (1..4).step_by(2))
         .unwrap()
-        .with_atoms(atoms);
-    let loaded = trajectory.to_ensemble(&sampling).unwrap();
+        .subset(&atoms)
+        .unwrap();
+    assert_eq!(
+        crate::tests::debug_fingerprint(
+            &loaded
+                .iter()
+                .map(|s| (
+                    s.positions().clone(),
+                    s.cell().cloned(),
+                    s.properties().clone()
+                ))
+                .collect::<Vec<_>>()
+        ),
+        0x03f1_2e1b_0b7c_4a09
+    );
+    assert_eq!(
+        crate::tests::debug_fingerprint(&loaded.topology()),
+        0x9c60_547f_6f3e_261b
+    );
     assert_eq!(loaded.topology().atom_count(), 2);
     assert_eq!(loaded.topology().bond_count(), 1);
     assert!(loaded.properties().is_empty());
-    let weights = loaded
-        .iter()
-        .map(|sample| sample.weight())
-        .collect::<Vec<_>>();
-    assert_eq!(weights, [0.25, 2.0]);
     let sample = loaded.get(1).unwrap();
-    let frame = trajectory.get(3).unwrap();
+    let frame = set.get(3).unwrap();
+    assert_eq!(sample.place(), frame.place());
     assert_eq!(
         sample.positions().values().value().to_vec(),
         frame.positions().values().value()[..2].to_vec()
     );
     assert_eq!(sample.cell(), frame.cell());
     assert!(sample.properties().owner().is_empty());
-    let atoms = sample.properties().atoms();
+    let atoms_table = sample.properties().atoms();
     let atom_key = PropertyKey::new("atom").unwrap();
     let atom_values = [0, 1].map(|index| {
-        atoms
+        atoms_table
             .value(&atom_key, crate::topology::TopologyAtomIndex::new(index))
             .unwrap()
     });
@@ -311,146 +351,18 @@ fn sampled_ensembles_are_the_same_in_memory_and_streamed() {
         .value(&bond_key, crate::topology::TopologyBondIndex::new(0))
         .unwrap();
     assert_eq!(bond, Some(PropertyValue::Int(4)));
-    for streamed in read_both(&trajectory, &sampling) {
-        let streamed = streamed.unwrap();
-        assert_eq!(sample_payloads(&streamed), sample_payloads(&loaded));
-        assert_eq!(streamed.topology().atom_count(), 2);
-        assert_eq!(streamed.topology().bond_count(), 1);
-    }
+    let from_stream = SampleSet::from_reader(&streamed, (1..4).step_by(2))
+        .unwrap()
+        .subset(&atoms)
+        .unwrap();
+    assert_eq!(payloads(&from_stream), payloads(&loaded));
+    assert_eq!(from_stream.topology().atom_count(), 2);
+    assert_eq!(from_stream.topology().bond_count(), 1);
 
-    // No frames make an empty ensemble.
-    let sampling = TrajectorySampling::new([]);
-    assert!(trajectory.to_ensemble(&sampling).unwrap().is_empty());
-    for streamed in read_both(&trajectory, &sampling) {
-        assert!(streamed.unwrap().is_empty());
-    }
-}
-
-#[test]
-fn ensemble_reads_stop_after_the_last_requested_frame_and_keep_the_seek_cursor() {
-    let trajectory = annotated();
-    let sampling = crate::structure::TrajectorySampling::new([2, 0]);
-    let mut reader = MemoryTrajectoryReader::new(&trajectory);
-    crate::traj::read_ensemble(&mut reader, &sampling, Default::default()).unwrap();
-    assert_eq!(reader.cursor, 3);
-    crate::traj::read_ensemble_seekable(&mut reader, &sampling, Default::default()).unwrap();
-    assert_eq!(reader.cursor, 3);
-}
-
-#[test]
-fn ensemble_sampling_rejects_invalid_weights_frames_and_atoms() {
-    use crate::structure::{TrajectoryError, TrajectorySampler, TrajectorySampling};
-    use crate::topology::AtomSelection;
-
+    // No frames make an empty set.
+    assert!(SampleSet::from_reader(&set, []).unwrap().is_empty());
     assert_eq!(
-        TrajectorySampling::new([0, 1])
-            .with_weights([1.0])
-            .unwrap_err(),
-        TrajectoryError::WeightCountMismatch {
-            expected: 2,
-            actual: 1
-        }
+        SampleSet::from_reader(&set, [1, 5, 4]).unwrap_err(),
+        crate::structure::SampleReadError::IndexOutOfRange { index: 5, len: 4 }
     );
-    for weight in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-        assert_eq!(
-            TrajectorySampling::new([0, 1])
-                .with_weights([1.0, weight])
-                .unwrap_err(),
-            TrajectoryError::InvalidWeight { sample: 1 }
-        );
-    }
-
-    let trajectory = annotated();
-    let sampling = TrajectorySampling::new([1, 5, 4]);
-    assert_eq!(
-        trajectory.to_ensemble(&sampling).unwrap_err(),
-        TrajectoryError::IndexOutOfRange { index: 5, len: 4 }
-    );
-    for streamed in read_both(&trajectory, &sampling) {
-        let error = streamed.unwrap_err();
-        assert_eq!(error.kind(), TrajectoryIoErrorKind::FrameIndexOutOfRange);
-        assert_eq!(error.frame(), Some(4));
-    }
-
-    let empty = TrajectorySampling::new([0])
-        .with_atoms(AtomSelection::from_atoms(trajectory.shared_topology(), []).unwrap());
-    assert!(matches!(
-        trajectory.to_ensemble(&empty),
-        Err(TrajectoryError::Subset(_))
-    ));
-    for streamed in read_both(&trajectory, &empty) {
-        assert_eq!(
-            streamed.unwrap_err().kind(),
-            TrajectoryIoErrorKind::InvalidTrajectory
-        );
-    }
-
-    let mut sampler = TrajectorySampler::new(
-        trajectory.shared_topology(),
-        &TrajectorySampling::new([0, 2]),
-    )
-    .unwrap();
-    assert_eq!(sampler.frames().collect::<Vec<_>>(), [0, 2]);
-    assert!(!sampler.add(1, trajectory.get(1).unwrap()).unwrap());
-    let other = Trajectory::from_items(
-        linear_carbon_topology(3),
-        [TrajectoryFrame::new(Positions::zeros(3))],
-    )
-    .unwrap();
-    assert_eq!(
-        sampler.add(0, other.get(0).unwrap()),
-        Err(TrajectoryError::TopologyMismatch)
-    );
-    assert!(sampler.add(2, trajectory.get(2).unwrap()).unwrap());
-    assert_eq!(
-        sampler.finish().unwrap_err(),
-        TrajectoryError::FrameNotSampled { frame: 0 }
-    );
-}
-
-#[test]
-fn ensemble_reads_report_progress_and_stop_on_cancellation() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
-
-    use crate::diagnostics::Cancellation;
-
-    let trajectory = annotated();
-    let sampling = crate::structure::TrajectorySampling::new([2, 0, 2]);
-    let reports = Arc::new(Mutex::new(Vec::new()));
-    let options = |reports: &Arc<Mutex<Vec<(usize, usize)>>>| {
-        let reports = Arc::clone(reports);
-        crate::traj::EnsembleReadOptions::default().with_progress(move |progress| {
-            reports
-                .lock()
-                .unwrap()
-                .push((progress.frame_count(), progress.total_frame_count()));
-        })
-    };
-
-    let mut reader = MemoryTrajectoryReader::new(&trajectory);
-    crate::traj::read_ensemble(&mut reader, &sampling, options(&reports)).unwrap();
-    assert_eq!(
-        std::mem::take(&mut *reports.lock().unwrap()),
-        [(0, 3), (1, 3), (2, 3), (3, 3)]
-    );
-    crate::traj::read_ensemble_seekable(&mut reader, &sampling, options(&reports)).unwrap();
-    assert_eq!(*reports.lock().unwrap(), [(0, 2), (1, 2), (2, 2)]);
-
-    // Cancel once the first frame has been read.
-    let read = Arc::new(AtomicUsize::new(0));
-    let progress = Arc::clone(&read);
-    let check = Arc::clone(&read);
-    let options = crate::traj::EnsembleReadOptions::default()
-        .with_progress(move |step| progress.store(step.frame_count(), Ordering::Relaxed))
-        .with_cancellation(Cancellation::new(move || {
-            check.load(Ordering::Relaxed) >= 1
-        }));
-    assert!(options.cancellation().is_some());
-    let mut reader = MemoryTrajectoryReader::new(&trajectory);
-    let error = crate::traj::read_ensemble(&mut reader, &sampling, options.clone()).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::Cancelled);
-    assert_eq!(reader.cursor, 1);
-    let error = crate::traj::read_ensemble_seekable(&mut reader, &sampling, options).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::Cancelled);
 }

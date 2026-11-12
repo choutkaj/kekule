@@ -336,27 +336,19 @@ impl SampleSet<IndexedFile> {
         Ok(self.with_storage(storage))
     }
 
-    /// Reads the samples `indices` into a set in memory, in the requested
-    /// order: each with its order value, and the distribution restricted to
-    /// them, as [`SampleSet::select`] restricts it. Ranges and strides can be
-    /// written as `(start..end).step_by(stride)`, and every sample as
-    /// `0..set.len()`; duplicates and reordering are allowed. Set
-    /// properties are kept.
+    /// Reads the samples `indices` into a set in memory, as
+    /// [`SampleSet::from_reader`] does, keeping the set properties.
     ///
     /// # Errors
     ///
-    /// [`SampleReadError::IndexOutOfRange`] for an index past the last
-    /// sample, and the first failure to read a sample.
+    /// As [`SampleSet::from_reader`].
     pub fn load(
         &self,
         indices: impl IntoIterator<Item = usize>,
     ) -> Result<SampleSet, SampleReadError> {
-        let indices = indices.into_iter().collect::<Vec<_>>();
-        let samples = indices
-            .iter()
-            .map(|index| self.read(*index))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(self.loaded(&indices, samples))
+        let mut set = SampleSet::from_reader(self, indices)?;
+        set.properties_mut().clone_from(self.properties());
+        Ok(set)
     }
 }
 

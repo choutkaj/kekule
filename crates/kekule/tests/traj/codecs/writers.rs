@@ -102,8 +102,8 @@ fn open<W: Write + Seek + 'static>(
 fn valid_frame(format: TrajectoryFormat, topology: &Arc<Topology>, index: u64) -> FrameBuffer {
     let shift = index as f64;
     let mut frame = FrameBuffer::new(Arc::clone(topology));
-    let mut frame_state = frame.frame_mut();
-    frame_state
+    frame
+        .sample_mut()
         .set_positions(Quantity::new(
             [
                 Point3::new(shift, 1.0, 2.0),
@@ -116,19 +116,19 @@ fn valid_frame(format: TrajectoryFormat, topology: &Arc<Topology>, index: u64) -
     match format {
         TrajectoryFormat::Xyz => {}
         TrajectoryFormat::Dcd => {
-            frame_state.set_step(Some(index));
-            frame_state.set_cell(Some(cell(
+            frame.set_step(Some(index));
+            frame.sample_mut().set_cell(Some(cell(
                 [[10.0, 0.0, 0.0], [2.0, 11.0, 0.0], [1.0, 3.0, 12.0]],
                 ANGSTROM,
             )));
         }
         TrajectoryFormat::Trr | TrajectoryFormat::Xtc => {
-            frame_state.set_step(Some(index));
-            frame_state
+            frame.set_step(Some(index));
+            frame
                 .set_time(Some(Quantity::new(0.5 * shift, PICOSECOND)))
                 .unwrap();
             if format == TrajectoryFormat::Xtc {
-                frame_state.set_cell(Some(cell(
+                frame.sample_mut().set_cell(Some(cell(
                     [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]],
                     NANOMETER,
                 )));
@@ -155,10 +155,9 @@ fn rejected_frame(
     topology: &Arc<Topology>,
 ) -> (FrameBuffer, TrajectoryIoError) {
     let mut frame = valid_frame(format, topology, 1);
-    let mut frame_state = frame.frame_mut();
     let (kind, detail, frame_index, field) = match format {
         TrajectoryFormat::Xyz => {
-            frame_state
+            frame
                 .set_time(Some(Quantity::new(1.0, PICOSECOND)))
                 .unwrap();
             (
@@ -169,7 +168,7 @@ fn rejected_frame(
             )
         }
         TrajectoryFormat::Dcd => {
-            frame_state.set_cell(Some(cell(
+            frame.sample_mut().set_cell(Some(cell(
                 [[0.0, 10.0, 0.0], [-11.0, 2.0, 0.0], [3.0, 1.0, 12.0]],
                 ANGSTROM,
             )));
@@ -181,7 +180,7 @@ fn rejected_frame(
             )
         }
         TrajectoryFormat::Trr => {
-            frame_state.set_time(None).unwrap();
+            frame.set_time(None).unwrap();
             (
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 "The frame has no time. TRR frames need one.",
@@ -190,7 +189,7 @@ fn rejected_frame(
             )
         }
         TrajectoryFormat::Xtc => {
-            frame_state.set_cell(None);
+            frame.sample_mut().set_cell(None);
             (
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 "The frame has no periodic cell. XTC frames need one.",

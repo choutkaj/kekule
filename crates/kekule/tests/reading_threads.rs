@@ -15,12 +15,14 @@ use std::sync::{Arc, Mutex};
 use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::structure::{Forces, Positions, SampleRead, Trajectory, TrajectoryFrame, Velocities};
+use kekule::structure::{
+    Forces, Order, Place, Positions, Sample, SampleRead, SampleSet, TimeAxis, Velocities,
+};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
-use kekule::traj::io::{open_indexed_sample_set, write_trajectory, TrajectoryWriteOptions};
+use kekule::traj::io::{open_indexed_sample_set, write_sample_set, TrajectoryWriteOptions};
 use kekule::traj::TrajectoryFormat;
 use kekule::units::{
     Quantity, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND,
@@ -122,10 +124,17 @@ fn topology() -> Arc<Topology> {
     Arc::new(builder.build().unwrap())
 }
 
-/// Three frames of a moving chain in a cell, with velocities and forces
-/// when `with_vectors` is set.
-fn trajectory(topology: &Arc<Topology>, with_vectors: bool) -> Trajectory {
-    let frames = (0..3_u32).map(|step| {
+/// Three samples of a moving chain in a cell, in time order, with
+/// velocities and forces when `with_vectors` is set.
+fn trajectory(topology: &Arc<Topology>, with_vectors: bool) -> SampleSet {
+    let mut set = SampleSet::new(Arc::clone(topology));
+    let axis = TimeAxis::new(
+        Some(Quantity::new(Vec::new(), PICOSECOND)),
+        Some(Vec::new()),
+    )
+    .unwrap();
+    set.set_order(Some(Order::Time(axis))).unwrap();
+    for step in 0..3_u32 {
         let shift = f64::from(step);
         let points = (0..ATOMS)
             .map(|atom| Point3::new(0.01 * atom as f64 + 0.1 * shift, 0.2, 0.3))
@@ -136,29 +145,29 @@ fn trajectory(topology: &Arc<Topology>, with_vectors: bool) -> Trajectory {
             [true; 3],
         )
         .unwrap();
-        let mut frame =
-            TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
+        let mut sample =
+            Sample::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
                 .with_cell(cell);
-        frame.set_step(Some(u64::from(step)));
-        frame
-            .set_time(Some(Quantity::new(shift, PICOSECOND)))
-            .unwrap();
-        if !with_vectors {
-            return frame;
+        if with_vectors {
+            sample
+                .set_velocities(Some(
+                    Velocities::new(Quantity::new(vectors.clone(), NANOMETER_PER_PICOSECOND))
+                        .unwrap(),
+                ))
+                .unwrap();
+            sample
+                .set_forces(Some(
+                    Forces::new(Quantity::new(vectors, KILOJOULE_PER_MOLE_PER_NANOMETER)).unwrap(),
+                ))
+                .unwrap();
         }
-        frame
-            .set_velocities(Some(
-                Velocities::new(Quantity::new(vectors.clone(), NANOMETER_PER_PICOSECOND)).unwrap(),
-            ))
-            .unwrap();
-        frame
-            .set_forces(Some(
-                Forces::new(Quantity::new(vectors, KILOJOULE_PER_MOLE_PER_NANOMETER)).unwrap(),
-            ))
-            .unwrap();
-        frame
-    });
-    Trajectory::from_items(Arc::clone(topology), frames).unwrap()
+        let place = Place::Time {
+            time: Some(Quantity::new(shift, PICOSECOND)),
+            step: Some(u64::from(step)),
+        };
+        set.push(sample, Some(place)).unwrap();
+    }
+    set
 }
 
 /// A file of [`trajectory`] in `format`, removed on drop.
@@ -187,7 +196,7 @@ impl File {
             );
         // Only TRR stores velocities and forces.
         let with_vectors = format == TrajectoryFormat::Trr;
-        write_trajectory(&path, &trajectory(topology, with_vectors), options).unwrap();
+        write_sample_set(&path, &trajectory(topology, with_vectors), options).unwrap();
         Self(path)
     }
 }

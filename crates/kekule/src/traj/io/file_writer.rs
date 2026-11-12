@@ -1,4 +1,4 @@
-use crate::traj::TrajectoryField;
+use crate::traj::{FrameView, TrajectoryField};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Seek, Write};
@@ -8,10 +8,10 @@ use std::sync::{
     Arc,
 };
 
-use crate::diagnostics::{UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::diagnostics::{UnrepresentablePolicy, WriteReport};
 use crate::topology::Topology;
 
-use crate::structure::{ModelView, Order, SampleSet, Trajectory, TrajectoryFrameView};
+use crate::structure::{Order, SampleSet};
 use crate::traj::{
     TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
     TrajectoryWriter,
@@ -115,18 +115,22 @@ impl TrajectoryWriteOptions {
         self
     }
 
-    /// Sets the `frame_metadata` policy of the codec options whose formats
-    /// cannot carry some frame velocities, forces, times, or steps, so that
-    /// whichever is written leaves them out, or fails on them:
-    /// [`xyz::XyzWriteOptions::frame_metadata`],
-    /// [`dcd::DcdWriteOptions::frame_metadata`], and
-    /// [`xtc::XtcWriteOptions::frame_metadata`]; TRR carries them all. The
-    /// writer's report names what was left out. A later `with_*_options`
-    /// call replaces the policy this sets for its codec.
+    /// Sets the `frame_metadata` policy of every codec's options, for the
+    /// frame state its format cannot carry, so that whichever is written
+    /// leaves it out, or fails on it: occupancies and B-factors, which no
+    /// format carries, and the velocities, forces, times, or steps some
+    /// formats do not
+    /// ([`xyz::XyzWriteOptions::frame_metadata`],
+    /// [`dcd::DcdWriteOptions::frame_metadata`],
+    /// [`trr::TrrWriteOptions::frame_metadata`], and
+    /// [`xtc::XtcWriteOptions::frame_metadata`]). The writer's report names
+    /// what was left out. A later `with_*_options` call replaces the policy
+    /// this sets for its codec.
     #[must_use]
     pub fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
         self.xyz = self.xyz.with_frame_metadata(frame_metadata);
         self.dcd = self.dcd.with_frame_metadata(frame_metadata);
+        self.trr = self.trr.with_frame_metadata(frame_metadata);
         self.xtc = self.xtc.with_frame_metadata(frame_metadata);
         self
     }
@@ -270,7 +274,7 @@ impl<W: Write + Seek> CodecWriter<W> {
         }
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         match self {
             Self::Xyz(writer) => writer.write_frame(frame),
             Self::Dcd(writer) => writer.write_frame(frame),
@@ -378,7 +382,7 @@ impl<W: Write + Seek> TrajectoryWriter for TrajectoryStreamWriter<W> {
         self.inner.shared_topology()
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         if self.failed {
             return Err(self.poisoned(TrajectoryIoOperation::WriteFrame));
         }
@@ -510,7 +514,7 @@ impl TrajectoryWriter for FileTrajectoryWriter {
         self.stream().shared_topology()
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         match &mut self.inner {
             Some(inner) => inner.write_frame(frame),
             None => unreachable!("finished path writers are consumed"),
@@ -536,148 +540,52 @@ impl Drop for FileTrajectoryWriter {
     }
 }
 
-/// Writes a loaded trajectory.
+/// Writes a sample set as a trajectory file, one frame per sample in sample
+/// order.
 ///
-/// The codec is the format of `options` or, by default, the one its destination
-/// extension names: `.xyz`, `.dcd`, `.trr`, or `.xtc`, case-insensitively.
-/// Unknown extensions require an explicit format. `options` also sets the
-/// precision, field, and overwrite policies; by default existing files are
-/// rejected. Unsupported metadata is rejected; no fields are silently discarded. Collection
-/// properties are unsupported by these codecs and must be explicitly cleared first.
-/// The destination is published atomically only after every frame and finalization
-/// succeeds. Empty trajectories are rejected by the writer.
+/// A time order gives the frames' times and steps, and each sample's
+/// positions, cell, properties, velocities, and forces are its frame's. A
+/// set without an order is written too; reading the file back gives a time
+/// order. Occupancies and B-factors, which no trajectory format stores,
+/// follow the codec's `frame_metadata` policy like the other frame state it
+/// cannot store ([`TrajectoryWriteOptions::with_frame_metadata`]). Each
+/// frame borrows its sample; nothing is copied.
+///
+/// The codec is the format of `options` or, by default, the one its
+/// destination extension names: `.xyz`, `.dcd`, `.trr`, or `.xtc`,
+/// case-insensitively. Unknown extensions require an explicit format.
+/// `options` also sets the precision, field, and overwrite policies; by
+/// default existing files are rejected. Unsupported state is rejected; no
+/// field is silently discarded. The destination is published atomically
+/// only after every frame and finalization succeeds. Empty sets are
+/// rejected by the writer.
 ///
 /// Returns the [`FileTrajectoryWriter::report`] of the content the file
 /// leaves out, such as the bonds of an XYZ file or the cells and frame state
 /// its options omit.
 ///
-/// # Errors
-///
-/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when no format is given and
-/// the extension names none, [`TrajectoryIoErrorKind::UnsupportedField`] for
-/// collection properties or a frame field the format cannot store, and the
-/// errors of [`create_trajectory_writer`], the codec's
-/// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`]. No
-/// file is published on error.
-///
 /// ```no_run
-/// # use kekule::structure::Trajectory;
-/// # fn save(trajectory: &Trajectory) -> Result<(), kekule::traj::TrajectoryIoError> {
-/// let report = kekule::traj::io::write_trajectory("aligned.xyz", trajectory, Default::default())?;
+/// # use kekule::structure::SampleSet;
+/// # fn save(set: &SampleSet) -> Result<(), kekule::traj::TrajectoryIoError> {
+/// let report = kekule::traj::io::write_sample_set("aligned.xyz", set, Default::default())?;
 /// for omission in report.omissions() {
 ///     eprintln!("left out {omission:?}");
 /// }
 /// # Ok(()) }
 /// ```
-pub fn write_trajectory(
-    path: impl AsRef<Path>,
-    trajectory: &Trajectory,
-    options: TrajectoryWriteOptions,
-) -> Result<WriteReport, TrajectoryIoError> {
-    let path = path.as_ref();
-    resolve_format(path, options.format)?;
-    if !trajectory.properties().is_empty() {
-        return Err(TrajectoryIoError::unsupported_field(
-            TrajectoryField::CollectionProperties,
-        ));
-    }
-    let mut writer = create_trajectory_writer(path, trajectory.shared_topology(), options)?;
-    for frame in trajectory {
-        writer.write_frame(frame)?;
-    }
-    let report = writer.report().clone();
-    writer.finish()?;
-    Ok(report)
-}
-
-/// Writes a loaded trajectory to a host's stream, as [`write_trajectory`]
-/// writes a file, so that the host places the file itself, for example
-/// under a temporary name of its own that it then moves over the
-/// destination.
-///
-/// `options` must name the format ([`TrajectoryWriteOptions::new`]); its
-/// overwrite policy does not apply. The trajectory is written from the
-/// stream's current position and the stream is left at its end. Wrap an
-/// unbuffered sink such as a `File` in a [`BufWriter`]. Returns the
-/// [`TrajectoryStreamWriter::report`] of the content the stream leaves out.
 ///
 /// # Errors
 ///
-/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when `options` names no
-/// format, [`TrajectoryIoErrorKind::UnsupportedField`] for collection
-/// properties or a frame field the format cannot store, and the errors of
-/// [`create_trajectory_stream_writer`], the codec's
-/// [`TrajectoryWriter::write_frame`] and [`TrajectoryStreamWriter::finish`].
-/// Output before a failure has already reached `writer`.
-///
-/// ```
-/// # use std::io::Cursor;
-/// # use std::sync::Arc;
-/// # use kekule::geometry::Point3;
-/// # use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
-/// # use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
-/// # use kekule::{smiles, topology::Topology};
-/// use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission};
-/// use kekule::traj::io::{write_trajectory_to, TrajectoryWriteOptions};
-/// use kekule::traj::TrajectoryFormat;
-/// # let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
-/// # let topology = Arc::new(Topology::from_molecule(molecule)?);
-/// # let points = vec![Point3::new(1.5, 0.0, 0.0)];
-/// # let mut frame = TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, ANGSTROM))?);
-/// # frame.set_step(Some(0));
-/// # frame.set_time(Some(Quantity::new(0.0, PICOSECOND)))?;
-/// # let trajectory = Trajectory::from_items(topology, [frame])?;
-///
-/// // A frame with a time, as read from XTC, written as DCD without it.
-/// let mut stream = Cursor::new(Vec::new());
-/// let options = TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
-///     .with_frame_metadata(UnrepresentablePolicy::Omit);
-/// let report = write_trajectory_to(&mut stream, &trajectory, options)?;
-/// let omitted = WriteOmission::StructureState { field: StructureField::Time, structures: 1 };
-/// assert_eq!(report.omissions(), [omitted]);
-/// assert!(!stream.into_inner().is_empty());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn write_trajectory_to<W: Write + Seek + ?Sized>(
-    writer: &mut W,
-    trajectory: &Trajectory,
-    options: TrajectoryWriteOptions,
-) -> Result<WriteReport, TrajectoryIoError> {
-    if !trajectory.properties().is_empty() {
-        return Err(TrajectoryIoError::unsupported_field(
-            TrajectoryField::CollectionProperties,
-        ));
-    }
-    let mut writer = create_trajectory_stream_writer(
-        writer,
-        trajectory.shared_topology(),
-        options,
-        "trajectory stream",
-    )?;
-    for frame in trajectory {
-        writer.write_frame(frame)?;
-    }
-    let report = writer.report().clone();
-    writer.finish()?;
-    Ok(report)
-}
-
-/// Writes a sample set as a trajectory file, one frame per sample in sample
-/// order, as [`write_trajectory`] writes the trajectory the set converts to:
-/// a time order gives the frames' times and steps, and each sample's
-/// positions, cell, properties, velocities, and forces are its frame's. A
-/// set without an order is written too; reading the file back gives a time
-/// order. Occupancies and B factors, which no trajectory format stores, are
-/// left out and reported.
-///
-/// # Errors
-///
-/// Returns [`TrajectoryIoErrorKind::UnsupportedField`] for set properties,
-/// with [`TrajectoryField::Distribution`] for a distribution, which these
-/// formats cannot store and must be cleared first, and with
-/// [`TrajectoryField::ItemStep`] or [`TrajectoryField::ItemCoordinate`] for
-/// a step or coordinate order; otherwise the errors of
-/// [`write_trajectory`]. No file is published on error.
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when no format is given
+/// and the extension names none, and
+/// [`TrajectoryIoErrorKind::UnsupportedField`] for state no trajectory
+/// format stores, which must be cleared first: set properties
+/// ([`TrajectoryField::CollectionProperties`]), a distribution
+/// ([`TrajectoryField::Distribution`]), and a step or coordinate order
+/// ([`TrajectoryField::OrderStep`], [`TrajectoryField::OrderCoordinate`]).
+/// Otherwise the errors of [`create_trajectory_writer`], the codec's
+/// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`].
+/// No file is published on error.
 pub fn write_sample_set(
     path: impl AsRef<Path>,
     set: &SampleSet,
@@ -687,45 +595,73 @@ pub fn write_sample_set(
     resolve_format(path, options.format)?;
     check_sample_set(set)?;
     let mut writer = create_trajectory_writer(path, set.shared_topology(), options)?;
-    let topology = set.shared_topology();
-    for index in 0..set.len() {
-        let frame = set.frame(index);
-        writer.write_frame(
-            TrajectoryFrameView::new(&topology, &frame).expect("a sample has its set's rows"),
-        )?;
+    for sample in set {
+        writer.write_frame(FrameView::from_sample(sample)?)?;
     }
-    let report = sample_set_report(writer.report(), set);
+    let report = writer.report().clone();
     writer.finish()?;
     Ok(report)
 }
 
 /// Writes a sample set to a host's stream, as [`write_sample_set`] writes a
-/// file and [`write_trajectory_to`] writes a trajectory.
+/// file, so that the host places the file itself, for example under a
+/// temporary name of its own that it then moves over the destination.
+///
+/// `options` must name the format ([`TrajectoryWriteOptions::new`]); its
+/// overwrite policy does not apply. The set is written from the stream's
+/// current position and the stream is left at its end. Wrap an unbuffered
+/// sink such as a `File` in a [`BufWriter`]. Returns the
+/// [`TrajectoryStreamWriter::report`] of the content the stream leaves out.
+///
+/// ```
+/// # use std::io::Cursor;
+/// # use kekule::geometry::Point3;
+/// # use kekule::structure::{Order, Place, Positions, Sample, SampleSet, TimeAxis};
+/// # use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
+/// use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission};
+/// use kekule::traj::io::{write_sample_set_to, TrajectoryWriteOptions};
+/// use kekule::traj::TrajectoryFormat;
+/// # let topology = kekule::smiles::to_topology("[He]")?;
+/// # let points = vec![Point3::new(1.5, 0.0, 0.0)];
+/// # let sample = Sample::new(Positions::from_vec(Quantity::new(points, ANGSTROM))?);
+/// # let mut set = SampleSet::new(topology);
+/// # set.set_order(Some(Order::Time(TimeAxis::new(Some(Quantity::new(Vec::new(), PICOSECOND)), Some(Vec::new()))?)))?;
+/// # set.push(sample, Some(Place::Time { time: Some(Quantity::new(0.0, PICOSECOND)), step: Some(0) }))?;
+///
+/// // A frame with a time, as read from XTC, written as DCD without it.
+/// let mut stream = Cursor::new(Vec::new());
+/// let options = TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
+///     .with_frame_metadata(UnrepresentablePolicy::Omit);
+/// let report = write_sample_set_to(&mut stream, &set, options)?;
+/// let omitted = WriteOmission::StructureState { field: StructureField::Time, structures: 1 };
+/// assert!(report.omissions().contains(&omitted));
+/// assert!(!stream.into_inner().is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 ///
 /// # Errors
 ///
-/// The errors of [`write_sample_set`] and [`write_trajectory_to`]. Output
-/// before a failure has already reached `writer`.
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when `options` names no
+/// format, the state errors of [`write_sample_set`], and the errors of
+/// [`create_trajectory_stream_writer`], the codec's
+/// [`TrajectoryWriter::write_frame`] and [`TrajectoryStreamWriter::finish`].
+/// Output before a failure has already reached `writer`.
 pub fn write_sample_set_to<W: Write + Seek + ?Sized>(
     writer: &mut W,
     set: &SampleSet,
     options: TrajectoryWriteOptions,
 ) -> Result<WriteReport, TrajectoryIoError> {
     check_sample_set(set)?;
-    let topology = set.shared_topology();
     let mut writer = create_trajectory_stream_writer(
         writer,
         set.shared_topology(),
         options,
         "trajectory stream",
     )?;
-    for index in 0..set.len() {
-        let frame = set.frame(index);
-        writer.write_frame(
-            TrajectoryFrameView::new(&topology, &frame).expect("a sample has its set's rows"),
-        )?;
+    for sample in set {
+        writer.write_frame(FrameView::from_sample(sample)?)?;
     }
-    let report = sample_set_report(writer.report(), set);
+    let report = writer.report().clone();
     writer.finish()?;
     Ok(report)
 }
@@ -739,43 +675,14 @@ fn check_sample_set(set: &SampleSet) -> Result<(), TrajectoryIoError> {
         Some(TrajectoryField::Distribution)
     } else {
         match set.order() {
-            Some(Order::Step(_)) => Some(TrajectoryField::ItemStep),
-            Some(Order::Coordinate { .. }) => Some(TrajectoryField::ItemCoordinate),
+            Some(Order::Step(_)) => Some(TrajectoryField::OrderStep),
+            Some(Order::Coordinate { .. }) => Some(TrajectoryField::OrderCoordinate),
             _ => None,
         }
     };
     field.map_or(Ok(()), |field| {
         Err(TrajectoryIoError::unsupported_field(field))
     })
-}
-
-/// The codec's report with the samples' occupancies and B factors, which no
-/// trajectory format stores.
-fn sample_set_report(report: &WriteReport, set: &SampleSet) -> WriteReport {
-    let count = |present: fn(ModelView<'_>) -> bool| {
-        set.iter()
-            .filter(|sample| present(sample.as_model_view()))
-            .count()
-    };
-    report
-        .omissions()
-        .iter()
-        .copied()
-        .chain([
-            WriteOmission::Occupancies {
-                structures: count(|view| {
-                    view.occupancies()
-                        .is_some_and(|values| values.iter().any(Option::is_some))
-                }),
-            },
-            WriteOmission::BFactors {
-                structures: count(|view| {
-                    view.b_factors()
-                        .is_some_and(|values| values.value().iter().any(Option::is_some))
-                }),
-            },
-        ])
-        .collect()
 }
 
 /// Creates a strict writer of the format `options` names over a host's
@@ -887,7 +794,7 @@ pub(super) fn resolve_format(
 /// Creates a strict path writer backed by a temporary sibling file.
 ///
 /// The codec is the format of `options` or, by default, the one the
-/// destination extension names, as for [`write_trajectory`].
+/// destination extension names, as for [`write_sample_set`].
 ///
 /// # Errors
 ///

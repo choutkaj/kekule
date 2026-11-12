@@ -4,21 +4,18 @@
 //! [`crate::traj`] and use the rest of Kekule only for topology, structural
 //! state, geometry, and units.
 //!
-//! Start with [`read_trajectory`] to load an entire file into an in-memory
-//! [`crate::structure::Trajectory`], and [`write_trajectory`] to save it
-//! atomically; [`read_sample_set`], [`write_sample_set`], and
-//! [`write_sample_set_to`] do the same for a
-//! [`crate::structure::SampleSet`] in a time order. The writers also take a
-//! set without an order, which reads back in a time order. Every operation
-//! takes its options, which set the codec and field policies; the defaults
-//! detect the format.
+//! Start with [`read_sample_set`] to load an entire file into an in-memory
+//! [`crate::structure::SampleSet`] in a time order, and [`write_sample_set`]
+//! to save one atomically. The writers also take a set without an order,
+//! which reads back in a time order. Every operation takes its options,
+//! which set the codec and field policies; the defaults detect the format.
 //! Use [`open_trajectory`] for sequential processing with
 //! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access,
 //! [`open_indexed_sample_set`] for a sample set that reads each sample from
 //! the file when asked ([`IndexedFile`]), [`create_trajectory_writer`] for atomic path-backed writing, or
-//! [`create_trajectory_stream_writer`] and [`write_trajectory_to`] for writing
+//! [`create_trajectory_stream_writer`] and [`write_sample_set_to`] for writing
 //! into a host's stream, so that the host places the file. Each operation
-//! takes a topology directly or from its trajectory. Path readers expose opening
+//! takes a topology directly or from its sample set. Path readers expose opening
 //! diagnostics through `open_report()` and verified format metadata through
 //! `metadata()`. The [`xyz`], [`dcd`], [`trr`] and [`xtc`] modules hold the
 //! codec-level readers and writers over caller-supplied streams.
@@ -29,22 +26,22 @@
 //! use std::sync::Arc;
 //!
 //! use kekule::geometry::Point3;
-//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+//! use kekule::structure::{Positions, Sample, SampleSet};
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use kekule::{smiles, topology::Topology};
-//! use kekule::traj::io::{read_trajectory, write_trajectory};
+//! use kekule::traj::io::{read_sample_set, write_sample_set};
 //!
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
 //! let points = vec![Point3::new(1.5, 0.0, 0.0)];
-//! let frame = TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, ANGSTROM))?);
-//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
+//! let sample = Sample::new(Positions::from_vec(Quantity::new(points, ANGSTROM))?);
+//! let frames = SampleSet::from_samples(Arc::clone(&topology), [sample])?;
 //!
 //! let path = std::env::temp_dir().join(format!("kekule-traj-io-{}.xyz", std::process::id()));
 //! # let _ = std::fs::remove_file(&path);
 //! // The `.xyz` extension selects the codec; an existing file is never replaced.
-//! write_trajectory(&path, &trajectory, Default::default())?;
-//! let loaded = read_trajectory(&path, Arc::clone(&topology), Default::default());
+//! write_sample_set(&path, &frames, Default::default())?;
+//! let loaded = read_sample_set(&path, Arc::clone(&topology), Default::default());
 //! std::fs::remove_file(&path)?;
 //! let loaded = loaded?;
 //!
@@ -152,7 +149,7 @@
 //! or places files itself writes through a [`TrajectoryStreamWriter`], whose
 //! consuming [`TrajectoryStreamWriter::finish`] finalizes and flushes the
 //! host's stream and returns it.
-//! The saving helpers reject unsupported collection properties before opening a
+//! The saving helpers reject unsupported set properties before opening a
 //! writer. Format policies also reject unsupported frame fields unless their
 //! `frame_metadata` or `frame_properties` options omit them; they never
 //! silently discard them, and the writers' reports name what they omit.
@@ -188,12 +185,12 @@ pub mod xyz;
 pub use append::{append_trajectory, KeepFrames, TrajectoryAppendOptions, TrajectoryAppendReport};
 pub use file_reader::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory, read_sample_set,
-    read_trajectory, IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
+    IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
     create_trajectory_stream_writer, create_trajectory_writer, write_sample_set,
-    write_sample_set_to, write_trajectory, write_trajectory_to, FileTrajectoryWriter,
-    OverwritePolicy, TrajectoryStreamWriter, TrajectoryWriteOptions,
+    write_sample_set_to, FileTrajectoryWriter, OverwritePolicy, TrajectoryStreamWriter,
+    TrajectoryWriteOptions,
 };
 pub use frame_index::{TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryIndexProgress};
 pub use frame_state::FrameTimingPolicy;

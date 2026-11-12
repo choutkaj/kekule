@@ -1,5 +1,6 @@
-//! Partitioning ensembles into clusters, hierarchical clustering on distance
-//! matrices, and regrouping and collapsing ensembles by the partitions.
+//! Partitioning sample sets into clusters, hierarchical clustering on
+//! distance matrices, and regrouping and collapsing distributions by the
+//! partitions.
 
 use std::sync::Arc;
 
@@ -12,8 +13,8 @@ use kekule::clustering::{
 use kekule::geometry::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Ensemble, EnsembleError, EnsemblePartition, EnsembleSample, PartitionError, Positions,
-    StructureError,
+    Distribution, Members, Partition, PartitionError, Positions, Requirement, Sample, SampleSet,
+    SampleSetError,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, UnitError, KELVIN, KILOJOULE_PER_MOLE, NANOMETER};
@@ -51,38 +52,58 @@ fn shape(mirror: bool, moved: bool) -> Vec<Point3> {
         .collect()
 }
 
-fn member(points: Vec<Point3>, weight: f64) -> EnsembleSample {
-    EnsembleSample::new(
-        Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
-        weight,
-    )
-    .unwrap()
+/// A sample at `points` and its weight.
+fn member(points: Vec<Point3>, weight: f64) -> (Sample, f64) {
+    let sample = Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
+    (sample, weight)
 }
 
-/// Distinct samples, each its own state.
+/// Distinct weighted samples, each its own state.
 fn conformers(
     topology: impl Into<Arc<Topology>>,
-    samples: impl IntoIterator<Item = EnsembleSample>,
-) -> Ensemble {
-    let samples = samples.into_iter().collect::<Vec<_>>();
-    let partition = EnsemblePartition::state_per_sample(samples.len());
-    Ensemble::from_samples(topology, samples, partition).unwrap()
+    members: impl IntoIterator<Item = (Sample, f64)>,
+) -> SampleSet {
+    let (samples, weights): (Vec<_>, Vec<_>) = members.into_iter().unzip();
+    let partition = Partition::state_per_sample(samples.len());
+    let distribution = Distribution::new(Members::All, partition)
+        .unwrap()
+        .with_weights(weights)
+        .unwrap();
+    let mut set = SampleSet::from_samples(topology, samples).unwrap();
+    set.set_distribution(Some(distribution)).unwrap();
+    set
 }
 
-/// Applies `partition` and checks that regrouping kept every weight.
-fn regrouped(ensemble: &Ensemble, partition: &EnsemblePartition) -> Ensemble {
+/// Applies `partition` and checks that regrouping kept every sample and
+/// weight.
+fn regrouped(ensemble: &SampleSet, partition: &Partition) -> SampleSet {
     let mut regrouped = ensemble.clone();
-    regrouped.regroup(partition.clone()).unwrap();
-    assert_eq!(regrouped.partition(), partition);
+    regrouped
+        .distribution_mut()
+        .unwrap()
+        .regroup(partition.clone())
+        .unwrap();
+    assert_eq!(regrouped.distribution().unwrap().partition(), partition);
     assert!(regrouped
         .iter()
         .zip(ensemble.iter())
-        .all(|(after, before)| after.payload() == before.payload()));
+        .all(|(after, before)| after.payload() == before.payload()
+            && after.weight() == before.weight()));
     regrouped
 }
 
+/// The energy of state `state` of `set`.
+fn set_energy(set: &mut SampleSet, state: usize, energy: Option<f64>) {
+    set.distribution_mut()
+        .unwrap()
+        .state_mut(state)
+        .unwrap()
+        .set_energy(energy.map(|energy| Quantity::new(energy, KILOJOULE_PER_MOLE)))
+        .unwrap();
+}
+
 /// Shape A, A moved, its mirror B, and B moved, weighted 1, 3, 2, 1.
-fn two_shapes() -> (Arc<Topology>, Ensemble) {
+fn two_shapes() -> (Arc<Topology>, SampleSet) {
     let topology = kekule::smiles::to_topology("CCCC").unwrap();
     let members = [
         member(shape(false, false), 1.0),
@@ -95,7 +116,7 @@ fn two_shapes() -> (Arc<Topology>, Ensemble) {
 }
 
 /// The fitted RMSD between the two shapes.
-fn shape_distance(ensemble: &Ensemble, atoms: &AtomSelection) -> f64 {
+fn shape_distance(ensemble: &SampleSet, atoms: &AtomSelection) -> f64 {
     alignment::fit(
         ensemble.get(0).unwrap().as_model_view(),
         ensemble.get(2).unwrap().as_model_view(),
@@ -107,8 +128,8 @@ fn shape_distance(ensemble: &Ensemble, atoms: &AtomSelection) -> f64 {
     .into_value()
 }
 
-fn partition(assignments: &[usize], representatives: &[usize]) -> EnsemblePartition {
-    EnsemblePartition::new(assignments.to_vec(), representatives.to_vec()).unwrap()
+fn partition(assignments: &[usize], representatives: &[usize]) -> Partition {
+    Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap()
 }
 
 #[test]
@@ -125,10 +146,11 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
         .unwrap();
     assert_eq!(clusters, partition(&[0, 0, 1, 1], &[1, 2]));
     assert_eq!(clusters.samples(1).collect::<Vec<_>>(), [2, 3]);
-    // Applied, the clusters are states whose populations follow the samples.
+    // Applied, the clusters are states whose populations follow the samples,
+    // relative to the heaviest sample.
     let states = regrouped(&ensemble, &clusters);
-    assert_eq!(states.state(0).unwrap().population(), 4.0);
-    assert_eq!(states.state(1).unwrap().population(), 3.0);
+    assert_eq!(states.state(0).unwrap().population(), 1.0 / 3.0 + 1.0);
+    assert_eq!(states.state(1).unwrap().population(), 2.0 / 3.0 + 1.0 / 3.0);
     // A radius reaching the other shape leaves one cluster.
     assert_eq!(
         ensemble
@@ -140,11 +162,7 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
     // By ascending state energy a sample of the lowest state of each shape
     // leads.
     for (index, energy) in [0.0, 5.0, 1.0, 3.0].into_iter().enumerate() {
-        ensemble
-            .state_mut(index)
-            .unwrap()
-            .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
-            .unwrap();
+        set_energy(&mut ensemble, index, Some(energy));
     }
     let by_energy = ClusteringOptions::default().with_order(ClusterOrder::Energy);
     assert_eq!(
@@ -153,15 +171,15 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
             .unwrap(),
         partition(&[0, 0, 1, 1], &[0, 2])
     );
-    ensemble.state_mut(3).unwrap().set_energy(None).unwrap();
+    set_energy(&mut ensemble, 3, None);
     assert_eq!(
         ensemble.cluster_by_radius(radius(0.5), &atoms, by_energy),
-        Err(ClusteringError::Ensemble(Box::new(
-            EnsembleError::MissingEnergy { state: 3 }
+        Err(ClusteringError::SampleSet(Box::new(
+            SampleSetError::Missing(Requirement::StateEnergies)
         )))
     );
 
-    let empty = Ensemble::new(Arc::clone(&topology));
+    let empty = SampleSet::new(Arc::clone(&topology));
     assert_eq!(
         empty
             .cluster_by_radius(radius(0.5), &atoms, Default::default())
@@ -259,7 +277,7 @@ fn symmetric_radius_clustering_merges_rotamers() {
     assert_eq!(rotamers, partition(&[0, 0], &[0]));
     let collapsed = regrouped(&ensemble, &rotamers).collapse().unwrap();
     assert_eq!(collapsed.len(), 1);
-    assert_eq!(collapsed.get(0).unwrap().weight(), 2.0);
+    assert_eq!(collapsed.get(0).unwrap().weight(), Some(2.0));
 }
 
 #[test]
@@ -270,11 +288,7 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
         .properties_mut()
         .insert(key.clone(), PropertyValue::Int(7))
         .unwrap();
-    ensemble
-        .state_mut(2)
-        .unwrap()
-        .set_energy(Some(Quantity::new(7.0, KILOJOULE_PER_MOLE)))
-        .unwrap();
+    set_energy(&mut ensemble, 2, Some(7.0));
 
     // Each cluster merges whole conformer states, so it keeps the energy of
     // its representative's state: none for sample 1, 7 kJ/mol for sample 2.
@@ -282,12 +296,14 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
     let collapsed = clustered.collapse().unwrap();
     assert_eq!(collapsed.len(), 2);
     assert!(collapsed.topology().shares_layout(ensemble.topology()));
+    // Each weight is its state's population, relative to the heaviest
+    // sample.
     assert_eq!(
         collapsed
             .iter()
-            .map(|sample| sample.weight())
+            .map(|sample| sample.weight().unwrap())
             .collect::<Vec<_>>(),
-        [4.0, 3.0]
+        [1.0 / 3.0 + 1.0, 2.0 / 3.0 + 1.0 / 3.0]
     );
     for (state, representative) in [(0, 1), (1, 2)] {
         assert_eq!(
@@ -296,7 +312,12 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
         );
         assert_eq!(
             collapsed.state(state).unwrap().energy(),
-            ensemble.get(representative).unwrap().state().energy()
+            ensemble
+                .get(representative)
+                .unwrap()
+                .state()
+                .unwrap()
+                .energy()
         );
     }
     assert_eq!(
@@ -306,8 +327,12 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
 
     let mut mismatched = ensemble.clone();
     assert_eq!(
-        mismatched.regroup(partition(&[0, 0, 0], &[0])).unwrap_err(),
-        EnsembleError::PartitionMismatch {
+        mismatched
+            .distribution_mut()
+            .unwrap()
+            .regroup(partition(&[0, 0, 0], &[0]))
+            .unwrap_err(),
+        SampleSetError::PartitionMismatch {
             expected: 4,
             actual: 3,
         }
@@ -320,11 +345,14 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
             member(shape(false, true), f64::MAX),
         ],
     );
-    huge.regroup(partition(&[0, 0], &[0])).unwrap();
-    assert_eq!(
-        huge.collapse().unwrap_err(),
-        EnsembleError::Structure(StructureError::InvalidWeight)
-    );
+    // Populations relative to the heaviest sample do not overflow.
+    huge.distribution_mut()
+        .unwrap()
+        .regroup(partition(&[0, 0], &[0]))
+        .unwrap();
+    let collapsed = huge.collapse().unwrap();
+    assert_eq!(collapsed.len(), 1);
+    assert_eq!(collapsed.get(0).unwrap().weight(), Some(2.0));
 }
 
 #[test]
@@ -338,7 +366,7 @@ fn partitions_assign_every_sample_to_a_state_containing_its_representative() {
     assert_eq!(valid.samples(5).count(), 0);
 
     assert_eq!(
-        EnsemblePartition::new(vec![0, 2], vec![0, 1]),
+        Partition::new(vec![0, 2], vec![0, 1]),
         Err(PartitionError::StateOutOfRange {
             sample: 1,
             state: 2,
@@ -346,7 +374,7 @@ fn partitions_assign_every_sample_to_a_state_containing_its_representative() {
         })
     );
     assert_eq!(
-        EnsemblePartition::new(vec![0, 1], vec![0, 3]),
+        Partition::new(vec![0, 1], vec![0, 3]),
         Err(PartitionError::RepresentativeOutOfRange {
             state: 1,
             sample: 3,
@@ -355,7 +383,7 @@ fn partitions_assign_every_sample_to_a_state_containing_its_representative() {
     );
     // A state whose representative belongs elsewhere would be empty.
     assert_eq!(
-        EnsemblePartition::new(vec![0, 0], vec![0, 1]),
+        Partition::new(vec![0, 0], vec![0, 1]),
         Err(PartitionError::RepresentativeNotInState {
             state: 1,
             sample: 1,
@@ -576,7 +604,7 @@ fn pairwise_rmsd_fits_every_unordered_pair_once() {
         }
     }
 
-    let empty = Ensemble::new(Arc::clone(&topology))
+    let empty = SampleSet::new(Arc::clone(&topology))
         .pairwise_fitted_rmsd(&atoms, Default::default())
         .unwrap();
     assert!(empty.is_empty());
@@ -719,13 +747,13 @@ fn member_distances_do_not_depend_on_member_order() {
     );
     // The pairing is rejected before members are examined.
     assert_eq!(
-        Ensemble::new(Arc::clone(&topology)).pairwise_fitted_rmsd(&exchanged, Default::default()),
+        SampleSet::new(Arc::clone(&topology)).pairwise_fitted_rmsd(&exchanged, Default::default()),
         Err(ClusteringError::DirectedCorrespondence)
     );
 }
 
 /// Five members of one shape with the given weights.
-fn weighted_members(weights: [f64; 5]) -> Ensemble {
+fn weighted_members(weights: [f64; 5]) -> SampleSet {
     conformers(
         kekule::smiles::to_topology("CCCC").unwrap(),
         weights.map(|weight| member(shape(false, false), weight)),
@@ -749,8 +777,8 @@ fn k_medoids_minimizes_the_weighted_distance_to_medoids() {
     assert_eq!(two.assignments(), [0, 0, 0, 1, 1]);
     assert_eq!(two.representatives(), [2, 4]);
     let states = regrouped(&weighted, &two);
-    assert_eq!(states.state(0).unwrap().population(), 12.0);
-    assert_eq!(states.state(1).unwrap().population(), 3.0);
+    assert_eq!(states.state(0).unwrap().population(), 0.1 + 0.1 + 1.0);
+    assert_eq!(states.state(1).unwrap().population(), 0.1 + 0.2);
 
     // One cluster gathers around the weighted medoid; one per member keeps
     // every member alone.
@@ -812,7 +840,7 @@ fn k_medoids_rejects_invalid_cluster_counts_and_matrices() {
         })
     );
     let topology = kekule::smiles::to_topology("CCCC").unwrap();
-    let empty = Ensemble::new(topology);
+    let empty = SampleSet::new(topology);
     let none = DistanceMatrix::from_condensed(0, Quantity::new(Vec::new(), NANOMETER)).unwrap();
     assert_eq!(
         empty.cluster_k_medoids(&none, 0).unwrap(),

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use kekule::diagnostics::{Cancellation, Cancelled};
 use kekule::geometry::Point3;
-use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+use kekule::structure::Positions;
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdReadOptions, DcdTimePolicy};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions, TrrWriter};
@@ -22,7 +22,7 @@ use kekule::traj::{
 use kekule::units::{Quantity, FEMTOSECOND, NANOMETER, PICOSECOND};
 
 use crate::support;
-use support::{linear_carbon_topology, topology};
+use support::{linear_carbon_topology, topology, Frame};
 
 /// A scratch directory removed on drop.
 struct Directory(PathBuf);
@@ -81,12 +81,12 @@ fn fixtures() -> [(&'static str, Arc<Topology>); 4] {
     ]
 }
 
-fn frames(reader: &mut IndexedFileTrajectoryReader) -> Vec<TrajectoryFrame> {
+fn frames(reader: &mut IndexedFileTrajectoryReader) -> Vec<Frame> {
     let mut buffer = reader.frame_buffer();
     (0..reader.frame_count().unwrap())
         .map(|index| {
             reader.read_frame(index, &mut buffer).unwrap();
-            buffer.frame_view().payload().clone()
+            Frame::of(&buffer)
         })
         .collect()
 }
@@ -144,7 +144,7 @@ fn reencode(bytes: &mut [u8]) {
 
 /// Checks that `index` holds exactly the steps and times, in picoseconds, of
 /// `frames`.
-fn assert_stamps(index: &TrajectoryFrameIndex, frames: &[TrajectoryFrame]) {
+fn assert_stamps(index: &TrajectoryFrameIndex, frames: &[Frame]) {
     let (steps, times): (Vec<_>, Vec<_>) = frames
         .iter()
         .map(|frame| {
@@ -234,7 +234,7 @@ fn exported_indexes_reopen_every_format_with_identical_frames_and_metadata() {
         let mut buffer = reopened.frame_buffer();
         for index in (0..expected.len()).rev() {
             reopened.read_frame(index, &mut buffer).unwrap();
-            assert_eq!(buffer.frame_view().payload(), &expected[index], "{name}");
+            assert_eq!(Frame::of(&buffer), expected[index], "{name}");
         }
         assert_eq!(support::read_all(&mut reopened), expected, "{name}");
         assert_eq!(
@@ -504,7 +504,7 @@ fn forged_offsets_fail_the_frames_they_misplace_and_no_other() {
                         assert!(result.is_err(), "{name} frame {frame} delta {delta}");
                     } else {
                         result.unwrap();
-                        assert_eq!(buffer.frame_view().payload(), expected, "{name}");
+                        assert_eq!(&Frame::of(&buffer), expected, "{name}");
                     }
                 }
             }
@@ -582,7 +582,7 @@ fn forged_times_and_steps_fail_their_frame_and_no_other() {
                     assert_eq!(error.frame(), Some(frame));
                 } else {
                     result.unwrap();
-                    assert_eq!(buffer.frame_view().payload(), expected, "{name}");
+                    assert_eq!(&Frame::of(&buffer), expected, "{name}");
                 }
             }
         }
@@ -714,7 +714,7 @@ fn mixed_precision_trr(path: &Path) -> Arc<Topology> {
             "mixed.trr",
         )
         .unwrap();
-        let mut frame = TrajectoryFrame::new(
+        let mut frame = Frame::new(
             Positions::from_vec(Quantity::new(
                 vec![Point3::new(step as f64, 0.0, 0.0); 3],
                 NANOMETER,
@@ -725,8 +725,8 @@ fn mixed_precision_trr(path: &Path) -> Arc<Topology> {
         frame
             .set_time(Some(Quantity::new(step as f64, PICOSECOND)))
             .unwrap();
-        let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame]).unwrap();
-        writer.write_frame(trajectory.get(0).unwrap()).unwrap();
+        let frame = frame.bound(&topology);
+        writer.write_frame(frame.view(&topology)).unwrap();
         combined.extend(writer.finish().unwrap().into_inner());
     }
     fs::write(path, combined).unwrap();

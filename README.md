@@ -41,7 +41,7 @@ Molecule  = Graph + Perception + Properties
 Topology  = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
-Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `SampleSet` holds many structures of one system as samples. An optional order places every sample: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An optional distribution groups all samples or some of them into states, with weights and state energies, as for a conformer ensemble. `Ensemble`, `Trajectory`, and `Series` are older collections for each of these cases; a sample set converts from and to each, refusing what the other side cannot hold. A sample set read from an indexed trajectory file (`traj::io::open_indexed_sample_set`) holds no samples in memory and decodes each one when it is read. `traj::Processed` makes molecules whole, wraps, centers, fits, smooths, and subsets samples as they are read, and statistics, RMSD, and pairwise fits read any set through the `SampleRead` trait.
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `SampleSet` holds many structures of one system as samples. An optional order places every sample: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An optional distribution groups all samples or some of them into states, with weights and state energies, as for a conformer ensemble. `SampleSet::from_reader` loads chosen samples of any set, such as every tenth frame of a file. A sample set read from an indexed trajectory file (`traj::io::open_indexed_sample_set`) holds no samples in memory and decodes each one when it is read. `traj::Processed` makes molecules whole, wraps, centers, fits, smooths, and subsets samples as they are read, and statistics, RMSD, and pairwise fits read any set through the `SampleRead` trait.
 
 ```text
 Model        = Topology + positions, cell, occupancies, B-factors, properties
@@ -49,9 +49,6 @@ SampleSet    = Topology + Samples (positions, cell, occupancies, B-factors, velo
                + optional Order (times and steps, steps, or coordinate values)
                + optional Distribution (members, weights, states with energies, temperature)
 SampleSet<IndexedFile> = the same, with each sample read from a trajectory file
-Ensemble     = Topology + weighted EnsembleSamples grouped into states
-Trajectory   = Topology + time-ordered TrajectoryFrames (velocities, forces, time, step)
-Series       = Topology + SeriesItems at steps or coordinate values
 ```
 
 ## Formats

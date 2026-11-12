@@ -22,9 +22,7 @@ use crate::perception::{
 use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue, StructureProperties,
 };
-use crate::structure::{
-    Distribution, Ensemble, Members, Model, ModelView, Order, SampleSet, StructureKind,
-};
+use crate::structure::{Distribution, Members, Model, ModelView, Order, SampleSet, StructureKind};
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
 
@@ -44,7 +42,6 @@ pub(crate) fn write_native_to<'a>(
     let source = source.into();
     let reports = match source.content {
         NativeContent::InterpretedSampleSet(set, reports) => Some((set.len(), reports)),
-        NativeContent::InterpretedEnsemble(ensemble, reports) => Some((ensemble.len(), reports)),
         _ => None,
     };
     if let Some((samples, reports)) = reports {
@@ -64,20 +61,6 @@ pub(crate) fn write_native_to<'a>(
             ));
         }
     }
-    // A trajectory's order is checked before anything reaches the sink.
-    let trajectory_order = match source.content {
-        NativeContent::Trajectory(trajectory) => {
-            Some(Order::of_trajectory(trajectory).map_err(|error| {
-                FormatError::write(
-                    Format::Native,
-                    DiagnosticKind::Inconsistent,
-                    "The trajectory's frame times do not form a time order.",
-                )
-                .with_source(error)
-            })?)
-        }
-        _ => None,
-    };
     let mut encoder = Encoder {
         sink: writer,
         buffer: Vec::with_capacity(STAGE_BYTES),
@@ -107,31 +90,6 @@ pub(crate) fn write_native_to<'a>(
                 distribution: description.distribution(),
             })?;
             encoder.u8(SAMPLES_EXTERNAL)?;
-        }
-        NativeContent::Ensemble(ensemble) => encoder.ensemble(ensemble)?,
-        NativeContent::InterpretedEnsemble(ensemble, reports) => {
-            encoder.ensemble(ensemble)?;
-            encoder.reports(reports)?;
-        }
-        NativeContent::Trajectory(trajectory) => {
-            encoder.sample_set_head(SetHead {
-                topology: trajectory.topology(),
-                properties: trajectory.properties(),
-                sample_count: trajectory.len(),
-                order: trajectory_order.as_ref(),
-                distribution: None,
-            })?;
-            encoder.samples(trajectory.iter().map(|frame| frame.as_model_view()))?;
-        }
-        NativeContent::Series(series) => {
-            encoder.sample_set_head(SetHead {
-                topology: series.topology(),
-                properties: series.properties(),
-                sample_count: series.len(),
-                order: Some(&Order::of_series(series)),
-                distribution: None,
-            })?;
-            encoder.samples(series.iter().map(|item| item.as_model_view()))?;
         }
     }
     encoder.finish()
@@ -753,18 +711,6 @@ impl<W: Write> Encoder<'_, W> {
             distribution: set.distribution(),
         })?;
         self.samples(set.iter().map(|sample| sample.as_model_view()))
-    }
-
-    /// An ensemble as the set [`SampleSet::from_ensemble`] gives it.
-    fn ensemble(&mut self, ensemble: &Ensemble) -> Result {
-        self.sample_set_head(SetHead {
-            topology: ensemble.topology(),
-            properties: ensemble.properties(),
-            sample_count: ensemble.len(),
-            order: None,
-            distribution: Some(&Distribution::of_ensemble(ensemble)),
-        })?;
-        self.samples(ensemble.iter().map(|sample| sample.as_model_view()))
     }
 
     fn reports(&mut self, reports: &[StructureInterpretationReport]) -> Result {

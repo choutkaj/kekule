@@ -12,16 +12,14 @@
 //!   more explicit molecule instances plus an optional biological hierarchy.
 //! - [`structure::Model`] is one structure of a topology: positions, an
 //!   optional periodic cell, and structure-scoped properties.
-//! - [`structure::Ensemble`] stores weighted samples of one shared topology,
-//!   grouped into states that may carry energies.
-//! - [`structure::Trajectory`] stores ordered
-//!   [`structure::TrajectoryFrame`]s of one shared topology, each with
-//!   positions and optional cell, velocities, forces, time, and step. File
-//!   codecs and streaming analysis for trajectories live in [`traj`].
-//! - [`structure::Series`] stores [`structure::SeriesItem`]s of one shared
-//!   topology in an order that is neither temporal nor weighted, such as the
-//!   steps of a geometry optimization or the points of a relaxed scan, each
-//!   at a step or a coordinate value of its [`structure::SeriesAxis`].
+//! - [`structure::SampleSet`] stores [`structure::Sample`]s of one shared
+//!   topology, each with positions and optional cell, velocities, and forces.
+//!   An optional [`structure::Order`] places them in time, as the frames of a
+//!   trajectory, or at steps or coordinate values, as the points of an
+//!   optimization or a scan. An optional [`structure::Distribution`] weights
+//!   its members and groups them into states that may carry energies, as an
+//!   ensemble. File codecs and streaming analysis for trajectories live in
+//!   [`traj`].
 //!
 //! A disconnected salt, solvent box, or protein-ligand complex is therefore a
 //! [`topology::Topology`] containing several connected molecules, not one
@@ -100,8 +98,8 @@
 //! a bond addition can join two occurrences. New model atoms require coordinates.
 //!
 //! Coordinate-dependent algorithms consume [`structure::ModelView`]. A model,
-//! ensemble sample, trajectory frame, or reusable trajectory buffer can
-//! therefore share kernels without copying coordinates. APIs that address atoms
+//! a sample of a sample set, or a streamed trajectory frame can therefore
+//! share kernels without copying coordinates. APIs that address atoms
 //! by index accept any topology snapshot sharing their layout
 //! ([`topology::Topology::shares_layout`]), so perception never detaches
 //! selections, buffers, or prepared potentials. Use
@@ -613,7 +611,7 @@ pub mod smiles {
 /// its canonical text. [`select::SelectionExpr::evaluate`] evaluates
 /// topology terms against a topology;
 /// [`select::SelectionExpr::evaluate_structure`] also evaluates spatial and
-/// site terms against a model, ensemble sample, or trajectory frame. Chemistry
+/// site terms against a model, sample, or trajectory frame. Chemistry
 /// terms read installed perception and never perceive. Applications add
 /// `#...`, `$name`, and keyword terms through a [`select::SelectionResolver`],
 /// which may answer spatial references with another object's points and add
@@ -787,7 +785,7 @@ pub mod molfile {
 /// them one at a time, so a malformed record fails alone; [`sdf::parse_str`]
 /// collects every record into a [`sdf::SdfDocument`]. Interpret each record
 /// explicitly with [`sdf::SdfRecord::interpret`]; sibling records are not
-/// merged into one model or reinterpreted as an ensemble.
+/// merged into one model or reinterpreted as a sample set.
 ///
 /// ```
 /// use kekule::geometry::Point3;
@@ -818,49 +816,31 @@ pub mod sdf {
         SDF_WEIGHT_FIELD as WEIGHT_FIELD,
     };
 
-    /// Assembles interpreted records, in order, into one ensemble whose
+    /// Assembles interpreted records, in order, into one sample set whose
     /// samples share the first record's topology, record `i` becoming sample
-    /// `i`. Sibling records never form an ensemble implicitly.
+    /// `i`. Sibling records never form a set implicitly, and the set states
+    /// only what the records state.
     ///
-    /// Each sample takes its relative weight from [`WEIGHT_FIELD`] (1.0 when
-    /// absent). Records without [`STATE_FIELD`], such as a conformer set
-    /// from another program, are one state each, with the energy of
-    /// [`ENERGY_FIELD`] in kJ/mol (none when absent). Records with it, as
-    /// [`write()`] emits for ensemble samples, are grouped by it: states are
-    /// numbered in ascending order of its values, each represented by the
-    /// one record marked with [`REPRESENTATIVE_FIELD`], which alone may carry
-    /// the state's energy. [`TEMPERATURE_FIELD`], in kelvin, is the
-    /// ensemble's temperature, the same on every record or on none.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`FormatError`] of kind
-    /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
-    /// when the records do not form an ensemble (none, or differing
-    /// topologies), a field is repeated, some records name a state and
-    /// others do not, a state has no or two representatives, an energy is
-    /// on a record that does not represent its state, or temperatures
-    /// differ, and
-    /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
-    /// when a field is not a valid number, state index, weight, energy,
-    /// temperature, or `true`.
-    pub fn ensemble<'a>(
-        records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
-    ) -> Result<crate::structure::Ensemble, FormatError> {
-        crate::io::sdf_ensemble(records)
-    }
-
-    /// Assembles interpreted records, in order, into one sample set, record
-    /// `i` becoming sample `i`. The set states only what the records state.
     /// Records without ensemble fields give a set without a distribution.
     /// When a record has one ([`WEIGHT_FIELD`], [`STATE_FIELD`],
     /// [`REPRESENTATIVE_FIELD`], [`ENERGY_FIELD`], or
-    /// [`TEMPERATURE_FIELD`]), the distribution is the ensemble
-    /// [`ensemble()`] reads, with weights only when a record has
-    /// [`WEIGHT_FIELD`]. When the records carry [`STEP_FIELD`], or
-    /// [`COORDINATE_FIELD`] with [`COORDINATE_UNIT_FIELD`], as [`write()`]
-    /// emits for series items, the samples are ordered by them. The unit is
-    /// the symbol of a unit constant of [`crate::units`].
+    /// [`TEMPERATURE_FIELD`]), the set has a distribution: the ensemble of
+    /// the formats' terms. It has weights only when a record has
+    /// [`WEIGHT_FIELD`], each sample's weight being its record's (1.0 when
+    /// absent). Records without [`STATE_FIELD`], such as a conformer set
+    /// from another program, are one state each, with the energy of
+    /// [`ENERGY_FIELD`] in kJ/mol (none when absent). Records with it, as
+    /// [`write()`] emits for samples of a distribution, are grouped by it:
+    /// states are numbered in ascending order of its values, each
+    /// represented by the one record marked with [`REPRESENTATIVE_FIELD`],
+    /// which alone may carry the state's energy. [`TEMPERATURE_FIELD`], in
+    /// kelvin, is the distribution's temperature, the same on every record
+    /// or on none.
+    ///
+    /// When the records carry [`STEP_FIELD`], or [`COORDINATE_FIELD`] with
+    /// [`COORDINATE_UNIT_FIELD`], as [`write()`] emits for samples of a step
+    /// or coordinate order, the samples are ordered by them. The unit is the
+    /// symbol of a unit constant of [`crate::units`].
     ///
     /// ```
     /// use kekule::geometry::Point3;
@@ -886,13 +866,17 @@ pub mod sdf {
     ///
     /// # Errors
     ///
-    /// The errors of [`ensemble()`]. Also returns a [`FormatError`] of kind
+    /// Returns a [`FormatError`] of kind
     /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
-    /// when some records carry a step or coordinate and others do not, steps
-    /// and coordinates are mixed, a place field is repeated, or coordinate
-    /// units differ, and
+    /// when the records do not form a sample set (none, or differing
+    /// topologies), a field is repeated, some records name a state and
+    /// others do not, a state has no or two representatives, an energy is
+    /// on a record that does not represent its state, temperatures differ,
+    /// some records carry a step or coordinate and others do not, steps and
+    /// coordinates are mixed, or coordinate units differ, and
     /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
-    /// when a step, coordinate, or unit is not valid.
+    /// when a field is not a valid number, state index, weight, energy,
+    /// temperature, step, coordinate, unit, or `true`.
     pub fn sample_set<'a>(
         records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
     ) -> Result<crate::structure::SampleSet, FormatError> {
@@ -939,11 +923,11 @@ pub mod sdf {
 
     /// Writes independent records in input order.
     ///
-    /// Records convert from models, ensemble samples and trajectory frames
-    /// (`sdf::write(&ensemble, options)` writes one record per sample, which
-    /// [`ensemble`] reads back with its weight, state, state energy, and
-    /// temperature), or
-    /// interpreted records, which keep their titles and data fields.
+    /// Records convert from models, samples of a sample set, and trajectory
+    /// frames (`sdf::write(&set, options)` writes one record per sample,
+    /// which [`sample_set`] reads back with its weight, state, state energy,
+    /// temperature, and step or coordinate), or interpreted records, which
+    /// keep their titles and data fields.
     ///
     /// # Errors
     ///
@@ -1023,9 +1007,9 @@ pub mod macromolecular {
         CoordinationProvenance, EntityKind, EntityMetadataPolicy, EntityMonomer,
         InstanceProvenance, ModelSelection, PolymerEntity, PolymerEntityInstance, PolymerType,
         SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
-        StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
         StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
-        StructureInterpretationReport, StructureSampleSetInterpretation,
+        StructureInterpretationReport, StructureSampleSetInterpretOptions,
+        StructureSampleSetInterpretation,
     };
 }
 
@@ -1033,8 +1017,8 @@ pub mod macromolecular {
 ///
 /// Data blocks are independent interpretation scopes. One selected coordinate
 /// model naturally produces a [`crate::structure::Model`], while compatible
-/// coordinate models from one block may produce an
-/// [`crate::structure::Ensemble`]. Ordinary writing derives mmCIF entity kinds
+/// coordinate models from one block may produce a
+/// [`crate::structure::SampleSet`]. Ordinary writing derives mmCIF entity kinds
 /// from canonical topology classification; source reports and explicit
 /// classifications remain available for faithful round trips and expert
 /// overrides.
@@ -1122,7 +1106,7 @@ pub mod mmcif {
     /// [`WriteReport`](crate::diagnostics::WriteReport) of what the options
     /// chose to omit, summed over the blocks.
     ///
-    /// Sources convert from models (one block), ensembles (one multi-model
+    /// Sources convert from models (one block), sample sets (one multi-model
     /// block), and interpretations (keeping their source reports). Entity kinds
     /// derive from canonical topology classification unless a source carries
     /// explicit classifications or reports ([`MmcifBlockSource`]). Blocks are
@@ -1278,8 +1262,8 @@ pub mod pdb {
         crate::io::parse_pdb_reader(reader, options)
     }
 
-    /// Writes one entry: a model or collection item without `MODEL` records,
-    /// or an ensemble with one `MODEL` per member. Returns the text with a
+    /// Writes one entry: a model or sample without `MODEL` records, or a
+    /// sample set with one `MODEL` per sample. Returns the text with a
     /// [`WriteReport`](crate::diagnostics::WriteReport) of what the options
     /// chose to omit.
     ///
@@ -1358,16 +1342,16 @@ pub mod pdb {
     /// ```
     ///
     /// An interpretation keeps its report, and so its coordination; a model
-    /// or an ensemble takes reports from [`PdbSource::with_reports`]:
+    /// or a sample set takes reports from [`PdbSource::with_reports`]:
     ///
     /// ```no_run
     /// use kekule::pdb::{self, PdbSource};
     /// # fn example(interpretation: &kekule::macromolecular::StructureInterpretation,
-    /// #     ensemble: &kekule::macromolecular::StructureEnsembleInterpretation)
+    /// #     models: &kekule::macromolecular::StructureSampleSetInterpretation)
     /// #     -> Result<(), kekule::diagnostics::FormatError> {
     /// let (entry, _) = pdb::write(interpretation, Default::default())?;
     /// let (models, _) = pdb::write(
-    ///     PdbSource::ensemble(ensemble.ensemble()).with_reports(ensemble.reports()),
+    ///     PdbSource::sample_set(models.sample_set()).with_reports(models.reports()),
     ///     Default::default(),
     /// )?;
     /// # let _ = (entry, models);
@@ -1425,9 +1409,8 @@ pub mod pdb {
 /// reports them as omitted.
 ///
 /// One frame becomes a [`Model`](crate::structure::Model); several frames of
-/// the same atoms become an equally weighted
-/// [`Ensemble`](crate::structure::Ensemble), and every frame must infer the
-/// same bonds. Interpretation keeps atom lines in source order as dense atom
+/// the same atoms become a [`SampleSet`](crate::structure::SampleSet) without
+/// an order or distribution, and every frame must infer the same bonds. Interpretation keeps atom lines in source order as dense atom
 /// order, so a trajectory reader such as [`crate::traj::io::xyz::XyzReader`] can
 /// stream the frames of the same file against the interpreted topology when
 /// the file spells every element as a symbol in its standard letter case,
@@ -1454,10 +1437,9 @@ pub mod pdb {
 pub mod xyz {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
-        XyzAtom, XyzDocument, XyzEnsembleInterpretOptions, XyzEnsembleInterpretation, XyzFrame,
-        XyzFrameSelection, XyzInferredBond, XyzInterpretIssue, XyzInterpretOptions,
-        XyzInterpretation, XyzInterpretationReport, XyzParseOptions, XyzSampleSetInterpretation,
-        DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+        XyzAtom, XyzDocument, XyzFrame, XyzFrameSelection, XyzInferredBond, XyzInterpretIssue,
+        XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport, XyzParseOptions,
+        XyzSampleSetInterpretOptions, XyzSampleSetInterpretation, DEFAULT_XYZ_MAX_ATOM_CONTACTS,
     };
 
     /// Parses XYZ frames without assigning molecular meaning. `options` sets
@@ -1504,15 +1486,8 @@ pub mod xyz {
 /// chemistry, definitions and instances, semantic IDs, dense order,
 /// hierarchy, classifications with their explicit or inferred assignment,
 /// properties at every scope with units, coordinates as exact bits, and every
-/// structure, sample, order, and distribution field. An
-/// [`Ensemble`](crate::structure::Ensemble), in-memory
-/// [`Trajectory`](crate::structure::Trajectory), or
-/// [`Series`](crate::structure::Series) is written as the sample set it
-/// converts to, and [`NativeObject::into_ensemble`](native::NativeObject::into_ensemble),
-/// [`into_trajectory`](native::NativeObject::into_trajectory), and
-/// [`into_series`](native::NativeObject::into_series) convert a decoded set
-/// back. A trajectory with a time or a step on only some frames has no
-/// sample set, so writing it is refused. A model or sample set may carry its structure interpretation
+/// structure, sample, order, and distribution field. A model or sample set
+/// may carry its structure interpretation
 /// reports: write a
 /// [`StructureInterpretation`](crate::macromolecular::StructureInterpretation)
 /// or [`StructureSampleSetInterpretation`](crate::macromolecular::StructureSampleSetInterpretation),

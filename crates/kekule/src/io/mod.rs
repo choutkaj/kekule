@@ -16,7 +16,7 @@ mod native;
 mod pdb_document;
 mod pdb_write;
 mod sdf_document;
-mod sdf_ensemble;
+mod sdf_sample_set;
 mod sdf_write;
 pub(crate) mod smiles;
 mod staged_coordinates;
@@ -72,7 +72,7 @@ pub use sdf_document::{
     SdfDataField, SdfDocument, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
     SdfRecordInterpretationReport, SdfRecords,
 };
-pub(crate) use sdf_ensemble::{sdf_ensemble, sdf_sample_set};
+pub(crate) use sdf_sample_set::sdf_sample_set;
 pub(crate) use sdf_write::{write_sdf, write_sdf_to};
 pub use sdf_write::{
     SdfRecordSource, SdfWriteOptions, SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD,
@@ -102,18 +102,15 @@ pub use structure_interpret::{
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
     EntityKind, EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection,
     PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource,
-    SourceResidueId, SourceResiduePosition, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation, StructureInterpretationReport, StructureSampleSetInterpretation,
+    SourceResidueId, SourceResiduePosition, StructureInterpretIssue, StructureInterpretOptions,
+    StructureInterpretation, StructureInterpretationReport, StructureSampleSetInterpretOptions,
+    StructureSampleSetInterpretation,
 };
-pub use write_error::{
-    check_multi_model_ensemble, UnrepresentablePolicy, UnrepresentableSampleState, WriteOmission,
-    WriteReport,
-};
+pub use write_error::{UnrepresentablePolicy, WriteOmission, WriteReport};
 pub(crate) use xyz_document::{parse_xyz_reader, parse_xyz_str};
 pub use xyz_document::{XyzAtom, XyzDocument, XyzFrame, XyzParseOptions};
 pub use xyz_interpret::{
-    XyzEnsembleInterpretOptions, XyzEnsembleInterpretation, XyzFrameSelection, XyzInferredBond,
-    XyzInterpretIssue, XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport,
-    XyzSampleSetInterpretation, DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+    XyzFrameSelection, XyzInferredBond, XyzInterpretIssue, XyzInterpretOptions, XyzInterpretation,
+    XyzInterpretationReport, XyzSampleSetInterpretOptions, XyzSampleSetInterpretation,
+    DEFAULT_XYZ_MAX_ATOM_CONTACTS,
 };

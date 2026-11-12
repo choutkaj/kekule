@@ -15,8 +15,8 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 | `Model::into_builder()`, `Topology::into_builder()` | Consume the owner to resume assembly. |
 | `Quantity::to_unit(unit)` | Convert a borrowed, cloneable payload. |
 | `Quantity::into_unit(unit)`, `Quantity::into_value()` | Consume the quantity; the payload need not be cloneable. |
-| `Ensemble`/`Trajectory` `into_parts()`, `into_items()`; `Trajectory::into_ensemble()` | Consume a collection; members or frames move without copying. `into_ensemble` assigns equal weights. |
-| Writer `into_trajectory()` | Transfer writer ownership. |
+| `FrameBuffer::into_sample()` | Consume a buffer; its sample and place move without copying. |
+| `MemoryTrajectoryWriter::into_sample_set()` | Transfer writer ownership. |
 | `as_model_view()` (`AsModelView`), `Quantity::as_ref()`, `PropertyKey::as_str()` | Return borrowed projections. |
 
 Ownership does not imply cost: opening an indexed reader scans input, and extracting

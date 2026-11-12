@@ -1,5 +1,5 @@
-//! Frame selection, replacement, editing, and extraction of in-memory
-//! trajectories.
+//! Frame selection, replacement, editing, and extraction of sample sets in
+//! a time order.
 
 use std::sync::Arc;
 
@@ -7,10 +7,10 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Forces, Positions, Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameView,
-    Velocities,
+    Forces, Order, Place, Positions, Sample, SampleSet, SampleSetError, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyBondIndex};
+use kekule::traj::FrameView;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
 fn chain(atoms: usize) -> Arc<Topology> {
@@ -28,15 +28,28 @@ fn chain(atoms: usize) -> Arc<Topology> {
     Arc::new(Topology::from_molecule(editor.finish().unwrap()).unwrap())
 }
 
+fn timed(picoseconds: f64, step: u64) -> Option<Place> {
+    Some(Place::Time {
+        time: Some(Quantity::new(picoseconds, PICOSECOND)),
+        step: Some(step),
+    })
+}
+
+/// A time order with times and steps, without values yet.
+fn time_order() -> Order {
+    let times = Quantity::new(Vec::new(), PICOSECOND);
+    Order::Time(TimeAxis::new(Some(times), Some(Vec::new())).unwrap())
+}
+
 /// Four frames carrying every kind of frame state.
-fn annotated() -> Trajectory {
-    let mut trajectory = Trajectory::new(chain(3));
-    trajectory
-        .properties_mut()
+fn annotated() -> SampleSet {
+    let mut set = SampleSet::new(chain(3));
+    set.set_order(Some(time_order())).unwrap();
+    set.properties_mut()
         .insert(PropertyKey::new("run").unwrap(), PropertyValue::Int(7))
         .unwrap();
     for index in 0..4 {
-        let mut frame = TrajectoryFrame::new(
+        let mut sample = Sample::new(
             Positions::new(Quantity::new(
                 [
                     Point3::new(index as f64, 0.0, 0.0),
@@ -47,20 +60,16 @@ fn annotated() -> Trajectory {
             ))
             .unwrap(),
         );
-        frame
-            .set_time(Some(Quantity::new(index as f64 * 0.5, PICOSECOND)))
-            .unwrap();
-        frame.set_step(Some(index * 10));
-        frame.set_velocities(Some(Velocities::zeros(3))).unwrap();
-        frame.set_forces(Some(Forces::zeros(3))).unwrap();
-        frame.set_cell(Some(
+        sample.set_velocities(Some(Velocities::zeros(3))).unwrap();
+        sample.set_forces(Some(Forces::zeros(3))).unwrap();
+        sample.set_cell(Some(
             PeriodicCell::orthorhombic(
                 Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
                 [true; 3],
             )
             .unwrap(),
         ));
-        let mut properties = frame.properties_mut();
+        let mut properties = sample.properties_mut();
         properties
             .owner_mut()
             .insert(
@@ -75,10 +84,10 @@ fn annotated() -> Trajectory {
                 PropertyColumn::Int(vec![Some(1), None, Some(3)]),
             )
             .unwrap();
-        trajectory.push(frame).unwrap();
-        // Bond rows exist once the frame is bound to the topology.
-        trajectory
-            .get_mut(index as usize)
+        set.push(sample, timed(index as f64 * 0.5, index * 10))
+            .unwrap();
+        // Bond rows exist once the sample is bound to the topology.
+        set.get_mut(index as usize)
             .unwrap()
             .properties_mut()
             .bonds_mut()
@@ -88,7 +97,7 @@ fn annotated() -> Trajectory {
             )
             .unwrap();
     }
-    trajectory
+    set
 }
 
 #[test]
@@ -102,18 +111,16 @@ fn frame_selection_retains_exact_state_order_duplicates_and_empty_topology_bindi
     ));
     assert_eq!(selected.properties(), original.properties());
     for (actual, index) in selected.iter().zip([3, 1, 1, 0]) {
-        assert_eq!(actual.payload(), original.get(index).unwrap().payload());
+        let expected = original.get(index).unwrap();
+        assert_eq!(actual.payload(), expected.payload());
+        assert_eq!(actual.place(), expected.place());
     }
     assert_eq!(
-        selected.validate_monotonic_time(kekule::structure::MissingTimePolicy::Reject),
-        Err(TrajectoryError::NonMonotonicTime { frame: 1 })
+        selected.validate_monotonic_time(),
+        Err(SampleSetError::NonMonotonicTime { sample: 1 })
     );
     let strided = original.select((0..4).step_by(2)).unwrap();
-    assert_eq!(strided.get(1).unwrap().step(), Some(20));
-    assert_eq!(
-        strided.get(1).unwrap().time(),
-        Some(Quantity::new(1.0, PICOSECOND))
-    );
+    assert_eq!(strided.get(1).unwrap().place(), timed(1.0, 20));
     let empty = original.select([]).unwrap();
     assert!(empty.is_empty());
     assert!(Arc::ptr_eq(
@@ -123,7 +130,7 @@ fn frame_selection_retains_exact_state_order_duplicates_and_empty_topology_bindi
     assert_eq!(empty.properties(), original.properties());
     assert_eq!(
         original.select([0, 4]).unwrap_err(),
-        TrajectoryError::IndexOutOfRange { index: 4, len: 4 }
+        SampleSetError::IndexOutOfRange { index: 4, len: 4 }
     );
     assert_eq!(format!("{original:?}"), before);
     let atoms = AtomSelection::all(original.shared_topology());
@@ -138,7 +145,6 @@ fn owned_frames_are_complete_and_independent_and_replacement_is_transactional() 
     owned
         .set_positions(Quantity::new([Point3::origin(); 3], NANOMETER))
         .unwrap();
-    owned.set_step(Some(999));
     assert_eq!(original.get(1).unwrap().payload(), &old);
     assert_eq!(owned.properties(), old.properties());
     assert_eq!(owned.velocities(), old.velocities());
@@ -146,11 +152,13 @@ fn owned_frames_are_complete_and_independent_and_replacement_is_transactional() 
     assert_eq!(owned.cell(), old.cell());
     assert_eq!(original.replace(1, owned.clone()).unwrap(), old);
     assert_eq!(original.get(1).unwrap().payload(), &owned);
+    // The replacement takes the replaced frame's time and step.
+    assert_eq!(original.get(1).unwrap().place(), timed(0.5, 10));
     let before = format!("{original:?}");
-    let invalid = TrajectoryFrame::new(Positions::zeros(2));
+    let invalid = Sample::new(Positions::zeros(2));
     assert_eq!(
         original.replace(4, invalid.clone()).unwrap_err(),
-        TrajectoryError::IndexOutOfRange { index: 4, len: 4 }
+        SampleSetError::IndexOutOfRange { index: 4, len: 4 }
     );
     assert!(original.replace(1, invalid).is_err());
     assert_eq!(format!("{original:?}"), before);
@@ -159,28 +167,28 @@ fn owned_frames_are_complete_and_independent_and_replacement_is_transactional() 
 #[test]
 #[allow(clippy::forget_non_drop)] // Regression: forgetting an editor must never bypass validation.
 fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_forgotten() {
-    let mut trajectory = annotated();
+    let mut set = annotated();
     let key = PropertyKey::new("bond").unwrap();
-    let before = trajectory.get(0).unwrap().payload().clone();
-    let smaller = TrajectoryFrame::new(Positions::zeros(2))
-        .properties()
-        .clone();
+    let before = set.get(0).unwrap().payload().clone();
+    let smaller = Sample::new(Positions::zeros(2)).properties().clone();
     {
-        let mut frame = trajectory.get_mut(0).unwrap();
-        assert!(frame.set_velocities(Some(Velocities::zeros(4))).is_err());
-        assert!(frame.set_forces(Some(Forces::zeros(4))).is_err());
-        assert!(frame
-            .set_time(Some(Quantity::new(f64::NAN, PICOSECOND)))
-            .is_err());
-        assert!(frame
+        let mut sample = set.get_mut(0).unwrap();
+        assert!(sample.set_velocities(Some(Velocities::zeros(4))).is_err());
+        assert!(sample.set_forces(Some(Forces::zeros(4))).is_err());
+        assert!(sample
             .set_positions(Quantity::new([Point3::origin(); 2], NANOMETER))
             .is_err());
-        assert!(frame.set_properties(smaller).is_err());
+        assert!(sample.set_properties(smaller).is_err());
     }
-    assert_eq!(trajectory.get(0).unwrap().payload(), &before);
+    assert_eq!(
+        set.set_place(0, timed(f64::NAN, 0)),
+        Err(SampleSetError::NonFiniteOrderValue { sample: 0 })
+    );
+    assert_eq!(set.get(0).unwrap().payload(), &before);
+    assert_eq!(set.get(0).unwrap().place(), timed(0.0, 0));
     {
-        let mut frame = trajectory.get_mut(0).unwrap();
-        let mut properties = frame.properties_mut();
+        let mut sample = set.get_mut(0).unwrap();
+        let mut properties = sample.properties_mut();
         properties.bonds_mut().remove(&key);
         assert!(properties
             .bonds_mut()
@@ -195,30 +203,27 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
             .bonds_mut()
             .set_value(key, TopologyBondIndex::new(1), Some(PropertyValue::Int(9)))
             .unwrap();
-        frame
+        sample
             .set_positions(Quantity::new([Point3::origin(); 3], NANOMETER))
             .unwrap();
-        frame.set_step(Some(500));
         // Invariants do not depend on Drop.
-        std::mem::forget(frame);
+        std::mem::forget(sample);
     }
-    assert_eq!(trajectory.get(0).unwrap().step(), Some(500));
-    let topology = trajectory.shared_topology();
-    let edited = trajectory.get(0).unwrap().payload().clone();
-    TrajectoryFrameView::new(&topology, &edited).unwrap();
-    assert!(trajectory.get_mut(10).is_none());
+    set.set_place(0, timed(0.0, 500)).unwrap();
+    assert_eq!(set.get(0).unwrap().place(), timed(0.0, 500));
+    let topology = set.shared_topology();
+    let edited = set.get(0).unwrap().payload().clone();
+    FrameView::new(&topology, &edited, None, None).unwrap();
+    assert!(set.get_mut(10).is_none());
 }
 
 #[test]
-fn consuming_extraction_moves_complete_frames_and_preserves_collection_context() {
-    let trajectory = annotated();
-    let topology = trajectory.shared_topology();
-    let properties = trajectory.properties().clone();
-    let expected: Vec<_> = trajectory
-        .iter()
-        .map(|frame| frame.payload().clone())
-        .collect();
-    let pointers: Vec<_> = trajectory
+fn consuming_extraction_moves_complete_frames() {
+    let set = annotated();
+    let topology = set.shared_topology();
+    let order = set.order().cloned();
+    let expected: Vec<_> = set.iter().map(|frame| frame.payload().clone()).collect();
+    let pointers: Vec<_> = set
         .iter()
         .map(|frame| {
             (
@@ -228,9 +233,7 @@ fn consuming_extraction_moves_complete_frames_and_preserves_collection_context()
             )
         })
         .collect();
-    let (actual_topology, actual_properties, frames) = trajectory.into_parts();
-    assert!(Arc::ptr_eq(&actual_topology, &topology));
-    assert_eq!(actual_properties, properties);
+    let frames = set.into_samples();
     assert_eq!(frames, expected);
     for (frame, (positions, velocities, forces)) in frames.iter().zip(pointers) {
         assert_eq!(frame.positions().values().value().as_ptr(), positions);
@@ -240,16 +243,12 @@ fn consuming_extraction_moves_complete_frames_and_preserves_collection_context()
         );
         assert_eq!(frame.forces().unwrap().values().value().as_ptr(), forces);
     }
-    let trajectory = Trajectory::from_items(actual_topology, frames).unwrap();
-    let pointer = trajectory
-        .get(0)
-        .unwrap()
-        .positions()
-        .values()
-        .value()
-        .as_ptr();
-    let frames = trajectory.into_items();
+    let mut set = SampleSet::from_samples(Arc::clone(&topology), frames).unwrap();
+    set.set_order(order).unwrap();
+    assert_eq!(set.get(3).unwrap().place(), timed(1.5, 30));
+    let pointer = set.get(0).unwrap().positions().values().value().as_ptr();
+    let frames = set.into_samples();
     assert_eq!(frames, expected);
     assert_eq!(frames[0].positions().values().value().as_ptr(), pointer);
-    assert!(Trajectory::new(topology).into_items().is_empty());
+    assert!(SampleSet::new(topology).into_samples().is_empty());
 }

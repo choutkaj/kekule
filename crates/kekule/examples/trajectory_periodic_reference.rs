@@ -4,11 +4,11 @@
 //! externally supplied data using tools/trajectory-reference/export_periodic.py.
 //! This is a scientific development check, not a routine CI or release gate.
 
-use kekule::structure::Trajectory;
+use kekule::structure::SampleSet;
 use kekule::traj::{
-    io::read_trajectory,
+    io::read_sample_set,
     periodic::{self, MoleculeImager, TrajectoryUnwrapper},
-    FrameBuffer,
+    FrameBuffer, FrameView,
 };
 use kekule::{
     molecule::{Atom, BondOrder, Element, MoleculeEditor},
@@ -97,7 +97,7 @@ fn topology(path: &Path) -> Result<Arc<Topology>, Box<dyn Error>> {
     )?))
 }
 
-fn compare(actual: &Trajectory, path: &Path) -> Result<f64, Box<dyn Error>> {
+fn compare(actual: &SampleSet, path: &Path) -> Result<f64, Box<dyn Error>> {
     let reference = fs::read_to_string(path)?
         .split_whitespace()
         .map(str::parse::<f64>)
@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Path::new(&args[2]),
     )?;
     let topology = topology(Path::new(&args[0]))?;
-    let source = read_trajectory(Path::new(&args[1]), topology.clone(), Default::default())?;
+    let source = read_sample_set(Path::new(&args[1]), topology.clone(), Default::default())?;
     if source.is_empty()
         || topology.atom_count() == 0
         || provenance["frames"] != json!(source.len())
@@ -161,13 +161,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut buffer = FrameBuffer::new(topology.clone());
     for (index, frame) in source.iter().enumerate() {
         let expected = whole.get(index).unwrap();
-        buffer.copy_from(frame)?;
+        buffer.copy_from(FrameView::from_sample(frame)?)?;
         imager.make_whole(index, &mut buffer)?;
         assert_eq!(*buffer, *expected.payload());
-        buffer.copy_from(frame)?;
+        buffer.copy_from(FrameView::from_sample(frame)?)?;
         imager.image(index, &mut buffer, &anchors)?;
         assert_eq!(*buffer, *imaged.get(index).unwrap().payload());
-        buffer.copy_from(frame)?;
+        buffer.copy_from(FrameView::from_sample(frame)?)?;
         unwrapper.unwrap(index, &mut buffer)?;
         assert_eq!(*buffer, *unwrapped.get(index).unwrap().payload());
         // Every non-position field survives each operation unchanged.
@@ -180,8 +180,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             assert_eq!(output.cell(), frame.cell());
             assert_eq!(output.velocities(), frame.velocities());
             assert_eq!(output.forces(), frame.forces());
-            assert_eq!(output.time(), frame.time());
-            assert_eq!(output.step(), frame.step());
+            assert_eq!(output.place(), frame.place());
             assert_eq!(output.positions().values().unit(), NANOMETER);
         }
     }

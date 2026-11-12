@@ -2,7 +2,7 @@
 //! their weights, and their grouping into states.
 
 use crate::properties::OwnerProperties;
-use crate::structure::{EnsemblePartition, EnsembleState};
+use crate::structure::{Partition, StructureError};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 
 use super::{Membership, Requirement, SampleSetError};
@@ -16,6 +16,66 @@ pub enum Members {
     /// The listed samples, by strictly increasing index; the others have no
     /// membership.
     Subset(Vec<usize>),
+}
+
+/// One state of a [`Distribution`]: an optional energy and owner properties.
+///
+/// Which samples a state groups, and which of them represents it, belong to
+/// the distribution's [`Partition`]; [`StateView`](super::StateView) reads
+/// them together with the state's population.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct State {
+    energy: Option<Quantity<f64>>,
+    properties: OwnerProperties,
+}
+
+impl State {
+    /// A state without an energy or properties.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns this state with a finite energy.
+    pub fn with_energy(mut self, energy: Quantity<f64>) -> Result<Self, StructureError> {
+        self.set_energy(Some(energy))?;
+        Ok(self)
+    }
+
+    /// The state's energy in [`CANONICAL_ENERGY_UNIT`], if known.
+    ///
+    /// Energies of one distribution share one scale, such as the minimized
+    /// energies of conformers or computed free energies at one level of
+    /// theory, never a snapshot's instantaneous energy; only differences
+    /// between states are meaningful. Record the scale in the set
+    /// properties.
+    pub const fn energy(&self) -> Option<Quantity<f64>> {
+        self.energy
+    }
+
+    /// Sets or clears a finite energy, converted to the canonical energy
+    /// unit. No weight changes.
+    pub fn set_energy(&mut self, energy: Option<Quantity<f64>>) -> Result<(), StructureError> {
+        self.energy = energy
+            .map(|energy| {
+                let energy = energy.into_unit(CANONICAL_ENERGY_UNIT)?;
+                if !energy.value().is_finite() {
+                    return Err(StructureError::NonFiniteEnergy);
+                }
+                Ok(energy)
+            })
+            .transpose()?;
+        Ok(())
+    }
+
+    /// State-level annotations.
+    pub fn properties(&self) -> &OwnerProperties {
+        &self.properties
+    }
+
+    /// Mutable state-level annotations.
+    pub fn properties_mut(&mut self) -> &mut OwnerProperties {
+        &mut self.properties
+    }
 }
 
 /// Members covering samples `members` of a set of `len`, as [`Members::All`]
@@ -36,7 +96,7 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 /// - A *member* is a sample with a finite, positive, relative *weight*: the
 ///   share of probability it carries. Only ratios of weights are
 ///   meaningful; without weights, every member weighs the same.
-/// - A *state* ([`EnsembleState`]) is a distinct conformation: a group of
+/// - A *state* ([`State`]) is a distinct conformation: a group of
 ///   members, one of them its representative. Its *population* is the total
 ///   weight of its members, derived and never stored. A state may carry an
 ///   *energy* on one scale for the whole distribution, such as a
@@ -44,7 +104,7 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 ///   sample's instantaneous energy, which stays a property of the sample.
 ///
 /// Every member is in exactly one state, and every state has at least one
-/// member, its representative among them ([`EnsemblePartition`]). The
+/// member, its representative among them ([`Partition`]). The
 /// distribution may record the *temperature* its populations describe.
 ///
 /// Two index spaces meet here. Methods that take or return a `sample` use
@@ -62,11 +122,11 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 /// selecting, and removing do, and remap the members.
 ///
 /// ```
-/// use kekule::structure::{Distribution, EnsemblePartition, Members};
+/// use kekule::structure::{Distribution, Partition, Members};
 /// // Frames 1 and 2 of a three-frame trajectory, as one state.
 /// let distribution = Distribution::new(
 ///     Members::Subset(vec![1, 2]),
-///     EnsemblePartition::one_state(2),
+///     Partition::one_state(2),
 /// )?
 /// .with_weights(vec![3.0, 1.0])?;
 /// assert_eq!(distribution.weight(1), Some(3.0));
@@ -83,8 +143,8 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 pub struct Distribution {
     pub(super) members: Members,
     pub(super) weights: Option<Vec<f64>>,
-    pub(super) partition: EnsemblePartition,
-    pub(super) states: Vec<EnsembleState>,
+    pub(super) partition: Partition,
+    pub(super) states: Vec<State>,
     pub(super) temperature: Option<Quantity<f64>>,
 }
 
@@ -99,7 +159,7 @@ impl Distribution {
     /// covers another number of samples than the subset lists. A
     /// distribution of [`Members::All`] is checked against its set when it
     /// is installed.
-    pub fn new(members: Members, partition: EnsemblePartition) -> Result<Self, SampleSetError> {
+    pub fn new(members: Members, partition: Partition) -> Result<Self, SampleSetError> {
         if let Members::Subset(indices) = &members {
             if indices.windows(2).any(|pair| pair[0] >= pair[1]) {
                 return Err(SampleSetError::UnsortedMembers);
@@ -114,7 +174,7 @@ impl Distribution {
         Ok(Self {
             members,
             weights: None,
-            states: vec![EnsembleState::new(); partition.state_count()],
+            states: vec![State::new(); partition.state_count()],
             partition,
             temperature: None,
         })
@@ -133,7 +193,7 @@ impl Distribution {
     /// # Errors
     ///
     /// [`SampleSetError::StateCountMismatch`] for another number of states.
-    pub fn with_states(mut self, states: Vec<EnsembleState>) -> Result<Self, SampleSetError> {
+    pub fn with_states(mut self, states: Vec<State>) -> Result<Self, SampleSetError> {
         if states.len() != self.states.len() {
             return Err(SampleSetError::StateCountMismatch {
                 expected: self.states.len(),
@@ -202,7 +262,7 @@ impl Distribution {
     }
 
     /// The grouping of the members into states, by member position.
-    pub fn partition(&self) -> &EnsemblePartition {
+    pub fn partition(&self) -> &Partition {
         &self.partition
     }
 
@@ -467,7 +527,7 @@ impl Distribution {
     }
 
     /// The payload of one state, which must exist.
-    pub(crate) fn state(&self, state: usize) -> &EnsembleState {
+    pub(crate) fn state(&self, state: usize) -> &State {
         &self.states[state]
     }
 
@@ -560,18 +620,13 @@ impl Distribution {
         self.push_position(sample);
         let (mut assignments, representatives) = self.take_partition();
         assignments.push(state);
-        self.partition = EnsemblePartition::from_parts_unchecked(assignments, representatives);
+        self.partition = Partition::from_parts_unchecked(assignments, representatives);
     }
 
     /// Adds sample `sample`, the new last sample of the set, as the
     /// representative of a new state, after [`Self::check_new_weight`];
     /// returns the state's index.
-    pub(crate) fn push_state(
-        &mut self,
-        sample: usize,
-        state: EnsembleState,
-        weight: Option<f64>,
-    ) -> usize {
+    pub(crate) fn push_state(&mut self, sample: usize, state: State, weight: Option<f64>) -> usize {
         let index = self.states.len();
         let position = self.member_count();
         self.push_weight(weight);
@@ -579,7 +634,7 @@ impl Distribution {
         let (mut assignments, mut representatives) = self.take_partition();
         assignments.push(index);
         representatives.push(position);
-        self.partition = EnsemblePartition::from_parts_unchecked(assignments, representatives);
+        self.partition = Partition::from_parts_unchecked(assignments, representatives);
         self.states.push(state);
         index
     }
@@ -641,7 +696,7 @@ impl Distribution {
                     *represented -= 1;
                 }
             }
-            self.partition = EnsemblePartition::from_parts_unchecked(assignments, representatives);
+            self.partition = Partition::from_parts_unchecked(assignments, representatives);
             if let Some(weights) = &mut self.weights {
                 weights.remove(position);
             }
@@ -690,7 +745,7 @@ impl Distribution {
                 states.push(if *count == sizes[state] {
                     self.states[state].clone()
                 } else {
-                    EnsembleState::new()
+                    State::new()
                 });
             }
         }
@@ -725,7 +780,7 @@ impl Distribution {
                     .map(|(_, position)| weights[*position])
                     .collect()
             }),
-            partition: EnsemblePartition::from_parts_unchecked(assignments, representatives),
+            partition: Partition::from_parts_unchecked(assignments, representatives),
             states,
             temperature: self.temperature,
         }
@@ -757,7 +812,7 @@ impl Distribution {
         let distribution = Self {
             members: Members::All,
             weights,
-            partition: EnsemblePartition::from_parts_unchecked(assignments, representatives),
+            partition: Partition::from_parts_unchecked(assignments, representatives),
             states,
             temperature: self.temperature,
         };
@@ -785,7 +840,7 @@ impl Distribution {
         let distribution = Self {
             members: Members::All,
             weights: Some(weights),
-            partition: EnsemblePartition::state_per_sample(representatives.len()),
+            partition: Partition::state_per_sample(representatives.len()),
             states: self.states.clone(),
             temperature: self.temperature,
         };
@@ -805,7 +860,7 @@ impl Distribution {
     /// Moves the partition out as its assignments and representatives, to
     /// be rebuilt and put back.
     fn take_partition(&mut self) -> (Vec<usize>, Vec<usize>) {
-        std::mem::replace(&mut self.partition, EnsemblePartition::state_per_sample(0)).into_parts()
+        std::mem::replace(&mut self.partition, Partition::state_per_sample(0)).into_parts()
     }
 }
 
@@ -820,9 +875,9 @@ impl Distribution {
 /// it against the set.
 ///
 /// ```compile_fail,E0594
-/// use kekule::structure::{Distribution, EnsemblePartition, Members, SampleSet};
+/// use kekule::structure::{Distribution, Partition, Members, SampleSet};
 /// fn replace(set: &mut SampleSet) {
-///     let foreign = Distribution::new(Members::Subset(vec![7]), EnsemblePartition::one_state(1));
+///     let foreign = Distribution::new(Members::Subset(vec![7]), Partition::one_state(1));
 ///     *set.distribution_mut().unwrap() = foreign.unwrap();
 /// }
 /// ```
@@ -948,7 +1003,7 @@ impl DistributionMut<'_> {
 
     /// The energy and properties of one state. Its members and
     /// representative change only through [`Self::regroup`].
-    pub fn state_mut(&mut self, state: usize) -> Option<&mut EnsembleState> {
+    pub fn state_mut(&mut self, state: usize) -> Option<&mut State> {
         self.distribution.states.get_mut(state)
     }
 
@@ -967,7 +1022,7 @@ impl DistributionMut<'_> {
     ///
     /// [`SampleSetError::PartitionMismatch`] when `partition` covers another
     /// number of samples than there are members; failure changes nothing.
-    pub fn regroup(&mut self, partition: EnsemblePartition) -> Result<(), SampleSetError> {
+    pub fn regroup(&mut self, partition: Partition) -> Result<(), SampleSetError> {
         if partition.sample_count() != self.distribution.member_count() {
             return Err(SampleSetError::PartitionMismatch {
                 expected: self.distribution.member_count(),
@@ -994,7 +1049,7 @@ impl DistributionMut<'_> {
             .map(|representative| {
                 let state = old[*representative];
                 if split[state] {
-                    EnsembleState::new()
+                    State::new()
                 } else {
                     std::mem::take(&mut previous[state])
                 }
@@ -1009,7 +1064,7 @@ impl DistributionMut<'_> {
 const MOLAR_GAS_CONSTANT: f64 = 8.314_462_618_153_24e-3;
 
 /// `R T` for a temperature in kelvin, when it is finite and positive.
-pub(crate) fn thermal_energy(kelvin: f64) -> Option<f64> {
+fn thermal_energy(kelvin: f64) -> Option<f64> {
     let thermal_energy = MOLAR_GAS_CONSTANT * kelvin;
     (thermal_energy.is_finite() && thermal_energy > 0.0).then_some(thermal_energy)
 }
@@ -1021,10 +1076,8 @@ pub(crate) fn thermal_energy(kelvin: f64) -> Option<f64> {
 ///
 /// Each state's members scale by one factor, so their ratios within the
 /// state are kept, and the total weight is kept. Fails with the position of
-/// the first member whose weight would not be finite and positive. This is
-/// the one implementation behind the sample set's and the ensemble's
-/// Boltzmann populations.
-pub(crate) fn boltzmann_weights(
+/// the first member whose weight would not be finite and positive.
+fn boltzmann_weights(
     thermal_energy: f64,
     energies: &[f64],
     weights: &[f64],

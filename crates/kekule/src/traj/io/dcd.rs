@@ -5,8 +5,8 @@
 //! writes canonical all-atom files. DCD stores f32 coordinates in angstrom and
 //! one step per frame on the `ISTART`/`NSAVC` sequence; time is derived from
 //! the header `DELTA` only under an explicit [`DcdTimePolicy`]. The writer
-//! rejects frame state DCD cannot carry (velocities, forces, and times
-//! under [`DcdTimePolicy::Absent`], and properties) unless
+//! rejects frame state DCD cannot carry (velocities, forces, occupancies,
+//! B-factors, times under [`DcdTimePolicy::Absent`], and properties) unless
 //! [`DcdWriteOptions::frame_metadata`] and
 //! [`DcdWriteOptions::frame_properties`] omit it, and reports what it leaves
 //! out in [`DcdWriter::report`]. Under [`DcdFrameTimingPolicy::Number`] it
@@ -20,30 +20,25 @@
 //! use std::sync::Arc;
 //!
 //! use kekule::geometry::Point3;
-//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
-//! use kekule::traj::{TrajectoryReader, TrajectoryWriter};
+//! use kekule::traj::{FrameBuffer, TrajectoryReader, TrajectoryWriter};
 //!
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
-//! let mut trajectory = Trajectory::new(Arc::clone(&topology));
-//! for step in [10, 20] {
-//!     let x = step as f64;
-//!     let points = vec![Point3::new(x, 0.0, 0.0)];
-//!     let positions = Positions::from_vec(Quantity::new(points, ANGSTROM))?;
-//!     let mut frame = TrajectoryFrame::new(positions);
-//!     frame.set_step(Some(step));
-//!     trajectory.push(frame)?;
-//! }
 //!
 //! // Frame steps must follow the writer's step sequence exactly.
 //! let options = DcdWriteOptions::default().with_step_sequence(10, 10);
 //! let stream = Cursor::new(Vec::new());
 //! let mut writer = DcdWriter::new(stream, Arc::clone(&topology), options, "memory")?;
-//! for frame in &trajectory {
-//!     writer.write_frame(frame)?;
+//! let mut frame = FrameBuffer::new(Arc::clone(&topology));
+//! for step in [10, 20] {
+//!     let x = step as f64;
+//!     let points = vec![Point3::new(x, 0.0, 0.0)];
+//!     frame.sample_mut().set_positions(Quantity::new(points, ANGSTROM))?;
+//!     frame.set_step(Some(step));
+//!     writer.write_frame(frame.frame_view())?;
 //! }
 //! let mut stream = writer.finish()?;
 //! stream.set_position(0);
@@ -62,7 +57,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::traj::TrajectoryField;
+use crate::traj::{FrameView, TrajectoryField};
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
@@ -71,7 +66,7 @@ use crate::diagnostics::{
     LimitExceeded, Resource, StructureField, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::structure::{DecodedSample, TrajectoryFrameView};
+use crate::structure::DecodedSample;
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -79,7 +74,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
-use super::frame_state::{record, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
@@ -375,12 +370,13 @@ impl DcdWriteOptions {
         self
     }
 
-    /// A trajectory frame's velocities and forces, and its time under
-    /// [`DcdTimePolicy::Absent`], which DCD cannot carry: by default a frame
-    /// with any of them fails to write; [`UnrepresentablePolicy::Omit`]
-    /// writes the frame without them and reports a
-    /// [`WriteOmission::StructureState`] for each kind left out (see
-    /// [`DcdWriter::report`]).
+    /// A trajectory frame's velocities, forces, occupancies, and B-factors,
+    /// and its time under [`DcdTimePolicy::Absent`], which DCD cannot carry:
+    /// by default a frame with any of them fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
+    /// reports a [`WriteOmission::StructureState`],
+    /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
+    /// each kind left out (see [`DcdWriter::report`]).
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
         self.frame_metadata
     }
@@ -2002,7 +1998,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         })
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         require_no_partial_frame(
             self.partial,
             TrajectoryIoOperation::WriteFrame,
@@ -2023,6 +2019,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        let (occupancies, b_factors) = site_fields(&frame);
         let omitted = unrepresentable_frame_state(
             [
                 (
@@ -2033,6 +2030,16 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 (
                     frame.forces().is_some(),
                     TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    occupancies,
+                    TrajectoryField::Occupancies,
+                    self.options.frame_metadata,
+                ),
+                (
+                    b_factors,
+                    TrajectoryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (

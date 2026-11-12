@@ -1,8 +1,7 @@
-//! Explicit assembly of interpreted SDF records into one ensemble or
-//! sample set.
+//! Explicit assembly of interpreted SDF records into one sample set.
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::structure::{
-    Ensemble, EnsembleError, EnsemblePartition, EnsembleSample, Order, SampleSet,
+    Distribution, Members, Order, Partition, Sample, SampleSet, SampleSetError,
 };
 use crate::units::{named_unit, Quantity, KELVIN, KILOJOULE_PER_MOLE};
 
@@ -12,11 +11,11 @@ use super::sdf_write::{
     SDF_STATE_FIELD, SDF_STEP_FIELD, SDF_TEMPERATURE_FIELD, SDF_WEIGHT_FIELD,
 };
 
-fn ensemble_error(error: EnsembleError) -> FormatError {
+fn set_error(error: SampleSetError) -> FormatError {
     FormatError::interpret(
         Format::Sdf,
         DiagnosticKind::Inconsistent,
-        "The records do not form an ensemble.",
+        "The records do not form a sample set.",
     )
     .with_source(error)
 }
@@ -129,128 +128,113 @@ impl RecordFields {
     }
 }
 
-/// Assembles interpreted SDF records, in order, into one ensemble on the
+/// Assembles interpreted SDF records, in order, into one sample set on the
 /// first record's topology, record `i` becoming sample `i`. Every record must
 /// have the same topology layout
 /// ([`Topology::same_layout`](crate::topology::Topology::same_layout)).
 ///
-/// Each sample takes its relative weight from the record's
-/// [`SDF_WEIGHT_FIELD`] (1.0 when absent). Records without
-/// [`SDF_STATE_FIELD`] are one state each, with the energy of
-/// [`SDF_ENERGY_FIELD`] in kJ/mol (none when absent). Records with it, as the
-/// SDF writer emits for ensemble samples, are grouped by it: states are
-/// numbered in ascending order of its values, each represented by the one
-/// record marked with [`SDF_REPRESENTATIVE_FIELD`], which alone may carry
-/// the state's energy. [`SDF_TEMPERATURE_FIELD`], in kelvin, must be absent
-/// from every record or the same on every record.
-pub(crate) fn sdf_ensemble<'a>(
-    records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
-) -> Result<Ensemble, FormatError> {
-    let records = records.into_iter().collect::<Vec<_>>();
-    assemble(&records).map(|(ensemble, _)| ensemble)
-}
-
-/// The ensemble [`sdf_ensemble`] assembles, with each record's ensemble
-/// data fields.
-fn assemble(
-    records: &[&SdfRecordInterpretation],
-) -> Result<(Ensemble, Vec<RecordFields>), FormatError> {
-    let topology = records
-        .first()
-        .ok_or_else(|| ensemble_error(EnsembleError::EmptySource))?
-        .model()
-        .shared_topology();
-    let mut samples = Vec::with_capacity(records.len());
-    let mut fields = Vec::with_capacity(records.len());
-    for (index, record) in records.iter().enumerate() {
-        let number = index + 1;
-        if !record.model().topology().same_layout(&topology) {
-            return Err(ensemble_error(EnsembleError::TopologyMismatch).in_record(number));
-        }
-        let read = RecordFields::read(record, number)?;
-        let weight = read.weight.unwrap_or(1.0);
-        let sample =
-            EnsembleSample::new(record.model().positions().clone(), weight).map_err(|error| {
-                invalid(
-                    DiagnosticKind::InvalidValue,
-                    number,
-                    SDF_WEIGHT_FIELD,
-                    "holds an invalid weight.",
-                )
-                .with_source(error)
-            })?;
-        samples.push(sample);
-        fields.push(read);
-    }
-    let partition = partition(&fields)?;
-    let temperature = temperature(&fields)?;
-    let mut ensemble =
-        Ensemble::from_samples(topology, samples, partition).map_err(ensemble_error)?;
-    for (index, read) in fields.iter().enumerate() {
-        let Some(energy) = read.energy else {
-            continue;
-        };
-        let number = index + 1;
-        let state = ensemble.partition().assignments()[index];
-        if ensemble.partition().representatives()[state] != index {
-            return Err(invalid(
-                DiagnosticKind::Inconsistent,
-                number,
-                SDF_ENERGY_FIELD,
-                "is on a record that does not represent its state.",
-            ));
-        }
-        ensemble
-            .state_mut(state)
-            .expect("every sample has a state")
-            .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
-            .map_err(|error| {
-                invalid(
-                    DiagnosticKind::InvalidValue,
-                    number,
-                    SDF_ENERGY_FIELD,
-                    "holds an invalid energy.",
-                )
-                .with_source(error)
-            })?;
-    }
-    ensemble
-        .set_temperature(temperature.map(|kelvin| Quantity::new(kelvin, KELVIN)))
-        .map_err(|error| {
-            invalid(
-                DiagnosticKind::InvalidValue,
-                1,
-                SDF_TEMPERATURE_FIELD,
-                "holds an invalid temperature.",
-            )
-            .with_source(error)
-        })?;
-    Ok((ensemble, fields))
-}
-
-/// Assembles interpreted SDF records as [`sdf_ensemble`] does, into a
-/// sample set of the records' samples. It has the ensemble's distribution
-/// when a record has an ensemble data field, with weights only when a
-/// record has [`SDF_WEIGHT_FIELD`], and no distribution otherwise. It
-/// orders the samples by the records' [`SDF_STEP_FIELD`] or, in the unit
-/// [`SDF_COORDINATE_UNIT_FIELD`] names, [`SDF_COORDINATE_FIELD`], when
+/// The set has a distribution when a record has a distribution data field
+/// ([`SDF_WEIGHT_FIELD`], [`SDF_STATE_FIELD`], [`SDF_REPRESENTATIVE_FIELD`],
+/// [`SDF_ENERGY_FIELD`], or [`SDF_TEMPERATURE_FIELD`]), and none otherwise.
+/// The distribution has weights only when a record has [`SDF_WEIGHT_FIELD`],
+/// each sample's weight being its record's (1.0 when absent). Records
+/// without [`SDF_STATE_FIELD`] are one state each, with the energy of
+/// [`SDF_ENERGY_FIELD`] in kJ/mol (none when absent). Records with it, as
+/// the SDF writer emits for samples of a distribution, are grouped by it:
+/// states are numbered in ascending order of its values, each represented
+/// by the one record marked with [`SDF_REPRESENTATIVE_FIELD`], which alone
+/// may carry the state's energy. [`SDF_TEMPERATURE_FIELD`], in kelvin, must
+/// be absent from every record or the same on every record.
+///
+/// The samples are ordered by the records' [`SDF_STEP_FIELD`] or, in the
+/// unit [`SDF_COORDINATE_UNIT_FIELD`] names, [`SDF_COORDINATE_FIELD`], when
 /// every record carries one.
 pub(crate) fn sdf_sample_set<'a>(
     records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
 ) -> Result<SampleSet, FormatError> {
     let records = records.into_iter().collect::<Vec<_>>();
-    let (ensemble, fields) = assemble(&records)?;
-    let order = record_order(&records)?;
-    let mut set = SampleSet::from_ensemble(ensemble);
-    if !fields.iter().any(RecordFields::any) {
-        set.set_distribution(None)
-            .expect("a set without a distribution is valid");
-    } else if fields.iter().all(|read| read.weight.is_none()) {
-        set.distribution_mut()
-            .expect("the set has the ensemble's distribution")
-            .set_weights(None)
-            .expect("a distribution without weights is valid");
+    let topology = records
+        .first()
+        .ok_or_else(|| set_error(SampleSetError::EmptySource))?
+        .model()
+        .shared_topology();
+    let mut samples = Vec::with_capacity(records.len());
+    let mut weights = Vec::with_capacity(records.len());
+    let mut fields = Vec::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
+        let number = index + 1;
+        if !record.model().topology().same_layout(&topology) {
+            return Err(set_error(SampleSetError::TopologyMismatch).in_record(number));
+        }
+        let read = RecordFields::read(record, number)?;
+        let weight = read.weight.unwrap_or(1.0);
+        if !(weight.is_finite() && weight > 0.0) {
+            return Err(invalid(
+                DiagnosticKind::InvalidValue,
+                number,
+                SDF_WEIGHT_FIELD,
+                "holds an invalid weight.",
+            ));
+        }
+        samples.push(Sample::new(record.model().positions().clone()));
+        weights.push(weight);
+        fields.push(read);
     }
+    let mut set = SampleSet::from_samples(topology, samples).map_err(set_error)?;
+    if fields.iter().any(RecordFields::any) {
+        let mut distribution =
+            Distribution::new(Members::All, partition(&fields)?).map_err(set_error)?;
+        if fields.iter().any(|read| read.weight.is_some()) {
+            distribution = distribution.with_weights(weights).map_err(set_error)?;
+        }
+        let temperature = temperature(&fields)?;
+        set.set_distribution(Some(distribution))
+            .map_err(set_error)?;
+        let mut distribution = set
+            .distribution_mut()
+            .expect("the distribution was just installed");
+        for (index, read) in fields.iter().enumerate() {
+            let Some(energy) = read.energy else {
+                continue;
+            };
+            let number = index + 1;
+            let partition = distribution.partition();
+            let state = partition.assignments()[index];
+            if partition.representatives()[state] != index {
+                return Err(invalid(
+                    DiagnosticKind::Inconsistent,
+                    number,
+                    SDF_ENERGY_FIELD,
+                    "is on a record that does not represent its state.",
+                ));
+            }
+            distribution
+                .state_mut(state)
+                .expect("every sample has a state")
+                .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
+                .map_err(|error| {
+                    invalid(
+                        DiagnosticKind::InvalidValue,
+                        number,
+                        SDF_ENERGY_FIELD,
+                        "holds an invalid energy.",
+                    )
+                    .with_source(error)
+                })?;
+        }
+        distribution
+            .set_temperature(temperature.map(|kelvin| Quantity::new(kelvin, KELVIN)))
+            .map_err(|error| {
+                invalid(
+                    DiagnosticKind::InvalidValue,
+                    1,
+                    SDF_TEMPERATURE_FIELD,
+                    "holds an invalid temperature.",
+                )
+                .with_source(error)
+            })?;
+    }
+    let order = record_order(&records)?;
     set.set_order(order).map_err(|error| {
         FormatError::interpret(
             Format::Sdf,
@@ -362,17 +346,17 @@ fn record_order(records: &[&SdfRecordInterpretation]) -> Result<Option<Order>, F
 
 /// One state per record without state fields; otherwise the states the
 /// fields name, numbered in ascending order of their values.
-fn partition(fields: &[RecordFields]) -> Result<EnsemblePartition, FormatError> {
+fn partition(fields: &[RecordFields]) -> Result<Partition, FormatError> {
     let stated = fields.iter().filter(|read| read.state.is_some()).count();
     if stated == 0 {
-        return Ok(EnsemblePartition::state_per_sample(fields.len()));
+        return Ok(Partition::state_per_sample(fields.len()));
     }
     if let Some(missing) = fields.iter().position(|read| read.state.is_none()) {
         return Err(invalid(
             DiagnosticKind::Inconsistent,
             missing + 1,
             SDF_STATE_FIELD,
-            "is missing. Other records of the ensemble have it.",
+            "is missing. Other records have it.",
         ));
     }
     let mut values = fields
@@ -416,7 +400,7 @@ fn partition(fields: &[RecordFields]) -> Result<EnsemblePartition, FormatError> 
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(EnsemblePartition::new(assignments, representatives)
+    Ok(Partition::new(assignments, representatives)
         .expect("every state is numbered and represented by one of its records"))
 }
 

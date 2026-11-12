@@ -1,4 +1,4 @@
-//! Bindings made before perception keep working with the perceived trajectory.
+//! Bindings made before perception keep working with the perceived set.
 
 use std::fs;
 use std::path::PathBuf;
@@ -8,11 +8,14 @@ use kekule::geometry::Point3;
 use kekule::smiles;
 use kekule::statistics::RmsfAccumulator;
 use kekule::structure::Positions;
-use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::topology::AtomSelection;
-use kekule::traj::io::{open_trajectory, write_trajectory};
-use kekule::traj::{FrameBuffer, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryReader};
+use kekule::traj::io::{open_trajectory, write_sample_set};
+use kekule::traj::{
+    FrameBuffer, FrameView, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryReader,
+};
 use kekule::units::{Quantity, ANGSTROM};
+
+use crate::support::{time_ordered, Frame};
 
 struct TemporaryPath(PathBuf);
 
@@ -22,36 +25,33 @@ impl Drop for TemporaryPath {
     }
 }
 
-fn ring_frame(offset: f64) -> TrajectoryFrame {
+fn ring_frame(offset: f64) -> Frame {
     let points = (0..6)
         .map(|i| {
             let angle = f64::from(i) * std::f64::consts::FRAC_PI_3;
             Point3::new(1.4 * angle.cos() + offset, 1.4 * angle.sin(), 0.1 * offset)
         })
         .collect::<Vec<_>>();
-    TrajectoryFrame::new(Positions::new(Quantity::new(points, ANGSTROM)).unwrap())
+    Frame::new(Positions::new(Quantity::new(points, ANGSTROM)).unwrap())
 }
 
 #[test]
-fn selections_buffers_and_accumulators_survive_trajectory_perception() {
+fn selections_buffers_and_accumulators_survive_set_perception() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
-    let mut trajectory =
-        Trajectory::from_items(Arc::clone(&topology), [ring_frame(0.0), ring_frame(0.5)]).unwrap();
+    let mut set = time_ordered(Arc::clone(&topology), [ring_frame(0.0), ring_frame(0.5)]);
     let selection = AtomSelection::all(Arc::clone(&topology));
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let mut rmsf = RmsfAccumulator::new(&selection).unwrap();
 
-    trajectory.perceive().unwrap();
-    assert!(!Arc::ptr_eq(&trajectory.shared_topology(), &topology));
-    assert!(trajectory.topology().shares_layout(&topology));
+    set.perceive().unwrap();
+    assert!(!Arc::ptr_eq(&set.shared_topology(), &topology));
+    assert!(set.topology().shares_layout(&topology));
 
     // In-memory analysis accepts the selection made before perception.
-    let perceived = trajectory.shared_topology();
-    trajectory
-        .superpose(0, &selection, Default::default())
-        .unwrap();
-    assert!(Arc::ptr_eq(&perceived, &trajectory.shared_topology()));
-    for (index, frame) in trajectory.iter().enumerate() {
+    let perceived = set.shared_topology();
+    set.superpose(0, &selection, Default::default()).unwrap();
+    assert!(Arc::ptr_eq(&perceived, &set.shared_topology()));
+    for (index, frame) in set.iter().enumerate() {
         rmsf.observe(index, &frame, 1.0).unwrap();
     }
     assert_eq!(rmsf.finish().unwrap().observation_count(), 2);
@@ -62,9 +62,8 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
         "kekule-perception-bindings-{}.xyz",
         std::process::id()
     )));
-    write_trajectory(&path.0, &trajectory, Default::default()).unwrap();
-    let mut reader =
-        open_trajectory(&path.0, trajectory.shared_topology(), Default::default()).unwrap();
+    write_sample_set(&path.0, &set, Default::default()).unwrap();
+    let mut reader = open_trajectory(&path.0, set.shared_topology(), Default::default()).unwrap();
     let mut frames = 0;
     while reader.read_next(&mut buffer).unwrap() {
         frames += 1;
@@ -76,7 +75,8 @@ fn selections_buffers_and_accumulators_survive_trajectory_perception() {
     let independent = smiles::to_topology("c1ccccc1").unwrap();
     assert!(independent.same_layout(&topology));
     assert_eq!(
-        FrameBuffer::new(independent).copy_from(trajectory.get(0).unwrap()),
+        FrameBuffer::new(independent)
+            .copy_from(FrameView::from_sample(set.get(0).unwrap()).unwrap()),
         Err(TrajectoryIoError::new(
             TrajectoryIoErrorKind::TopologyMismatch
         ))

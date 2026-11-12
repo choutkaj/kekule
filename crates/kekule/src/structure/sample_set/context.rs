@@ -2,11 +2,10 @@
 
 use std::fmt;
 
-use crate::structure::series::ItemPlace;
-use crate::structure::{Ensemble, Forces, SeriesItem, TrajectoryFrame, Velocities};
+use crate::structure::{Forces, Velocities};
 use crate::units::Quantity;
 
-use super::{Place, SampleRead, SampleView};
+use super::{Place, Sample, SampleRead, SampleView};
 
 /// What a borrowed sample carries besides its structure: its place in its
 /// set's order, its membership in the set's distribution, and its
@@ -16,9 +15,9 @@ use super::{Place, SampleRead, SampleView};
 /// it. Writers and reductions read it so that this state is written,
 /// rejected, or deliberately omitted, never silently dropped. A sample of a
 /// set without an order has no place, and one outside the set's
-/// distribution has no membership. Views of an ensemble sample, a trajectory
-/// frame, and a series item give the same context: membership, a time place
-/// with velocities and forces, and a step or coordinate place.
+/// distribution has no membership. A trajectory frame of a codec
+/// ([`FrameView`](crate::traj::FrameView)) has a time place and no
+/// membership.
 ///
 /// The context borrows the sample's container and reads these on request,
 /// so a view stays small.
@@ -31,9 +30,7 @@ pub struct SampleContext<'a> {
 #[derive(Clone, Copy)]
 enum Source<'a> {
     Set(SampleView<'a, dyn SampleRead>),
-    Ensemble(&'a Ensemble, usize),
-    Frame(&'a TrajectoryFrame),
-    Item(&'a SeriesItem),
+    Frame(&'a Sample, Place),
 }
 
 impl<'a> SampleContext<'a> {
@@ -44,31 +41,11 @@ impl<'a> SampleContext<'a> {
         }
     }
 
-    /// The context of sample `index` of `ensemble`, which must exist.
-    pub(crate) const fn of_ensemble(ensemble: &'a Ensemble, index: usize) -> Self {
+    /// The context of a codec's frame: `sample` at a time `place`.
+    pub(crate) const fn of_frame(sample: &'a Sample, place: Place) -> Self {
         Self {
-            source: Source::Ensemble(ensemble, index),
+            source: Source::Frame(sample, place),
         }
-    }
-
-    /// The context of a trajectory frame.
-    pub(crate) const fn of_frame(frame: &'a TrajectoryFrame) -> Self {
-        Self {
-            source: Source::Frame(frame),
-        }
-    }
-
-    /// The context of a series item.
-    pub(crate) const fn of_item(item: &'a SeriesItem) -> Self {
-        Self {
-            source: Source::Item(item),
-        }
-    }
-
-    /// Whether the sample belongs to a [`SampleSet`](super::SampleSet) or
-    /// another reader, whose writers apply one policy to all of its state.
-    pub(crate) const fn is_of_set(self) -> bool {
-        matches!(self.source, Source::Set(..))
     }
 
     /// Whether the sample belongs to a set whose distribution leaves it out.
@@ -78,7 +55,7 @@ impl<'a> SampleContext<'a> {
                 .reader
                 .distribution()
                 .is_some_and(|distribution| distribution.membership(view.index).is_none()),
-            _ => false,
+            Source::Frame(..) => false,
         }
     }
 
@@ -87,15 +64,7 @@ impl<'a> SampleContext<'a> {
     pub fn place(self) -> Option<Place> {
         match self.source {
             Source::Set(view) => view.place(),
-            Source::Ensemble(..) => None,
-            Source::Frame(frame) => Some(Place::Time {
-                time: frame.time,
-                step: frame.step,
-            }),
-            Source::Item(item) => Some(match item.place {
-                ItemPlace::Step(step) => Place::Step(step),
-                ItemPlace::Coordinate(coordinate) => Place::Coordinate(coordinate),
-            }),
+            Source::Frame(_, place) => Some(place),
         }
     }
 
@@ -107,8 +76,7 @@ impl<'a> SampleContext<'a> {
                 .reader
                 .distribution()
                 .and_then(|distribution| distribution.membership(view.index)),
-            Source::Ensemble(ensemble, index) => Some(ensemble.membership(index)),
-            Source::Frame(_) | Source::Item(_) => None,
+            Source::Frame(..) => None,
         }
     }
 
@@ -116,8 +84,7 @@ impl<'a> SampleContext<'a> {
     pub fn velocities(self) -> Option<&'a Velocities> {
         match self.source {
             Source::Set(view) => view.payload().velocities(),
-            Source::Frame(frame) => frame.velocities.as_ref(),
-            Source::Ensemble(..) | Source::Item(_) => None,
+            Source::Frame(sample, _) => sample.velocities(),
         }
     }
 
@@ -125,8 +92,7 @@ impl<'a> SampleContext<'a> {
     pub fn forces(self) -> Option<&'a Forces> {
         match self.source {
             Source::Set(view) => view.payload().forces(),
-            Source::Frame(frame) => frame.forces.as_ref(),
-            Source::Ensemble(..) | Source::Item(_) => None,
+            Source::Frame(sample, _) => sample.forces(),
         }
     }
 }

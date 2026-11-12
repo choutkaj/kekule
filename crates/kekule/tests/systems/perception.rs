@@ -5,7 +5,7 @@ use std::sync::{Arc, Weak};
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{Ensemble, EnsemblePartition, EnsembleSample, Model, Positions};
+use kekule::structure::{Distribution, Members, Model, Partition, Positions, Sample, SampleSet};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
     ResidueClass, SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
@@ -283,10 +283,9 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
 }
 
 #[test]
-fn ensemble_perception_preserves_members_weights_and_collection_properties() {
+fn sample_set_perception_preserves_samples_weights_and_set_properties() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
-    let mut member = EnsembleSample::new(Positions::zeros(6), 1.0).unwrap();
-    member.set_weight(0.25).unwrap();
+    let mut member = Sample::new(Positions::zeros(6));
     member.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
@@ -307,15 +306,17 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
             Some(PropertyValue::Int(11)),
         )
         .unwrap();
-    let mut second = EnsembleSample::new(Positions::zeros(6), 1.0).unwrap();
-    second.set_weight(0.75).unwrap();
-    let mut ensemble = Ensemble::from_samples(
-        Arc::clone(&topology),
-        [member, second],
-        EnsemblePartition::one_state(2),
-    )
-    .unwrap();
-    // Bond rows exist once the member is bound to the ensemble topology.
+    let second = Sample::new(Positions::zeros(6));
+    let mut ensemble = SampleSet::from_samples(Arc::clone(&topology), [member, second]).unwrap();
+    ensemble
+        .set_distribution(Some(
+            Distribution::new(Members::All, Partition::one_state(2))
+                .unwrap()
+                .with_weights(vec![0.25, 0.75])
+                .unwrap(),
+        ))
+        .unwrap();
+    // Bond rows exist once the member is bound to the set's topology.
     ensemble
         .get_mut(0)
         .unwrap()
@@ -339,6 +340,7 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
     assert!(!Arc::ptr_eq(&topology, &ensemble.shared_topology()));
     assert!(Arc::ptr_eq(&topology, &before.shared_topology()));
     assert_eq!(ensemble.properties(), before.properties());
+    assert_eq!(ensemble.distribution(), before.distribution());
     for ((member, original), pointer) in ensemble.iter().zip(before.iter()).zip(pointers) {
         assert!(Arc::ptr_eq(
             &member.shared_topology(),
@@ -350,14 +352,14 @@ fn ensemble_perception_preserves_members_weights_and_collection_properties() {
         assert_eq!(member.properties(), original.properties());
         assert_eq!(member.weight(), original.weight());
     }
-    let mut empty = Ensemble::new(topology);
+    let mut empty = SampleSet::new(topology);
     empty.perceive().unwrap();
     assert_default_perception(empty.topology());
     assert_eq!(empty.iter().len(), 0);
 }
 
 #[test]
-fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
+fn topology_model_and_sample_set_failure_preserve_complete_previous_state() {
     let topology = failing_topology();
     let previous = installed(&topology);
     let error = topology.perceived().unwrap_err();
@@ -385,12 +387,16 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
     assert_eq!(model, before);
     assert_eq!(installed(model.topology()), previous);
 
-    let mut ensemble = Ensemble::from_samples(
+    let mut ensemble = SampleSet::from_samples(
         Arc::clone(&topology),
-        [EnsembleSample::new(Positions::zeros(topology.atom_count()), 1.0).unwrap()],
-        EnsemblePartition::one_state(1),
+        [Sample::new(Positions::zeros(topology.atom_count()))],
     )
     .unwrap();
+    ensemble
+        .set_distribution(Some(
+            Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
+        ))
+        .unwrap();
     ensemble
         .properties_mut()
         .insert(key(), PropertyValue::Int(15))
@@ -399,6 +405,7 @@ fn topology_model_and_ensemble_failure_preserve_complete_previous_state() {
     assert_eq!(ensemble.perceive(), Err(error));
     assert!(Arc::ptr_eq(&topology, &ensemble.shared_topology()));
     assert_eq!(ensemble.properties(), before.properties());
+    assert_eq!(ensemble.distribution(), before.distribution());
     assert_eq!(
         ensemble.get(0).unwrap().to_model(),
         before.get(0).unwrap().to_model()
@@ -523,9 +530,9 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
     .unwrap();
     let model = document.interpret(Default::default()).unwrap().into_model();
     let ensemble = document
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap()
-        .into_ensemble();
+        .into_sample_set();
     assert_unperceived(model.topology());
     let mut expected = model.clone();
     expected.perceive().unwrap();
