@@ -6,8 +6,8 @@
 //! than nine atoms are compressed with nominal resolution `1 / precision`
 //! nanometres, smaller frames are stored as plain f32. The box follows an
 //! [`XtcCellPolicy`]. A frame without a time or step can be numbered under
-//! [`XtcWriteOptions::frame_timing`]; the velocities, forces, and
-//! properties XTC cannot carry are rejected unless
+//! [`XtcWriteOptions::frame_timing`]; the velocities, forces, occupancies,
+//! B-factors, and properties XTC cannot carry are rejected unless
 //! [`XtcWriteOptions::frame_metadata`] and
 //! [`XtcWriteOptions::frame_properties`] omit them, as
 //! [`XtcWriter::report`] then reports.
@@ -69,7 +69,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 
-use super::frame_state::{record, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
@@ -302,11 +302,13 @@ impl XtcWriteOptions {
         self.cell_policy
     }
 
-    /// A trajectory frame's velocities and forces, which XTC cannot carry:
-    /// by default a frame with either fails to write;
-    /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
-    /// reports a
-    /// [`WriteOmission::StructureState`](crate::diagnostics::WriteOmission::StructureState)
+    /// A trajectory frame's velocities, forces, occupancies, and B-factors,
+    /// which XTC cannot carry: by default a frame with any of them fails to
+    /// write; [`UnrepresentablePolicy::Omit`] writes the frame without them
+    /// and reports a
+    /// [`WriteOmission::StructureState`](crate::diagnostics::WriteOmission::StructureState),
+    /// [`WriteOmission::Occupancies`](crate::diagnostics::WriteOmission::Occupancies),
+    /// or [`WriteOmission::BFactors`](crate::diagnostics::WriteOmission::BFactors)
     /// for each kind left out (see [`XtcWriter::report`]).
     pub const fn frame_metadata(self) -> UnrepresentablePolicy {
         self.frame_metadata
@@ -1788,6 +1790,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        let (occupancies, b_factors) = site_fields(&frame);
         let omitted = unrepresentable_frame_state(
             [
                 (
@@ -1798,6 +1801,16 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 (
                     frame.forces().is_some(),
                     TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    occupancies,
+                    TrajectoryField::Occupancies,
+                    self.options.frame_metadata,
+                ),
+                (
+                    b_factors,
+                    TrajectoryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (

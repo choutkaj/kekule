@@ -5,7 +5,12 @@ use crate::structure::{Order, SampleSet, SampleSetError, TimeAxis};
 use crate::topology::Topology;
 
 use super::buffer::FrameBuffer;
-use super::{FrameView, TrajectoryIoError, TrajectoryIoErrorKind};
+use super::{FrameView, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation};
+
+/// Why a time-ordered set refuses a frame whose time or step columns differ
+/// from the first frame's.
+pub(crate) const COLUMN_MISMATCH: &str =
+    "The frame has a time or step the first frame lacks, or lacks one it has.";
 
 /// Sequential reader that publishes complete frames into reusable storage.
 ///
@@ -236,17 +241,25 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
     /// As [`TrajectoryWriter::write_frame`], and
     /// [`TrajectoryIoErrorKind::InconsistentMetadata`] for a frame without a
     /// time or step that the first frame has, or with one the first frame
-    /// lacks; the [`SampleSetError`] is the source.
+    /// lacks, with [`TrajectoryIoError::frame`] its index; the
+    /// [`SampleSetError`] is the source.
     fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.set.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryIoError::new(
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        let index = self.set.len();
         self.collect(frame).map_err(|error| match error {
             SampleSetError::Structure(error) => error.into(),
-            error => TrajectoryIoError::new(TrajectoryIoErrorKind::InconsistentMetadata)
-                .with_source(error),
+            error => TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::WriteFrame,
+                None,
+            )
+            .with_frame(index)
+            .with_detail(COLUMN_MISMATCH)
+            .with_source(error),
         })
     }
 }

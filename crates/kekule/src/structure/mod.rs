@@ -125,7 +125,7 @@ mod partition;
 pub mod placement;
 mod positions;
 mod sample_set;
-mod scalars;
+pub(crate) mod scalars;
 mod state;
 
 pub use dynamics::{Forces, Velocities};

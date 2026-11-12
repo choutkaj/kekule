@@ -363,32 +363,49 @@ impl SampleSet {
     }
 
     /// Reads the samples `indices` of `reader` into a set in memory, in the
-    /// requested order: each with its order value, and the distribution
-    /// restricted to them, as [`Self::select`] restricts it. The set has no
-    /// set properties; [`SampleSet::load`] keeps a file's.
+    /// requested order: a faithful copy. Each picked sample is kept whole,
+    /// with its velocities, forces, occupancies, and B-factors; the set
+    /// keeps the reader's order values and its distribution for the picked
+    /// samples, restricted as [`Self::select`] restricts them. Set
+    /// properties are not kept; [`SampleSet::load`] keeps a file's.
     ///
     /// Ranges and strides can be written as `(start..end).step_by(stride)`,
-    /// and every sample as `0..reader.len()`; duplicates and reordering are
-    /// allowed. The reader can be a [`Processed`](crate::traj::Processed)
+    /// and every sample as `0..reader.len()`. Indices may repeat and come in
+    /// any order. A repeated index is read once and its sample shared.
+    /// Samples picked out of ascending order keep their times, so
+    /// [`Self::validate_monotonic_time`] refuses the set when a time
+    /// decreases. The reader can be a [`Processed`](crate::traj::Processed)
     /// one, so its steps, such as an atom subset or a fit, run on each
-    /// sample as it is read. Each sample keeps its velocities and forces.
-    /// The host then sets the order and the distribution it wants with
-    /// [`Self::set_order`] and [`Self::set_distribution`]:
+    /// sample as it is read. A host that needs progress or cancellation
+    /// reads sample by sample through [`SampleRead`] and builds the set
+    /// itself.
+    ///
+    /// An ensemble of trajectory frames, such as one for a structure
+    /// format, drops what the frames have and an ensemble does not:
     ///
     /// ```
     /// use kekule::structure::{
-    ///     Distribution, Members, Partition, Positions, Sample, SampleSet,
+    ///     Distribution, Members, Order, Partition, Place, Positions, Sample, SampleSet,
+    ///     TimeAxis,
     /// };
+    /// use kekule::units::{Quantity, PICOSECOND};
     ///
     /// let topology = kekule::smiles::to_topology("O")?;
     /// let mut frames = SampleSet::new(topology.clone());
-    /// for _ in 0..10 {
-    ///     frames.push(Sample::new(Positions::zeros(topology.atom_count())), None)?;
+    /// frames.set_order(Some(Order::Time(TimeAxis::new(
+    ///     Some(Quantity::new(Vec::new(), PICOSECOND)),
+    ///     None,
+    /// )?)))?;
+    /// for index in 0..10 {
+    ///     let time = Some(Quantity::new(f64::from(index), PICOSECOND));
+    ///     let sample = Sample::new(Positions::zeros(topology.atom_count()));
+    ///     frames.push(sample, Some(Place::Time { time, step: None }))?;
     /// }
     /// // Leave out two samples of equilibration, then take every third.
     /// let mut ensemble = SampleSet::from_reader(&frames, (2..10).step_by(3))?;
     /// assert_eq!(ensemble.len(), 3);
     /// ensemble.set_order(None)?;
+    /// ensemble.clear_velocities_and_forces();
     /// ensemble.set_distribution(Some(Distribution::new(
     ///     Members::All,
     ///     Partition::one_state(3),
@@ -398,27 +415,51 @@ impl SampleSet {
     ///
     /// # Errors
     ///
-    /// [`SampleReadError::IndexOutOfRange`] for an index past the last
-    /// sample, [`SampleReadError::Structure`] for a sample the reader does
-    /// not bind to its topology, and the first failure to read a sample.
+    /// [`SampleReadError::IndexOutOfRange`] for the first index not below
+    /// `reader.len()`, before anything is read;
+    /// [`SampleReadError::Structure`] for a sample the reader does not bind
+    /// to its topology; and otherwise the first failure to read a sample.
     pub fn from_reader<R: SampleRead + ?Sized>(
         reader: &R,
         indices: impl IntoIterator<Item = usize>,
     ) -> Result<Self, SampleReadError> {
         let indices = indices.into_iter().collect::<Vec<_>>();
-        let samples = indices
-            .iter()
-            .map(|&index| {
-                let sample = reader.read(index)?;
-                check_bound(reader.topology(), &sample).map_err(|source| {
-                    SampleReadError::Structure {
-                        sample: index,
-                        source: Box::new(source),
-                    }
-                })?;
-                Ok(sample)
-            })
-            .collect::<Result<Vec<_>, SampleReadError>>()?;
+        let len = reader.len();
+        if let Some(&index) = indices.iter().find(|&&index| index >= len) {
+            return Err(SampleReadError::IndexOutOfRange { index, len });
+        }
+        let read = |index: usize| {
+            let sample = reader.read(index)?;
+            check_bound(reader.topology(), &sample).map_err(|source| {
+                SampleReadError::Structure {
+                    sample: index,
+                    source: Box::new(source),
+                }
+            })?;
+            Ok(sample)
+        };
+        let samples = if indices.windows(2).all(|pair| pair[0] < pair[1]) {
+            indices
+                .iter()
+                .map(|&index| read(index))
+                .collect::<Result<Vec<_>, SampleReadError>>()?
+        } else {
+            // Each index once, then a shared clone wherever it is asked for.
+            let mut unique = indices.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            let picked = unique
+                .iter()
+                .map(|&index| read(index))
+                .collect::<Result<Vec<_>, SampleReadError>>()?;
+            indices
+                .iter()
+                .map(|index| {
+                    let slot = unique.binary_search(index).expect("every index was read");
+                    picked[slot].clone()
+                })
+                .collect()
+        };
         Ok(Self::from_storage(
             Arc::clone(reader.topology()),
             InMemory::new(samples),
@@ -782,6 +823,15 @@ impl SampleSet {
                 .as_ref()
                 .map(Distribution::without_state_properties),
         })
+    }
+
+    /// Removes the velocities and forces of every sample. A sample without
+    /// them stays shared.
+    pub fn clear_velocities_and_forces(&mut self) {
+        for sample in &mut self.storage.samples {
+            sample.take_velocities();
+            sample.take_forces();
+        }
     }
 
     /// Consumes the set, returning its samples in order and dropping the

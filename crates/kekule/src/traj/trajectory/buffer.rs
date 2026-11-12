@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::properties::{OwnerProperties, StructureProperties, StructurePropertiesMut};
+use crate::structure::scalars::AtomScalars;
 use crate::structure::{
     DenseArrayError, Forces, ModelView, Place, Positions, Sample, SampleMut, StructureError,
     Velocities,
@@ -18,7 +19,9 @@ use super::{FrameView, TrajectoryIoError};
 /// A decoder builds this value only after it has read one complete frame into
 /// reusable scratch. [`FrameBuffer::replace_from_data`] validates every field
 /// before changing the destination, converts units once, reuses dense-array
-/// allocations, and clears optional fields omitted from this value.
+/// allocations, and clears optional fields omitted from this value. Only
+/// [`Self::from_frame_view`] carries occupancies and B-factors, so a decoded
+/// frame has none.
 #[derive(Debug, Clone, Copy)]
 pub struct FrameData<'a> {
     positions: Quantity<&'a [Point3]>,
@@ -29,6 +32,8 @@ pub struct FrameData<'a> {
     step: Option<u64>,
     owner: Option<&'a OwnerProperties>,
     annotations: Option<&'a StructureProperties>,
+    /// Occupancies and B-factors, shared rather than copied.
+    sites: Option<(&'a AtomScalars, &'a AtomScalars)>,
 }
 
 impl<'a> FrameData<'a> {
@@ -43,13 +48,15 @@ impl<'a> FrameData<'a> {
             step: None,
             owner: None,
             annotations: None,
+            sites: None,
         }
     }
 
-    /// Borrows every field, including all structure properties, from a
-    /// topology-bound frame.
+    /// Borrows every field, including occupancies, B-factors, and all
+    /// structure properties, from a topology-bound frame.
     pub fn from_frame_view(frame: FrameView<'a>) -> Self {
         let sample = frame.payload();
+        let structure = sample.structure();
         Self {
             positions: sample.positions().values(),
             cell: sample.cell().copied(),
@@ -59,6 +66,7 @@ impl<'a> FrameData<'a> {
             step: frame.step(),
             owner: None,
             annotations: Some(sample.properties()),
+            sites: Some((&structure.occupancies, &structure.b_factors)),
         }
     }
 
@@ -291,22 +299,25 @@ impl FrameBuffer {
     }
 
     /// Clears all per-frame state except positions, keeping allocations and
-    /// the bound topology.
+    /// the bound topology: velocities, forces, time, step, cell, occupancies,
+    /// B-factors, and properties.
     pub fn reset_dynamic_state(&mut self) {
         self.publish_velocities(None);
         self.publish_forces(None);
         self.step = None;
         self.time = None;
-        let mut sample = self.sample_mut();
-        sample.set_cell(None);
-        sample.properties_mut().clear();
+        let structure = self.sample.structure_in_place();
+        structure.cell = None;
+        structure.occupancies = AtomScalars::default();
+        structure.b_factors = AtomScalars::default();
+        StructurePropertiesMut::new(&mut structure.properties).clear();
     }
 
     /// Replaces the complete visible frame transactionally.
     ///
     /// All count, unit, finite-value, and annotation validation completes
     /// before any field changes. Optional fields absent from `data`, including
-    /// annotations, are cleared.
+    /// annotations, occupancies, and B-factors, are cleared.
     ///
     /// # Errors
     ///
@@ -360,6 +371,16 @@ impl FrameBuffer {
             .set_all(data.positions)
             .expect("positions were validated");
         structure.cell = data.cell;
+        match data.sites {
+            Some((occupancies, b_factors)) => {
+                structure.occupancies.clone_from(occupancies);
+                structure.b_factors.clone_from(b_factors);
+            }
+            None => {
+                structure.occupancies = AtomScalars::default();
+                structure.b_factors = AtomScalars::default();
+            }
+        }
         match data.annotations {
             Some(source) => structure.properties.clone_from(source),
             None => {
@@ -373,7 +394,8 @@ impl FrameBuffer {
         Ok(())
     }
 
-    /// Copies a complete frame of any snapshot sharing this buffer's layout.
+    /// Copies a complete frame of any snapshot sharing this buffer's layout,
+    /// every field of it: what the frame lacks, the buffer then lacks too.
     ///
     /// # Errors
     ///

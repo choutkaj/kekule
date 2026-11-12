@@ -5,8 +5,8 @@
 //! writes canonical all-atom files. DCD stores f32 coordinates in angstrom and
 //! one step per frame on the `ISTART`/`NSAVC` sequence; time is derived from
 //! the header `DELTA` only under an explicit [`DcdTimePolicy`]. The writer
-//! rejects frame state DCD cannot carry (velocities, forces, and times
-//! under [`DcdTimePolicy::Absent`], and properties) unless
+//! rejects frame state DCD cannot carry (velocities, forces, occupancies,
+//! B-factors, times under [`DcdTimePolicy::Absent`], and properties) unless
 //! [`DcdWriteOptions::frame_metadata`] and
 //! [`DcdWriteOptions::frame_properties`] omit it, and reports what it leaves
 //! out in [`DcdWriter::report`]. Under [`DcdFrameTimingPolicy::Number`] it
@@ -74,7 +74,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
-use super::frame_state::{record, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch, scratch_bytes};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
@@ -370,12 +370,13 @@ impl DcdWriteOptions {
         self
     }
 
-    /// A trajectory frame's velocities and forces, and its time under
-    /// [`DcdTimePolicy::Absent`], which DCD cannot carry: by default a frame
-    /// with any of them fails to write; [`UnrepresentablePolicy::Omit`]
-    /// writes the frame without them and reports a
-    /// [`WriteOmission::StructureState`] for each kind left out (see
-    /// [`DcdWriter::report`]).
+    /// A trajectory frame's velocities, forces, occupancies, and B-factors,
+    /// and its time under [`DcdTimePolicy::Absent`], which DCD cannot carry:
+    /// by default a frame with any of them fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
+    /// reports a [`WriteOmission::StructureState`],
+    /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
+    /// each kind left out (see [`DcdWriter::report`]).
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
         self.frame_metadata
     }
@@ -2018,6 +2019,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
+        let (occupancies, b_factors) = site_fields(&frame);
         let omitted = unrepresentable_frame_state(
             [
                 (
@@ -2028,6 +2030,16 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 (
                     frame.forces().is_some(),
                     TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    occupancies,
+                    TrajectoryField::Occupancies,
+                    self.options.frame_metadata,
+                ),
+                (
+                    b_factors,
+                    TrajectoryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (

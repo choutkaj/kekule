@@ -174,8 +174,7 @@ pub(crate) fn sdf_sample_set<'a>(
                 number,
                 SDF_WEIGHT_FIELD,
                 "holds an invalid weight.",
-            )
-            .with_source(SampleSetError::InvalidWeight { sample: index }));
+            ));
         }
         samples.push(Sample::new(record.model().positions().clone()));
         weights.push(weight);
@@ -357,7 +356,7 @@ fn partition(fields: &[RecordFields]) -> Result<Partition, FormatError> {
             DiagnosticKind::Inconsistent,
             missing + 1,
             SDF_STATE_FIELD,
-            "is missing. Other records of the ensemble have it.",
+            "is missing. Other records have it.",
         ));
     }
     let mut values = fields

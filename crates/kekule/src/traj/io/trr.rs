@@ -6,9 +6,11 @@
 //! time; GROMACS nanometre, picosecond and kJ/(mol nm) units are converted at
 //! the codec boundary. The lambda scalar follows a [`TrrLambdaPolicy`]. A
 //! frame without a time or step can be numbered under
-//! [`TrrWriteOptions::frame_timing`]; the properties TRR cannot carry are
-//! rejected unless [`TrrWriteOptions::frame_properties`] omits them, as
-//! [`TrrWriter::report`] then reports.
+//! [`TrrWriteOptions::frame_timing`]; the occupancies, B-factors, and
+//! properties TRR cannot carry are rejected unless
+//! [`TrrWriteOptions::frame_metadata`] and
+//! [`TrrWriteOptions::frame_properties`] omit them, as [`TrrWriter::report`]
+//! then reports.
 //!
 //! # Examples
 //!
@@ -75,7 +77,7 @@ use crate::units::{
     NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
 
-use super::frame_state::{record, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
@@ -189,6 +191,7 @@ impl TrrReadOptions {
 pub struct TrrWriteOptions {
     precision: TrrScalarPrecision,
     lambda_policy: TrrLambdaPolicy,
+    frame_metadata: UnrepresentablePolicy,
     frame_properties: UnrepresentablePolicy,
     frame_timing: FrameTimingPolicy,
 }
@@ -198,6 +201,7 @@ impl Default for TrrWriteOptions {
         Self {
             precision: TrrScalarPrecision::Float32,
             lambda_policy: TrrLambdaPolicy::FrameProperty,
+            frame_metadata: UnrepresentablePolicy::Fail,
             frame_properties: UnrepresentablePolicy::Fail,
             frame_timing: FrameTimingPolicy::Require,
         }
@@ -218,6 +222,13 @@ impl TrrWriteOptions {
     #[must_use]
     pub const fn with_lambda_policy(mut self, lambda_policy: TrrLambdaPolicy) -> Self {
         self.lambda_policy = lambda_policy;
+        self
+    }
+
+    /// Sets [`Self::frame_metadata`].
+    #[must_use]
+    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
+        self.frame_metadata = frame_metadata;
         self
     }
 
@@ -245,6 +256,18 @@ impl TrrWriteOptions {
     /// [`TRR_LAMBDA_PROPERTY`] frame property.
     pub const fn lambda_policy(&self) -> TrrLambdaPolicy {
         self.lambda_policy
+    }
+
+    /// A trajectory frame's occupancies and B-factors, which TRR cannot
+    /// carry: by default a frame with either fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
+    /// reports a
+    /// [`WriteOmission::Occupancies`](crate::diagnostics::WriteOmission::Occupancies)
+    /// or
+    /// [`WriteOmission::BFactors`](crate::diagnostics::WriteOmission::BFactors)
+    /// for each kind left out (see [`TrrWriter::report`]).
+    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
+        self.frame_metadata
     }
 
     /// A trajectory frame's atom and bond properties, and its frame
@@ -1351,6 +1374,7 @@ impl<W: Write> TrrWriter<W> {
     }
 
     /// The frame state the frames written so far leave out under
+    /// [`TrrWriteOptions::frame_metadata`] and
     /// [`TrrWriteOptions::frame_properties`], counted over every frame
     /// written. TRR stores coordinates for a topology its readers receive
     /// separately, so nothing else is reported.
@@ -1428,8 +1452,19 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             ));
         }
         let properties = frame.properties();
+        let (occupancies, b_factors) = site_fields(&frame);
         let omitted = unrepresentable_frame_state(
             [
+                (
+                    occupancies,
+                    TrajectoryField::Occupancies,
+                    self.options.frame_metadata,
+                ),
+                (
+                    b_factors,
+                    TrajectoryField::BFactors,
+                    self.options.frame_metadata,
+                ),
                 (
                     properties.atoms().has_data(),
                     TrajectoryField::AtomProperties,

@@ -5,7 +5,8 @@
 //! elements; [`XyzWriter`] writes them deterministically, from trajectory
 //! frames or one frame per sample of a sample set
 //! ([`XyzWriter::write_sample_set`]). XYZ stores positions only: the writer
-//! rejects a frame's velocities, forces, time, step and properties, its
+//! rejects a frame's velocities, forces, time, step, occupancies, B-factors
+//! and properties, its
 //! cell, and sample set state unless its options omit them, and reports
 //! everything it leaves out, such as bonds, charges and omitted cells, in
 //! [`XyzWriter::report`]. To
@@ -66,7 +67,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
-use super::frame_state::{record, sample_field, unrepresentable_frame_state};
+use super::frame_state::{record, sample_field, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
@@ -238,10 +239,13 @@ impl XyzWriteOptions {
         self.cell
     }
 
-    /// A trajectory frame's velocities, forces, time, and step, which XYZ
-    /// cannot carry: by default a frame with any of them fails to write;
-    /// [`UnrepresentablePolicy::Omit`] writes its positions and reports a
-    /// [`WriteOmission::StructureState`] for each kind left out.
+    /// A trajectory frame's velocities, forces, time, step, occupancies, and
+    /// B-factors, which XYZ cannot carry: by default a frame with any of them
+    /// fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
+    /// and reports a [`WriteOmission::StructureState`],
+    /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
+    /// each kind left out. [`XyzWriter::write_sample_set`] leaves a sample's
+    /// occupancies and B-factors out under every policy.
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
         self.frame_metadata
     }
@@ -1391,6 +1395,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 TrajectoryField::PeriodicCell,
             ));
         }
+        let (occupancies, b_factors) = site_fields(&frame);
         let omitted = unrepresentable_frame_state(
             [
                 (
@@ -1401,6 +1406,16 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 (
                     frame.forces().is_some(),
                     TrajectoryField::Forces,
+                    self.options.frame_metadata,
+                ),
+                (
+                    occupancies,
+                    TrajectoryField::Occupancies,
+                    self.options.frame_metadata,
+                ),
+                (
+                    b_factors,
+                    TrajectoryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (

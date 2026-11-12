@@ -241,9 +241,27 @@ pub(crate) fn unrepresentable_state(
         }
         (StructureField::Order, _) => format!("The sample order has no {format} representation."),
         (field, Some(sample)) => {
-            format!("The {field} of sample {sample} has no {format} representation.")
+            let verb = verb(field);
+            format!("The {field} of sample {sample} {verb} no {format} representation.")
         }
-        (field, None) => format!("The {field} of the sample has no {format} representation."),
+        (field, None) => {
+            let verb = verb(field);
+            format!("The {field} of the sample {verb} no {format} representation.")
+        }
+    }
+}
+
+/// The verb for `field` as the subject: "have" for a plural field, "has"
+/// otherwise.
+const fn verb(field: StructureField) -> &'static str {
+    match field {
+        StructureField::Velocities
+        | StructureField::Forces
+        | StructureField::StateProperties
+        | StructureField::AtomProperties
+        | StructureField::BondProperties
+        | StructureField::Properties => "have",
+        _ => "has",
     }
 }
 

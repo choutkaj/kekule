@@ -66,10 +66,16 @@ that lazy processing checks its steps on, and starts no threads: caching,
 read-ahead, and parallel observation belong to the host.
 
 A host loads chosen samples of any reader with `SampleSet::from_reader`,
-which takes sample indices (a range, a stride, or a list) and reads them in
-that order. It keeps no order, distribution, or set properties, so the host
-states what the samples mean with `set_order` and `set_distribution`; reading
-through `Processed` loads processed samples.
+which takes sample indices (a range, a stride, or a list) in any order and
+makes a faithful copy: each picked sample whole, the reader's order values,
+and its distribution restricted to the picked samples. It keeps no set
+properties. Every index is checked against the reader's length first, and a
+repeated index is read once and its sample shared. Samples picked out of
+ascending order keep their times, so `validate_monotonic_time` refuses the
+set when a time decreases. The host changes what the samples mean with
+`set_order` and `set_distribution`; reading through `Processed` loads
+processed samples. A host that needs progress or cancellation reads sample
+by sample through `SampleRead`.
 
 Structures are flat. A structure is one set of coordinates and per-atom state
 of a topology: a `Model` or a `Sample`. Positions, cell, occupancies, B
@@ -89,7 +95,9 @@ and step. `FrameView::from_sample` lends a sample of a time-ordered set and
 `FrameView::new` one held apart from a set, without copying arrays. A
 `FrameBuffer` holds one `Sample` bound to its topology plus the frame's time
 and step; it lends its frame as a `FrameView` and becomes a `Sample` with its
-`Place` through `into_sample`, again without copying. `read_sample_set` and
+`Place` through `into_sample`, again without copying. A frame the buffer
+publishes replaces every field, occupancies and B factors included, so a
+buffer never keeps a previous frame's state. `read_sample_set` and
 `write_sample_set` move whole time-ordered sets.
 
 A salt, solvent box, or protein-ligand complex is a topology containing connected
@@ -526,7 +534,9 @@ trajectory, a DCD header counting its frames, that another process can read
 while it grows. Frame state a codec cannot carry fails
 unless the caller sets `UnrepresentablePolicy::Omit` for its kind (frame
 metadata, frame properties, or the cell), and the writer reports what it
-left out; collection properties are rejected rather than discarded. A codec
+left out. Occupancies and B factors, which no trajectory format stores, are
+frame metadata of every codec, so `write_sample_set` returns the codec's
+report as it is; collection properties are rejected rather than discarded. A codec
 never invents frame state, except the times and steps XTC and TRR number
 under an explicit `FrameTimingPolicy::Number` and DCD numbers on its header's
 step sequence under an explicit `DcdFrameTimingPolicy::Number`, which reports

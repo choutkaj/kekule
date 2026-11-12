@@ -2,16 +2,21 @@
 //! distribution and order, and the sets they build.
 
 use kekule::diagnostics::{
-    DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy,
+    DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy, WriteOmission,
 };
-use kekule::geometry::Point3;
+use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif::{self, MmcifWriteOptions};
 use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::structure::{
-    Distribution, Members, Model, Order, Partition, Positions, Sample, SampleSet,
+    Distribution, Members, Model, Order, Partition, Place, Positions, Sample, SampleSet, TimeAxis,
+    Velocities,
 };
-use kekule::units::{Quantity, Unit, ANGSTROM, DEGREE, KILOJOULE_PER_MOLE};
+use kekule::topology::{AtomSelection, TopologyAtomIndex};
+use kekule::units::{
+    Quantity, Unit, ANGSTROM, CANONICAL_VELOCITY_UNIT, DEGREE, KILOJOULE_PER_MOLE, NANOMETER,
+    PICOSECOND,
+};
 
 const WATERS: &str = "3
 first
@@ -466,4 +471,133 @@ fn xyz_sample_sets_have_no_distribution() {
     ))
     .unwrap();
     assert_eq!(crate::native_fingerprint(&set), 0x0f08_570b_3fb1_51ac);
+}
+
+/// Four frames of one water, each with a cell, velocities, a time, and a
+/// step.
+fn water_frames() -> SampleSet {
+    let model = kekule::xyz::parse_str(
+        "3\nwater\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.240 0.927 0.000\n",
+        Default::default(),
+    )
+    .unwrap()
+    .interpret(Default::default())
+    .unwrap()
+    .into_model();
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(20.0, 21.0, 22.0), ANGSTROM),
+        [true; 3],
+    )
+    .unwrap();
+    let mut frames = SampleSet::new(model.shared_topology());
+    let axis = TimeAxis::new(
+        Some(Quantity::new(Vec::new(), PICOSECOND)),
+        Some(Vec::new()),
+    )
+    .unwrap();
+    frames.set_order(Some(Order::Time(axis))).unwrap();
+    for index in 0..4_u32 {
+        let shift = f64::from(index) * 0.25;
+        let points = model
+            .positions()
+            .values()
+            .value()
+            .iter()
+            .map(|point| Point3::new(point.x + shift, point.y, point.z - shift))
+            .collect::<Vec<_>>();
+        let mut sample =
+            Sample::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
+                .with_cell(cell);
+        sample
+            .set_velocities(Some(
+                Velocities::new(Quantity::new(
+                    [Vector3::new(1.0, 2.0, 3.0); 3],
+                    CANONICAL_VELOCITY_UNIT,
+                ))
+                .unwrap(),
+            ))
+            .unwrap();
+        let place = Place::Time {
+            time: Some(Quantity::new(f64::from(index), PICOSECOND)),
+            step: Some(u64::from(index) * 10),
+        };
+        frames.push(sample, Some(place)).unwrap();
+    }
+    frames
+}
+
+/// An ensemble of the frames `[3, 1, 3]` built with the calls that replace
+/// `Trajectory::to_ensemble`, as the changelog states them.
+fn ensemble_of_frames(
+    frames: &SampleSet,
+    atoms: Option<&AtomSelection>,
+    weights: Option<Vec<f64>>,
+) -> SampleSet {
+    let mut ensemble = SampleSet::from_reader(frames, [3, 1, 3]).unwrap();
+    ensemble.set_order(None).unwrap();
+    ensemble.clear_velocities_and_forces();
+    if let Some(atoms) = atoms {
+        ensemble = ensemble.subset(atoms).unwrap();
+    }
+    let mut distribution = Distribution::new(Members::All, Partition::one_state(3)).unwrap();
+    if let Some(weights) = weights {
+        distribution = distribution.with_weights(weights).unwrap();
+    }
+    ensemble.set_distribution(Some(distribution)).unwrap();
+    ensemble
+}
+
+/// The calls replacing `Trajectory::to_ensemble` write the PDB and mmCIF
+/// bytes it wrote; the fingerprints were recorded from its output.
+#[test]
+fn ensembles_of_trajectory_frames_write_what_trajectory_sampling_wrote() {
+    let frames = water_frames();
+    let atoms = AtomSelection::from_indices(
+        frames.shared_topology(),
+        [TopologyAtomIndex::new(0), TopologyAtomIndex::new(1)],
+    )
+    .unwrap();
+    let omit = UnrepresentablePolicy::Omit;
+    let hydrogens = |atoms| WriteOmission::ImplicitHydrogens { atoms };
+    let weights = WriteOmission::StructureState {
+        field: StructureField::Weight,
+        structures: 3,
+    };
+    let cases = [
+        (
+            ensemble_of_frames(&frames, None, None),
+            false,
+            vec![hydrogens(3)],
+            0x7856_ea1c_9be2_f84b,
+            0xdc86_05a8_6729_3231,
+        ),
+        (
+            ensemble_of_frames(&frames, Some(&atoms), None),
+            false,
+            vec![hydrogens(2)],
+            0xa036_6f06_4366_5371,
+            0x3c9d_6a15_f7ef_9fb6,
+        ),
+        (
+            ensemble_of_frames(&frames, Some(&atoms), Some(vec![2.0, 1.0, 0.5])),
+            true,
+            vec![weights, hydrogens(2)],
+            0xa036_6f06_4366_5371,
+            0x3c9d_6a15_f7ef_9fb6,
+        ),
+    ];
+    for (ensemble, weighted, omissions, pdb_bytes, mmcif_bytes) in cases {
+        let mut pdb_options = PdbWriteOptions::default().with_implicit_hydrogens(omit);
+        let mut mmcif_options = MmcifWriteOptions::default().with_implicit_hydrogens(omit);
+        if weighted {
+            pdb_options = pdb_options.with_sample_metadata(omit);
+            mmcif_options = mmcif_options.with_sample_metadata(omit);
+        }
+        let (text, report) = pdb::write(&ensemble, pdb_options).unwrap();
+        assert_eq!(crate::fingerprint(&text), pdb_bytes, "{text}");
+        assert_eq!(report.omissions(), omissions);
+        let (text, report) = mmcif::write([&ensemble], mmcif_options).unwrap();
+        assert_eq!(crate::fingerprint(&text), mmcif_bytes, "{text}");
+        assert_eq!(report.omissions(), omissions);
+    }
 }

@@ -8,10 +8,10 @@ use std::sync::{
     Arc,
 };
 
-use crate::diagnostics::{UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::diagnostics::{UnrepresentablePolicy, WriteReport};
 use crate::topology::Topology;
 
-use crate::structure::{ModelView, Order, SampleSet};
+use crate::structure::{Order, SampleSet};
 use crate::traj::{
     TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
     TrajectoryWriter,
@@ -115,18 +115,22 @@ impl TrajectoryWriteOptions {
         self
     }
 
-    /// Sets the `frame_metadata` policy of the codec options whose formats
-    /// cannot carry some frame velocities, forces, times, or steps, so that
-    /// whichever is written leaves them out, or fails on them:
-    /// [`xyz::XyzWriteOptions::frame_metadata`],
-    /// [`dcd::DcdWriteOptions::frame_metadata`], and
-    /// [`xtc::XtcWriteOptions::frame_metadata`]; TRR carries them all. The
-    /// writer's report names what was left out. A later `with_*_options`
-    /// call replaces the policy this sets for its codec.
+    /// Sets the `frame_metadata` policy of every codec's options, for the
+    /// frame state its format cannot carry, so that whichever is written
+    /// leaves it out, or fails on it: occupancies and B-factors, which no
+    /// format carries, and the velocities, forces, times, or steps some
+    /// formats do not
+    /// ([`xyz::XyzWriteOptions::frame_metadata`],
+    /// [`dcd::DcdWriteOptions::frame_metadata`],
+    /// [`trr::TrrWriteOptions::frame_metadata`], and
+    /// [`xtc::XtcWriteOptions::frame_metadata`]). The writer's report names
+    /// what was left out. A later `with_*_options` call replaces the policy
+    /// this sets for its codec.
     #[must_use]
     pub fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
         self.xyz = self.xyz.with_frame_metadata(frame_metadata);
         self.dcd = self.dcd.with_frame_metadata(frame_metadata);
+        self.trr = self.trr.with_frame_metadata(frame_metadata);
         self.xtc = self.xtc.with_frame_metadata(frame_metadata);
         self
     }
@@ -542,8 +546,10 @@ impl Drop for FileTrajectoryWriter {
 /// A time order gives the frames' times and steps, and each sample's
 /// positions, cell, properties, velocities, and forces are its frame's. A
 /// set without an order is written too; reading the file back gives a time
-/// order. Occupancies and B factors, which no trajectory format stores, are
-/// left out and reported. Each frame borrows its sample; nothing is copied.
+/// order. Occupancies and B-factors, which no trajectory format stores,
+/// follow the codec's `frame_metadata` policy like the other frame state it
+/// cannot store ([`TrajectoryWriteOptions::with_frame_metadata`]). Each
+/// frame borrows its sample; nothing is copied.
 ///
 /// The codec is the format of `options` or, by default, the one its
 /// destination extension names: `.xyz`, `.dcd`, `.trr`, or `.xtc`,
@@ -556,7 +562,7 @@ impl Drop for FileTrajectoryWriter {
 ///
 /// Returns the [`FileTrajectoryWriter::report`] of the content the file
 /// leaves out, such as the bonds of an XYZ file or the cells and frame state
-/// its options omit, with the occupancies and B factors.
+/// its options omit.
 ///
 /// ```no_run
 /// # use kekule::structure::SampleSet;
@@ -592,7 +598,7 @@ pub fn write_sample_set(
     for sample in set {
         writer.write_frame(FrameView::from_sample(sample)?)?;
     }
-    let report = sample_set_report(writer.report(), set);
+    let report = writer.report().clone();
     writer.finish()?;
     Ok(report)
 }
@@ -655,7 +661,7 @@ pub fn write_sample_set_to<W: Write + Seek + ?Sized>(
     for sample in set {
         writer.write_frame(FrameView::from_sample(sample)?)?;
     }
-    let report = sample_set_report(writer.report(), set);
+    let report = writer.report().clone();
     writer.finish()?;
     Ok(report)
 }
@@ -677,35 +683,6 @@ fn check_sample_set(set: &SampleSet) -> Result<(), TrajectoryIoError> {
     field.map_or(Ok(()), |field| {
         Err(TrajectoryIoError::unsupported_field(field))
     })
-}
-
-/// The codec's report with the samples' occupancies and B factors, which no
-/// trajectory format stores.
-fn sample_set_report(report: &WriteReport, set: &SampleSet) -> WriteReport {
-    let count = |present: fn(ModelView<'_>) -> bool| {
-        set.iter()
-            .filter(|sample| present(sample.as_model_view()))
-            .count()
-    };
-    report
-        .omissions()
-        .iter()
-        .copied()
-        .chain([
-            WriteOmission::Occupancies {
-                structures: count(|view| {
-                    view.occupancies()
-                        .is_some_and(|values| values.iter().any(Option::is_some))
-                }),
-            },
-            WriteOmission::BFactors {
-                structures: count(|view| {
-                    view.b_factors()
-                        .is_some_and(|values| values.value().iter().any(Option::is_some))
-                }),
-            },
-        ])
-        .collect()
 }
 
 /// Creates a strict writer of the format `options` names over a host's

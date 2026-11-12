@@ -13,6 +13,8 @@ use crate::traj::{
     TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
 };
 
+use crate::traj::trajectory::COLUMN_MISMATCH;
+
 use super::limits::index_hard_capacity;
 use super::{
     dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata, FrameOffsets,
@@ -678,10 +680,10 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 ///
 /// Returns the errors of [`open_trajectory`], the first decoding, validation
 /// or [`TrajectoryIoErrorKind::Io`] error of any frame, and
-/// [`TrajectoryIoErrorKind::InconsistentMetadata`] at the first frame
+/// [`TrajectoryIoErrorKind::InconsistentMetadata`] for the first frame
 /// without a time or step that the first frame has, or with one the first
-/// frame lacks; the [`SampleSetError`](crate::structure::SampleSetError) is
-/// the source.
+/// frame lacks, with [`TrajectoryIoError::frame`] its index; the
+/// [`SampleSetError`](crate::structure::SampleSetError) is the source.
 ///
 /// [`TrajectoryIoErrorKind::Io`]: crate::traj::TrajectoryIoErrorKind::Io
 /// [`TrajectoryIoErrorKind::InconsistentMetadata`]:
@@ -706,16 +708,21 @@ pub fn read_sample_set(
     let mut reader = open_trajectory(path, topology, options)?;
     let mut buffer = reader.frame_buffer();
     let mut writer = MemoryTrajectoryWriter::new(reader.shared_topology());
+    let format = reader.metadata().format();
+    let mut index = 0;
     while reader.read_next(&mut buffer)? {
         writer.collect(buffer.frame_view()).map_err(|error| {
             TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::ReadFrame,
-                None,
+                Some(format),
             )
             .with_source_label(path.display().to_string())
+            .with_frame(index)
+            .with_detail(COLUMN_MISMATCH)
             .with_source(error)
         })?;
+        index += 1;
     }
     Ok(writer.into_sample_set())
 }

@@ -13,6 +13,7 @@ mod stream;
 
 pub use buffer::{FrameBuffer, FrameData};
 pub use frame::FrameView;
+pub(crate) use stream::COLUMN_MISMATCH;
 pub use stream::{
     MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
 };
@@ -193,6 +194,10 @@ pub enum TrajectoryField {
     Velocities,
     /// Atom forces.
     Forces,
+    /// Crystallographic occupancies.
+    Occupancies,
+    /// Crystallographic B-factors.
+    BFactors,
     /// The frame time.
     Time,
     /// The integration step.
@@ -236,6 +241,8 @@ impl fmt::Display for TrajectoryField {
             Self::PeriodicCell => "periodic cell",
             Self::Velocities => "velocities",
             Self::Forces => "forces",
+            Self::Occupancies => "occupancies",
+            Self::BFactors => "B-factors",
             Self::Time => "time",
             Self::Step => "step",
             Self::AtomProperties => "atom properties",

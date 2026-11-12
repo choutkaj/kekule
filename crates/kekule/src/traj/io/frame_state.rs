@@ -1,6 +1,7 @@
 //! Frame state the trajectory writers leave out or give frames themselves.
 
 use crate::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::structure::Sample;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
 use crate::traj::{
@@ -89,12 +90,32 @@ pub(crate) fn unrepresentable_frame_state<const N: usize>(
     {
         return Err(error(*field));
     }
-    Ok(
-        fields.map(|(present, field, _)| WriteOmission::StructureState {
-            field: structure_field(field),
-            structures: usize::from(present),
-        }),
+    Ok(fields.map(|(present, field, _)| omission(field, usize::from(present))))
+}
+
+/// Whether `sample` records an occupancy, and whether it records a
+/// B-factor: the site fields no trajectory format stores.
+pub(crate) fn site_fields(sample: &Sample) -> (bool, bool) {
+    (
+        sample
+            .occupancies()
+            .is_some_and(|values| values.iter().any(Option::is_some)),
+        sample
+            .b_factors()
+            .is_some_and(|values| values.value().iter().any(Option::is_some)),
     )
+}
+
+/// The omission of `field` from `structures` frames.
+fn omission(field: TrajectoryField, structures: usize) -> WriteOmission {
+    match field {
+        TrajectoryField::Occupancies => WriteOmission::Occupancies { structures },
+        TrajectoryField::BFactors => WriteOmission::BFactors { structures },
+        field => WriteOmission::StructureState {
+            field: structure_field(field),
+            structures,
+        },
+    }
 }
 
 /// The frame state `field` names.

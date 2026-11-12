@@ -672,6 +672,14 @@ fn sdf_samples_carry_their_weight_state_and_energy_through_data_fields() {
             .to_string(),
         "Cannot interpret the SDF input in record 2. The data field \"kekule.weight\" holds \"heavy\", not a number."
     );
+    // An invalid weight names its record alone.
+    let negative = text.replacen(">  <kekule.weight>\n3\n", ">  <kekule.weight>\n-3\n", 1);
+    let error = sdf::sample_set(&interpret_records(&negative)).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot interpret the SDF input in record 2. The data field \"kekule.weight\" holds an invalid weight."
+    );
+    assert!(std::error::Error::source(&error).is_none());
     let fields = [SdfDataField::new(sdf::STATE_FIELD, "2")];
     let sample = sdf::SdfRecordSource::from(set.get(0).unwrap()).with_data_fields(&fields);
     assert_eq!(
@@ -757,7 +765,7 @@ fn sdf_round_trips_one_state_and_clustered_states() {
     assert_eq!(
         error(&text.replacen(">  <kekule.state>\n1\n\n", "", 1)),
         "Cannot interpret the SDF input in record 1. The data field \"kekule.state\" is \
-         missing. Other records of the ensemble have it."
+         missing. Other records have it."
     );
     assert_eq!(
         error(&text.replacen(
@@ -2585,6 +2593,9 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
         // The order belongs to the whole set.
         let lost = |format| match field {
             StructureField::Order => format!("The sample order has no {format} representation."),
+            StructureField::StateProperties => {
+                format!("The {field} of sample {sample} have no {format} representation.")
+            }
             _ => format!("The {field} of sample {sample} has no {format} representation."),
         };
         let error = pdb::write(set, pdb_options).unwrap_err();

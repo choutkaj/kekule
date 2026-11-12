@@ -2,10 +2,10 @@ use super::*;
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
-use crate::topology::{TopologyAtomIndex, TopologyBondIndex, TopologyBuilder};
+use crate::topology::{Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder};
 use crate::units::{
     Quantity, UnitError, ANGSTROM, KELVIN, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE, NANOMETER,
-    SQUARE_ANGSTROM, SQUARE_NANOMETER,
+    PICOSECOND, SQUARE_ANGSTROM, SQUARE_NANOMETER,
 };
 use std::sync::Arc;
 
@@ -802,6 +802,163 @@ fn sets_read_chosen_samples_of_another_set_without_consuming_it() {
     assert_eq!(
         SampleSet::from_reader(&trajectory, [5]).unwrap_err(),
         SampleReadError::IndexOutOfRange { index: 5, len: 5 }
+    );
+}
+
+/// A reader of three samples on a step order, weighted 1, 2, and 3, that
+/// decodes a fresh sample on every read, even past its length, and counts
+/// its reads.
+#[derive(Debug)]
+struct DecodingReader {
+    set: SampleSet,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl DecodingReader {
+    fn new() -> Self {
+        let (model, _, _) = model_fixture();
+        let mut set =
+            SampleSet::from_samples(model.shared_topology(), (0..3).map(Self::decode)).unwrap();
+        set.set_order(Some(Order::Step(vec![10, 11, 12]))).unwrap();
+        set.set_distribution(Some(
+            Distribution::new(Members::All, Partition::one_state(3))
+                .unwrap()
+                .with_weights(vec![1.0, 2.0, 3.0])
+                .unwrap(),
+        ))
+        .unwrap();
+        Self {
+            set,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn decode(index: usize) -> Sample {
+        let mut sample = Sample::new(
+            Positions::new(Quantity::new(
+                [Point3::new(index as f64, 0.0, 0.0), Point3::origin()],
+                NANOMETER,
+            ))
+            .unwrap(),
+        );
+        sample.set_velocities(Some(Velocities::zeros(2))).unwrap();
+        sample.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
+        sample
+    }
+
+    fn reads(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl SampleRead for DecodingReader {
+    fn topology(&self) -> &Arc<Topology> {
+        SampleRead::topology(&self.set)
+    }
+
+    fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    fn order(&self) -> Option<&Order> {
+        self.set.order()
+    }
+
+    fn distribution(&self) -> Option<&Distribution> {
+        self.set.distribution()
+    }
+
+    fn peek(&self, _: usize) -> Option<SampleView<'_, dyn SampleRead>> {
+        None
+    }
+
+    fn read(&self, index: usize) -> Result<Sample, SampleReadError> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut sample = Self::decode(index);
+        sample.bind(self.set.topology()).unwrap();
+        Ok(sample)
+    }
+}
+
+#[test]
+fn sets_read_from_a_reader_are_faithful_copies_reading_each_sample_once() {
+    let reader = DecodingReader::new();
+
+    // Each picked sample whole, with its order value and weight; a repeated
+    // index is read once and shared.
+    let set = SampleSet::from_reader(&reader, [2, 0, 2, 2]).unwrap();
+    assert_eq!(reader.reads(), 2);
+    assert_eq!(set.order(), Some(&Order::Step(vec![12, 10, 12, 12])));
+    assert_eq!(
+        set.distribution().unwrap().weights(),
+        Some([3.0, 1.0, 3.0, 3.0].as_slice())
+    );
+    let first = set.get(0).unwrap();
+    for index in [2, 3] {
+        assert!(set.get(index).unwrap().shares_structure_with(&first));
+    }
+    assert!(!set.get(1).unwrap().shares_structure_with(&first));
+    assert_eq!(first.positions().values().value()[0].x, 2.0);
+    assert_eq!(set.get(1).unwrap().positions().values().value()[0].x, 0.0);
+    assert!(first.velocities().is_some());
+    assert_eq!(first.occupancies(), Some([Some(0.5), None].as_slice()));
+
+    // Ascending indices are read in turn.
+    let set = SampleSet::from_reader(&reader, [0, 1, 2]).unwrap();
+    assert_eq!(reader.reads(), 5);
+    assert_eq!(set.order(), reader.order());
+
+    // Every index is checked before anything is read, so a reader that
+    // reads past its length fails cleanly rather than selecting order
+    // values and weights it does not have.
+    assert_eq!(
+        SampleSet::from_reader(&reader, [1, 4]).unwrap_err(),
+        SampleReadError::IndexOutOfRange { index: 4, len: 3 }
+    );
+    assert_eq!(reader.reads(), 5);
+
+    // Samples out of ascending order keep their times.
+    let mut timed = SampleSet::new(SampleRead::topology(&reader.set).clone());
+    timed
+        .set_order(Some(Order::Time(
+            TimeAxis::new(Some(Quantity::new(Vec::new(), PICOSECOND)), None).unwrap(),
+        )))
+        .unwrap();
+    for index in 0..2 {
+        let place = Place::Time {
+            time: Some(Quantity::new(index as f64, PICOSECOND)),
+            step: None,
+        };
+        timed
+            .push(DecodingReader::decode(index), Some(place))
+            .unwrap();
+    }
+    let reversed = SampleSet::from_reader(&timed, [1, 0]).unwrap();
+    assert_eq!(
+        reversed.validate_monotonic_time(),
+        Err(SampleSetError::NonMonotonicTime { sample: 1 })
+    );
+}
+
+#[test]
+fn clearing_velocities_and_forces_keeps_samples_without_them_shared() {
+    let reader = DecodingReader::new();
+    let mut set = SampleSet::from_reader(&reader, [0, 1]).unwrap();
+    set.get_mut(1).unwrap().take_velocities();
+    let bare = set.get(1).unwrap().payload().clone();
+    set.get_mut(0)
+        .unwrap()
+        .set_forces(Some(Forces::zeros(2)))
+        .unwrap();
+    set.clear_velocities_and_forces();
+    for sample in &set {
+        assert!(sample.velocities().is_none() && sample.forces().is_none());
+    }
+    assert!(set.get(1).unwrap().shares_structure_with(&bare));
+    assert_eq!(
+        set.get(0).unwrap().occupancies(),
+        Some([Some(0.5), None].as_slice())
     );
 }
 

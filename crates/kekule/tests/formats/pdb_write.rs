@@ -16,6 +16,7 @@ use kekule::pdb::{
 use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
     Distribution, Members, Model, ModelBuilder, Order, Partition, Positions, Sample, SampleSet,
+    Velocities,
 };
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{Quantity, ANGSTROM, DEGREE, KELVIN, MOLAR, NANOMETER};
@@ -690,6 +691,26 @@ fn ordered_sample_sets_write_models_and_their_places_fail_unless_omitted() {
             field: StructureField::OrderStep,
             structures: 1
         }]
+    );
+
+    // Plural state is named with a plural verb.
+    let mut moving =
+        SampleSet::from_samples(history.shared_topology(), [Sample::new(positions(0.0))]).unwrap();
+    moving
+        .get_mut(0)
+        .unwrap()
+        .set_velocities(Some(Velocities::zeros(1)))
+        .unwrap();
+    let error = pdb::write(&moving, Default::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The velocities of sample 1 have no PDB representation."
+    );
+    let lone = moving.get(0).unwrap();
+    let error = pdb::write(pdb::PdbSource::structure(&lone), Default::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The velocities of the sample have no PDB representation."
     );
 
     // An empty sample set is no entry.
