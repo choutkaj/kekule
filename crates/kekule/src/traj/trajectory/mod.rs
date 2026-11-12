@@ -1,27 +1,25 @@
-//! Reusable frame buffers, streaming reader/writer contracts, and the
-//! trajectory I/O error type.
+//! Frames, reusable frame buffers, streaming reader/writer contracts, and
+//! the trajectory I/O error type.
 //!
-//! In-memory frames and trajectories live in [`crate::structure`]
-//! ([`crate::structure::TrajectoryFrame`], [`crate::structure::Trajectory`]).
-//! [`FrameBuffer`] provides reusable validated storage for streaming decoders.
-//! The reader and writer traits publish complete frames transactionally.
-//! [`TrajectoryIoError`] reports every codec and file failure.
+//! A frame is a [`crate::structure::Sample`] with its time and MD step:
+//! [`FrameView`] borrows one, and [`FrameBuffer`] provides reusable
+//! validated storage for streaming decoders. The reader and writer traits
+//! publish complete frames transactionally. [`TrajectoryIoError`] reports
+//! every codec and file failure.
 
 mod buffer;
-mod sample;
+mod frame;
 mod stream;
 
 pub use buffer::{FrameBuffer, FrameData};
-pub use sample::{
-    read_ensemble, read_ensemble_seekable, EnsembleReadOptions, EnsembleReadProgress,
-};
+pub use frame::FrameView;
 pub use stream::{
     MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
 };
 
 use std::{fmt, io};
 
-use crate::structure::{StructureError, TrajectoryError};
+use crate::structure::StructureError;
 
 /// Stable identity for a trajectory file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -137,9 +135,6 @@ pub enum TrajectoryIoErrorKind {
     /// A decoded or supplied frame is invalid for its topology; the
     /// [`StructureError`] is the source.
     InvalidStructure,
-    /// Frames cannot form an in-memory trajectory; the [`TrajectoryError`]
-    /// is the source.
-    InvalidTrajectory,
     /// The caller's [`crate::diagnostics::Cancellation`] stopped the
     /// operation; [`crate::diagnostics::Cancelled`] is the source.
     Cancelled,
@@ -179,7 +174,6 @@ impl fmt::Display for TrajectoryIoErrorKind {
             Self::TopologyMismatch => "trajectory object belongs to a different topology",
             Self::FrameIndexOutOfRange => "trajectory frame index is out of range",
             Self::InvalidStructure => "invalid trajectory frame",
-            Self::InvalidTrajectory => "invalid trajectory",
             Self::Cancelled => "trajectory operation cancelled",
             Self::InvalidIndex => "invalid trajectory frame index",
             Self::IndexMismatch => "trajectory frame index does not match the file",
@@ -189,8 +183,7 @@ impl fmt::Display for TrajectoryIoErrorKind {
     }
 }
 
-/// Frame, ensemble, series, or sample set state a trajectory format cannot
-/// store.
+/// Frame or sample set state a trajectory format cannot store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TrajectoryField {
@@ -210,22 +203,22 @@ pub enum TrajectoryField {
     BondProperties,
     /// Properties of the frame itself.
     Properties,
-    /// Properties of the frame collection or ensemble.
+    /// Properties of the sample set.
     CollectionProperties,
-    /// An ensemble sample's relative weight.
+    /// A member's relative weight in the set's distribution.
     Weight,
-    /// The energy of an ensemble sample's state.
+    /// The energy of a member's state.
     Energy,
-    /// The grouping of ensemble samples into states.
+    /// The grouping of members into states.
     State,
-    /// The temperature an ensemble's populations describe.
+    /// The temperature the distribution's populations describe.
     Temperature,
-    /// Properties of an ensemble state.
+    /// Properties of a state.
     StateProperties,
-    /// A series item's step on its series' axis.
-    ItemStep,
-    /// A series item's coordinate on its series' axis.
-    ItemCoordinate,
+    /// A sample's step on a step order.
+    OrderStep,
+    /// A sample's coordinate on a coordinate order.
+    OrderCoordinate,
     /// Whether a sample belongs to its set's distribution.
     Membership,
     /// A sample set's distribution, which a trajectory file cannot store.
@@ -249,13 +242,13 @@ impl fmt::Display for TrajectoryField {
             Self::BondProperties => "bond properties",
             Self::Properties => "frame properties",
             Self::CollectionProperties => "collection properties",
-            Self::Weight => "ensemble sample weight",
-            Self::Energy => "ensemble state energy",
-            Self::State => "ensemble state",
-            Self::Temperature => "ensemble temperature",
-            Self::StateProperties => "ensemble state properties",
-            Self::ItemStep => "series item step",
-            Self::ItemCoordinate => "series item coordinate",
+            Self::Weight => "weight",
+            Self::Energy => "state energy",
+            Self::State => "state",
+            Self::Temperature => "temperature",
+            Self::StateProperties => "state properties",
+            Self::OrderStep => "order step",
+            Self::OrderCoordinate => "order coordinate",
             Self::Membership => "distribution membership",
             Self::Distribution => "sample set distribution",
             Self::Representative => "state representative",
@@ -269,7 +262,8 @@ impl fmt::Display for TrajectoryField {
 /// [`kind`](Self::kind) classifies it; the accessors give the operation,
 /// format, source label, frame, byte offset and counts when known, and
 /// [`source`](std::error::Error::source) the underlying [`std::io::Error`],
-/// [`StructureError`] or [`TrajectoryError`]. `Display` gives the context
+/// [`StructureError`] or [`SampleSetError`](crate::structure::SampleSetError).
+/// `Display` gives the context
 /// and never repeats the source.
 ///
 /// Two errors are equal when every field agrees and their sources have the
@@ -623,7 +617,6 @@ impl fmt::Display for TrajectoryIoError {
                     Some(frame) => format!("Frame {frame} is invalid for its topology."),
                     None => "The frame is invalid for its topology.".to_owned(),
                 },
-                Kind::InvalidTrajectory => "The frames cannot form a trajectory.".to_owned(),
                 Kind::InvalidIndex => {
                     "The frame index is malformed or of an unsupported version.".to_owned()
                 }
@@ -657,15 +650,5 @@ impl From<StructureError> for TrajectoryIoError {
 impl From<crate::structure::DenseArrayError> for TrajectoryIoError {
     fn from(error: crate::structure::DenseArrayError) -> Self {
         StructureError::from(error).into()
-    }
-}
-
-impl From<TrajectoryError> for TrajectoryIoError {
-    fn from(error: TrajectoryError) -> Self {
-        match error {
-            TrajectoryError::IndexOutOfRange { index, .. } => Self::frame_index_out_of_range(index),
-            TrajectoryError::Structure(error) => error.into(),
-            error => Self::new(TrajectoryIoErrorKind::InvalidTrajectory).with_source(error),
-        }
     }
 }

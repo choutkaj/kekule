@@ -35,9 +35,6 @@ pub enum MolfileWriteVersion {
 pub struct MolfileWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
-    ensemble_metadata: UnrepresentablePolicy,
-    frame_metadata: UnrepresentablePolicy,
-    series_metadata: UnrepresentablePolicy,
     sample_metadata: UnrepresentablePolicy,
 }
 
@@ -67,51 +64,9 @@ impl MolfileWriteOptions {
         self
     }
 
-    /// An ensemble sample's weight and its state's energy, which a Molfile
-    /// cannot carry: by default writing a view of an ensemble sample fails.
-    pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
-        self.ensemble_metadata
-    }
-
-    /// Sets [`Self::ensemble_metadata`].
-    #[must_use]
-    pub const fn with_ensemble_metadata(
-        mut self,
-        ensemble_metadata: UnrepresentablePolicy,
-    ) -> Self {
-        self.ensemble_metadata = ensemble_metadata;
-        self
-    }
-
-    /// A trajectory frame's time, step, velocities, and forces, which a
-    /// Molfile cannot carry: by default writing a frame with any of them
-    /// fails.
-    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
-        self.frame_metadata
-    }
-
-    /// Sets [`Self::frame_metadata`].
-    #[must_use]
-    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
-        self.frame_metadata = frame_metadata;
-        self
-    }
-
-    /// A series item's step or coordinate, which a Molfile cannot carry: by
-    /// default writing a view of a series item fails.
-    pub const fn series_metadata(&self) -> UnrepresentablePolicy {
-        self.series_metadata
-    }
-
-    /// Sets [`Self::series_metadata`].
-    #[must_use]
-    pub const fn with_series_metadata(mut self, series_metadata: UnrepresentablePolicy) -> Self {
-        self.series_metadata = series_metadata;
-        self
-    }
-
-    /// The state of a sample set's sample that a Molfile cannot carry: its
-    /// membership in the set's distribution, its place in the set's order,
+    /// The state of a sample that a Molfile cannot carry, whether of a sample
+    /// set or a trajectory frame: its membership in the set's distribution,
+    /// its place in the set's order (a frame's time and MD step among them),
     /// and its velocities and forces. By default writing a view of a sample
     /// with any of them fails.
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
@@ -163,8 +118,7 @@ impl<'a> MolfileSource<'a> {
         }
     }
 
-    /// A geometry-bearing model, ensemble sample, trajectory frame, series item,
-    /// or sample of a sample set.
+    /// A geometry-bearing model, sample of a sample set, or trajectory frame.
     pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
         Self {
             content: MolfileContent::Model(model.as_model_view()),
@@ -217,12 +171,7 @@ pub(crate) fn write_molfile<'a>(
             check_structure_state(
                 Format::Molfile,
                 model.kind(),
-                StatePolicies {
-                    sample: Some(options.ensemble_metadata),
-                    frame: options.frame_metadata,
-                    item: Some(options.series_metadata),
-                    set: options.sample_metadata,
-                },
+                StatePolicies::positions_only(options.sample_metadata),
             )?;
             render_model(model, source.title, options.version)
         }

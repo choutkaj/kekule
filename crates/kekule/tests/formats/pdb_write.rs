@@ -15,11 +15,10 @@ use kekule::pdb::{
 };
 use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
-    Ensemble, EnsemblePartition, EnsembleSample, EnsembleState, Model, ModelBuilder, Positions,
-    Series, SeriesAxis, SeriesItem,
+    Distribution, Members, Model, ModelBuilder, Order, Partition, Positions, Sample, SampleSet,
 };
 use kekule::topology::{InstanceAtomId, Topology};
-use kekule::units::{Quantity, ANGSTROM, DEGREE, MOLAR, NANOMETER};
+use kekule::units::{Quantity, ANGSTROM, DEGREE, KELVIN, MOLAR, NANOMETER};
 use kekule::{mmcif, smiles};
 
 const CRAMBIN: &str = include_str!("../fixtures/pdb/1CRN.pdb");
@@ -462,69 +461,89 @@ fn residues_must_be_consecutive_in_dense_order() {
     ));
 }
 
+/// Samples of `positions` in one state of equally weighted members, as
+/// readers of formats with weights write them.
+fn one_state(topology: Arc<Topology>, positions: impl IntoIterator<Item = Positions>) -> SampleSet {
+    let mut set =
+        SampleSet::from_samples(topology, positions.into_iter().map(Sample::new)).unwrap();
+    let members = set.len();
+    set.set_distribution(Some(
+        Distribution::new(Members::All, Partition::one_state(members))
+            .unwrap()
+            .with_weights(vec![1.0; members])
+            .unwrap(),
+    ))
+    .unwrap();
+    set
+}
+
 #[test]
-fn ensembles_write_models_and_sample_state_fails_unless_omitted() {
+fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
     let topology = smiles::to_topology("C").unwrap();
-    let sample = |x: f64| {
-        EnsembleSample::new(
-            Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap(),
-            1.0,
-        )
-        .unwrap()
+    let positions = |x: f64| {
+        Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap()
     };
-    let mut ensemble = Ensemble::new(Arc::clone(&topology));
-    ensemble
-        .push_state(sample(0.0), EnsembleState::new())
-        .unwrap();
-    ensemble.push_sample(sample(1.0), 0).unwrap();
-    let written = pdb::write(&ensemble, Default::default())
+    let mut set = one_state(Arc::clone(&topology), [positions(0.0), positions(1.0)]);
+    let written = pdb::write(&set, Default::default())
         .map(|(text, _)| text)
         .unwrap();
     assert_eq!(written.matches("MODEL ").count(), 2);
     assert_eq!(written.matches("ENDMDL").count(), 2);
+    assert_eq!(crate::fingerprint(&written), 0xac79_8dcd_f341_ece8);
     let reread = pdb::parse_str(&written, Default::default())
         .unwrap()
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap();
-    assert_eq!(reread.ensemble().len(), 2);
+    assert_eq!(reread.sample_set().len(), 2);
+    assert_eq!(crate::native_fingerprint(&reread), 0x2dcc_e32f_274e_b5a5);
     assert_eq!(
-        pdb::write(reread.ensemble(), Default::default())
+        pdb::write(reread.sample_set(), Default::default())
             .map(|(text, _)| text)
             .unwrap(),
         written
     );
 
     // A second state fails, and so does its energy, which comes first.
-    ensemble
-        .regroup(EnsemblePartition::state_per_sample(2))
+    set.distribution_mut()
+        .unwrap()
+        .regroup(Partition::state_per_sample(2))
         .unwrap();
-    let error = pdb::write(&ensemble, Default::default())
+    let error = pdb::write(&set, Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableEnsembleSample {
+        PdbWriteIssue::UnrepresentableSample {
             sample: 2,
             field: StructureField::State
         }
     ));
-    ensemble
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The state of sample 2 has no PDB representation."
+    );
+    set.distribution_mut()
+        .unwrap()
         .state_mut(1)
         .unwrap()
         .set_energy(Some(Quantity::new(1.0, kekule::units::KILOJOULE_PER_MOLE)))
         .unwrap();
-    let error = pdb::write(&ensemble, Default::default())
+    let error = pdb::write(&set, Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableEnsembleSample {
+        PdbWriteIssue::UnrepresentableSample {
             sample: 2,
             field: StructureField::Energy
         }
     ));
-    let options = PdbWriteOptions::default().with_ensemble_metadata(UnrepresentablePolicy::Omit);
-    let (_, report) = pdb::write(&ensemble, options).unwrap();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The state energy of sample 2 has no PDB representation."
+    );
+    let options = PdbWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit);
+    let (_, report) = pdb::write(&set, options).unwrap();
     assert_eq!(
         report.omissions(),
         [
@@ -539,11 +558,17 @@ fn ensembles_write_models_and_sample_state_fails_unless_omitted() {
         ]
     );
     // A lone sample's weight is relative to samples the entry does not hold.
-    let lone = ensemble.get(0).unwrap();
-    assert!(
-        pdb::write(pdb::PdbSource::structure(&lone), Default::default())
-            .map(|(text, _)| text)
-            .is_err()
+    let lone = set.get(0).unwrap();
+    let error = pdb::write(pdb::PdbSource::structure(&lone), Default::default()).unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::UnrepresentableState(
+            StructureField::Weight
+        ))
+    );
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The weight of the sample has no PDB representation."
     );
     let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
     assert_eq!(
@@ -553,61 +578,97 @@ fn ensembles_write_models_and_sample_state_fails_unless_omitted() {
             structures: 1
         }]
     );
+
+    // The temperature belongs to the whole set.
+    let mut warm = one_state(Arc::clone(&topology), [positions(0.0), positions(1.0)]);
+    warm.distribution_mut()
+        .unwrap()
+        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
+        .unwrap();
+    let error = pdb::write(&warm, Default::default()).unwrap_err();
+    assert!(matches!(
+        issue(&error),
+        PdbWriteIssue::UnrepresentableSample {
+            sample: 1,
+            field: StructureField::Temperature
+        }
+    ));
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The ensemble temperature has no PDB representation."
+    );
+    let (text, report) = pdb::write(&warm, options).unwrap();
+    assert_eq!(text, written);
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::StructureState {
+            field: StructureField::Temperature,
+            structures: 2
+        }]
+    );
 }
 
 #[test]
-fn series_write_models_and_their_places_fail_unless_omitted() {
+fn ordered_sample_sets_write_models_and_their_places_fail_unless_omitted() {
     let topology = smiles::to_topology("C").unwrap();
     let positions = |x: f64| {
         Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap()
     };
-    let mut scan = Series::new(Arc::clone(&topology), SeriesAxis::Coordinate(DEGREE));
-    for (index, angle) in [0.0, 120.0, 240.0].into_iter().enumerate() {
-        let place = Quantity::new(angle, DEGREE);
-        scan.push(SeriesItem::at_coordinate(positions(index as f64), place).unwrap())
-            .unwrap();
-    }
+    let mut scan = SampleSet::from_samples(
+        Arc::clone(&topology),
+        (0..3).map(|index| Sample::new(positions(f64::from(index)))),
+    )
+    .unwrap();
+    scan.set_order(Some(Order::Coordinate {
+        unit: DEGREE,
+        values: vec![0.0, 120.0, 240.0],
+    }))
+    .unwrap();
     let error = pdb::write(&scan, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableSeriesItem {
-            item: 1,
-            field: StructureField::ItemCoordinate
+        PdbWriteIssue::UnrepresentableSample {
+            sample: 1,
+            field: StructureField::OrderCoordinate
         }
     ));
-    let options = PdbWriteOptions::default().with_series_metadata(UnrepresentablePolicy::Omit);
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The order coordinate of sample 1 has no PDB representation."
+    );
+    let options = PdbWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit);
     let (written, report) = pdb::write(&scan, options).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::StructureState {
-            field: StructureField::ItemCoordinate,
+            field: StructureField::OrderCoordinate,
             structures: 3
         }]
     );
     assert_eq!(written.matches("MODEL ").count(), 3);
     assert_eq!(written.matches("ENDMDL").count(), 3);
-    // The models read back as an ensemble of the items' positions.
+    assert_eq!(crate::fingerprint(&written), 0xe5b3_1cce_48b6_9862);
+    // The models read back as one state of the samples' positions.
     let reread = pdb::parse_str(&written, Default::default())
         .unwrap()
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap();
-    let ensemble = reread.ensemble();
-    assert_eq!(ensemble.len(), 3);
-    for (sample, item) in ensemble.iter().zip(&scan) {
-        assert_eq!(sample.positions(), item.positions());
+    assert_eq!(crate::native_fingerprint(&reread), 0xe477_f52c_3492_7442);
+    let read = reread.sample_set();
+    assert_eq!(read.len(), 3);
+    for (sample, source) in read.iter().zip(&scan) {
+        assert_eq!(sample.positions(), source.positions());
     }
 
-    // A step history fails on its steps, and a lone item on its own.
-    let mut history = Series::new(topology, SeriesAxis::Step);
-    history
-        .push(SeriesItem::at_step(positions(0.0), 3))
-        .unwrap();
+    // A step order fails on its steps, and a lone sample on its own.
+    let mut history = SampleSet::from_samples(topology, [Sample::new(positions(0.0))]).unwrap();
+    history.set_order(Some(Order::Step(vec![3]))).unwrap();
     let error = pdb::write(&history, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableSeriesItem {
-            item: 1,
-            field: StructureField::ItemStep
+        PdbWriteIssue::UnrepresentableSample {
+            sample: 1,
+            field: StructureField::OrderStep
         }
     ));
     let lone = history.get(0).unwrap();
@@ -615,23 +676,27 @@ fn series_write_models_and_their_places_fail_unless_omitted() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::UnrepresentableState(
-            StructureField::ItemStep
+            StructureField::OrderStep
         ))
+    );
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The order step of the sample has no PDB representation."
     );
     let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::StructureState {
-            field: StructureField::ItemStep,
+            field: StructureField::OrderStep,
             structures: 1
         }]
     );
 
-    // An empty series is no entry.
-    let empty = Series::new(smiles::to_topology("C").unwrap(), SeriesAxis::Step);
+    // An empty sample set is no entry.
+    let empty = SampleSet::new(smiles::to_topology("C").unwrap());
     let error = pdb::write(&empty, options).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-    assert!(matches!(issue(&error), PdbWriteIssue::EmptySeries));
+    assert!(matches!(issue(&error), PdbWriteIssue::EmptySampleSet));
 }
 
 #[test]
@@ -1043,7 +1108,7 @@ fn coordination_link_records_would_not_select_is_reported() {
 }
 
 #[test]
-fn ensembles_state_the_coordination_every_sample_states() {
+fn sample_sets_state_the_coordination_every_sample_states() {
     // The same entry without its first LINK record and its CONECT records,
     // which list the coordination again, states three of the four
     // iron-sulfur records.
@@ -1063,24 +1128,18 @@ fn ensembles_state_the_coordination_every_sample_states() {
     assert_eq!(coordination(partial.report()).len(), 3);
     assert_eq!(partial.model().atom_count(), full.model().atom_count());
 
-    let sample = |model: &Model| {
-        EnsembleSample::new(model.as_model_view().positions().clone(), 1.0).unwrap()
-    };
-    let mut ensemble = Ensemble::new(full.model().shared_topology());
-    ensemble
-        .push_state(sample(full.model()), EnsembleState::new())
-        .unwrap();
-    ensemble.push_sample(sample(partial.model()), 0).unwrap();
+    let set = one_state(
+        full.model().shared_topology(),
+        [full.model(), partial.model()].map(|model| model.as_model_view().positions().clone()),
+    );
     let options = PdbWriteOptions::default();
 
     // LINK records belong to the entry, so samples that agree keep them all.
     let agreeing = [full.report().clone(), full.report().clone()];
-    let (written, report) = pdb::write(
-        PdbSource::ensemble(&ensemble).with_reports(&agreeing),
-        options,
-    )
-    .unwrap();
+    let (written, report) =
+        pdb::write(PdbSource::sample_set(&set).with_reports(&agreeing), options).unwrap();
     assert_eq!(records(&written, "LINK").len(), 4);
+    assert_eq!(crate::fingerprint(&written), 0x711e_553b_58aa_2bf7);
     assert!(written.starts_with("LINK"));
     assert!(!report
         .omissions()
@@ -1090,38 +1149,33 @@ fn ensembles_state_the_coordination_every_sample_states() {
     // A record one sample does not state is left out of the entry.
     let differing = [full.report().clone(), partial.report().clone()];
     let (written, report) = pdb::write(
-        PdbSource::ensemble(&ensemble).with_reports(&differing),
+        PdbSource::sample_set(&set).with_reports(&differing),
         options,
     )
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 3);
+    assert_eq!(crate::fingerprint(&written), 0x7343_a984_b5dc_32c9);
     assert!(report
         .omissions()
         .contains(&WriteOmission::Coordination { records: 1 }));
     let reread = pdb::parse_str(&written, Default::default())
         .unwrap()
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap();
+    assert_eq!(crate::native_fingerprint(&reread), 0x7290_b363_5bb4_2fcc);
     for report in reread.reports() {
         assert_eq!(coordination(report), coordination(partial.report()));
     }
     // The order of the reports does not matter.
     let reversed = [partial.report().clone(), full.report().clone()];
-    assert_eq!(
-        pdb::write(
-            PdbSource::ensemble(&ensemble).with_reports(&reversed),
-            options
-        )
+    let written = pdb::write(PdbSource::sample_set(&set).with_reports(&reversed), options)
         .unwrap()
-        .0
-        .lines()
-        .filter(|line| line.starts_with("LINK"))
-        .count(),
-        3
-    );
+        .0;
+    assert_eq!(records(&written, "LINK").len(), 3);
+    assert_eq!(crate::fingerprint(&written), 0x7343_a984_b5dc_32c9);
 
     let error = pdb::write(
-        PdbSource::ensemble(&ensemble).with_reports(std::slice::from_ref(full.report())),
+        PdbSource::sample_set(&set).with_reports(std::slice::from_ref(full.report())),
         options,
     )
     .unwrap_err();

@@ -2,10 +2,7 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
 };
-use crate::structure::{
-    Distribution, Ensemble, Order, Place, SampleContext, SampleSet, Series, SeriesAxis,
-    StructureKind,
-};
+use crate::structure::{Distribution, Order, Place, SampleContext, SampleSet, StructureKind};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -197,52 +194,56 @@ pub enum WriteOmission {
         /// The chains written so.
         chains: usize,
     },
-    /// Sample set sample, ensemble sample, trajectory frame, or series item
-    /// state the format cannot carry.
+    /// Sample or trajectory frame state the format cannot carry.
     StructureState {
         /// The state left out.
         field: StructureField,
-        /// The samples, frames, or items whose state was left out.
+        /// The samples or frames whose state was left out.
         structures: usize,
     },
 }
 
-/// What a structure writer does with the state of an ensemble sample,
-/// trajectory frame, or series item that its format cannot carry.
+/// What a structure writer does with the state of a sample, a sample set's
+/// or a trajectory frame's, that its format cannot carry.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StatePolicies {
-    /// `None` for a format that writes sample state itself.
-    pub(crate) sample: Option<UnrepresentablePolicy>,
-    pub(crate) frame: UnrepresentablePolicy,
-    /// `None` for a format that writes an item's step or coordinate itself.
-    pub(crate) item: Option<UnrepresentablePolicy>,
-    /// The policy for all state of a sample of a [`SampleSet`], in place of
-    /// the three above.
-    pub(crate) set: UnrepresentablePolicy,
+    /// The policy for every such state.
+    pub(crate) policy: UnrepresentablePolicy,
+    /// Whether the format writes a sample's membership in a distribution
+    /// itself.
+    pub(crate) writes_membership: bool,
+    /// Whether the format writes a sample's step or coordinate place itself.
+    pub(crate) writes_place: bool,
 }
 
 impl StatePolicies {
-    /// The policies for a sample with `context`: the set policy for every
-    /// state the format cannot carry when the sample belongs to a set.
-    fn of(self, context: SampleContext<'_>) -> Self {
-        if !context.is_of_set() {
-            return self;
-        }
+    /// The policies of a format that writes no sample state itself.
+    pub(crate) const fn positions_only(policy: UnrepresentablePolicy) -> Self {
         Self {
-            sample: self.sample.map(|_| self.set),
-            frame: self.set,
-            item: self.item.map(|_| self.set),
-            set: self.set,
+            policy,
+            writes_membership: false,
+            writes_place: false,
         }
     }
 }
 
-/// The item state a series' items have that a format without series
-/// cannot carry: their steps or their coordinates.
-const fn item_field(axis: SeriesAxis) -> StructureField {
-    match axis {
-        SeriesAxis::Step => StructureField::ItemStep,
-        SeriesAxis::Coordinate(_) => StructureField::ItemCoordinate,
+/// The sentence for the `field` of a sample that `format` cannot carry: of
+/// the 1-based sample `sample` of a set, or of a lone sample for `None`. The
+/// temperature and the order belong to the whole set.
+pub(crate) fn unrepresentable_state(
+    format: impl std::fmt::Display,
+    field: StructureField,
+    sample: Option<usize>,
+) -> String {
+    match (field, sample) {
+        (StructureField::Temperature, _) => {
+            format!("The ensemble temperature has no {format} representation.")
+        }
+        (StructureField::Order, _) => format!("The sample order has no {format} representation."),
+        (field, Some(sample)) => {
+            format!("The {field} of sample {sample} has no {format} representation.")
+        }
+        (field, None) => format!("The {field} of the sample has no {format} representation."),
     }
 }
 
@@ -316,13 +317,15 @@ impl Omissions {
         let StructureKind::Sample(context) = kind else {
             return;
         };
-        let policies = policies.of(context);
-        let omit = Some(UnrepresentablePolicy::Omit);
-        let mut fields = Vec::new();
-        if outside_distribution(context, policies) && policies.set == UnrepresentablePolicy::Omit {
-            fields.push(StructureField::Membership);
+        if policies.policy == UnrepresentablePolicy::Fail {
+            return;
         }
-        if let Some(membership) = context.membership().filter(|_| policies.sample == omit) {
+        let mut fields = Vec::new();
+        if policies.writes_membership {
+            if context.is_outside_distribution() {
+                fields.push(StructureField::Membership);
+            }
+        } else if let Some(membership) = context.membership() {
             // A lone record cannot carry a weight relative to other
             // samples, so its weight is always left out.
             fields.push(StructureField::Weight);
@@ -333,12 +336,10 @@ impl Omissions {
                 fields.push(StructureField::Temperature);
             }
         }
-        if policies.item == omit {
+        if !policies.writes_place {
             fields.extend(place_field(context));
         }
-        if policies.frame == UnrepresentablePolicy::Omit {
-            fields.extend(frame_fields(context));
-        }
+        fields.extend(frame_fields(context));
         for field in fields {
             self.record(WriteOmission::StructureState {
                 field,
@@ -352,19 +353,12 @@ impl Omissions {
     }
 }
 
-/// Whether a format that writes distribution membership itself writes a
-/// sample of a set whose distribution leaves it out, which its records
-/// cannot tell from a member.
-fn outside_distribution(context: SampleContext<'_>, policies: StatePolicies) -> bool {
-    policies.sample.is_none() && context.is_outside_distribution()
-}
-
 /// The field a sample's step or coordinate place is written as, if it has
 /// one.
 fn place_field(context: SampleContext<'_>) -> Option<StructureField> {
     match context.place() {
-        Some(Place::Step(_)) => Some(StructureField::ItemStep),
-        Some(Place::Coordinate(_)) => Some(StructureField::ItemCoordinate),
+        Some(Place::Step(_)) => Some(StructureField::OrderStep),
+        Some(Place::Coordinate(_)) => Some(StructureField::OrderCoordinate),
         _ => None,
     }
 }
@@ -398,123 +392,35 @@ pub(crate) fn check_structure_state(
     let StructureKind::Sample(context) = kind else {
         return Ok(());
     };
-    let policies = policies.of(context);
-    let fail = Some(UnrepresentablePolicy::Fail);
-    let membership = context
-        .membership()
-        .filter(|_| policies.sample == fail)
-        .map(|membership| {
-            // A lone record cannot carry a weight relative to other samples.
+    if policies.policy == UnrepresentablePolicy::Omit {
+        return Ok(());
+    }
+    let membership = if policies.writes_membership {
+        context
+            .is_outside_distribution()
+            .then_some(StructureField::Membership)
+    } else {
+        // A lone record cannot carry a weight relative to other samples.
+        context.membership().map(|membership| {
             if membership.state_energy().is_some() {
                 StructureField::Energy
             } else {
                 StructureField::Weight
             }
         })
-        .or_else(|| {
-            (outside_distribution(context, policies) && policies.set == UnrepresentablePolicy::Fail)
-                .then_some(StructureField::Membership)
-        });
+    };
     let field = membership
-        .or_else(|| place_field(context).filter(|_| policies.item == fail))
-        .or_else(|| {
-            frame_fields(context)
-                .next()
-                .filter(|_| policies.frame == UnrepresentablePolicy::Fail)
-        });
+        .or_else(|| place_field(context).filter(|_| !policies.writes_place))
+        .or_else(|| frame_fields(context).next());
     match field {
         None => Ok(()),
         Some(field) => Err(FormatError::write(
             format,
             DiagnosticKind::Unsupported,
-            format!("{format} cannot represent the {field}."),
+            unrepresentable_state(format, field, None),
         )
         .with_detail(FormatErrorDetail::UnrepresentableState(field))),
     }
-}
-
-/// Records or rejects the state of `ensemble` that a multi-model format
-/// cannot carry. Its readers give one state of equally weighted samples
-/// without an energy or temperature, so only that survives a round trip.
-///
-/// With [`UnrepresentablePolicy::Fail`], returns the 1-based number of the
-/// first sample with such state and the field; the temperature is the first
-/// sample's. With [`UnrepresentablePolicy::Omit`], records the omissions.
-pub(crate) fn record_multi_model_ensemble(
-    ensemble: &Ensemble,
-    policy: UnrepresentablePolicy,
-    omissions: &mut Omissions,
-) -> Result<(), (usize, StructureField)> {
-    let weight = ensemble.get(0).map(|sample| sample.weight());
-    if policy == UnrepresentablePolicy::Fail {
-        for sample in ensemble.iter() {
-            let field = if sample.state().energy().is_some() {
-                StructureField::Energy
-            } else if Some(sample.weight()) != weight {
-                StructureField::Weight
-            } else if sample.state().index() != 0 {
-                StructureField::State
-            } else {
-                continue;
-            };
-            return Err((sample.index() + 1, field));
-        }
-        if ensemble.temperature().is_some() {
-            return Err((1, StructureField::Temperature));
-        }
-        return Ok(());
-    }
-    let all = ensemble.len();
-    let unequal = ensemble
-        .iter()
-        .any(|sample| Some(sample.weight()) != weight);
-    for (field, structures) in [
-        (StructureField::Weight, if unequal { all } else { 0 }),
-        (
-            StructureField::Energy,
-            ensemble
-                .iter()
-                .filter(|sample| sample.state().energy().is_some())
-                .count(),
-        ),
-        (
-            StructureField::State,
-            if ensemble.state_count() > 1 { all } else { 0 },
-        ),
-        (
-            StructureField::Temperature,
-            if ensemble.temperature().is_some() {
-                all
-            } else {
-                0
-            },
-        ),
-    ] {
-        omissions.record(WriteOmission::StructureState { field, structures });
-    }
-    Ok(())
-}
-
-/// Records or rejects the steps or coordinates of the items of `series`,
-/// which a multi-model format without series cannot carry.
-///
-/// With [`UnrepresentablePolicy::Fail`], returns the 1-based number of the
-/// first item, every item having one, and the field. With
-/// [`UnrepresentablePolicy::Omit`], records the omission for every item.
-pub(crate) fn record_multi_model_series(
-    series: &Series,
-    policy: UnrepresentablePolicy,
-    omissions: &mut Omissions,
-) -> Result<(), (usize, StructureField)> {
-    let field = item_field(series.axis());
-    if policy == UnrepresentablePolicy::Fail && !series.is_empty() {
-        return Err((1, field));
-    }
-    omissions.record(WriteOmission::StructureState {
-        field,
-        structures: series.len(),
-    });
-    Ok(())
 }
 
 /// Records or rejects the state of `set` that a multi-model format cannot
@@ -657,10 +563,10 @@ pub(crate) fn record_multi_model_sample_set(
         ),
         (StructureField::Time, count(StructureField::Time)),
         (StructureField::Step, count(StructureField::Step)),
-        (StructureField::ItemStep, count(StructureField::ItemStep)),
+        (StructureField::OrderStep, count(StructureField::OrderStep)),
         (
-            StructureField::ItemCoordinate,
-            count(StructureField::ItemCoordinate),
+            StructureField::OrderCoordinate,
+            count(StructureField::OrderCoordinate),
         ),
         (
             StructureField::Velocities,
@@ -671,60 +577,4 @@ pub(crate) fn record_multi_model_sample_set(
         omissions.record(WriteOmission::StructureState { field, structures });
     }
     Ok(())
-}
-
-/// The first ensemble sample state that a file of equally weighted structures
-/// in one state cannot carry; see [`check_multi_model_ensemble`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UnrepresentableSampleState {
-    sample: usize,
-    field: StructureField,
-}
-
-impl UnrepresentableSampleState {
-    /// The 0-based index of the sample. The temperature is reported for the
-    /// first sample.
-    pub const fn sample(&self) -> usize {
-        self.sample
-    }
-
-    /// The state the sample has: [`StructureField::Energy`],
-    /// [`StructureField::Weight`], [`StructureField::State`] or
-    /// [`StructureField::Temperature`].
-    pub const fn field(&self) -> StructureField {
-        self.field
-    }
-}
-
-/// Checks the sample state of `ensemble` that a file of equally weighted
-/// structures in one state cannot carry, by the rules of the PDB and mmCIF
-/// ensemble writers, for writers of other formats that share them, such as
-/// the XYZ writer of [`crate::traj::io::xyz`].
-///
-/// Such a file reads back as one state of equally weighted samples without
-/// an energy or temperature. Unequal weights, more than one state, any state
-/// energy, and a temperature are therefore lost: with
-/// [`UnrepresentablePolicy::Omit`] the returned report counts the samples
-/// each one affects (every sample for weights, states and the temperature),
-/// and with [`UnrepresentablePolicy::Fail`] the report is empty when there is
-/// nothing to lose.
-///
-/// # Errors
-///
-/// With [`UnrepresentablePolicy::Fail`], returns the first sample, in sample
-/// order, whose state energy, weight (unequal to the first sample's) or
-/// state (other than the first) would be lost, checked in that order for
-/// each sample, and otherwise the temperature.
-pub fn check_multi_model_ensemble(
-    ensemble: &Ensemble,
-    policy: UnrepresentablePolicy,
-) -> Result<WriteReport, UnrepresentableSampleState> {
-    let mut omissions = Omissions::default();
-    record_multi_model_ensemble(ensemble, policy, &mut omissions).map_err(|(sample, field)| {
-        UnrepresentableSampleState {
-            sample: sample - 1,
-            field,
-        }
-    })?;
-    Ok(omissions.into_report())
 }

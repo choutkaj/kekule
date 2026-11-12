@@ -1,5 +1,4 @@
-//! Sample sets: the order and the distribution, copy on write, and lossless
-//! conversion from and to ensembles, trajectories, and series.
+//! Sample sets: the order, the distribution, views, and copy on write.
 
 use super::*;
 use crate::units::{DEGREE, PICOSECOND};
@@ -40,7 +39,7 @@ fn distribution(
     assignments: &[usize],
     representatives: &[usize],
 ) -> Distribution {
-    let partition = EnsemblePartition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
+    let partition = Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
     Distribution::new(members, partition).unwrap()
 }
 
@@ -71,14 +70,6 @@ fn requirements_read_as_they_are() {
     assert_eq!(
         SampleSetError::Missing(Requirement::Distribution).to_string(),
         "The sample set needs a distribution."
-    );
-    assert_eq!(
-        SampleSetError::NotConvertible {
-            target: ConversionTarget::Trajectory,
-            content: Unconvertible::Occupancies { sample: 3 },
-        }
-        .to_string(),
-        "A trajectory cannot hold the occupancies of sample 3."
     );
     let set = set_at(&[0.0]);
     assert_eq!(
@@ -170,6 +161,28 @@ fn an_order_has_one_value_per_sample_in_every_column() {
     });
     assert_eq!(set.push(sample(), place), Ok(2));
     assert_eq!(set.get(2).unwrap().place(), place);
+    // An axis of steps alone takes a step and no time.
+    let mut stepped = set_at(&[0.0]);
+    stepped
+        .set_order(Some(Order::Time(
+            TimeAxis::new(None, Some(vec![0])).unwrap(),
+        )))
+        .unwrap();
+    assert_eq!(
+        stepped.push(
+            sample(),
+            Some(Place::Time {
+                time: None,
+                step: None
+            })
+        ),
+        Err(SampleSetError::MissingStep { sample: 1 })
+    );
+    assert_eq!(
+        stepped.push(sample(), timed(1.0, 1)),
+        Err(SampleSetError::UnexpectedTime { sample: 1 })
+    );
+    assert_eq!(stepped.len(), 1);
 
     // A coordinate converts to the order's unit.
     let mut scan = set_at(&[0.0]);
@@ -299,11 +312,11 @@ fn any_sample_may_carry_site_fields_and_dynamics() {
 #[test]
 fn a_distribution_covers_all_samples_or_a_sorted_subset() {
     assert_eq!(
-        Distribution::new(Members::Subset(vec![2, 1]), EnsemblePartition::one_state(2)),
+        Distribution::new(Members::Subset(vec![2, 1]), Partition::one_state(2)),
         Err(SampleSetError::UnsortedMembers)
     );
     assert_eq!(
-        Distribution::new(Members::Subset(vec![1, 2]), EnsemblePartition::one_state(3)),
+        Distribution::new(Members::Subset(vec![1, 2]), Partition::one_state(3)),
         Err(SampleSetError::PartitionMismatch {
             expected: 2,
             actual: 3
@@ -421,7 +434,7 @@ fn weights_are_finite_positive_and_equal_when_absent() {
         set.push_member(Sample::new(single_position(3.0)), None, 0, Some(0.5)),
         Ok(3)
     );
-    let state = EnsembleState::new()
+    let state = State::new()
         .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
         .unwrap();
     assert_eq!(
@@ -457,7 +470,7 @@ fn weights_are_finite_positive_and_equal_when_absent() {
 }
 
 fn distribution_of_one_state(members: usize) -> Distribution {
-    Distribution::new(Members::All, EnsemblePartition::one_state(members)).unwrap()
+    Distribution::new(Members::All, Partition::one_state(members)).unwrap()
 }
 
 #[test]
@@ -467,7 +480,7 @@ fn selecting_and_removing_samples_remaps_the_members() {
     set.set_order(Some(Order::Step(vec![0, 1, 2, 3, 4])))
         .unwrap();
     let energies = [1.0, 2.0].map(|energy| {
-        EnsembleState::new()
+        State::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap()
     });
@@ -567,7 +580,7 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
     let mut regrouped = Arc::clone(&shared);
     let mut distribution = Arc::make_mut(&mut regrouped).distribution_mut().unwrap();
     distribution
-        .regroup(EnsemblePartition::state_per_sample(3))
+        .regroup(Partition::state_per_sample(3))
         .unwrap();
     distribution.set_weights(Some(vec![1.0, 2.0, 3.0])).unwrap();
     assert!(!Arc::ptr_eq(&regrouped, &shared));
@@ -627,63 +640,58 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
 }
 
 #[test]
-fn distribution_operations_match_the_ensemble() {
-    let ensemble = grouped(&[1.0, 2.0, 3.0, 4.0], &[0, 1, 0, 1], &[2, 1]);
-    let mut set = SampleSet::from_ensemble(ensemble.clone());
+fn distribution_operations_keep_their_results() {
+    use crate::tests::debug_fingerprint as fingerprint;
+    let mut set = grouped(&[1.0, 2.0, 3.0, 4.0], &[0, 1, 0, 1], &[2, 1]);
+    assert_eq!(fingerprint(&set), 0x9ea9_4bd6_e625_0908);
     let distribution = set.distribution().unwrap();
     assert_eq!(
-        distribution.probabilities(),
-        Ok(ensemble.probabilities().unwrap())
+        fingerprint(&distribution.probabilities()),
+        0x5264_938e_9878_2088
     );
     assert_eq!(
-        distribution.state_probabilities(),
-        Ok(ensemble.state_probabilities().unwrap())
+        fingerprint(&distribution.state_probabilities()),
+        0xeeff_7097_2abe_e8d6
     );
     assert_eq!(
-        distribution.effective_sample_size(),
-        Ok(ensemble.effective_sample_size().unwrap())
-    );
-    assert_eq!(distribution.ranked_by_weight(), ensemble.ranked_by_weight());
-    assert_eq!(
-        distribution.ranked_by_population(),
-        ensemble.ranked_by_population()
+        fingerprint(&distribution.effective_sample_size()),
+        0xb362_b541_7cb7_3645
     );
     assert_eq!(
-        distribution.covering_population(0.5),
-        Ok(ensemble.covering_population(0.5).unwrap())
+        fingerprint(&distribution.ranked_by_weight()),
+        0x2789_cca9_c741_8519
+    );
+    assert_eq!(
+        fingerprint(&distribution.ranked_by_population()),
+        0xc97a_7cef_68ff_64f6
+    );
+    assert_eq!(
+        fingerprint(&distribution.covering_population(0.5)),
+        0xd618_a48c_73fd_0377
     );
     assert_eq!(
         distribution.covering_population(0.0),
         Err(SampleSetError::InvalidFraction)
     );
-    let collapsed = set.collapse().unwrap().into_ensemble().unwrap();
-    let expected = ensemble.collapse().unwrap();
-    // The same populations, relative to the largest sample weight, 4.
-    let expected_weights = weights(&expected)
-        .into_iter()
-        .map(|weight| weight / 4.0)
-        .collect::<Vec<_>>();
-    assert_eq!(weights(&collapsed), expected_weights);
-    assert_eq!(representatives(&collapsed), representatives(&expected));
+    assert_eq!(fingerprint(&set.collapse().unwrap()), 0xb860_e760_087d_2a22);
 
-    let mut energetic = energy_ensemble(&[3.0, 1.0, 2.0]);
-    let mut energy_set = SampleSet::from_ensemble(energetic.clone());
+    let mut energy_set = energy_conformers(&[3.0, 1.0, 2.0]);
+    assert_eq!(fingerprint(&energy_set), 0x2d1d_d3e7_bdac_0a45);
     let distribution = energy_set.distribution().unwrap();
     assert_eq!(
-        distribution.ranked_by_energy(),
-        Ok(energetic.ranked_by_energy().unwrap())
+        fingerprint(&distribution.ranked_by_energy()),
+        0x1d17_fb39_6219_0729
     );
     let window = Quantity::new(1.0, KILOJOULE_PER_MOLE);
     assert_eq!(
-        distribution.within_energy_window(window),
-        Ok(energetic.within_energy_window(window).unwrap())
+        fingerprint(&distribution.within_energy_window(window)),
+        0xdacb_19db_c0de_14a3
     );
     assert_eq!(
         distribution.within_energy_window(Quantity::new(-1.0, KILOJOULE_PER_MOLE)),
         Err(SampleSetError::InvalidEnergyWindow)
     );
     let temperature = Quantity::new(300.0, KELVIN);
-    energetic.set_temperature(Some(temperature)).unwrap();
     energy_set
         .distribution_mut()
         .unwrap()
@@ -691,7 +699,11 @@ fn distribution_operations_match_the_ensemble() {
         .unwrap();
     assert_eq!(
         energy_set.distribution().unwrap().temperature(),
-        energetic.temperature()
+        Some(temperature)
+    );
+    assert_eq!(
+        fingerprint(&energy_set.distribution()),
+        0xf47d_c1c2_0c11_71f4
     );
     assert_eq!(
         energy_set
@@ -702,384 +714,71 @@ fn distribution_operations_match_the_ensemble() {
     );
 
     // Regrouping merges whole states with their representative's energy.
-    let partition = EnsemblePartition::new(vec![0, 0, 1], vec![1, 2]).unwrap();
-    energetic.regroup(partition.clone()).unwrap();
+    let partition = Partition::new(vec![0, 0, 1], vec![1, 2]).unwrap();
     energy_set
         .distribution_mut()
         .unwrap()
         .regroup(partition)
         .unwrap();
     assert_eq!(
-        energies(&energy_set.to_ensemble().unwrap()),
-        energies(&energetic)
+        energy_set
+            .states()
+            .map(|state| state.energy())
+            .collect::<Vec<_>>(),
+        [1.0, 2.0].map(|energy| Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
+    );
+    assert_eq!(
+        fingerprint(&energy_set.distribution()),
+        0x1270_e3e0_7f3f_2a5c
     );
     assert_eq!(
         energy_set
             .distribution_mut()
             .unwrap()
-            .regroup(EnsemblePartition::one_state(2)),
+            .regroup(Partition::one_state(2)),
         Err(SampleSetError::PartitionMismatch {
             expected: 3,
             actual: 2
         })
     );
     set.distribution_mut().unwrap().normalize_weights().unwrap();
-}
-
-/// Fields of two ensembles compared one by one, since an ensemble is not
-/// `PartialEq`.
-fn assert_same_ensemble(actual: &Ensemble, expected: &Ensemble) {
-    assert!(Arc::ptr_eq(
-        &actual.shared_topology(),
-        &expected.shared_topology()
-    ));
-    assert_eq!(actual.properties(), expected.properties());
-    assert_eq!(actual.len(), expected.len());
-    for (a, b) in actual.iter().zip(expected.iter()) {
-        assert_eq!(a.payload(), b.payload());
-        assert!(a.shares_structure_with(&b));
-    }
-    assert_eq!(actual.partition(), expected.partition());
-    assert_eq!(actual.state_count(), expected.state_count());
-    for (a, b) in actual.states().zip(expected.states()) {
-        assert_eq!(a.payload(), b.payload());
-    }
-    assert_eq!(actual.temperature(), expected.temperature());
+    assert_eq!(fingerprint(&set.distribution()), 0xb6fd_7ee1_eebd_78cd);
 }
 
 #[test]
-fn ensembles_round_trip_sharing_every_structure() {
-    let mut ensemble = grouped(&[1.0, 2.0, 3.0], &[0, 1, 0], &[2, 1]);
-    ensemble.state_mut(0).unwrap().set_energy(kj(-1.5)).unwrap();
-    ensemble
-        .state_mut(1)
+fn sample_views_write_the_sdf_records_they_always_wrote() {
+    use crate::tests::debug_fingerprint as fingerprint;
+    let mut set = energy_conformers(&[2.5, 1.0]);
+    set.push_member(Sample::new(single_position(1.0)), None, 0, Some(3.0))
+        .unwrap();
+    set.distribution_mut()
         .unwrap()
-        .properties_mut()
-        .insert(key("label"), PropertyValue::String("b".into()))
-        .unwrap();
-    ensemble
-        .set_temperature(Some(Quantity::new(298.15, KELVIN)))
-        .unwrap();
-    ensemble
-        .properties_mut()
-        .insert(key("method"), PropertyValue::String("crest".into()))
-        .unwrap();
-    ensemble
-        .get_mut(1)
-        .unwrap()
-        .set_occupancies(Some(vec![Some(0.25)]))
-        .unwrap();
-
-    let set = SampleSet::from_ensemble(ensemble.clone());
-    assert_eq!(set.order(), None);
-    assert_eq!(set.properties(), ensemble.properties());
-    let distribution = set.distribution().unwrap();
-    assert_eq!(distribution.members(), &Members::All);
-    assert_eq!(distribution.weights(), Some(&[1.0, 2.0, 3.0][..]));
-    assert_eq!(distribution.temperature(), ensemble.temperature());
-    for (sample, original) in set.iter().zip(ensemble.iter()) {
-        assert!(Arc::ptr_eq(
-            sample.payload().structure(),
-            &original.payload().structure
-        ));
-        // The view reports the same context as the ensemble sample's.
-        assert_eq!(
-            sample.as_model_view().kind(),
-            original.as_model_view().kind()
-        );
-    }
-    assert_same_ensemble(&set.to_ensemble().unwrap(), &ensemble);
-    assert_same_ensemble(&set.into_ensemble().unwrap(), &ensemble);
-    // An empty ensemble too.
-    let empty = Ensemble::new(single_atom_topology());
-    assert_same_ensemble(
-        &SampleSet::from_ensemble(empty.clone())
-            .to_ensemble()
-            .unwrap(),
-        &empty,
-    );
-}
-
-#[test]
-fn ensemble_conversion_refuses_what_an_ensemble_cannot_hold() {
-    let ensemble = grouped(&[1.0, 2.0], &[0, 0], &[0]);
-    let set = SampleSet::from_ensemble(ensemble);
-    let not = |content| SampleSetError::NotConvertible {
-        target: ConversionTarget::Ensemble,
-        content,
-    };
-    assert_eq!(
-        set_at(&[0.0]).to_ensemble().unwrap_err(),
-        SampleSetError::Missing(Requirement::Distribution)
-    );
-    let mut ordered = set.clone();
-    ordered.set_order(Some(Order::Step(vec![0, 1]))).unwrap();
-    assert_eq!(
-        ordered.to_ensemble().unwrap_err(),
-        not(Unconvertible::Order)
-    );
-    let mut partial = set.clone();
-    partial
-        .push(Sample::new(single_position(1.0)), None)
-        .unwrap();
-    assert_eq!(
-        partial.to_ensemble().unwrap_err(),
-        not(Unconvertible::NonMembers)
-    );
-    let mut moving = set.clone();
-    moving
-        .get_mut(1)
-        .unwrap()
-        .set_velocities(Some(velocities(1.0)))
-        .unwrap();
-    assert_eq!(
-        moving.into_ensemble().unwrap_err(),
-        not(Unconvertible::Velocities { sample: 1 })
-    );
-    // Members without weights weigh one.
-    let mut equal = set_at(&[0.0, 1.0]);
-    equal
-        .set_distribution(Some(distribution_of_one_state(2)))
-        .unwrap();
-    assert_eq!(weights(&equal.to_ensemble().unwrap()), [1.0, 1.0]);
-}
-
-fn assert_same_trajectory(actual: &Trajectory, expected: &Trajectory) {
-    assert!(Arc::ptr_eq(
-        &actual.shared_topology(),
-        &expected.shared_topology()
-    ));
-    assert_eq!(actual.properties(), expected.properties());
-    assert_eq!(actual.len(), expected.len());
-    for (a, b) in actual.iter().zip(expected.iter()) {
-        assert_eq!(a.payload(), b.payload());
-    }
-}
-
-fn frame(x: f64, time: Option<f64>, step: Option<u64>) -> TrajectoryFrame {
-    let mut frame = TrajectoryFrame::new(single_position(x));
-    frame.set_time(time.map(ps)).unwrap();
-    frame.set_step(step);
-    frame
-}
-
-#[test]
-fn trajectories_round_trip_with_their_times_steps_and_dynamics() {
-    let topology = Arc::new(single_atom_topology());
-    let mut frames = vec![
-        frame(0.0, Some(0.0), Some(0)),
-        frame(1.0, Some(2.0), Some(1000)),
-    ];
-    frames[0].set_velocities(Some(velocities(0.5))).unwrap();
-    frames[1].set_forces(Some(Forces::zeros(1))).unwrap();
-    frames[1] = frames[1].clone().with_cell(cell());
-    frames[1]
-        .properties_mut()
-        .owner_mut()
-        .insert(
-            key("energy"),
-            PropertyValue::real(-3.0, KILOJOULE_PER_MOLE).unwrap(),
-        )
-        .unwrap();
-    let mut trajectory = Trajectory::from_items(Arc::clone(&topology), frames).unwrap();
-    trajectory
-        .properties_mut()
-        .insert(key("engine"), PropertyValue::String("wiggle".into()))
-        .unwrap();
-
-    let set = SampleSet::from_trajectory(trajectory.clone()).unwrap();
-    assert_eq!(set.order(), Some(&time_axis(vec![0.0, 2.0], vec![0, 1000])));
-    assert_eq!(set.distribution(), None);
-    assert_eq!(set.get(0).unwrap().velocities(), Some(&velocities(0.5)));
-    for (sample, original) in set.iter().zip(trajectory.iter()) {
-        assert_eq!(
-            sample.as_model_view().kind(),
-            original.as_model_view().kind()
-        );
-    }
-    assert_same_trajectory(&set.to_trajectory().unwrap(), &trajectory);
-    assert_same_trajectory(&set.into_trajectory().unwrap(), &trajectory);
-
-    // Frames without times or steps give an axis without columns.
-    let untimed = Trajectory::from_items(Arc::clone(&topology), [frame(0.0, None, None)]).unwrap();
-    let set = SampleSet::from_trajectory(untimed.clone()).unwrap();
-    assert_eq!(set.order(), Some(&Order::Time(TimeAxis::default())));
-    assert_same_trajectory(&set.to_trajectory().unwrap(), &untimed);
-    let empty = Trajectory::new(Arc::clone(&topology));
-    assert_same_trajectory(
-        &SampleSet::from_trajectory(empty.clone())
-            .unwrap()
-            .to_trajectory()
-            .unwrap(),
-        &empty,
-    );
-
-    // A column covers every frame or none.
-    let partly = |frames: Vec<TrajectoryFrame>| {
-        SampleSet::from_trajectory(Trajectory::from_items(Arc::clone(&topology), frames).unwrap())
-            .unwrap_err()
-    };
-    assert_eq!(
-        partly(vec![frame(0.0, Some(0.0), None), frame(1.0, None, None)]),
-        SampleSetError::MissingTime { sample: 1 }
-    );
-    assert_eq!(
-        partly(vec![frame(0.0, None, None), frame(1.0, Some(1.0), None)]),
-        SampleSetError::UnexpectedTime { sample: 1 }
-    );
-    assert_eq!(
-        partly(vec![frame(0.0, None, Some(0)), frame(1.0, None, None)]),
-        SampleSetError::MissingStep { sample: 1 }
-    );
-    assert_eq!(
-        partly(vec![frame(0.0, None, None), frame(1.0, None, Some(1))]),
-        SampleSetError::UnexpectedStep { sample: 1 }
-    );
-}
-
-#[test]
-fn trajectory_conversion_refuses_what_a_trajectory_cannot_hold() {
-    let not = |content| SampleSetError::NotConvertible {
-        target: ConversionTarget::Trajectory,
-        content,
-    };
-    let mut set = set_at(&[0.0, 1.0]);
-    assert_eq!(
-        set.to_trajectory().unwrap_err(),
-        SampleSetError::Missing(Requirement::TimeOrder)
-    );
-    set.set_order(Some(Order::Step(vec![0, 1]))).unwrap();
-    assert_eq!(
-        set.to_trajectory().unwrap_err(),
-        SampleSetError::Missing(Requirement::TimeOrder)
-    );
-    set.set_order(Some(time_axis(vec![0.0, 1.0], vec![0, 1])))
-        .unwrap();
-    let mut clustered = set.clone();
-    clustered
-        .set_distribution(Some(distribution_of_one_state(2)))
-        .unwrap();
-    assert_eq!(
-        clustered.to_trajectory().unwrap_err(),
-        not(Unconvertible::Distribution)
-    );
-    set.get_mut(1)
-        .unwrap()
-        .set_b_factors(Some(Quantity::new(vec![Some(1.0)], SQUARE_ANGSTROM)))
-        .unwrap();
-    assert_eq!(
-        set.to_trajectory().unwrap_err(),
-        not(Unconvertible::BFactors { sample: 1 })
-    );
-}
-
-#[test]
-fn series_round_trip_on_steps_and_coordinates() {
-    let topology = Arc::new(single_atom_topology());
-    let mut history = Series::new(Arc::clone(&topology), SeriesAxis::Step);
-    for (step, x) in [(0, 0.0), (3, 1.0)] {
-        history
-            .push(SeriesItem::at_step(single_position(x), step))
-            .unwrap();
-    }
-    history
-        .properties_mut()
-        .insert(key("method"), PropertyValue::String("lbfgs".into()))
-        .unwrap();
-    let set = SampleSet::from_series(history.clone());
-    assert_eq!(set.order(), Some(&Order::Step(vec![0, 3])));
-    let round = set.to_series().unwrap();
-    assert_eq!(round.axis(), SeriesAxis::Step);
-    assert_eq!(round.properties(), history.properties());
-    for (a, b) in round.iter().zip(history.iter()) {
-        assert_eq!(a.payload(), b.payload());
-    }
-    for (sample, original) in set.iter().zip(history.iter()) {
-        assert_eq!(
-            sample.as_model_view().kind(),
-            original.as_model_view().kind()
-        );
-    }
-
-    let mut scan = Series::new(Arc::clone(&topology), SeriesAxis::Coordinate(DEGREE));
-    for (angle, x) in [(60.0, 0.0), (-60.0, 1.0)] {
-        let item = SeriesItem::at_coordinate(single_position(x), Quantity::new(angle, DEGREE))
-            .unwrap()
-            .with_cell(cell());
-        scan.push(item).unwrap();
-    }
-    let set = SampleSet::from_series(scan.clone());
-    assert_eq!(
-        set.order(),
-        Some(&Order::Coordinate {
-            unit: DEGREE,
-            values: vec![60.0, -60.0],
-        })
-    );
-    let round = set.into_series().unwrap();
-    assert_eq!(round.axis(), SeriesAxis::Coordinate(DEGREE));
-    for (a, b) in round.iter().zip(scan.iter()) {
-        assert_eq!(a.payload(), b.payload());
-    }
-
-    let not = |content| SampleSetError::NotConvertible {
-        target: ConversionTarget::Series,
-        content,
-    };
-    let mut set = set_at(&[0.0]);
-    assert_eq!(
-        set.to_series().unwrap_err(),
-        SampleSetError::Missing(Requirement::AnyOrder)
-    );
-    set.set_order(Some(Order::Time(TimeAxis::default())))
-        .unwrap();
-    assert_eq!(set.to_series().unwrap_err(), not(Unconvertible::Order));
-    set.set_order(Some(Order::Step(vec![0]))).unwrap();
-    set.get_mut(0)
-        .unwrap()
-        .set_forces(Some(Forces::zeros(1)))
-        .unwrap();
-    assert_eq!(
-        set.to_series().unwrap_err(),
-        not(Unconvertible::Forces { sample: 0 })
-    );
-}
-
-#[test]
-fn sample_set_views_write_as_the_old_views_do() {
-    let mut ensemble = energy_ensemble(&[2.5, 1.0]);
-    ensemble
-        .push_sample(EnsembleSample::new(single_position(1.0), 3.0).unwrap(), 0)
-        .unwrap();
-    ensemble
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    let set = SampleSet::from_ensemble(ensemble.clone());
+    assert_eq!(fingerprint(&set), 0x0655_a44b_5c90_6abb);
     let options = crate::sdf::SdfWriteOptions::default();
-    let expected = crate::sdf::write(ensemble.iter(), options).unwrap();
     let views = set.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
         views.iter().map(crate::sdf::SdfRecordSource::model),
         options,
     )
     .unwrap();
-    assert_eq!(written, expected);
+    assert_eq!(fingerprint(&written), 0xfdd2_1ccf_3060_ad78);
 
-    let mut scan = Series::new(single_atom_topology(), SeriesAxis::Coordinate(DEGREE));
-    scan.push(
-        SeriesItem::at_coordinate(single_position(0.0), Quantity::new(30.0, DEGREE)).unwrap(),
+    let mut scan = set_at(&[0.0]);
+    scan.set_order(Some(Order::Coordinate {
+        unit: DEGREE,
+        values: vec![30.0],
+    }))
+    .unwrap();
+    assert_eq!(fingerprint(&scan), 0x2652_64cd_7ece_ac1a);
+    let views = scan.iter().collect::<Vec<_>>();
+    let written = crate::sdf::write(
+        views.iter().map(crate::sdf::SdfRecordSource::model),
+        options,
     )
     .unwrap();
-    let set = SampleSet::from_series(scan.clone());
-    let views = set.iter().collect::<Vec<_>>();
-    assert_eq!(
-        crate::sdf::write(
-            views.iter().map(crate::sdf::SdfRecordSource::model),
-            options
-        )
-        .unwrap(),
-        crate::sdf::write(scan.iter(), options).unwrap()
-    );
+    assert_eq!(fingerprint(&written), 0x3c58_9dc0_2772_0fe0);
 }
 
 #[test]
@@ -1087,7 +786,7 @@ fn subsets_keep_the_order_and_the_distribution() {
     let (model, atom, _) = model_fixture();
     let mut set = SampleSet::from_models([model.clone(), model]).unwrap();
     set.set_order(Some(Order::Step(vec![5, 6]))).unwrap();
-    let state = EnsembleState::new()
+    let state = State::new()
         .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
         .unwrap();
     let mut state = state;
@@ -1178,8 +877,7 @@ fn the_distribution_guard_keeps_the_members() {
     set.set_distribution(Some(distribution_of_one_state(2)))
         .unwrap();
     // The replacement the guard cannot make is refused when installed.
-    let foreign =
-        Distribution::new(Members::Subset(vec![7]), EnsemblePartition::one_state(1)).unwrap();
+    let foreign = Distribution::new(Members::Subset(vec![7]), Partition::one_state(1)).unwrap();
     assert_eq!(
         set.set_distribution(Some(foreign)),
         Err(SampleSetError::IndexOutOfRange { index: 7, len: 2 })
@@ -1188,7 +886,7 @@ fn the_distribution_guard_keeps_the_members() {
     assert_eq!(distribution.member_count(), 2);
     distribution.set_weight(1, 3.0).unwrap();
     distribution
-        .regroup(EnsemblePartition::state_per_sample(2))
+        .regroup(Partition::state_per_sample(2))
         .unwrap();
     distribution
         .state_mut(1)
@@ -1248,10 +946,10 @@ fn duplicates_in_a_selection_become_separate_samples() {
             .with_weights(vec![1.0, 2.0])
             .unwrap()
             .with_states(vec![
-                EnsembleState::new()
+                State::new()
                     .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
-                EnsembleState::new()
+                State::new()
                     .with_energy(Quantity::new(2.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
             ])
@@ -1346,7 +1044,7 @@ fn members_pushed_into_a_distribution_of_every_sample() {
         set.push_state(
             Sample::new(single_position(2.0)),
             Some(Place::Step(2)),
-            EnsembleState::new(),
+            State::new(),
             None,
         ),
         Ok(1)
@@ -1366,7 +1064,7 @@ fn members_pushed_into_a_distribution_of_every_sample() {
         Err(SampleSetError::Structure(_))
     ));
     assert!(matches!(
-        set.push_state(wide(), Some(Place::Step(3)), EnsembleState::new(), None),
+        set.push_state(wide(), Some(Place::Step(3)), State::new(), None),
         Err(SampleSetError::Structure(_))
     ));
     assert!(matches!(
@@ -1446,17 +1144,17 @@ fn regrouping_a_split_state_drops_its_energy() {
     set.set_distribution(Some(
         distribution(Members::All, &[0, 0, 1], &[0, 2])
             .with_states(vec![
-                EnsembleState::new()
+                State::new()
                     .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
-                EnsembleState::new()
+                State::new()
                     .with_energy(Quantity::new(2.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
             ])
             .unwrap(),
     ))
     .unwrap();
-    let partition = EnsemblePartition::new(vec![0, 1, 2], vec![0, 1, 2]).unwrap();
+    let partition = Partition::new(vec![0, 1, 2], vec![0, 1, 2]).unwrap();
     set.distribution_mut().unwrap().regroup(partition).unwrap();
     assert_eq!(set.states().len(), 3);
     assert_eq!(set.state(0).unwrap().energy(), None);
@@ -1517,7 +1215,6 @@ fn every_error_reads_as_a_sentence() {
     let unit = Quantity::new(1.0, ANGSTROM)
         .value_in(PICOSECOND)
         .unwrap_err();
-    let not = |target, content| E::NotConvertible { target, content };
     let errors = [
         (E::EmptySource, "There are no models to collect."),
         (E::EmptyDistribution, "The distribution has no members."),
@@ -1644,46 +1341,6 @@ fn every_error_reads_as_a_sentence() {
         (
             E::InvalidFraction,
             "The population fraction is not greater than 0 and at most 1.",
-        ),
-        (
-            not(ConversionTarget::Ensemble, Unconvertible::Order),
-            "An ensemble cannot hold the order of the sample set.",
-        ),
-        (
-            not(ConversionTarget::Trajectory, Unconvertible::Distribution),
-            "A trajectory cannot hold the distribution of the sample set.",
-        ),
-        (
-            not(ConversionTarget::Ensemble, Unconvertible::NonMembers),
-            "An ensemble cannot hold samples outside the distribution.",
-        ),
-        (
-            not(
-                ConversionTarget::Series,
-                Unconvertible::BFactors { sample: 2 },
-            ),
-            "A series cannot hold the B-factors of sample 2.",
-        ),
-        (
-            not(
-                ConversionTarget::Series,
-                Unconvertible::Velocities { sample: 2 },
-            ),
-            "A series cannot hold the velocities of sample 2.",
-        ),
-        (
-            not(
-                ConversionTarget::Series,
-                Unconvertible::Forces { sample: 2 },
-            ),
-            "A series cannot hold the forces of sample 2.",
-        ),
-        (
-            not(
-                ConversionTarget::Trajectory,
-                Unconvertible::Occupancies { sample: 2 },
-            ),
-            "A trajectory cannot hold the occupancies of sample 2.",
         ),
         (
             E::Structure(StructureError::NonFiniteTime),

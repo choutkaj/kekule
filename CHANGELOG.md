@@ -964,6 +964,53 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** one container for many structures (SeekDelta K74).
+  `SampleSet` replaces `Ensemble`, `Trajectory`, and `Series`, which are
+  removed with everything that existed only for them (see Removed).
+  Renames: `EnsemblePartition` is `Partition`, `EnsembleState` is `State`,
+  `StructureEnsembleInterpretOptions` is
+  `StructureSampleSetInterpretOptions`, `XyzEnsembleInterpretOptions` is
+  `XyzSampleSetInterpretOptions`, `StructureField::ItemStep` and
+  `ItemCoordinate` are `OrderStep` and `OrderCoordinate`, and
+  `MmcifWriteIssue::IncompatibleEnsembleSample` is `IncompatibleSample`.
+  `StructureKind` is `Model | Sample(SampleContext)`.
+- **Breaking:** trajectory writers take a `FrameView`, a borrowed `Sample`
+  with its time and step (SeekDelta K74). `FrameView::new(topology, sample,
+  time, step)` lends a sample held apart from a set and
+  `FrameView::from_sample` one of a time-ordered set, neither copying
+  arrays; `to_model` copies a frame out as a model. A `FrameBuffer` holds a `Sample`: `FrameBuffer::from_sample`
+  binds one, `into_sample` returns it with its `Place`, `sample_mut` edits
+  it, and `set_time` and `set_step` set the frame's place. Its `Deref`
+  target is `Sample`. `MemoryTrajectoryWriter` collects frames into a
+  time-ordered `SampleSet` (`into_sample_set`), sharing each frame's
+  structure without a copy.
+- **Breaking:** `SampleSet::from_reader(reader, indices)` loads chosen
+  samples of any `SampleRead`, in the order given, into a set without an
+  order, distribution, or set properties, which the host then states
+  (SeekDelta K74). It replaces `TrajectorySampler`, `TrajectorySampling`,
+  `Trajectory::to_ensemble`, and `read_ensemble`; reading through
+  `Processed` loads processed samples.
+- **Breaking:** the Molfile, SDF, PDB, and mmCIF writers hold a sample to
+  one policy, `sample_metadata`, whether it belongs to a set or is a
+  trajectory frame (SeekDelta K74). XYZ keeps `frame_metadata` for the
+  frames it streams and `sample_metadata` for the sample state of a set.
+- **Breaking:** writer failure texts name samples (SeekDelta K74). A sample
+  state a format cannot carry reads "The {field} of sample {n} has no
+  {format} representation." ("of the sample" for one sample), the
+  temperature "The ensemble temperature has no {format} representation.",
+  and the order "The sample order has no {format} representation." mmCIF's
+  "Sample {n} has a different {field} from the first sample." and PDB's and
+  mmCIF's "The samples have different cells." replace the ensemble
+  wordings, SDF reserves a field "of the sample", and interpretation fails
+  with "The records do not form a sample set.", "Cannot assemble the sample
+  set.", or "Cannot add the frame to the sample set." The XYZ writer says
+  "XYZ cannot store the {field}." for a weight, state, state energy,
+  temperature, state properties, order step, or order coordinate.
+  `StructureError::NonFiniteEnergy` reads "The state energy is not finite."
+- **Breaking:** `interpret_conformations` of mmCIF and PDB gives a sample
+  set of one state without weights; `sdf::sample_set` of records without
+  any distribution field gives a set without a distribution
+  (SeekDelta K74).
 - **Breaking:** `SampleReadError::Trajectory` is a struct variant naming the
   sample, `Trajectory { sample, source }`, and displays "Cannot read sample
   7." with the trajectory error as its source (SeekDelta K73 follow-ups).
@@ -1492,6 +1539,36 @@ are marked **Breaking:**.
   `CONECT`. Coordination is a `Dative` bond, so heme Fe–N and iron–sulfur Fe–S
   bonds are now dative from mmCIF, as they already were from PDB. A stated
   flag still decides.
+
+### Removed
+
+- **Breaking:** `Ensemble`, `Trajectory`, `Series`, and their payloads,
+  views, guards, iterators, and errors (SeekDelta K74). A host migrates as
+  follows:
+
+  | Removed | Instead |
+  | --- | --- |
+  | `Ensemble`, `EnsembleSample`, `EnsembleSampleView`, `EnsembleSampleMut`, `EnsembleIter`, `EnsembleStateView`, `EnsembleStateIter`, `EnsembleError` | `SampleSet` with a `Distribution`; `Sample`, `SampleView`, `SampleMut`, `StateView`, `SampleSetError` |
+  | `Trajectory`, `TrajectoryFrame`, `TrajectoryFrameView`, `TrajectoryFrameMut`, `TrajectoryIter`, `TrajectoryError` | `SampleSet` with `Order::Time(TimeAxis)`; `Sample` and its `Place::Time { time, step }`; `FrameView` for writers |
+  | `Series`, `SeriesItem`, `SeriesItemView`, `SeriesItemMut`, `SeriesIter`, `SeriesAxis`, `SeriesError` | `SampleSet` with `Order::Step` or `Order::Coordinate`; `Place::Step` or `Place::Coordinate` |
+  | `EnsemblePartition`, `EnsembleState` | `Partition`, `State` |
+  | `Ensemble::from_models(models, partition)` | `SampleSet::from_models(models)` then `set_distribution(Some(Distribution::new(Members::All, partition)?))` |
+  | `Ensemble::from_molecule_positions` | `Topology::from_molecule`, `SampleSet::from_samples` of `Sample::new(positions)`, then `set_distribution` |
+  | `Ensemble` and `Trajectory` methods (`select`, `subset`, `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, `contact_occupancy`, `group_contact_occupancy`, clustering, `pairwise_fitted_rmsd`, populations, rankings, `collapse`, `assign_boltzmann_populations`) | The `SampleSet` and `DistributionMut` methods of the same names |
+  | `Trajectory::validate_monotonic_time(MissingTimePolicy)` | `SampleSet::validate_monotonic_time()`, which fails with `Missing(Times)` on an axis without times |
+  | `TrajectorySampler`, `TrajectorySampling`, `Trajectory::to_ensemble`, `Trajectory::into_ensemble`, `traj::read_ensemble`, `read_ensemble_seekable`, `EnsembleReadOptions`, `EnsembleReadProgress` | `SampleSet::from_reader(&reader, indices)`, then `set_distribution` with the weights; `subset` for an atom subset |
+  | `SampleSet::from_ensemble`, `from_trajectory`, `from_series`, `to_ensemble`, `into_ensemble`, `to_trajectory`, `into_trajectory`, `to_series`, `into_series`, `ConversionTarget`, `Unconvertible`, `SampleSetError::NotConvertible` | Build the `SampleSet` directly |
+  | `NativeObject::into_ensemble`, `into_ensemble_interpretation`, `into_trajectory`, `into_series`, `NativeSource::interpreted_ensemble`, `FormatErrorDetail::NativeSampleSetShape` | `NativeObject::into_sample_set`, `into_sample_set_interpretation`; `NativeSource::interpreted_sample_set` |
+  | `traj::io::read_trajectory`, `write_trajectory`, `write_trajectory_to` | `read_sample_set`, `write_sample_set`, `write_sample_set_to` |
+  | `FrameBuffer::from_frame`, `into_trajectory`, `frame_mut` | `FrameBuffer::from_sample`, `into_sample`, `sample_mut` (time and step through `set_time` and `set_step`) |
+  | `XyzWriter::write_ensemble`, `write_series` | `XyzWriter::write_sample_set` |
+  | `MmcifDocument::interpret_ensemble`, `PdbDocument::interpret_ensemble`, `XyzDocument::interpret_ensemble`, `StructureEnsembleInterpretation`, `XyzEnsembleInterpretation` | `interpret_sample_set`, `StructureSampleSetInterpretation`, `XyzSampleSetInterpretation` |
+  | `sdf::ensemble` | `sdf::sample_set` |
+  | `PdbSource::ensemble`, `series`, `MmcifBlockSource::ensemble`, and the conversions from `&Ensemble`, `&Series`, `&StructureEnsembleInterpretation` | `PdbSource::sample_set`, `MmcifBlockSource::sample_set`, and the conversions from `&SampleSet` and `&StructureSampleSetInterpretation` |
+  | `ensemble_metadata`, `series_metadata`, and (except XYZ) `frame_metadata` writer options with their `with_` setters | `sample_metadata` and `with_sample_metadata` |
+  | `PdbWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`, `UnrepresentableSeriesItem`, `EmptySeries`; `MmcifWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`; `MmcifSampleField::Weight`, `Energy`, `State`, `Temperature` | `UnrepresentableSample`, `EmptySampleSet` |
+  | `diagnostics::check_multi_model_ensemble`, `UnrepresentableSampleState` | none: writers check sample state themselves |
+  | `StructureError::InvalidWeight`, `NonFiniteCoordinate` | `SampleSetError::InvalidWeight`, `NonFiniteOrderValue` |
 
 ### Fixed
 

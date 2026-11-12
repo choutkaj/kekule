@@ -13,13 +13,10 @@
 //!   the moving-to-reference transform and post-fit RMSD.
 //! - [`rmsd`] measures coordinates exactly as stored, without fitting.
 //! - [`aligned_rmsd`] fits on one set of pairs and measures another.
-//! - `superpose`, `rmsd`, and `aligned_rmsd` on
-//!   [`SampleSet`](crate::structure::SampleSet::superpose),
-//!   [`Ensemble`](crate::structure::Ensemble::superpose),
-//!   [`Trajectory`](crate::structure::Trajectory::superpose), and
-//!   [`Series`](crate::structure::Series::superpose) apply the same kernels
-//!   to every sample, frame, or item against a [`Reference`]: an item of the
-//!   collection or any external view.
+//! - `superpose`, `rmsd`, and `aligned_rmsd` on a
+//!   [`SampleSet`](crate::structure::SampleSet::superpose) apply the same
+//!   kernels to every sample against a [`Reference`]: a sample of the set
+//!   or any external view.
 //! - [`sample_rmsd`] and [`sample_aligned_rmsd`] measure listed samples of
 //!   any [`SampleRead`](crate::structure::SampleRead), such as a set read
 //!   from a file, one at a time.

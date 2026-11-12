@@ -6,6 +6,7 @@ mod bond_dihedrals;
 mod clustering;
 mod clustering_runs;
 mod dssp;
+mod fingerprint;
 mod geometry;
 mod interactions;
 mod measurements;

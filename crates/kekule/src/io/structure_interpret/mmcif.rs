@@ -20,13 +20,13 @@ use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, LabelConnectionSelector, PartnerSpec,
 };
-use super::ensemble::{interpret_conformations, interpret_ensemble, no_coordinate_models};
+use super::sample_set::{interpret_conformations, interpret_models, no_coordinate_models};
 use super::sequences::read_polymer_entities;
 use super::types::{
-    ensemble_error, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason,
-    ConnectivityOptions, StructureEnsembleInterpretOptions, StructureEnsembleInterpretation,
-    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
-    StructureInterpretationReport,
+    sample_set_error, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason,
+    ConnectivityOptions, StructureInterpretIssue, StructureInterpretOptions,
+    StructureInterpretation, StructureInterpretationReport, StructureSampleSetInterpretOptions,
+    StructureSampleSetInterpretation,
 };
 use super::{interpret_source, AltLocResidue, StructureSource};
 
@@ -70,25 +70,25 @@ pub(crate) fn interpret_mmcif_block(
 }
 
 /// Interprets explicitly selected or all coordinate models as one
-/// shared-topology non-temporal ensemble.
-pub(crate) fn interpret_mmcif_ensemble(
+/// shared-topology unordered sample set.
+pub(crate) fn interpret_mmcif_sample_set(
     document: &MmcifDocument,
-    options: StructureEnsembleInterpretOptions,
-) -> Result<StructureEnsembleInterpretation, FormatError> {
-    interpret_mmcif_ensemble_block(atom_site_block(document)?, options)
+    options: StructureSampleSetInterpretOptions,
+) -> Result<StructureSampleSetInterpretation, FormatError> {
+    interpret_mmcif_sample_set_block(atom_site_block(document)?, options)
 }
 
 /// Interprets explicitly selected or all coordinate models in one block as
-/// one shared-topology non-temporal ensemble.
-pub(crate) fn interpret_mmcif_ensemble_block(
+/// one shared-topology unordered sample set.
+pub(crate) fn interpret_mmcif_sample_set_block(
     block: &MmcifBlock,
-    options: StructureEnsembleInterpretOptions,
-) -> Result<StructureEnsembleInterpretation, FormatError> {
+    options: StructureSampleSetInterpretOptions,
+) -> Result<StructureSampleSetInterpretation, FormatError> {
     if !block.has_category("_atom_site") {
         return Err(no_coordinate_models());
     }
     let available = coordinate_model_ids(block)?;
-    interpret_ensemble(available, options, |options| {
+    interpret_models(available, options, |options| {
         mmcif_source(
             block,
             options.requires_entity_metadata(),
@@ -103,14 +103,14 @@ pub(crate) fn interpret_mmcif_ensemble_block(
 pub(crate) fn interpret_mmcif_conformations(
     document: &MmcifDocument,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureEnsembleInterpretation, FormatError> {
+) -> Result<StructureSampleSetInterpretation, FormatError> {
     interpret_mmcif_conformations_block(atom_site_block(document)?, selections)
 }
 
 pub(crate) fn interpret_mmcif_conformations_block(
     block: &MmcifBlock,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureEnsembleInterpretation, FormatError> {
+) -> Result<StructureSampleSetInterpretation, FormatError> {
     interpret_conformations(selections, |options| {
         interpret_mmcif_block(block, options.clone())
     })
@@ -147,7 +147,7 @@ fn atom_site_block(document: &MmcifDocument) -> Result<&MmcifBlock, FormatError>
         .filter(|block| block.has_category("_atom_site"));
     let block = blocks.next().ok_or_else(no_coordinate_models)?;
     if blocks.next().is_some() {
-        return Err(ensemble_error(
+        return Err(sample_set_error(
             DiagnosticKind::Inconsistent,
             "More than one data block has _atom_site data.",
             FormatErrorDetail::MultipleAtomSiteBlocks,

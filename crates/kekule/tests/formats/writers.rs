@@ -13,11 +13,11 @@ use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{
-    Distribution, Ensemble, EnsemblePartition, EnsembleState, Forces, Members, Model, ModelView,
-    Order, Positions, SampleSet, Series, SeriesAxis, SeriesItem, Trajectory, TrajectoryFrame,
-    Velocities,
+    Distribution, Forces, Members, Model, ModelView, Order, Partition, Positions, Sample,
+    SampleSet, State, TimeAxis, Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
+use kekule::traj::FrameView;
 use kekule::units::{
     Quantity, ANGSTROM, KELVIN, KILOJOULE_PER_MOLE, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
     NANOMETER_PER_PICOSECOND, PICOSECOND,
@@ -439,7 +439,7 @@ fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
 }
 
 #[test]
-fn sdf_writes_independent_models_and_ensemble_members_in_order() {
+fn sdf_writes_independent_models_and_set_samples_in_order() {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let second = model("O", &[[2.0, 0.0, 0.0]]);
     let text = sdf::write(&[first.clone(), second.clone()], SdfWriteOptions::default()).unwrap();
@@ -474,9 +474,10 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
         Positions::new(Quantity::new([Point3::new(9.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
     .unwrap();
-    let ensemble = Ensemble::from_models([first, later], EnsemblePartition::one_state(2)).unwrap();
-    let ensemble_text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
-    let records = interpret_records(&ensemble_text);
+    let set = distributed([first, later], Partition::one_state(2));
+    let set_text = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    assert_eq!(crate::fingerprint(&set_text), 0x5a81_ddae_c2c0_94b9);
+    let records = interpret_records(&set_text);
     assert_eq!(records.len(), 2);
     assert!(
         (records[0]
@@ -506,31 +507,46 @@ fn sdf_writes_independent_models_and_ensemble_members_in_order() {
     );
 }
 
+/// `models` as the samples of one distribution in the states of
+/// `partition`, every member weighing 1.
+fn distributed(models: impl IntoIterator<Item = Model>, partition: Partition) -> SampleSet {
+    let mut set = SampleSet::from_models(models).unwrap();
+    let members = set.len();
+    set.set_distribution(Some(
+        Distribution::new(Members::All, partition)
+            .unwrap()
+            .with_weights(vec![1.0; members])
+            .unwrap(),
+    ))
+    .unwrap();
+    set
+}
+
 /// Two methane conformers, one state each, weighted 1:3 with state energies
 /// 0 and 5 kJ/mol.
-fn weighted_ensemble() -> Ensemble {
+fn weighted_set() -> SampleSet {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let later = Model::new(
         first.shared_topology(),
         Positions::new(Quantity::new([Point3::new(9.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
     .unwrap();
-    let mut ensemble =
-        Ensemble::from_models([first, later], EnsemblePartition::state_per_sample(2)).unwrap();
-    for (index, weight, energy) in [(0, 1.0, 0.0), (1, 3.0, 5.0)] {
-        ensemble.get_mut(index).unwrap().set_weight(weight).unwrap();
-        ensemble
-            .state_mut(index)
+    let mut set = distributed([first, later], Partition::state_per_sample(2));
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution.set_weights(Some(vec![1.0, 3.0])).unwrap();
+    for (state, energy) in [(0, 0.0), (1, 5.0)] {
+        distribution
+            .state_mut(state)
             .unwrap()
             .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
             .unwrap();
     }
-    ensemble
+    set
 }
 
 /// Four methane samples weighted 1 to 4 in two states, {1, 3} represented
 /// by 3 and {0, 2} represented by 2, the latter at -2.5 kJ/mol, at 300 K.
-fn clustered_ensemble() -> Ensemble {
+fn clustered_set() -> SampleSet {
     let first = model("C", &[[0.0, 0.0, 0.0]]);
     let models = (0..4).map(|index| {
         Model::new(
@@ -543,44 +559,46 @@ fn clustered_ensemble() -> Ensemble {
         )
         .unwrap()
     });
-    let partition = EnsemblePartition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap();
-    let mut ensemble = Ensemble::from_models(models.collect::<Vec<_>>(), partition).unwrap();
-    for index in 0..4 {
-        ensemble
-            .get_mut(index)
-            .unwrap()
-            .set_weight(f64::from(index as u8 + 1))
-            .unwrap();
-    }
-    ensemble
+    let partition = Partition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap();
+    let mut set = distributed(models.collect::<Vec<_>>(), partition);
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution
+        .set_weights(Some(vec![1.0, 2.0, 3.0, 4.0]))
+        .unwrap();
+    distribution
         .state_mut(1)
         .unwrap()
         .set_energy(Some(Quantity::new(-2.5, KILOJOULE_PER_MOLE)))
         .unwrap();
-    ensemble
+    distribution
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    ensemble
+    set
 }
 
-/// Every weight, the partition, every state energy in kJ/mol, and the
-/// temperature in kelvin.
-type EnsembleMetadata = (Vec<f64>, EnsemblePartition, Vec<Option<f64>>, Option<f64>);
+/// Every sample's weight, the partition, every state energy in kJ/mol, and
+/// the temperature in kelvin.
+type SetMetadata = (
+    Vec<Option<f64>>,
+    Option<Partition>,
+    Vec<Option<f64>>,
+    Option<f64>,
+);
 
-fn ensemble_metadata(ensemble: &Ensemble) -> EnsembleMetadata {
+fn set_metadata(set: &SampleSet) -> SetMetadata {
+    let distribution = set.distribution();
     (
-        ensemble.iter().map(|sample| sample.weight()).collect(),
-        ensemble.partition().clone(),
-        ensemble
-            .states()
+        set.iter().map(|sample| sample.weight()).collect(),
+        distribution.map(|distribution| distribution.partition().clone()),
+        set.states()
             .map(|state| {
                 state
                     .energy()
                     .map(|energy| energy.value_in(KILOJOULE_PER_MOLE).unwrap())
             })
             .collect(),
-        ensemble
-            .temperature()
+        distribution
+            .and_then(Distribution::temperature)
             .map(|temperature| temperature.value_in(KELVIN).unwrap()),
     )
 }
@@ -599,9 +617,10 @@ fn data_fields(records: &[SdfRecordInterpretation]) -> Vec<Vec<(String, String)>
 }
 
 #[test]
-fn sdf_ensemble_samples_carry_their_weight_state_and_energy_through_data_fields() {
-    let ensemble = weighted_ensemble();
-    let text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
+fn sdf_samples_carry_their_weight_state_and_energy_through_data_fields() {
+    let set = weighted_set();
+    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    assert_eq!(crate::fingerprint(&text), 0x335f_7889_a7ba_d12f);
     let records = interpret_records(&text);
     let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
     assert_eq!(
@@ -621,42 +640,40 @@ fn sdf_ensemble_samples_carry_their_weight_state_and_energy_through_data_fields(
             ],
         ]
     );
-    let reread = sdf::ensemble(&records).unwrap();
-    assert_eq!(ensemble_metadata(&reread), ensemble_metadata(&ensemble));
-    assert_eq!(reread.probabilities().unwrap(), [0.25, 0.75]);
+    let reread = sdf::sample_set(&records).unwrap();
+    assert_eq!(set_metadata(&reread), set_metadata(&set));
+    assert_eq!(crate::native_fingerprint(&reread), 0x4ae5_cd3f_eab9_4c61);
+    assert_eq!(
+        reread.distribution().unwrap().probabilities().unwrap(),
+        [0.25, 0.75]
+    );
 
     // Records without state fields, as other programs write conformers, are
-    // one state each with their energies; without weights they are equal.
+    // one state each with their energies.
     let foreign = text
         .replace(">  <kekule.state>\n0\n\n", "")
         .replace(">  <kekule.state>\n1\n\n", "")
         .replace(">  <kekule.representative>\ntrue\n\n", "");
-    assert_eq!(
-        ensemble_metadata(&sdf::ensemble(&interpret_records(&foreign)).unwrap()),
-        ensemble_metadata(&ensemble)
-    );
+    let read = sdf::sample_set(&interpret_records(&foreign)).unwrap();
+    assert_eq!(set_metadata(&read), set_metadata(&set));
+    assert_eq!(crate::native_fingerprint(&read), 0x4ae5_cd3f_eab9_4c61);
+    // Records without any of the fields have no distribution.
     let plain = interpret_records(
         &sdf::write(&[model("C", &[[0.0; 3]])], SdfWriteOptions::default()).unwrap(),
     );
-    assert_eq!(
-        ensemble_metadata(&sdf::ensemble(&plain).unwrap()),
-        (
-            vec![1.0],
-            EnsemblePartition::state_per_sample(1),
-            vec![None],
-            None
-        )
-    );
+    let read = sdf::sample_set(&plain).unwrap();
+    assert_eq!(read.distribution(), None);
+    assert_eq!(crate::native_fingerprint(&read), 0x6708_332a_1f3d_942d);
 
     let malformed = text.replacen(">  <kekule.weight>\n3\n", ">  <kekule.weight>\nheavy\n", 1);
     assert_eq!(
-        sdf::ensemble(&interpret_records(&malformed))
+        sdf::sample_set(&interpret_records(&malformed))
             .unwrap_err()
             .to_string(),
         "Cannot interpret the SDF input in record 2. The data field \"kekule.weight\" holds \"heavy\", not a number."
     );
     let fields = [SdfDataField::new(sdf::STATE_FIELD, "2")];
-    let sample = sdf::SdfRecordSource::from(ensemble.get(0).unwrap()).with_data_fields(&fields);
+    let sample = sdf::SdfRecordSource::from(set.get(0).unwrap()).with_data_fields(&fields);
     assert_eq!(
         described(sdf::write([sample], SdfWriteOptions::default()).unwrap_err()),
         (
@@ -664,13 +681,12 @@ fn sdf_ensemble_samples_carry_their_weight_state_and_energy_through_data_fields(
             Some(FormatErrorDetail::DataField {
                 name: sdf::STATE_FIELD.to_owned(),
             }),
-            "The data field \"kekule.state\" is reserved for the data of the ensemble sample."
-                .to_owned(),
+            "The data field \"kekule.state\" is reserved for the data of the sample.".to_owned(),
         )
     );
     // So does a field the sample does not write, such as a second
     // representative marker on a sample that represents nothing.
-    let clustered = clustered_ensemble();
+    let clustered = clustered_set();
     let fields = [SdfDataField::new(sdf::REPRESENTATIVE_FIELD, "true")];
     let sample = sdf::SdfRecordSource::from(clustered.get(0).unwrap()).with_data_fields(&fields);
     assert_eq!(
@@ -682,9 +698,10 @@ fn sdf_ensemble_samples_carry_their_weight_state_and_energy_through_data_fields(
 }
 
 #[test]
-fn sdf_round_trips_ensembles_of_one_state_and_of_clustered_states() {
-    let ensemble = clustered_ensemble();
-    let text = sdf::write(&ensemble, SdfWriteOptions::default()).unwrap();
+fn sdf_round_trips_one_state_and_clustered_states() {
+    let set = clustered_set();
+    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    assert_eq!(crate::fingerprint(&text), 0x7c1a_5784_711d_b34e);
     let records = interpret_records(&text);
     let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
     // Only representatives carry their state's energy; every record carries
@@ -707,26 +724,28 @@ fn sdf_round_trips_ensembles_of_one_state_and_of_clustered_states() {
             field(sdf::TEMPERATURE_FIELD, "300"),
         ]
     );
-    let reread = sdf::ensemble(&records).unwrap();
-    assert_eq!(ensemble_metadata(&reread), ensemble_metadata(&ensemble));
-    for (left, right) in reread.iter().zip(ensemble.iter()) {
+    let reread = sdf::sample_set(&records).unwrap();
+    assert_eq!(set_metadata(&reread), set_metadata(&set));
+    assert_eq!(crate::native_fingerprint(&reread), 0x1460_5a70_893d_3b93);
+    for (left, right) in reread.iter().zip(set.iter()) {
         assert_eq!(left.positions(), right.positions());
     }
 
-    // One state of equally weighted samples.
-    let mut one = clustered_ensemble();
-    one.regroup(EnsemblePartition::one_state(4)).unwrap();
-    one.set_temperature(None).unwrap();
-    let reread = sdf::ensemble(&interpret_records(
-        &sdf::write(&one, SdfWriteOptions::default()).unwrap(),
-    ))
-    .unwrap();
-    assert_eq!(ensemble_metadata(&reread), ensemble_metadata(&one));
-    assert_eq!(reread.state_count(), 1);
+    // One state.
+    let mut one = clustered_set();
+    let mut distribution = one.distribution_mut().unwrap();
+    distribution.regroup(Partition::one_state(4)).unwrap();
+    distribution.set_temperature(None).unwrap();
+    let text_one = sdf::write(&one, SdfWriteOptions::default()).unwrap();
+    assert_eq!(crate::fingerprint(&text_one), 0x8638_8572_626a_81dc);
+    let reread = sdf::sample_set(&interpret_records(&text_one)).unwrap();
+    assert_eq!(set_metadata(&reread), set_metadata(&one));
+    assert_eq!(crate::native_fingerprint(&reread), 0xca61_de19_5bcd_2aec);
+    assert_eq!(reread.distribution().unwrap().state_count(), 1);
 
     // Records that do not describe a partition are rejected.
     let error = |text: &str| {
-        sdf::ensemble(&interpret_records(text))
+        sdf::sample_set(&interpret_records(text))
             .unwrap_err()
             .to_string()
     };
@@ -761,49 +780,52 @@ fn sdf_round_trips_ensembles_of_one_state_and_of_clustered_states() {
 }
 
 #[test]
-fn mmcif_rejects_ensemble_weights_states_energies_and_temperatures_it_cannot_carry() {
+fn mmcif_rejects_the_weights_states_energies_and_temperature_it_cannot_carry() {
     use StructureField::{Energy, State, Temperature, Weight};
-    let mut ensemble = weighted_ensemble();
-    let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
-        .map(|(text, _)| text)
-        .unwrap_err();
+    let mut set = weighted_set();
+    let message = |set: &SampleSet| {
+        mmcif::write([set], MmcifWriteOptions::default())
+            .map(|(text, _)| text)
+            .unwrap_err()
+            .to_string()
+    };
     assert_eq!(
-        error.to_string(),
-        "Cannot write the mmCIF output. The state energy of ensemble sample 1 has no mmCIF representation."
+        message(&set),
+        "Cannot write the mmCIF output. The state energy of sample 1 has no mmCIF representation."
     );
-    for index in 0..2 {
-        ensemble.state_mut(index).unwrap().set_energy(None).unwrap();
+    let mut distribution = set.distribution_mut().unwrap();
+    for state in 0..2 {
+        distribution
+            .state_mut(state)
+            .unwrap()
+            .set_energy(None)
+            .unwrap();
     }
-    let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
-        .map(|(text, _)| text)
-        .unwrap_err();
     assert_eq!(
-        error.to_string(),
-        "Cannot write the mmCIF output. The weight of ensemble sample 2 has no mmCIF representation."
+        message(&set),
+        "Cannot write the mmCIF output. The weight of sample 2 has no mmCIF representation."
     );
-    ensemble.get_mut(1).unwrap().set_weight(1.0).unwrap();
-    let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
-        .map(|(text, _)| text)
-        .unwrap_err();
+    set.distribution_mut().unwrap().set_weight(1, 1.0).unwrap();
     assert_eq!(
-        error.to_string(),
-        "Cannot write the mmCIF output. The state of ensemble sample 2 has no mmCIF representation."
+        message(&set),
+        "Cannot write the mmCIF output. The state of sample 2 has no mmCIF representation."
     );
-    ensemble.regroup(EnsemblePartition::one_state(2)).unwrap();
-    ensemble
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution.regroup(Partition::one_state(2)).unwrap();
+    distribution
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    let error = mmcif::write([&ensemble], MmcifWriteOptions::default())
-        .map(|(text, _)| text)
-        .unwrap_err();
     assert_eq!(
-        error.to_string(),
-        "Cannot write the mmCIF output. The temperature of ensemble sample 1 has no mmCIF representation."
+        message(&set),
+        "Cannot write the mmCIF output. The ensemble temperature has no mmCIF representation."
     );
-    ensemble.set_temperature(None).unwrap();
+    set.distribution_mut()
+        .unwrap()
+        .set_temperature(None)
+        .unwrap();
     let (omitted, report) = mmcif::write(
-        [&clustered_ensemble()],
-        MmcifWriteOptions::default().with_ensemble_metadata(UnrepresentablePolicy::Omit),
+        [&clustered_set()],
+        MmcifWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit),
     )
     .unwrap();
     assert_eq!(
@@ -813,15 +835,17 @@ fn mmcif_rejects_ensemble_weights_states_energies_and_temperatures_it_cannot_car
             structures: if field == Energy { 2 } else { 4 },
         })
     );
+    assert_eq!(crate::fingerprint(&omitted), 0xa348_4d3d_7813_ac6a);
     let reread = mmcif::parse_str(&omitted, Default::default())
         .unwrap()
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap();
+    assert_eq!(crate::native_fingerprint(&reread), 0xab5b_7b59_ab44_b17c);
     assert_eq!(
-        ensemble_metadata(reread.ensemble()),
+        set_metadata(reread.sample_set()),
         (
-            vec![1.0; 4],
-            EnsemblePartition::one_state(4),
+            vec![Some(1.0); 4],
+            Some(Partition::one_state(4)),
             vec![None],
             None
         )
@@ -829,81 +853,64 @@ fn mmcif_rejects_ensemble_weights_states_energies_and_temperatures_it_cannot_car
 
     // One state of equal weights without an energy is what interpretation
     // gives back.
-    mmcif::write([&ensemble], MmcifWriteOptions::default())
+    mmcif::write([&set], MmcifWriteOptions::default())
         .map(|(text, _)| text)
         .unwrap();
 }
 
 /// One-atom methane frames with exactly one piece of frame state each:
-/// none, time, step, velocities, forces.
-fn stateful_trajectory() -> Trajectory {
-    let topology = model("C", &[[0.0; 3]]).shared_topology();
-    let mut trajectory = Trajectory::new(topology);
-    for _ in 0..5 {
-        trajectory
-            .push(TrajectoryFrame::new(Positions::zeros(1)))
-            .unwrap();
+/// none, time, MD step, velocities, forces.
+struct StatefulFrames {
+    topology: Arc<Topology>,
+    samples: Vec<Sample>,
+}
+
+impl StatefulFrames {
+    fn new() -> Self {
+        let topology = model("C", &[[0.0; 3]]).shared_topology();
+        let mut samples = vec![Sample::new(Positions::zeros(1)); 5];
+        let zero = || vec![Vector3::new(0.0, 0.0, 0.0)];
+        let velocities =
+            Velocities::from_vec(Quantity::new(zero(), NANOMETER_PER_PICOSECOND)).unwrap();
+        samples[3].set_velocities(Some(velocities)).unwrap();
+        let forces =
+            Forces::from_vec(Quantity::new(zero(), KILOJOULE_PER_MOLE_PER_NANOMETER)).unwrap();
+        samples[4].set_forces(Some(forces)).unwrap();
+        Self { topology, samples }
     }
-    let zero = || vec![Vector3::new(0.0, 0.0, 0.0)];
-    trajectory
-        .get_mut(1)
-        .unwrap()
-        .set_time(Some(Quantity::new(2.0, PICOSECOND)))
-        .unwrap();
-    trajectory.get_mut(2).unwrap().set_step(Some(7));
-    let velocities = Velocities::from_vec(Quantity::new(zero(), NANOMETER_PER_PICOSECOND)).unwrap();
-    trajectory
-        .get_mut(3)
-        .unwrap()
-        .set_velocities(Some(velocities))
-        .unwrap();
-    let forces = Forces::from_vec(Quantity::new(zero(), KILOJOULE_PER_MOLE_PER_NANOMETER)).unwrap();
-    trajectory
-        .get_mut(4)
-        .unwrap()
-        .set_forces(Some(forces))
-        .unwrap();
-    trajectory
+
+    /// The frames, the second at 2 ps and the third at MD step 7.
+    fn views(&self) -> Vec<FrameView<'_>> {
+        self.samples
+            .iter()
+            .enumerate()
+            .map(|(index, sample)| {
+                let time = (index == 1).then(|| Quantity::new(2.0, PICOSECOND));
+                let step = (index == 2).then_some(7);
+                FrameView::new(&self.topology, sample, time, step).unwrap()
+            })
+            .collect()
+    }
 }
 
 /// Writes one structure view as a Molfile, an SDF record and an mmCIF model
-/// block, each with member, frame, series item, and sample set state set to
-/// `policy`.
+/// block, each with sample state set to `policy`.
 fn write_structure(
     view: ModelView<'_>,
     policy: UnrepresentablePolicy,
 ) -> [Result<String, FormatError>; 3] {
-    write_structure_with(view, policy, policy)
-}
-
-/// [`write_structure`] with sample set state set to `sample`.
-fn write_structure_with(
-    view: ModelView<'_>,
-    policy: UnrepresentablePolicy,
-    sample: UnrepresentablePolicy,
-) -> [Result<String, FormatError>; 3] {
     [
         molfile::write(
             molfile::MolfileSource::model(&view),
-            MolfileWriteOptions::default()
-                .with_ensemble_metadata(policy)
-                .with_frame_metadata(policy)
-                .with_series_metadata(policy)
-                .with_sample_metadata(sample),
+            MolfileWriteOptions::default().with_sample_metadata(policy),
         ),
         sdf::write(
             [sdf::SdfRecordSource::model(&view)],
-            SdfWriteOptions::default()
-                .with_frame_metadata(policy)
-                .with_sample_metadata(sample),
+            SdfWriteOptions::default().with_sample_metadata(policy),
         ),
         mmcif::write(
             [mmcif::MmcifBlockSource::model(&view)],
-            MmcifWriteOptions::default()
-                .with_ensemble_metadata(policy)
-                .with_frame_metadata(policy)
-                .with_series_metadata(policy)
-                .with_sample_metadata(sample),
+            MmcifWriteOptions::default().with_sample_metadata(policy),
         )
         .map(|(text, _)| text),
     ]
@@ -914,31 +921,31 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
     use StructureField::{
         Energy, Forces as ForceField, Step, Time, Velocities as VelocityField, Weight,
     };
-    let mut ensemble = weighted_ensemble();
-    ensemble.state_mut(1).unwrap().set_energy(None).unwrap();
-    let trajectory = stateful_trajectory();
+    let mut set = weighted_set();
+    set.distribution_mut()
+        .unwrap()
+        .state_mut(1)
+        .unwrap()
+        .set_energy(None)
+        .unwrap();
+    let frames = StatefulFrames::new();
+    let frames = frames.views();
     // Expected detail per writer (Molfile, SDF, mmCIF); SDF writes sample
     // weights, states, and state energies as data fields.
     let rows: [(ModelView<'_>, [Option<StructureField>; 3]); 7] = [
         (
-            ensemble.get(0).unwrap().as_model_view(),
+            set.get(0).unwrap().as_model_view(),
             [Some(Energy), None, Some(Energy)],
         ),
         (
-            ensemble.get(1).unwrap().as_model_view(),
+            set.get(1).unwrap().as_model_view(),
             [Some(Weight), None, Some(Weight)],
         ),
-        (trajectory.get(0).unwrap().as_model_view(), [None; 3]),
-        (trajectory.get(1).unwrap().as_model_view(), [Some(Time); 3]),
-        (trajectory.get(2).unwrap().as_model_view(), [Some(Step); 3]),
-        (
-            trajectory.get(3).unwrap().as_model_view(),
-            [Some(VelocityField); 3],
-        ),
-        (
-            trajectory.get(4).unwrap().as_model_view(),
-            [Some(ForceField); 3],
-        ),
+        (frames[0].as_model_view(), [None; 3]),
+        (frames[1].as_model_view(), [Some(Time); 3]),
+        (frames[2].as_model_view(), [Some(Step); 3]),
+        (frames[3].as_model_view(), [Some(VelocityField); 3]),
+        (frames[4].as_model_view(), [Some(ForceField); 3]),
     ];
     let formats = [Format::Molfile, Format::Sdf, Format::Mmcif];
     for (row, (view, expected)) in rows.into_iter().enumerate() {
@@ -969,7 +976,7 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
                 }
                 None if format == Format::Sdf && row < 2 => {
                     // Both SDF paths write the sample's own data fields.
-                    let sample = ensemble.get(row).unwrap();
+                    let sample = set.get(row).unwrap();
                     let typed = sdf::write([sample], SdfWriteOptions::default()).unwrap();
                     assert_eq!(failed[writer].as_ref().unwrap(), &typed);
                     assert!(typed.contains(
@@ -986,37 +993,44 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
             }
         }
     }
-    let error = sdf::write(&trajectory, SdfWriteOptions::default()).unwrap_err();
+    let error = sdf::write(frames.clone(), SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the SDF output in record 2. SDF cannot represent the trajectory frame time."
+        "Cannot write the SDF output in record 2. The time of the sample has no SDF representation."
+    );
+    let error = molfile::write(
+        molfile::MolfileSource::model(&frames[2].as_model_view()),
+        MolfileWriteOptions::default(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the Molfile output. The MD step of the sample has no Molfile representation."
     );
 }
 
 /// A three-step optimization history and a two-point distance scan of one
 /// methane carbon.
-fn methane_series() -> (Series, Series) {
+fn methane_series() -> (SampleSet, SampleSet) {
     let topology = model("C", &[[0.0; 3]]).shared_topology();
-    let mut history = Series::new(Arc::clone(&topology), SeriesAxis::Step);
-    for step in [0, 4, 9] {
-        history
-            .push(SeriesItem::at_step(Positions::zeros(1), step))
-            .unwrap();
-    }
-    let mut scan = Series::new(topology, SeriesAxis::Coordinate(ANGSTROM));
-    for distance in [1.25, 1.5] {
-        let place = Quantity::new(distance, ANGSTROM);
-        scan.push(SeriesItem::at_coordinate(Positions::zeros(1), place).unwrap())
-            .unwrap();
-    }
+    let samples = |count| (0..count).map(|_| Sample::new(Positions::zeros(1)));
+    let mut history = SampleSet::from_samples(Arc::clone(&topology), samples(3)).unwrap();
+    history.set_order(Some(Order::Step(vec![0, 4, 9]))).unwrap();
+    let mut scan = SampleSet::from_samples(topology, samples(2)).unwrap();
+    scan.set_order(Some(Order::Coordinate {
+        unit: ANGSTROM,
+        values: vec![1.25, 1.5],
+    }))
+    .unwrap();
     (history, scan)
 }
 
 #[test]
-fn sdf_series_items_carry_their_step_or_coordinate_through_data_fields() {
+fn sdf_ordered_samples_carry_their_step_or_coordinate_through_data_fields() {
     let (history, scan) = methane_series();
     let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
     let text = sdf::write(&history, SdfWriteOptions::default()).unwrap();
+    assert_eq!(crate::fingerprint(&text), 0x2543_22fa_c15f_63d1);
     assert_eq!(
         data_fields(&interpret_records(&text)),
         [
@@ -1026,6 +1040,7 @@ fn sdf_series_items_carry_their_step_or_coordinate_through_data_fields() {
         ]
     );
     let text = sdf::write(&scan, SdfWriteOptions::default()).unwrap();
+    assert_eq!(crate::fingerprint(&text), 0x5065_032e_d48f_d515);
     assert_eq!(
         data_fields(&interpret_records(&text)),
         [
@@ -1040,11 +1055,12 @@ fn sdf_series_items_carry_their_step_or_coordinate_through_data_fields() {
         ]
     );
 
-    // A caller's fields come first, such as an item's energy, but cannot
-    // give an item another place.
+    // A caller's fields come first, such as a sample's energy, but cannot
+    // give a sample another place.
     let energy = [SdfDataField::new("energy", "-3.5")];
-    let item = sdf::SdfRecordSource::from(history.get(1).unwrap()).with_data_fields(&energy);
-    let text = sdf::write([item], SdfWriteOptions::default()).unwrap();
+    let sample = sdf::SdfRecordSource::from(history.get(1).unwrap()).with_data_fields(&energy);
+    let text = sdf::write([sample], SdfWriteOptions::default()).unwrap();
+    assert_eq!(crate::fingerprint(&text), 0x3b6b_1074_f00f_9ca7);
     assert_eq!(
         data_fields(&interpret_records(&text)),
         [vec![field("energy", "-3.5"), field(sdf::STEP_FIELD, "4")]]
@@ -1055,31 +1071,31 @@ fn sdf_series_items_carry_their_step_or_coordinate_through_data_fields() {
         sdf::COORDINATE_UNIT_FIELD,
     ] {
         let fields = [SdfDataField::new(name, "1")];
-        let item = sdf::SdfRecordSource::from(history.get(0).unwrap()).with_data_fields(&fields);
+        let sample = sdf::SdfRecordSource::from(history.get(0).unwrap()).with_data_fields(&fields);
         assert_eq!(
-            described(sdf::write([item], SdfWriteOptions::default()).unwrap_err()),
+            described(sdf::write([sample], SdfWriteOptions::default()).unwrap_err()),
             (
                 DiagnosticKind::Inconsistent,
                 Some(FormatErrorDetail::DataField {
                     name: name.to_owned()
                 }),
-                format!("The data field {name:?} is reserved for the data of the series item."),
+                format!("The data field {name:?} is reserved for the data of the sample."),
             )
         );
     }
 }
 
 #[test]
-fn single_structure_writers_fail_on_a_series_item_place_unless_told_to_omit_it() {
+fn single_structure_writers_fail_on_a_sample_place_unless_told_to_omit_it() {
     let (history, scan) = methane_series();
     let omit = UnrepresentablePolicy::Omit;
-    for (series, field) in [
-        (&history, StructureField::ItemStep),
-        (&scan, StructureField::ItemCoordinate),
+    for (set, field, name) in [
+        (&history, StructureField::OrderStep, "order step"),
+        (&scan, StructureField::OrderCoordinate, "order coordinate"),
     ] {
-        let item = series.get(1).unwrap();
-        let view = item.as_model_view();
-        let plain = item.to_model();
+        let sample = set.get(1).unwrap();
+        let view = sample.as_model_view();
+        let plain = sample.to_model();
         let state = Some(FormatErrorDetail::UnrepresentableState(field));
 
         let error = molfile::write(
@@ -1091,11 +1107,17 @@ fn single_structure_writers_fail_on_a_series_item_place_unless_told_to_omit_it()
             (error.kind(), error.detail().cloned()),
             (DiagnosticKind::Unsupported, state.clone())
         );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Cannot write the Molfile output. The {name} of the sample has no Molfile representation."
+            )
+        );
         // Omitting the place writes exactly the bare model.
         assert_eq!(
             molfile::write(
                 molfile::MolfileSource::model(&view),
-                MolfileWriteOptions::default().with_series_metadata(omit),
+                MolfileWriteOptions::default().with_sample_metadata(omit),
             )
             .unwrap(),
             molfile::write(&plain, MolfileWriteOptions::default()).unwrap()
@@ -1110,9 +1132,15 @@ fn single_structure_writers_fail_on_a_series_item_place_unless_told_to_omit_it()
             (error.kind(), error.detail().cloned()),
             (DiagnosticKind::Unsupported, state)
         );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Cannot write the mmCIF output. The {name} of the sample has no mmCIF representation."
+            )
+        );
         let (text, report) = mmcif::write(
             [mmcif::MmcifBlockSource::model(&view)],
-            MmcifWriteOptions::default().with_series_metadata(omit),
+            MmcifWriteOptions::default().with_sample_metadata(omit),
         )
         .unwrap();
         assert_eq!(
@@ -1227,31 +1255,36 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
         None
     );
 
-    let mut ensemble =
-        Ensemble::from_models([boxed.clone(), boxed], EnsemblePartition::one_state(2)).unwrap();
-    let text = mmcif::write([&ensemble], MmcifWriteOptions::default())
+    let mut set = distributed([boxed.clone(), boxed], Partition::one_state(2));
+    let text = mmcif::write([&set], MmcifWriteOptions::default())
         .map(|(text, _)| text)
         .unwrap();
+    assert_eq!(crate::fingerprint(&text), 0x37db_812f_437b_970d);
     let members = mmcif::parse_str(&text, Default::default())
         .unwrap()
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap()
-        .ensemble()
+        .sample_set()
         .iter()
         .map(|member| member.as_model_view().cell().is_some())
         .collect::<Vec<_>>();
     assert_eq!(members, [true, true]);
-    ensemble.get_mut(1).unwrap().set_cell(None);
+    set.get_mut(1).unwrap().set_cell(None);
     assert_eq!(
-        mmcif::write([&ensemble], MmcifWriteOptions::default())
+        mmcif::write([&set], MmcifWriteOptions::default())
             .map(|(text, _)| text)
             .unwrap_err()
             .to_string(),
-        "Cannot write the mmCIF output. The ensemble samples have different cells."
+        "Cannot write the mmCIF output. The samples have different cells."
     );
-    mmcif::write([&ensemble], omit)
-        .map(|(text, _)| text)
-        .unwrap();
+    let pdb_options =
+        PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    assert_eq!(
+        pdb::write(&set, pdb_options).unwrap_err().to_string(),
+        "Cannot write the PDB output. The samples have different cells."
+    );
+    let (text, _) = mmcif::write([&set], omit).unwrap();
+    assert_eq!(crate::fingerprint(&text), 0xd84b_4cef_cb89_042c);
 }
 
 #[test]
@@ -1449,7 +1482,7 @@ fn mmcif_blocks_take_their_own_names_and_read_back_under_them() {
 }
 
 #[test]
-fn mmcif_distinguishes_independent_models_from_an_ensemble() {
+fn mmcif_distinguishes_independent_models_from_a_sample_set() {
     let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
     let unrelated = model("N", &[[3.0, 0.0, 0.0]]);
     let independent = mmcif::write(
@@ -1468,7 +1501,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     assert!(independent.starts_with("data_model_1\n"));
     assert!(independent.contains("data_model_2\n"));
     assert!(independent_document
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .is_err());
 
     let shared = first.shared_topology();
@@ -1481,24 +1514,26 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
         .unwrap(),
     )
     .unwrap();
-    let ensemble =
-        Ensemble::from_models([first.clone(), second], EnsemblePartition::one_state(2)).unwrap();
-    let ensemble_text = mmcif::write(
-        [mmcif::MmcifBlockSource::ensemble(&ensemble)
-            .with_classifications(&classifications(&first))],
-        MmcifWriteOptions::default(),
-    )
-    .map(|(text, _)| text)
-    .unwrap();
-    let ensemble_document = mmcif::parse_str(&ensemble_text, Default::default()).unwrap();
-    assert_eq!(ensemble_document.blocks().len(), 1);
-    let parsed = ensemble_document
-        .interpret_ensemble(Default::default())
+    let set = distributed([first.clone(), second], Partition::one_state(2));
+    let set_text =
+        mmcif::write(
+            [mmcif::MmcifBlockSource::sample_set(&set)
+                .with_classifications(&classifications(&first))],
+            MmcifWriteOptions::default(),
+        )
+        .map(|(text, _)| text)
         .unwrap();
-    assert_eq!(parsed.ensemble().len(), 2);
+    assert_eq!(crate::fingerprint(&set_text), 0xd958_9ed3_ad5a_420d);
+    let set_document = mmcif::parse_str(&set_text, Default::default()).unwrap();
+    assert_eq!(set_document.blocks().len(), 1);
+    let parsed = set_document
+        .interpret_sample_set(Default::default())
+        .unwrap();
+    assert_eq!(crate::native_fingerprint(&parsed), 0x7b46_6ec6_7f47_b53d);
+    assert_eq!(parsed.sample_set().len(), 2);
     assert!(
         (parsed
-            .ensemble()
+            .sample_set()
             .get(0)
             .unwrap()
             .positions()
@@ -1513,7 +1548,7 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     );
     assert!(
         (parsed
-            .ensemble()
+            .sample_set()
             .get(1)
             .unwrap()
             .positions()
@@ -1530,10 +1565,11 @@ fn mmcif_distinguishes_independent_models_from_an_ensemble() {
     let round_trip = mmcif::write([&parsed], MmcifWriteOptions::default())
         .map(|(text, _)| text)
         .unwrap();
+    assert_eq!(crate::fingerprint(&round_trip), 0xd958_9ed3_ad5a_420d);
     let reparsed = (mmcif::parse_str(&round_trip, Default::default()).unwrap())
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap();
-    assert_eq!(reparsed.ensemble().len(), 2);
+    assert_eq!(reparsed.sample_set().len(), 2);
 }
 
 #[test]
@@ -1853,7 +1889,7 @@ fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
 }
 
 #[test]
-fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
+fn mmcif_streaming_matches_string_output_for_models_and_a_sample_set() {
     let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
     let unrelated = model("N", &[[3.0, 0.0, 0.0]]);
     let models = [first.clone(), unrelated.clone()];
@@ -1905,39 +1941,42 @@ fn mmcif_streaming_matches_string_output_for_models_and_ensemble() {
         .unwrap(),
     )
     .unwrap();
-    let ensemble =
-        Ensemble::from_models([first.clone(), second], EnsemblePartition::one_state(2)).unwrap();
-    let expected_ensemble = mmcif::write(
-        [mmcif::MmcifBlockSource::ensemble(&ensemble)
-            .with_classifications(&classifications(&first))],
-        MmcifWriteOptions::default(),
-    )
-    .map(|(text, _)| text)
-    .unwrap();
-    let mut streamed_ensemble = BoundedChunkWriter {
+    let set = distributed([first.clone(), second], Partition::one_state(2));
+    let expected_set =
+        mmcif::write(
+            [mmcif::MmcifBlockSource::sample_set(&set)
+                .with_classifications(&classifications(&first))],
+            MmcifWriteOptions::default(),
+        )
+        .map(|(text, _)| text)
+        .unwrap();
+    assert_eq!(crate::fingerprint(&expected_set), 0xd958_9ed3_ad5a_420d);
+    let mut streamed_set = BoundedChunkWriter {
         bytes: Vec::new(),
         maximum_chunk: 64,
     };
     mmcif::write_to(
-        &mut streamed_ensemble,
-        [mmcif::MmcifBlockSource::ensemble(&ensemble)
-            .with_classifications(&classifications(&first))],
+        &mut streamed_set,
+        [
+            mmcif::MmcifBlockSource::sample_set(&set)
+                .with_classifications(&classifications(&first)),
+        ],
         MmcifWriteOptions::default(),
     )
     .unwrap();
-    assert_eq!(streamed_ensemble.bytes, expected_ensemble.as_bytes());
+    assert_eq!(streamed_set.bytes, expected_set.as_bytes());
 
     let document = mmcif::parse_str(
-        std::str::from_utf8(&streamed_ensemble.bytes).unwrap(),
+        std::str::from_utf8(&streamed_set.bytes).unwrap(),
         Default::default(),
     )
     .unwrap();
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(
         document
-            .interpret_ensemble(Default::default())
+            .interpret_sample_set(Default::default())
             .unwrap()
-            .ensemble()
+            .sample_set()
             .len(),
         2
     );
@@ -1953,7 +1992,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     .unwrap();
 
     // Each model block carries its own reports, so a mismatch is reported
-    // per block in the same shape as an ensemble block's.
+    // per block in the same shape as a sample set block's.
     let model_error = mmcif::write(
         [mmcif::MmcifBlockSource::model(&first).with_reports(&[])],
         MmcifWriteOptions::default(),
@@ -1974,15 +2013,15 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
         "Cannot write the mmCIF output. There are 0 interpretation reports for 1 models."
     );
 
-    let ensemble = Ensemble::from_models([first, second], EnsemblePartition::one_state(2)).unwrap();
-    let ensemble_error = mmcif::write(
-        [mmcif::MmcifBlockSource::ensemble(&ensemble).with_reports(&[])],
+    let set = distributed([first, second], Partition::one_state(2));
+    let set_error = mmcif::write(
+        [mmcif::MmcifBlockSource::sample_set(&set).with_reports(&[])],
         MmcifWriteOptions::default(),
     )
     .map(|(text, _)| text)
     .unwrap_err();
     assert_eq!(
-        ensemble_error.detail(),
+        set_error.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
             MmcifWriteIssue::ReportCountMismatch {
                 expected: 2,
@@ -1991,7 +2030,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
         ))
     );
     assert_eq!(
-        ensemble_error.to_string(),
+        set_error.to_string(),
         "Cannot write the mmCIF output. There are 0 interpretation reports for 2 models."
     );
 }
@@ -2138,250 +2177,245 @@ fn molfile_titles_and_smiles_names_round_trip_and_reject_unreadable_text() {
     }
 }
 
-/// Every structure writer's output with its report, or its error, for one
-/// view with sample, frame, series item, and sample set state set to
-/// `policy`.
-fn write_with_reports(view: ModelView<'_>, policy: UnrepresentablePolicy) -> Vec<String> {
-    write_with_reports_with(view, policy, policy)
+/// A write's outcome: its output, or its error's kind and detail.
+fn outcome<T: std::fmt::Debug>(result: Result<T, FormatError>) -> String {
+    match result {
+        Ok(value) => format!("Ok({value:?})"),
+        Err(error) => format!("Err({:?}, {:?})", error.kind(), error.detail()),
+    }
 }
 
-/// [`write_with_reports`] with sample set state set to `sample`.
-fn write_with_reports_with(
-    view: ModelView<'_>,
-    policy: UnrepresentablePolicy,
-    sample: UnrepresentablePolicy,
-) -> Vec<String> {
-    let mut written = write_structure_with(view, policy, sample)
-        .iter()
-        .map(|result| format!("{result:?}"))
-        .collect::<Vec<_>>();
-    written.push(format!(
-        "{:?}",
-        molfile::write(
-            molfile::MolfileSource::model(&view),
-            MolfileWriteOptions::default()
-                .with_ensemble_metadata(policy)
-                .with_frame_metadata(policy)
-                .with_series_metadata(policy)
-                .with_sample_metadata(sample),
-        )
-    ));
-    written.push(format!(
-        "{:?}",
-        mmcif::write(
-            [mmcif::MmcifBlockSource::model(&view)],
-            MmcifWriteOptions::default()
-                .with_ensemble_metadata(policy)
-                .with_frame_metadata(policy)
-                .with_series_metadata(policy)
-                .with_sample_metadata(sample),
-        )
-    ));
-    written.push(format!(
-        "{:?}",
-        pdb::write(
-            pdb::PdbSource::structure(&view),
-            PdbWriteOptions::default()
-                .with_ensemble_metadata(policy)
-                .with_frame_metadata(policy)
-                .with_series_metadata(policy)
-                .with_sample_metadata(sample),
-        )
-    ));
-    written
+/// The fingerprint of every structure writer's outcome for one view with
+/// sample state set to `policy`.
+fn view_outcomes(view: ModelView<'_>, policy: UnrepresentablePolicy) -> u64 {
+    crate::fingerprint(
+        [
+            outcome(molfile::write(
+                molfile::MolfileSource::model(&view),
+                MolfileWriteOptions::default().with_sample_metadata(policy),
+            )),
+            outcome(sdf::write(
+                [sdf::SdfRecordSource::model(&view)],
+                SdfWriteOptions::default().with_sample_metadata(policy),
+            )),
+            outcome(mmcif::write(
+                [mmcif::MmcifBlockSource::model(&view)],
+                MmcifWriteOptions::default().with_sample_metadata(policy),
+            )),
+            outcome(pdb::write(
+                pdb::PdbSource::structure(&view),
+                PdbWriteOptions::default().with_sample_metadata(policy),
+            )),
+        ]
+        .join("\n"),
+    )
 }
 
 #[test]
-fn sample_set_views_write_as_the_views_they_come_from() {
-    let mut ensemble = weighted_ensemble();
-    ensemble.state_mut(1).unwrap().set_energy(None).unwrap();
-    let trajectory = stateful_trajectory();
+fn sample_and_frame_views_write_their_state_or_fail_on_it() {
+    let mut set = weighted_set();
+    set.distribution_mut()
+        .unwrap()
+        .state_mut(1)
+        .unwrap()
+        .set_energy(None)
+        .unwrap();
+    let frames = StatefulFrames::new();
     let (history, scan) = methane_series();
-    // Its frames state times and steps only in part, which a time axis
-    // refuses, so each frame converts as a trajectory of its own.
-    let frames = trajectory.iter().map(|frame| {
-        let alone = Trajectory::from_items(trajectory.shared_topology(), [frame.payload().clone()])
-            .unwrap();
-        SampleSet::from_trajectory(alone).unwrap()
-    });
-    let sets = [SampleSet::from_ensemble(ensemble.clone())]
-        .into_iter()
-        .chain(frames)
-        .chain([
-            SampleSet::from_series(history.clone()),
-            SampleSet::from_series(scan.clone()),
-        ])
-        .collect::<Vec<_>>();
-    let old = ensemble
+    let views = set
         .iter()
         .map(|sample| sample.as_model_view())
-        .chain(trajectory.iter().map(|frame| frame.as_model_view()))
-        .chain(history.iter().map(|item| item.as_model_view()))
-        .chain(scan.iter().map(|item| item.as_model_view()))
+        .chain(
+            frames
+                .views()
+                .into_iter()
+                .map(|frame| frame.as_model_view()),
+        )
+        .chain(history.iter().map(|sample| sample.as_model_view()))
+        .chain(scan.iter().map(|sample| sample.as_model_view()))
         .collect::<Vec<_>>();
-    let new = sets
-        .iter()
-        .flat_map(|set| set.iter().map(|sample| sample.as_model_view()))
-        .collect::<Vec<_>>();
-    assert_eq!(old.len(), new.len());
-    let mut failures = 0;
-    for policy in [UnrepresentablePolicy::Fail, UnrepresentablePolicy::Omit] {
-        for (index, (old, new)) in old.iter().zip(&new).enumerate() {
-            let written = write_with_reports(*old, policy);
+    // Molfile, SDF, mmCIF, and PDB outcomes of two weighted samples, the
+    // five stateful frames, and the step and coordinate places.
+    let expected = [
+        (
+            UnrepresentablePolicy::Fail,
+            [
+                0x3125_0e0b_6f72_259d,
+                0x1d1c_ea3c_bea8_caef,
+                0xc0c3_c9e3_caca_e18c,
+                0x89aa_5014_99a0_f1ed,
+                0x186a_5785_5fe1_0661,
+                0x16a1_2c31_b4fc_c06d,
+                0x611f_a810_d55a_1c81,
+                0xfc2c_9016_0697_fed6,
+                0x70c5_d730_0069_f862,
+                0x2e43_247e_4bed_0415,
+                0x0f09_5294_25e6_86a4,
+                0x5e14_2e8b_6ca1_318e,
+            ],
+        ),
+        (
+            UnrepresentablePolicy::Omit,
+            [
+                0x518f_49a3_9158_8365,
+                0xb2aa_49de_c2e8_003d,
+                0xc0c3_c9e3_caca_e18c,
+                0x18b2_7334_f2fe_c5e0,
+                0x0eb2_c9cc_cfa3_1b58,
+                0x956a_216a_f9fc_cd34,
+                0xba77_94ba_b8a5_3100,
+                0xbdb8_04cd_e3dd_956f,
+                0xfd78_26a5_9e7f_6953,
+                0xff8f_e988_4e22_efb6,
+                0xe8f2_ff23_05a9_cefd,
+                0x4397_116d_e774_ff2b,
+            ],
+        ),
+    ];
+    for (policy, fingerprints) in expected {
+        assert_eq!(views.len(), fingerprints.len());
+        for (index, (view, fingerprint)) in views.iter().zip(fingerprints).enumerate() {
             assert_eq!(
-                write_with_reports(*new, policy),
-                written,
+                view_outcomes(*view, policy),
+                fingerprint,
                 "view {index}, {policy:?}"
             );
-            failures += written
-                .iter()
-                .filter(|text| text.starts_with("Err"))
-                .count();
         }
-    }
-    // The failure paths are compared too, not only the written text.
-    assert!(failures > 0);
-}
-
-/// Asserts that a sample set writes what the collection it converts from
-/// writes, or fails as it does; errors name a sample where the collection's
-/// name an ensemble sample, a series item or a trajectory frame.
-fn assert_same_outcome<T: std::fmt::Debug>(
-    old: Result<T, FormatError>,
-    new: Result<T, FormatError>,
-    label: &str,
-) -> bool {
-    match (old, new) {
-        (Ok(old), Ok(new)) => {
-            assert_eq!(format!("{new:?}"), format!("{old:?}"), "{label}");
-            true
-        }
-        (Err(old), Err(new)) => {
-            let named = |error: &FormatError| {
-                error
-                    .to_string()
-                    .replace("ensemble sample ", "sample ")
-                    .replace("Ensemble sample ", "Sample ")
-                    .replace("series item ", "sample ")
-                    .replace("ensemble state ", "state ")
-            };
-            assert_eq!(new.kind(), old.kind(), "{label}");
-            assert_eq!(named(&new), named(&old), "{label}");
-            false
-        }
-        (old, new) => panic!("{label}: {old:?} != {new:?}"),
     }
 }
 
-/// Two methane frames, both timed and stepped, the second with velocities.
-fn timed_trajectory() -> Trajectory {
+/// Two methane samples, both timed and stepped, the second with velocities.
+fn timed_set() -> SampleSet {
     let topology = model("C", &[[0.0; 3]]).shared_topology();
-    let mut trajectory = Trajectory::new(topology);
-    for index in 0..2u32 {
-        let mut frame = TrajectoryFrame::new(Positions::zeros(1));
-        frame
-            .set_time(Some(Quantity::new(f64::from(index), PICOSECOND)))
-            .unwrap();
-        frame.set_step(Some(u64::from(index) * 10));
-        trajectory.push(frame).unwrap();
-    }
+    let mut samples = vec![Sample::new(Positions::zeros(1)); 2];
     let velocities = Velocities::from_vec(Quantity::new(
         vec![Vector3::new(0.0, 0.0, 0.0)],
         NANOMETER_PER_PICOSECOND,
     ))
     .unwrap();
-    trajectory
-        .get_mut(1)
-        .unwrap()
-        .set_velocities(Some(velocities))
-        .unwrap();
-    trajectory
+    samples[1].set_velocities(Some(velocities)).unwrap();
+    let mut set = SampleSet::from_samples(topology, samples).unwrap();
+    set.set_order(Some(Order::Time(
+        TimeAxis::new(
+            Some(Quantity::new(vec![0.0, 1.0], PICOSECOND)),
+            Some(vec![0, 10]),
+        )
+        .unwrap(),
+    )))
+    .unwrap();
+    set
 }
 
-#[test]
-fn sample_sets_write_what_the_collections_they_convert_from_write() {
+/// Two methane samples at 1 and 2 Å.
+fn plain_models() -> [Model; 2] {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let second = Model::new(
         first.shared_topology(),
         Positions::new(Quantity::new([Point3::new(2.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
     .unwrap();
-    let plain = Ensemble::from_models([first, second], EnsemblePartition::one_state(2)).unwrap();
-    let ensembles = [plain, weighted_ensemble(), clustered_ensemble()];
+    [first, second]
+}
+
+#[test]
+fn sample_sets_write_their_distribution_and_order_or_fail_on_them() {
+    let distributed_sets = [
+        (
+            distributed(plain_models(), Partition::one_state(2)),
+            0xef05_4d2a_760d_29e1,
+        ),
+        (weighted_set(), 0x543d_8ee2_c93e_9194),
+        (clustered_set(), 0x4f1c_d9da_c18c_3e27),
+    ];
     let (history, scan) = methane_series();
-    let trajectory = timed_trajectory();
-    let mut written = 0;
-    for policy in [UnrepresentablePolicy::Fail, UnrepresentablePolicy::Omit] {
-        let pdb_old = PdbWriteOptions::default()
-            .with_implicit_hydrogens(UnrepresentablePolicy::Omit)
-            .with_ensemble_metadata(policy)
-            .with_series_metadata(policy);
-        let pdb_new = PdbWriteOptions::default()
+    let timed = timed_set();
+    for (set, expected) in distributed_sets.iter().chain(&[
+        (history.clone(), 0x7a22_d2a6_9ef3_764a),
+        (scan.clone(), 0xb228_c64b_8f05_5b2b),
+        (timed.clone(), 0xea90_f0fe_abe7_d46a),
+    ]) {
+        assert_eq!(crate::native_fingerprint(set), *expected);
+    }
+    // PDB, mmCIF, and SDF outcomes of each distributed set; PDB and SDF of
+    // each ordered one; SDF of the timed one.
+    let expected = [
+        (
+            UnrepresentablePolicy::Fail,
+            [
+                0x4eb2_d1a7_b204_40e5,
+                0x81d7_5a99_ec97_0c6a,
+                0x2b8b_46ef_6646_0b65,
+                0xbbe3_1999_ab83_f2d7,
+                0xdf37_195a_9864_3d89,
+                0x33fb_5b41_17c5_491a,
+                0xbbe3_1999_ab83_f2d7,
+                0xdf37_195a_9864_3d89,
+                0x5009_da48_133d_9c9b,
+                0xc4ff_34d0_8ff6_7f07,
+                0x0d1a_586e_2139_0dc0,
+                0xcdbf_839b_9364_bcab,
+                0x64ee_b24c_080e_d552,
+                0xb8c0_bcdb_13d4_d055,
+            ],
+        ),
+        (
+            UnrepresentablePolicy::Omit,
+            [
+                0x4eb2_d1a7_b204_40e5,
+                0x81d7_5a99_ec97_0c6a,
+                0x2b8b_46ef_6646_0b65,
+                0xb580_6c39_a7a0_1e73,
+                0x2a35_a3da_6072_52a4,
+                0x33fb_5b41_17c5_491a,
+                0xa50e_e374_8865_7588,
+                0x3273_d4c8_7d21_0bd0,
+                0x5009_da48_133d_9c9b,
+                0x28a9_a32a_9522_058f,
+                0x0d1a_586e_2139_0dc0,
+                0x0e9f_e5ca_171a_3e44,
+                0x64ee_b24c_080e_d552,
+                0x763c_4a75_cf56_36b4,
+            ],
+        ),
+    ];
+    for (policy, fingerprints) in expected {
+        let pdb_options = PdbWriteOptions::default()
             .with_implicit_hydrogens(UnrepresentablePolicy::Omit)
             .with_sample_metadata(policy);
-        let mmcif_old = MmcifWriteOptions::default().with_ensemble_metadata(policy);
-        let mmcif_new = MmcifWriteOptions::default().with_sample_metadata(policy);
-        let sdf_old = SdfWriteOptions::default().with_frame_metadata(policy);
-        let sdf_new = SdfWriteOptions::default().with_sample_metadata(policy);
-        for (index, ensemble) in ensembles.iter().enumerate() {
-            let set = SampleSet::from_ensemble(ensemble.clone());
-            let label = format!("ensemble {index}, {policy:?}");
-            for written_now in [
-                assert_same_outcome(
-                    pdb::write(ensemble, pdb_old),
-                    pdb::write(&set, pdb_new),
-                    &format!("PDB {label}"),
-                ),
-                assert_same_outcome(
-                    mmcif::write([ensemble], mmcif_old.clone()),
-                    mmcif::write([&set], mmcif_new.clone()),
-                    &format!("mmCIF {label}"),
-                ),
-                assert_same_outcome(
-                    sdf::write(ensemble, sdf_old),
-                    sdf::write(&set, sdf_new),
-                    &format!("SDF {label}"),
-                ),
-            ] {
-                written += usize::from(written_now);
-            }
+        let mmcif_options = MmcifWriteOptions::default().with_sample_metadata(policy);
+        let sdf_options = SdfWriteOptions::default().with_sample_metadata(policy);
+        let mut outcomes = Vec::new();
+        for (set, _) in &distributed_sets {
+            outcomes.push(outcome(pdb::write(set, pdb_options)));
+            outcomes.push(outcome(mmcif::write([set], mmcif_options.clone())));
+            outcomes.push(outcome(sdf::write(set, sdf_options)));
         }
-        for (index, series) in [&history, &scan].into_iter().enumerate() {
-            let set = SampleSet::from_series(series.clone());
-            let label = format!("series {index}, {policy:?}");
-            written += usize::from(assert_same_outcome(
-                pdb::write(series, pdb_old),
-                pdb::write(&set, pdb_new),
-                &format!("PDB {label}"),
-            ));
-            written += usize::from(assert_same_outcome(
-                sdf::write(series, SdfWriteOptions::default()),
-                sdf::write(&set, sdf_new),
-                &format!("SDF {label}"),
-            ));
+        for set in [&history, &scan] {
+            outcomes.push(outcome(pdb::write(set, pdb_options)));
+            outcomes.push(outcome(sdf::write(set, sdf_options)));
         }
-        let set = SampleSet::from_trajectory(trajectory.clone()).unwrap();
-        written += usize::from(assert_same_outcome(
-            sdf::write(&trajectory, sdf_old),
-            sdf::write(&set, sdf_new),
-            &format!("SDF trajectory, {policy:?}"),
-        ));
+        outcomes.push(outcome(sdf::write(&timed, sdf_options)));
+        assert_eq!(outcomes.len(), fingerprints.len());
+        for (index, (outcome, fingerprint)) in outcomes.iter().zip(fingerprints).enumerate() {
+            assert_eq!(
+                crate::fingerprint(outcome),
+                fingerprint,
+                "case {index}, {policy:?}: {outcome}"
+            );
+        }
     }
-    // Both written text and failures are compared.
-    assert!(written > 10, "{written}");
 }
 
 #[test]
 fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
-    let trajectory = timed_trajectory();
-    let set = SampleSet::from_trajectory(trajectory.clone()).unwrap();
+    let set = timed_set();
     let pdb_options =
         PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
     let error = pdb::write(&set, pdb_options).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The trajectory frame time of sample 1 has no PDB representation."
+        "Cannot write the PDB output. The time of sample 1 has no PDB representation."
     );
     let (text, report) = pdb::write(
         &set,
@@ -2394,20 +2428,20 @@ fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
         state(StructureField::Step, 2),
         state(StructureField::Velocities, 1),
     ]));
-    // The positions are the frames' positions.
-    let models = trajectory
+    // The positions are the samples' positions.
+    let models = set
         .iter()
-        .map(|frame| frame.to_model())
+        .map(|sample| sample.to_model())
         .collect::<Vec<_>>();
-    let bare = Ensemble::from_models(models, EnsemblePartition::one_state(2)).unwrap();
+    let bare = distributed(models, Partition::one_state(2));
     assert_eq!(text, pdb::write(&bare, pdb_options).unwrap().0);
 
     // A sample outside the distribution is a model all the same; the file
     // cannot say it is no member.
-    let mut subset = SampleSet::from_ensemble(bare.clone());
+    let mut subset = bare.clone();
     subset
         .set_distribution(Some(
-            Distribution::new(Members::Subset(vec![1]), EnsemblePartition::one_state(1)).unwrap(),
+            Distribution::new(Members::Subset(vec![1]), Partition::one_state(1)).unwrap(),
         ))
         .unwrap();
     let error = mmcif::write([&subset], MmcifWriteOptions::default()).unwrap_err();
@@ -2454,10 +2488,10 @@ fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
 fn a_sample_with_a_place_and_a_membership_writes_both_in_sdf() {
     let mut set = SampleSet::from_models([model("C", &[[0.0; 3]])]).unwrap();
     set.set_order(Some(Order::Step(vec![7]))).unwrap();
-    let state = EnsembleState::new()
+    let state = State::new()
         .with_energy(Quantity::new(-1.5, KILOJOULE_PER_MOLE))
         .unwrap();
-    let distribution = Distribution::new(Members::All, EnsemblePartition::one_state(1))
+    let distribution = Distribution::new(Members::All, Partition::one_state(1))
         .unwrap()
         .with_weights(vec![2.5])
         .unwrap()
@@ -2503,87 +2537,10 @@ $$$$
 }
 
 #[test]
-fn old_collections_write_alike_under_either_sample_policy() {
-    let ensembles = [weighted_ensemble(), clustered_ensemble()];
-    let trajectory = stateful_trajectory();
-    let (history, scan) = methane_series();
-    let views = ensembles
-        .iter()
-        .flat_map(|ensemble| ensemble.iter().map(|sample| sample.as_model_view()))
-        .chain(trajectory.iter().map(|frame| frame.as_model_view()))
-        .chain(history.iter().map(|item| item.as_model_view()))
-        .chain(scan.iter().map(|item| item.as_model_view()))
-        .collect::<Vec<_>>();
-    let omit = UnrepresentablePolicy::Omit;
-    for policy in [UnrepresentablePolicy::Fail, omit] {
-        for (index, view) in views.iter().enumerate() {
-            assert_eq!(
-                write_with_reports_with(*view, policy, omit),
-                write_with_reports(*view, policy),
-                "view {index}, {policy:?}"
-            );
-        }
-        let pdb_options = PdbWriteOptions::default()
-            .with_implicit_hydrogens(omit)
-            .with_ensemble_metadata(policy)
-            .with_series_metadata(policy);
-        let mmcif_options = MmcifWriteOptions::default().with_ensemble_metadata(policy);
-        let sdf_options = SdfWriteOptions::default().with_frame_metadata(policy);
-        let debug = |result: &dyn std::fmt::Debug| format!("{result:?}");
-        for ensemble in &ensembles {
-            assert_eq!(
-                debug(&pdb::write(
-                    ensemble,
-                    pdb_options.with_sample_metadata(omit)
-                )),
-                debug(&pdb::write(ensemble, pdb_options))
-            );
-            assert_eq!(
-                debug(&mmcif::write(
-                    [ensemble],
-                    mmcif_options.clone().with_sample_metadata(omit)
-                )),
-                debug(&mmcif::write([ensemble], mmcif_options.clone()))
-            );
-            assert_eq!(
-                debug(&sdf::write(
-                    ensemble,
-                    sdf_options.with_sample_metadata(omit)
-                )),
-                debug(&sdf::write(ensemble, sdf_options))
-            );
-        }
-        for series in [&history, &scan] {
-            assert_eq!(
-                debug(&pdb::write(series, pdb_options.with_sample_metadata(omit))),
-                debug(&pdb::write(series, pdb_options))
-            );
-            assert_eq!(
-                debug(&sdf::write(series, sdf_options.with_sample_metadata(omit))),
-                debug(&sdf::write(series, sdf_options))
-            );
-        }
-        assert_eq!(
-            debug(&sdf::write(
-                &trajectory,
-                sdf_options.with_sample_metadata(omit)
-            )),
-            debug(&sdf::write(&trajectory, sdf_options))
-        );
-    }
-}
-
-#[test]
 fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
     use kekule::properties::{PropertyKey, PropertyValue};
     use kekule::structure::TimeAxis;
-    let first = model("C", &[[1.0, 0.0, 0.0]]);
-    let second = Model::new(
-        first.shared_topology(),
-        Positions::new(Quantity::new([Point3::new(2.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
-    )
-    .unwrap();
-    let plain = Ensemble::from_models([first, second], EnsemblePartition::one_state(2)).unwrap();
+    let plain = distributed(plain_models(), Partition::one_state(2));
     let omit = UnrepresentablePolicy::Omit;
     let pdb_options = PdbWriteOptions::default().with_implicit_hydrogens(omit);
     let (pdb_text, pdb_report) = pdb::write(&plain, pdb_options).unwrap();
@@ -2591,11 +2548,11 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
     let state = |field, structures| WriteOmission::StructureState { field, structures };
 
     // A time order without times or steps.
-    let mut bare = SampleSet::from_ensemble(plain.clone());
+    let mut bare = plain.clone();
     bare.set_order(Some(Order::Time(TimeAxis::new(None, None).unwrap())))
         .unwrap();
     // A state with properties.
-    let mut labelled_state = EnsembleState::new();
+    let mut labelled_state = State::new();
     labelled_state
         .properties_mut()
         .insert(
@@ -2603,23 +2560,19 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
             PropertyValue::Bool(true),
         )
         .unwrap();
-    let mut labelled = SampleSet::from_ensemble(plain.clone());
+    let mut labelled = plain.clone();
     labelled
         .set_distribution(Some(
-            Distribution::new(Members::All, EnsemblePartition::one_state(2))
+            Distribution::new(Members::All, Partition::one_state(2))
                 .unwrap()
                 .with_states(vec![labelled_state])
                 .unwrap(),
         ))
         .unwrap();
     // A lone state represented by its second member.
-    let mut late = SampleSet::from_ensemble(plain.clone());
+    let mut late = plain.clone();
     late.set_distribution(Some(
-        Distribution::new(
-            Members::All,
-            EnsemblePartition::new(vec![0, 0], vec![1]).unwrap(),
-        )
-        .unwrap(),
+        Distribution::new(Members::All, Partition::new(vec![0, 0], vec![1]).unwrap()).unwrap(),
     ))
     .unwrap();
 
@@ -2629,15 +2582,22 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
         (&late, StructureField::Representative, 2, 1),
     ];
     for (set, field, sample, structures) in cases {
+        // The order belongs to the whole set.
+        let lost = |format| match field {
+            StructureField::Order => format!("The sample order has no {format} representation."),
+            _ => format!("The {field} of sample {sample} has no {format} representation."),
+        };
         let error = pdb::write(set, pdb_options).unwrap_err();
         assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{error}");
         assert_eq!(
             error.to_string(),
-            format!(
-                "Cannot write the PDB output. The {field} of sample {sample} has no PDB representation."
-            )
+            format!("Cannot write the PDB output. {}", lost("PDB"))
         );
         let error = mmcif::write([set], MmcifWriteOptions::default()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("Cannot write the mmCIF output. {}", lost("mmCIF"))
+        );
         assert_eq!(
             error.detail(),
             Some(&FormatErrorDetail::MmcifWrite(
@@ -2676,12 +2636,12 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
     }
 
     // With several states, the lost grouping includes the representatives.
-    let mut clustered = SampleSet::from_ensemble(plain);
+    let mut clustered = plain;
     clustered
         .set_distribution(Some(
             Distribution::new(
                 Members::All,
-                EnsemblePartition::new(vec![1, 0], vec![1, 0]).unwrap(),
+                Partition::new(vec![1, 0], vec![1, 0]).unwrap(),
             )
             .unwrap(),
         ))
@@ -2697,12 +2657,12 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
 }
 
 #[test]
-fn mmcif_ensembles_check_the_report_count_before_their_state() {
-    // The ensemble's state energies alone would fail to write.
-    let ensemble = weighted_ensemble();
+fn mmcif_sample_sets_check_the_report_count_before_their_state() {
+    // The set's state energies alone would fail to write.
+    let set = weighted_set();
     let reports = Vec::new();
     let error = mmcif::write(
-        [mmcif::MmcifBlockSource::ensemble(&ensemble).with_reports(&reports)],
+        [mmcif::MmcifBlockSource::sample_set(&set).with_reports(&reports)],
         MmcifWriteOptions::default(),
     )
     .unwrap_err();
@@ -2713,4 +2673,72 @@ fn mmcif_ensembles_check_the_report_count_before_their_state() {
             actual: 0
         })
     ),);
+}
+
+#[test]
+fn structure_fields_name_the_state_a_format_loses() {
+    use StructureField::*;
+    let names = [
+        (Weight, "weight"),
+        (Energy, "state energy"),
+        (State, "state"),
+        (Temperature, "temperature"),
+        (StateProperties, "state properties"),
+        (Representative, "state representative"),
+        (Order, "sample order"),
+        (Time, "time"),
+        (Step, "MD step"),
+        (Velocities, "velocities"),
+        (Forces, "forces"),
+        (AtomProperties, "per-atom structure properties"),
+        (BondProperties, "per-bond structure properties"),
+        (Properties, "structure properties"),
+        (OrderStep, "order step"),
+        (OrderCoordinate, "order coordinate"),
+        (Membership, "distribution membership"),
+    ];
+    for (field, name) in names {
+        assert_eq!(field.to_string(), name, "{field:?}");
+    }
+}
+
+#[test]
+fn mmcif_samples_share_the_first_sample_s_entities() {
+    // The PDB and mmCIF readings of one entry describe its entity
+    // differently, so their reports cannot share one block.
+    let from_pdb = pdb::parse_str(include_str!("../fixtures/pdb/1CRN.pdb"), Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let from_mmcif = mmcif::parse_str(
+        include_str!("../fixtures/mmcif/1CRN.cif"),
+        Default::default(),
+    )
+    .unwrap()
+    .interpret(Default::default())
+    .unwrap();
+    let set = distributed(
+        [from_pdb.model().clone(), from_pdb.model().clone()],
+        Partition::one_state(2),
+    );
+    let reports = [from_pdb.report().clone(), from_mmcif.report().clone()];
+    let error = mmcif::write(
+        [mmcif::MmcifBlockSource::sample_set(&set).with_reports(&reports)],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::MmcifWrite(
+            MmcifWriteIssue::IncompatibleSample {
+                sample: 2,
+                field: kekule::mmcif::MmcifSampleField::Entities,
+            }
+        ))
+    );
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the mmCIF output. Sample 2 has a different entity representation from the first sample."
+    );
 }

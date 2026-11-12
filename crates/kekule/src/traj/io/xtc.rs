@@ -19,27 +19,25 @@
 //! use std::sync::Arc;
 //!
 //! use kekule::geometry::Point3;
-//! use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
 //! use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::xtc::{
 //!     XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
 //! };
-//! use kekule::traj::{TrajectoryReader, TrajectoryWriter};
+//! use kekule::traj::{FrameBuffer, TrajectoryReader, TrajectoryWriter};
 //!
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
+//! let mut frame = FrameBuffer::new(Arc::clone(&topology));
 //! let points = vec![Point3::new(0.25, 0.5, 0.0)];
-//! let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
-//! let mut frame = TrajectoryFrame::new(positions);
+//! frame.sample_mut().set_positions(Quantity::new(points, NANOMETER))?;
 //! frame.set_step(Some(100));
 //! frame.set_time(Some(Quantity::new(0.5, PICOSECOND)))?;
-//! let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame])?;
 //!
 //! // A frame without a cell is written as the GROMACS zero box.
 //! let options = XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
 //! let mut writer = XtcWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
-//! writer.write_frame(trajectory.get(0).unwrap())?;
+//! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
 //!
 //! let read_options =
@@ -56,14 +54,14 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::traj::TrajectoryField;
+use crate::traj::{FrameView, TrajectoryField};
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::structure::{DecodedSample, TrajectoryFrameView};
+use crate::structure::DecodedSample;
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -1778,7 +1776,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         require_no_partial_frame(
             self.partial,
             TrajectoryIoOperation::WriteFrame,

@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{Ensemble, EnsemblePartition, Model, ModelView, Positions};
-use kekule::structure::{Trajectory, TrajectoryFrame};
+use kekule::structure::{Distribution, Members, Model, ModelView, Partition, Positions};
+use kekule::structure::{Order, Sample, SampleSet, TimeAxis};
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
 use kekule::traj::FrameBuffer;
 use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
@@ -327,29 +327,37 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
         potential.energy(periodic.as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
     );
-    let ensemble = Ensemble::from_models([periodic], EnsemblePartition::one_state(1)).unwrap();
+    let set = SampleSet::from_models([periodic]).unwrap();
     assert_eq!(
-        potential.evaluate(ensemble.get(0).unwrap().as_model_view()),
+        potential.evaluate(set.get(0).unwrap().as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
     );
 }
 
 #[test]
-fn ensemble_members_and_trajectory_frames_evaluate_like_models() {
+fn distribution_members_and_trajectory_frames_evaluate_like_models() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let model = model(&topology);
     let expected = potential.evaluate(model.as_model_view()).unwrap();
 
-    let ensemble = Ensemble::from_models([model.clone()], EnsemblePartition::one_state(1)).unwrap();
+    let mut members = SampleSet::from_models([model.clone()]).unwrap();
+    members
+        .set_distribution(Some(
+            Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
+        ))
+        .unwrap();
     assert_eq!(
         potential
-            .evaluate(ensemble.get(0).unwrap().as_model_view())
+            .evaluate(members.get(0).unwrap().as_model_view())
             .unwrap(),
         expected
     );
-    let frame = TrajectoryFrame::new(model.positions().clone());
-    let trajectory = Trajectory::from_items(Arc::clone(&topology), [frame]).unwrap();
+    let frame = Sample::new(model.positions().clone());
+    let mut trajectory = SampleSet::from_samples(Arc::clone(&topology), [frame]).unwrap();
+    trajectory
+        .set_order(Some(Order::Time(TimeAxis::default())))
+        .unwrap();
     assert_eq!(
         potential
             .evaluate(trajectory.get(0).unwrap().as_model_view())
@@ -358,7 +366,7 @@ fn ensemble_members_and_trajectory_frames_evaluate_like_models() {
     );
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
-        .frame_mut()
+        .sample_mut()
         .set_positions(model.positions().values())
         .unwrap();
     assert_eq!(

@@ -2,8 +2,8 @@
 
 use kekule::diagnostics::UnsupportedContent;
 use kekule::xyz::{
-    parse_str, XyzEnsembleInterpretOptions, XyzFrameSelection, XyzInterpretOptions,
-    XyzParseOptions,
+    parse_str, XyzFrameSelection, XyzInterpretOptions, XyzParseOptions,
+    XyzSampleSetInterpretOptions,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -31,9 +31,9 @@ fuzz_target!(|data: &[u8]| {
         );
     }
     let options =
-        XyzEnsembleInterpretOptions::default().with_extra_columns(UnsupportedContent::Report);
-    if let Ok(interpreted) = document.interpret_ensemble(options) {
-        assert_eq!(interpreted.ensemble().len(), document.frames().len());
+        XyzSampleSetInterpretOptions::default().with_extra_columns(UnsupportedContent::Report);
+    if let Ok(interpreted) = document.interpret_sample_set(options) {
+        assert_eq!(interpreted.sample_set().len(), document.frames().len());
         assert_eq!(interpreted.reports().len(), document.frames().len());
     }
 });

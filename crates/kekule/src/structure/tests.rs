@@ -58,21 +58,23 @@ fn single_position(x: f64) -> Positions {
     Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], NANOMETER)).unwrap()
 }
 
-/// Distinct samples, each its own state.
+/// Distinct, equally weighted samples, each its own state.
 fn conformers(
     topology: impl Into<Arc<crate::topology::Topology>>,
-    samples: impl IntoIterator<Item = EnsembleSample>,
-) -> Result<Ensemble, EnsembleError> {
-    let samples = samples.into_iter().collect::<Vec<_>>();
-    let partition = EnsemblePartition::state_per_sample(samples.len());
-    Ensemble::from_samples(topology, samples, partition)
+    samples: impl IntoIterator<Item = Sample>,
+) -> Result<SampleSet, SampleSetError> {
+    let mut set = SampleSet::from_samples(topology, samples)?;
+    let partition = Partition::state_per_sample(set.len());
+    set.set_distribution(Some(Distribution::new(Members::All, partition)?))?;
+    Ok(set)
 }
 
-/// Models drawn from one distribution: one state.
-fn bundle(models: impl IntoIterator<Item = Model>) -> Result<Ensemble, EnsembleError> {
-    let models = models.into_iter().collect::<Vec<_>>();
-    let partition = EnsemblePartition::one_state(models.len());
-    Ensemble::from_models(models, partition)
+/// Models drawn from one distribution: one state of equal weights.
+fn bundle(models: impl IntoIterator<Item = Model>) -> Result<SampleSet, SampleSetError> {
+    let mut set = SampleSet::from_models(models)?;
+    let partition = Partition::one_state(set.len());
+    set.set_distribution(Some(Distribution::new(Members::All, partition)?))?;
+    Ok(set)
 }
 
 fn cell() -> PeriodicCell {
@@ -153,7 +155,7 @@ fn structures_reject_rows_of_other_dimensions() {
             actual: 1
         }))
     );
-    // A member bound to a topology with one bond cannot bind to one with no
+    // A sample bound to a topology with one bond cannot bind to one with no
     // bonds: populated bond rows never resize silently.
     let two_atoms = Arc::new(
         crate::topology::Topology::from_molecules([
@@ -176,7 +178,7 @@ fn structures_reject_rows_of_other_dimensions() {
     assert_eq!(bound.properties().bonds().len(), 1);
     assert_eq!(
         conformers(two_atoms, [bound]).unwrap_err(),
-        EnsembleError::Structure(StructureError::BondCountMismatch {
+        SampleSetError::Structure(StructureError::BondCountMismatch {
             expected: 0,
             actual: 1
         })
@@ -184,62 +186,47 @@ fn structures_reject_rows_of_other_dimensions() {
 }
 
 #[test]
-fn collection_position_replacement_checks_counts_per_collection_transactionally() {
+fn sample_position_replacement_checks_the_count_transactionally() {
     let (model, _, _) = model_fixture();
-    let mut ensemble = bundle([model.clone(), model.clone()]).unwrap();
+    let mut set = bundle([model.clone(), model.clone()]).unwrap();
     assert_eq!(
-        ensemble.replace_positions([Positions::zeros(2)]),
-        Err(EnsembleError::SampleCountMismatch {
+        set.replace_positions([Positions::zeros(2)]),
+        Err(SampleSetError::SampleCountMismatch {
             expected: 2,
             actual: 1
         })
     );
     assert_eq!(
-        ensemble.replace_positions([Positions::zeros(2), Positions::zeros(3)]),
-        Err(EnsembleError::Structure(StructureError::Array(
+        set.replace_positions([Positions::zeros(2), Positions::zeros(3)]),
+        Err(SampleSetError::Structure(StructureError::Array(
             DenseArrayError::CountMismatch {
                 expected: 2,
                 actual: 3
             }
         )))
     );
-    assert!(ensemble
+    assert!(set
         .iter()
         .all(|member| member.positions() == model.positions()));
-    ensemble
-        .replace_positions([Positions::zeros(2), Positions::zeros(2)])
+    set.replace_positions([Positions::zeros(2), Positions::zeros(2)])
         .unwrap();
-    assert!(ensemble
+    assert!(set
         .iter()
         .all(|member| member.positions() == &Positions::zeros(2)));
-
-    let frame = TrajectoryFrame::new(model.positions().clone());
-    let mut trajectory = Trajectory::from_items(model.shared_topology(), [frame]).unwrap();
-    assert_eq!(
-        trajectory.replace_positions([]),
-        Err(TrajectoryError::FrameCountMismatch {
-            expected: 1,
-            actual: 0
-        })
-    );
-    assert_eq!(trajectory.get(0).unwrap().positions(), model.positions());
 }
 
 #[test]
-fn canonical_ensemble_constructors_accept_owned_and_shared_topology() {
-    let owned_new = Ensemble::new(single_atom_topology());
+fn canonical_sample_set_constructors_accept_owned_and_shared_topology() {
+    let owned_new = SampleSet::new(single_atom_topology());
     let shared = owned_new.shared_topology();
-    let shared_new = Ensemble::new(Arc::clone(&shared));
+    let shared_new = SampleSet::new(Arc::clone(&shared));
     assert!(Arc::ptr_eq(&shared_new.shared_topology(), &shared));
 
-    let owned_members = conformers(
-        single_atom_topology(),
-        [EnsembleSample::new(single_position(1.0), 1.0).unwrap()],
-    )
-    .unwrap();
+    let owned_members =
+        conformers(single_atom_topology(), [Sample::new(single_position(1.0))]).unwrap();
     let shared_members = conformers(
         owned_members.shared_topology(),
-        [EnsembleSample::new(single_position(2.0), 1.0).unwrap()],
+        [Sample::new(single_position(2.0))],
     )
     .unwrap();
     assert!(owned_members
@@ -248,26 +235,29 @@ fn canonical_ensemble_constructors_accept_owned_and_shared_topology() {
 }
 
 #[test]
-fn ensembles_from_models_accept_equal_layouts_and_refuse_others() {
+fn sets_from_models_accept_equal_layouts_and_refuse_others() {
     let model = |smiles: &str| {
         let topology = crate::smiles::to_topology(smiles).unwrap();
         let atoms = topology.atom_count();
         Model::new(topology, Positions::zeros(atoms)).unwrap()
     };
     // Published separately with equal contents: one layout.
-    let ensemble = bundle([model("CO"), model("CO")]).unwrap();
-    assert_eq!(ensemble.len(), 2);
+    let set = bundle([model("CO"), model("CO")]).unwrap();
+    assert_eq!(set.len(), 2);
     // The same atoms and bonds in another dense order are another layout.
     for models in [[model("CO"), model("OC")], [model("CO"), model("CC")]] {
-        assert_eq!(bundle(models).unwrap_err(), EnsembleError::TopologyMismatch);
+        assert_eq!(
+            bundle(models).unwrap_err(),
+            SampleSetError::TopologyMismatch
+        );
     }
 }
 
 #[test]
-fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
+fn member_views_project_borrowed_and_owned_models_in_stable_order() {
     let topology = Arc::new(single_atom_topology());
     let score = key("score");
-    let mut first = EnsembleSample::new(single_position(1.0), 1.0).unwrap();
+    let mut first = Sample::new(single_position(1.0));
     first.set_cell(Some(cell()));
     let mut properties = first.properties_mut();
     properties
@@ -278,27 +268,22 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
         .atoms_mut()
         .set_value(score.clone(), ATOM0, Some(PropertyValue::Int(7)))
         .unwrap();
-    first.set_weight(0.25).unwrap();
-    let mut second = EnsembleSample::new(single_position(2.0), 1.0).unwrap();
-    second.set_weight(0.75).unwrap();
-    let mut ensemble = conformers(Arc::clone(&topology), [first, second]).unwrap();
+    let second = Sample::new(single_position(2.0));
+    let mut set = conformers(Arc::clone(&topology), [first, second]).unwrap();
+    set.distribution_mut()
+        .unwrap()
+        .set_weights(Some(vec![0.25, 0.75]))
+        .unwrap();
 
     assert_eq!(
-        ensemble
-            .iter()
+        set.iter()
             .map(|member| member.positions().values().value()[0].x)
             .collect::<Vec<_>>(),
         [1.0, 2.0]
     );
-    assert_eq!(
-        ensemble
-            .iter()
-            .map(|member| member.weight())
-            .collect::<Vec<_>>(),
-        [0.25, 0.75]
-    );
+    assert_eq!(weights(&set), [0.25, 0.75]);
 
-    let member = ensemble.get(0).unwrap();
+    let member = set.get(0).unwrap();
     assert!(Arc::ptr_eq(&member.shared_topology(), &topology));
     let borrowed = member.as_model_view();
     assert!(Arc::ptr_eq(&borrowed.shared_topology(), &topology));
@@ -312,8 +297,7 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
     assert_eq!(owned.cell(), member.cell());
     assert_eq!(owned.properties(), member.properties());
 
-    ensemble
-        .get_mut(0)
+    set.get_mut(0)
         .unwrap()
         .properties_mut()
         .atoms_mut()
@@ -326,10 +310,10 @@ fn ensemble_member_views_project_borrowed_and_owned_models_in_stable_order() {
 }
 
 #[test]
-fn detached_members_get_bond_rows_only_when_bound() {
+fn detached_samples_get_bond_rows_only_when_bound() {
     let (model, _, _) = model_fixture();
     let label = key("label");
-    let mut member = EnsembleSample::new(model.positions().clone(), 1.0).unwrap();
+    let mut member = Sample::new(model.positions().clone());
     assert_eq!(member.properties().atoms().len(), 2);
     assert!(member.properties().bonds().is_empty());
     // Detached payloads cannot carry bond annotations yet.
@@ -346,8 +330,8 @@ fn detached_members_get_bond_rows_only_when_bound() {
         .owner_mut()
         .insert(label.clone(), PropertyValue::Int(7))
         .unwrap();
-    let mut ensemble = conformers(model.shared_topology(), [member]).unwrap();
-    let stored = ensemble.get(0).unwrap();
+    let mut set = conformers(model.shared_topology(), [member]).unwrap();
+    let stored = set.get(0).unwrap();
     assert_eq!(stored.properties().atoms().len(), 2);
     assert_eq!(stored.properties().bonds().len(), 1);
     assert_eq!(
@@ -355,7 +339,7 @@ fn detached_members_get_bond_rows_only_when_bound() {
         Some(&PropertyValue::Int(7))
     );
 
-    let mut editor = ensemble.get_mut(0).unwrap();
+    let mut editor = set.get_mut(0).unwrap();
     let before = editor.properties().clone();
     assert!(editor
         .properties_mut()
@@ -375,13 +359,16 @@ fn detached_members_get_bond_rows_only_when_bound() {
 }
 
 #[test]
-fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
+fn sample_replacement_rejects_incompatible_samples_without_changing_state() {
     let (model, _, _) = model_fixture();
     let topology = model.shared_topology();
-    let mut original = EnsembleSample::new(model.positions().clone(), 1.0).unwrap();
-    original.set_weight(0.75).unwrap();
-    let mut ensemble = conformers(Arc::clone(&topology), [original]).unwrap();
-    let original = ensemble.get(0).unwrap().payload().clone();
+    let mut set = conformers(
+        Arc::clone(&topology),
+        [Sample::new(model.positions().clone())],
+    )
+    .unwrap();
+    set.distribution_mut().unwrap().set_weight(0, 0.75).unwrap();
+    let original = set.get(0).unwrap().payload().clone();
     // Bound to another one-bond topology; matching bond rows rebind freely.
     let other = model_fixture().0;
     let mut bound_elsewhere = conformers(
@@ -393,7 +380,7 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
             .molecule()
             .clone()])
         .unwrap(),
-        [EnsembleSample::new(Positions::zeros(2), 1.0).unwrap()],
+        [Sample::new(Positions::zeros(2))],
     )
     .unwrap()
     .into_samples()
@@ -404,64 +391,65 @@ fn ensemble_replacement_rejects_incompatible_members_without_changing_state() {
         .set_value(key("bond"), BOND0, Some(PropertyValue::Int(1)))
         .unwrap();
 
-    let replacement = EnsembleSample::new(Positions::zeros(1), 1.0).unwrap();
+    let replacement = Sample::new(Positions::zeros(1));
     let expected =
-        EnsembleError::Structure(StructureError::Array(DenseArrayError::CountMismatch {
+        SampleSetError::Structure(StructureError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 1,
         }));
+    assert_eq!(set.replace(0, replacement.clone()), Err(expected.clone()));
     assert_eq!(
-        ensemble.replace(0, replacement.clone()),
-        Err(expected.clone())
-    );
-    assert_eq!(
-        ensemble.push_state(replacement, EnsembleState::new()),
+        set.push_state(replacement, None, State::new(), Some(1.0)),
         Err(expected)
     );
-    assert_eq!(ensemble.len(), 1);
-    let member = ensemble.get(0).unwrap();
+    assert_eq!(set.len(), 1);
+    let member = set.get(0).unwrap();
     assert_eq!(member.payload(), &original);
+    assert_eq!(member.weight(), Some(0.75));
     assert_eq!(
         member.as_model_view().positions().len(),
         topology.atom_count()
     );
     // Same bond count: a payload bound elsewhere with matching rows is accepted.
-    ensemble.push_sample(bound_elsewhere, 0).unwrap();
-    assert_eq!(ensemble.len(), 2);
-    ensemble.remove(1).unwrap();
+    set.push_member(bound_elsewhere, None, 0, Some(1.0))
+        .unwrap();
+    assert_eq!(set.len(), 2);
+    set.remove(1).unwrap();
 
     for index in [1, usize::MAX] {
         assert_eq!(
-            ensemble.replace(index, original.clone()),
-            Err(EnsembleError::IndexOutOfRange { index, len: 1 })
+            set.replace(index, original.clone()),
+            Err(SampleSetError::IndexOutOfRange { index, len: 1 })
         );
-        assert!(ensemble.get_mut(index).is_none());
+        assert!(set.get_mut(index).is_none());
     }
-    let mut empty = Ensemble::new(topology);
+    let mut empty = SampleSet::new(topology);
     assert_eq!(
         empty.replace(0, original.clone()),
-        Err(EnsembleError::IndexOutOfRange { index: 0, len: 0 })
+        Err(SampleSetError::IndexOutOfRange { index: 0, len: 0 })
     );
     assert!(empty.is_empty());
-    assert_eq!(ensemble.replace(0, original.clone()).unwrap(), original);
+    assert_eq!(set.replace(0, original.clone()).unwrap(), original);
 }
 
 #[test]
-fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
+fn sample_replacement_preserves_order_and_membership_and_publishes_the_whole_sample() {
     let (model, _, _) = model_fixture();
     let topology = model.shared_topology();
-    let original = EnsembleSample::new(model.positions().clone(), 1.0).unwrap();
-    let mut ensemble = conformers(Arc::clone(&topology), [original.clone(), original]).unwrap();
-    let original = ensemble.get(0).unwrap().payload().clone();
+    let original = Sample::new(model.positions().clone());
+    let mut set = conformers(Arc::clone(&topology), [original.clone(), original]).unwrap();
+    set.distribution_mut()
+        .unwrap()
+        .set_weights(Some(vec![1.0, 0.5]))
+        .unwrap();
+    let original = set.get(0).unwrap().payload().clone();
     let score = key("score");
-    ensemble
-        .properties_mut()
+    set.properties_mut()
         .insert(score.clone(), PropertyValue::Int(9))
         .unwrap();
-    let collection_properties = ensemble.properties().clone();
-    let mut replacement = EnsembleSample::new(Positions::zeros(2), 1.0).unwrap();
+    let set_properties = set.properties().clone();
+    let mut replacement = Sample::new(Positions::zeros(2));
     replacement.set_cell(Some(cell()));
-    replacement.set_weight(0.5).unwrap();
     replacement
         .properties_mut()
         .owner_mut()
@@ -473,15 +461,17 @@ fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
         .set_value(score, ATOM0, Some(PropertyValue::Int(2)))
         .unwrap();
 
-    assert_eq!(ensemble.replace(1, replacement.clone()).unwrap(), original);
-    assert_eq!(ensemble.len(), 2);
-    assert_eq!(ensemble.properties(), &collection_properties);
-    assert_eq!(ensemble.get(0).unwrap().payload(), &original);
-    let member = ensemble.get(1).unwrap();
+    assert_eq!(set.replace(1, replacement.clone()).unwrap(), original);
+    assert_eq!(set.len(), 2);
+    assert_eq!(set.properties(), &set_properties);
+    assert_eq!(set.get(0).unwrap().payload(), &original);
+    let member = set.get(1).unwrap();
     assert!(Arc::ptr_eq(&member.shared_topology(), &topology));
     assert_eq!(member.positions(), replacement.positions());
     assert_eq!(member.cell(), replacement.cell());
-    assert_eq!(member.weight(), replacement.weight());
+    // The replacement takes the replaced sample's weight and state.
+    assert_eq!(member.weight(), Some(0.5));
+    assert_eq!(member.state().map(|state| state.index()), Some(1));
     assert_eq!(
         member.properties().owner(),
         replacement.properties().owner()
@@ -496,25 +486,23 @@ fn ensemble_replacement_preserves_order_and_publishes_complete_member_state() {
 }
 
 #[test]
-fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
+fn sample_editor_preserves_dimensions_and_validated_values() {
     let (model, _, _) = model_fixture();
-    let mut ensemble = bundle([model]).unwrap();
+    let mut set = bundle([model]).unwrap();
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution.set_weight(0, 0.5).unwrap();
+    // Weights are finite and strictly positive.
+    for weight in [f64::NAN, f64::INFINITY, -1.0, 0.0] {
+        assert_eq!(
+            distribution.set_weight(0, weight),
+            Err(SampleSetError::InvalidWeight { sample: 0 })
+        );
+        assert_eq!(distribution.weight(0), Some(0.5));
+    }
     {
-        let mut member = ensemble.get_mut(0).unwrap();
-        member.set_weight(0.5).unwrap();
-        // Weights are finite and strictly positive.
-        for weight in [f64::NAN, f64::INFINITY, -1.0, 0.0] {
-            assert_eq!(
-                member.set_weight(weight),
-                Err(StructureError::InvalidWeight)
-            );
-            assert_eq!(member.weight(), 0.5);
-        }
+        let mut member = set.get_mut(0).unwrap();
         let properties = member.properties().clone();
-        let detached = EnsembleSample::new(Positions::zeros(2), 1.0)
-            .unwrap()
-            .properties()
-            .clone();
+        let detached = Sample::new(Positions::zeros(2)).properties().clone();
         assert_eq!(
             member.set_properties(detached),
             Err(StructureError::BondCountMismatch {
@@ -522,10 +510,7 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
                 actual: 0
             })
         );
-        let wrong_atoms = EnsembleSample::new(Positions::zeros(1), 1.0)
-            .unwrap()
-            .properties()
-            .clone();
+        let wrong_atoms = Sample::new(Positions::zeros(1)).properties().clone();
         assert_eq!(
             member.set_properties(wrong_atoms),
             Err(StructureError::Array(DenseArrayError::CountMismatch {
@@ -543,8 +528,8 @@ fn ensemble_member_editor_preserves_dimensions_and_validated_values() {
         );
         assert_eq!(member.positions().len(), 2);
     }
-    let member = ensemble.get(0).unwrap();
-    assert_eq!(member.weight(), 0.5);
+    let member = set.get(0).unwrap();
+    assert_eq!(member.weight(), Some(0.5));
     assert_eq!(member.as_model_view().positions().len(), 2);
     assert_eq!(member.to_model().properties().bonds().len(), 1);
 }
@@ -690,7 +675,7 @@ fn model_subset_projects_entity_state_and_drops_owner_properties() {
 }
 
 #[test]
-fn ensemble_collection_and_member_properties_are_separate() {
+fn set_and_sample_properties_are_separate() {
     let (mut model, atom, _) = model_fixture();
     let mut properties = model.properties_mut();
     properties
@@ -701,20 +686,18 @@ fn ensemble_collection_and_member_properties_are_separate() {
         .bonds_mut()
         .set_value(key("member_bond"), BOND0, Some(PropertyValue::Int(2)))
         .unwrap();
-    let mut ensemble = bundle([model]).unwrap();
-    ensemble
-        .properties_mut()
+    let mut set = bundle([model]).unwrap();
+    set.properties_mut()
         .insert(key("collection"), PropertyValue::Bool(true))
         .unwrap();
-    ensemble
-        .get_mut(0)
+    set.get_mut(0)
         .unwrap()
         .properties_mut()
         .owner_mut()
         .insert(key("member"), PropertyValue::Int(1))
         .unwrap();
-    assert!(!ensemble.properties().is_empty());
-    let member = ensemble.get(0).unwrap();
+    assert!(!set.properties().is_empty());
+    let member = set.get(0).unwrap();
     assert!(!member.properties().owner().is_empty());
     assert_eq!(
         member
@@ -733,91 +716,97 @@ fn ensemble_collection_and_member_properties_are_separate() {
         Some(PropertyValue::Int(2))
     );
 
-    let cloned = ensemble.clone();
-    assert_eq!(cloned.properties(), ensemble.properties());
+    let cloned = set.clone();
+    assert_eq!(cloned.properties(), set.properties());
     let selection =
-        crate::topology::AtomSelection::from_atoms(ensemble.shared_topology(), [atom]).unwrap();
-    let subset = ensemble.subset(&selection).unwrap();
+        crate::topology::AtomSelection::from_atoms(set.shared_topology(), [atom]).unwrap();
+    let subset = set.subset(&selection).unwrap();
     assert!(subset.properties().is_empty());
     assert!(subset.get(0).unwrap().properties().owner().is_empty());
 }
 
 #[test]
-fn trajectories_reinterpret_as_ensembles_without_copying_positions() {
+fn ordered_samples_join_a_distribution_without_copying_positions() {
     let (model, _, _) = model_fixture();
-    let mut frame = TrajectoryFrame::new(model.positions().clone());
-    frame.set_step(Some(4));
-    frame.set_velocities(Some(Velocities::zeros(2))).unwrap();
+    let mut sample = Sample::new(model.positions().clone());
+    sample.set_velocities(Some(Velocities::zeros(2))).unwrap();
     assert_eq!(
-        frame.set_forces(Some(Forces::zeros(3))),
+        sample.set_forces(Some(Forces::zeros(3))),
         Err(StructureError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 3
         }))
     );
-    let trajectory = Trajectory::from_items(model.shared_topology(), [frame]).unwrap();
-    let pointer = trajectory
-        .get(0)
-        .unwrap()
-        .positions()
-        .values()
-        .value()
-        .as_ptr();
-    let ensemble = trajectory.into_ensemble();
-    let member = ensemble.get(0).unwrap();
-    // Frames become equally weighted members.
-    assert_eq!(member.weight(), 1.0);
+    let mut set = SampleSet::from_samples(model.shared_topology(), [sample]).unwrap();
+    set.set_order(Some(Order::Step(vec![4]))).unwrap();
+    let pointer = set.get(0).unwrap().positions().values().value().as_ptr();
+    set.set_distribution(Some(
+        Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
+    ))
+    .unwrap();
+    let member = set.get(0).unwrap();
+    // Samples join as equally weighted members and keep their place.
+    assert_eq!(member.weight(), Some(1.0));
+    assert_eq!(member.place(), Some(Place::Step(4)));
     assert_eq!(member.positions().values().value().as_ptr(), pointer);
 }
 
 #[test]
-fn trajectories_sample_chosen_frames_into_ensembles_without_consuming() {
+fn sets_read_chosen_samples_of_another_set_without_consuming_it() {
     let (model, carbon, _) = model_fixture();
     let frames = (0..5).map(|index| {
-        let mut frame = TrajectoryFrame::new(
+        let mut sample = Sample::new(
             Positions::new(Quantity::new(
                 [Point3::new(index as f64, 0.0, 0.0), Point3::origin()],
                 NANOMETER,
             ))
             .unwrap(),
         );
-        frame.set_velocities(Some(Velocities::zeros(2))).unwrap();
-        frame
+        sample.set_velocities(Some(Velocities::zeros(2))).unwrap();
+        sample
     });
-    let trajectory = Trajectory::from_items(model.shared_topology(), frames).unwrap();
+    let trajectory = SampleSet::from_samples(model.shared_topology(), frames).unwrap();
 
-    // Leave out equilibration, take every second frame, and weight them.
-    let sampling = TrajectorySampling::new((1..5).step_by(2))
-        .with_weights([3.0, 1.0])
+    // Leave out equilibration, take every second sample, and weight them.
+    let mut sampled = SampleSet::from_reader(&trajectory, (1..5).step_by(2)).unwrap();
+    sampled
+        .set_distribution(Some(
+            Distribution::new(Members::All, Partition::one_state(2))
+                .unwrap()
+                .with_weights(vec![3.0, 1.0])
+                .unwrap(),
+        ))
         .unwrap();
-    let ensemble = trajectory.to_ensemble(&sampling).unwrap();
     assert_eq!(trajectory.len(), 5);
-    assert_eq!(ensemble.state_count(), 1);
-    assert!(ensemble.state(0).unwrap().payload().energy().is_none());
-    let samples = ensemble
+    assert_eq!(sampled.distribution().unwrap().state_count(), 1);
+    assert!(sampled.state(0).unwrap().energy().is_none());
+    let samples = sampled
         .iter()
         .map(|sample| (sample.positions().values().value()[0].x, sample.weight()))
         .collect::<Vec<_>>();
-    assert_eq!(samples, [(1.0, 3.0), (3.0, 1.0)]);
+    assert_eq!(samples, [(1.0, Some(3.0)), (3.0, Some(1.0))]);
+    assert!(sampled
+        .get(0)
+        .unwrap()
+        .shares_structure_with(&trajectory.get(1).unwrap()));
 
     let atoms =
         crate::topology::AtomSelection::from_atoms(model.shared_topology(), [carbon]).unwrap();
-    let subset = trajectory
-        .to_ensemble(&TrajectorySampling::new([4]).with_atoms(atoms))
+    let subset = SampleSet::from_reader(&trajectory, [4])
+        .unwrap()
+        .subset(&atoms)
         .unwrap();
     assert_eq!(subset.topology().atom_count(), 1);
     assert_eq!(subset.get(0).unwrap().positions().len(), 1);
 
     assert_eq!(
-        trajectory
-            .to_ensemble(&TrajectorySampling::new([5]))
-            .unwrap_err(),
-        TrajectoryError::IndexOutOfRange { index: 5, len: 5 }
+        SampleSet::from_reader(&trajectory, [5]).unwrap_err(),
+        SampleReadError::IndexOutOfRange { index: 5, len: 5 }
     );
 }
 
 #[test]
-fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
+fn occupancies_and_b_factors_follow_models_into_samples() {
     let (mut model, _, _) = model_fixture();
     model.set_occupancy(ATOM0, Some(0.5)).unwrap();
     model
@@ -826,8 +815,8 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
     model.set_cell(Some(cell()));
 
     // Models become members with their occupancies, B-factors, cell, and rows.
-    let ensemble = bundle([model.clone()]).unwrap();
-    let member = ensemble.get(0).unwrap();
+    let set = bundle([model.clone()]).unwrap();
+    let member = set.get(0).unwrap();
     assert_eq!(member.occupancies(), Some([Some(0.5), None].as_slice()));
     assert_eq!(
         member.b_factors().unwrap().value(),
@@ -835,33 +824,11 @@ fn occupancies_and_b_factors_follow_models_and_members_but_never_frames() {
     );
     assert_eq!(member.cell(), Some(&cell()));
     assert_eq!(member.as_model_view().occupancy(ATOM0), Some(0.5));
-    assert_eq!(member.to_model(), model);
-
-    // Frame views report no occupancies or B-factors but still check indices.
-    let mut frame = TrajectoryFrame::new(model.positions().clone()).with_cell(cell());
-    frame
-        .properties_mut()
-        .owner_mut()
-        .insert(key("source"), PropertyValue::Int(1))
-        .unwrap();
-    let trajectory = Trajectory::from_items(model.shared_topology(), [frame]).unwrap();
-    let view = trajectory.get(0).unwrap().as_model_view();
-    assert_eq!(view.occupancies(), None);
-    assert!(view.b_factors().is_none());
-    assert_eq!(view.occupancy(ATOM0), None);
-    assert_eq!(view.b_factor(ATOM0), None);
-    assert_eq!(view.occupancy(TopologyAtomIndex::new(2)), None);
-    assert_eq!(view.to_model().occupancies(), None);
-
-    // Frames reinterpreted as members keep their cell and rows only.
-    let ensemble = trajectory.into_ensemble();
-    let member = ensemble.get(0).unwrap();
-    assert_eq!(member.occupancies(), None);
-    assert_eq!(member.cell(), Some(&cell()));
     assert_eq!(
-        member.properties().owner().get(&key("source")),
-        Some(&PropertyValue::Int(1))
+        member.as_model_view().occupancy(TopologyAtomIndex::new(2)),
+        None
     );
+    assert_eq!(member.to_model(), model);
 }
 
 #[test]
@@ -913,93 +880,114 @@ fn model_atom_views_join_topology_identity_with_structure_state() {
 }
 
 #[test]
-fn ensemble_members_always_carry_finite_positive_relative_weights() {
+fn member_weights_are_finite_positive_and_relative() {
+    let topology = Arc::new(single_atom_topology());
+    let mut set = weighted(Arc::clone(&topology), &[3.0, 1.0]);
     for weight in [0.0, -1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
-            EnsembleSample::new(single_position(0.0), weight),
-            Err(StructureError::InvalidWeight)
+            set.distribution_mut().unwrap().set_weight(1, weight),
+            Err(SampleSetError::InvalidWeight { sample: 1 })
         );
     }
-    let topology = Arc::new(single_atom_topology());
-    let members =
-        [3.0, 1.0].map(|weight| EnsembleSample::new(single_position(0.0), weight).unwrap());
-    let mut ensemble = conformers(Arc::clone(&topology), members).unwrap();
 
     // Weights are relative, so selection keeps them as stored.
-    let resampled = ensemble.select([0, 0, 1]).unwrap();
-    assert_eq!(
-        resampled
-            .iter()
-            .map(|member| member.weight())
-            .collect::<Vec<_>>(),
-        [3.0, 3.0, 1.0]
-    );
+    let resampled = set.select([0, 0, 1]).unwrap();
+    assert_eq!(weights(&resampled), [3.0, 3.0, 1.0]);
 
-    ensemble.normalize_weights().unwrap();
-    assert_eq!(
-        ensemble
-            .iter()
-            .map(|member| member.weight())
-            .collect::<Vec<_>>(),
-        [0.75, 0.25]
-    );
+    set.distribution_mut().unwrap().normalize_weights().unwrap();
+    assert_eq!(weights(&set), [0.75, 0.25]);
     // Scaling by the largest weight first keeps huge weights finite.
-    let huge = [f64::MAX, f64::MAX]
-        .map(|weight| EnsembleSample::new(single_position(0.0), weight).unwrap());
-    let mut huge = conformers(Arc::clone(&topology), huge).unwrap();
-    huge.normalize_weights().unwrap();
-    assert_eq!(
-        huge.iter()
-            .map(|member| member.weight())
-            .collect::<Vec<_>>(),
-        [0.5, 0.5]
-    );
+    let mut huge = weighted(Arc::clone(&topology), &[f64::MAX, f64::MAX]);
+    huge.distribution_mut()
+        .unwrap()
+        .normalize_weights()
+        .unwrap();
+    assert_eq!(weights(&huge), [0.5, 0.5]);
     // A ratio that underflows is rejected without changing any weight.
-    let extreme = [f64::MAX, f64::MIN_POSITIVE]
-        .map(|weight| EnsembleSample::new(single_position(0.0), weight).unwrap());
-    let mut extreme = conformers(Arc::clone(&topology), extreme).unwrap();
+    let mut extreme = weighted(Arc::clone(&topology), &[f64::MAX, f64::MIN_POSITIVE]);
     assert_eq!(
-        extreme.normalize_weights(),
-        Err(EnsembleError::Structure(StructureError::InvalidWeight))
+        extreme.distribution_mut().unwrap().normalize_weights(),
+        Err(SampleSetError::InvalidWeight { sample: 1 })
     );
-    assert_eq!(extreme.get(1).unwrap().weight(), f64::MIN_POSITIVE);
+    assert_eq!(extreme.get(1).unwrap().weight(), Some(f64::MIN_POSITIVE));
     assert_eq!(
-        Ensemble::new(topology).normalize_weights(),
-        Err(EnsembleError::EmptySource)
+        with_empty_distribution(topology)
+            .distribution_mut()
+            .unwrap()
+            .normalize_weights(),
+        Err(SampleSetError::EmptyDistribution)
     );
 
     // Models carry no statistical weight; they become equally weighted members.
     let (model, _, _) = model_fixture();
-    let ensemble = bundle([model.clone(), model]).unwrap();
-    assert!(ensemble.iter().all(|member| member.weight() == 1.0));
+    let set = bundle([model.clone(), model]).unwrap();
+    assert_eq!(set.distribution().unwrap().weights(), None);
+    assert_eq!(weights(&set), [1.0, 1.0]);
 }
 
 /// Unit-weight conformers of a one-atom topology, one state each, with
 /// state energies in kJ/mol.
-fn energy_ensemble(energies: &[f64]) -> Ensemble {
-    let mut ensemble = Ensemble::new(single_atom_topology());
-    for energy in energies {
-        let state = EnsembleState::new()
-            .with_energy(Quantity::new(*energy, KILOJOULE_PER_MOLE))
-            .unwrap();
-        ensemble
-            .push_state(
-                EnsembleSample::new(single_position(0.0), 1.0).unwrap(),
-                state,
-            )
-            .unwrap();
-    }
-    ensemble
+fn energy_conformers(energies: &[f64]) -> SampleSet {
+    let states = energies
+        .iter()
+        .map(|energy| {
+            State::new()
+                .with_energy(Quantity::new(*energy, KILOJOULE_PER_MOLE))
+                .unwrap()
+        })
+        .collect();
+    let mut set = SampleSet::from_samples(
+        single_atom_topology(),
+        energies.iter().map(|_| Sample::new(single_position(0.0))),
+    )
+    .unwrap();
+    let distribution = Distribution::new(Members::All, Partition::state_per_sample(energies.len()))
+        .unwrap()
+        .with_weights(vec![1.0; energies.len()])
+        .unwrap()
+        .with_states(states)
+        .unwrap();
+    set.set_distribution(Some(distribution)).unwrap();
+    set
 }
 
 /// Samples of a one-atom topology with these weights, grouped by
 /// `assignments` with `representatives`.
-fn grouped(weights: &[f64], assignments: &[usize], representatives: &[usize]) -> Ensemble {
-    let samples = weights
-        .iter()
-        .map(|weight| EnsembleSample::new(single_position(0.0), *weight).unwrap());
-    let partition = EnsemblePartition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
-    Ensemble::from_samples(single_atom_topology(), samples, partition).unwrap()
+fn grouped(weights: &[f64], assignments: &[usize], representatives: &[usize]) -> SampleSet {
+    let mut set = SampleSet::from_samples(
+        single_atom_topology(),
+        weights.iter().map(|_| Sample::new(single_position(0.0))),
+    )
+    .unwrap();
+    let partition = Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
+    let distribution = Distribution::new(Members::All, partition)
+        .unwrap()
+        .with_weights(weights.to_vec())
+        .unwrap();
+    set.set_distribution(Some(distribution)).unwrap();
+    set
+}
+
+/// Conformers of `topology` at the origin with these weights, one state
+/// each.
+fn weighted(topology: Arc<crate::topology::Topology>, weights: &[f64]) -> SampleSet {
+    let samples = weights.iter().map(|_| Sample::new(single_position(0.0)));
+    let mut set = conformers(topology, samples).unwrap();
+    set.distribution_mut()
+        .unwrap()
+        .set_weights(Some(weights.to_vec()))
+        .unwrap();
+    set
+}
+
+/// An empty set of `topology` with a distribution of no members.
+fn with_empty_distribution(topology: impl Into<Arc<crate::topology::Topology>>) -> SampleSet {
+    let mut set = SampleSet::new(topology);
+    set.set_distribution(Some(
+        Distribution::new(Members::All, Partition::one_state(0)).unwrap(),
+    ))
+    .unwrap();
+    set
 }
 
 fn kj(value: f64) -> Option<Quantity<f64>> {
@@ -1007,9 +995,10 @@ fn kj(value: f64) -> Option<Quantity<f64>> {
 }
 
 /// Sets the energy of every state, in kJ/mol where given.
-fn set_energies(ensemble: &mut Ensemble, energies: &[Option<f64>]) {
+fn set_energies(set: &mut SampleSet, energies: &[Option<f64>]) {
+    let mut distribution = set.distribution_mut().unwrap();
     for (state, energy) in energies.iter().enumerate() {
-        ensemble
+        distribution
             .state_mut(state)
             .unwrap()
             .set_energy(energy.and_then(kj))
@@ -1017,21 +1006,29 @@ fn set_energies(ensemble: &mut Ensemble, energies: &[Option<f64>]) {
     }
 }
 
-fn weights(ensemble: &Ensemble) -> Vec<f64> {
-    ensemble.iter().map(|sample| sample.weight()).collect()
+fn weights(set: &SampleSet) -> Vec<f64> {
+    set.iter().map(|sample| sample.weight().unwrap()).collect()
 }
 
-fn energies(ensemble: &Ensemble) -> Vec<Option<Quantity<f64>>> {
-    ensemble.states().map(|state| state.energy()).collect()
+fn energies(set: &SampleSet) -> Vec<Option<Quantity<f64>>> {
+    set.states().map(|state| state.energy()).collect()
 }
 
-fn representatives(ensemble: &Ensemble) -> Vec<usize> {
-    ensemble.partition().representatives().to_vec()
+fn representatives(set: &SampleSet) -> Vec<usize> {
+    set.distribution()
+        .unwrap()
+        .partition()
+        .representatives()
+        .to_vec()
+}
+
+fn temperature(set: &SampleSet) -> Option<Quantity<f64>> {
+    set.distribution().unwrap().temperature()
 }
 
 #[test]
 fn state_energies_are_canonical_finite_and_never_on_samples() {
-    let state = EnsembleState::new();
+    let state = State::new();
     assert_eq!(state.energy(), None);
     let mut state = state
         .with_energy(Quantity::new(1.0, KILOCALORIE_PER_MOLE))
@@ -1056,22 +1053,25 @@ fn state_energies_are_canonical_finite_and_never_on_samples() {
     );
     assert_eq!(state.energy(), kj(4.184));
 
-    let mut ensemble = Ensemble::new(single_atom_topology());
-    let index = ensemble
-        .push_state(
-            EnsembleSample::new(single_position(0.0), 2.0).unwrap(),
-            state,
-        )
+    let mut set = with_empty_distribution(single_atom_topology());
+    let index = set
+        .push_state(Sample::new(single_position(0.0)), None, state, Some(2.0))
         .unwrap();
     assert_eq!(index, 0);
-    ensemble.state_mut(0).unwrap().set_energy(kj(-3.0)).unwrap();
+    set.distribution_mut()
+        .unwrap()
+        .state_mut(0)
+        .unwrap()
+        .set_energy(kj(-3.0))
+        .unwrap();
     // Energies describe the sampled structure, so subsets keep them.
-    let all = crate::topology::AtomSelection::all(ensemble.shared_topology());
-    assert_eq!(energies(&ensemble.subset(&all).unwrap()), [kj(-3.0)]);
-    assert_eq!(ensemble.get(0).unwrap().state().energy(), kj(-3.0));
-    ensemble.state_mut(0).unwrap().set_energy(None).unwrap();
-    assert_eq!(energies(&ensemble), [None]);
-    assert!(ensemble.state_mut(1).is_none());
+    let all = crate::topology::AtomSelection::all(set.shared_topology());
+    assert_eq!(energies(&set.subset(&all).unwrap()), [kj(-3.0)]);
+    assert_eq!(set.get(0).unwrap().state().unwrap().energy(), kj(-3.0));
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution.state_mut(0).unwrap().set_energy(None).unwrap();
+    assert!(distribution.state_mut(1).is_none());
+    assert_eq!(energies(&set), [None]);
 
     // Models carry no energy.
     let (model, _, _) = model_fixture();
@@ -1079,73 +1079,75 @@ fn state_energies_are_canonical_finite_and_never_on_samples() {
 }
 
 #[test]
-fn every_sample_is_in_one_state_that_contains_its_representative() {
-    let mut ensemble = Ensemble::new(single_atom_topology());
-    assert_eq!(ensemble.state_count(), 0);
-    let sample = |x| EnsembleSample::new(single_position(x), 1.0).unwrap();
+fn every_member_is_in_one_state_that_contains_its_representative() {
+    let mut set = with_empty_distribution(single_atom_topology());
+    assert_eq!(set.distribution().unwrap().state_count(), 0);
+    let sample = |x| Sample::new(single_position(x));
     assert_eq!(
-        ensemble.push_sample(sample(0.0), 0),
-        Err(EnsembleError::StateOutOfRange {
+        set.push_member(sample(0.0), None, 0, None),
+        Err(SampleSetError::StateOutOfRange {
             state: 0,
             states: 0
         })
     );
-    ensemble
-        .push_state(sample(0.0), EnsembleState::new())
+    set.push_state(sample(0.0), None, State::new(), None)
         .unwrap();
-    ensemble
-        .push_state(sample(1.0), EnsembleState::new())
+    set.push_state(sample(1.0), None, State::new(), None)
         .unwrap();
-    ensemble.push_sample(sample(2.0), 0).unwrap();
-    assert_eq!(ensemble.partition().assignments(), [0, 1, 0]);
-    assert_eq!(representatives(&ensemble), [0, 1]);
-    let state = ensemble.state(0).unwrap();
+    set.push_member(sample(2.0), None, 0, None).unwrap();
+    assert_eq!(
+        set.distribution().unwrap().partition().assignments(),
+        [0, 1, 0]
+    );
+    assert_eq!(representatives(&set), [0, 1]);
+    let state = set.state(0).unwrap();
     assert_eq!(state.samples().collect::<Vec<_>>(), [0, 2]);
     assert_eq!(state.representative_sample().index(), 0);
-    assert!(ensemble.get(0).unwrap().is_representative());
-    assert!(!ensemble.get(2).unwrap().is_representative());
-    assert_eq!(ensemble.get(2).unwrap().state().index(), 0);
+    assert!(set.get(0).unwrap().is_representative());
+    assert!(!set.get(2).unwrap().is_representative());
+    assert_eq!(set.get(2).unwrap().state().unwrap().index(), 0);
 
-    // A representative of a state with other samples stays.
+    // A representative of a state with other members stays.
     assert_eq!(
-        ensemble.remove(0),
-        Err(EnsembleError::RepresentativeRemoval {
+        set.remove(0),
+        Err(SampleSetError::RepresentativeRemoval {
             sample: 0,
             state: 0
         })
     );
-    // Removing a state's only sample removes the state; later indices shift.
-    ensemble.remove(1).unwrap();
-    assert_eq!(ensemble.partition().assignments(), [0, 0]);
-    assert_eq!(representatives(&ensemble), [0]);
-    ensemble.remove(1).unwrap();
-    ensemble.remove(0).unwrap();
-    assert!(ensemble.is_empty());
-    assert_eq!(ensemble.state_count(), 0);
-
-    // Partitions cover the ensemble's samples.
-    let samples = [sample(0.0), sample(1.0)];
+    // Removing a state's only member removes the state; later indices shift.
+    set.remove(1).unwrap();
     assert_eq!(
-        Ensemble::from_samples(
-            single_atom_topology(),
-            samples,
-            EnsemblePartition::one_state(3)
-        )
-        .unwrap_err(),
-        EnsembleError::PartitionMismatch {
-            expected: 2,
-            actual: 3
-        }
+        set.distribution().unwrap().partition().assignments(),
+        [0, 0]
+    );
+    assert_eq!(representatives(&set), [0]);
+    set.remove(1).unwrap();
+    set.remove(0).unwrap();
+    assert!(set.is_empty());
+    assert_eq!(set.distribution().unwrap().state_count(), 0);
+
+    // A distribution of every sample covers all of them.
+    let mut two =
+        SampleSet::from_samples(single_atom_topology(), [sample(0.0), sample(1.0)]).unwrap();
+    assert_eq!(
+        two.set_distribution(Some(
+            Distribution::new(Members::All, Partition::one_state(3)).unwrap()
+        )),
+        Err(SampleSetError::CoverageMismatch {
+            covered: 3,
+            samples: 2
+        })
     );
     assert_eq!(
-        EnsemblePartition::new(vec![0, 1], vec![1, 0]),
+        Partition::new(vec![0, 1], vec![1, 0]),
         Err(PartitionError::RepresentativeNotInState {
             state: 0,
             sample: 1
         })
     );
     assert_eq!(
-        EnsemblePartition::new(vec![0, 2], vec![0, 1]),
+        Partition::new(vec![0, 2], vec![0, 1]),
         Err(PartitionError::StateOutOfRange {
             sample: 1,
             state: 2,
@@ -1153,38 +1155,47 @@ fn every_sample_is_in_one_state_that_contains_its_representative() {
         })
     );
     assert_eq!(
-        EnsemblePartition::new(vec![0], vec![0, 3]),
+        Partition::new(vec![0], vec![0, 3]),
         Err(PartitionError::RepresentativeOutOfRange {
             state: 1,
             sample: 3,
             samples: 1
         })
     );
-    assert_eq!(EnsemblePartition::one_state(0).state_count(), 0);
-    assert_eq!(EnsemblePartition::one_state(2).representatives(), [0]);
+    assert_eq!(Partition::one_state(0).state_count(), 0);
+    assert_eq!(Partition::one_state(2).representatives(), [0]);
 }
 
 #[test]
-fn populations_are_derived_from_sample_weights() {
+fn populations_are_derived_from_member_weights() {
     // Two states: samples 0 and 2 (weights 1 and 3) and sample 1 (weight 4).
-    let mut ensemble = grouped(&[1.0, 4.0, 3.0], &[0, 1, 0], &[2, 1]);
-    assert_eq!(ensemble.state(0).unwrap().population(), 4.0);
-    assert_eq!(ensemble.state(1).unwrap().population(), 4.0);
-    assert_eq!(ensemble.probabilities().unwrap(), [0.125, 0.5, 0.375]);
-    assert_eq!(ensemble.state_probabilities().unwrap(), [0.5, 0.5]);
+    let mut set = grouped(&[1.0, 4.0, 3.0], &[0, 1, 0], &[2, 1]);
+    // Populations are relative to the largest member weight, 4.
+    assert_eq!(set.state(0).unwrap().population(), 1.0);
+    assert_eq!(set.state(1).unwrap().population(), 1.0);
+    let distribution = set.distribution().unwrap();
+    assert_eq!(distribution.probabilities().unwrap(), [0.125, 0.5, 0.375]);
+    assert_eq!(distribution.state_probabilities().unwrap(), [0.5, 0.5]);
     // Kish: (1 + 4 + 3)² / (1 + 16 + 9) = 64 / 26.
-    assert_eq!(ensemble.effective_sample_size().unwrap(), 64.0 / 26.0);
+    assert_eq!(distribution.effective_sample_size().unwrap(), 64.0 / 26.0);
 
-    ensemble.get_mut(1).unwrap().set_weight(12.0).unwrap();
-    assert_eq!(ensemble.state(1).unwrap().population(), 12.0);
-    assert_eq!(ensemble.state_probabilities().unwrap(), [0.25, 0.75]);
-    assert_eq!(ensemble.ranked_by_population(), [1, 0]);
-    ensemble.normalize_weights().unwrap();
-    assert_eq!(weights(&ensemble), [0.0625, 0.75, 0.1875]);
-    assert_eq!(ensemble.state_probabilities().unwrap(), [0.25, 0.75]);
+    set.distribution_mut().unwrap().set_weight(1, 12.0).unwrap();
+    assert_eq!(set.state(1).unwrap().population(), 1.0);
+    let distribution = set.distribution().unwrap();
+    assert_eq!(distribution.state_probabilities().unwrap(), [0.25, 0.75]);
+    assert_eq!(distribution.ranked_by_population(), [1, 0]);
+    set.distribution_mut().unwrap().normalize_weights().unwrap();
+    assert_eq!(weights(&set), [0.0625, 0.75, 0.1875]);
+    assert_eq!(
+        set.distribution().unwrap().state_probabilities().unwrap(),
+        [0.25, 0.75]
+    );
 
-    let empty = Ensemble::new(single_atom_topology());
-    assert_eq!(empty.state_probabilities(), Err(EnsembleError::EmptySource));
+    let empty = with_empty_distribution(single_atom_topology());
+    assert_eq!(
+        empty.distribution().unwrap().state_probabilities(),
+        Err(SampleSetError::EmptyDistribution)
+    );
 }
 
 #[test]
@@ -1192,82 +1203,92 @@ fn boltzmann_populations_follow_relative_state_energies_at_temperature() {
     // 1, 0, and 2 kcal/mol above the minimum at 298.15 K. Expected factors
     // exp(-dE/RT) evaluated independently to 40 digits (Python `decimal`,
     // R = N_A k_B exact in the 2019 SI).
-    let mut ensemble = energy_ensemble(&[-100.0 + 4.184, -100.0, -100.0 + 8.368]);
-    ensemble
+    let mut set = energy_conformers(&[-100.0 + 4.184, -100.0, -100.0 + 8.368]);
+    set.distribution_mut()
+        .unwrap()
         .assign_boltzmann_populations(Quantity::new(298.15, KELVIN))
         .unwrap();
     let expected = [0.184_924_695_965_256_4, 1.0, 0.034_197_143_177_842_51];
-    let weights = weights(&ensemble);
+    let weights = weights(&set);
     for (weight, expected) in weights.iter().zip(expected) {
         let ratio = weight / weights[1];
         assert!((ratio - expected).abs() <= 1.0e-15, "{ratio} != {expected}");
     }
     // The total weight is kept.
     assert!((weights.iter().sum::<f64>() - 3.0).abs() <= 1.0e-15);
-    assert_eq!(ensemble.temperature(), Some(Quantity::new(298.15, KELVIN)));
+    assert_eq!(temperature(&set), Some(Quantity::new(298.15, KELVIN)));
 
     // Invalid temperatures and missing energies change nothing.
-    let before = self::weights(&ensemble);
+    let before = self::weights(&set);
+    let mut distribution = set.distribution_mut().unwrap();
     for temperature in [0.0, -1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
-            ensemble.assign_boltzmann_populations(Quantity::new(temperature, KELVIN)),
-            Err(EnsembleError::InvalidTemperature)
+            distribution.assign_boltzmann_populations(Quantity::new(temperature, KELVIN)),
+            Err(SampleSetError::InvalidTemperature)
         );
     }
     assert_eq!(
-        ensemble.assign_boltzmann_populations(Quantity::new(1.0, KILOJOULE_PER_MOLE)),
-        Err(EnsembleError::Unit(Box::new(
+        distribution.assign_boltzmann_populations(Quantity::new(1.0, KILOJOULE_PER_MOLE)),
+        Err(SampleSetError::Unit(Box::new(
             UnitError::IncompatibleUnits {
                 from: KILOJOULE_PER_MOLE,
                 to: KELVIN,
             }
         )))
     );
-    ensemble.state_mut(2).unwrap().set_energy(None).unwrap();
+    distribution.state_mut(2).unwrap().set_energy(None).unwrap();
     assert_eq!(
-        ensemble.assign_boltzmann_populations(Quantity::new(310.0, KELVIN)),
-        Err(EnsembleError::MissingEnergy { state: 2 })
+        distribution.assign_boltzmann_populations(Quantity::new(310.0, KELVIN)),
+        Err(SampleSetError::Missing(Requirement::StateEnergies))
     );
-    assert_eq!(self::weights(&ensemble), before);
-    assert_eq!(ensemble.temperature(), Some(Quantity::new(298.15, KELVIN)));
+    assert_eq!(self::weights(&set), before);
+    assert_eq!(temperature(&set), Some(Quantity::new(298.15, KELVIN)));
 
     // A factor that underflows to zero is rejected transactionally.
-    let mut wide = energy_ensemble(&[0.0, 1.0e6]);
+    let mut wide = energy_conformers(&[0.0, 1.0e6]);
     assert_eq!(
-        wide.assign_boltzmann_populations(Quantity::new(298.15, KELVIN)),
-        Err(EnsembleError::Structure(StructureError::InvalidWeight))
+        wide.distribution_mut()
+            .unwrap()
+            .assign_boltzmann_populations(Quantity::new(298.15, KELVIN)),
+        Err(SampleSetError::InvalidWeight { sample: 1 })
     );
     assert_eq!(self::weights(&wide), [1.0, 1.0]);
-    assert_eq!(wide.temperature(), None);
+    assert_eq!(temperature(&wide), None);
 }
 
 #[test]
-fn boltzmann_populations_scale_the_samples_of_each_state_together() {
+fn boltzmann_populations_scale_the_members_of_each_state_together() {
     // State 0 (0 kJ/mol) holds samples of weights 1 and 3; state 1, RT ln 3
     // higher, one sample of weight 2. Populations go from 4 : 2 to 3 : 1 of
     // the kept total 6, so 4.5 and 1.5: state 0's samples scale by 4.5 / 4
     // and state 1's by 1.5 / 2.
-    let temperature = 300.0;
-    let gap = 8.314_462_618_153_24e-3 * temperature * 3.0_f64.ln();
-    let mut ensemble = grouped(&[1.0, 2.0, 3.0], &[0, 1, 0], &[0, 1]);
-    set_energies(&mut ensemble, &[Some(0.0), Some(gap)]);
-    ensemble
-        .assign_boltzmann_populations(Quantity::new(temperature, KELVIN))
+    let kelvin = 300.0;
+    let gap = 8.314_462_618_153_24e-3 * kelvin * 3.0_f64.ln();
+    let mut set = grouped(&[1.0, 2.0, 3.0], &[0, 1, 0], &[0, 1]);
+    set_energies(&mut set, &[Some(0.0), Some(gap)]);
+    set.distribution_mut()
+        .unwrap()
+        .assign_boltzmann_populations(Quantity::new(kelvin, KELVIN))
         .unwrap();
-    for (weight, expected) in weights(&ensemble).into_iter().zip([1.125, 1.5, 3.375]) {
+    for (weight, expected) in weights(&set).into_iter().zip([1.125, 1.5, 3.375]) {
         assert!(
             (weight - expected).abs() <= 1.0e-14,
             "{weight} != {expected}"
         );
     }
-    assert_eq!(ensemble.partition().assignments(), [0, 1, 0]);
+    assert_eq!(
+        set.distribution().unwrap().partition().assignments(),
+        [0, 1, 0]
+    );
 
     // States whose weights differ by more than the floating-point range
     // still get representable populations.
     let mut spread = grouped(&[1.0e-200, 1.0e200], &[0, 1], &[0, 1]);
     set_energies(&mut spread, &[Some(0.0), Some(0.0)]);
     spread
-        .assign_boltzmann_populations(Quantity::new(temperature, KELVIN))
+        .distribution_mut()
+        .unwrap()
+        .assign_boltzmann_populations(Quantity::new(kelvin, KELVIN))
         .unwrap();
     for weight in weights(&spread) {
         assert!((weight / 5.0e199 - 1.0).abs() <= 1.0e-12, "{weight}");
@@ -1276,70 +1297,84 @@ fn boltzmann_populations_scale_the_samples_of_each_state_together() {
     // Weighting one state changes nothing: its population is all there is.
     let mut one = grouped(&[1.0, 2.0, 5.0], &[0, 0, 0], &[1]);
     set_energies(&mut one, &[Some(7.0)]);
-    one.assign_boltzmann_populations(Quantity::new(298.15, KELVIN))
+    one.distribution_mut()
+        .unwrap()
+        .assign_boltzmann_populations(Quantity::new(298.15, KELVIN))
         .unwrap();
     assert_eq!(weights(&one), [1.0, 2.0, 5.0]);
-    assert_eq!(one.temperature(), Some(Quantity::new(298.15, KELVIN)));
+    assert_eq!(temperature(&one), Some(Quantity::new(298.15, KELVIN)));
 
     // Samples drawn from a simulation form a state without an energy, which
     // is never weighted a second time.
     let (model, _, _) = model_fixture();
     let mut drawn = bundle([model.clone(), model]).unwrap();
+    let mut distribution = drawn.distribution_mut().unwrap();
     assert_eq!(
-        drawn.assign_boltzmann_populations(Quantity::new(298.15, KELVIN)),
-        Err(EnsembleError::MissingEnergy { state: 0 })
+        distribution.assign_boltzmann_populations(Quantity::new(298.15, KELVIN)),
+        Err(SampleSetError::Missing(Requirement::StateEnergies))
     );
-    assert_eq!(drawn.temperature(), None);
+    assert_eq!(distribution.temperature(), None);
 
     // A temperature is recorded or cleared explicitly, and validated.
-    drawn
+    distribution
         .set_temperature(Some(Quantity::new(298.15, KELVIN)))
         .unwrap();
-    assert_eq!(drawn.temperature(), Some(Quantity::new(298.15, KELVIN)));
     assert_eq!(
-        drawn.set_temperature(Some(Quantity::new(-1.0, KELVIN))),
-        Err(EnsembleError::InvalidTemperature)
+        distribution.temperature(),
+        Some(Quantity::new(298.15, KELVIN))
     );
-    drawn.set_temperature(None).unwrap();
-    assert_eq!(drawn.temperature(), None);
+    assert_eq!(
+        distribution.set_temperature(Some(Quantity::new(-1.0, KELVIN))),
+        Err(SampleSetError::InvalidTemperature)
+    );
+    distribution.set_temperature(None).unwrap();
+    assert_eq!(temperature(&drawn), None);
 }
 
 /// Whether every sample of `a` shares its structure with the same sample
 /// of `b`.
-fn shares_every_structure(a: &Ensemble, b: &Ensemble) -> bool {
+fn shares_every_structure(a: &SampleSet, b: &SampleSet) -> bool {
     a.len() == b.len()
         && a.iter()
-            .zip(b)
+            .zip(b.iter())
             .all(|(a, b)| a.payload().shares_structure_with(b.payload()))
 }
 
-fn x(ensemble: &Ensemble, sample: usize) -> f64 {
-    ensemble.get(sample).unwrap().positions().values().value()[0].x
+fn x(set: &SampleSet, sample: usize) -> f64 {
+    set.get(sample).unwrap().positions().values().value()[0].x
 }
 
 #[test]
-fn regrouping_and_reweighting_a_shared_ensemble_copy_no_structure() {
-    let shared = Arc::new(energy_ensemble(&[0.0, 1.0, 2.0, 3.0]));
+fn regrouping_and_reweighting_a_shared_set_copy_no_structure() {
+    let shared = Arc::new(energy_conformers(&[0.0, 1.0, 2.0, 3.0]));
     let mut edited = Arc::clone(&shared);
 
-    let ensemble = Arc::make_mut(&mut edited);
-    ensemble
-        .regroup(EnsemblePartition::new(vec![0, 0, 1, 1], vec![0, 2]).unwrap())
+    let mut distribution = Arc::make_mut(&mut edited).distribution_mut().unwrap();
+    distribution
+        .regroup(Partition::new(vec![0, 0, 1, 1], vec![0, 2]).unwrap())
         .unwrap();
-    ensemble.get_mut(1).unwrap().set_weight(3.0).unwrap();
-    ensemble.normalize_weights().unwrap();
-    ensemble.state_mut(0).unwrap().set_energy(kj(0.0)).unwrap();
-    ensemble.state_mut(1).unwrap().set_energy(kj(1.0)).unwrap();
-    ensemble
+    distribution.set_weight(1, 3.0).unwrap();
+    distribution.normalize_weights().unwrap();
+    distribution
+        .state_mut(0)
+        .unwrap()
+        .set_energy(kj(0.0))
+        .unwrap();
+    distribution
+        .state_mut(1)
+        .unwrap()
+        .set_energy(kj(1.0))
+        .unwrap();
+    distribution
         .assign_boltzmann_populations(Quantity::new(300.0, KELVIN))
         .unwrap();
 
     assert!(shares_every_structure(&edited, &shared));
-    // The held ensemble keeps its own grouping and weights.
-    assert_eq!(shared.state_count(), 4);
+    // The held set keeps its own grouping and weights.
+    assert_eq!(shared.distribution().unwrap().state_count(), 4);
     assert_eq!(weights(&shared), [1.0; 4]);
-    assert_eq!(shared.temperature(), None);
-    assert_eq!(edited.state_count(), 2);
+    assert_eq!(temperature(&shared), None);
+    assert_eq!(edited.distribution().unwrap().state_count(), 2);
     assert_ne!(weights(&edited), weights(&shared));
 
     // Selections and collapsing share the structures they keep.
@@ -1355,10 +1390,10 @@ fn regrouping_and_reweighting_a_shared_ensemble_copy_no_structure() {
     ));
     assert!(shares_every_structure(&shared.collapse().unwrap(), &shared));
 
-    // A sample taken from an ensemble of the same topology stays shared.
-    let mut other = Ensemble::new(shared.shared_topology());
+    // A sample taken from a set of the same topology stays shared.
+    let mut other = with_empty_distribution(shared.shared_topology());
     let sample = shared.get(2).unwrap().payload().clone();
-    other.push_state(sample, EnsembleState::new()).unwrap();
+    other.push_state(sample, None, State::new(), None).unwrap();
     assert!(other
         .get(0)
         .unwrap()
@@ -1367,8 +1402,8 @@ fn regrouping_and_reweighting_a_shared_ensemble_copy_no_structure() {
 }
 
 #[test]
-fn editing_one_sample_of_a_shared_ensemble_copies_that_sample_alone() {
-    let original = energy_ensemble(&[0.0, 1.0, 2.0]);
+fn editing_one_sample_of_a_shared_set_copies_that_sample_alone() {
+    let original = energy_conformers(&[0.0, 1.0, 2.0]);
     let mut copy = original.clone();
     let moved = Quantity::new(Point3::new(5.0, 0.0, 0.0), NANOMETER);
     copy.get_mut(1)
@@ -1418,7 +1453,7 @@ fn editing_one_sample_of_a_shared_ensemble_copies_that_sample_alone() {
         [0.0; 3]
     );
 
-    // An edit that fails after copying changes neither ensemble.
+    // An edit that fails after copying changes neither set.
     let mut failed = original.clone();
     assert!(failed
         .get_mut(0)
@@ -1434,44 +1469,46 @@ fn editing_one_sample_of_a_shared_ensemble_copies_that_sample_alone() {
 #[test]
 fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
     // Four conformers, energies 0..3 kJ/mol, weights 1..4.
-    let mut ensemble = energy_ensemble(&[0.0, 1.0, 2.0, 3.0]);
-    for (index, weight) in [1.0, 2.0, 3.0, 4.0].into_iter().enumerate() {
-        ensemble.get_mut(index).unwrap().set_weight(weight).unwrap();
-    }
-    ensemble
+    let mut set = energy_conformers(&[0.0, 1.0, 2.0, 3.0]);
+    let mut distribution = set.distribution_mut().unwrap();
+    distribution
+        .set_weights(Some(vec![1.0, 2.0, 3.0, 4.0]))
+        .unwrap();
+    distribution
         .state_mut(1)
         .unwrap()
         .properties_mut()
         .insert(key("label"), PropertyValue::Int(1))
         .unwrap();
-    ensemble
+    distribution
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    let before = ensemble.clone();
+    let before = set.clone();
 
     // An unchanged grouping keeps everything.
-    ensemble.regroup(ensemble.partition().clone()).unwrap();
-    assert_eq!(energies(&ensemble), energies(&before));
+    let unchanged = set.distribution().unwrap().partition().clone();
+    set.distribution_mut().unwrap().regroup(unchanged).unwrap();
+    assert_eq!(energies(&set), energies(&before));
     assert_eq!(
-        ensemble.state(1).unwrap().properties(),
+        set.state(1).unwrap().properties(),
         before.state(1).unwrap().properties()
     );
 
     // Merging conformers 0 and 1 under 1 keeps conformer 1's state.
-    let merged = EnsemblePartition::new(vec![0, 0, 1, 2], vec![1, 2, 3]).unwrap();
-    ensemble.regroup(merged).unwrap();
-    assert_eq!(weights(&ensemble), [1.0, 2.0, 3.0, 4.0]);
-    assert_eq!(energies(&ensemble), [kj(1.0), kj(2.0), kj(3.0)]);
+    let merged = Partition::new(vec![0, 0, 1, 2], vec![1, 2, 3]).unwrap();
+    set.distribution_mut().unwrap().regroup(merged).unwrap();
+    assert_eq!(weights(&set), [1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(energies(&set), [kj(1.0), kj(2.0), kj(3.0)]);
     assert_eq!(
-        ensemble.state(0).unwrap().properties().get(&key("label")),
+        set.state(0).unwrap().properties().get(&key("label")),
         Some(&PropertyValue::Int(1))
     );
-    assert_eq!(ensemble.state(0).unwrap().population(), 3.0);
-    assert_eq!(ensemble.temperature(), Some(Quantity::new(300.0, KELVIN)));
+    // Relative to the largest member weight, 4.
+    assert_eq!(set.state(0).unwrap().population(), 0.75);
+    assert_eq!(temperature(&set), Some(Quantity::new(300.0, KELVIN)));
     // Samples never move.
     assert_eq!(
-        ensemble
-            .iter()
+        set.iter()
             .map(|sample| sample.positions().clone())
             .collect::<Vec<_>>(),
         before
@@ -1483,28 +1520,31 @@ fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
     // Splitting the merged state loses its energy and properties; the state
     // that takes a whole old state with part of a split one keeps the whole
     // one's energy when its representative comes from it.
-    let split = EnsemblePartition::new(vec![0, 1, 0, 2], vec![2, 1, 3]).unwrap();
-    ensemble.regroup(split).unwrap();
-    assert_eq!(weights(&ensemble), [1.0, 2.0, 3.0, 4.0]);
-    assert_eq!(energies(&ensemble), [kj(2.0), None, kj(3.0)]);
-    assert!(ensemble.state(1).unwrap().properties().is_empty());
+    let split = Partition::new(vec![0, 1, 0, 2], vec![2, 1, 3]).unwrap();
+    set.distribution_mut().unwrap().regroup(split).unwrap();
+    assert_eq!(weights(&set), [1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(energies(&set), [kj(2.0), None, kj(3.0)]);
+    assert!(set.state(1).unwrap().properties().is_empty());
 
-    // A partition of another sample count changes nothing.
-    let snapshot = ensemble.clone();
+    // A partition of another member count changes nothing.
+    let snapshot = set.clone();
     assert_eq!(
-        ensemble.regroup(EnsemblePartition::one_state(3)),
-        Err(EnsembleError::PartitionMismatch {
+        set.distribution_mut()
+            .unwrap()
+            .regroup(Partition::one_state(3)),
+        Err(SampleSetError::PartitionMismatch {
             expected: 4,
             actual: 3
         })
     );
-    assert_eq!(ensemble.partition(), snapshot.partition());
-    assert_eq!(energies(&ensemble), energies(&snapshot));
+    assert_eq!(set.distribution(), snapshot.distribution());
 
     // One state split into several loses its energy.
     let mut one = grouped(&[1.0, 1.0, 1.0, 1.0], &[0, 0, 0, 0], &[0]);
     set_energies(&mut one, &[Some(5.0)]);
-    one.regroup(EnsemblePartition::new(vec![0, 0, 1, 1], vec![0, 2]).unwrap())
+    one.distribution_mut()
+        .unwrap()
+        .regroup(Partition::new(vec![0, 0, 1, 1], vec![0, 2]).unwrap())
         .unwrap();
     assert_eq!(energies(&one), [None, None]);
     assert_eq!(weights(&one), [1.0; 4]);
@@ -1512,46 +1552,48 @@ fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
 
 #[test]
 fn collapse_keeps_one_representative_per_state_with_its_population() {
-    let mut ensemble = grouped(&[1.0, 2.0, 3.0, 4.0], &[0, 1, 0, 1], &[2, 1]);
-    ensemble
-        .replace_positions([1.0, 2.0, 3.0, 4.0].map(single_position))
+    let mut set = grouped(&[1.0, 2.0, 3.0, 4.0], &[0, 1, 0, 1], &[2, 1]);
+    set.replace_positions([1.0, 2.0, 3.0, 4.0].map(single_position))
         .unwrap();
-    set_energies(&mut ensemble, &[Some(0.0), None]);
-    ensemble
+    set_energies(&mut set, &[Some(0.0), None]);
+    set.distribution_mut()
+        .unwrap()
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    let source = ensemble.clone();
+    let source = set.clone();
 
-    let collapsed = ensemble.collapse().unwrap();
+    let collapsed = set.collapse().unwrap();
     assert_eq!(collapsed.len(), 2);
-    assert_eq!(weights(&collapsed), [4.0, 6.0]);
+    // Populations 4 and 6, relative to the largest member weight, 4.
+    assert_eq!(weights(&collapsed), [1.0, 1.5]);
     assert_eq!(
         collapsed.get(0).unwrap().positions(),
-        ensemble.get(2).unwrap().positions()
+        set.get(2).unwrap().positions()
     );
     assert_eq!(
         collapsed.get(1).unwrap().positions(),
-        ensemble.get(1).unwrap().positions()
+        set.get(1).unwrap().positions()
     );
     assert_eq!(
-        collapsed.partition(),
-        &EnsemblePartition::state_per_sample(2)
+        collapsed.distribution().unwrap().partition(),
+        &Partition::state_per_sample(2)
     );
     assert_eq!(energies(&collapsed), [kj(0.0), None]);
-    assert_eq!(collapsed.temperature(), ensemble.temperature());
+    assert_eq!(temperature(&collapsed), temperature(&set));
     for (collapsed, source) in collapsed
+        .distribution()
+        .unwrap()
         .state_probabilities()
         .unwrap()
         .into_iter()
-        .zip(ensemble.state_probabilities().unwrap())
+        .zip(set.distribution().unwrap().state_probabilities().unwrap())
     {
         assert!((collapsed - source).abs() <= 1.0e-15);
     }
     // The source is unchanged.
-    assert_eq!(weights(&ensemble), weights(&source));
-    assert_eq!(ensemble.partition(), source.partition());
+    assert_eq!(set.distribution(), source.distribution());
     assert_eq!(
-        Ensemble::new(single_atom_topology())
+        with_empty_distribution(single_atom_topology())
             .collapse()
             .unwrap()
             .len(),
@@ -1562,31 +1604,40 @@ fn collapse_keeps_one_representative_per_state_with_its_population() {
 #[test]
 fn selection_copies_samples_and_whole_or_partial_states() {
     // State 0: samples 0 and 1, represented by 1; state 1: sample 2.
-    let mut ensemble = grouped(&[1.0, 2.0, 3.0], &[0, 0, 1], &[1, 2]);
-    set_energies(&mut ensemble, &[Some(1.0), Some(2.0)]);
+    let mut set = grouped(&[1.0, 2.0, 3.0], &[0, 0, 1], &[1, 2]);
+    set_energies(&mut set, &[Some(1.0), Some(2.0)]);
 
     // Weights are relative, so selection keeps them as stored.
-    let whole = ensemble.select([2, 0, 1, 1]).unwrap();
+    let whole = set.select([2, 0, 1, 1]).unwrap();
     assert_eq!(weights(&whole), [3.0, 1.0, 2.0, 2.0]);
-    assert_eq!(whole.partition().assignments(), [1, 0, 0, 0]);
+    assert_eq!(
+        whole.distribution().unwrap().partition().assignments(),
+        [1, 0, 0, 0]
+    );
     assert_eq!(representatives(&whole), [2, 0]);
     assert_eq!(energies(&whole), [kj(1.0), kj(2.0)]);
 
     // A partly selected state has no energy.
-    let partial = ensemble.select([0, 2]).unwrap();
-    assert_eq!(partial.partition().assignments(), [0, 1]);
+    let partial = set.select([0, 2]).unwrap();
+    assert_eq!(
+        partial.distribution().unwrap().partition().assignments(),
+        [0, 1]
+    );
     assert_eq!(representatives(&partial), [0, 1]);
     assert_eq!(energies(&partial), [None, kj(2.0)]);
 
-    // Whole states keep their samples, representative, and energy.
-    let states = ensemble.select_states([1, 0]).unwrap();
+    // Whole states keep their members, representative, and energy.
+    let states = set.select_states([1, 0]).unwrap();
     assert_eq!(weights(&states), [3.0, 1.0, 2.0]);
-    assert_eq!(states.partition().assignments(), [0, 1, 1]);
+    assert_eq!(
+        states.distribution().unwrap().partition().assignments(),
+        [0, 1, 1]
+    );
     assert_eq!(representatives(&states), [0, 2]);
     assert_eq!(energies(&states), [kj(2.0), kj(1.0)]);
     assert_eq!(
-        ensemble.select_states([2]).unwrap_err(),
-        EnsembleError::StateOutOfRange {
+        set.select_states([2]).unwrap_err(),
+        SampleSetError::StateOutOfRange {
             state: 2,
             states: 2
         }
@@ -1596,111 +1647,126 @@ fn selection_copies_samples_and_whole_or_partial_states() {
 #[test]
 fn population_ranking_and_coverage_select_the_most_populated_states() {
     let topology = Arc::new(single_atom_topology());
-    let ensemble = conformers(
-        Arc::clone(&topology),
-        [1.0, 4.0, 2.0, 2.0, 1.0]
-            .map(|weight| EnsembleSample::new(single_position(0.0), weight).unwrap()),
-    )
-    .unwrap();
+    let set = weighted(Arc::clone(&topology), &[1.0, 4.0, 2.0, 2.0, 1.0]);
+    let distribution = set.distribution().unwrap();
 
     // Equal weights and populations keep sample and state order.
-    assert_eq!(ensemble.ranked_by_weight(), [1, 2, 3, 0, 4]);
-    assert_eq!(ensemble.ranked_by_population(), [1, 2, 3, 0, 4]);
-    assert_eq!(ensemble.probabilities().unwrap(), [0.1, 0.4, 0.2, 0.2, 0.1]);
-    assert_eq!(weights(&ensemble), [1.0, 4.0, 2.0, 2.0, 1.0]);
+    assert_eq!(distribution.ranked_by_weight(), [1, 2, 3, 0, 4]);
+    assert_eq!(distribution.ranked_by_population(), [1, 2, 3, 0, 4]);
+    assert_eq!(
+        distribution.probabilities().unwrap(),
+        [0.1, 0.4, 0.2, 0.2, 0.1]
+    );
+    assert_eq!(weights(&set), [1.0, 4.0, 2.0, 2.0, 1.0]);
 
-    assert_eq!(ensemble.covering_population(0.4).unwrap(), [1]);
-    assert_eq!(ensemble.covering_population(0.5).unwrap(), [1, 2]);
-    assert_eq!(ensemble.covering_population(0.85).unwrap(), [1, 2, 3, 0]);
-    assert_eq!(ensemble.covering_population(1.0).unwrap(), [1, 2, 3, 0, 4]);
+    assert_eq!(distribution.covering_population(0.4).unwrap(), [1]);
+    assert_eq!(distribution.covering_population(0.5).unwrap(), [1, 2]);
+    assert_eq!(
+        distribution.covering_population(0.85).unwrap(),
+        [1, 2, 3, 0]
+    );
+    assert_eq!(
+        distribution.covering_population(1.0).unwrap(),
+        [1, 2, 3, 0, 4]
+    );
     for fraction in [0.0, -0.5, 1.5, f64::NAN] {
         assert_eq!(
-            ensemble.covering_population(fraction),
-            Err(EnsembleError::InvalidFraction)
+            distribution.covering_population(fraction),
+            Err(SampleSetError::InvalidFraction)
         );
     }
-    // States of several samples rank by their summed weight.
+    // States of several members rank by their summed weight.
     let pooled = grouped(&[3.0, 2.0, 2.0], &[0, 1, 1], &[0, 1]);
+    let pooled = pooled.distribution().unwrap();
     assert_eq!(pooled.ranked_by_weight(), [0, 1, 2]);
     assert_eq!(pooled.ranked_by_population(), [1, 0]);
     assert_eq!(pooled.covering_population(0.5).unwrap(), [1]);
 
     // A full fraction keeps states too light to change the total.
-    let light = conformers(
-        Arc::clone(&topology),
-        [1.0, 1.0e-20].map(|weight| EnsembleSample::new(single_position(0.0), weight).unwrap()),
-    )
-    .unwrap();
+    let light = weighted(Arc::clone(&topology), &[1.0, 1.0e-20]);
+    let light = light.distribution().unwrap();
     assert_eq!(light.covering_population(1.0).unwrap(), [0, 1]);
     assert_eq!(light.covering_population(0.999).unwrap(), [0]);
 
-    let skewed = conformers(
-        Arc::clone(&topology),
-        [2.0, 1.0, 1.0].map(|weight| EnsembleSample::new(single_position(0.0), weight).unwrap()),
-    )
-    .unwrap();
-    assert_eq!(skewed.effective_sample_size().unwrap(), 8.0 / 3.0);
-    let uniform = conformers(
-        Arc::clone(&topology),
-        [7.0; 4].map(|weight| EnsembleSample::new(single_position(0.0), weight).unwrap()),
-    )
-    .unwrap();
-    assert_eq!(uniform.effective_sample_size().unwrap(), 4.0);
+    let skewed = weighted(Arc::clone(&topology), &[2.0, 1.0, 1.0]);
+    assert_eq!(
+        skewed
+            .distribution()
+            .unwrap()
+            .effective_sample_size()
+            .unwrap(),
+        8.0 / 3.0
+    );
+    let uniform = weighted(Arc::clone(&topology), &[7.0; 4]);
+    assert_eq!(
+        uniform
+            .distribution()
+            .unwrap()
+            .effective_sample_size()
+            .unwrap(),
+        4.0
+    );
 
-    let empty = Ensemble::new(topology);
+    let empty = with_empty_distribution(topology);
+    let empty = empty.distribution().unwrap();
     assert_eq!(empty.ranked_by_weight(), Vec::<usize>::new());
     assert_eq!(empty.ranked_by_population(), Vec::<usize>::new());
-    assert_eq!(empty.probabilities(), Err(EnsembleError::EmptySource));
+    assert_eq!(
+        empty.probabilities(),
+        Err(SampleSetError::EmptyDistribution)
+    );
     assert_eq!(
         empty.effective_sample_size(),
-        Err(EnsembleError::EmptySource)
+        Err(SampleSetError::EmptyDistribution)
     );
     assert_eq!(
         empty.covering_population(0.5),
-        Err(EnsembleError::EmptySource)
+        Err(SampleSetError::EmptyDistribution)
     );
 }
 
 #[test]
 fn energy_ranking_and_windows_are_relative_to_the_lowest_state() {
-    let mut ensemble = energy_ensemble(&[10.0, 0.0, 30.0, 4.184, 0.0]);
-    assert_eq!(ensemble.ranked_by_energy().unwrap(), [1, 4, 3, 0, 2]);
+    let mut set = energy_conformers(&[10.0, 0.0, 30.0, 4.184, 0.0]);
+    let distribution = set.distribution().unwrap();
+    assert_eq!(distribution.ranked_by_energy().unwrap(), [1, 4, 3, 0, 2]);
     // The window bound is inclusive and converted to the canonical unit.
     assert_eq!(
-        ensemble
+        distribution
             .within_energy_window(Quantity::new(1.0, KILOCALORIE_PER_MOLE))
             .unwrap(),
         [1, 3, 4]
     );
     assert_eq!(
-        ensemble
+        distribution
             .within_energy_window(Quantity::new(0.0, KILOJOULE_PER_MOLE))
             .unwrap(),
         [1, 4]
     );
-    let window = ensemble
+    let window = distribution
         .within_energy_window(Quantity::new(10.0, KILOJOULE_PER_MOLE))
         .unwrap();
     assert_eq!(window, [0, 1, 3, 4]);
     assert_eq!(
-        energies(&ensemble.select_states(window).unwrap()),
+        energies(&set.select_states(window).unwrap()),
         [10.0, 0.0, 4.184, 0.0].map(kj)
     );
 
     for value in [-1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
-            ensemble.within_energy_window(Quantity::new(value, KILOJOULE_PER_MOLE)),
-            Err(EnsembleError::InvalidEnergyWindow)
+            distribution.within_energy_window(Quantity::new(value, KILOJOULE_PER_MOLE)),
+            Err(SampleSetError::InvalidEnergyWindow)
         );
     }
-    ensemble.state_mut(3).unwrap().set_energy(None).unwrap();
+    set_energies(&mut set, &[Some(10.0), Some(0.0), Some(30.0), None]);
+    let distribution = set.distribution().unwrap();
     assert_eq!(
-        ensemble.ranked_by_energy(),
-        Err(EnsembleError::MissingEnergy { state: 3 })
+        distribution.ranked_by_energy(),
+        Err(SampleSetError::Missing(Requirement::StateEnergies))
     );
     assert_eq!(
-        ensemble.within_energy_window(Quantity::new(1.0, KILOJOULE_PER_MOLE)),
-        Err(EnsembleError::MissingEnergy { state: 3 })
+        distribution.within_energy_window(Quantity::new(1.0, KILOJOULE_PER_MOLE)),
+        Err(SampleSetError::Missing(Requirement::StateEnergies))
     );
 }
 
@@ -1710,15 +1776,15 @@ fn model_views_report_which_structure_they_borrow() {
     let model = Model::new(Arc::clone(&topology), single_position(0.0)).unwrap();
     assert_eq!(model.as_model_view().kind(), StructureKind::Model);
 
-    let mut ensemble = energy_ensemble(&[2.5]);
-    ensemble
-        .push_sample(EnsembleSample::new(single_position(0.0), 3.0).unwrap(), 0)
+    let mut set = energy_conformers(&[2.5]);
+    set.push_member(Sample::new(single_position(0.0)), None, 0, Some(3.0))
         .unwrap();
-    ensemble
+    set.distribution_mut()
+        .unwrap()
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    let StructureKind::Sample(context) = ensemble.get(1).unwrap().as_model_view().kind() else {
-        panic!("an ensemble sample is a sample");
+    let StructureKind::Sample(context) = set.get(1).unwrap().as_model_view().kind() else {
+        panic!("a member is a sample");
     };
     assert_eq!(context.place(), None);
     assert_eq!(
@@ -1732,7 +1798,7 @@ fn model_views_report_which_structure_they_borrow() {
         ))
     );
     assert_eq!(context.velocities(), None);
-    let sample = ensemble.get(0).unwrap();
+    let sample = set.get(0).unwrap();
     assert!(matches!(
         sample.as_model_view().kind(),
         StructureKind::Sample(context)
@@ -1744,27 +1810,30 @@ fn model_views_report_which_structure_they_borrow() {
         StructureKind::Model
     );
 
-    let mut trajectory = Trajectory::new(topology);
-    let mut frame = TrajectoryFrame::new(single_position(0.0));
-    frame.set_step(Some(4));
-    trajectory.push(frame).unwrap();
+    let mut trajectory = SampleSet::new(topology);
+    trajectory
+        .set_order(Some(Order::Time(
+            TimeAxis::new(None, Some(Vec::new())).unwrap(),
+        )))
+        .unwrap();
+    let place = Place::Time {
+        time: None,
+        step: Some(4),
+    };
+    trajectory
+        .push(Sample::new(single_position(0.0)), Some(place))
+        .unwrap();
     let frame = trajectory.get(0).unwrap();
     let StructureKind::Sample(context) = frame.as_model_view().kind() else {
-        panic!("a trajectory frame is a sample");
+        panic!("a frame is a sample");
     };
-    assert_eq!(
-        context.place(),
-        Some(Place::Time {
-            time: None,
-            step: Some(4),
-        })
-    );
+    assert_eq!(context.place(), Some(place));
     assert_eq!(context.membership(), None);
     assert_eq!(context.forces(), None);
 }
 
 #[test]
-fn rigid_transforms_move_models_members_and_frames_with_their_cells() {
+fn rigid_transforms_move_models_and_samples_with_their_cells() {
     use crate::geometry::{Matrix3, RigidTransform};
     let topology = Arc::new(single_atom_topology());
     let box_cell = PeriodicCell::orthorhombic(
@@ -1781,23 +1850,23 @@ fn rigid_transforms_move_models_members_and_frames_with_their_cells() {
         Vector3::new(0.0, 0.0, 1.0),
     );
     let transform = RigidTransform::from_canonical(turn, Vector3::new(2.0, 0.0, 0.0)).unwrap();
-    let mut ensemble = bundle([model.clone()]).unwrap();
-    let mut trajectory = Trajectory::new(Arc::clone(&topology));
+    let mut members = bundle([model.clone()]).unwrap();
+    let mut trajectory = SampleSet::from_samples(
+        Arc::clone(&topology),
+        [Sample::new(single_position(1.0)).with_cell(box_cell)],
+    )
+    .unwrap();
     trajectory
-        .push(TrajectoryFrame::new(single_position(1.0)).with_cell(box_cell))
+        .set_order(Some(Order::Time(TimeAxis::default())))
         .unwrap();
 
     model.apply_rigid_transform(&transform).unwrap();
-    ensemble
-        .get_mut(0)
-        .unwrap()
-        .apply_rigid_transform(&transform)
-        .unwrap();
-    trajectory
-        .get_mut(0)
-        .unwrap()
-        .apply_rigid_transform(&transform)
-        .unwrap();
+    for set in [&mut members, &mut trajectory] {
+        set.get_mut(0)
+            .unwrap()
+            .apply_rigid_transform(&transform)
+            .unwrap();
+    }
 
     assert_eq!(
         model.positions().values().value(),
@@ -1812,7 +1881,7 @@ fn rigid_transforms_move_models_members_and_frames_with_their_cells() {
         ]
     );
     for view in [
-        ensemble.get(0).unwrap().as_model_view(),
+        members.get(0).unwrap().as_model_view(),
         trajectory.get(0).unwrap().as_model_view(),
     ] {
         assert_eq!(view.positions(), model.positions());

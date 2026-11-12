@@ -2,7 +2,7 @@
 //!
 //! [`minimize`] runs limited-memory BFGS (L-BFGS) with a strong-Wolfe line
 //! search on all Cartesian coordinates. It reads a borrowed [`ModelView`], so
-//! models, ensemble samples, and trajectory frames are minimized the same way,
+//! models, samples, and trajectory frames are minimized the same way,
 //! and returns new [`Positions`] without changing its input. Periodic cells are
 //! passed through to the potential unchanged.
 //!

@@ -1,4 +1,4 @@
-//! Topologies, hierarchies, models, ensembles, selections, and their editors.
+//! Topologies, hierarchies, models, sample sets, selections, and their editors.
 
 mod atom_order;
 mod classification;
@@ -8,6 +8,7 @@ mod edit_scale;
 mod editors;
 mod hierarchy;
 mod model_append;
+mod orders;
 mod ownership;
 mod perception;
 mod placement;
@@ -15,7 +16,6 @@ mod properties;
 mod scientific_selection;
 mod select_language;
 mod selection;
-mod series;
 #[path = "../support/mod.rs"]
 mod support;
 mod topology;

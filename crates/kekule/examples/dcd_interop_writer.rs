@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut frame = FrameBuffer::new(topology);
     for (step, shift) in [(0, 0.0), (1, 1.0)] {
-        frame.frame_mut().set_positions(Quantity::new(
+        frame.sample_mut().set_positions(Quantity::new(
             [
                 Point3::new(0.0 + shift, 1.0, 2.0),
                 Point3::new(3.0 + shift, 4.0, 5.0),
@@ -60,8 +60,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             ],
             ANGSTROM,
         ))?;
-        frame.frame_mut().set_cell(Some(cell));
-        frame.frame_mut().set_step(Some(step));
+        frame.sample_mut().set_cell(Some(cell));
+        frame.set_step(Some(step));
         writer.write_frame(frame.frame_view())?;
     }
     writer.finish()?;

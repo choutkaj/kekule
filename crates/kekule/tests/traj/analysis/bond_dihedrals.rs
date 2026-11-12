@@ -1,4 +1,3 @@
-use kekule::structure::{Trajectory, TrajectoryFrame};
 use kekule::{
     geometry::Point3,
     smiles,
@@ -8,6 +7,8 @@ use kekule::{
     },
     units::{Quantity, NANOMETER},
 };
+
+use crate::support::{time_ordered, Frame};
 
 #[test]
 fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry() {
@@ -43,10 +44,9 @@ fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry()
     degenerate[0] = Point3::new(0.0, -1.0, 0.0);
     let mut rotated = points;
     rotated[0] = Point3::new(-1.0, 0.0, 0.0);
-    let frames = [points, degenerate, rotated].map(|points| {
-        TrajectoryFrame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
-    });
-    let trajectory = Trajectory::from_items(topology, frames).unwrap();
+    let frames = [points, degenerate, rotated]
+        .map(|points| Frame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap()));
+    let trajectory = time_ordered(topology, frames);
     let angles = trajectory
         .iter()
         .map(|frame| {

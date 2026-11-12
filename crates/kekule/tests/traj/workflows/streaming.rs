@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use kekule::geometry::Point3;
-use kekule::structure::TrajectoryFrameView;
 use kekule::topology::Topology;
 use kekule::traj::{
-    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryIoError, TrajectoryIoErrorKind,
-    TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameData, FrameView, SeekableTrajectoryReader, TrajectoryIoError,
+    TrajectoryIoErrorKind, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, ANGSTROM};
 
@@ -79,7 +78,7 @@ impl TrajectoryWriter for CompanionWriter {
         Arc::clone(&self.topology)
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !std::ptr::eq(self.topology.as_ref(), frame.topology()) {
             return Err(TrajectoryIoError::new(
                 TrajectoryIoErrorKind::TopologyMismatch,

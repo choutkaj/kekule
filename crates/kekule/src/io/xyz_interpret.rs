@@ -8,9 +8,7 @@ use crate::diagnostics::{
 };
 use crate::geometry::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
-use crate::structure::{
-    Ensemble, EnsembleSample, EnsembleState, Model, ModelBuilder, Positions, SampleSet,
-};
+use crate::structure::{Model, ModelBuilder, Positions, Sample, SampleSet};
 use crate::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, Unit, ANGSTROM};
 
@@ -35,7 +33,7 @@ pub enum XyzFrameSelection {
     Index(usize),
 }
 
-/// Options shared by single-frame and ensemble interpretation.
+/// Options shared by single-frame and sample set interpretation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Common {
     length_unit: Unit,
@@ -168,15 +166,15 @@ impl XyzInterpretOptions {
     common_options!();
 }
 
-/// Options of [`XyzDocument::interpret_ensemble`].
+/// Options of [`XyzDocument::interpret_sample_set`].
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct XyzEnsembleInterpretOptions {
+pub struct XyzSampleSetInterpretOptions {
     frames: Option<Vec<usize>>,
     common: Common,
 }
 
-impl XyzEnsembleInterpretOptions {
-    /// Zero-based indices of the frames to interpret, in member order;
+impl XyzSampleSetInterpretOptions {
+    /// Zero-based indices of the frames to interpret, in sample order;
     /// `None`, the default, selects every frame in source order.
     pub fn frames(&self) -> Option<&[usize]> {
         self.frames.as_deref()
@@ -359,41 +357,6 @@ impl XyzInterpretation {
     }
 }
 
-/// Several frames interpreted as one equally weighted ensemble, with one
-/// report per member.
-#[derive(Debug, Clone)]
-pub struct XyzEnsembleInterpretation {
-    ensemble: Ensemble,
-    reports: Vec<XyzInterpretationReport>,
-}
-
-impl XyzEnsembleInterpretation {
-    /// The interpreted ensemble, one member per selected frame.
-    pub fn ensemble(&self) -> &Ensemble {
-        &self.ensemble
-    }
-
-    /// One report per member, in member order.
-    pub fn reports(&self) -> &[XyzInterpretationReport] {
-        &self.reports
-    }
-
-    /// The topology all members share.
-    pub fn topology(&self) -> &Topology {
-        self.ensemble.topology()
-    }
-
-    /// The interpreted ensemble, discarding the reports.
-    pub fn into_ensemble(self) -> Ensemble {
-        self.ensemble
-    }
-
-    /// The ensemble and its per-member reports.
-    pub fn into_parts(self) -> (Ensemble, Vec<XyzInterpretationReport>) {
-        (self.ensemble, self.reports)
-    }
-}
-
 /// Several frames interpreted as one unordered sample set without a
 /// distribution, with one report per sample.
 #[derive(Debug, Clone)]
@@ -427,20 +390,6 @@ impl XyzSampleSetInterpretation {
     pub fn into_parts(self) -> (SampleSet, Vec<XyzInterpretationReport>) {
         (self.set, self.reports)
     }
-}
-
-/// The frames of an ensemble interpretation as a sample set without a
-/// distribution: an XYZ file states no weights or states.
-pub(crate) fn interpret_xyz_sample_set(
-    document: &XyzDocument,
-    options: &XyzEnsembleInterpretOptions,
-) -> Result<XyzSampleSetInterpretation, FormatError> {
-    let XyzEnsembleInterpretation { ensemble, reports } =
-        interpret_xyz_ensemble(document, options)?;
-    let mut set = SampleSet::from_ensemble(ensemble);
-    set.set_distribution(None)
-        .expect("clearing a distribution cannot fail");
-    Ok(XyzSampleSetInterpretation { set, reports })
 }
 
 fn interpret_error(kind: DiagnosticKind, message: impl Into<String>) -> FormatError {
@@ -505,10 +454,12 @@ fn unknown_frame(index: usize) -> FormatError {
     })
 }
 
-pub(crate) fn interpret_xyz_ensemble(
+/// The selected frames as a sample set without a distribution: an XYZ file
+/// states no weights or states.
+pub(crate) fn interpret_xyz_sample_set(
     document: &XyzDocument,
-    options: &XyzEnsembleInterpretOptions,
-) -> Result<XyzEnsembleInterpretation, FormatError> {
+    options: &XyzSampleSetInterpretOptions,
+) -> Result<XyzSampleSetInterpretation, FormatError> {
     let frames = document.frames();
     if frames.is_empty() {
         return Err(no_frames());
@@ -540,10 +491,10 @@ pub(crate) fn interpret_xyz_ensemble(
         .build_model(common.length_unit)
         .map_err(|error| in_frame(error, first_index))?;
     let (first_model, first_report) = (model, first.report);
-    let mut ensemble = Ensemble::new(first_model.shared_topology());
+    let mut set = SampleSet::new(first_model.shared_topology());
     let shared_bonds = bond_identity(&first_report.bonds);
     let mut reports = Vec::with_capacity(selected.len());
-    push_sample(&mut ensemble, first.points, common.length_unit, first_index)?;
+    push_sample(&mut set, first.points, common.length_unit, first_index)?;
     reports.push(first_report);
     for &index in &selected[1..] {
         let frame = &frames[index];
@@ -576,38 +527,29 @@ pub(crate) fn interpret_xyz_ensemble(
                 model_id: index.to_string(),
             }));
         }
-        push_sample(&mut ensemble, analysed.points, common.length_unit, index)?;
+        push_sample(&mut set, analysed.points, common.length_unit, index)?;
         reports.push(analysed.report);
     }
     drop(first_model);
-    Ok(XyzEnsembleInterpretation { ensemble, reports })
+    Ok(XyzSampleSetInterpretation { set, reports })
 }
 
 fn bond_identity(bonds: &[XyzInferredBond]) -> Vec<([TopologyAtomIndex; 2], BondOrder)> {
     bonds.iter().map(|bond| (bond.atoms, bond.order)).collect()
 }
 
-/// Appends one frame as an equally weighted sample of the ensemble's one
-/// state.
+/// Appends one frame as a sample of the set.
 fn push_sample(
-    ensemble: &mut Ensemble,
+    set: &mut SampleSet,
     points: Vec<Point3>,
     unit: Unit,
     frame: usize,
 ) -> Result<(), FormatError> {
     let positions = Positions::from_vec(Quantity::new(points, unit))
         .map_err(|error| sample_error(error, frame))?;
-    let sample = EnsembleSample::new(positions, 1.0).map_err(|error| sample_error(error, frame))?;
-    if ensemble.is_empty() {
-        ensemble
-            .push_state(sample, EnsembleState::new())
-            .map(|_| ())
-            .map_err(|error| sample_error(error, frame))
-    } else {
-        ensemble
-            .push_sample(sample, 0)
-            .map_err(|error| sample_error(error, frame))
-    }
+    set.push(Sample::new(positions), None)
+        .map(|_| ())
+        .map_err(|error| sample_error(error, frame))
 }
 
 /// A failure to build the structure of a frame, keeping its cause.
@@ -615,7 +557,7 @@ fn structure_error(error: impl std::error::Error + Send + Sync + 'static) -> For
     interpret_error(DiagnosticKind::Chemistry, "Cannot build the structure.").with_source(error)
 }
 
-/// A failure to add `frame` to the ensemble, keeping its cause.
+/// A failure to add `frame` to the sample set, keeping its cause.
 fn sample_error(
     error: impl std::error::Error + Send + Sync + 'static,
     frame: usize,
@@ -623,7 +565,7 @@ fn sample_error(
     in_frame(
         interpret_error(
             DiagnosticKind::Chemistry,
-            "Cannot add the frame to the ensemble.",
+            "Cannot add the frame to the sample set.",
         )
         .with_source(error),
         frame,

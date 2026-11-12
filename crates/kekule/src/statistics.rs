@@ -5,11 +5,9 @@
 //! Weights are relative: scaling every weight by one factor changes no
 //! statistic. [`RmsfAccumulator`], [`ContactOccupancyAccumulator`], and
 //! [`GroupContactOccupancyAccumulator`] observe any borrowed structure
-//! ([`AsModelView`]: a model, a sample, an ensemble sample, a trajectory
-//! frame, or a streamed frame buffer through its `as_model_view()`) one at a
-//! time, with
-//! memory bounded by the selected atoms, pairs, or groups, not the
-//! observation count.
+//! ([`AsModelView`]: a model, a sample, or a codec frame such as a streamed
+//! frame buffer's `frame_view()`) one at a time, with memory bounded by the
+//! selected atoms, pairs, or groups, not the observation count.
 //!
 //! Accumulators merge, so a host can observe in parallel: it splits the
 //! observations into ranges, observes each range into its own accumulator,
@@ -17,20 +15,15 @@
 //! result is the same whichever threads observed the ranges, and it equals
 //! observing everything in one accumulator up to rounding.
 //!
-//! Sample sets, ensembles, and trajectories reduce themselves with the same
-//! accumulators, through one reduction. [`SampleSet::rmsf`],
-//! [`SampleSet::contact_occupancy`], and
+//! Sample sets reduce themselves with the same accumulators.
+//! [`SampleSet::rmsf`], [`SampleSet::contact_occupancy`], and
 //! [`SampleSet::group_contact_occupancy`] observe the members of the set's
-//! distribution, each with its probability, and leave the other samples out;
-//! without a distribution they observe every sample with weight one.
-//! [`Ensemble::rmsf`], [`Ensemble::contact_occupancy`], and
-//! [`Ensemble::group_contact_occupancy`] observe each sample with its
-//! probability, its weight divided by the total. [`Trajectory::rmsf`],
-//! [`Trajectory::contact_occupancy`], and
-//! [`Trajectory::group_contact_occupancy`] observe every frame with weight one,
-//! taking the frames as equally weighted equilibrium samples; to reweight
-//! frames, for example after biased sampling, observe them through an
-//! accumulator with explicit weights.
+//! distribution, each with its probability, its weight divided by the
+//! members' total, and leave the other samples out. Without a distribution
+//! they observe every sample with weight one, taking a trajectory's frames
+//! as equally weighted equilibrium samples; to reweight frames, for example
+//! after biased sampling, give the set a distribution with those weights or
+//! observe the frames through an accumulator with explicit weights.
 //!
 //! An accumulator also observes the samples of any
 //! [`SampleRead`], such as a set read from a
@@ -46,18 +39,20 @@
 //!
 //! ```
 //! use kekule::geometry::Point3;
-//! use kekule::structure::{Ensemble, EnsembleSample, EnsembleState, Positions};
+//! use kekule::structure::{Distribution, Members, Partition, Positions, Sample, SampleSet};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, NANOMETER};
 //!
 //! let topology = kekule::smiles::to_topology("CC")?;
-//! let mut ensemble = Ensemble::new(topology.clone());
+//! let mut ensemble = SampleSet::new(topology.clone());
 //! // The first atom sits at x = 0 with weight 3 and at x = 1 with weight 1.
-//! for (x, weight) in [(0.0, 3.0), (1.0, 1.0)] {
+//! for x in [0.0, 1.0] {
 //!     let points = [Point3::new(x, 0.0, 0.0), Point3::new(0.15, 0.0, 0.0)];
-//!     let positions = Positions::new(Quantity::new(points, NANOMETER))?;
-//!     ensemble.push_state(EnsembleSample::new(positions, weight)?, EnsembleState::new())?;
+//!     ensemble.push(Sample::new(Positions::new(Quantity::new(points, NANOMETER))?), None)?;
 //! }
+//! let distribution = Distribution::new(Members::All, Partition::state_per_sample(2))?
+//!     .with_weights(vec![3.0, 1.0])?;
+//! ensemble.set_distribution(Some(distribution))?;
 //!
 //! // Weighted mean 0.25, weighted variance 0.75 × 0.25² + 0.25 × 0.75² = 0.1875.
 //! let fluctuation = ensemble.rmsf(&AtomSelection::all(topology.clone()))?;
@@ -80,8 +75,7 @@ use std::sync::Arc;
 use crate::diagnostics::{Cancellation, Cancelled};
 use crate::geometry::{Point3, PointGrid, Vector3};
 use crate::structure::{
-    visit_sample, AsModelView, Ensemble, ModelView, SampleRead, SampleReadError, SampleSet,
-    SampleStorage, Trajectory,
+    visit_sample, AsModelView, ModelView, SampleRead, SampleReadError, SampleSet, SampleStorage,
 };
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -657,9 +651,9 @@ fn combine_into(
 /// use std::sync::Mutex;
 /// use kekule::parallel::{Executor, ScopedThreads};
 /// use kekule::statistics::{RmsfAccumulator, RmsfResult};
-/// use kekule::structure::Trajectory;
+/// use kekule::structure::SampleSet;
 /// use kekule::topology::AtomSelection;
-/// # fn reduce(trajectory: &Trajectory, atoms: &AtomSelection)
+/// # fn reduce(trajectory: &SampleSet, atoms: &AtomSelection)
 /// # -> Result<RmsfResult, Box<dyn std::error::Error>> {
 /// // Four ranges of frames, whatever the thread count.
 /// let (frames, ranges) = (trajectory.len(), 4);
@@ -688,9 +682,9 @@ fn combine_into(
 ///
 /// ```
 /// use kekule::statistics::{RmsfAccumulator, RmsfResult};
-/// use kekule::structure::Trajectory;
+/// use kekule::structure::SampleSet;
 /// use kekule::topology::AtomSelection;
-/// # fn reduce(trajectory: &Trajectory, atoms: &AtomSelection, weights: &[f64])
+/// # fn reduce(trajectory: &SampleSet, atoms: &AtomSelection, weights: &[f64])
 /// # -> Result<RmsfResult, Box<dyn std::error::Error>> {
 /// let mut rmsf = RmsfAccumulator::new(atoms)?;
 /// for (index, (frame, weight)) in trajectory.iter().zip(weights).enumerate() {
@@ -1258,7 +1252,7 @@ const DIRECT_PAIRS: usize = 256;
 /// ```
 /// use kekule::geometry::Point3;
 /// use kekule::statistics::GroupContactOccupancyAccumulator;
-/// use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+/// use kekule::structure::{Positions, Sample, SampleSet};
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, NANOMETER};
 ///
@@ -1270,11 +1264,11 @@ const DIRECT_PAIRS: usize = 256;
 /// // Atoms 0 and 1 against atoms 2 and 3. In the first frame atom 1 touches
 /// // atom 2; in the second atom 0 touches atom 3; in the third none touches.
 /// let frames = [[0.0, 1.0, 1.1, 3.0], [0.0, 1.0, 2.0, 0.1], [0.0, 1.0, 2.0, 3.0]];
-/// let trajectory = Trajectory::from_items(
+/// let trajectory = SampleSet::from_samples(
 ///     topology.clone(),
 ///     frames.iter().map(|xs| {
 ///         let points = xs.map(|x| Point3::new(x, 0.0, 0.0));
-///         TrajectoryFrame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
+///         Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
 ///     }),
 /// )?;
 /// let cutoff = Quantity::new(0.2, NANOMETER);
@@ -1698,57 +1692,6 @@ impl GroupContactOccupancyResult {
     }
 }
 
-/// Observes each `(index, structure, weight)` into a new [`RmsfAccumulator`]
-/// over `selection`, after checking it against `topology`; the one reduction
-/// behind every collection's RMSF.
-fn rmsf_of<'a>(
-    topology: &Arc<Topology>,
-    selection: &AtomSelection,
-    observations: impl IntoIterator<Item = (usize, ModelView<'a>, f64)>,
-) -> Result<RmsfResult, StatisticsError> {
-    selection
-        .ensure_compatible(topology)
-        .map_err(StatisticsError::Selection)?;
-    let mut accumulator = RmsfAccumulator::new(selection)?;
-    for (index, structure, weight) in observations {
-        accumulator.observe(index, &structure, weight)?;
-    }
-    accumulator.finish()
-}
-
-/// Observes each `(index, structure, weight)` into a new
-/// [`ContactOccupancyAccumulator`]; the one reduction behind every
-/// collection's contact occupancy.
-fn contact_occupancy_of<'a>(
-    topology: &Arc<Topology>,
-    pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
-    cutoff: Quantity<f64>,
-    observations: impl IntoIterator<Item = (usize, ModelView<'a>, f64)>,
-) -> Result<ContactOccupancyResult, StatisticsError> {
-    let mut accumulator = ContactOccupancyAccumulator::new(topology, pairs, cutoff)?;
-    for (index, structure, weight) in observations {
-        accumulator.observe(index, &structure, weight)?;
-    }
-    accumulator.finish()
-}
-
-/// Observes each `(index, structure, weight)` into a new
-/// [`GroupContactOccupancyAccumulator`]; the one reduction behind every
-/// collection's group contact occupancy.
-fn group_contact_occupancy_of<'a>(
-    topology: &Arc<Topology>,
-    groups: impl IntoIterator<Item = AtomSelection>,
-    pairs: impl IntoIterator<Item = (usize, usize)>,
-    cutoff: Quantity<f64>,
-    observations: impl IntoIterator<Item = (usize, ModelView<'a>, f64)>,
-) -> Result<GroupContactOccupancyResult, StatisticsError> {
-    let mut accumulator = GroupContactOccupancyAccumulator::new(topology, groups, pairs, cutoff)?;
-    for (index, structure, weight) in observations {
-        accumulator.observe(index, &structure, weight)?;
-    }
-    accumulator.finish()
-}
-
 /// Probabilities from weights already scaled by the largest one, so that
 /// the total cannot overflow.
 fn probabilities(scaled: Vec<f64>) -> Vec<f64> {
@@ -1831,145 +1774,5 @@ where
         let observations = SampleObservations::all(self);
         accumulator.observe_samples(self, &observations, 0..observations.len())?;
         accumulator.finish()
-    }
-}
-
-impl Ensemble {
-    /// Per-atom weighted RMSF about each atom's weighted mean stored position
-    /// over every sample, as defined by [`RmsfAccumulator`], each sample
-    /// observed with its probability. Align and perform periodic
-    /// preprocessing beforehand.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StatisticsError::Selection`] when `selection` is incompatible
-    /// with the ensemble's topology, [`StatisticsError::NoObservations`] for
-    /// an empty ensemble, [`StatisticsError::InvalidWeight`] at a sample whose
-    /// probability underflows to zero, and the errors of
-    /// [`RmsfAccumulator::new`] and [`RmsfAccumulator::observe`].
-    pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, StatisticsError> {
-        rmsf_of(&self.shared_topology(), selection, self.observations())
-    }
-
-    /// Weighted Cartesian contact occupancies over every sample, as defined
-    /// by [`ContactOccupancyAccumulator`], each sample observed with its
-    /// probability.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StatisticsError::NoObservations`] for an empty ensemble,
-    /// [`StatisticsError::InvalidWeight`] at a sample whose probability
-    /// underflows to zero, and the errors of
-    /// [`ContactOccupancyAccumulator::new`] and
-    /// [`ContactOccupancyAccumulator::observe`].
-    pub fn contact_occupancy(
-        &self,
-        pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
-        cutoff: Quantity<f64>,
-    ) -> Result<ContactOccupancyResult, StatisticsError> {
-        contact_occupancy_of(&self.shared_topology(), pairs, cutoff, self.observations())
-    }
-
-    /// Weighted Cartesian contact occupancies of pairs of atom groups over
-    /// every sample, as defined by [`GroupContactOccupancyAccumulator`], each
-    /// sample observed with its probability.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StatisticsError::NoObservations`] for an empty ensemble,
-    /// [`StatisticsError::InvalidWeight`] at a sample whose probability
-    /// underflows to zero, and the errors of
-    /// [`GroupContactOccupancyAccumulator::new`] and
-    /// [`GroupContactOccupancyAccumulator::observe`].
-    pub fn group_contact_occupancy(
-        &self,
-        groups: impl IntoIterator<Item = AtomSelection>,
-        pairs: impl IntoIterator<Item = (usize, usize)>,
-        cutoff: Quantity<f64>,
-    ) -> Result<GroupContactOccupancyResult, StatisticsError> {
-        group_contact_occupancy_of(
-            &self.shared_topology(),
-            groups,
-            pairs,
-            cutoff,
-            self.observations(),
-        )
-    }
-
-    /// Each sample, labelled by its index, with its probability.
-    fn observations(&self) -> impl Iterator<Item = (usize, ModelView<'_>, f64)> {
-        self.iter()
-            .zip(probabilities(self.scaled_weights()))
-            .enumerate()
-            .map(|(index, (sample, probability))| (index, sample.as_model_view(), probability))
-    }
-}
-
-impl Trajectory {
-    /// Per-atom population RMSF about mean stored positions over every frame,
-    /// as defined by [`RmsfAccumulator`] with every frame observed with weight
-    /// one: the frames are taken as equally weighted equilibrium samples.
-    /// Align and perform periodic preprocessing beforehand. To weight frames
-    /// differently, observe them through an [`RmsfAccumulator`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StatisticsError::Selection`] when `selection` is incompatible
-    /// with the trajectory's topology, [`StatisticsError::NoObservations`] for
-    /// an empty trajectory, and the errors of [`RmsfAccumulator::new`] and
-    /// [`RmsfAccumulator::observe`].
-    pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, StatisticsError> {
-        rmsf_of(&self.shared_topology(), selection, self.observations())
-    }
-
-    /// Cartesian contact occupancies over every frame, as defined by
-    /// [`ContactOccupancyAccumulator`] with every frame observed with weight
-    /// one, so each contact weight is a frame count. To weight frames
-    /// differently, observe them through a [`ContactOccupancyAccumulator`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StatisticsError::NoObservations`] for an empty trajectory and
-    /// the errors of [`ContactOccupancyAccumulator::new`] and
-    /// [`ContactOccupancyAccumulator::observe`].
-    pub fn contact_occupancy(
-        &self,
-        pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
-        cutoff: Quantity<f64>,
-    ) -> Result<ContactOccupancyResult, StatisticsError> {
-        contact_occupancy_of(&self.shared_topology(), pairs, cutoff, self.observations())
-    }
-
-    /// Cartesian contact occupancies of pairs of atom groups over every
-    /// frame, as defined by [`GroupContactOccupancyAccumulator`] with every
-    /// frame observed with weight one, so each contact weight is a frame
-    /// count. To weight frames differently, observe them through a
-    /// [`GroupContactOccupancyAccumulator`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StatisticsError::NoObservations`] for an empty trajectory and
-    /// the errors of [`GroupContactOccupancyAccumulator::new`] and
-    /// [`GroupContactOccupancyAccumulator::observe`].
-    pub fn group_contact_occupancy(
-        &self,
-        groups: impl IntoIterator<Item = AtomSelection>,
-        pairs: impl IntoIterator<Item = (usize, usize)>,
-        cutoff: Quantity<f64>,
-    ) -> Result<GroupContactOccupancyResult, StatisticsError> {
-        group_contact_occupancy_of(
-            &self.shared_topology(),
-            groups,
-            pairs,
-            cutoff,
-            self.observations(),
-        )
-    }
-
-    /// Each frame, labelled by its index, with weight one.
-    fn observations(&self) -> impl Iterator<Item = (usize, ModelView<'_>, f64)> {
-        self.iter()
-            .enumerate()
-            .map(|(index, frame)| (index, frame.as_model_view(), 1.0))
     }
 }

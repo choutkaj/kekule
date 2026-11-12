@@ -22,9 +22,9 @@ const CHECKPOINT_WORK: usize = 1 << 14;
 const WORK_ITEM_WORK: usize = 1 << 16;
 
 /// Where clustering fits run, and how a host follows and stops them, for
-/// [`SampleSet::pairwise_fitted_rmsd_with`](crate::structure::SampleSet::pairwise_fitted_rmsd_with),
-/// [`SampleSet::cluster_by_radius_with`](crate::structure::SampleSet::cluster_by_radius_with),
-/// and their [`Ensemble`](crate::structure::Ensemble) counterparts.
+/// [`SampleSet::pairwise_fitted_rmsd_with`](crate::structure::SampleSet::pairwise_fitted_rmsd_with)
+/// and
+/// [`SampleSet::cluster_by_radius_with`](crate::structure::SampleSet::cluster_by_radius_with).
 ///
 /// By default fits run on the calling thread, without cancellation or
 /// progress. The executor decides only where and when fits run: the result,
@@ -126,9 +126,8 @@ impl<'a> ClusteringRun<'a> {
 
 /// Progress of a clustering run: pairs fitted for
 /// [`SampleSet::pairwise_fitted_rmsd_with`](crate::structure::SampleSet::pairwise_fitted_rmsd_with),
-/// members placed for
-/// [`SampleSet::cluster_by_radius_with`](crate::structure::SampleSet::cluster_by_radius_with),
-/// and likewise for an [`Ensemble`](crate::structure::Ensemble).
+/// and members placed for
+/// [`SampleSet::cluster_by_radius_with`](crate::structure::SampleSet::cluster_by_radius_with).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClusteringProgress {
     completed: usize,

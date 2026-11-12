@@ -107,8 +107,8 @@ fn structure_field(field: TrajectoryField) -> StructureField {
         TrajectoryField::AtomProperties => StructureField::AtomProperties,
         TrajectoryField::BondProperties => StructureField::BondProperties,
         TrajectoryField::Properties => StructureField::Properties,
-        TrajectoryField::ItemStep => StructureField::ItemStep,
-        TrajectoryField::ItemCoordinate => StructureField::ItemCoordinate,
+        TrajectoryField::OrderStep => StructureField::OrderStep,
+        TrajectoryField::OrderCoordinate => StructureField::OrderCoordinate,
         other => unreachable!("{other} is not frame state a policy omits"),
     }
 }
@@ -126,8 +126,8 @@ pub(crate) fn sample_field(field: StructureField) -> TrajectoryField {
         StructureField::Membership => TrajectoryField::Membership,
         StructureField::Time => TrajectoryField::Time,
         StructureField::Step => TrajectoryField::Step,
-        StructureField::ItemStep => TrajectoryField::ItemStep,
-        StructureField::ItemCoordinate => TrajectoryField::ItemCoordinate,
+        StructureField::OrderStep => TrajectoryField::OrderStep,
+        StructureField::OrderCoordinate => TrajectoryField::OrderCoordinate,
         StructureField::Velocities => TrajectoryField::Velocities,
         StructureField::Forces => TrajectoryField::Forces,
         StructureField::AtomProperties => TrajectoryField::AtomProperties,

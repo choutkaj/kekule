@@ -5,11 +5,7 @@ a `Molecule`, `Topology`, `Model`, or `SampleSet`. A `Model` or `SampleSet`
 may carry its structure interpretation reports, as a
 `StructureInterpretation` or `StructureSampleSetInterpretation`. A sample set
 record may also store only the number of its samples, kept elsewhere, as a
-`SampleSetDescription`. An `Ensemble`, in-memory `Trajectory`, or `Series` is
-written as the sample set it converts to, and `NativeObject::into_ensemble`,
-`into_trajectory`, and `into_series` convert a decoded sample set back.
-A trajectory with a time or a step on only some frames has no sample set,
-so writing it is refused. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
+`SampleSetDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
 [Identity and reconstruction](../ARCHITECTURE.md#identity-and-reconstruction).
 The API lives in [`kekule::native`](../crates/kekule/src/lib.rs); the codec is
@@ -79,7 +75,10 @@ still reads the same, and readers that predate them reject them as unknown
 kinds. Version 4 stores the biological assemblies of each interpretation
 report; version 3 reports had none. Version 5 stores ensembles,
 trajectories, and series as sample sets, kinds 9 and 10, and retires kinds
-4, 5, 6, and 8; a version 5 reader reads no version 4 file.
+4, 5, 6, and 8; a version 5 reader reads no version 4 file. A reader meets
+a retired kind only in a version 5 header, which no writer produces, and
+rejects it as an unknown kind with `DiagnosticKind::InvalidValue`; an older file
+that holds one fails on its version first.
 
 ## Layout
 

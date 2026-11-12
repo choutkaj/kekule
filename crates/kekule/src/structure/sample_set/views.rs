@@ -7,9 +7,7 @@ use std::sync::Arc;
 
 use crate::structure::model::sealed::Sealed;
 use crate::structure::state::{is_bound, validate_binding};
-use crate::structure::{
-    AsModelView, EnsembleState, Model, ModelView, StructureError, StructureKind,
-};
+use crate::structure::{AsModelView, Model, ModelView, State, StructureError, StructureKind};
 use crate::topology::Topology;
 
 use super::{Place, Sample, SampleContext, SampleRead, SampleReadError, SampleSet};
@@ -161,6 +159,11 @@ impl<'a, R: ?Sized> SampleView<'a, R> {
         Arc::clone(self.reader.topology())
     }
 
+    /// The bound topology's handle, with the view's full lifetime.
+    pub(crate) fn topology_handle(self) -> &'a Arc<Topology> {
+        self.reader.topology()
+    }
+
     /// The borrowed sample with the view's full lifetime.
     pub fn payload(self) -> &'a Sample {
         self.sample
@@ -238,7 +241,7 @@ impl<R: ?Sized> fmt::Debug for StateView<'_, R> {
 }
 
 impl<R: ?Sized> std::ops::Deref for StateView<'_, R> {
-    type Target = EnsembleState;
+    type Target = State;
 
     fn deref(&self) -> &Self::Target {
         self.payload()
@@ -291,7 +294,7 @@ impl<'a, R: ?Sized> StateView<'a, R> {
     }
 
     /// The borrowed state with the view's full lifetime.
-    pub fn payload(self) -> &'a EnsembleState {
+    pub fn payload(self) -> &'a State {
         self.distribution().state(self.index)
     }
 }

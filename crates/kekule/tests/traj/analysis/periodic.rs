@@ -2,16 +2,14 @@ use std::sync::Arc;
 
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::Positions;
-use kekule::structure::{Forces, Trajectory, TrajectoryFrame, Velocities};
+use kekule::structure::{Forces, Place, Positions, SampleSet, Velocities};
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
 use kekule::traj::periodic::{self, PeriodicError};
 use kekule::units::{
     Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND,
 };
 
-use crate::support;
-use support::{linear_carbon_topology, topology};
+use crate::support::{dynamics, linear_carbon_topology, time_ordered, topology, Frame, Recorded};
 
 fn cell(length: f64) -> PeriodicCell {
     PeriodicCell::orthorhombic(
@@ -21,19 +19,18 @@ fn cell(length: f64) -> PeriodicCell {
     .unwrap()
 }
 
-fn frame(points: &[[f64; 3]], cell: Option<PeriodicCell>) -> TrajectoryFrame {
+fn frame(points: &[[f64; 3]], cell: Option<PeriodicCell>) -> Frame {
     let points = points
         .iter()
         .map(|p| Point3::new(p[0], p[1], p[2]))
         .collect::<Vec<_>>();
-    let mut frame = TrajectoryFrame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
+    let mut frame = Frame::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
     frame.set_cell(cell);
     frame
 }
 
-fn xyz(trajectory: &Trajectory, frame: usize) -> Vec<Point3> {
-    trajectory
-        .get(frame)
+fn xyz(set: &SampleSet, frame: usize) -> Vec<Point3> {
+    set.get(frame)
         .unwrap()
         .positions()
         .values()
@@ -41,22 +38,30 @@ fn xyz(trajectory: &Trajectory, frame: usize) -> Vec<Point3> {
         .to_vec()
 }
 
-/// Copying forms of the in-place periodic operations.
-fn whole(trajectory: &Trajectory) -> Result<Trajectory, PeriodicError> {
-    let mut copy = trajectory.clone();
+/// Copying forms of the in-place periodic operations. Each result is the
+/// next one `recorded`, as the operations gave it on trajectories.
+fn whole(set: &SampleSet, recorded: &mut Recorded) -> Result<SampleSet, PeriodicError> {
+    let mut copy = set.clone();
     periodic::make_molecules_whole(&mut copy)?;
+    recorded.check(&dynamics(&copy));
     Ok(copy)
 }
 
-fn imaged(trajectory: &Trajectory, anchors: &AtomSelection) -> Result<Trajectory, PeriodicError> {
-    let mut copy = trajectory.clone();
+fn imaged(
+    set: &SampleSet,
+    anchors: &AtomSelection,
+    recorded: &mut Recorded,
+) -> Result<SampleSet, PeriodicError> {
+    let mut copy = set.clone();
     periodic::image_molecules(&mut copy, anchors)?;
+    recorded.check(&dynamics(&copy));
     Ok(copy)
 }
 
-fn unwrapped(trajectory: &Trajectory) -> Result<Trajectory, PeriodicError> {
-    let mut copy = trajectory.clone();
+fn unwrapped(set: &SampleSet, recorded: &mut Recorded) -> Result<SampleSet, PeriodicError> {
+    let mut copy = set.clone();
     periodic::unwrap_trajectory(&mut copy)?;
+    recorded.check(&dynamics(&copy));
     Ok(copy)
 }
 
@@ -70,6 +75,9 @@ fn close(actual: Point3, expected: [f64; 3]) {
 
 #[test]
 fn making_whole_preserves_complete_metadata_source_and_topology_and_supports_in_place() {
+    let mut recorded = Recorded::new(&[
+        0xfb94_1a55_6ecc_d061, // whole
+    ]);
     let topology = linear_carbon_topology(2);
     let mut source_frame = frame(&[[0.9, 0.2, 0.3], [0.1, 0.2, 0.3]], Some(cell(1.0)));
     source_frame
@@ -107,7 +115,7 @@ fn making_whole_preserves_complete_metadata_source_and_topology_and_supports_in_
             PropertyColumn::Int(vec![Some(1), Some(2)]),
         )
         .unwrap();
-    let mut source = Trajectory::from_items(topology.clone(), [source_frame]).unwrap();
+    let mut source = time_ordered(topology.clone(), [source_frame]);
     source
         .get_mut(0)
         .unwrap()
@@ -126,7 +134,7 @@ fn making_whole_preserves_complete_metadata_source_and_topology_and_supports_in_
         )
         .unwrap();
     let before = format!("{source:?}");
-    let whole = whole(&source).unwrap();
+    let whole = whole(&source, &mut recorded).unwrap();
     close(xyz(&whole, 0)[0], [0.9, 0.2, 0.3]);
     close(xyz(&whole, 0)[1], [1.1, 0.2, 0.3]);
     assert_eq!(format!("{source:?}"), before);
@@ -137,8 +145,14 @@ fn making_whole_preserves_complete_metadata_source_and_topology_and_supports_in_
     assert_eq!(transformed.cell(), original.cell());
     assert_eq!(transformed.velocities(), original.velocities());
     assert_eq!(transformed.forces(), original.forces());
-    assert_eq!(transformed.time(), original.time());
-    assert_eq!(transformed.step(), original.step());
+    assert_eq!(transformed.place(), original.place());
+    assert_eq!(
+        transformed.place(),
+        Some(Place::Time {
+            time: Some(Quantity::new(2.5, PICOSECOND)),
+            step: Some(25)
+        })
+    );
     assert_eq!(transformed.properties(), original.properties());
     let velocity_pointer = source
         .get(0)
@@ -165,6 +179,12 @@ fn making_whole_preserves_complete_metadata_source_and_topology_and_supports_in_
 
 #[test]
 fn making_whole_uses_true_shortest_images_for_skewed_rotated_and_partial_cells() {
+    let mut recorded = Recorded::new(&[
+        0x2d85_87a2_e7df_2695, // fully periodic
+        0xd19d_1d28_b6e3_670d, // partially periodic
+        0x85a6_65f6_414a_508f, // rotated, fully periodic
+        0x331e_bbc6_d7ea_041b, // rotated, partially periodic
+    ]);
     let topology = linear_carbon_topology(2);
     for rotate in [false, true] {
         let rotate_vector = |v: Vector3| {
@@ -186,12 +206,11 @@ fn making_whole_uses_true_shortest_images_for_skewed_rotated_and_partial_cells()
             .map(rotate_vector);
             let cell = PeriodicCell::new(Quantity::new(basis, NANOMETER), axes).unwrap();
             let delta = rotate_vector(Vector3::new(0.931, 0.098, 0.0));
-            let trajectory = Trajectory::from_items(
+            let set = time_ordered(
                 topology.clone(),
                 [frame(&[[0.0; 3], [delta.x, delta.y, delta.z]], Some(cell))],
-            )
-            .unwrap();
-            let whole = whole(&trajectory).unwrap();
+            );
+            let whole = whole(&set, &mut recorded).unwrap();
             let expected = rotate_vector(Vector3::new(expected[0], expected[1], expected[2]));
             close(xyz(&whole, 0)[1], [expected.x, expected.y, expected.z]);
         }
@@ -200,6 +219,7 @@ fn making_whole_uses_true_shortest_images_for_skewed_rotated_and_partial_cells()
 
 #[test]
 fn reconstruction_checks_ring_closures_and_rolls_back_late_failures() {
+    let mut recorded = Recorded::new(&[]);
     let topology = topology(&["C", "C", "C"], &[(0, 1), (1, 2), (2, 0)]);
     let good = frame(
         &[[0.9, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 0.1, 0.0]],
@@ -209,28 +229,29 @@ fn reconstruction_checks_ring_closures_and_rolls_back_late_failures() {
         &[[0.1, 0.0, 0.0], [0.4, 0.0, 0.0], [0.8, 0.0, 0.0]],
         Some(cell(1.0)),
     );
-    let mut trajectory = Trajectory::from_items(topology, [good, bad]).unwrap();
-    let before = format!("{trajectory:?}");
+    let mut set = time_ordered(topology, [good, bad]);
+    let before = format!("{set:?}");
     assert!(matches!(
-        periodic::make_molecules_whole(&mut trajectory),
+        periodic::make_molecules_whole(&mut set),
         Err(PeriodicError::InconsistentBondImages { frame: 1, .. })
     ));
-    assert_eq!(format!("{trajectory:?}"), before);
+    assert_eq!(format!("{set:?}"), before);
     assert!(matches!(
-        whole(&trajectory),
+        whole(&set, &mut recorded),
         Err(PeriodicError::InconsistentBondImages { frame: 1, .. })
     ));
 }
 
 #[test]
 fn ring_closure_validation_is_independent_of_cell_aspect_ratio() {
+    let mut recorded = Recorded::new(&[]);
     let topology = topology(&["C", "C", "C"], &[(0, 1), (1, 2), (2, 0)]);
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(1.0e-10, 10.0, 10.0), NANOMETER),
         [true; 3],
     )
     .unwrap();
-    let trajectory = Trajectory::from_items(
+    let set = time_ordered(
         topology,
         [frame(
             &[
@@ -240,16 +261,18 @@ fn ring_closure_validation_is_independent_of_cell_aspect_ratio() {
             ],
             Some(cell),
         )],
-    )
-    .unwrap();
+    );
     assert!(matches!(
-        whole(&trajectory),
+        whole(&set, &mut recorded),
         Err(PeriodicError::InconsistentBondImages { frame: 0, .. })
     ));
 }
 
 #[test]
 fn reconstruction_reuses_bond_image_ties_when_traversal_reverses_an_edge() {
+    let mut recorded = Recorded::new(&[
+        0x5398_ba0b_c66d_cd7d, // whole
+    ]);
     let topology = topology(&["C", "C", "C"], &[(0, 2), (1, 2)]);
     let cell = PeriodicCell::new(
         Quantity::new(
@@ -263,15 +286,14 @@ fn reconstruction_reuses_bond_image_ties_when_traversal_reverses_an_edge() {
         [true; 3],
     )
     .unwrap();
-    let trajectory = Trajectory::from_items(
+    let set = time_ordered(
         topology,
         [frame(
             &[[0.0; 3], [0.51, 0.0, 0.0], [0.01, 0.0, 0.0]],
             Some(cell),
         )],
-    )
-    .unwrap();
-    let whole = whole(&trajectory).unwrap();
+    );
+    let whole = whole(&set, &mut recorded).unwrap();
     let points = xyz(&whole, 0);
     close(points[0], [0.0; 3]);
     close(points[2], [0.01, 0.0, 0.0]);
@@ -293,6 +315,9 @@ fn imaging_topology() -> Arc<Topology> {
 
 #[test]
 fn imaging_expands_anchor_atoms_to_molecules_and_centers_complete_groups() {
+    let mut recorded = Recorded::new(&[
+        0x0406_c60d_533e_9486, // imaged
+    ]);
     let topology = imaging_topology();
     let source = frame(
         &[
@@ -304,77 +329,87 @@ fn imaging_expands_anchor_atoms_to_molecules_and_centers_complete_groups() {
         ],
         Some(cell(1.0)),
     );
-    let mut trajectory = Trajectory::from_items(topology.clone(), [source]).unwrap();
+    let mut set = time_ordered(topology.clone(), [source]);
     let anchors = AtomSelection::from_indices(
         Arc::clone(&topology),
         [TopologyAtomIndex::new(0), TopologyAtomIndex::new(3)],
     )
     .unwrap();
-    let before = format!("{trajectory:?}");
-    let imaged = imaged(&trajectory, &anchors).unwrap();
+    let before = format!("{set:?}");
+    let imaged = imaged(&set, &anchors, &mut recorded).unwrap();
     for (actual, x) in xyz(&imaged, 0)
         .into_iter()
         .zip([0.275, 0.475, 0.575, 0.675, 0.325])
     {
         close(actual, [x, 0.5, 0.5]);
     }
-    assert_eq!(format!("{trajectory:?}"), before);
+    assert_eq!(format!("{set:?}"), before);
     assert!(Arc::ptr_eq(&topology, &imaged.shared_topology()));
-    periodic::image_molecules(&mut trajectory, &anchors).unwrap();
-    assert_eq!(format!("{trajectory:?}"), format!("{imaged:?}"));
-    assert_eq!(
-        imaged.get(0).unwrap().cell(),
-        trajectory.get(0).unwrap().cell()
-    );
+    periodic::image_molecules(&mut set, &anchors).unwrap();
+    assert_eq!(format!("{set:?}"), format!("{imaged:?}"));
+    assert_eq!(imaged.get(0).unwrap().cell(), set.get(0).unwrap().cell());
 }
 
 #[test]
 fn imaging_rejects_empty_or_foreign_anchors_and_preserves_nonperiodic_coordinates() {
+    let mut recorded = Recorded::new(&[
+        0xd5a9_9676_d301_8fa8, // imaged
+    ]);
     let topology = linear_carbon_topology(2);
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
         [true, false, false],
     )
     .unwrap();
-    let trajectory = Trajectory::from_items(
+    let set = time_ordered(
         topology.clone(),
         [frame(&[[0.9, 2.0, 3.0], [0.1, 2.1, 3.2]], Some(cell))],
-    )
-    .unwrap();
+    );
     let empty = AtomSelection::from_atoms(Arc::clone(&topology), []).unwrap();
     assert!(matches!(
-        imaged(&trajectory, &empty),
+        imaged(&set, &empty, &mut recorded),
         Err(PeriodicError::EmptyAnchors)
     ));
     let foreign = AtomSelection::all(Arc::clone(&linear_carbon_topology(2)));
     assert!(matches!(
-        imaged(&trajectory, &foreign),
+        imaged(&set, &foreign, &mut recorded),
         Err(PeriodicError::SelectionTopologyMismatch)
     ));
-    let imaged = imaged(&trajectory, &AtomSelection::all(Arc::clone(&topology))).unwrap();
+    let imaged = imaged(
+        &set,
+        &AtomSelection::all(Arc::clone(&topology)),
+        &mut recorded,
+    )
+    .unwrap();
     close(xyz(&imaged, 0)[0], [0.4, 2.0, 3.0]);
     close(xyz(&imaged, 0)[1], [0.6, 2.1, 3.2]);
 }
 
 #[test]
 fn unwrapping_tracks_multiple_crossings_and_preserves_the_first_frame() {
+    let mut recorded = Recorded::new(&[
+        0x2c62_9e58_5948_72a3, // unwrapped
+    ]);
     let topology = linear_carbon_topology(1);
     let frames = [0.9, 0.1, 0.4, 0.8, 0.2].map(|x| frame(&[[x, 0.0, 0.0]], Some(cell(1.0))));
-    let mut trajectory = Trajectory::from_items(topology.clone(), frames).unwrap();
-    let before = format!("{trajectory:?}");
-    let unwrapped = unwrapped(&trajectory).unwrap();
-    assert_eq!(xyz(&unwrapped, 0), xyz(&trajectory, 0));
+    let mut set = time_ordered(topology.clone(), frames);
+    let before = format!("{set:?}");
+    let unwrapped = unwrapped(&set, &mut recorded).unwrap();
+    assert_eq!(xyz(&unwrapped, 0), xyz(&set, 0));
     for (frame, expected) in [0.9, 1.1, 1.4, 1.8, 2.2].into_iter().enumerate() {
         close(xyz(&unwrapped, frame)[0], [expected, 0.0, 0.0]);
     }
     assert!(Arc::ptr_eq(&topology, &unwrapped.shared_topology()));
-    assert_eq!(format!("{trajectory:?}"), before);
-    periodic::unwrap_trajectory(&mut trajectory).unwrap();
-    assert_eq!(format!("{trajectory:?}"), format!("{unwrapped:?}"));
+    assert_eq!(format!("{set:?}"), before);
+    periodic::unwrap_trajectory(&mut set).unwrap();
+    assert_eq!(format!("{set:?}"), format!("{unwrapped:?}"));
 }
 
 #[test]
 fn unwrapping_uses_current_triclinic_cells_and_only_periodic_fractional_axes() {
+    let mut recorded = Recorded::new(&[
+        0xc64d_6a6b_4958_0ed1, // unwrapped
+    ]);
     let topology = linear_carbon_topology(1);
     let first = PeriodicCell::new(
         Quantity::new(
@@ -401,15 +436,14 @@ fn unwrapping_uses_current_triclinic_cells_and_only_periodic_fractional_axes() {
     )
     .unwrap();
     // Fractional positions (0.9, 0.1, 0.0) -> (0.1, 1.4, 0.0).
-    let trajectory = Trajectory::from_items(
+    let set = time_ordered(
         topology,
         [
             frame(&[[0.94, 0.1, 0.0]], Some(first)),
             frame(&[[1.04, 2.1, 0.0]], Some(second)),
         ],
-    )
-    .unwrap();
-    let unwrapped = unwrapped(&trajectory).unwrap();
+    );
+    let unwrapped = unwrapped(&set, &mut recorded).unwrap();
     // Unwrapped fractional position (1.1, 1.4, 0.0) in the second cell.
     close(xyz(&unwrapped, 1)[0], [3.04, 2.1, 0.0]);
     assert_eq!(unwrapped.get(1).unwrap().cell(), Some(&second));
@@ -417,15 +451,15 @@ fn unwrapping_uses_current_triclinic_cells_and_only_periodic_fractional_axes() {
 
 #[test]
 fn periodic_failures_are_transactional_and_include_frame_context() {
+    let mut recorded = Recorded::new(&[]);
     let topology = linear_carbon_topology(1);
-    let mut missing = Trajectory::from_items(
+    let mut missing = time_ordered(
         topology.clone(),
         [
             frame(&[[0.9, 0.0, 0.0]], Some(cell(1.0))),
             frame(&[[0.1, 0.0, 0.0]], None),
         ],
-    )
-    .unwrap();
+    );
     let before = format!("{missing:?}");
     assert!(matches!(
         periodic::unwrap_trajectory(&mut missing),
@@ -441,14 +475,13 @@ fn periodic_failures_are_transactional_and_include_frame_context() {
     ));
     assert_eq!(format!("{missing:?}"), before);
 
-    let mut ambiguous = Trajectory::from_items(
+    let mut ambiguous = time_ordered(
         topology.clone(),
         [
             frame(&[[0.9, 0.0, 0.0]], Some(cell(1.0))),
             frame(&[[0.4, 0.0, 0.0]], Some(cell(1.0))),
         ],
-    )
-    .unwrap();
+    );
     let before = format!("{ambiguous:?}");
     assert!(matches!(
         periodic::unwrap_trajectory(&mut ambiguous),
@@ -465,31 +498,46 @@ fn periodic_failures_are_transactional_and_include_frame_context() {
         [true, false, false],
     )
     .unwrap();
-    let changed = Trajectory::from_items(
+    let changed = time_ordered(
         topology,
         [
             frame(&[[0.0; 3]], Some(cell(1.0))),
             frame(&[[0.1; 3]], Some(partial)),
         ],
-    )
-    .unwrap();
+    );
     assert!(matches!(
-        unwrapped(&changed),
+        unwrapped(&changed, &mut recorded),
         Err(PeriodicError::PeriodicAxesChanged { frame: 1 })
     ));
 }
 
 #[test]
 fn empty_trajectories_and_single_atom_molecules_need_no_special_cases() {
+    let mut recorded = Recorded::new(&[
+        0x0961_2b07_b5ec_b5a5, // empty whole
+        0x0961_2b07_b5ec_b5a5, // empty imaged
+        0x0961_2b07_b5ec_b5a5, // empty unwrapped
+        0xa22f_b9f9_89ea_5d22, // single whole
+        0xa22f_b9f9_89ea_5d22, // single unwrapped
+    ]);
     let topology = linear_carbon_topology(1);
-    let empty = Trajectory::new(topology.clone());
-    assert!(whole(&empty).unwrap().is_empty());
-    assert!(imaged(&empty, &AtomSelection::all(Arc::clone(&topology)))
-        .unwrap()
-        .is_empty());
-    assert!(unwrapped(&empty).unwrap().is_empty());
-    let single =
-        Trajectory::from_items(topology, [frame(&[[3.0, 4.0, 5.0]], Some(cell(1.0)))]).unwrap();
-    assert_eq!(xyz(&whole(&single).unwrap(), 0), xyz(&single, 0));
-    assert_eq!(xyz(&unwrapped(&single).unwrap(), 0), xyz(&single, 0));
+    let empty = SampleSet::new(topology.clone());
+    assert!(whole(&empty, &mut recorded).unwrap().is_empty());
+    assert!(imaged(
+        &empty,
+        &AtomSelection::all(Arc::clone(&topology)),
+        &mut recorded
+    )
+    .unwrap()
+    .is_empty());
+    assert!(unwrapped(&empty, &mut recorded).unwrap().is_empty());
+    let single = time_ordered(topology, [frame(&[[3.0, 4.0, 5.0]], Some(cell(1.0)))]);
+    assert_eq!(
+        xyz(&whole(&single, &mut recorded).unwrap(), 0),
+        xyz(&single, 0)
+    );
+    assert_eq!(
+        xyz(&unwrapped(&single, &mut recorded).unwrap(), 0),
+        xyz(&single, 0)
+    );
 }

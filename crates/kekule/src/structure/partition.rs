@@ -1,37 +1,38 @@
 use std::fmt;
 
-/// A grouping of every sample of one ensemble into states, with one
-/// representative sample per state.
+/// A grouping of the members of a distribution into states, with one
+/// representative member per state.
 ///
-/// States are numbered from zero, and every sample is in exactly one of
+/// States are numbered from zero, and every member is in exactly one of
 /// them. A state always contains its representative, so none is empty. The
-/// partition records sample indices only: it applies to any ensemble with
-/// the same sample count, and [`Ensemble::regroup`](super::Ensemble::regroup)
-/// checks that count.
+/// partition records member positions only: it applies to any distribution
+/// with the same member count, and
+/// [`DistributionMut::regroup`](super::DistributionMut::regroup) checks that
+/// count.
 ///
-/// Every [`Ensemble`](super::Ensemble) owns one partition, its states.
-/// Clustering returns a new one without changing the ensemble, and
+/// Every [`Distribution`](super::Distribution) owns one partition, its
+/// states. Clustering returns a new one without changing the set, and
 /// [`one_state`](Self::one_state) and [`state_per_sample`](Self::state_per_sample)
 /// say what a source's samples are: draws of one distribution, such as the
 /// models of an NMR bundle or the frames of a trajectory, or distinct
 /// conformers.
 ///
 /// ```
-/// use kekule::structure::EnsemblePartition;
-/// let partition = EnsemblePartition::new(vec![0, 1, 0, 1], vec![2, 1])?;
+/// use kekule::structure::Partition;
+/// let partition = Partition::new(vec![0, 1, 0, 1], vec![2, 1])?;
 /// assert_eq!(partition.state_count(), 2);
 /// assert_eq!(partition.samples(0).collect::<Vec<_>>(), [0, 2]);
-/// assert_eq!(EnsemblePartition::one_state(3).assignments(), [0, 0, 0]);
-/// assert_eq!(EnsemblePartition::state_per_sample(3).representatives(), [0, 1, 2]);
+/// assert_eq!(Partition::one_state(3).assignments(), [0, 0, 0]);
+/// assert_eq!(Partition::state_per_sample(3).representatives(), [0, 1, 2]);
 /// # Ok::<(), kekule::structure::PartitionError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnsemblePartition {
+pub struct Partition {
     assignments: Vec<usize>,
     representatives: Vec<usize>,
 }
 
-impl EnsemblePartition {
+impl Partition {
     /// Validates a partition built elsewhere: `assignments[s]` is the state
     /// of sample `s`, and `representatives[t]` is a sample assigned to state
     /// `t`.
@@ -156,7 +157,7 @@ impl EnsemblePartition {
     }
 }
 
-/// An invalid [`EnsemblePartition`].
+/// An invalid [`Partition`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PartitionError {

@@ -24,7 +24,7 @@
 //! used as stored; cells are ignored, so image periodic structures first.
 //!
 //! [`HydrogenBondOccupancyAccumulator`] reduces the hydrogen bonds of
-//! weighted observations, such as ensemble samples or trajectory frames, to
+//! weighted observations, such as the samples of a set or trajectory frames, to
 //! occupancies, and merges partial results as the [`crate::statistics`]
 //! accumulators do.
 //!

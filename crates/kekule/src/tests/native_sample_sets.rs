@@ -7,8 +7,7 @@ use crate::diagnostics::{DiagnosticKind, Format};
 use crate::geometry::Point3;
 use crate::native::{self, NativeSource, NativeWriteOptions, SampleSetDescription};
 use crate::structure::{
-    Distribution, EnsemblePartition, EnsembleState, Members, Order, Positions, Sample, SampleSet,
-    TimeAxis,
+    Distribution, Members, Order, Partition, Positions, Sample, SampleSet, State, TimeAxis,
 };
 use crate::units::{Quantity, DEGREE, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
 
@@ -41,16 +40,16 @@ fn set() -> SampleSet {
     let mut set = samples(Order::Step(STEPS.to_vec()));
     let distribution = Distribution::new(
         Members::Subset(vec![0, 2]),
-        EnsemblePartition::new(vec![1, 0], vec![1, 0]).unwrap(),
+        Partition::new(vec![1, 0], vec![1, 0]).unwrap(),
     )
     .unwrap()
     .with_weights(WEIGHTS.to_vec())
     .unwrap()
     .with_states(vec![
-        EnsembleState::new()
+        State::new()
             .with_energy(Quantity::new(ENERGY, KILOJOULE_PER_MOLE))
             .unwrap(),
-        EnsembleState::new(),
+        State::new(),
     ])
     .unwrap()
     .with_temperature(Quantity::new(TEMPERATURE, KELVIN))
@@ -236,16 +235,17 @@ fn stored_order_values_and_positions_are_finite() {
 
 #[test]
 fn interpreted_sample_sets_store_their_samples_and_one_report_each() {
-    let (_, ensemble) = parts();
-    let mut set = SampleSet::from_ensemble(ensemble);
+    let (_, mut set) = parts();
     set.set_order(Some(Order::Step(STEPS[..2].to_vec())))
         .unwrap();
+    assert_eq!(super::debug_fingerprint(&set), 0xd62a_4fbb_4cc5_1e47);
     let reports = vec![report(false), report(false)];
     let bytes = native::write(
         NativeSource::interpreted_sample_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap();
+    assert_eq!(super::debug_fingerprint(&bytes), 0x7e76_8e05_f793_9faf);
     assert_eq!(bytes[12], 10);
     let plain = native::write(&set, NativeWriteOptions::default()).unwrap();
     assert_eq!(bytes[13..plain.len() - 8], plain[13..plain.len() - 8]);

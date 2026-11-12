@@ -7,9 +7,9 @@ mod atom_site;
 mod build;
 mod connections;
 pub(crate) use connections::is_metal;
-mod ensemble;
 mod mmcif;
 mod pdb;
+mod sample_set;
 mod sequences;
 mod types;
 
@@ -37,11 +37,11 @@ pub use altloc::{
 pub use assemblies::{Assembly, AssemblyError, AssemblyGenerator, AssemblyOperation};
 pub(crate) use mmcif::{
     alternate_location_inventory, interpret_mmcif, interpret_mmcif_block,
-    interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_ensemble,
-    interpret_mmcif_ensemble_block,
+    interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_sample_set,
+    interpret_mmcif_sample_set_block,
 };
 pub(crate) use pdb::{
-    interpret_pdb, interpret_pdb_conformations, interpret_pdb_ensemble, pdb_alternate_locations,
+    interpret_pdb, interpret_pdb_conformations, interpret_pdb_sample_set, pdb_alternate_locations,
 };
 pub use sequences::{
     EntityMonomer, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
@@ -51,10 +51,9 @@ pub(in crate::io) use types::{poll, poll_every, structure_error};
 pub use types::{
     AssemblyOmissionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
-    EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection,
-    StructureEnsembleInterpretOptions, StructureEnsembleInterpretation, StructureInterpretIssue,
+    EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
-    StructureSampleSetInterpretation,
+    StructureSampleSetInterpretOptions, StructureSampleSetInterpretation,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a

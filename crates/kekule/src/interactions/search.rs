@@ -32,7 +32,7 @@ pub struct InteractionSide<'a> {
 }
 
 impl<'a> InteractionSide<'a> {
-    /// A side of `structure`, a model, ensemble sample, or trajectory frame,
+    /// A side of `structure`, a model, sample, or trajectory frame,
     /// whose `atoms` take part, with `features` of its topology.
     ///
     /// # Errors

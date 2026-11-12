@@ -1,7 +1,9 @@
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
-use kekule::structure::{Ensemble, Model, ModelEditError, ModelEditor, Positions};
+use kekule::structure::{
+    Distribution, Members, Model, ModelEditError, ModelEditor, Partition, Positions, SampleSet,
+};
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId,
     ResidueClass, TopologyAtomIndex, TopologyBuilder,
@@ -816,14 +818,14 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
 }
 
 #[test]
-fn borrowed_ensemble_member_and_plain_finish_need_no_intermediate_model() {
+fn borrowed_member_sample_and_plain_finish_need_no_intermediate_model() {
     let source = annotated(None);
-    let ensemble = Ensemble::from_models(
-        [source.clone()],
-        kekule::structure::EnsemblePartition::one_state(1),
-    )
+    let mut set = SampleSet::from_models([source.clone()]).unwrap();
+    set.set_distribution(Some(
+        Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
+    ))
     .unwrap();
-    let member = ensemble.iter().next().unwrap();
+    let member = set.iter().next().unwrap();
     let mut editor = ModelEditor::new();
     let imported = editor.append_model(&member).unwrap();
     for &id in source.topology().atom_ids() {

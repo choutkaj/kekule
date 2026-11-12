@@ -2,11 +2,11 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::structure::{AsModelView, ModelView, Positions, TrajectoryError, TrajectoryFrameView};
+use crate::structure::{AsModelView, ModelView, Positions, SampleSetError};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
 use super::{checked_image, positions, Lattice, MoleculePlan, PeriodicError};
-use crate::traj::FrameBuffer;
+use crate::traj::{FrameBuffer, FrameView};
 
 /// A reusable bond traversal for making molecules whole and imaging them.
 ///
@@ -90,10 +90,10 @@ impl MoleculeImager {
     /// use std::sync::Arc;
     ///
     /// use kekule::geometry::{PeriodicCell, Point3, Vector3};
-    /// use kekule::structure::{Positions, Trajectory, TrajectoryFrame};
+    /// use kekule::structure::{Positions, Sample, SampleSet};
     /// use kekule::units::{Quantity, NANOMETER};
     /// use kekule::{smiles, topology::Topology};
-    /// use kekule::traj::{periodic::MoleculeImager, FrameBuffer};
+    /// use kekule::traj::{periodic::MoleculeImager, FrameBuffer, FrameView};
     ///
     /// let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
     /// let topology = Arc::new(Topology::from_molecule(molecule)?);
@@ -103,13 +103,13 @@ impl MoleculeImager {
     /// let frames = [0.95, 0.05].map(|x| {
     ///     let points = vec![Point3::new(x, 0.5, 0.5)];
     ///     let positions = Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap();
-    ///     TrajectoryFrame::new(positions).with_cell(cell)
+    ///     Sample::new(positions).with_cell(cell)
     /// });
-    /// let trajectory = Trajectory::from_items(Arc::clone(&topology), frames)?;
+    /// let trajectory = SampleSet::from_samples(Arc::clone(&topology), frames)?;
     ///
     /// let imager = MoleculeImager::new(Arc::clone(&topology));
     /// let mut frame = FrameBuffer::new(topology);
-    /// frame.copy_from(trajectory.get(1).unwrap())?;
+    /// frame.copy_from(FrameView::from_sample(trajectory.get(1).unwrap())?)?;
     /// imager.image_onto(1, &mut frame, &trajectory.get(0).unwrap())?;
     /// let x = frame.positions().get(0).unwrap().value_in(NANOMETER)?.x;
     /// assert!((x - 1.05).abs() < 1.0e-12);
@@ -324,7 +324,7 @@ impl TrajectoryUnwrapper {
     pub(super) fn next_positions(
         &mut self,
         frame_index: usize,
-        source: TrajectoryFrameView<'_>,
+        source: FrameView<'_>,
     ) -> Result<Positions, PeriodicError> {
         let step = self.prepare(frame_index, source)?;
         Ok(self.commit(step))
@@ -338,7 +338,7 @@ impl TrajectoryUnwrapper {
     fn prepare(
         &self,
         frame_index: usize,
-        source: TrajectoryFrameView<'_>,
+        source: FrameView<'_>,
     ) -> Result<UnwrapStep, PeriodicError> {
         if !self.topology().shares_layout(source.topology()) {
             return Err(PeriodicError::TopologyMismatch { frame: frame_index });
@@ -412,7 +412,7 @@ impl TrajectoryUnwrapper {
 
 fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), PeriodicError> {
     frame
-        .frame_mut()
+        .sample_mut()
         .set_positions(positions.values())
-        .map_err(|error| PeriodicError::Publication(Box::new(TrajectoryError::Structure(error))))
+        .map_err(|error| PeriodicError::Publication(Box::new(SampleSetError::Structure(error))))
 }

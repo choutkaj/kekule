@@ -6,9 +6,7 @@ use crate::alignment::{
 };
 use crate::geometry::Point3;
 use crate::parallel::map_ranges;
-use crate::structure::{
-    visit_sample, Ensemble, EnsemblePartition, Members, SampleRead, SampleSet, SampleStorage,
-};
+use crate::structure::{visit_sample, Members, Partition, SampleRead, SampleSet, SampleStorage};
 use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -16,15 +14,15 @@ use super::run::{FirstFailure, Stop, Tracker};
 use super::{sample_index, undirected, Clustered, ClusteringError, ClusteringRun};
 
 /// Symmetric pairwise distances between the members of one sample set's
-/// distribution or one ensemble, stored once per unordered pair in
+/// distribution, stored once per unordered pair in
 /// [`CANONICAL_LENGTH_UNIT`].
 ///
 /// Members are numbered by member position, from zero. The condensed order
 /// lists the pairs `(i, j)` with `i < j` row by row:
 /// `(0, 1), (0, 2), ..., (0, n - 1), (1, 2), ...`, the order SciPy's
 /// `squareform` uses. Build one from fitted RMSDs with
-/// [`SampleSet::pairwise_fitted_rmsd`] or
-/// [`Ensemble::pairwise_fitted_rmsd`], or from any other distances with
+/// [`SampleSet::pairwise_fitted_rmsd`] or [`pairwise_fitted_rmsd`], or from
+/// any other distances with
 /// [`Self::from_condensed`]. It stores `n (n - 1) / 2` values, so memory
 /// grows quadratically with the member count.
 #[derive(Debug, Clone, PartialEq)]
@@ -351,11 +349,11 @@ impl Clustered<'_> {
         distances: &DistanceMatrix,
         linkage: Linkage,
         cut: Cut,
-    ) -> Result<EnsemblePartition, ClusteringError> {
+    ) -> Result<Partition, ClusteringError> {
         self.check_matrix(distances)?;
         let assignments = distances.dendrogram(linkage).cut(cut)?;
         let representatives = weighted_medoids(&self.scaled_weights(), distances, &assignments);
-        Ok(EnsemblePartition::from_parts_unchecked(
+        Ok(Partition::from_parts_unchecked(
             assignments,
             representatives,
         ))
@@ -638,15 +636,21 @@ impl SampleSet {
     /// member ([`Distribution::members`](crate::structure::Distribution::members)),
     /// or sample `i` without a distribution, so it fits
     /// [`Self::cluster_hierarchical`] and [`Self::cluster_k_medoids`] of this
-    /// set. Samples outside the distribution are left out. Fits, costs, and
-    /// threads are those of [`Ensemble::pairwise_fitted_rmsd`]; they run on
-    /// the calling thread, and [`Self::pairwise_fitted_rmsd_with`] spreads
-    /// them over threads, reports progress, and can be cancelled.
+    /// set. Samples outside the distribution are left out.
+    ///
+    /// `atoms` is a selection or a
+    /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
+    /// set's layout, so each distance is the same whichever member moves; an
+    /// [`AtomCorrespondence`](crate::alignment::AtomCorrespondence) is
+    /// rejected. Each unordered pair is fitted once, lower member moving, so
+    /// the cost is `n (n - 1) / 2` fits (times symmetry permutations). They
+    /// run on the calling thread; [`Self::pairwise_fitted_rmsd_with`]
+    /// spreads them over threads, reports progress, and can be cancelled.
     ///
     /// ```
     /// use kekule::geometry::Point3;
     /// use kekule::structure::{
-    ///     Distribution, EnsemblePartition, Members, Positions, Sample, SampleSet,
+    ///     Distribution, Partition, Members, Positions, Sample, SampleSet,
     /// };
     /// use kekule::clustering::{Cut, Linkage};
     /// use kekule::topology::AtomSelection;
@@ -664,7 +668,7 @@ impl SampleSet {
     /// }
     /// // Samples 1 to 4 are the members; sample 0 is left out.
     /// let members = Members::Subset(vec![1, 2, 3, 4]);
-    /// set.set_distribution(Some(Distribution::new(members, EnsemblePartition::one_state(4))?))?;
+    /// set.set_distribution(Some(Distribution::new(members, Partition::one_state(4))?))?;
     ///
     /// let atoms = AtomSelection::all(topology);
     /// let matrix = set.pairwise_fitted_rmsd(&atoms, Default::default())?;
@@ -681,8 +685,14 @@ impl SampleSet {
     ///
     /// # Errors
     ///
-    /// As [`Ensemble::pairwise_fitted_rmsd`], with
-    /// [`ClusteringError::PairFit`] naming both members by sample index.
+    /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
+    ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
+    /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
+    ///   set's layout, has fewer than three pairs, or the explicit weights of
+    ///   `options` are invalid.
+    /// - [`ClusteringError::PairFit`] naming both members by sample index
+    ///   when a fit fails.
+    /// - [`ClusteringError::MatrixTooLarge`] when the pair count overflows.
     pub fn pairwise_fitted_rmsd<'a>(
         &self,
         atoms: impl Into<FitAtoms<'a>>,
@@ -692,8 +702,50 @@ impl SampleSet {
     }
 
     /// [`Self::pairwise_fitted_rmsd`], with its fits run, followed and
-    /// stopped as `run` says, as [`Ensemble::pairwise_fitted_rmsd_with`]
-    /// describes.
+    /// stopped as `run` says.
+    ///
+    /// The pairs split, in condensed order, into contiguous ranges on
+    /// `run`'s executor, whose distances join in order. Each distance is one
+    /// fit whatever thread makes it, and a failed fit reports the first
+    /// failing pair in condensed order, so the matrix and any error are the
+    /// ones [`Self::pairwise_fitted_rmsd`] returns. Progress counts pairs
+    /// fitted, of `n (n - 1) / 2`.
+    ///
+    /// ```
+    /// use std::num::NonZeroUsize;
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    /// use kekule::clustering::{ClusteringProgress, ClusteringRun};
+    /// use kekule::geometry::Point3;
+    /// use kekule::parallel::ScopedThreads;
+    /// use kekule::structure::{Positions, Sample, SampleSet};
+    /// use kekule::topology::AtomSelection;
+    /// use kekule::units::{Quantity, ANGSTROM};
+    ///
+    /// let topology = kekule::smiles::to_topology("CCO")?;
+    /// let mut set = SampleSet::new(topology.clone());
+    /// for stretch in [1.0, 1.1, 1.2, 1.3] {
+    ///     let points = [
+    ///         Point3::new(0.0, 0.0, 0.0),
+    ///         Point3::new(1.5 * stretch, 0.0, 0.0),
+    ///         Point3::new(2.0, 1.2, 0.0),
+    ///     ];
+    ///     set.push(Sample::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
+    /// }
+    /// let atoms = AtomSelection::all(topology);
+    ///
+    /// let threads = ScopedThreads::new(NonZeroUsize::new(2).unwrap());
+    /// let fitted = AtomicUsize::new(0);
+    /// let progress = |progress: ClusteringProgress| {
+    ///     fitted.store(progress.completed(), Ordering::Relaxed);
+    /// };
+    /// let run = ClusteringRun::default()
+    ///     .with_executor(&threads)
+    ///     .with_progress(&progress);
+    /// let matrix = set.pairwise_fitted_rmsd_with(&atoms, Default::default(), run)?;
+    /// assert_eq!(matrix, set.pairwise_fitted_rmsd(&atoms, Default::default())?);
+    /// assert_eq!(fitted.into_inner(), 6);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///
@@ -721,9 +773,13 @@ impl<S: SampleStorage> SampleSet<S> {
     /// member position ([`Self::pairwise_fitted_rmsd`]), cut into flat
     /// clusters, each represented by its weighted medoid.
     ///
-    /// The clustering is [`Ensemble::cluster_hierarchical`]'s, with the
-    /// members' weights (equal without weights or a distribution). The
-    /// partition groups the members by member position; install it with
+    /// The dendrogram depends on distances only; see
+    /// [`DistanceMatrix::dendrogram`]. The representative of a cluster is
+    /// the member minimizing the weight-summed distance to the cluster's
+    /// members, `sum_j w_j d(i, j)`, with the members' weights (equal
+    /// without weights or a distribution) and ties to the lowest index.
+    /// Clusters are numbered in order of their lowest member. The partition
+    /// groups the members by member position; install it with
     /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)
     /// or, without a distribution, as `Distribution::new(Members::All,
     /// partition)` through [`Self::set_distribution`].
@@ -737,129 +793,9 @@ impl<S: SampleStorage> SampleSet<S> {
         distances: &DistanceMatrix,
         linkage: Linkage,
         cut: Cut,
-    ) -> Result<EnsemblePartition, ClusteringError> {
+    ) -> Result<Partition, ClusteringError> {
         Clustered::of_members(self.len(), self.distribution())
             .cluster_hierarchical(distances, linkage, cut)
-    }
-}
-
-impl Ensemble {
-    /// Fitted RMSD between every pair of members, after a
-    /// [`fit`](crate::alignment::fit) over `atoms` with the weights and
-    /// periodic policy of `options`.
-    ///
-    /// `atoms` is a selection or a
-    /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
-    /// ensemble's layout, so each distance is the same whichever member
-    /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
-    /// is rejected. Each unordered pair is fitted once, lower member moving,
-    /// so the cost is `n (n - 1) / 2` fits (times symmetry permutations).
-    /// They run on the calling thread; [`Self::pairwise_fitted_rmsd_with`]
-    /// spreads them over threads, reports progress, and can be cancelled.
-    ///
-    /// # Errors
-    ///
-    /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
-    ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
-    /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
-    ///   ensemble's layout, has fewer than three pairs, or the explicit
-    ///   weights of `options` are invalid.
-    /// - [`ClusteringError::PairFit`] naming both members when a fit fails.
-    /// - [`ClusteringError::MatrixTooLarge`] when the pair count overflows.
-    pub fn pairwise_fitted_rmsd<'a>(
-        &self,
-        atoms: impl Into<FitAtoms<'a>>,
-        options: AlignmentOptions<'_>,
-    ) -> Result<DistanceMatrix, ClusteringError> {
-        self.pairwise_fitted_rmsd_with(atoms, options, ClusteringRun::default())
-    }
-
-    /// [`Self::pairwise_fitted_rmsd`], with its fits run, followed and
-    /// stopped as `run` says.
-    ///
-    /// The pairs split, in condensed order, into contiguous ranges on
-    /// `run`'s executor, whose distances join in order. Each distance is one
-    /// fit whatever thread makes it, and a failed fit reports the first
-    /// failing pair in condensed order, so the matrix and any error are the
-    /// ones [`Self::pairwise_fitted_rmsd`] returns. Progress counts pairs
-    /// fitted, of `n (n - 1) / 2`.
-    ///
-    /// ```
-    /// use std::num::NonZeroUsize;
-    /// use std::sync::atomic::{AtomicUsize, Ordering};
-    /// use kekule::clustering::{ClusteringProgress, ClusteringRun};
-    /// use kekule::geometry::Point3;
-    /// use kekule::parallel::ScopedThreads;
-    /// use kekule::structure::{Ensemble, EnsembleSample, Positions};
-    /// use kekule::topology::AtomSelection;
-    /// use kekule::units::{Quantity, ANGSTROM};
-    ///
-    /// let topology = kekule::smiles::to_topology("CCO")?;
-    /// let mut ensemble = Ensemble::new(topology.clone());
-    /// for stretch in [1.0, 1.1, 1.2, 1.3] {
-    ///     let points = [
-    ///         Point3::new(0.0, 0.0, 0.0),
-    ///         Point3::new(1.5 * stretch, 0.0, 0.0),
-    ///         Point3::new(2.0, 1.2, 0.0),
-    ///     ];
-    ///     let positions = Positions::new(Quantity::new(points, ANGSTROM))?;
-    ///     ensemble.push_state(EnsembleSample::new(positions, 1.0)?, Default::default())?;
-    /// }
-    /// let atoms = AtomSelection::all(topology);
-    ///
-    /// let threads = ScopedThreads::new(NonZeroUsize::new(2).unwrap());
-    /// let fitted = AtomicUsize::new(0);
-    /// let progress = |progress: ClusteringProgress| {
-    ///     fitted.store(progress.completed(), Ordering::Relaxed);
-    /// };
-    /// let run = ClusteringRun::default()
-    ///     .with_executor(&threads)
-    ///     .with_progress(&progress);
-    /// let matrix = ensemble.pairwise_fitted_rmsd_with(&atoms, Default::default(), run)?;
-    /// assert_eq!(matrix, ensemble.pairwise_fitted_rmsd(&atoms, Default::default())?);
-    /// assert_eq!(fitted.into_inner(), 6);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::pairwise_fitted_rmsd`], and [`ClusteringError::Cancelled`]
-    /// once `run`'s cancellation is requested.
-    ///
-    /// # Panics
-    ///
-    /// When a work item panics, which
-    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
-    /// the executor skips or repeats a work item.
-    pub fn pairwise_fitted_rmsd_with<'a>(
-        &self,
-        atoms: impl Into<FitAtoms<'a>>,
-        options: AlignmentOptions<'_>,
-        run: ClusteringRun<'_>,
-    ) -> Result<DistanceMatrix, ClusteringError> {
-        Clustered::of_ensemble(self).pairwise_fitted_rmsd(atoms.into(), options, run)
-    }
-
-    /// Hierarchical clustering of the members on `distances`, cut into flat
-    /// clusters, each represented by its weighted medoid.
-    ///
-    /// The dendrogram depends on distances only; see
-    /// [`DistanceMatrix::dendrogram`]. The representative of a cluster is
-    /// the member minimizing the weight-summed distance to the cluster's
-    /// members, `sum_j w_j d(i, j)`, with ties to the lowest index. Clusters
-    /// are numbered in order of their lowest member.
-    ///
-    /// # Errors
-    ///
-    /// [`ClusteringError::MatrixMismatch`] when the matrix covers a different
-    /// member count, and the errors of [`Dendrogram::cut`] for `cut`.
-    pub fn cluster_hierarchical(
-        &self,
-        distances: &DistanceMatrix,
-        linkage: Linkage,
-        cut: Cut,
-    ) -> Result<EnsemblePartition, ClusteringError> {
-        Clustered::of_ensemble(self).cluster_hierarchical(distances, linkage, cut)
     }
 }
 

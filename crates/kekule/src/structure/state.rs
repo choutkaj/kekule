@@ -1,8 +1,8 @@
 //! Validation and accessors shared by the flat structure owners: models,
-//! ensemble samples, trajectory frames, series items, and model drafts.
+//! samples, trajectory frames, and model drafts.
 //!
 //! Each owner stores its own `positions`, `cell`, and `properties` fields, and
-//! models and ensemble samples also `occupancies` and `b_factors`. The macros
+//! models and samples also `occupancies` and `b_factors`. The macros
 //! below generate the
 //! common public accessors from those fields; an owner provides
 //! `storage_ref(&self)` and `storage(&mut self)` returning the value that holds
@@ -151,7 +151,7 @@ macro_rules! structure_readers {
 }
 pub(crate) use structure_readers;
 
-/// Occupancy and B-factor readers of models and ensemble samples.
+/// Occupancy and B-factor readers of models and samples.
 macro_rules! site_readers {
     () => {
         /// Occupancy of one atom; `None` when it was never recorded or `atom`
@@ -236,7 +236,7 @@ macro_rules! structure_mutators {
 }
 pub(crate) use structure_mutators;
 
-/// Occupancy and B-factor mutators of models and ensemble samples.
+/// Occupancy and B-factor mutators of models and samples.
 macro_rules! site_mutators {
     () => {
         /// Sets or clears one occupancy. Values must be finite.
@@ -302,12 +302,8 @@ pub enum StructureError {
     },
     /// A frame time is not finite.
     NonFiniteTime,
-    /// An ensemble state energy is not finite.
+    /// A state energy is not finite.
     NonFiniteEnergy,
-    /// A series item coordinate is not finite.
-    NonFiniteCoordinate,
-    /// An ensemble weight is not finite and positive.
-    InvalidWeight,
     /// The payload exceeds addressable capacity.
     CapacityOverflow,
     /// A structure property edit failed; see the source.
@@ -327,15 +323,7 @@ impl fmt::Display for StructureError {
                 "The bond properties have {actual} rows, but the structure has {expected} bonds."
             ),
             Self::NonFiniteTime => formatter.write_str("The frame time is not finite."),
-            Self::NonFiniteEnergy => {
-                formatter.write_str("The ensemble state energy is not finite.")
-            }
-            Self::NonFiniteCoordinate => {
-                formatter.write_str("The series item coordinate is not finite.")
-            }
-            Self::InvalidWeight => {
-                formatter.write_str("The ensemble weight is not finite and positive.")
-            }
+            Self::NonFiniteEnergy => formatter.write_str("The state energy is not finite."),
             Self::CapacityOverflow => {
                 formatter.write_str("The structure exceeds the addressable capacity.")
             }

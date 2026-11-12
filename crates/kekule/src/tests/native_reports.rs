@@ -9,12 +9,12 @@ use crate::io::{
     ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance, EntityKind,
     EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance, PolymerType,
     SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
-    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretationReport,
+    StructureInterpretIssue, StructureInterpretationReport, StructureSampleSetInterpretation,
 };
 use crate::molecule::AtomId;
 use crate::native::{self, NativeReadOptions, NativeSource, NativeWriteOptions};
 use crate::sequence::{CodeOrigin, ResidueCode};
-use crate::structure::{Ensemble, Model};
+use crate::structure::{Model, SampleSet};
 use crate::topology::{ChainId, InstanceAtomId, MoleculeInstanceId, ResidueId};
 
 const MODELS: &str = "data_demo
@@ -520,7 +520,9 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
     }
 }
 
-pub(super) fn parts() -> (Model, Ensemble) {
+/// The first coordinate model of [`MODELS`] and the set of both models,
+/// whose two samples carry stored equal weights.
+pub(super) fn parts() -> (Model, SampleSet) {
     let document = crate::mmcif::parse_str(MODELS, Default::default()).unwrap();
     let model = document
         .interpret(
@@ -529,11 +531,15 @@ pub(super) fn parts() -> (Model, Ensemble) {
         )
         .unwrap()
         .into_model();
-    let ensemble = document
-        .interpret_ensemble(Default::default())
+    let mut set = document
+        .interpret_sample_set(Default::default())
         .unwrap()
-        .into_ensemble();
-    (model, ensemble)
+        .into_sample_set();
+    set.distribution_mut()
+        .unwrap()
+        .set_weights(Some(vec![1.0, 1.0]))
+        .unwrap();
+    (model, set)
 }
 
 pub(super) fn read(
@@ -544,7 +550,8 @@ pub(super) fn read(
 
 #[test]
 fn every_report_field_round_trips() {
-    let (model, ensemble) = parts();
+    let (model, set) = parts();
+    assert_eq!(super::debug_fingerprint(&set), 0x3f40_ab36_f0b2_dad2);
     let report = report(false);
     let bytes = native::write(
         NativeSource::interpreted_model(&model, &report),
@@ -562,16 +569,18 @@ fn every_report_field_round_trips() {
 
     let reports = vec![report, self::report(true)];
     let bytes = native::write(
-        NativeSource::interpreted_ensemble(&ensemble, &reports),
+        NativeSource::interpreted_sample_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap();
+    assert_eq!(super::debug_fingerprint(&bytes), 0xde2b_74f7_fb64_0b01);
     let decoded = read(&bytes)
         .unwrap()
-        .into_ensemble_interpretation()
+        .into_sample_set_interpretation()
         .unwrap();
+    assert_eq!(super::debug_fingerprint(&decoded), 0x1648_6503_5a44_75c0);
     assert_eq!(decoded.reports(), reports.as_slice());
-    assert_eq!(decoded.ensemble().len(), 2);
+    assert_eq!(decoded.sample_set().len(), 2);
     let again = native::write(&decoded, NativeWriteOptions::default()).unwrap();
     assert!(
         again == bytes,
@@ -702,11 +711,11 @@ fn corrupt_report_sections_fail_cleanly() {
 }
 
 #[test]
-fn ensembles_need_one_report_per_sample() {
-    let (_, ensemble) = parts();
+fn interpreted_sample_sets_need_one_report_per_sample() {
+    let (_, set) = parts();
     let reports = vec![report(false)];
     let error = native::write(
-        NativeSource::interpreted_ensemble(&ensemble, &reports),
+        NativeSource::interpreted_sample_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap_err();
@@ -716,8 +725,8 @@ fn ensembles_need_one_report_per_sample() {
         "Cannot write the native output. The sample set has 2 samples and 1 interpretation \
          report. Give one report per sample."
     );
-    let interpretation = StructureEnsembleInterpretation {
-        ensemble,
+    let interpretation = StructureSampleSetInterpretation {
+        set,
         reports: Vec::new(),
     };
     assert!(native::write(&interpretation, NativeWriteOptions::default()).is_err());

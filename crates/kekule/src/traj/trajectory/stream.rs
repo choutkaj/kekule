@@ -1,11 +1,11 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::structure::{Trajectory, TrajectoryFrameView};
+use crate::structure::{Order, SampleSet, SampleSetError, TimeAxis};
 use crate::topology::Topology;
 
 use super::buffer::FrameBuffer;
-use super::{TrajectoryIoError, TrajectoryIoErrorKind};
+use super::{FrameView, TrajectoryIoError, TrajectoryIoErrorKind};
 
 /// Sequential reader that publishes complete frames into reusable storage.
 ///
@@ -94,7 +94,7 @@ pub trait SeekableTrajectoryReader: TrajectoryReader {
     ) -> Result<(), TrajectoryIoError>;
 }
 
-/// Streaming writer for topology-bound frame views.
+/// Streaming writer for topology-bound frames ([`FrameView`]).
 ///
 /// Writers reject topology mismatches and unsupported frame state rather than
 /// silently dropping data. A rejected frame writes nothing, so the writer
@@ -152,7 +152,7 @@ pub trait TrajectoryWriter {
     /// [`TrajectoryIoErrorKind::UnsupportedField`] when the format cannot store
     /// a field the frame carries, another validation kind when the frame
     /// cannot be encoded, and [`TrajectoryIoErrorKind::Io`] when writing fails.
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError>;
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError>;
 
     /// Makes every frame written so far reach the destination whole, so
     /// that a reader of it sees them; see the trait documentation. More
@@ -168,19 +168,26 @@ pub trait TrajectoryWriter {
     }
 }
 
-/// In-memory writer that preserves every core frame field.
+/// In-memory writer collecting frames into a time-ordered
+/// [`SampleSet`], keeping every frame field.
 ///
-/// Useful as a [`TrajectoryWriter`] destination for streaming pipelines. To load
-/// a complete file directly, use [`crate::traj::io::read_trajectory`].
+/// Useful as a [`TrajectoryWriter`] destination for streaming pipelines. To
+/// load a complete file directly, use [`crate::traj::io::read_sample_set`].
+/// Each frame's sample is shared with the frame, not copied; a
+/// [`FrameBuffer`] it came from copies its sample once on its next edit.
+///
+/// The first frame decides the columns of the set's [`TimeAxis`]: times
+/// when it has a time, and steps when it has a step. Every later frame must
+/// have the same.
 pub struct MemoryTrajectoryWriter {
-    trajectory: Trajectory,
+    set: SampleSet,
 }
 
 impl fmt::Debug for MemoryTrajectoryWriter {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MemoryTrajectoryWriter")
-            .field("frame_count", &self.trajectory.len())
+            .field("frame_count", &self.set.len())
             .finish_non_exhaustive()
     }
 }
@@ -188,34 +195,59 @@ impl fmt::Debug for MemoryTrajectoryWriter {
 impl MemoryTrajectoryWriter {
     /// An empty writer collecting frames of `topology`.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
-        let topology = topology.into();
         Self {
-            trajectory: Trajectory::new(topology),
+            set: SampleSet::new(topology),
         }
     }
 
-    /// The frames written so far, in write order.
-    pub fn into_trajectory(self) -> Trajectory {
-        self.trajectory
+    /// The frames written so far, in write order: a set with a time order
+    /// and without a distribution, or an empty, unordered set when no frame
+    /// was written.
+    pub fn into_sample_set(self) -> SampleSet {
+        self.set
+    }
+
+    /// Appends a frame of a topology sharing the set's layout.
+    pub(crate) fn collect(&mut self, frame: FrameView<'_>) -> Result<(), SampleSetError> {
+        if self.set.order().is_none() {
+            let axis = TimeAxis::from_columns(
+                frame.time().map(|_| Vec::new()),
+                frame.step().map(|_| Vec::new()),
+            );
+            self.set.set_order(Some(Order::Time(axis)))?;
+        }
+        self.set
+            .push(frame.payload().clone(), Some(frame.place()))?;
+        Ok(())
     }
 }
 
 impl TrajectoryWriter for MemoryTrajectoryWriter {
     fn topology(&self) -> &Topology {
-        self.trajectory.topology()
+        self.set.topology()
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        self.trajectory.shared_topology()
+        self.set.shared_topology()
     }
 
-    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryIoError> {
-        if !self.trajectory.topology().shares_layout(frame.topology()) {
+    /// # Errors
+    ///
+    /// As [`TrajectoryWriter::write_frame`], and
+    /// [`TrajectoryIoErrorKind::InconsistentMetadata`] for a frame without a
+    /// time or step that the first frame has, or with one the first frame
+    /// lacks; the [`SampleSetError`] is the source.
+    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
+        if !self.set.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryIoError::new(
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        Ok(self.trajectory.push(frame.payload().clone())?)
+        self.collect(frame).map_err(|error| match error {
+            SampleSetError::Structure(error) => error.into(),
+            error => TrajectoryIoError::new(TrajectoryIoErrorKind::InconsistentMetadata)
+                .with_source(error),
+        })
     }
 }
 

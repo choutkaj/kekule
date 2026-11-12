@@ -2,7 +2,7 @@
 //! interprets round-trips through the native format exactly.
 //!
 //! Small molecules (Molfile, SDF, SMILES) and macromolecular entries (mmCIF,
-//! as models and, for several coordinate models, sample sets and ensembles)
+//! as models and, for several coordinate models, sample sets)
 //! are checked for molecular and layout equality, properties,
 //! classifications, perception, and bitwise-identical coordinates. Inputs
 //! Kekule does not interpret are the benchmark's business, not this test's,
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use kekule::geometry::Point3;
 use kekule::molecule::Molecule;
 use kekule::native::{self, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions};
-use kekule::structure::{Ensemble, Model, SampleSet};
+use kekule::structure::{Model, SampleSet};
 use kekule::topology::Topology;
 use kekule::{mmcif, molfile, sdf, smiles};
 
@@ -105,18 +105,6 @@ fn assert_same_model(decoded: &Model, source: &Model) {
     assert_eq!(decoded.occupancies(), source.occupancies());
     assert_eq!(decoded.b_factors(), source.b_factors());
     assert_eq!(decoded.properties(), source.properties());
-}
-
-fn assert_same_ensemble(decoded: &Ensemble, source: &Ensemble) {
-    assert_same_topology(decoded.topology(), source.topology());
-    assert_eq!(decoded.len(), source.len());
-    for (left, right) in decoded.iter().zip(source.iter()) {
-        assert_eq!(left.payload(), right.payload());
-        assert_eq!(
-            coordinate_bits(left.payload().positions().values().value()),
-            coordinate_bits(right.payload().positions().values().value())
-        );
-    }
 }
 
 fn assert_same_sample_set(decoded: &SampleSet, source: &SampleSet) {
@@ -227,13 +215,6 @@ fn curated_biomolecules_round_trip_exactly() {
             if set.len() > 1 {
                 let decoded = round_trip(&set).into_sample_set().expect("a sample set");
                 assert_same_sample_set(&decoded, &set);
-            }
-        }
-        if let Ok(interpretation) = document.interpret_ensemble(Default::default()) {
-            let ensemble = interpretation.into_ensemble();
-            if ensemble.len() > 1 {
-                let decoded = round_trip(&ensemble).into_ensemble().expect("an ensemble");
-                assert_same_ensemble(&decoded, &ensemble);
             }
         }
     }

@@ -17,30 +17,20 @@
 //!   each shared and copied on write, with an optional [`Order`] that places
 //!   every sample ([`TimeAxis`], steps, or coordinate values; [`Place`]) and
 //!   an optional [`Distribution`] over all samples or some of them
-//!   ([`Members`]) grouped into states. [`SampleView`], [`SampleMut`], and
-//!   [`StateView`] read and edit them, and [`DistributionMut`] edits the
-//!   distribution; the set's operations fail with a [`SampleSetError`]. It
-//!   converts from and to the three older collections, refusing what the
-//!   other side cannot hold, so a conversion that succeeds loses nothing.
-//!   Its storage ([`SampleStorage`]) is a type parameter: [`InMemory`] by
-//!   default, or a file's ([`crate::traj::io::IndexedFile`]), whose samples
-//!   are read on demand. Sets of either storage, and a host's own readers,
-//!   read through [`SampleRead`], which fails with [`SampleReadError`].
-//! - Older collections of one shared topology: [`Ensemble`] is a distribution of
-//!   weighted samples ([`EnsembleSample`]) grouped into states
-//!   ([`EnsembleState`]) by an [`EnsemblePartition`]; [`Trajectory`] is a time-ordered
-//!   in-memory sequence of [`TrajectoryFrame`]s, which may carry time, step,
-//!   velocities and forces. File codecs and streaming live in [`crate::traj`].
-//!   [`Trajectory::to_ensemble`] samples chosen frames into an ensemble of
-//!   one state ([`TrajectorySampling`]); [`TrajectorySampler`] does so for
-//!   frames that arrive one at a time. [`Series`] is an ordered sequence of
-//!   [`SeriesItem`]s that is neither temporal nor weighted, such as the
-//!   steps of a geometry optimization or the points of a relaxed scan, each
-//!   at a step or a coordinate value of its [`SeriesAxis`].
+//!   ([`Members`]) grouped into [`State`]s by a [`Partition`]. A trajectory,
+//!   a conformer ensemble, and a scan are sample sets. [`SampleView`],
+//!   [`SampleMut`], and [`StateView`] read and edit them, and
+//!   [`DistributionMut`] edits the distribution; the set's operations fail
+//!   with a [`SampleSetError`]. Its storage ([`SampleStorage`]) is a type
+//!   parameter: [`InMemory`] by default, or a file's
+//!   ([`crate::traj::io::IndexedFile`]), whose samples are read on demand.
+//!   Sets of either storage, and a host's own readers, read through
+//!   [`SampleRead`], which fails with [`SampleReadError`];
+//!   [`SampleSet::from_reader`] loads chosen samples of any reader into
+//!   memory. File codecs and streaming live in [`crate::traj`].
 //! - Borrowed access: [`ModelView`] is the common input of coordinate-dependent
-//!   kernels. Models, samples ([`SampleView`]), ensemble samples
-//!   ([`EnsembleSampleView`]), trajectory frames ([`TrajectoryFrameView`]),
-//!   and series items ([`SeriesItemView`]) all borrow as one without copying
+//!   kernels. Models, samples ([`SampleView`]), and codec frames
+//!   ([`crate::traj::FrameView`]) all borrow as one without copying
 //!   ([`AsModelView`]); [`ModelAtomView`] pairs one topology atom with its
 //!   structure state. [`ModelView::kind`] says whether a view borrows a model
 //!   or a sample ([`StructureKind`]); a sample's [`SampleContext`] reports
@@ -59,8 +49,8 @@
 //! Owners accept semantic atom and bond IDs (and, in `*_at` methods, dense
 //! indexes), translate IDs to dense indexes, and check every array's length.
 //! Each owner has its own error type ([`ModelError`], [`ModelBuildError`],
-//! [`ModelEditError`], [`EnsembleError`], [`TrajectoryError`],
-//! [`SeriesError`], [`GeometryEditError`]); [`StructureError`] and [`DenseArrayError`] report
+//! [`ModelEditError`], [`SampleSetError`], [`PartitionError`],
+//! [`GeometryEditError`]); [`StructureError`] and [`DenseArrayError`] report
 //! invalid structure state shared by all of them.
 //!
 //! ```
@@ -126,7 +116,6 @@
 //! No relaxation is performed.
 
 mod dynamics;
-mod ensemble;
 mod geometry_edit;
 pub mod measure;
 mod model;
@@ -136,18 +125,12 @@ mod partition;
 pub mod placement;
 mod positions;
 mod sample_set;
-mod sampling;
 mod scalars;
-mod series;
 mod state;
-mod trajectory;
 
 pub use dynamics::{Forces, Velocities};
-pub use ensemble::{
-    Ensemble, EnsembleError, EnsembleIter, EnsembleSample, EnsembleSampleMut, EnsembleSampleView,
-    EnsembleState, EnsembleStateIter, EnsembleStateView,
-};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
+pub(crate) use model::sealed::Sealed as ModelViewSealed;
 pub use model::{
     AsModelView, Model, ModelAtomView, ModelBuildError, ModelBuilder, ModelError, ModelTopologyMut,
     ModelView, StructureKind,
@@ -156,25 +139,16 @@ pub use model_editor::{
     ModelAppend, ModelAppendReport, ModelEditError, ModelEditor, ModelEditorProperties,
     ModelEditorPropertiesMut, ModelEditorTopologyMut,
 };
-pub use partition::{EnsemblePartition, PartitionError};
+pub use partition::{Partition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
-pub(crate) use sample_set::{sealed as sample_storage, visit_sample, DecodedSample};
+pub(crate) use sample_set::{check_bound, sealed as sample_storage, visit_sample, DecodedSample};
 pub use sample_set::{
-    ConversionTarget, Distribution, DistributionMut, InMemory, Members, Membership, Order, Place,
-    Requirement, Sample, SampleContext, SampleIter, SampleMut, SampleRead, SampleReadError,
-    SampleSet, SampleSetError, SampleStorage, SampleView, StateIter, StateView, TimeAxis,
-    Unconvertible,
-};
-pub use sampling::{TrajectorySampler, TrajectorySampling};
-pub use series::{
-    Series, SeriesAxis, SeriesError, SeriesItem, SeriesItemMut, SeriesItemView, SeriesIter,
+    Distribution, DistributionMut, InMemory, Members, Membership, Order, Place, Requirement,
+    Sample, SampleContext, SampleIter, SampleMut, SampleRead, SampleReadError, SampleSet,
+    SampleSetError, SampleStorage, SampleView, State, StateIter, StateView, TimeAxis,
 };
 pub(crate) use state::subset_rows;
 pub use state::StructureError;
-pub use trajectory::{
-    MissingTimePolicy, Trajectory, TrajectoryError, TrajectoryFrame, TrajectoryFrameMut,
-    TrajectoryFrameView, TrajectoryIter,
-};
 
 #[cfg(test)]
 mod model_tests;

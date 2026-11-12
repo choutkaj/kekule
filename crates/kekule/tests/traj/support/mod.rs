@@ -1,25 +1,263 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
+use std::fmt::Debug;
 use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use kekule::geometry::PeriodicCell;
 use kekule::molecule::{Atom, BondOrder, Element};
-use kekule::structure::TrajectoryFrame;
+use kekule::structure::{
+    Forces, Order, Place, Positions, Sample, SampleRead, SampleReadError, SampleSet, SampleView,
+    StructureError, TimeAxis, Velocities,
+};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::DcdEndian;
 use kekule::traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
+    FrameBuffer, FrameView, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
 };
+use kekule::units::{Quantity, CANONICAL_TIME_UNIT};
+
+/// A frame a test expects or a reader decodes: a sample with its time and
+/// MD step, compared as a whole.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Frame {
+    pub(crate) sample: Sample,
+    pub(crate) time: Option<Quantity<f64>>,
+    pub(crate) step: Option<u64>,
+}
+
+impl Frame {
+    /// A frame of `positions` without a cell, time, or step.
+    pub(crate) fn new(positions: Positions) -> Self {
+        Self::of_sample(Sample::new(positions))
+    }
+
+    /// A frame of `sample` without a time or step.
+    pub(crate) fn of_sample(sample: Sample) -> Self {
+        Self {
+            sample,
+            time: None,
+            step: None,
+        }
+    }
+
+    /// The frame a buffer holds.
+    pub(crate) fn of(buffer: &FrameBuffer) -> Self {
+        Self::of_view(buffer.frame_view())
+    }
+
+    /// The frame a frame view shows.
+    pub(crate) fn of_view(frame: FrameView<'_>) -> Self {
+        Self {
+            sample: frame.payload().clone(),
+            time: frame.time(),
+            step: frame.step(),
+        }
+    }
+
+    /// A sample of a set as a frame: the time and step of a time order.
+    pub(crate) fn of_set_sample(view: SampleView<'_>) -> Self {
+        let (time, step) = match view.place() {
+            Some(Place::Time { time, step }) => (time, step),
+            _ => (None, None),
+        };
+        Self {
+            sample: view.payload().clone(),
+            time,
+            step,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_cell(mut self, cell: kekule::geometry::PeriodicCell) -> Self {
+        self.sample = self.sample.with_cell(cell);
+        self
+    }
+
+    /// Sets the time in the canonical time unit, as frames hold it; a time
+    /// that is not a finite time fails, as for a frame buffer.
+    pub(crate) fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), StructureError> {
+        self.time = time
+            .map(|time| {
+                let time = time.into_unit(CANONICAL_TIME_UNIT)?;
+                if time.value().is_finite() {
+                    Ok(time)
+                } else {
+                    Err(StructureError::NonFiniteTime)
+                }
+            })
+            .transpose()?;
+        Ok(())
+    }
+
+    pub(crate) fn set_step(&mut self, step: Option<u64>) {
+        self.step = step;
+    }
+
+    pub(crate) const fn time(&self) -> Option<Quantity<f64>> {
+        self.time
+    }
+
+    pub(crate) const fn step(&self) -> Option<u64> {
+        self.step
+    }
+
+    /// The frame with the annotation rows of `topology`, as a set or a
+    /// buffer binds a sample.
+    #[must_use]
+    pub(crate) fn bound(self, topology: &Arc<Topology>) -> Self {
+        let (sample, _) = FrameBuffer::from_sample(Arc::clone(topology), self.sample)
+            .unwrap()
+            .into_sample();
+        Self { sample, ..self }
+    }
+
+    /// The bound frame as a writer takes it.
+    pub(crate) fn view<'a>(&'a self, topology: &'a Arc<Topology>) -> FrameView<'a> {
+        FrameView::new(topology, &self.sample, self.time, self.step).unwrap()
+    }
+}
+
+impl std::ops::Deref for Frame {
+    type Target = Sample;
+
+    fn deref(&self) -> &Sample {
+        &self.sample
+    }
+}
+
+impl std::ops::DerefMut for Frame {
+    fn deref_mut(&mut self) -> &mut Sample {
+        &mut self.sample
+    }
+}
+
+/// Frames in a time order whose columns the first frame's time and step
+/// give, as a reader of them returns them.
+pub(crate) fn time_ordered(
+    topology: impl Into<Arc<Topology>>,
+    frames: impl IntoIterator<Item = Frame>,
+) -> SampleSet {
+    let mut set = SampleSet::new(topology);
+    for (index, frame) in frames.into_iter().enumerate() {
+        if index == 0 {
+            let axis = TimeAxis::new(
+                frame
+                    .time
+                    .map(|_| Quantity::new(Vec::new(), CANONICAL_TIME_UNIT)),
+                frame.step.map(|_| Vec::new()),
+            )
+            .unwrap();
+            set.set_order(Some(Order::Time(axis))).unwrap();
+        }
+        let place = Place::Time {
+            time: frame.time,
+            step: frame.step,
+        };
+        set.push(frame.sample, Some(place)).unwrap();
+    }
+    set
+}
+
+/// The frames of a set, in set order.
+pub(crate) fn frames_of(set: &SampleSet) -> Vec<Frame> {
+    set.iter().map(Frame::of_set_sample).collect()
+}
+
+/// FNV-1a 64 over `bytes`.
+pub(crate) fn fingerprint_bytes(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// FNV-1a 64 over the `Debug` text of `value`. `Debug` writes every `f64`
+/// as the shortest text that reads back to the same bits.
+pub(crate) fn fingerprint(value: &impl Debug) -> u64 {
+    fingerprint_bytes(format!("{value:?}").as_bytes())
+}
+
+/// Checks a sequence of results against their recorded fingerprints, in
+/// order, and that every recorded fingerprint was checked.
+pub(crate) struct Recorded {
+    expected: &'static [u64],
+    next: usize,
+}
+
+impl Recorded {
+    pub(crate) const fn new(expected: &'static [u64]) -> Self {
+        Self { expected, next: 0 }
+    }
+
+    pub(crate) fn check(&mut self, value: &impl Debug) {
+        assert_eq!(
+            Some(&fingerprint(value)),
+            self.expected.get(self.next),
+            "recorded result {}",
+            self.next
+        );
+        self.next += 1;
+    }
+}
+
+impl Drop for Recorded {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            assert_eq!(self.next, self.expected.len(), "unchecked recorded results");
+        }
+    }
+}
+
+/// What a set holds apart from its topology: its properties, order,
+/// distribution, and samples.
+pub(crate) fn contents(set: &SampleSet) -> impl Debug + '_ {
+    (
+        set.properties(),
+        set.order(),
+        set.distribution(),
+        set.iter()
+            .map(|sample| sample.payload())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The positions, cell, velocities, and forces of a sample.
+pub(crate) type Dynamics = (
+    Positions,
+    Option<PeriodicCell>,
+    Option<Velocities>,
+    Option<Forces>,
+);
+
+/// The dynamics of every sample: the state periodic operations and fits
+/// change.
+pub(crate) fn dynamics(set: &SampleSet) -> Vec<Dynamics> {
+    set.iter()
+        .map(|sample| {
+            (
+                sample.positions().clone(),
+                sample.cell().copied(),
+                sample.velocities().cloned(),
+                sample.forces().cloned(),
+            )
+        })
+        .collect()
+}
+
+/// Every sample `reader` reads, in order.
+pub(crate) fn reads(reader: &(impl SampleRead + ?Sized)) -> Vec<Result<Sample, SampleReadError>> {
+    (0..reader.len()).map(|index| reader.read(index)).collect()
+}
 
 /// Reject another topology context without changing its buffer or consuming input.
 /// Call before reading and checking the first expected frame in the caller.
 pub(crate) fn assert_rejects_unrelated_buffer(reader: &mut impl TrajectoryReader) {
     let mut wrong = FrameBuffer::new(linear_carbon_topology(reader.topology().atom_count()));
-    wrong.frame_mut().set_step(Some(99));
+    wrong.set_step(Some(99));
     let before = buffer_snapshot(&wrong);
     assert!(matches!(
         reader.read_next(&mut wrong),
@@ -116,29 +354,29 @@ pub(crate) fn cursor_after_leading_bytes(trajectory: &[u8]) -> Cursor<Vec<u8>> {
 /// where they stopped after random reads.
 pub(crate) fn assert_indexes_every_frame_from_its_start(
     reader: &mut impl SeekableTrajectoryReader,
-    expected: &[TrajectoryFrame],
+    expected: &[Frame],
 ) {
     let mut destination = FrameBuffer::new(reader.shared_topology());
     assert_eq!(reader.frame_count(), Some(expected.len()));
     assert!(reader.read_next(&mut destination).unwrap());
-    assert_eq!(destination.frame_view().payload(), &expected[0]);
+    assert_eq!(Frame::of(&destination), expected[0]);
     for index in (0..expected.len()).rev() {
         reader.read_frame(index, &mut destination).unwrap();
-        assert_eq!(destination.frame_view().payload(), &expected[index]);
+        assert_eq!(Frame::of(&destination), expected[index]);
     }
     for frame in &expected[1..] {
         assert!(reader.read_next(&mut destination).unwrap());
-        assert_eq!(destination.frame_view().payload(), frame);
+        assert_eq!(&Frame::of(&destination), frame);
     }
     assert!(!reader.read_next(&mut destination).unwrap());
 }
 
 /// Every frame a sequential reader decodes, in order.
-pub(crate) fn read_all(reader: &mut impl TrajectoryReader) -> Vec<TrajectoryFrame> {
+pub(crate) fn read_all(reader: &mut impl TrajectoryReader) -> Vec<Frame> {
     let mut destination = FrameBuffer::new(reader.shared_topology());
     let mut frames = Vec::new();
     while reader.read_next(&mut destination).unwrap() {
-        frames.push(destination.frame_view().payload().clone());
+        frames.push(Frame::of(&destination));
     }
     frames
 }

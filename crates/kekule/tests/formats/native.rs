@@ -16,9 +16,8 @@ use kekule::native::{
 use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    ConversionTarget, Distribution, Ensemble, EnsemblePartition, EnsembleSample, EnsembleState,
-    Forces, Members, Model, Order, Positions, Sample, SampleSet, Series, SeriesAxis, SeriesItem,
-    TimeAxis, Trajectory, TrajectoryFrame, Velocities,
+    Distribution, Forces, Members, Model, Order, Partition, Place, Positions, Sample, SampleSet,
+    State, TimeAxis, Velocities,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology, TopologyBuilder,
@@ -428,7 +427,7 @@ fn interpreted_models_keep_their_reports() {
 }
 
 #[test]
-fn interpreted_ensembles_keep_one_report_per_sample() {
+fn interpreted_conformations_keep_one_report_per_sample() {
     let text = std::fs::read_to_string(fixture("mmcif/1AKE.cif")).unwrap();
     let document = mmcif::parse_str(&text, Default::default()).unwrap();
     let selections = ["A", "B"].map(|label| {
@@ -442,25 +441,37 @@ fn interpreted_ensembles_keep_one_report_per_sample() {
         .iter()
         .all(|report| !report.alternate_locations().is_empty()));
     assert_ne!(interpretation.reports()[0], interpretation.reports()[1]);
+    // The conformations are one state of equally weighted samples.
+    let distribution = interpretation.sample_set().distribution().unwrap();
+    assert_eq!(distribution.state_count(), 1);
+    assert_eq!(distribution.weights(), None);
+    assert_eq!(
+        crate::native_fingerprint(&interpretation),
+        0x09ae_12e3_3d1f_f605
+    );
 
     let decoded = round_trip(&interpretation)
-        .into_ensemble_interpretation()
+        .into_sample_set_interpretation()
         .unwrap();
     assert_eq!(decoded.reports(), interpretation.reports());
-    assert_same_ensemble(decoded.ensemble(), interpretation.ensemble());
+    assert_same_sample_set(decoded.sample_set(), interpretation.sample_set());
     let written = |source| {
         mmcif::write([source], MmcifWriteOptions::default())
             .unwrap()
             .0
     };
     assert_eq!(written(&decoded), written(&interpretation));
+    assert_eq!(
+        crate::fingerprint(written(&interpretation)),
+        0x5812_6ef2_c2b1_32c0
+    );
 
     let bytes = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
-    let ensemble = native::read(bytes.as_slice(), NativeReadOptions::default())
+    let set = native::read(bytes.as_slice(), NativeReadOptions::default())
         .unwrap()
-        .into_ensemble()
+        .into_sample_set()
         .unwrap();
-    assert_same_ensemble(&ensemble, interpretation.ensemble());
+    assert_same_sample_set(&set, interpretation.sample_set());
 }
 
 #[test]
@@ -631,18 +642,18 @@ fn sample_sets_keep_every_order_kind_and_sample_field() {
 fn sample_sets_keep_their_distribution() {
     let distributions = [
         // Every sample, one state, without weights.
-        Distribution::new(Members::All, EnsemblePartition::one_state(3)).unwrap(),
+        Distribution::new(Members::All, Partition::one_state(3)).unwrap(),
         // Every sample, weighted, a state each with energies and a temperature.
-        Distribution::new(Members::All, EnsemblePartition::state_per_sample(3))
+        Distribution::new(Members::All, Partition::state_per_sample(3))
             .unwrap()
             .with_weights(vec![0.25, 3.0, 1.0e-300])
             .unwrap()
             .with_states(vec![
-                EnsembleState::new()
+                State::new()
                     .with_energy(Quantity::new(-12.5, KILOJOULE_PER_MOLE))
                     .unwrap(),
-                EnsembleState::new(),
-                EnsembleState::new()
+                State::new(),
+                State::new()
                     .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
             ])
@@ -653,13 +664,13 @@ fn sample_sets_keep_their_distribution() {
         // sample 2, with state properties.
         Distribution::new(
             Members::Subset(vec![0, 2]),
-            EnsemblePartition::new(vec![0, 0], vec![1]).unwrap(),
+            Partition::new(vec![0, 0], vec![1]).unwrap(),
         )
         .unwrap()
         .with_weights(vec![2.0, 1.0])
         .unwrap()
         .with_states(vec![{
-            let mut state = EnsembleState::new();
+            let mut state = State::new();
             state
                 .properties_mut()
                 .insert(key("cluster"), PropertyValue::String("open".into()))
@@ -685,18 +696,15 @@ fn interpreted_sample_sets_keep_one_report_per_sample() {
         StructureInterpretOptions::default()
             .with_altloc_policy(AltLocPolicy::SelectLabel(label.into()))
     });
-    let ensemble = document.interpret_conformations(&selections).unwrap();
-    // An interpreted ensemble is written as the interpreted sample set it
-    // converts to.
-    let bytes = native::write(&ensemble, NativeWriteOptions::default()).unwrap();
+    let conformations = document.interpret_conformations(&selections).unwrap();
+    let bytes = native::write(&conformations, NativeWriteOptions::default()).unwrap();
     assert_eq!(bytes[12], 10);
     let interpretation = native::read(bytes.as_slice(), NativeReadOptions::default())
         .unwrap()
         .into_sample_set_interpretation()
         .unwrap();
-    assert_eq!(interpretation.reports(), ensemble.reports());
-    let converted = SampleSet::from_ensemble(ensemble.ensemble().clone());
-    assert_same_sample_set(interpretation.sample_set(), &converted);
+    assert_eq!(interpretation.reports(), conformations.reports());
+    assert_same_sample_set(interpretation.sample_set(), conformations.sample_set());
     let decoded = round_trip(&interpretation)
         .into_sample_set_interpretation()
         .unwrap();
@@ -751,7 +759,7 @@ fn sample_set_descriptions_store_the_number_of_samples() {
     let mut set = rich_set();
     set.set_order(Some(Order::Step(vec![1, 2, 3]))).unwrap();
     set.set_distribution(Some(
-        Distribution::new(Members::Subset(vec![1]), EnsemblePartition::one_state(1)).unwrap(),
+        Distribution::new(Members::Subset(vec![1]), Partition::one_state(1)).unwrap(),
     ))
     .unwrap();
     let description = SampleSetDescription::of(&set);
@@ -767,10 +775,6 @@ fn sample_set_descriptions_store_the_number_of_samples() {
     assert_eq!(
         error.to_string(),
         "Cannot interpret the native input. The input's sample set stores its 3 samples elsewhere."
-    );
-    assert_eq!(
-        decoded.clone().into_ensemble().unwrap_err().detail(),
-        Some(&FormatErrorDetail::NativeExternalSamples { samples: 3 })
     );
     let decoded = decoded.into_sample_set_description().unwrap();
     assert_same_topology(decoded.topology(), set.topology());
@@ -807,91 +811,35 @@ fn sample_set_descriptions_store_the_number_of_samples() {
 }
 
 #[test]
-fn ensembles_trajectories_and_series_write_the_sample_set_they_convert_to() {
-    let ensemble = Ensemble::from_samples(
+fn distributed_and_ordered_sample_sets_are_one_kind() {
+    let clustered = water_set(Partition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap());
+    let mut timed = SampleSet::from_samples(
         water_topology(),
-        water_samples(),
-        EnsemblePartition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap(),
+        (0..2u32).map(|index| Sample::new(positions(f64::from(index)))),
     )
     .unwrap();
-    let mut frames = Vec::new();
-    for index in 0..2u32 {
-        let mut frame = TrajectoryFrame::new(positions(f64::from(index)));
-        frame
-            .set_time(Some(Quantity::new(f64::from(index), PICOSECOND)))
-            .unwrap();
-        frames.push(frame);
-    }
-    let trajectory = Trajectory::from_items(water_topology(), frames).unwrap();
-    let mut series = Series::new(water_topology(), SeriesAxis::Coordinate(DEGREE));
-    series
-        .push(SeriesItem::at_coordinate(positions(0.0), Quantity::new(-0.0, DEGREE)).unwrap())
+    timed
+        .set_order(Some(Order::Time(
+            TimeAxis::new(Some(Quantity::new(vec![0.0, 1.0], PICOSECOND)), None).unwrap(),
+        )))
         .unwrap();
-    let bytes =
-        |source: NativeSource<'_>| native::write(source, NativeWriteOptions::default()).unwrap();
-    let ensemble_set = SampleSet::from_ensemble(ensemble.clone());
-    let trajectory_set = SampleSet::from_trajectory(trajectory.clone()).unwrap();
-    let series_set = SampleSet::from_series(series.clone());
-    assert!(bytes((&ensemble).into()) == bytes((&ensemble_set).into()));
-    assert!(bytes((&trajectory).into()) == bytes((&trajectory_set).into()));
-    assert!(bytes((&series).into()) == bytes((&series_set).into()));
-    for written in [
-        bytes((&ensemble).into()),
-        bytes((&trajectory).into()),
-        bytes((&series).into()),
+    let mut scan =
+        SampleSet::from_samples(water_topology(), [Sample::new(positions(0.0))]).unwrap();
+    scan.set_order(Some(Order::Coordinate {
+        unit: DEGREE,
+        values: vec![-0.0],
+    }))
+    .unwrap();
+    for (set, expected) in [
+        (&clustered, 0xe094_8e71_1825_a8c0),
+        (&timed, 0xf70e_517b_80a7_996a),
+        (&scan, 0xaa6d_2989_3a6c_8868),
     ] {
-        assert_eq!(written[12], 9);
+        let bytes = native::write(set, NativeWriteOptions::default()).unwrap();
+        assert_eq!(bytes[12], 9);
+        assert_eq!(crate::fingerprint(&bytes), expected);
+        assert_same_sample_set(&round_trip(set).into_sample_set().unwrap(), set);
     }
-
-    // Each reads back as itself, and as no collection of another shape.
-    let read = |source: NativeSource<'_>| {
-        native::read(bytes(source).as_slice(), NativeReadOptions::default()).unwrap()
-    };
-    assert_same_ensemble(
-        &read((&ensemble).into()).into_ensemble().unwrap(),
-        &ensemble,
-    );
-    assert_same_series(&read((&series).into()).into_series().unwrap(), &series);
-    let decoded = read((&trajectory).into()).into_trajectory().unwrap();
-    for (left, right) in decoded.iter().zip(trajectory.iter()) {
-        assert_eq!(left.payload(), right.payload());
-    }
-    let mismatches = [
-        (
-            read((&ensemble).into()).into_trajectory().map(|_| ()),
-            ConversionTarget::Trajectory,
-        ),
-        (
-            read((&trajectory).into()).into_series().map(|_| ()),
-            ConversionTarget::Series,
-        ),
-        (
-            read((&trajectory).into()).into_ensemble().map(|_| ()),
-            ConversionTarget::Ensemble,
-        ),
-        (
-            read((&series).into()).into_ensemble().map(|_| ()),
-            ConversionTarget::Ensemble,
-        ),
-    ];
-    for (result, target) in mismatches {
-        let error = result.unwrap_err();
-        assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-        assert_eq!(
-            error.detail(),
-            Some(&FormatErrorDetail::NativeSampleSetShape { target })
-        );
-        assert!(std::error::Error::source(&error).is_some());
-    }
-    // A sample set an ensemble cannot hold, such as one with velocities,
-    // is no ensemble either.
-    let error = read((&rich_set()).into()).into_ensemble().unwrap_err();
-    assert_eq!(
-        error.detail(),
-        Some(&FormatErrorDetail::NativeSampleSetShape {
-            target: ConversionTarget::Ensemble,
-        })
-    );
 }
 
 fn water_topology() -> Arc<Topology> {
@@ -924,30 +872,10 @@ fn cell() -> PeriodicCell {
     .unwrap()
 }
 
-fn assert_same_ensemble(decoded: &Ensemble, source: &Ensemble) {
-    assert_same_topology(decoded.topology(), source.topology());
-    assert_eq!(decoded.properties(), source.properties());
-    assert_eq!(decoded.len(), source.len());
-    for (left, right) in decoded.iter().zip(source.iter()) {
-        assert_eq!(left.payload(), right.payload());
-        assert_eq!(
-            left.payload().weight().to_bits(),
-            right.payload().weight().to_bits()
-        );
-    }
-    assert_eq!(decoded.partition(), source.partition());
-    for (left, right) in decoded.states().zip(source.states()) {
-        assert_eq!(left.payload(), right.payload());
-    }
-    assert_eq!(decoded.temperature(), source.temperature());
-}
-
 /// Four samples of water: the first with a cell, an occupancy, and an
 /// owner property, the last with the smallest positive coordinate.
-fn water_samples() -> Vec<EnsembleSample> {
-    let mut first = EnsembleSample::new(positions(0.5), 0.25)
-        .unwrap()
-        .with_cell(cell());
+fn water_samples() -> Vec<Sample> {
+    let mut first = Sample::new(positions(0.5)).with_cell(cell());
     first.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
     first
         .properties_mut()
@@ -956,70 +884,81 @@ fn water_samples() -> Vec<EnsembleSample> {
         .unwrap();
     vec![
         first,
-        EnsembleSample::new(positions(1.0), 3.0).unwrap(),
-        EnsembleSample::new(positions(2.0), 0.1).unwrap(),
-        EnsembleSample::new(positions(f64::MIN_POSITIVE), 1.0e-300).unwrap(),
+        Sample::new(positions(1.0)),
+        Sample::new(positions(2.0)),
+        Sample::new(positions(f64::MIN_POSITIVE)),
     ]
 }
 
-#[test]
-fn ensembles_of_one_state_keep_samples_weights_and_site_values() {
-    let mut ensemble = Ensemble::from_samples(
-        water_topology(),
-        water_samples(),
-        EnsemblePartition::one_state(4),
-    )
+/// The water samples in the states of `partition`, weighted down to the
+/// smallest positive weight.
+fn water_set(partition: Partition) -> SampleSet {
+    let mut set = SampleSet::from_samples(water_topology(), water_samples()).unwrap();
+    set.set_distribution(Some(
+        Distribution::new(Members::All, partition)
+            .unwrap()
+            .with_weights(vec![0.25, 3.0, 0.1, 1.0e-300])
+            .unwrap(),
+    ))
     .unwrap();
-    ensemble
-        .properties_mut()
-        .insert(key("method"), PropertyValue::String("REMD".into()))
-        .unwrap();
-    let decoded = round_trip(&ensemble).into_ensemble().unwrap();
-    assert_same_ensemble(&decoded, &ensemble);
-    assert_eq!(decoded.state_count(), 1);
+    set
+}
+
+/// Asserts that a set round trips and encodes to the bytes `expected`
+/// fingerprints, returning the decoded set.
+fn round_trip_set(set: &SampleSet, expected: u64) -> SampleSet {
+    assert_eq!(crate::native_fingerprint(set), expected);
+    let decoded = round_trip(set).into_sample_set().unwrap();
+    assert_same_sample_set(&decoded, set);
+    for (left, right) in decoded.iter().zip(set.iter()) {
+        assert_eq!(
+            left.weight().map(f64::to_bits),
+            right.weight().map(f64::to_bits)
+        );
+    }
+    decoded
 }
 
 #[test]
-fn ensembles_of_one_state_per_sample_keep_energies_and_the_temperature() {
-    let mut ensemble = Ensemble::from_samples(
-        water_topology(),
-        water_samples(),
-        EnsemblePartition::state_per_sample(4),
-    )
-    .unwrap();
+fn distributions_of_one_state_keep_samples_weights_and_site_values() {
+    let mut set = water_set(Partition::one_state(4));
+    set.properties_mut()
+        .insert(key("method"), PropertyValue::String("REMD".into()))
+        .unwrap();
+    let decoded = round_trip_set(&set, 0x2e0b_dd44_1d2f_84de);
+    assert_eq!(decoded.distribution().unwrap().state_count(), 1);
+}
+
+#[test]
+fn distributions_of_one_state_per_sample_keep_energies_and_the_temperature() {
+    let mut set = water_set(Partition::state_per_sample(4));
+    let mut distribution = set.distribution_mut().unwrap();
     for (state, energy) in [(0, -12.5), (2, 0.0)] {
-        ensemble
+        distribution
             .state_mut(state)
             .unwrap()
             .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
             .unwrap();
     }
-    ensemble
+    distribution
         .set_temperature(Some(Quantity::new(298.15, kekule::units::KELVIN)))
         .unwrap();
-    let decoded = round_trip(&ensemble).into_ensemble().unwrap();
-    assert_same_ensemble(&decoded, &ensemble);
-    assert_eq!(decoded.state_count(), 4);
+    let decoded = round_trip_set(&set, 0x6372_8013_2b2e_4f7f);
+    assert_eq!(decoded.distribution().unwrap().state_count(), 4);
 }
 
 #[test]
-fn clustered_ensembles_keep_their_partition_and_state_properties() {
-    let mut ensemble = Ensemble::from_samples(
-        water_topology(),
-        water_samples(),
-        EnsemblePartition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap(),
-    )
-    .unwrap();
-    let mut state = EnsembleState::new()
+fn clustered_distributions_keep_their_partition_and_state_properties() {
+    let mut set = water_set(Partition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap());
+    let mut state = State::new()
         .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
         .unwrap();
     state
         .properties_mut()
         .insert(key("cluster"), PropertyValue::String("open".into()))
         .unwrap();
-    *ensemble.state_mut(1).unwrap() = state;
-    let decoded = round_trip(&ensemble).into_ensemble().unwrap();
-    assert_same_ensemble(&decoded, &ensemble);
+    *set.distribution_mut().unwrap().state_mut(1).unwrap() = state;
+    let decoded = round_trip_set(&set, 0xd7e9_595d_bac6_e09f);
     assert_eq!(
         decoded
             .state(1)
@@ -1034,18 +973,12 @@ fn clustered_ensembles_keep_their_partition_and_state_properties() {
 }
 
 #[test]
-fn trajectories_keep_time_step_velocities_and_forces() {
-    let topology = water_topology();
-    let mut frames = Vec::new();
-    for index in 0..3u32 {
-        let mut frame = TrajectoryFrame::new(positions(f64::from(index)));
-        frame
-            .set_time(Some(Quantity::new(f64::from(index) * 0.002, PICOSECOND)))
-            .unwrap();
-        frame.set_step(Some(u64::MAX - u64::from(index)));
+fn time_orders_keep_time_step_velocities_and_forces() {
+    let samples = (0..3u32).map(|index| {
+        let mut sample = Sample::new(positions(f64::from(index)));
         if index != 1 {
-            frame.set_cell(Some(cell()));
-            frame
+            sample.set_cell(Some(cell()));
+            sample
                 .set_velocities(Some(
                     Velocities::from_vec(Quantity::new(
                         vec![Vector3::new(1.0, 2.0, 3.0); 2],
@@ -1054,7 +987,7 @@ fn trajectories_keep_time_step_velocities_and_forces() {
                     .unwrap(),
                 ))
                 .unwrap();
-            frame
+            sample
                 .set_forces(Some(
                     Forces::from_vec(Quantity::new(
                         vec![Vector3::new(-1.0, 0.5, 0.0); 2],
@@ -1064,11 +997,16 @@ fn trajectories_keep_time_step_velocities_and_forces() {
                 ))
                 .unwrap();
         }
-        frames.push(frame);
-    }
-    let mut trajectory = Trajectory::from_items(topology, frames).unwrap();
-    trajectory
-        .get_mut(2)
+        sample
+    });
+    let mut set = SampleSet::from_samples(water_topology(), samples).unwrap();
+    let times = (0..3u32).map(|index| f64::from(index) * 0.002).collect();
+    let steps = (0..3u64).map(|index| u64::MAX - index).collect();
+    set.set_order(Some(Order::Time(
+        TimeAxis::new(Some(Quantity::new(times, PICOSECOND)), Some(steps)).unwrap(),
+    )))
+    .unwrap();
+    set.get_mut(2)
         .unwrap()
         .properties_mut()
         .atoms_mut()
@@ -1078,81 +1016,47 @@ fn trajectories_keep_time_step_velocities_and_forces() {
             Some(PropertyValue::Bool(true)),
         )
         .unwrap();
-    let decoded = round_trip(&trajectory).into_trajectory().unwrap();
-    assert_same_topology(decoded.topology(), trajectory.topology());
-    for (left, right) in decoded.iter().zip(trajectory.iter()) {
-        assert_eq!(left.payload(), right.payload());
-    }
+    round_trip_set(&set, 0x4e84_32d6_85a6_eacb);
 
-    // Frames without any time or step keep having none.
-    let untimed = Trajectory::from_items(
+    // A time order without times or steps keeps having none.
+    let mut untimed = SampleSet::from_samples(
         water_topology(),
-        [
-            TrajectoryFrame::new(positions(0.0)),
-            TrajectoryFrame::new(positions(1.0)),
-        ],
+        [Sample::new(positions(0.0)), Sample::new(positions(1.0))],
     )
     .unwrap();
-    let decoded = round_trip(&untimed).into_trajectory().unwrap();
-    assert!(decoded
-        .iter()
-        .all(|frame| frame.time().is_none() && frame.step().is_none()));
-
-    // A sample set's time order has times on every sample or on none, so
-    // frames of which only some have a time do not write.
-    let mut partial = untimed;
-    partial
-        .get_mut(1)
-        .unwrap()
-        .set_time(Some(Quantity::new(1.0, PICOSECOND)))
+    untimed
+        .set_order(Some(Order::Time(TimeAxis::new(None, None).unwrap())))
         .unwrap();
-    let error = native::write(&partial, NativeWriteOptions::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-    assert_eq!(
-        error.to_string(),
-        "Cannot write the native output. The trajectory's frame times do not form a time order."
-    );
-}
-
-fn assert_same_series(decoded: &Series, source: &Series) {
-    assert_same_topology(decoded.topology(), source.topology());
-    assert_eq!(decoded.properties(), source.properties());
-    assert_eq!(decoded.axis(), source.axis());
-    assert_eq!(decoded.len(), source.len());
-    for (left, right) in decoded.iter().zip(source.iter()) {
-        assert_eq!(left.payload(), right.payload());
-        assert_eq!(
-            bits(left.positions().values().value()),
-            bits(right.positions().values().value())
-        );
-        assert_eq!(
-            left.coordinate()
-                .map(|coordinate| coordinate.value().to_bits()),
-            right
-                .coordinate()
-                .map(|coordinate| coordinate.value().to_bits())
-        );
-    }
+    let decoded = round_trip_set(&untimed, 0x1b2a_c843_8dcc_2f53);
+    assert!(decoded.iter().all(|sample| sample.place()
+        == Some(Place::Time {
+            time: None,
+            step: None
+        })));
 }
 
 #[test]
-fn series_keep_their_axis_places_cells_and_values() {
+fn step_and_coordinate_orders_keep_places_cells_and_values() {
     // An optimization history: steps, energies, a cell, and atom values.
-    let mut history = Series::new(water_topology(), SeriesAxis::Step);
-    for (index, step) in [0, 7, u64::MAX].into_iter().enumerate() {
-        let mut item = SeriesItem::at_step(positions(index as f64), step);
+    let samples = (0..3).map(|index| {
+        let mut sample = Sample::new(positions(f64::from(index)));
         if index == 1 {
-            item = item.with_cell(cell());
+            sample = sample.with_cell(cell());
         }
-        item.properties_mut()
+        sample
+            .properties_mut()
             .owner_mut()
             .insert(
                 key("energy"),
-                PropertyValue::real(-1.5 - index as f64, KILOJOULE_PER_MOLE).unwrap(),
+                PropertyValue::real(-1.5 - f64::from(index), KILOJOULE_PER_MOLE).unwrap(),
             )
             .unwrap();
-        history.push(item).unwrap();
-    }
+        sample
+    });
+    let mut history = SampleSet::from_samples(water_topology(), samples).unwrap();
+    history
+        .set_order(Some(Order::Step(vec![0, 7, u64::MAX])))
+        .unwrap();
     history
         .properties_mut()
         .insert(key("converged"), PropertyValue::Bool(true))
@@ -1168,46 +1072,42 @@ fn series_keep_their_axis_places_cells_and_values() {
             Some(PropertyValue::Bool(true)),
         )
         .unwrap();
-    let decoded = round_trip(&history).into_series().unwrap();
-    assert_same_series(&decoded, &history);
-    assert_eq!(decoded.get(2).unwrap().step(), Some(u64::MAX));
+    let decoded = round_trip_set(&history, 0xb76f_4cd8_a1d5_12a7);
+    assert_eq!(decoded.get(2).unwrap().place(), Some(Place::Step(u64::MAX)));
 
     // A relaxed scan in degrees, swept back, with a negative zero.
-    let mut scan = Series::new(water_topology(), SeriesAxis::Coordinate(DEGREE));
-    for (index, angle) in [-0.0, 1e-300, 180.0, -90.5].into_iter().enumerate() {
-        let item = SeriesItem::at_coordinate(positions(index as f64), Quantity::new(angle, DEGREE))
-            .unwrap();
-        scan.push(item).unwrap();
-    }
-    let decoded = round_trip(&scan).into_series().unwrap();
-    assert_same_series(&decoded, &scan);
-    let first = decoded.get(0).unwrap().coordinate().unwrap();
+    let mut scan = SampleSet::from_samples(
+        water_topology(),
+        (0..4).map(|index| Sample::new(positions(f64::from(index)))),
+    )
+    .unwrap();
+    scan.set_order(Some(Order::Coordinate {
+        unit: DEGREE,
+        values: vec![-0.0, 1e-300, 180.0, -90.5],
+    }))
+    .unwrap();
+    let decoded = round_trip_set(&scan, 0x02a0_cc46_8fab_4ee9);
+    let Some(Place::Coordinate(first)) = decoded.get(0).unwrap().place() else {
+        panic!("a coordinate order places its samples by coordinate");
+    };
     assert_eq!(first.value().to_bits(), (-0.0_f64).to_bits());
     assert_eq!(first.unit(), DEGREE);
 
-    // An empty series keeps its axis.
-    let empty = Series::new(water_topology(), SeriesAxis::Coordinate(ANGSTROM));
-    let decoded = round_trip(&empty).into_series().unwrap();
+    // An empty set keeps its order's unit.
+    let mut empty = SampleSet::new(water_topology());
+    empty
+        .set_order(Some(Order::Coordinate {
+            unit: ANGSTROM,
+            values: Vec::new(),
+        }))
+        .unwrap();
+    let decoded = round_trip_set(&empty, 0x93e3_20f6_6457_161b);
     assert!(decoded.is_empty());
-    assert_eq!(decoded.axis(), SeriesAxis::Coordinate(ANGSTROM));
 
-    // A series is a sample set of a coordinate order, no trajectory; its
-    // item count is bounded; every truncation fails cleanly.
+    // The sample count is bounded; every truncation fails cleanly.
     let bytes = native::write(&scan, NativeWriteOptions::default()).unwrap();
     let decoded = native::read(bytes.as_slice(), NativeReadOptions::default()).unwrap();
     assert_eq!(decoded.kind(), NativeKind::SampleSet);
-    let error = decoded.into_trajectory().unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-    assert_eq!(
-        error.detail(),
-        Some(&FormatErrorDetail::NativeSampleSetShape {
-            target: ConversionTarget::Trajectory,
-        })
-    );
-    assert_eq!(
-        error.to_string(),
-        "Cannot interpret the native input. The input's sample set is not a trajectory."
-    );
     let limited = NativeReadOptions::default().with_max_items(3).unwrap();
     let error = native::read(bytes.as_slice(), limited).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Limit);

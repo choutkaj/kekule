@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use crate::support;
 use support::{
     buffer_snapshot, codec_error, codec_kind, linear_carbon_topology as topology,
-    x_coordinates as x_values, GuardedCursor, RestoreSeekFailure,
+    x_coordinates as x_values, Frame, GuardedCursor, RestoreSeekFailure,
 };
 
 fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer {
@@ -35,10 +35,10 @@ fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer 
         })
         .collect::<Vec<_>>();
     frame
-        .frame_mut()
+        .sample_mut()
         .set_positions(Quantity::new(positions, NANOMETER))
         .unwrap();
-    frame.frame_mut().set_cell(Some(
+    frame.sample_mut().set_cell(Some(
         PeriodicCell::new(
             Quantity::new(
                 [
@@ -53,10 +53,9 @@ fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer 
         .unwrap(),
     ));
     frame
-        .frame_mut()
         .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))
         .unwrap();
-    frame.frame_mut().set_step(Some(step));
+    frame.set_step(Some(step));
     frame
 }
 
@@ -129,7 +128,7 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
     let valid_cell = frame.cell().copied();
     writer.write_frame(frame.frame_view()).unwrap();
     let before = writer.writer().clone();
-    frame.frame_mut().set_cell(Some(
+    frame.sample_mut().set_cell(Some(
         PeriodicCell::new(
             Quantity::new(
                 [
@@ -159,8 +158,8 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
         ))
     );
     assert_eq!(writer.writer(), &before);
-    frame.frame_mut().set_cell(valid_cell);
-    frame.frame_mut().set_step(Some(1));
+    frame.sample_mut().set_cell(valid_cell);
+    frame.set_step(Some(1));
     writer.write_frame(frame.frame_view()).unwrap();
     let mut reader = XtcReader::new(
         Cursor::new(writer.finish().unwrap().into_inner()),
@@ -188,7 +187,7 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
                 let mut frame = source_frame(&topology, step as f64 * 0.01, step);
                 if step == 1 {
                     frame
-                        .frame_mut()
+                        .sample_mut()
                         .set_positions(Quantity::new(
                             (0..atom_count)
                                 .map(|i| {
@@ -272,7 +271,7 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             let mut destination = sequential.frame_buffer();
             let mut expected = Vec::new();
             while sequential.read_next(&mut destination).unwrap() {
-                expected.push(destination.frame_view().payload().clone());
+                expected.push(Frame::of(&destination));
             }
             if atom_count > 9 {
                 assert!(
@@ -298,9 +297,9 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             // or reuse cached coordinates for the wrong pending frame.
             for (random, next) in [(1, 0), (0, 1), (1, 2)] {
                 indexed.read_frame(random, &mut destination).unwrap();
-                assert_eq!(destination.frame_view().payload().clone(), expected[random]);
+                assert_eq!(Frame::of(&destination), expected[random]);
                 assert!(indexed.read_next(&mut destination).unwrap());
-                assert_eq!(destination.frame_view().payload().clone(), expected[next]);
+                assert_eq!(Frame::of(&destination), expected[next]);
             }
             indexed.read_frame(0, &mut destination).unwrap();
             assert!(!indexed.read_next(&mut destination).unwrap());
@@ -434,7 +433,7 @@ fn xtc_round_trips_frames_whose_packed_integers_exceed_64_bits() {
         .collect::<Vec<_>>();
     let mut frame = source_frame(&topology, 0.0, 3);
     frame
-        .frame_mut()
+        .sample_mut()
         .set_positions(Quantity::new(positions.clone(), NANOMETER))
         .unwrap();
     for magic in [XtcMagic::Xtc1995, XtcMagic::Xtc2023] {
@@ -628,7 +627,7 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
     .unwrap();
     let mut destination = source_frame(&topology, 9.0, 99);
     destination
-        .frame_mut()
+        .sample_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -902,7 +901,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     )
     .unwrap();
     let mut frame = source_frame(&topology, 0.0, 0);
-    frame.frame_mut().set_cell(None);
+    frame.sample_mut().set_cell(None);
     assert_eq!(
         writer.write_frame(frame.frame_view()),
         Err(codec_error(
@@ -915,10 +914,10 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         ))
     );
     frame
-        .frame_mut()
+        .sample_mut()
         .set_cell(source_frame(&topology, 0.0, 0).cell().copied());
     frame
-        .frame_mut()
+        .sample_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -938,9 +937,9 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         )
         .with_field(TrajectoryField::Properties))
     );
-    frame.frame_mut().properties_mut().owner_mut().clear();
+    frame.sample_mut().properties_mut().owner_mut().clear();
     frame
-        .frame_mut()
+        .sample_mut()
         .properties_mut()
         .bonds_mut()
         .insert(
@@ -983,7 +982,7 @@ fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
             .map(|atom| Point3::new(if atom == 0 { first } else { rest }, 0.0, 0.0))
             .collect::<Vec<_>>();
         frame
-            .frame_mut()
+            .sample_mut()
             .set_positions(Quantity::new(positions, NANOMETER))
             .unwrap();
         frame
@@ -1047,7 +1046,7 @@ fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
     let topology = topology(12);
     let frames = [(0.0, 4_u64), (0.01, 5)].map(|(shift, step)| {
         let mut frame = source_frame(&topology, shift, step);
-        frame.frame_mut().set_cell(None);
+        frame.sample_mut().set_cell(None);
         (shift, step, frame)
     });
     let mut strict = XtcWriter::new(

@@ -4,9 +4,7 @@ use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator, StatisticsError,
 };
-use kekule::structure::{
-    Ensemble, EnsembleSample, EnsembleState, Positions, Trajectory, TrajectoryFrame,
-};
+use kekule::structure::{Distribution, Members, Partition, Positions, Sample, SampleSet};
 use kekule::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
 
@@ -19,13 +17,30 @@ fn positions(points: [Point3; 3]) -> Positions {
 }
 
 /// One frame per row, with the three atoms on the x axis.
-fn trajectory(top: &Arc<Topology>, rows: &[[f64; 3]]) -> Trajectory {
-    Trajectory::from_items(
+fn trajectory(top: &Arc<Topology>, rows: &[[f64; 3]]) -> SampleSet {
+    SampleSet::from_samples(
         top.clone(),
         rows.iter()
-            .map(|row| TrajectoryFrame::new(positions(row.map(|x| Point3::new(x, 0.0, 0.0))))),
+            .map(|row| Sample::new(positions(row.map(|x| Point3::new(x, 0.0, 0.0))))),
     )
     .unwrap()
+}
+
+/// Samples of `structures` weighted by `weights`, grouped by `partition`.
+fn weighted(
+    top: &Arc<Topology>,
+    structures: impl IntoIterator<Item = Positions>,
+    partition: Partition,
+    weights: Vec<f64>,
+) -> SampleSet {
+    let mut set =
+        SampleSet::from_samples(top.clone(), structures.into_iter().map(Sample::new)).unwrap();
+    let distribution = Distribution::new(Members::All, partition)
+        .unwrap()
+        .with_weights(weights)
+        .unwrap();
+    set.set_distribution(Some(distribution)).unwrap();
+    set
 }
 
 fn close(a: f64, b: f64) {
@@ -58,8 +73,7 @@ fn weighted_accumulators_match_hand_computation() {
     let top = linear_carbon_topology();
     let ids = top.atom_ids();
     let structures =
-        Trajectory::from_items(top.clone(), weighted_structures().map(TrajectoryFrame::new))
-            .unwrap();
+        SampleSet::from_samples(top.clone(), weighted_structures().map(Sample::new)).unwrap();
     let pairs = [(ids[0], ids[1]), (ids[1], ids[2])];
     let mut rmsf = RmsfAccumulator::new(&AtomSelection::all(top.clone())).unwrap();
     let mut contacts =
@@ -88,27 +102,16 @@ fn weighted_accumulators_match_hand_computation() {
 }
 
 #[test]
-fn ensemble_statistics_use_sample_weights_not_states() {
+fn distribution_statistics_use_sample_weights_not_states() {
     let top = linear_carbon_topology();
     let ids = top.atom_ids();
-    let [first, second, third] = weighted_structures();
     // The two heavier samples share a state; populations do not enter twice.
-    let mut ensemble = Ensemble::new(top.clone());
-    ensemble
-        .push_state(
-            EnsembleSample::new(first, 10.0).unwrap(),
-            EnsembleState::new(),
-        )
-        .unwrap();
-    let state = ensemble
-        .push_state(
-            EnsembleSample::new(second, 20.0).unwrap(),
-            EnsembleState::new(),
-        )
-        .unwrap();
-    ensemble
-        .push_sample(EnsembleSample::new(third, 10.0).unwrap(), state)
-        .unwrap();
+    let ensemble = weighted(
+        &top,
+        weighted_structures(),
+        Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap(),
+        vec![10.0, 20.0, 10.0],
+    );
 
     let rmsf = ensemble.rmsf(&AtomSelection::all(top.clone())).unwrap();
     for (value, expected) in rmsf.values().value().iter().zip(expected_weighted_rmsf()) {
@@ -129,11 +132,12 @@ fn ensemble_statistics_use_sample_weights_not_states() {
     );
 
     // Weights near the floating-point limits are scaled before summing.
-    let mut extreme = Ensemble::new(top.clone());
-    for (sample, weight) in weighted_structures().into_iter().zip(WEIGHTS) {
-        let sample = EnsembleSample::new(sample, weight * 1.0e307).unwrap();
-        extreme.push_state(sample, EnsembleState::new()).unwrap();
-    }
+    let extreme = weighted(
+        &top,
+        weighted_structures(),
+        Partition::state_per_sample(3),
+        WEIGHTS.map(|weight| weight * 1.0e307).to_vec(),
+    );
     let extreme = extreme.rmsf(&AtomSelection::all(top.clone())).unwrap();
     for (value, expected) in extreme
         .values()
@@ -145,11 +149,11 @@ fn ensemble_statistics_use_sample_weights_not_states() {
     }
 
     assert!(matches!(
-        Ensemble::new(top.clone()).rmsf(&AtomSelection::all(top.clone())),
+        SampleSet::new(top.clone()).rmsf(&AtomSelection::all(top.clone())),
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
-        Ensemble::new(top.clone()).contact_occupancy(pairs, Quantity::new(1.0, NANOMETER)),
+        SampleSet::new(top.clone()).contact_occupancy(pairs, Quantity::new(1.0, NANOMETER)),
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
@@ -197,8 +201,10 @@ fn equal_weights_reproduce_frame_counting() {
         close(scaled, unit);
     }
 
-    // The projection to an equally weighted ensemble keeps every statistic.
-    let ensemble = t.clone().into_ensemble();
+    // An equally weighted distribution of every frame keeps every statistic.
+    let mut ensemble = t.clone();
+    let distribution = Distribution::new(Members::All, Partition::state_per_sample(3)).unwrap();
+    ensemble.set_distribution(Some(distribution)).unwrap();
     for (sample, frame) in ensemble
         .rmsf(&all)
         .unwrap()
@@ -404,7 +410,7 @@ fn statistics_reject_empty_or_ambiguous_inputs_and_handle_single_observations() 
         ContactOccupancyAccumulator::new(&top, [(ids[0], ids[1])], Quantity::new(1.0, PICOSECOND)),
         Err(StatisticsError::Unit(_))
     ));
-    let none = Trajectory::new(top.clone());
+    let none = SampleSet::new(top.clone());
     assert!(matches!(
         none.rmsf(&all),
         Err(StatisticsError::NoObservations)
@@ -504,11 +510,11 @@ fn brute_group_contact(
     })
 }
 
-fn frames_trajectory(top: &Arc<Topology>, frames: &[Vec<Point3>]) -> Trajectory {
-    Trajectory::from_items(
+fn frames_trajectory(top: &Arc<Topology>, frames: &[Vec<Point3>]) -> SampleSet {
+    SampleSet::from_samples(
         top.clone(),
         frames.iter().map(|points| {
-            TrajectoryFrame::new(Positions::new(Quantity::new(points.clone(), NANOMETER)).unwrap())
+            Sample::new(Positions::new(Quantity::new(points.clone(), NANOMETER)).unwrap())
         }),
     )
     .unwrap()
@@ -620,16 +626,12 @@ fn group_contacts_weight_samples_by_probability_and_frames_equally() {
     // Atom 0 against atoms 1 and 2: in contact in the first two structures,
     // through different atoms, and apart in the third.
     let rows = [[0.0, 0.1, 5.0], [0.0, 5.0, -0.1], [0.0, 5.0, -5.0]];
-    let mut ensemble = Ensemble::new(top.clone());
-    for (row, weight) in rows.iter().zip(WEIGHTS) {
-        ensemble
-            .push_state(
-                EnsembleSample::new(positions(row.map(|x| Point3::new(x, 0.0, 0.0))), weight)
-                    .unwrap(),
-                EnsembleState::new(),
-            )
-            .unwrap();
-    }
+    let ensemble = weighted(
+        &top,
+        rows.map(|row| positions(row.map(|x| Point3::new(x, 0.0, 0.0)))),
+        Partition::state_per_sample(3),
+        WEIGHTS.to_vec(),
+    );
     let groups = [group(&top, [0]), group(&top, [1, 2])];
     let cutoff = Quantity::new(1.0, NANOMETER);
     let weighted = ensemble
@@ -713,7 +715,7 @@ fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
-        Trajectory::new(top.clone()).group_contact_occupancy(groups(), [(0, 1)], cutoff),
+        SampleSet::new(top.clone()).group_contact_occupancy(groups(), [(0, 1)], cutoff),
         Err(StatisticsError::NoObservations)
     ));
 

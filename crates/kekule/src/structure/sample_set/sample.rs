@@ -18,8 +18,7 @@ use crate::structure::{
 };
 
 /// The structure state of a sample, shared between clones and copied on
-/// write. Ensemble samples hold the same storage, without velocities or
-/// forces, so converting between the two copies no coordinates.
+/// write.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SampleStructure {
     pub(crate) positions: Positions,
@@ -66,16 +65,6 @@ impl SampleStructure {
             velocities: None,
             forces: None,
         }
-    }
-
-    /// Whether any occupancy is recorded.
-    pub(crate) fn has_occupancies(&self) -> bool {
-        recorded(&self.occupancies)
-    }
-
-    /// Whether any B-factor is recorded.
-    pub(crate) fn has_b_factors(&self) -> bool {
-        recorded(&self.b_factors)
     }
 
     /// Projects every dense row through a subset correspondence.
@@ -179,13 +168,6 @@ impl SampleStructure {
     }
 }
 
-/// Whether a per-atom column records any value.
-fn recorded(column: &AtomScalars) -> bool {
-    column
-        .values()
-        .is_some_and(|values| values.iter().any(Option::is_some))
-}
-
 /// One sample of a [`super::SampleSet`]: positions in dense topology atom
 /// order, an optional periodic cell, structure properties, and, only when
 /// stated, occupancies, B-factors, velocities, and forces.
@@ -241,8 +223,16 @@ impl Sample {
         &mut self.structure
     }
 
-    pub(crate) fn into_structure(self) -> Arc<SampleStructure> {
-        self.structure
+    /// The structure for editing in place: one shared with a clone is
+    /// copied first, once. The caller keeps it bound and valid.
+    pub(crate) fn structure_in_place(&mut self) -> &mut SampleStructure {
+        Arc::make_mut(&mut self.structure)
+    }
+
+    /// Binds the sample to `topology`, allocating its bond property rows
+    /// unless it is bound already.
+    pub(crate) fn bind(&mut self, topology: &Topology) -> Result<(), StructureError> {
+        SampleStructure::bind(&mut self.structure, topology)
     }
 
     /// This sample projected onto the dense atom and bond rows of a

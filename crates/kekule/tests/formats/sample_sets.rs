@@ -1,19 +1,16 @@
-//! Readers that interpret sample sets give what the readers of ensembles,
-//! series and trajectories give, converted.
+//! Readers that interpret sample sets: what each format states of the
+//! distribution and order, and the sets they build.
 
 use kekule::diagnostics::{
     DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy,
 };
 use kekule::geometry::Point3;
 use kekule::mmcif::{self, MmcifWriteOptions};
-use kekule::native::{self, NativeWriteOptions};
 use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::structure::{
-    Ensemble, EnsemblePartition, Model, Order, Positions, Sample, SampleSet, Series, SeriesAxis,
-    SeriesItem,
+    Distribution, Members, Model, Order, Partition, Positions, Sample, SampleSet,
 };
-use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, DEGREE, KILOJOULE_PER_MOLE};
 
 const WATERS: &str = "3
@@ -28,40 +25,15 @@ H 0.957 0.0 0.1
 H -0.24 0.927 0.1
 ";
 
-/// The topology's exact native encoding, which compares every part of it.
-fn topology_bytes(topology: &Topology) -> Vec<u8> {
-    native::write(topology, NativeWriteOptions::default()).unwrap()
-}
-
-/// Asserts that two ensembles hold the same topology, samples, partition,
-/// states, temperature, and properties.
-fn assert_same_ensemble(actual: &Ensemble, expected: &Ensemble) {
-    assert_eq!(
-        topology_bytes(actual.topology()),
-        topology_bytes(expected.topology())
-    );
-    assert_eq!(actual.properties(), expected.properties());
-    assert_eq!(actual.len(), expected.len());
-    for (left, right) in actual.iter().zip(expected.iter()) {
-        assert_eq!(left.payload(), right.payload());
-    }
-    assert_eq!(actual.partition(), expected.partition());
-    assert!(actual
-        .states()
-        .zip(expected.states())
-        .all(|(left, right)| left.payload() == right.payload()));
-    assert_eq!(actual.temperature(), expected.temperature());
-}
-
 /// Two waters as a two-model PDB entry.
 fn pdb_waters() -> String {
-    let ensemble = kekule::xyz::parse_str(WATERS, Default::default())
+    let set = kekule::xyz::parse_str(WATERS, Default::default())
         .unwrap()
-        .interpret_ensemble(Default::default())
+        .interpret_sample_set(Default::default())
         .unwrap()
-        .into_ensemble();
+        .into_sample_set();
     pdb::write(
-        &ensemble,
+        &set,
         PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit),
     )
     .unwrap()
@@ -69,49 +41,39 @@ fn pdb_waters() -> String {
 }
 
 #[test]
-fn pdb_and_mmcif_sample_sets_are_their_ensembles_of_one_unweighted_state() {
-    let document = pdb::parse_str(&pdb_waters(), Default::default()).unwrap();
-    let ensemble = document.interpret_ensemble(Default::default()).unwrap();
+fn pdb_and_mmcif_sample_sets_are_one_unweighted_state() {
+    let text = pdb_waters();
+    assert_eq!(crate::fingerprint(&text), 0xb1bb_deac_c50e_359a);
+    let document = pdb::parse_str(&text, Default::default()).unwrap();
     let set = document.interpret_sample_set(Default::default()).unwrap();
-    assert_eq!(set.reports(), ensemble.reports());
+    assert_eq!(set.reports().len(), 2);
     assert_eq!(set.sample_set().len(), 2);
     assert_eq!(set.sample_set().order(), None);
     let distribution = set.sample_set().distribution().unwrap();
     assert_eq!(distribution.state_count(), 1);
     assert_eq!(distribution.weights(), None);
-    assert_same_ensemble(
-        &set.sample_set().clone().into_ensemble().unwrap(),
-        ensemble.ensemble(),
-    );
-    // Both write the same PDB entry.
+    assert_eq!(crate::native_fingerprint(&set), 0x2aba_a9f4_5933_d9f3);
     assert_eq!(
-        pdb::write(&set, PdbWriteOptions::default()).unwrap(),
-        pdb::write(&ensemble, PdbWriteOptions::default()).unwrap()
+        crate::fingerprint(format!(
+            "{:?}",
+            pdb::write(&set, PdbWriteOptions::default()).unwrap()
+        )),
+        0xaaa2_2f01_7606_146c
     );
 
-    let text = mmcif::write([&ensemble], MmcifWriteOptions::default())
+    let text = mmcif::write([&set], MmcifWriteOptions::default())
         .unwrap()
         .0;
-    assert_eq!(
-        mmcif::write([&set], MmcifWriteOptions::default())
-            .unwrap()
-            .0,
-        text
-    );
+    assert_eq!(crate::fingerprint(&text), 0x3a95_627c_2c78_254c);
     let document = mmcif::parse_str(&text, Default::default()).unwrap();
-    let ensemble = document.interpret_ensemble(Default::default()).unwrap();
     let set = document.interpret_sample_set(Default::default()).unwrap();
-    assert_eq!(set.reports(), ensemble.reports());
-    assert_same_ensemble(
-        &set.sample_set().clone().into_ensemble().unwrap(),
-        ensemble.ensemble(),
-    );
+    assert_eq!(crate::native_fingerprint(&set), 0xfb08_1261_f062_f25a);
     let block = &document.blocks()[0];
     let from_block = block.interpret_sample_set(Default::default()).unwrap();
-    assert_eq!(from_block.reports(), ensemble.reports());
-    assert_same_ensemble(
-        &from_block.into_sample_set().into_ensemble().unwrap(),
-        ensemble.ensemble(),
+    assert_eq!(from_block.reports(), set.reports());
+    assert_eq!(
+        crate::native_fingerprint(&from_block),
+        0xfb08_1261_f062_f25a
     );
 }
 
@@ -126,7 +88,7 @@ fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
 
 /// Two methane conformers in two states, weighted 1:3, the second at
 /// -2.5 kJ/mol.
-fn weighted_methanes() -> Ensemble {
+fn weighted_methanes() -> SampleSet {
     let topology = kekule::smiles::to_topology("C").unwrap();
     let models = [0.0, 1.0].map(|x| {
         Model::new(
@@ -139,71 +101,93 @@ fn weighted_methanes() -> Ensemble {
         )
         .unwrap()
     });
-    let mut ensemble =
-        Ensemble::from_models(models, EnsemblePartition::state_per_sample(2)).unwrap();
-    ensemble.get_mut(1).unwrap().set_weight(3.0).unwrap();
-    ensemble
+    let mut set = SampleSet::from_models(models).unwrap();
+    set.set_distribution(Some(
+        Distribution::new(Members::All, Partition::state_per_sample(2))
+            .unwrap()
+            .with_weights(vec![1.0, 3.0])
+            .unwrap(),
+    ))
+    .unwrap();
+    set.distribution_mut()
+        .unwrap()
         .state_mut(1)
         .unwrap()
         .set_energy(Some(Quantity::new(-2.5, KILOJOULE_PER_MOLE)))
         .unwrap();
-    ensemble
+    set
 }
 
-/// A three-item series of one methane carbon along `axis`.
-fn methane_series(axis: SeriesAxis) -> Series {
+/// How a three-sample methane set is ordered.
+#[derive(Debug, Clone, Copy)]
+enum Axis {
+    /// By steps 0, 4, and 8.
+    Step,
+    /// By coordinates -60, -30, and 0 in a unit.
+    Coordinate(Unit),
+}
+
+/// A three-sample set of one methane carbon along `axis`.
+fn methane_series(axis: Axis) -> SampleSet {
     let topology = kekule::smiles::to_topology("C").unwrap();
-    let mut series = Series::new(topology, axis);
-    for index in 0..3u32 {
-        let positions = Positions::zeros(1);
-        let item = match axis {
-            SeriesAxis::Step => SeriesItem::at_step(positions, u64::from(index) * 4),
-            SeriesAxis::Coordinate(unit) => SeriesItem::at_coordinate(
-                positions,
-                Quantity::new(f64::from(index) * 30.0 - 60.0, unit),
-            )
-            .unwrap(),
-            _ => unreachable!("a step or coordinate series"),
-        };
-        series.push(item).unwrap();
-    }
-    series
+    let mut set =
+        SampleSet::from_samples(topology, (0..3).map(|_| Sample::new(Positions::zeros(1))))
+            .unwrap();
+    let order = match axis {
+        Axis::Step => Order::Step((0..3).map(|index| index * 4).collect()),
+        Axis::Coordinate(unit) => Order::Coordinate {
+            unit,
+            values: (0..3).map(|index| f64::from(index) * 30.0 - 60.0).collect(),
+        },
+    };
+    set.set_order(Some(order)).unwrap();
+    set
 }
 
 #[test]
-fn sdf_sample_sets_are_the_ensembles_and_series_of_their_records() {
+fn sdf_sample_sets_are_the_distributions_and_orders_of_their_records() {
     // Weights, states and energies make the distribution.
-    let records =
-        interpret_records(&sdf::write(&weighted_methanes(), SdfWriteOptions::default()).unwrap());
-    let set = sdf::sample_set(&records).unwrap();
-    assert_eq!(set.order(), None);
-    assert_same_ensemble(
-        &set.clone().into_ensemble().unwrap(),
-        &sdf::ensemble(&records).unwrap(),
-    );
-    assert_eq!(set.distribution().unwrap().state_count(), 2);
+    let set = weighted_methanes();
+    assert_eq!(crate::native_fingerprint(&set), 0x8fe6_53ce_8dea_5590);
+    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    assert_eq!(crate::fingerprint(&text), 0xa96d_0167_e29e_65c6);
+    let read = sdf::sample_set(&interpret_records(&text)).unwrap();
+    assert_eq!(read.order(), None);
+    assert_eq!(read.distribution().unwrap().state_count(), 2);
+    assert_eq!(read.distribution(), set.distribution());
+    assert_eq!(crate::native_fingerprint(&read), 0xf4be_d5a7_57e0_1dcf);
 
     // Steps or coordinates make the order.
-    for axis in [SeriesAxis::Step, SeriesAxis::Coordinate(DEGREE)] {
+    for (axis, native, written, reread) in [
+        (
+            Axis::Step,
+            0x8346_2618_fe0b_dd41,
+            0x27fd_0aed_408e_6608,
+            0x97db_3505_645b_a4f1,
+        ),
+        (
+            Axis::Coordinate(DEGREE),
+            0x7be2_e975_7d64_a7b5,
+            0xd40b_391d_7512_5e32,
+            0xd492_afa0_6f9d_cd74,
+        ),
+    ] {
         let series = methane_series(axis);
-        let records = interpret_records(&sdf::write(&series, SdfWriteOptions::default()).unwrap());
-        let set = sdf::sample_set(&records).unwrap();
-        assert_eq!(
-            set.order(),
-            SampleSet::from_series(series.clone()).order(),
-            "{axis:?}"
-        );
+        assert_eq!(crate::native_fingerprint(&series), native, "{axis:?}");
+        let text = sdf::write(&series, SdfWriteOptions::default()).unwrap();
+        assert_eq!(crate::fingerprint(&text), written, "{axis:?}");
+        let set = sdf::sample_set(&interpret_records(&text)).unwrap();
+        assert_eq!(crate::native_fingerprint(&set), reread, "{axis:?}");
+        assert_eq!(set.order(), series.order(), "{axis:?}");
         assert!(matches!(
             (axis, set.order()),
-            (SeriesAxis::Step, Some(Order::Step(_)))
-                | (SeriesAxis::Coordinate(_), Some(Order::Coordinate { .. }))
+            (Axis::Step, Some(Order::Step(_)))
+                | (Axis::Coordinate(_), Some(Order::Coordinate { .. }))
         ));
-        // The records have no ensemble field, so the set has no
-        // distribution and is the series.
+        // The records have no distribution field, so the set has no
+        // distribution.
         assert_eq!(set.distribution(), None);
-        let read = set.into_series().unwrap();
-        assert_eq!(read.axis(), series.axis());
-        for (left, right) in read.iter().zip(series.iter()) {
+        for (left, right) in set.iter().zip(series.iter()) {
             assert_eq!(left.payload(), right.payload());
         }
     }
@@ -211,7 +195,7 @@ fn sdf_sample_sets_are_the_ensembles_and_series_of_their_records() {
 
 #[test]
 fn sdf_records_that_do_not_form_an_order_are_refused() {
-    let series = methane_series(SeriesAxis::Step);
+    let series = methane_series(Axis::Step);
     let text = sdf::write(&series, SdfWriteOptions::default()).unwrap();
     let mut records = interpret_records(&text);
     // A record without the step its neighbours have.
@@ -227,16 +211,13 @@ fn sdf_records_that_do_not_form_an_order_are_refused() {
     records.push(stepless[0].clone());
     let error = sdf::sample_set(&records).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-    assert!(
-        error
-            .to_string()
-            .contains("missing. Other records have it."),
-        "{error}"
+    assert_eq!(
+        error.to_string(),
+        "Cannot interpret the SDF input in record 4. The data field \"kekule.step\" is missing. Other records have it."
     );
-    assert!(sdf::ensemble(&records).is_ok());
 
     // Steps and coordinates together.
-    let scan = methane_series(SeriesAxis::Coordinate(ANGSTROM));
+    let scan = methane_series(Axis::Coordinate(ANGSTROM));
     let mut mixed = interpret_records(&sdf::write(&scan, SdfWriteOptions::default()).unwrap());
     mixed.extend(interpret_records(&text));
     let error = sdf::sample_set(&mixed).unwrap_err();
@@ -245,6 +226,26 @@ fn sdf_records_that_do_not_form_an_order_are_refused() {
         error.detail(),
         Some(FormatErrorDetail::DataField { .. })
     ));
+}
+
+#[test]
+fn sdf_records_of_different_topologies_do_not_form_a_sample_set() {
+    let water = Model::new(
+        kekule::smiles::to_topology("O").unwrap(),
+        Positions::new(Quantity::new([Point3::new(0.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
+    )
+    .unwrap();
+    let records = [
+        methane_record(0.0, &[]),
+        SdfRecordInterpretation::new("", water, Vec::new()),
+    ];
+    let error = sdf::sample_set(&records).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert_eq!(
+        error.to_string(),
+        "Cannot interpret the SDF input in record 2. The records do not form a sample set."
+    );
+    assert!(std::error::Error::source(&error).is_some());
 }
 
 /// One methane record at `x` with `fields`.
@@ -269,15 +270,12 @@ fn sdf_round_trip(set: &SampleSet, options: SdfWriteOptions) -> SampleSet {
 
 #[test]
 fn sdf_sample_sets_state_only_what_the_records_state() {
-    // Records without ensemble fields give no distribution.
+    // Records without distribution fields give no distribution.
     let bare = [methane_record(0.0, &[]), methane_record(1.0, &[])];
     let set = sdf::sample_set(&bare).unwrap();
     assert_eq!(set.distribution(), None);
     assert_eq!(set.order(), None);
-    // `sdf::ensemble` still gives a state per record of weight 1.
-    let ensemble = sdf::ensemble(&bare).unwrap();
-    assert_eq!(ensemble.state_count(), 2);
-    assert!(ensemble.iter().all(|sample| sample.weight() == 1.0));
+    assert_eq!(crate::native_fingerprint(&set), 0xdc67_2d95_20d3_270a);
     // A set without a distribution survives a round trip.
     let read = sdf_round_trip(&set, SdfWriteOptions::default());
     assert_eq!(read.distribution(), None);
@@ -317,8 +315,9 @@ fn sdf_sample_sets_state_only_what_the_records_state() {
     );
 
     // A set with a distribution and no order survives a round trip.
-    let set = SampleSet::from_ensemble(weighted_methanes());
+    let set = weighted_methanes();
     let read = sdf_round_trip(&set, SdfWriteOptions::default());
+    assert_eq!(crate::native_fingerprint(&read), 0xf4be_d5a7_57e0_1dcf);
     assert_eq!(read.order(), None);
     assert_eq!(read.distribution(), set.distribution());
 }
@@ -404,7 +403,7 @@ fn sdf_coordinate_units_are_the_unit_constants() {
         assert_eq!(
             error.detail(),
             Some(&FormatErrorDetail::UnrepresentableState(
-                StructureField::ItemCoordinate
+                StructureField::OrderCoordinate
             ))
         );
         assert!(error.to_string().contains("coordinate unit"), "{error}");
@@ -413,14 +412,6 @@ fn sdf_coordinate_units_are_the_unit_constants() {
         assert!(!text.contains(sdf::COORDINATE_FIELD), "{text}");
         assert_eq!(sdf_round_trip(&set, omit).order(), None);
     }
-    // A series writes its unit as it displays itself, as before.
-    let unit = Unit::new(Dimension::LENGTH, 2.0e-10, None).unwrap();
-    let series = methane_series(SeriesAxis::Coordinate(unit));
-    let text = sdf::write(&series, SdfWriteOptions::default()).unwrap();
-    assert!(
-        text.contains(&format!("<{}>\n{unit}\n", sdf::COORDINATE_UNIT_FIELD)),
-        "{text}"
-    );
 }
 
 #[test]
@@ -454,36 +445,25 @@ fn sdf_place_fields_appear_once_per_record() {
 }
 
 #[test]
-fn xyz_sample_sets_have_no_distribution_where_ensembles_have_one_state() {
+fn xyz_sample_sets_have_no_distribution() {
     let document = kekule::xyz::parse_str(WATERS, Default::default()).unwrap();
-    let ensemble = document.interpret_ensemble(Default::default()).unwrap();
     let set = document.interpret_sample_set(Default::default()).unwrap();
-    assert_eq!(set.reports(), ensemble.reports());
+    assert_eq!(
+        crate::fingerprint(format!("{:?}", set.reports())),
+        0xa502_1322_7468_2c3c
+    );
     assert_eq!(set.sample_set().order(), None);
     assert_eq!(set.sample_set().distribution(), None);
-    assert_eq!(ensemble.ensemble().state_count(), 1);
-    assert!(ensemble
-        .ensemble()
-        .iter()
-        .all(|sample| sample.weight() == 1.0));
     assert_eq!(
-        topology_bytes(set.topology()),
-        topology_bytes(ensemble.topology())
+        crate::native_fingerprint(set.sample_set()),
+        0xcce8_08a1_364d_2b57
     );
-    for (left, right) in set.sample_set().iter().zip(ensemble.ensemble().iter()) {
-        let (left, right) = (left.as_model_view(), right.as_model_view());
-        assert_eq!(left.positions(), right.positions());
-        assert_eq!(left.properties(), right.properties());
-    }
-    // With a distribution of one unweighted state it is the ensemble.
+    // With a distribution of one unweighted state it is what readers of
+    // formats with states give.
     let mut set = set.into_sample_set();
     set.set_distribution(Some(
-        kekule::structure::Distribution::new(
-            kekule::structure::Members::All,
-            EnsemblePartition::one_state(2),
-        )
-        .unwrap(),
+        Distribution::new(Members::All, Partition::one_state(2)).unwrap(),
     ))
     .unwrap();
-    assert_same_ensemble(&set.into_ensemble().unwrap(), ensemble.ensemble());
+    assert_eq!(crate::native_fingerprint(&set), 0x0f08_570b_3fb1_51ac);
 }

@@ -24,11 +24,11 @@ use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, PartnerSpec,
 };
-use super::ensemble::{interpret_conformations, interpret_ensemble};
+use super::sample_set::{interpret_conformations, interpret_models};
 use super::types::{
-    ConnectionResolutionReason, ConnectivityOptions, EntityKind, StructureEnsembleInterpretOptions,
-    StructureEnsembleInterpretation, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation,
+    ConnectionResolutionReason, ConnectivityOptions, EntityKind, StructureInterpretIssue,
+    StructureInterpretOptions, StructureInterpretation, StructureSampleSetInterpretOptions,
+    StructureSampleSetInterpretation,
 };
 use super::{interpret_source, AltLocResidue, StructureSource};
 
@@ -46,11 +46,11 @@ pub(crate) fn interpret_pdb(
 }
 
 /// Interprets explicitly selected or all coordinate models as one
-/// shared-topology non-temporal ensemble.
-pub(crate) fn interpret_pdb_ensemble(
+/// shared-topology unordered sample set.
+pub(crate) fn interpret_pdb_sample_set(
     document: &PdbDocument,
-    options: StructureEnsembleInterpretOptions,
-) -> Result<StructureEnsembleInterpretation, FormatError> {
+    options: StructureSampleSetInterpretOptions,
+) -> Result<StructureSampleSetInterpretation, FormatError> {
     let mut seen = BTreeSet::new();
     let available = document
         .atoms()
@@ -59,7 +59,7 @@ pub(crate) fn interpret_pdb_ensemble(
         .filter(|model| seen.insert(*model))
         .map(model_id)
         .collect();
-    interpret_ensemble(available, options, |options| {
+    interpret_models(available, options, |options| {
         pdb_source(
             document,
             options.requires_entity_metadata(),
@@ -74,7 +74,7 @@ pub(crate) fn interpret_pdb_ensemble(
 pub(crate) fn interpret_pdb_conformations(
     document: &PdbDocument,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureEnsembleInterpretation, FormatError> {
+) -> Result<StructureSampleSetInterpretation, FormatError> {
     interpret_conformations(selections, |options| {
         interpret_pdb(document, options.clone())
     })

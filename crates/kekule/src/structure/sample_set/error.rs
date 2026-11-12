@@ -49,74 +49,6 @@ impl fmt::Display for Requirement {
     }
 }
 
-/// A collection a sample set converts to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ConversionTarget {
-    /// An [`Ensemble`](crate::structure::Ensemble).
-    Ensemble,
-    /// A [`Trajectory`](crate::structure::Trajectory).
-    Trajectory,
-    /// A [`Series`](crate::structure::Series).
-    Series,
-}
-
-impl fmt::Display for ConversionTarget {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Ensemble => "an ensemble",
-            Self::Trajectory => "a trajectory",
-            Self::Series => "a series",
-        })
-    }
-}
-
-/// What a sample set holds and a [`ConversionTarget`] cannot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Unconvertible {
-    /// The set's order, or an order of another kind than the target's.
-    Order,
-    /// The set's distribution.
-    Distribution,
-    /// Samples outside the set's distribution.
-    NonMembers,
-    /// The occupancies of a sample.
-    Occupancies {
-        /// The sample's index.
-        sample: usize,
-    },
-    /// The B-factors of a sample.
-    BFactors {
-        /// The sample's index.
-        sample: usize,
-    },
-    /// The velocities of a sample.
-    Velocities {
-        /// The sample's index.
-        sample: usize,
-    },
-    /// The forces of a sample.
-    Forces {
-        /// The sample's index.
-        sample: usize,
-    },
-}
-
-impl fmt::Display for Unconvertible {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Order => formatter.write_str("the order of the sample set"),
-            Self::Distribution => formatter.write_str("the distribution of the sample set"),
-            Self::NonMembers => formatter.write_str("samples outside the distribution"),
-            Self::Occupancies { sample } => write!(formatter, "the occupancies of sample {sample}"),
-            Self::BFactors { sample } => write!(formatter, "the B-factors of sample {sample}"),
-            Self::Velocities { sample } => write!(formatter, "the velocities of sample {sample}"),
-            Self::Forces { sample } => write!(formatter, "the forces of sample {sample}"),
-        }
-    }
-}
-
 /// Failure of a [`super::SampleSet`] operation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -265,13 +197,6 @@ pub enum SampleSetError {
     InvalidEnergyWindow,
     /// A population fraction is not in `(0, 1]`.
     InvalidFraction,
-    /// The target collection cannot hold what the set holds.
-    NotConvertible {
-        /// The collection converted to.
-        target: ConversionTarget,
-        /// What it cannot hold.
-        content: Unconvertible,
-    },
     /// A sample's structural state is invalid; see the source.
     Structure(StructureError),
     /// Projecting the topology onto a selection failed; see the source.
@@ -395,14 +320,6 @@ impl fmt::Display for SampleSetError {
             }
             Self::InvalidFraction => {
                 formatter.write_str("The population fraction is not greater than 0 and at most 1.")
-            }
-            Self::NotConvertible { target, content } => {
-                let target = match target {
-                    ConversionTarget::Ensemble => "An ensemble",
-                    ConversionTarget::Trajectory => "A trajectory",
-                    ConversionTarget::Series => "A series",
-                };
-                write!(formatter, "{target} cannot hold {content}.")
             }
             Self::Structure(_) => formatter.write_str("A sample is invalid."),
             Self::Subset(_) => formatter.write_str("Cannot subset the sample set."),

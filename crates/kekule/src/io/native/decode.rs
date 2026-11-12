@@ -39,8 +39,8 @@ use crate::properties::{
     RawPropertyTable, StructureProperties, TopologyProperties,
 };
 use crate::structure::{
-    Distribution, EnsemblePartition, EnsembleState, Forces, Members, Model, Order, Positions,
-    Sample, SampleSet, TimeAxis, Velocities,
+    Distribution, Forces, Members, Model, Order, Partition, Positions, Sample, SampleSet, State,
+    TimeAxis, Velocities,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
@@ -1420,7 +1420,7 @@ impl<R: Read> Decoder<'_, R> {
         for _ in 0..state_count {
             representatives.push(self.u32()? as usize);
             let energy = self.opt_f64()?;
-            let mut state = EnsembleState::new();
+            let mut state = State::new();
             state
                 .set_energy(energy.map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT)))
                 .map_err(|error| self.structure_error(error))?;
@@ -1428,7 +1428,7 @@ impl<R: Read> Decoder<'_, R> {
             states.push(state);
         }
         let temperature = self.opt_f64()?;
-        let partition = EnsemblePartition::new(assignments, representatives)
+        let partition = Partition::new(assignments, representatives)
             .map_err(|error| self.structure_error(error))?;
         let mut distribution = Distribution::new(members, partition)
             .and_then(|distribution| distribution.with_states(states))

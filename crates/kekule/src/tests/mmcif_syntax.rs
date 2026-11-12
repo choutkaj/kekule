@@ -57,7 +57,7 @@ pub(crate) fn singleton_loops_as_scalars(input: &str) -> String {
 const SINGLE_SITE: &str = "data_x\nloop_\n_entity.id\n_entity.type\n1 water\nloop_\n_struct_asym.id\n_struct_asym.entity_id\nA 1\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_entity_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\nO O HOH A 1 1.0 2.0 3.0\n";
 
 #[test]
-fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
+fn mmcif_scalar_categories_support_document_block_and_sample_set_paths() {
     let looped = mmcif::parse_str(SINGLE_SITE, Default::default()).unwrap();
     let scalar =
         mmcif::parse_str(&singleton_loops_as_scalars(SINGLE_SITE), Default::default()).unwrap();
@@ -77,12 +77,16 @@ fn mmcif_scalar_categories_support_document_block_and_ensemble_paths() {
         assert_eq!(actual.report().solvent_molecules(), 1);
         assert_eq!(actual.model().topology().residues().count(), 1);
     }
-    let ensemble = scalar.interpret_ensemble(Default::default()).unwrap();
-    assert_eq!(ensemble.ensemble().len(), 1);
-    assert!(ensemble.topology().same_layout(expected.topology()));
+    let interpreted = scalar.interpret_sample_set(Default::default()).unwrap();
     assert_eq!(
-        ensemble
-            .ensemble()
+        super::debug_fingerprint(&interpreted),
+        0xc9c4_a1b8_abc3_5a3a
+    );
+    assert_eq!(interpreted.sample_set().len(), 1);
+    assert!(interpreted.topology().same_layout(expected.topology()));
+    assert_eq!(
+        interpreted
+            .sample_set()
             .get(0)
             .unwrap()
             .as_model_view()
@@ -154,7 +158,7 @@ fn mmcif_present_categories_missing_required_fields_reject_in_both_encodings() {
             "{category}: {scalar_error}"
         );
         assert!(loop_error.location().is_some() && scalar_error.location().is_some());
-        assert!(scalar_doc.interpret_ensemble(Default::default()).is_err());
+        assert!(scalar_doc.interpret_sample_set(Default::default()).is_err());
     }
 }
 
@@ -178,7 +182,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         let error = doc.interpret(Default::default()).unwrap_err();
         assert!(error.message().contains(message), "{error}");
         assert!(error.location().is_some());
-        assert!(doc.interpret_ensemble(Default::default()).is_err());
+        assert!(doc.interpret_sample_set(Default::default()).is_err());
     }
     let doc = mmcif::parse_str(
         &format!("{SINGLE_SITE}data_broken\n_atom_site.label_atom_id O\n"),
@@ -191,7 +195,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         .message()
         .contains("More than one data block"));
     assert_eq!(
-        error_detail(doc.interpret_ensemble(Default::default())),
+        error_detail(doc.interpret_sample_set(Default::default())),
         Some(FormatErrorDetail::MultipleAtomSiteBlocks)
     );
 }
@@ -437,8 +441,8 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
     );
     let error = mmcif::parse_str(SINGLE_SITE, Default::default())
         .unwrap()
-        .interpret_ensemble(
-            macromolecular::StructureEnsembleInterpretOptions::default()
+        .interpret_sample_set(
+            macromolecular::StructureSampleSetInterpretOptions::default()
                 .with_model_ids(Some(vec!["9".into()]))
                 .unwrap(),
         )

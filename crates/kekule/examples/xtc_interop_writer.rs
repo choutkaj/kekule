@@ -63,13 +63,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         frame
-            .frame_mut()
+            .sample_mut()
             .set_positions(Quantity::new(positions, NANOMETER))?;
-        frame.frame_mut().set_cell(Some(cell));
-        frame
-            .frame_mut()
-            .set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
-        frame.frame_mut().set_step(Some(step));
+        frame.sample_mut().set_cell(Some(cell));
+        frame.set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
+        frame.set_step(Some(step));
         writer.write_frame(frame.frame_view())?;
     }
     writer.finish()?;

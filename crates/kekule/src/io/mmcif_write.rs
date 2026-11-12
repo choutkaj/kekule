@@ -5,16 +5,16 @@ use crate::diagnostics::{
 use crate::geometry::PeriodicCell;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::{
-    EntityKind, StructureEnsembleInterpretation, StructureInterpretation,
-    StructureInterpretationReport, StructureSampleSetInterpretation,
+    EntityKind, StructureInterpretation, StructureInterpretationReport,
+    StructureSampleSetInterpretation,
 };
 use crate::io::write_error::{
-    check_structure_state, record_multi_model_ensemble, record_multi_model_sample_set, Omissions,
+    check_structure_state, record_multi_model_sample_set, unrepresentable_state, Omissions,
     StatePolicies,
 };
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::molecule::BondOrder;
-use crate::structure::{AsModelView, Ensemble, Model, ModelView, SampleSet, SampleView};
+use crate::structure::{AsModelView, Model, ModelView, SampleSet, SampleView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -26,25 +26,22 @@ mod implied;
 mod prepare;
 use emit::{render_model_to, write_atom_rows, write_block_end, write_block_start};
 use entities::{
-    ensemble_entity_plan, entity_plan_from_report, generic_entity_plan,
+    entity_plan_from_report, generic_entity_plan, multi_model_entity_plan,
     normalize_entity_classifications,
 };
-use prepare::{prepare_model, validate_ensemble_sample};
+use prepare::{prepare_model, validate_sample};
 
 const MAX_COORDINATE_PRECISION: usize = 15;
 
 /// Options of the mmCIF writer.
 ///
 /// The default writes a block named `model` with coordinates to 3 decimal
-/// places and fails on ensemble metadata, a periodic cell, or fixed
+/// places and fails on sample state, a periodic cell, or fixed
 /// implicit-hydrogen counts mmCIF cannot carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifWriteOptions {
     block_name: String,
     coordinate_precision: usize,
-    ensemble_metadata: UnrepresentablePolicy,
-    frame_metadata: UnrepresentablePolicy,
-    series_metadata: UnrepresentablePolicy,
     sample_metadata: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
@@ -98,58 +95,16 @@ impl MmcifWriteOptions {
         Ok(self)
     }
 
-    /// Ensemble sample weights, states, state energies, and the temperature,
-    /// which mmCIF cannot carry: by default an ensemble with unequal weights,
-    /// more than one state, any energy, or a temperature fails to write, and
-    /// so does a model block of one ensemble sample, whose weight is relative
-    /// to samples the block does not hold.
-    pub const fn ensemble_metadata(&self) -> UnrepresentablePolicy {
-        self.ensemble_metadata
-    }
-
-    /// Sets [`Self::ensemble_metadata`].
-    #[must_use]
-    pub fn with_ensemble_metadata(mut self, ensemble_metadata: UnrepresentablePolicy) -> Self {
-        self.ensemble_metadata = ensemble_metadata;
-        self
-    }
-
-    /// A trajectory frame's time, step, velocities, and forces, which mmCIF
-    /// cannot carry: by default a model block of a frame with any of them
-    /// fails to write.
-    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
-        self.frame_metadata
-    }
-
-    /// Sets [`Self::frame_metadata`].
-    #[must_use]
-    pub fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
-        self.frame_metadata = frame_metadata;
-        self
-    }
-
-    /// A series item's step or coordinate, which mmCIF cannot carry: by
-    /// default a model block of a series item fails to write.
-    pub const fn series_metadata(&self) -> UnrepresentablePolicy {
-        self.series_metadata
-    }
-
-    /// Sets [`Self::series_metadata`].
-    #[must_use]
-    pub fn with_series_metadata(mut self, series_metadata: UnrepresentablePolicy) -> Self {
-        self.series_metadata = series_metadata;
-        self
-    }
-
-    /// The state of a sample set's samples that mmCIF cannot carry. An mmCIF
-    /// reader gives one state of equally weighted samples without an order,
-    /// represented by the first sample, so by default a set fails to write
-    /// when a sample is outside its distribution, weights are unequal, it
-    /// has more than one state, a state energy, state properties, another
-    /// representative, a temperature, or an order, a time order without
-    /// times or steps included, or a sample has velocities or forces; so
-    /// does a model block of one sample with a membership, a
-    /// place, velocities, or forces. [`UnrepresentablePolicy::Omit`] writes
+    /// The state of samples that mmCIF cannot carry, whether of a sample set
+    /// or a trajectory frame. An mmCIF reader gives one state of equally
+    /// weighted samples without an order, represented by the first sample,
+    /// so by default a set fails to write when a sample is outside its
+    /// distribution, weights are unequal, it has more than one state, a
+    /// state energy, state properties, another representative, a
+    /// temperature, or an order, a time order without times or steps
+    /// included, or a sample has velocities or forces; so does a model
+    /// block of one sample with a membership, a place (a frame's time and
+    /// MD step among them), velocities, or forces. [`UnrepresentablePolicy::Omit`] writes
     /// the models without them and reports a
     /// [`WriteOmission::StructureState`] for each field.
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
@@ -163,20 +118,14 @@ impl MmcifWriteOptions {
         self
     }
 
-    /// The policies for sample, frame, series item, and sample set state of
-    /// a block.
-    fn state_policies(&self) -> StatePolicies {
-        StatePolicies {
-            sample: Some(self.ensemble_metadata),
-            frame: self.frame_metadata,
-            item: Some(self.series_metadata),
-            set: self.sample_metadata,
-        }
+    /// The policies for the sample state of a model block.
+    const fn state_policies(&self) -> StatePolicies {
+        StatePolicies::positions_only(self.sample_metadata)
     }
 
     /// A periodic cell mmCIF cannot carry: one not periodic along all three
     /// axes, not in the standard crystallographic orientation, or differing
-    /// between ensemble samples. By default such a cell fails to write;
+    /// between samples. By default such a cell fails to write;
     /// representable cells are always written as `_cell` in space group P 1.
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
@@ -212,9 +161,6 @@ impl Default for MmcifWriteOptions {
         Self {
             block_name: "model".to_owned(),
             coordinate_precision: 3,
-            ensemble_metadata: UnrepresentablePolicy::Fail,
-            frame_metadata: UnrepresentablePolicy::Fail,
-            series_metadata: UnrepresentablePolicy::Fail,
             sample_metadata: UnrepresentablePolicy::Fail,
             cell: UnrepresentablePolicy::Fail,
             implicit_hydrogens: UnrepresentablePolicy::Fail,
@@ -343,8 +289,6 @@ pub enum MmcifWriteIssue {
         /// `_atom_site.label_atom_id`.
         item: String,
     },
-    /// The ensemble has no samples.
-    EmptyEnsemble,
     /// The number of interpretation reports does not match the number of
     /// models.
     ReportCountMismatch {
@@ -353,24 +297,12 @@ pub enum MmcifWriteIssue {
         /// The number of reports.
         actual: usize,
     },
-    /// The 1-based ensemble sample `sample` differs from the first sample in
-    /// state one mmCIF block shares between models.
-    IncompatibleEnsembleSample {
+    /// The 1-based sample `sample` differs from the first sample in state
+    /// one mmCIF block shares between models.
+    IncompatibleSample {
         /// The 1-based sample number.
         sample: usize,
         /// The differing state.
-        field: MmcifSampleField,
-    },
-    /// The 1-based ensemble sample `sample` has state mmCIF cannot
-    /// represent, with [`UnrepresentablePolicy::Fail`]. A temperature is
-    /// reported for the first sample.
-    UnrepresentableEnsembleSample {
-        /// The 1-based sample number.
-        sample: usize,
-        /// [`MmcifSampleField::Weight`] for unequal weights,
-        /// [`MmcifSampleField::State`] for more than one state,
-        /// [`MmcifSampleField::Energy`] for a state energy, or
-        /// [`MmcifSampleField::Temperature`] for the ensemble temperature.
         field: MmcifSampleField,
     },
     /// A periodic cell mmCIF cannot represent, with
@@ -426,7 +358,7 @@ impl fmt::Display for MmcifAtomField {
     }
 }
 
-/// Ensemble sample state named by an [`MmcifWriteIssue`].
+/// Sample state named by [`MmcifWriteIssue::IncompatibleSample`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MmcifSampleField {
@@ -438,14 +370,6 @@ pub enum MmcifSampleField {
     Connectivity,
     /// The `_atom_site` identity columns.
     AtomSites,
-    /// The sample's relative weight.
-    Weight,
-    /// The energy of the sample's state.
-    Energy,
-    /// The sample's state.
-    State,
-    /// The temperature the ensemble's populations describe.
-    Temperature,
 }
 
 impl fmt::Display for MmcifSampleField {
@@ -455,10 +379,6 @@ impl fmt::Display for MmcifSampleField {
             Self::StructuralAsymmetry => "structural asymmetry representation",
             Self::Connectivity => "connectivity representation",
             Self::AtomSites => "atom-site representation",
-            Self::Weight => "weight",
-            Self::Energy => "state energy",
-            Self::State => "state",
-            Self::Temperature => "temperature",
         })
     }
 }
@@ -467,7 +387,7 @@ impl fmt::Display for MmcifSampleField {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MmcifCellReason {
-    /// Ensemble samples have different cells; one block has one `_cell`.
+    /// The samples have different cells; one block has one `_cell`.
     SampleCellsDiffer,
     /// The cell is not periodic along all three axes.
     PartiallyPeriodic,
@@ -481,7 +401,7 @@ pub enum MmcifCellReason {
 impl fmt::Display for MmcifCellReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::SampleCellsDiffer => "The ensemble samples have different cells.",
+            Self::SampleCellsDiffer => "The samples have different cells.",
             Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
             Self::NonstandardOrientation => {
                 "Cell vector a is not along x, or b is not in the xy plane."
@@ -508,7 +428,6 @@ impl MmcifWriteIssue {
             | Self::UnsupportedBondOrder { .. }
             | Self::AmbiguousConnectionSelector(_)
             | Self::UnsupportedTextValue { .. }
-            | Self::UnrepresentableEnsembleSample { .. }
             | Self::UnrepresentableSample { .. }
             | Self::UnrepresentableCell { .. } => DiagnosticKind::Unsupported,
             Self::MissingEntityClassification(_)
@@ -523,10 +442,9 @@ impl MmcifWriteIssue {
             | Self::DuplicateAtomIdentity(_)
             | Self::MissingAtomProvenance(_)
             | Self::DuplicateAtomProvenance(_)
-            | Self::EmptyEnsemble
             | Self::EmptySampleSet
             | Self::ReportCountMismatch { .. }
-            | Self::IncompatibleEnsembleSample { .. } => DiagnosticKind::Inconsistent,
+            | Self::IncompatibleSample { .. } => DiagnosticKind::Inconsistent,
         }
     }
 }
@@ -660,23 +578,18 @@ impl fmt::Display for MmcifWriteIssue {
             Self::UnsupportedTextValue { item } => {
                 write!(f, "A value of {item} does not fit one mmCIF token.")
             }
-            Self::EmptyEnsemble => f.write_str("The ensemble has no samples."),
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
                 "There are {actual} interpretation reports for {expected} models."
             ),
-            Self::IncompatibleEnsembleSample { sample, field } => write!(
+            Self::IncompatibleSample { sample, field } => write!(
                 f,
-                "Ensemble sample {sample} has a different {field} from the first sample."
-            ),
-            Self::UnrepresentableEnsembleSample { sample, field } => write!(
-                f,
-                "The {field} of ensemble sample {sample} has no mmCIF representation."
+                "Sample {sample} has a different {field} from the first sample."
             ),
             Self::UnrepresentableCell { reason } => reason.fmt(f),
             Self::EmptySampleSet => f.write_str("The sample set has no samples."),
             Self::UnrepresentableSample { sample, field } => {
-                write!(f, "The {field} of sample {sample} has no mmCIF representation.")
+                f.write_str(&unrepresentable_state("mmCIF", *field, Some(*sample)))
             }
         }
     }
@@ -832,16 +745,15 @@ impl MmcifEntityClassifications {
     }
 }
 
-/// One mmCIF data block to write: a model, an ensemble, or a sample set, plus
-/// the entity semantics used for its `_entity` and asymmetry assignments.
+/// One mmCIF data block to write: a model or a sample set, plus the entity
+/// semantics used for its `_entity` and asymmetry assignments.
 ///
-/// Convert from `&Model`, `&Ensemble`, `&SampleSet`, [`SampleView`],
-/// `&StructureInterpretation`, `&StructureEnsembleInterpretation`, or
-/// `&StructureSampleSetInterpretation`; interpretations keep their source
-/// reports. [`Self::model`] accepts any borrowed model view; an ensemble
-/// sample's weight and state energy, a trajectory frame's time, step,
-/// velocities, and forces, and a sample's membership, place, velocities, and
-/// forces fail to write unless the write options omit them.
+/// Convert from `&Model`, `&SampleSet`, [`SampleView`],
+/// `&StructureInterpretation`, or `&StructureSampleSetInterpretation`;
+/// interpretations keep their source reports. [`Self::model`] accepts any
+/// borrowed model view, such as a sample or a trajectory frame; a sample's
+/// membership, place, velocities, and forces fail to write unless the
+/// write options omit them.
 ///
 /// A block is named by [`MmcifWriteOptions::block_name`] unless
 /// [`Self::with_block_name`] names it.
@@ -866,7 +778,6 @@ pub struct MmcifBlockSource<'a> {
 #[derive(Debug, Clone, Copy)]
 enum BlockContent<'a> {
     Model(ModelView<'a>),
-    Ensemble(&'a Ensemble),
     SampleSet(&'a SampleSet),
 }
 
@@ -883,15 +794,6 @@ impl<'a> MmcifBlockSource<'a> {
     pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
         Self {
             content: BlockContent::Model(model.as_model_view()),
-            entities: EntitySemantics::Canonical,
-            block_name: None,
-        }
-    }
-
-    /// One multi-model block with one model per ensemble sample.
-    pub fn ensemble(ensemble: &'a Ensemble) -> Self {
-        Self {
-            content: BlockContent::Ensemble(ensemble),
             entities: EntitySemantics::Canonical,
             block_name: None,
         }
@@ -921,7 +823,7 @@ impl<'a> MmcifBlockSource<'a> {
     }
 
     /// Preserves interpreted mmCIF entity and asymmetry semantics: one report
-    /// for a model block, one per sample for an ensemble or sample set block.
+    /// for a model block, one per sample for a sample set block.
     ///
     /// Atom-level provenance keeps one source entity and structural asymmetry
     /// consistent even when it spans several molecule instances; conflicting
@@ -966,12 +868,6 @@ impl<'a> From<&'a Model> for MmcifBlockSource<'a> {
     }
 }
 
-impl<'a> From<&'a Ensemble> for MmcifBlockSource<'a> {
-    fn from(ensemble: &'a Ensemble) -> Self {
-        Self::ensemble(ensemble)
-    }
-}
-
 impl<'a> From<&'a SampleSet> for MmcifBlockSource<'a> {
     fn from(set: &'a SampleSet) -> Self {
         Self::sample_set(set)
@@ -998,12 +894,6 @@ impl<'a> From<&'a StructureInterpretation> for MmcifBlockSource<'a> {
     fn from(interpretation: &'a StructureInterpretation) -> Self {
         Self::model(interpretation.model())
             .with_reports(std::slice::from_ref(interpretation.report()))
-    }
-}
-
-impl<'a> From<&'a StructureEnsembleInterpretation> for MmcifBlockSource<'a> {
-    fn from(interpretation: &'a StructureEnsembleInterpretation) -> Self {
-        Self::ensemble(interpretation.ensemble()).with_reports(interpretation.reports())
     }
 }
 
@@ -1059,34 +949,6 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
         match block.content {
             BlockContent::Model(view) => {
                 write_model_block_to(writer, view, block.entities, &block_options, &mut omissions)?
-            }
-            BlockContent::Ensemble(ensemble) => {
-                let views = ensemble
-                    .iter()
-                    .map(|sample| sample.as_model_view())
-                    .collect::<Vec<_>>();
-                let record_state = |state: &mut Omissions| {
-                    record_multi_model_ensemble(ensemble, options.ensemble_metadata, state).map_err(
-                        |(sample, field)| {
-                            let field = match field {
-                                StructureField::Weight => MmcifSampleField::Weight,
-                                StructureField::Energy => MmcifSampleField::Energy,
-                                StructureField::State => MmcifSampleField::State,
-                                _ => MmcifSampleField::Temperature,
-                            };
-                            fail(MmcifWriteIssue::UnrepresentableEnsembleSample { sample, field })
-                        },
-                    )
-                };
-                write_multi_model_block_to(
-                    writer,
-                    &views,
-                    record_state,
-                    MmcifWriteIssue::EmptyEnsemble,
-                    block.entities,
-                    &block_options,
-                    &mut omissions,
-                )?;
             }
             BlockContent::SampleSet(set) => {
                 let views = set
@@ -1231,7 +1093,8 @@ fn write_multi_model_block_to(
     let cell = block_cell(views.iter().map(|view| view.cell()), options.cell)?;
     let mut samples = views.iter().copied().enumerate();
     let (_, first_view) = samples.next().ok_or_else(|| fail(empty))?;
-    let first_plan = ensemble_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
+    let first_plan =
+        multi_model_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
     let mut first = prepare_model(
         first_view,
         first_plan,
@@ -1244,14 +1107,14 @@ fn write_multi_model_block_to(
     write_atom_rows(writer, &first.atoms, 1, &mut atom_serial, options)?;
 
     for (index, view) in samples {
-        let plan = ensemble_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
+        let plan = multi_model_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
         let candidate = prepare_model(
             view,
             plan,
             options.implicit_hydrogens,
             options.coordinate_precision,
         )?;
-        validate_ensemble_sample(&first, &candidate, index + 1)?;
+        validate_sample(&first, &candidate, index + 1)?;
         // A bond the reader derives in one model but not another is stated.
         for (connection, sample) in first.connections.iter_mut().zip(&candidate.connections) {
             if connection.implied != sample.implied {

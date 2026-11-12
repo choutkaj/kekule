@@ -16,13 +16,13 @@ use kekule::statistics::{
     SampleObservations, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, EnsemblePartition, Members, Model, Positions, SampleRead, SampleReadError,
-    SampleSet, Trajectory, TrajectoryFrame,
+    Distribution, Members, Model, Order, Partition, Positions, Sample, SampleRead, SampleReadError,
+    SampleSet, TimeAxis,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::{
-    open_indexed_sample_set, write_trajectory, IndexedFile, TrajectoryWriteOptions,
+    open_indexed_sample_set, write_sample_set, IndexedFile, TrajectoryWriteOptions,
 };
 use kekule::traj::{FitReference, Processed, ProcessingSteps, TrajectoryFormat};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
@@ -58,18 +58,19 @@ fn points(index: usize) -> Vec<Point3> {
 }
 
 /// Ten timed frames of a six-carbon chain.
-fn trajectory() -> Trajectory {
+fn trajectory() -> SampleSet {
     let topology = kekule::smiles::to_topology(&"C".repeat(ATOMS)).unwrap();
-    let frames = (0..10).map(|index| {
-        let positions = Positions::new(Quantity::new(points(index), NANOMETER)).unwrap();
-        let mut frame = TrajectoryFrame::new(positions);
-        frame
-            .set_time(Some(Quantity::new(2.0 * index as f64, PICOSECOND)))
-            .unwrap();
-        frame.set_step(Some(index as u64));
-        frame
-    });
-    Trajectory::from_items(topology, frames).unwrap()
+    let frames = (0..10)
+        .map(|index| Sample::new(Positions::new(Quantity::new(points(index), NANOMETER)).unwrap()));
+    let mut set = SampleSet::from_samples(topology, frames).unwrap();
+    let times = (0..10).map(|index| 2.0 * index as f64).collect();
+    let axis = TimeAxis::new(
+        Some(Quantity::new(times, PICOSECOND)),
+        Some((0..10).collect()),
+    )
+    .unwrap();
+    set.set_order(Some(Order::Time(axis))).unwrap();
+    set
 }
 
 /// A scratch file removed on drop.
@@ -94,7 +95,7 @@ fn file_and_memory(scratch: &str) -> (Scratch, SampleSet<IndexedFile>, SampleSet
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
         TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
     );
-    write_trajectory(&path, &trajectory, options).unwrap();
+    write_sample_set(&path, &trajectory, options).unwrap();
     let file =
         open_indexed_sample_set(&path, trajectory.shared_topology(), Default::default()).unwrap();
     let memory = file.load(0..file.len()).unwrap();
@@ -106,7 +107,7 @@ fn file_and_memory(scratch: &str) -> (Scratch, SampleSet<IndexedFile>, SampleSet
 fn partial() -> Distribution {
     Distribution::new(
         Members::Subset(vec![1, 2, 4, 5, 7, 8]),
-        EnsemblePartition::new(vec![0, 1, 0, 1, 1, 0], vec![0, 1]).unwrap(),
+        Partition::new(vec![0, 1, 0, 1, 1, 0], vec![0, 1]).unwrap(),
     )
     .unwrap()
     .with_weights(vec![1.0, 2.0, 3.0, 0.5, 1.5, 4.0])

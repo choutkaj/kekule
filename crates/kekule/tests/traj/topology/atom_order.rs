@@ -7,9 +7,10 @@ use std::sync::Arc;
 use kekule::geometry::Point3;
 use kekule::mmcif;
 use kekule::structure::Positions;
-use kekule::structure::{Trajectory, TrajectoryFrame};
-use kekule::traj::io::{read_trajectory, write_trajectory};
+use kekule::traj::io::{read_sample_set, write_sample_set};
 use kekule::units::{Quantity, ANGSTROM};
+
+use crate::support::{time_ordered, Frame};
 
 // A covalent link joins the first and third atom-site rows into one molecule,
 // so instance-major numbering would move the water between the carbons.
@@ -100,19 +101,19 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     // carries no atom identity, so write it through an unrelated topology.
     let external = kekule::smiles::to_topology("C.O.C").unwrap();
     let rows = ROW_X.map(|x| Point3::new(x, 0.0, 0.0)).to_vec();
-    let mut frame = TrajectoryFrame::new(Positions::new(Quantity::new(rows, ANGSTROM)).unwrap());
+    let mut frame = Frame::new(Positions::new(Quantity::new(rows, ANGSTROM)).unwrap());
     frame.set_step(Some(0));
     let path = TemporaryPath(
         std::env::temp_dir().join(format!("kekule-atom-order-{}.dcd", std::process::id())),
     );
-    write_trajectory(
+    write_sample_set(
         &path.0,
-        &Trajectory::from_items(external, [frame]).unwrap(),
+        &time_ordered(external, [frame]),
         Default::default(),
     )
     .unwrap();
 
-    let loaded = read_trajectory(&path.0, Arc::clone(&topology), Default::default()).unwrap();
+    let loaded = read_sample_set(&path.0, Arc::clone(&topology), Default::default()).unwrap();
     let frame = loaded.get(0).unwrap().as_model_view();
     assert_eq!(row_x(frame.positions().values().value()), ROW_X);
     for (atom, element) in topology.atom_ids().iter().zip(ROW_ELEMENTS) {

@@ -13,8 +13,8 @@ use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::native::SampleSetDescription;
 use kekule::structure::{
-    Distribution, EnsemblePartition, Members, Order, Positions, Sample, SampleRead,
-    SampleReadError, SampleSet, Trajectory, TrajectoryFrame,
+    Distribution, Members, Order, Partition, Positions, Sample, SampleRead, SampleReadError,
+    SampleSet,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdEndian, DcdWriteOptions};
@@ -22,16 +22,18 @@ use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
     append_trajectory, open_indexed_sample_set, open_indexed_sample_set_from_index,
-    open_indexed_trajectory, read_sample_set, write_trajectory, IndexedFile, KeepFrames,
+    open_indexed_trajectory, read_sample_set, write_sample_set, IndexedFile, KeepFrames,
     TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
-    Processed, ProcessingSteps, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
-    TrajectoryReader, TrajectoryWriter,
+    FrameView, Processed, ProcessingSteps, SeekableTrajectoryReader, TrajectoryFormat,
+    TrajectoryIoErrorKind, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
-use crate::support::{fixed_atom_fixture, linear_carbon_topology, topology};
+use crate::support::{
+    fixed_atom_fixture, frames_of, linear_carbon_topology, time_ordered, topology, Frame,
+};
 
 /// The externally supplied fixture of every format with its topology.
 fn fixtures() -> [(PathBuf, Arc<Topology>); 4] {
@@ -84,7 +86,7 @@ impl Drop for Directory {
 
 /// `count` frames of a moving 12-carbon chain in a cell, with times and
 /// steps.
-fn chain(topology: &Arc<Topology>, count: u64) -> Trajectory {
+fn chain(topology: &Arc<Topology>, count: u64) -> SampleSet {
     let frames = (0..count).map(|step| {
         let shift = step as f64;
         let points = (0..12)
@@ -102,34 +104,33 @@ fn chain(topology: &Arc<Topology>, count: u64) -> Trajectory {
             [true; 3],
         )
         .unwrap();
-        let mut frame =
-            TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
-                .with_cell(cell);
+        let mut frame = Frame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
+            .with_cell(cell);
         frame.set_step(Some(10 * step));
         frame
             .set_time(Some(Quantity::new(0.5 * shift, PICOSECOND)))
             .unwrap();
         frame
     });
-    Trajectory::from_items(Arc::clone(topology), frames).unwrap()
+    time_ordered(Arc::clone(topology), frames)
 }
 
 /// Every frame of the file at `path`, read through its indexed reader.
-fn indexed_frames(path: &Path, topology: &Arc<Topology>) -> Vec<TrajectoryFrame> {
+fn indexed_frames(path: &Path, topology: &Arc<Topology>) -> Vec<Frame> {
     let mut reader =
         open_indexed_trajectory(path, Arc::clone(topology), Default::default()).unwrap();
     let mut buffer = reader.frame_buffer();
     (0..reader.frame_count().unwrap())
         .map(|index| {
             reader.read_frame(index, &mut buffer).unwrap();
-            buffer.frame_view().payload().clone()
+            Frame::of(&buffer)
         })
         .collect()
 }
 
 /// Checks that `sample`, sample `index` of `set`, is `frame` with its time
 /// and step in the set's order.
-fn assert_frame(set: &impl SampleRead, index: usize, sample: &Sample, frame: &TrajectoryFrame) {
+fn assert_frame(set: &impl SampleRead, index: usize, sample: &Sample, frame: &Frame) {
     assert_eq!(sample.positions(), frame.positions(), "sample {index}");
     assert_eq!(sample.cell(), frame.cell(), "sample {index}");
     assert_eq!(sample.velocities(), frame.velocities(), "sample {index}");
@@ -220,7 +221,7 @@ fn loading_gives_the_set_in_memory_with_its_order_and_distribution() {
     let directory = Directory::new();
     let path = directory.0.join("run.xtc");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_trajectory(&path, &chain(&topology, 8), options).unwrap();
+    write_sample_set(&path, &chain(&topology, 8), options).unwrap();
     let mut set =
         open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let kept = (0..set.len())
@@ -229,7 +230,7 @@ fn loading_gives_the_set_in_memory_with_its_order_and_distribution() {
     let count = kept.len();
     let members = Members::Subset(kept);
     let weights = (0..count).map(|index| 1.0 + index as f64).collect();
-    let distribution = Distribution::new(members, EnsemblePartition::one_state(count))
+    let distribution = Distribution::new(members, Partition::one_state(count))
         .unwrap()
         .with_weights(weights)
         .unwrap();
@@ -287,21 +288,18 @@ fn reads_from_many_threads_at_once_equal_sequential_reads() {
 fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 8);
-    let frames = all
-        .iter()
-        .map(|frame| frame.payload().clone())
-        .collect::<Vec<_>>();
+    let frames = frames_of(&all);
     let directory = Directory::new();
     let path = directory.0.join("run.xtc");
-    let head = Trajectory::from_items(Arc::clone(&topology), frames[..3].iter().cloned()).unwrap();
+    let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_trajectory(&path, &head, options.clone()).unwrap();
+    write_sample_set(&path, &head, options.clone()).unwrap();
 
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
     assert_eq!(set.len(), 3);
     assert_eq!(set.refresh().unwrap(), 0);
-    let distribution = Distribution::new(Members::All, EnsemblePartition::one_state(3)).unwrap();
+    let distribution = Distribution::new(Members::All, Partition::one_state(3)).unwrap();
     set.set_distribution(Some(distribution)).unwrap();
     let before = (0..3)
         .map(|index| set.read(index).unwrap())
@@ -312,13 +310,17 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
     assert_eq!(report.kept_frames(), 3);
     for frame in all.iter().skip(3).take(2) {
-        writer.write_frame(frame).unwrap();
+        writer
+            .write_frame(FrameView::from_sample(frame).unwrap())
+            .unwrap();
     }
     writer.flush().unwrap();
     assert_eq!(set.refresh().unwrap(), 2);
     assert_eq!(set.len(), 5);
     for frame in all.iter().skip(5) {
-        writer.write_frame(frame).unwrap();
+        writer
+            .write_frame(FrameView::from_sample(frame).unwrap())
+            .unwrap();
     }
     writer.finish().unwrap();
     assert_eq!(set.refresh().unwrap(), frames.len() - 5);
@@ -351,19 +353,17 @@ fn refresh_counts_from_the_set_after_concurrent_reads() {
     let all = chain(&topology, 24);
     let directory = Directory::new();
     let path = directory.0.join("run.xtc");
-    let head = Trajectory::from_items(
-        Arc::clone(&topology),
-        all.iter().take(2).map(|frame| frame.payload().clone()),
-    )
-    .unwrap();
+    let head = time_ordered(Arc::clone(&topology), frames_of(&all).into_iter().take(2));
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_trajectory(&path, &head, options.clone()).unwrap();
+    write_sample_set(&path, &head, options.clone()).unwrap();
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
     let (mut writer, _) =
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(2), options).unwrap();
     for (count, frame) in all.iter().enumerate().skip(2) {
-        writer.write_frame(frame).unwrap();
+        writer
+            .write_frame(FrameView::from_sample(frame).unwrap())
+            .unwrap();
         writer.flush().unwrap();
         let barrier = std::sync::Barrier::new(8);
         thread::scope(|scope| {
@@ -399,7 +399,7 @@ fn refresh_counts_from_the_set_after_concurrent_reads() {
 /// A TRR file of [`chain`] in `directory`.
 fn chain_trr(directory: &Directory, topology: &Arc<Topology>, count: u64) -> PathBuf {
     let path = directory.0.join("run.trr");
-    write_trajectory(&path, &chain(topology, count), trr_options()).unwrap();
+    write_sample_set(&path, &chain(topology, count), trr_options()).unwrap();
     path
 }
 
@@ -536,13 +536,10 @@ fn a_replaced_file_reads_as_before_and_refresh_fails() {
         .map(|index| set.read(index).unwrap())
         .collect::<Vec<_>>();
     let other = directory.0.join("other.trr");
-    let mut reversed = chain(&topology, 9)
-        .iter()
-        .map(|frame| frame.payload().clone())
-        .collect::<Vec<_>>();
+    let mut reversed = frames_of(&chain(&topology, 9));
     reversed.reverse();
-    let reversed = Trajectory::from_items(Arc::clone(&topology), reversed).unwrap();
-    write_trajectory(&other, &reversed, trr_options()).unwrap();
+    let reversed = time_ordered(Arc::clone(&topology), reversed);
+    write_sample_set(&other, &reversed, trr_options()).unwrap();
     fs::rename(&other, &path).unwrap();
 
     for reads in read_at_once(&set, 12) {
@@ -563,21 +560,17 @@ fn a_replaced_file_reads_as_before_and_refresh_fails() {
 fn refresh_keeps_a_distribution_over_some_samples_or_none() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 6);
-    let frames = all
-        .iter()
-        .map(|frame| frame.payload().clone())
-        .collect::<Vec<_>>();
+    let frames = frames_of(&all);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     for members in [vec![0, 2], vec![]] {
         let directory = Directory::new();
         let path = directory.0.join("run.xtc");
-        let head =
-            Trajectory::from_items(Arc::clone(&topology), frames[..3].iter().cloned()).unwrap();
-        write_trajectory(&path, &head, options.clone()).unwrap();
+        let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
+        write_sample_set(&path, &head, options.clone()).unwrap();
         let mut set =
             open_indexed_sample_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
-        let partition = EnsemblePartition::one_state(members.len());
+        let partition = Partition::one_state(members.len());
         let distribution = Distribution::new(Members::Subset(members.clone()), partition).unwrap();
         set.set_distribution(Some(distribution.clone())).unwrap();
         let (mut writer, _) = append_trajectory(
@@ -588,7 +581,9 @@ fn refresh_keeps_a_distribution_over_some_samples_or_none() {
         )
         .unwrap();
         for frame in all.iter().skip(3) {
-            writer.write_frame(frame).unwrap();
+            writer
+                .write_frame(FrameView::from_sample(frame).unwrap())
+                .unwrap();
         }
         writer.finish().unwrap();
         assert_eq!(set.refresh().unwrap(), 3);
@@ -606,13 +601,9 @@ fn a_processed_growing_file_reads_the_appended_samples() {
     let all = chain(&topology, 7);
     let directory = Directory::new();
     let path = directory.0.join("run.xtc");
-    let head = Trajectory::from_items(
-        Arc::clone(&topology),
-        all.iter().take(3).map(|frame| frame.payload().clone()),
-    )
-    .unwrap();
+    let head = time_ordered(Arc::clone(&topology), frames_of(&all).into_iter().take(3));
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_trajectory(&path, &head, options.clone()).unwrap();
+    write_sample_set(&path, &head, options.clone()).unwrap();
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
     let ids = topology.atom_ids();
@@ -629,7 +620,9 @@ fn a_processed_growing_file_reads_the_appended_samples() {
     let (mut writer, _) =
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
     for frame in all.iter().skip(3) {
-        writer.write_frame(frame).unwrap();
+        writer
+            .write_frame(FrameView::from_sample(frame).unwrap())
+            .unwrap();
     }
     writer.finish().unwrap();
     let (mut set, steps) = processed.into_parts();
@@ -706,9 +699,9 @@ fn a_set_in_memory_lends_what_a_file_reads() {
     assert_eq!(readers[0].order(), readers[1].order());
 }
 
-/// `trajectory` with every atom moved by `dx` nanometres along x.
-fn shifted(trajectory: &Trajectory, dx: f64) -> Trajectory {
-    let mut shifted = trajectory.clone();
+/// `set` with every atom moved by `dx` nanometres along x.
+fn shifted(set: &SampleSet, dx: f64) -> SampleSet {
+    let mut shifted = set.clone();
     let transform = RigidTransform::new(
         Matrix3::identity(),
         Quantity::new(Vector3::new(dx, 0.0, 0.0), NANOMETER),
@@ -733,7 +726,7 @@ fn a_frame_rewritten_in_place_reads_as_it_now_is() {
     let directory = Directory::new();
     let path = chain_trr(&directory, &topology, 6);
     let other = directory.0.join("other.trr");
-    write_trajectory(&other, &shifted(&chain(&topology, 6), 0.05), trr_options()).unwrap();
+    write_sample_set(&other, &shifted(&chain(&topology, 6), 0.05), trr_options()).unwrap();
     let rewritten = indexed_frames(&other, &topology);
     let mut set =
         open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
@@ -773,21 +766,18 @@ fn a_frame_rewritten_in_place_reads_as_it_now_is() {
 fn refresh_takes_a_replacement_that_begins_with_the_indexed_frames() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 6);
-    let frames = all
-        .iter()
-        .map(|frame| frame.payload().clone())
-        .collect::<Vec<_>>();
+    let frames = frames_of(&all);
     let directory = Directory::new();
     let path = directory.0.join("run.xtc");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    let head = Trajectory::from_items(Arc::clone(&topology), frames[..3].iter().cloned()).unwrap();
-    write_trajectory(&path, &head, options.clone()).unwrap();
+    let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
+    write_sample_set(&path, &head, options.clone()).unwrap();
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
     read_at_once(&set, 4);
 
     let other = directory.0.join("other.xtc");
-    write_trajectory(&other, &all, options).unwrap();
+    write_sample_set(&other, &all, options).unwrap();
     assert!(fs::read(&other)
         .unwrap()
         .starts_with(&fs::read(&path).unwrap()));
@@ -822,10 +812,7 @@ fn growing_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
 fn xyz_and_dcd_sets_take_appended_frames_on_refresh() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 6);
-    let frames = all
-        .iter()
-        .map(|frame| frame.payload().clone())
-        .collect::<Vec<_>>();
+    let frames = frames_of(&all);
     for (format, name) in [
         (TrajectoryFormat::Xyz, "run.xyz"),
         (TrajectoryFormat::Dcd, "run.dcd"),
@@ -833,9 +820,8 @@ fn xyz_and_dcd_sets_take_appended_frames_on_refresh() {
         let directory = Directory::new();
         let path = directory.0.join(name);
         let options = growing_options(format);
-        let head =
-            Trajectory::from_items(Arc::clone(&topology), frames[..3].iter().cloned()).unwrap();
-        write_trajectory(&path, &head, options.clone()).unwrap();
+        let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
+        write_sample_set(&path, &head, options.clone()).unwrap();
         let growing = TrajectoryOpenOptions::default().with_growing(true);
         let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
         assert_eq!(set.len(), 3, "{format}");
@@ -844,12 +830,16 @@ fn xyz_and_dcd_sets_take_appended_frames_on_refresh() {
         let (mut writer, _) =
             append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
         for frame in all.iter().skip(3).take(2) {
-            writer.write_frame(frame).unwrap();
+            writer
+                .write_frame(FrameView::from_sample(frame).unwrap())
+                .unwrap();
         }
         writer.flush().unwrap();
         assert_eq!(set.refresh().unwrap(), 2, "{format}");
         for frame in all.iter().skip(5) {
-            writer.write_frame(frame).unwrap();
+            writer
+                .write_frame(FrameView::from_sample(frame).unwrap())
+                .unwrap();
         }
         writer.finish().unwrap();
         assert_eq!(set.refresh().unwrap(), 1, "{format}");
@@ -919,13 +909,9 @@ fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
     let all = chain(&topology, 6);
     let directory = Directory::new();
     let path = directory.0.join("run.xtc");
-    let head = Trajectory::from_items(
-        Arc::clone(&topology),
-        all.iter().take(3).map(|frame| frame.payload().clone()),
-    )
-    .unwrap();
+    let head = time_ordered(Arc::clone(&topology), frames_of(&all).into_iter().take(3));
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_trajectory(&path, &head, options.clone()).unwrap();
+    write_sample_set(&path, &head, options.clone()).unwrap();
 
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let reader = open_indexed_trajectory(&path, Arc::clone(&topology), growing.clone()).unwrap();
@@ -936,7 +922,7 @@ fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
     for index in 0..3 {
         assert_eq!(set.read(index).unwrap(), opened.read(index).unwrap());
     }
-    let distribution = Distribution::new(Members::All, EnsemblePartition::one_state(3)).unwrap();
+    let distribution = Distribution::new(Members::All, Partition::one_state(3)).unwrap();
     set.set_distribution(Some(distribution)).unwrap();
     let expected = (0..3)
         .map(|index| set.read(index).unwrap())
@@ -948,7 +934,9 @@ fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
     let (mut writer, _) =
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
     for frame in all.iter().skip(3) {
-        writer.write_frame(frame).unwrap();
+        writer
+            .write_frame(FrameView::from_sample(frame).unwrap())
+            .unwrap();
     }
     writer.finish().unwrap();
     assert_eq!(set.refresh().unwrap(), 3);
@@ -959,7 +947,7 @@ fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
 
     // Another file at the path: the snapshot reads the file it shares.
     let other = directory.0.join("other.xtc");
-    write_trajectory(
+    write_sample_set(
         &other,
         &shifted(&head, 0.5),
         TrajectoryWriteOptions::new(TrajectoryFormat::Xtc),
@@ -985,13 +973,12 @@ fn a_snapshot_and_its_set_grow_apart() {
     let path = directory.0.join("run.xtc");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
     let first = |count: usize| {
-        Trajectory::from_items(
+        time_ordered(
             Arc::clone(&topology),
-            all.iter().take(count).map(|frame| frame.payload().clone()),
+            frames_of(&all).into_iter().take(count),
         )
-        .unwrap()
     };
-    write_trajectory(&path, &first(2), options.clone()).unwrap();
+    write_sample_set(&path, &first(2), options.clone()).unwrap();
     let append = |from: usize, to: usize| {
         let (mut writer, _) = append_trajectory(
             &path,
@@ -1001,7 +988,9 @@ fn a_snapshot_and_its_set_grow_apart() {
         )
         .unwrap();
         for frame in all.iter().take(to).skip(from) {
-            writer.write_frame(frame).unwrap();
+            writer
+                .write_frame(FrameView::from_sample(frame).unwrap())
+                .unwrap();
         }
         writer.finish().unwrap();
     };
@@ -1034,7 +1023,7 @@ fn a_snapshot_and_its_set_grow_apart() {
 /// Two frames of a chain in a cell: frame 0 on a regular line, frame 1
 /// scattered far from it, so that frame 1 needs more scratch to read in
 /// every format but DCD, whose frames all have one size.
-fn uneven(topology: &Arc<Topology>) -> Trajectory {
+fn uneven(topology: &Arc<Topology>) -> SampleSet {
     let atoms = topology.atom_count();
     let frames = (0..2_u32).map(|step| {
         let points = (0..atoms)
@@ -1056,16 +1045,15 @@ fn uneven(topology: &Arc<Topology>) -> Trajectory {
             [true; 3],
         )
         .unwrap();
-        let mut frame =
-            TrajectoryFrame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
-                .with_cell(cell);
+        let mut frame = Frame::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
+            .with_cell(cell);
         frame.set_step(Some(10 * u64::from(step)));
         frame
             .set_time(Some(Quantity::new(f64::from(step), PICOSECOND)))
             .unwrap();
         frame
     });
-    Trajectory::from_items(Arc::clone(topology), frames).unwrap()
+    time_ordered(Arc::clone(topology), frames)
 }
 
 /// Which reader reads sample 1 in [`reads_under`].
@@ -1176,7 +1164,7 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
         let options = growing_options(format).with_trr_options(
             TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
         );
-        write_trajectory(&path, &trajectory, options).unwrap();
+        write_sample_set(&path, &trajectory, options).unwrap();
         let opened = fs::read(&path).unwrap();
         let read = if rewrite {
             one_long_line(&opened)

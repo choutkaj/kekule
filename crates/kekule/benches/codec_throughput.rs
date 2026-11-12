@@ -327,14 +327,14 @@ fn positions(topology: &Topology) -> Vec<Point3> {
 fn base_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame
-        .frame_mut()
+        .sample_mut()
         .set_positions(Quantity::new(positions(topology), NANOMETER))?;
     Ok(frame)
 }
 
 fn dynamic_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = base_frame(topology)?;
-    frame.frame_mut().set_cell(Some(PeriodicCell::new(
+    frame.sample_mut().set_cell(Some(PeriodicCell::new(
         Quantity::new(
             [
                 Vector3::new(5.0, 0.0, 0.0),
@@ -345,10 +345,8 @@ fn dynamic_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>
         ),
         [true; 3],
     )?));
-    frame.frame_mut().set_step(Some(0));
-    frame
-        .frame_mut()
-        .set_time(Some(Quantity::new(0.0, PICOSECOND)))?;
+    frame.set_step(Some(0));
+    frame.set_time(Some(Quantity::new(0.0, PICOSECOND)))?;
     Ok(frame)
 }
 
@@ -375,7 +373,7 @@ fn encode_dcd(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dy
     )?;
     let mut frame = base_frame(topology)?;
     for index in 0..frames {
-        frame.frame_mut().set_step(Some(index as u64));
+        frame.set_step(Some(index as u64));
         writer.write_frame(frame.frame_view())?;
     }
     Ok(writer.finish()?.into_inner())
@@ -390,10 +388,8 @@ fn encode_trr(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dy
     )?;
     let mut frame = dynamic_frame(topology)?;
     for index in 0..frames {
-        frame.frame_mut().set_step(Some(index as u64));
-        frame
-            .frame_mut()
-            .set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))?;
+        frame.set_step(Some(index as u64));
+        frame.set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))?;
         writer.write_frame(frame.frame_view())?;
     }
     Ok(writer.finish()?.into_inner())
@@ -408,10 +404,8 @@ fn encode_xtc(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dy
     )?;
     let mut frame = dynamic_frame(topology)?;
     for index in 0..frames {
-        frame.frame_mut().set_step(Some(index as u64));
-        frame
-            .frame_mut()
-            .set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))?;
+        frame.set_step(Some(index as u64));
+        frame.set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))?;
         writer.write_frame(frame.frame_view())?;
     }
     Ok(writer.finish()?.into_inner())

@@ -226,7 +226,7 @@ fn write(
         "bench.xtc",
     )?;
     let mut frame = FrameBuffer::new(Arc::clone(topology));
-    frame.frame_mut().set_cell(Some(PeriodicCell::orthorhombic(
+    frame.sample_mut().set_cell(Some(PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(edge, edge, edge), NANOMETER),
         [true; 3],
     )?));
@@ -249,12 +249,10 @@ fn write(
             })
             .collect::<Vec<_>>();
         frame
-            .frame_mut()
+            .sample_mut()
             .set_positions(Quantity::new(positions, NANOMETER))?;
-        frame.frame_mut().set_step(Some(index as u64));
-        frame
-            .frame_mut()
-            .set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))?;
+        frame.set_step(Some(index as u64));
+        frame.set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))?;
         writer.write_frame(frame.frame_view())?;
     }
     writer.finish()?.flush()?;

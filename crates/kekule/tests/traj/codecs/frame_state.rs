@@ -9,7 +9,7 @@ use std::sync::{Arc, OnceLock};
 use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{Forces, Positions, Trajectory, TrajectoryFrame, Velocities};
+use kekule::structure::{Forces, Positions, Velocities};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{
     DcdFrameTimingPolicy, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
@@ -21,7 +21,7 @@ use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOp
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::io::FrameTimingPolicy;
 use kekule::traj::{
-    TrajectoryField, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryIoOperation,
+    FrameView, TrajectoryField, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryIoOperation,
     TrajectoryWriter,
 };
 use kekule::units::{
@@ -30,20 +30,29 @@ use kekule::units::{
 };
 
 use crate::support;
-use support::{codec_error, read_all};
+use support::{codec_error, read_all, Frame};
 
 const OMIT: UnrepresentablePolicy = UnrepresentablePolicy::Omit;
 
 /// One topology for every writer and frame, whose layouts must agree.
-fn topology() -> Arc<Topology> {
+fn shared_topology() -> &'static Arc<Topology> {
     static TOPOLOGY: OnceLock<Arc<Topology>> = OnceLock::new();
-    Arc::clone(TOPOLOGY.get_or_init(|| support::topology(&["C", "H", "O"], &[(0, 1), (0, 2)])))
+    TOPOLOGY.get_or_init(|| support::topology(&["C", "H", "O"], &[(0, 1), (0, 2)]))
+}
+
+fn topology() -> Arc<Topology> {
+    Arc::clone(shared_topology())
+}
+
+/// `frame` as a writer takes it.
+fn view(frame: &Frame) -> FrameView<'_> {
+    frame.view(shared_topology())
 }
 
 /// Frame `index` with positions only.
-fn bare_frame(index: usize) -> TrajectoryFrame {
+fn bare_frame(index: usize) -> Frame {
     let shift = index as f64;
-    TrajectoryFrame::new(
+    Frame::new(
         Positions::new(Quantity::new(
             [
                 Point3::new(shift, 1.0, 2.0),
@@ -56,7 +65,7 @@ fn bare_frame(index: usize) -> TrajectoryFrame {
     )
 }
 
-fn set_velocities(frame: &mut TrajectoryFrame) {
+fn set_velocities(frame: &mut Frame) {
     frame
         .set_velocities(Some(
             Velocities::new(Quantity::new(
@@ -68,7 +77,7 @@ fn set_velocities(frame: &mut TrajectoryFrame) {
         .unwrap();
 }
 
-fn set_forces(frame: &mut TrajectoryFrame) {
+fn set_forces(frame: &mut Frame) {
     frame
         .set_forces(Some(
             Forces::new(Quantity::new(
@@ -81,9 +90,8 @@ fn set_forces(frame: &mut TrajectoryFrame) {
 }
 
 /// Gives every frame atom, bond, and frame properties.
-fn with_properties(mut trajectory: Trajectory) -> Trajectory {
-    for index in 0..trajectory.len() {
-        let mut frame = trajectory.get_mut(index).unwrap();
+fn with_properties(mut frames: Vec<Frame>) -> Vec<Frame> {
+    for frame in &mut frames {
         let mut properties = frame.properties_mut();
         properties
             .owner_mut()
@@ -104,11 +112,16 @@ fn with_properties(mut trajectory: Trajectory) -> Trajectory {
             )
             .unwrap();
     }
-    trajectory
+    frames
 }
 
-fn trajectory(frames: impl IntoIterator<Item = TrajectoryFrame>) -> Trajectory {
-    Trajectory::from_items(topology(), frames).unwrap()
+/// Frames bound to the topology, written one by one with whatever times
+/// and steps each has.
+fn trajectory(frames: impl IntoIterator<Item = Frame>) -> Vec<Frame> {
+    frames
+        .into_iter()
+        .map(|frame| frame.bound(shared_topology()))
+        .collect()
 }
 
 fn time(picoseconds: f64) -> Option<Quantity<f64>> {
@@ -127,46 +140,46 @@ fn omitted(field: StructureField, structures: usize) -> WriteOmission {
     WriteOmission::StructureState { field, structures }
 }
 
-/// Writes every frame of `trajectory` with `writer` and returns its stream
-/// and report.
+/// Writes every frame of `frames` with `writer` and returns its stream and
+/// report.
 fn write_all<W: TrajectoryWriter>(
     mut writer: W,
-    trajectory: &Trajectory,
+    frames: &[Frame],
     finish: impl FnOnce(W) -> (Vec<u8>, WriteReport),
 ) -> (Vec<u8>, WriteReport) {
-    for frame in trajectory {
-        writer.write_frame(frame).unwrap();
+    for frame in frames {
+        writer.write_frame(view(frame)).unwrap();
     }
     finish(writer)
 }
 
-fn xyz(options: XyzWriteOptions, trajectory: &Trajectory) -> (Vec<u8>, WriteReport) {
+fn xyz(options: XyzWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
     let writer = XyzWriter::new(Vec::new(), topology(), options, "state.xyz").unwrap();
-    write_all(writer, trajectory, |writer| {
+    write_all(writer, frames, |writer| {
         let report = writer.report().clone();
         (writer.finish().unwrap(), report)
     })
 }
 
-fn dcd(options: DcdWriteOptions, trajectory: &Trajectory) -> (Vec<u8>, WriteReport) {
+fn dcd(options: DcdWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
     let writer = DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
-    write_all(writer, trajectory, |writer| {
+    write_all(writer, frames, |writer| {
         let report = writer.report().clone();
         (writer.finish().unwrap().into_inner(), report)
     })
 }
 
-fn trr(options: TrrWriteOptions, trajectory: &Trajectory) -> (Vec<u8>, WriteReport) {
+fn trr(options: TrrWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
     let writer = TrrWriter::new(Vec::new(), topology(), options, "state.trr").unwrap();
-    write_all(writer, trajectory, |writer| {
+    write_all(writer, frames, |writer| {
         let report = writer.report().clone();
         (writer.finish().unwrap(), report)
     })
 }
 
-fn xtc(options: XtcWriteOptions, trajectory: &Trajectory) -> (Vec<u8>, WriteReport) {
+fn xtc(options: XtcWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
     let writer = XtcWriter::new(Vec::new(), topology(), options, "state.xtc").unwrap();
-    write_all(writer, trajectory, |writer| {
+    write_all(writer, frames, |writer| {
         let report = writer.report().clone();
         (writer.finish().unwrap(), report)
     })
@@ -175,9 +188,9 @@ fn xtc(options: XtcWriteOptions, trajectory: &Trajectory) -> (Vec<u8>, WriteRepo
 /// Two frames as `base` makes them, and the same frames with `extra` state
 /// and properties.
 fn plain_and_rich(
-    base: impl Fn(usize) -> TrajectoryFrame,
-    extra: impl Fn(&mut TrajectoryFrame),
-) -> (Trajectory, Trajectory) {
+    base: impl Fn(usize) -> Frame,
+    extra: impl Fn(&mut Frame),
+) -> (Vec<Frame>, Vec<Frame>) {
     let plain = trajectory((0..2).map(&base));
     let rich = with_properties(trajectory((0..2).map(|index| {
         let mut frame = base(index);
@@ -229,7 +242,7 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
         "state.xyz",
     );
     assert_eq!(
-        writer.unwrap().write_frame(rich.get(0).unwrap()),
+        writer.unwrap().write_frame(view(&rich[0])),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -290,7 +303,7 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(timed.get(0).unwrap()),
+        writer.write_frame(view(&timed[0])),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -353,7 +366,7 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
     ] {
         let mut writer = XtcWriter::new(Vec::new(), topology(), options, "state.xtc").unwrap();
         assert_eq!(
-            writer.write_frame(rich.get(0).unwrap()),
+            writer.write_frame(view(&rich[0])),
             Err(codec_error(
                 TrajectoryIoErrorKind::UnsupportedField,
                 TrajectoryIoOperation::WriteFrame,
@@ -375,7 +388,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
         frame.set_time(time(index as f64)).unwrap();
         frame
     };
-    let lambda = |frame: &mut TrajectoryFrame| {
+    let lambda = |frame: &mut Frame| {
         frame
             .properties_mut()
             .owner_mut()
@@ -413,7 +426,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
     let read = read_all(
         &mut TrrReader::new(Cursor::new(bytes), topology(), TrrReadOptions::default()).unwrap(),
     );
-    assert_eq!(read[1].properties(), plain.get(1).unwrap().properties());
+    assert_eq!(read[1].properties(), plain[1].properties());
 
     // The lambda policy's own requirements are never omitted, and
     // RequireZero leaves out every frame property.
@@ -426,7 +439,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(without_lambda.get(0).unwrap()),
+        writer.write_frame(view(&without_lambda[0])),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
@@ -496,7 +509,7 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
     // By default such frames still fail.
     let mut writer = XtcWriter::new(Vec::new(), topology(), xtc_options, "state.xtc").unwrap();
     assert_eq!(
-        writer.write_frame(unnumbered.get(0).unwrap()),
+        writer.write_frame(view(&unnumbered[0])),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
@@ -546,19 +559,16 @@ fn dcd_numbers_frames_on_the_step_sequence() {
     let read = read_all(
         &mut DcdReader::new(Cursor::new(bytes), topology(), DcdReadOptions::default()).unwrap(),
     );
-    let steps = read.iter().map(TrajectoryFrame::step).collect::<Vec<_>>();
+    let steps = read.iter().map(Frame::step).collect::<Vec<_>>();
     assert_eq!(steps, [Some(100), Some(110), Some(120)]);
 
     // By default such frames still fail.
     let options = numbered.with_frame_timing(DcdFrameTimingPolicy::Require);
-    for frame in [
-        unstepped.get(0).unwrap(),
-        stepped([90, 110, 120]).get(0).unwrap(),
-    ] {
+    for frame in [unstepped[0].clone(), stepped([90, 110, 120])[0].clone()] {
         let mut writer =
             DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
         assert_eq!(
-            writer.write_frame(frame),
+            writer.write_frame(view(&frame)),
             Err(codec_error(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
@@ -642,11 +652,7 @@ fn dcd_numbering_times_frames_with_the_header_delta() {
     let mut writer =
         DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
     assert_eq!(
-        writer.write_frame(
-            timed([None; 3], [Some(0), Some(5), Some(10)])
-                .get(0)
-                .unwrap()
-        ),
+        writer.write_frame(view(&timed([None; 3], [Some(0), Some(5), Some(10)])[0])),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,

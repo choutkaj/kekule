@@ -45,11 +45,11 @@ fuzz_target!(|data: &[u8]| {
                 let _ = interpreted.model().position(*atom);
             }
         }
-        if let Ok(interpreted) = document.interpret_ensemble(Default::default()) {
+        if let Ok(interpreted) = document.interpret_sample_set(Default::default()) {
             for view in interpreted
-                .ensemble()
+                .sample_set()
                 .iter()
-                .map(|member| member.as_model_view())
+                .map(|sample| sample.as_model_view())
             {
                 for atom in view.topology().atom_ids() {
                     let _ = view.topology().atom(*atom);

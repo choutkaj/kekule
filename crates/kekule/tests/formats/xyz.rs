@@ -4,7 +4,7 @@ use kekule::molecule::{BondOrder, Element, ImplicitHydrogens};
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{ANGSTROM, BOHR, KELVIN};
 use kekule::xyz::{
-    self, XyzEnsembleInterpretOptions, XyzFrameSelection, XyzInterpretIssue, XyzInterpretOptions,
+    self, XyzFrameSelection, XyzInterpretIssue, XyzInterpretOptions, XyzSampleSetInterpretOptions,
 };
 
 const WATER: &str = "3\nwater\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.240 0.927 0.000\n";
@@ -201,35 +201,39 @@ fn frame_selection_follows_the_request() {
 }
 
 #[test]
-fn frames_of_the_same_connectivity_form_an_ensemble() {
+fn frames_of_the_same_connectivity_form_a_sample_set() {
     let stretched = "3\nstretched\nO 0 0 0\nH 1.0 0 0\nH -0.25 0.95 0\n";
     let document = xyz::parse_str(&format!("{WATER}{stretched}"), Default::default()).unwrap();
-    let interpretation = document.interpret_ensemble(Default::default()).unwrap();
-    let ensemble = interpretation.ensemble();
-    assert_eq!(ensemble.len(), 2);
+    let interpretation = document.interpret_sample_set(Default::default()).unwrap();
+    let set = interpretation.sample_set();
+    assert_eq!(set.len(), 2);
     assert_eq!(interpretation.reports().len(), 2);
     assert_eq!(interpretation.reports()[1].comment(), "stretched");
-    let x = ensemble.get(1).unwrap().positions().get(1).unwrap();
+    let x = set.get(1).unwrap().positions().get(1).unwrap();
     assert!((x.value_in(ANGSTROM).unwrap().x - 1.0).abs() < 1e-12);
-    assert_eq!(
-        ensemble.get(0).unwrap().weight(),
-        ensemble.get(1).unwrap().weight()
-    );
+    // An XYZ file states no weights, states, or order.
+    assert_eq!(set.distribution(), None);
+    assert_eq!(set.order(), None);
+    assert_eq!(crate::native_fingerprint(set), 0x86ec_939a_2cbb_3e26);
 
     let selected = document
-        .interpret_ensemble(
-            XyzEnsembleInterpretOptions::default()
+        .interpret_sample_set(
+            XyzSampleSetInterpretOptions::default()
                 .with_frames(Some(vec![1]))
                 .unwrap(),
         )
         .unwrap();
     assert_eq!(selected.reports()[0].frame(), 1);
-    assert!(XyzEnsembleInterpretOptions::default()
+    assert_eq!(
+        crate::native_fingerprint(selected.sample_set()),
+        0xbe77_888f_6f82_8a84
+    );
+    assert!(XyzSampleSetInterpretOptions::default()
         .with_frames(Some(Vec::new()))
         .is_err());
     let error = document
-        .interpret_ensemble(
-            XyzEnsembleInterpretOptions::default()
+        .interpret_sample_set(
+            XyzSampleSetInterpretOptions::default()
                 .with_frames(Some(vec![0, 0]))
                 .unwrap(),
         )
@@ -241,10 +245,12 @@ fn frames_of_the_same_connectivity_form_an_ensemble() {
 }
 
 #[test]
-fn frames_that_disagree_fail_the_ensemble() {
+fn frames_that_disagree_fail_the_sample_set() {
     let dissociated = "3\n\nO 0 0 0\nH 0.957 0 0\nH -2.4 9.3 0\n";
     let document = xyz::parse_str(&format!("{WATER}{dissociated}"), Default::default()).unwrap();
-    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    let error = document
+        .interpret_sample_set(Default::default())
+        .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
         error.detail(),
@@ -254,7 +260,9 @@ fn frames_that_disagree_fail_the_ensemble() {
     );
     let other_atoms = "3\n\nS 0 0 0\nH 0.957 0 0\nH -0.24 0.927 0\n";
     let document = xyz::parse_str(&format!("{WATER}{other_atoms}"), Default::default()).unwrap();
-    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    let error = document
+        .interpret_sample_set(Default::default())
+        .unwrap_err();
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::InconsistentAtomSet {
@@ -344,7 +352,9 @@ fn later_frames_keep_element_errors_and_locate_mismatches() {
         Default::default(),
     )
     .unwrap();
-    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    let error = document
+        .interpret_sample_set(Default::default())
+        .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     assert_eq!(error.location().unwrap().line(), 8);
     // Mismatches name the frame's count line.
@@ -353,14 +363,18 @@ fn later_frames_keep_element_errors_and_locate_mismatches() {
         Default::default(),
     )
     .unwrap();
-    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    let error = document
+        .interpret_sample_set(Default::default())
+        .unwrap_err();
     assert_eq!(error.location().unwrap().line(), 6);
     let document = xyz::parse_str(
         &format!("{WATER}3\n\nO 0 0 0\nH 0.957 0 0\nH -2.4 9.3 0\n"),
         Default::default(),
     )
     .unwrap();
-    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    let error = document
+        .interpret_sample_set(Default::default())
+        .unwrap_err();
     assert!(matches!(
         error.detail(),
         Some(FormatErrorDetail::InconsistentTopology { .. })
@@ -477,14 +491,20 @@ fn documents_built_from_atoms_interpret_as_parsed_files() {
         xyz::XyzFrame::new("stretched", water_atoms(1.0)),
     ]);
     let parsed = xyz::parse_str(&format!("{WATER}{stretched}"), Default::default()).unwrap();
-    let from_atoms = built.interpret_ensemble(Default::default()).unwrap();
-    let from_text = parsed.interpret_ensemble(Default::default()).unwrap();
+    let from_atoms = built.interpret_sample_set(Default::default()).unwrap();
+    let from_text = parsed.interpret_sample_set(Default::default()).unwrap();
     assert_eq!(from_atoms.reports(), from_text.reports());
-    assert_eq!(from_atoms.ensemble().len(), 2);
+    assert_eq!(from_atoms.sample_set().len(), 2);
     for sample in 0..2 {
         assert_eq!(
-            from_atoms.ensemble().get(sample).unwrap().positions(),
-            from_text.ensemble().get(sample).unwrap().positions()
+            from_atoms.sample_set().get(sample).unwrap().positions(),
+            from_text.sample_set().get(sample).unwrap().positions()
+        );
+    }
+    for interpretation in [&from_atoms, &from_text] {
+        assert_eq!(
+            crate::native_fingerprint(interpretation.sample_set()),
+            0x8953_66ba_1095_4bea
         );
     }
 }
@@ -547,7 +567,9 @@ fn built_documents_fail_as_parsing_would_reject_them() {
         .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     assert_eq!(error.location().map(|at| at.line()), Some(2));
-    let error = document.interpret_ensemble(Default::default()).unwrap_err();
+    let error = document
+        .interpret_sample_set(Default::default())
+        .unwrap_err();
     assert!(matches!(
         error.detail(),
         Some(FormatErrorDetail::InconsistentAtomSet { model_id }) if model_id == "1"

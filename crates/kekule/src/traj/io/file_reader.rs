@@ -7,11 +7,10 @@ use std::sync::Arc;
 use crate::topology::Topology;
 
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::structure::{DecodedSample, Sample, SampleSet, Trajectory};
+use crate::structure::{DecodedSample, Sample, SampleSet};
 use crate::traj::{
     FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryFormat,
     TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
-    TrajectoryWriter,
 };
 
 use super::limits::index_hard_capacity;
@@ -652,7 +651,10 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
     }
 }
 
-/// Reads an entire trajectory file into memory in file frame order.
+/// Reads an entire trajectory file into a sample set in memory, one sample
+/// per frame in file frame order: the frames' times and steps become a time
+/// order, and each frame's positions, cell, properties, velocities, and
+/// forces its sample's. The set has no distribution.
 ///
 /// Accepts an owned topology or a shared `Arc<Topology>` and detects the format
 /// automatically. File coordinates must follow the topology's dense atom order;
@@ -661,76 +663,61 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 /// a supplied shared topology retains its exact allocation.
 ///
 /// This consumes the sequential reader through clean EOF. Any open or decoding
-/// error is returned without publishing a partial trajectory. Memory usage grows
-/// with the number of frames and atoms; use [`open_trajectory`] to process large
-/// files one frame at a time or inspect file metadata and opening diagnostics.
+/// error is returned without publishing a partial set. Memory usage grows
+/// with the number of frames and atoms; use [`open_trajectory`] to process
+/// large files one frame at a time or inspect file metadata and opening
+/// diagnostics, and [`open_indexed_sample_set`](super::open_indexed_sample_set)
+/// to read samples on demand.
 ///
 /// `options` sets the format policies and limits; frame limits cause an error
 /// rather than truncating the result. These codec limits do not impose a total
-/// resident-memory budget for the loaded trajectory. No random-access index is
+/// resident-memory budget for the loaded set. No random-access index is
 /// built.
 ///
 /// # Errors
 ///
-/// Returns the errors of [`open_trajectory`] and the first decoding,
-/// validation or [`TrajectoryIoErrorKind::Io`] error of any frame.
+/// Returns the errors of [`open_trajectory`], the first decoding, validation
+/// or [`TrajectoryIoErrorKind::Io`] error of any frame, and
+/// [`TrajectoryIoErrorKind::InconsistentMetadata`] at the first frame
+/// without a time or step that the first frame has, or with one the first
+/// frame lacks; the [`SampleSetError`](crate::structure::SampleSetError) is
+/// the source.
 ///
 /// [`TrajectoryIoErrorKind::Io`]: crate::traj::TrajectoryIoErrorKind::Io
+/// [`TrajectoryIoErrorKind::InconsistentMetadata`]:
+///     crate::traj::TrajectoryIoErrorKind::InconsistentMetadata
 ///
 /// ```no_run
 /// use kekule::mmcif;
-/// use kekule::traj::io::read_trajectory;
+/// use kekule::traj::io::read_sample_set;
 ///
 /// let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
 /// let topology = document.interpret(Default::default())?.into_topology();
-/// let trajectory = read_trajectory("trajectory.xtc", topology, Default::default())?;
-/// println!("{} frames, {} atoms", trajectory.len(), trajectory.topology().atom_count());
+/// let frames = read_sample_set("trajectory.xtc", topology, Default::default())?;
+/// println!("{} frames, {} atoms", frames.len(), frames.topology().atom_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn read_trajectory(
-    path: impl AsRef<Path>,
-    topology: impl Into<Arc<Topology>>,
-    options: TrajectoryOpenOptions,
-) -> Result<Trajectory, TrajectoryIoError> {
-    let mut reader = open_trajectory(path, topology, options)?;
-    let mut buffer = reader.frame_buffer();
-    let mut writer = MemoryTrajectoryWriter::new(reader.shared_topology());
-    while reader.read_next(&mut buffer)? {
-        writer.write_frame(buffer.frame_view())?;
-    }
-    Ok(writer.into_trajectory())
-}
-
-/// Reads an entire trajectory file into a sample set, one sample per frame
-/// in file frame order, as [`read_trajectory`] reads it: the frames' times
-/// and steps become a time order, and each frame's positions, cell,
-/// properties, velocities, and forces its sample's. The set has no
-/// distribution.
-///
-/// # Errors
-///
-/// The errors of [`read_trajectory`], and
-/// [`TrajectoryIoErrorKind::InconsistentMetadata`] when some frames have a
-/// time or step and others do not, or the times are not finite.
-///
-/// [`TrajectoryIoErrorKind::InconsistentMetadata`]:
-///     crate::traj::TrajectoryIoErrorKind::InconsistentMetadata
 pub fn read_sample_set(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
 ) -> Result<SampleSet, TrajectoryIoError> {
     let path = path.as_ref();
-    let trajectory = read_trajectory(path, topology, options)?;
-    SampleSet::from_trajectory(trajectory).map_err(|error| {
-        TrajectoryIoError::codec(
-            TrajectoryIoErrorKind::InconsistentMetadata,
-            TrajectoryIoOperation::ReadFrame,
-            None,
-        )
-        .with_source_label(path.display().to_string())
-        .with_source(error)
-    })
+    let mut reader = open_trajectory(path, topology, options)?;
+    let mut buffer = reader.frame_buffer();
+    let mut writer = MemoryTrajectoryWriter::new(reader.shared_topology());
+    while reader.read_next(&mut buffer)? {
+        writer.collect(buffer.frame_view()).map_err(|error| {
+            TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::ReadFrame,
+                None,
+            )
+            .with_source_label(path.display().to_string())
+            .with_source(error)
+        })?;
+    }
+    Ok(writer.into_sample_set())
 }
 
 /// Opens one fast sequential path-backed trajectory reader without loading all frames.
@@ -739,7 +726,7 @@ pub fn read_sample_set(
 /// follow its dense atom order; counts and available format metadata are checked
 /// automatically. Matching counts alone cannot establish atom identity.
 /// `options` sets the format policies and limits. For a fully loaded in-memory
-/// trajectory, use [`read_trajectory`] instead.
+/// sample set, use [`read_sample_set`] instead.
 ///
 /// # Errors
 ///
