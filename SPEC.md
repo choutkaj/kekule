@@ -1,4 +1,4 @@
-# Architecture
+# Specification
 
 This document defines ownership boundaries and invariants for contributors.
 The [current capability index](docs/capabilities.md) links supported features and
@@ -52,139 +52,6 @@ New types take the prefix of what they belong to: `Geometry*`, `Structure*`,
 stays for perception models (`AromaticityModel`, `ValenceModel`), physical and
 machine-learning models (`WaterModel`, NAGL bundles), and the `MODEL` records
 of PDB and mmCIF, which this document calls coordinate models.
-
-### One container, one optional reading
-
-`StructureSet` is the one container for many geometries of one topology. What
-makes a set a trajectory, a scan, or an ensemble is stated beside the
-geometries, never carried by its type. Sources differ along two independent
-axes and real ones combine them: an MCMC chain is ordered and a distribution,
-a metadynamics run is time-ordered and weighted, a clustered trajectory is
-both. A reader cannot know which it has — a multi-model PDB may be an NMR
-bundle or an MD run, and a multi-frame XYZ may be conformers or an
-optimization history — so a reader loads geometries and the caller states what
-they mean, which is an annotation rather than a conversion.
-
-The two axes divide on what the source recorded against what an analysis
-infers.
-
-An order is recorded, so it belongs to the set. An MD engine writes each
-frame's time and step, an optimizer numbers its steps, and a scan driver
-records its coordinate; trajectory files carry these values. An order, when
-present, places every geometry: a time axis for a path produced by dynamics,
-steps for an optimization, or values of one coordinate in a unit for a scan or
-a reaction path (values need not increase, as a scan swept back and forth
-shows). A time axis has times, steps, both, or neither, and each column covers
-every geometry or none. Order values belong to the order, not to the
-geometries: selecting keeps each selected geometry's value, and a removed
-geometry takes its value with it.
-
-A distribution is inferred, so it belongs to `Ensemble` and never to the set.
-Reweighting a biased run, MBAR, clustering into states, and Boltzmann
-populations from energies are interpretations, and one set often carries
-several at once. An `Ensemble` owns one `StructureSet` and one `Distribution`
-over it, validated together once; `Ensemble::into_parts` returns both without
-copying. It lends the set but never lends it mutably, so everything that
-changes which geometries exist goes through the ensemble, which remaps the
-samples. Several readings of one set are several ensembles sharing every
-coordinate.
-
-A distribution covers every geometry of its set or a sorted subset, its
-samples. Weights are stored as natural logarithms, one per sample, each
-finite: weights from bias reweighting or importance sampling span hundreds of
-orders of magnitude, and a stored linear weight would underflow to zero and be
-rejected as nonpositive. Normalized weights and probabilities are derived on
-request. Without weights the samples weigh equally. Log weights and the
-partition are indexed by sample position. Every sample is in exactly one state
-and every state has a representative sample; a state's population is the total
-weight of its samples, derived and never stored. Only states have energies, on
-one scale per distribution: a conformer's minimized energy or a computed free
-energy, never a snapshot's instantaneous energy, which stays a property of its
-geometry. Selecting and removing geometries remap the samples; a selection
-keeps the energy and properties of the states it keeps whole.
-
-A weight means something only against a target, so it is never a field of a
-geometry or of a set. The same geometries weigh uniformly at 300 K and
-differently reweighted to 310 K, and a metadynamics run has one set of weights
-under c(t) reweighting and another under MBAR. What the engine recorded per
-geometry — a bias potential, collective-variable values, an instantaneous
-energy, a repeat count — is a geometry property, and the weights an analysis
-uses are derived from those. `Ensemble::uniform` and `Ensemble::weighted` build
-the one-state readings, so weighting a trajectory needs no partition.
-
-A geometry is shared through `Arc` and copied on write, so regrouping,
-reweighting, selecting, and collapsing copy no coordinates, and editing one
-geometry copies that geometry alone. Set and ensemble operations fail with one
-`StructureSetError`, whose `Missing` variant names the `Requirement` an
-operation lacks, such as a time order or an energy for every state; a
-geometry's own edits fail with `GeometryError`, and perception with
-`TopologyPerceptionError`. Statistics and clustering over an ensemble observe
-its samples with their probabilities and leave the other geometries out; over
-a bare set they observe every geometry equally. Superposition and RMSD act on
-every geometry.
-
-Two axes are deliberately absent. Kekule records no runs or segments: replica
-exchange, metadynamics walkers, umbrella windows and repeated runs are the
-concern of the code that produced them, which knows its own boundaries, and a
-pooled weighting across them is still one ensemble. `Order::Coordinate` holds
-one coordinate, so a multi-dimensional scan uses `Order::Step` with the
-coordinate values as geometry properties.
-
-Where the geometries live is a type parameter. `StructureSet`
-(`StructureSet<InMemory>`) holds them and lends them by reference, so its
-accessors cannot fail. `StructureSet<IndexedFile>` holds none: it reads
-geometry `i` from an indexed trajectory file as an owned `Geometry`, and a
-read can fail. Both share the topology, properties, order, and the operations
-on them; only a set in memory edits geometries or its order. A set of either
-storage reads through the object-safe `StructureSetRead` trait (topology,
-length, order, `peek`, `read`), which is open to the host. `peek` lends a
-geometry the reader holds; `read` returns an owned one. Everything in kekule
-that reads many geometries takes a `&dyn StructureSetRead`: the observation of
-statistics, RMSD of listed geometries, pairwise fitted RMSD, and lazy
-processing. kekule keeps no geometries a reader read, but for the geometry 0
-that lazy processing checks its steps on, and starts no threads: caching,
-read-ahead, and parallel observation belong to the host.
-
-A reader describes geometries and their order and never a distribution, so
-`Processed` and a host's own readers carry none. Processing neither removes
-nor reorders geometries, so indices are preserved, and a host that wants a
-processed ensemble reads the processed set and pairs it with the distribution
-it already had.
-
-A host loads chosen geometries of any reader with `StructureSet::from_reader`,
-which takes indices (a range, a stride, or a list) in any order and makes a
-faithful copy: each picked geometry whole, with the reader's order values. It
-keeps no set properties. Every index is checked against the reader's length
-first, and a repeated index is read once and its geometry shared. Geometries
-picked out of ascending order keep their times, so `validate_monotonic_time`
-refuses the set when a time decreases. The host changes what the geometries
-mean with `set_order` and by building an `Ensemble`; `Ensemble::select`
-restricts a distribution to the geometries it keeps. A host that needs
-progress or cancellation reads geometry by geometry through
-`StructureSetRead`.
-
-Geometries are flat. One `Geometry` holds all the coordinates and per-atom
-state of one arrangement, and a `Structure` holds exactly one of them, so a
-structure read from a restart file carries its velocities and a single-point
-result carries its forces. A place in an order and a membership in a
-distribution belong to the set and to the ensemble, never to a geometry; an
-energy belongs to a state, not to any geometry, except as a geometry's own
-property. Coordinate kernels share code through the borrowed `StructureView`,
-not through a common owned payload.
-
-These live in `kekule::structure`. `kekule::traj` owns file codecs, streaming
-reader and writer contracts, the reusable `FrameBuffer`, the `IndexedFile`
-storage of structure sets, periodic preprocessing, streaming superposition,
-and lazy processing (`Processed`); it owns no second in-memory trajectory
-type. A trajectory writer takes a `FrameView`: a borrowed `Geometry` with its
-time and step. `FrameView::from_geometry` lends a geometry of a time-ordered
-set and `FrameView::new` one held apart from a set, without copying arrays. A
-`FrameBuffer` holds one `Geometry` bound to its topology plus the frame's time
-and step; it lends its frame as a `FrameView` and becomes a `Geometry` with
-its `Place` through `into_geometry`, again without copying. A frame the buffer
-publishes replaces every field, occupancies and B factors included, so a
-buffer never keeps a previous frame's state. `read_structure_set` and
-`write_structure_set` move whole time-ordered sets.
 
 A salt, solvent box, or protein-ligand complex is a topology containing connected
 molecules. Covalent connectedness determines molecule boundaries; hierarchy and
@@ -511,13 +378,20 @@ values. Exact units, tolerances, and conversion policies belong with
 
 ## Geometry and structure ownership
 
-A structure or structure set owns its shared topology once. Geometries store flat
-payloads, not nested structures; a detached geometry has atom rows only and
-acquires bond rows when a set or a frame buffer binds it. The structure of a
-sample is shared storage, copied on write per sample, so copies of a set that
-differ only in order, weights, or grouping share every coordinate. Borrowed
+Geometries are flat. One `Geometry` holds all the coordinates and per-atom
+state of one arrangement, and a `Structure` holds exactly one of them, so a
+structure read from a restart file carries its velocities and a single-point
+result carries its forces. A place in an order and a membership in a
+distribution belong to the set and to the ensemble, never to a geometry; an
+energy belongs to a state, not to any geometry, except as a geometry's own
+property. Coordinate kernels share code through the borrowed `StructureView`,
+not through a common owned payload.
+
+A structure or structure set owns its shared topology once. A detached
+geometry has atom rows only and acquires bond rows when a set or a frame
+buffer binds it. Borrowed
 `StructureView` access, obtained through the sealed `AsStructureView` (or a frame
-buffer's `as_model_view`), lets coordinate algorithms and writers share
+buffer's `as_structure_view`), lets coordinate algorithms and writers share
 kernels across structures, geometries, frames, and buffers. A view's `kind()`
 is `StructureKind::Standalone` or `StructureKind::InSet` with a `SetContext`: the
 geometry's place in its order, its membership (weight, state, whether it
@@ -530,10 +404,9 @@ own properties of a structure, and the properties of its structure set, follow a
 second policy, `properties`. Molfile and SDF, which store no occupancies or B
 factors, put them under `set_metadata`. Each of these fails by default. Owned
 projections (`to_structure`) explicitly materialize a structure while sharing the
-topology. Collections built from structures (`from_structures`) consume them and require
-equal layouts (`same_layout`), keeping the first structure's topology, and a
-partition saying what they are; there is no special
-single-geometry ownership model.
+topology. A set built from structures (`from_structures`) consumes them and
+requires equal layouts (`same_layout`), keeping the first structure's
+topology; there is no special single-geometry ownership model.
 
 Read access is through views: `Topology` lookups return `Option` views
 (`AtomView`, `BondView`, molecule, chain, residue, and atom-site views), and
@@ -565,15 +438,139 @@ policies and supported geometries live with
 [measurements](crates/kekule/src/structure/measure.rs), and
 [alignment](crates/kekule/src/alignment.rs).
 
-Cartesian geometry edits mutate `Model` coordinates atomically while retaining
+Cartesian geometry edits mutate a structure's coordinates atomically while retaining
 the exact topology, cell, and properties. A rigid motion of a whole structure
-(`apply_rigid_transform` on a structure, sample, or frame) rotates its cell with
+(`apply_rigid_transform` on a structure, geometry, or frame) rotates its cell with
 its coordinates; selection edits such as `transform_atoms` keep the cell. Prepared distance, angle, and dihedral
 edits bind references and moving selections to that layout, never to cached
 coordinates. Automatic fragments must separate from fixed references; explicit
 selections may deliberately deform boundary bonds. Neither path performs ring
 closure, relaxation, or periodic imaging. See the
 [geometry editing contract](crates/kekule/src/structure/geometry_edit.rs).
+
+## Structure sets and ensembles
+
+`StructureSet` is the one container for many geometries of one topology. What
+makes a set a trajectory, a scan, or an ensemble is stated beside the
+geometries, never carried by its type. Sources differ along two independent
+axes and real ones combine them: an MCMC chain is ordered and a distribution,
+a metadynamics run is time-ordered and weighted, a clustered trajectory is
+both. A reader cannot know which it has — a multi-model PDB may be an NMR
+bundle or an MD run, and a multi-frame XYZ may be conformers or an
+optimization history — so a reader loads geometries and the caller states what
+they mean, which is an annotation rather than a conversion.
+
+The two axes divide on what the source recorded against what an analysis
+infers.
+
+An order is recorded, so it belongs to the set. An MD engine writes each
+frame's time and step, an optimizer numbers its steps, and a scan driver
+records its coordinate; trajectory files carry these values. An order, when
+present, places every geometry: a time axis for a path produced by dynamics,
+steps for an optimization, or values of one coordinate in a unit for a scan or
+a reaction path (values need not increase, as a scan swept back and forth
+shows). A time axis has times, steps, both, or neither, and each column covers
+every geometry or none. Order values belong to the order, not to the
+geometries: selecting keeps each selected geometry's value, and a removed
+geometry takes its value with it.
+
+A distribution is inferred, so it belongs to `Ensemble` and never to the set.
+Reweighting a biased run, MBAR, clustering into states, and Boltzmann
+populations from energies are interpretations, and one set often carries
+several at once. An `Ensemble` owns one `StructureSet` and one `Distribution`
+over it, validated together once; `Ensemble::into_parts` returns both without
+copying. It lends the set but never lends it mutably, so everything that
+changes which geometries exist goes through the ensemble, which remaps the
+samples. Several readings of one set are several ensembles sharing every
+coordinate.
+
+A distribution covers every geometry of its set or a sorted subset, its
+samples. Weights are stored as natural logarithms, one per sample, each
+finite: weights from bias reweighting or importance sampling span hundreds of
+orders of magnitude, and a stored linear weight would underflow to zero and be
+rejected as nonpositive. Normalized weights and probabilities are derived on
+request. Without weights the samples weigh equally. Log weights and the
+partition are indexed by sample position. Every sample is in exactly one state
+and every state has a representative sample; a state's population is the total
+weight of its samples, derived and never stored. Only states have energies, on
+one scale per distribution: a conformer's minimized energy or a computed free
+energy, never a snapshot's instantaneous energy, which stays a property of its
+geometry. Selecting and removing geometries remap the samples; a selection
+keeps the energy and properties of the states it keeps whole.
+
+A weight means something only against a target, so it is never a field of a
+geometry or of a set. The same geometries weigh uniformly at 300 K and
+differently reweighted to 310 K, and a metadynamics run has one set of weights
+under c(t) reweighting and another under MBAR. What the engine recorded per
+geometry — a bias potential, collective-variable values, an instantaneous
+energy, a repeat count — is a geometry property, and the weights an analysis
+uses are derived from those. `Ensemble::uniform` and `Ensemble::weighted` build
+the one-state readings, so weighting a trajectory needs no partition.
+
+A geometry is shared through `Arc` and copied on write, so regrouping,
+reweighting, selecting, and collapsing copy no coordinates, and editing one
+geometry copies that geometry alone. Set and ensemble operations fail with one
+`StructureSetError`, whose `Missing` variant names the `Requirement` an
+operation lacks, such as a time order or an energy for every state; a
+geometry's own edits fail with `GeometryError`, and perception with
+`TopologyPerceptionError`. Statistics and clustering over an ensemble observe
+its samples with their probabilities and leave the other geometries out; over
+a bare set they observe every geometry equally. Superposition and RMSD act on
+every geometry.
+
+Two axes are deliberately absent. Kekule records no runs or segments: replica
+exchange, metadynamics walkers, umbrella windows and repeated runs are the
+concern of the code that produced them, which knows its own boundaries, and a
+pooled weighting across them is still one ensemble. `Order::Coordinate` holds
+one coordinate, so a multi-dimensional scan uses `Order::Step` with the
+coordinate values as geometry properties.
+
+Where the geometries live is a type parameter. `StructureSet`
+(`StructureSet<InMemory>`) holds them and lends them by reference, so its
+accessors cannot fail. `StructureSet<IndexedFile>` holds none: it reads
+geometry `i` from an indexed trajectory file as an owned `Geometry`, and a
+read can fail. Both share the topology, properties, order, and the operations
+on them; only a set in memory edits geometries or its order. A set of either
+storage reads through the object-safe `StructureSetRead` trait (topology,
+length, order, `peek`, `read`), which is open to the host. `peek` lends a
+geometry the reader holds; `read` returns an owned one. Everything in kekule
+that reads many geometries takes a `&dyn StructureSetRead`: the observation of
+statistics, RMSD of listed geometries, pairwise fitted RMSD, and lazy
+processing. kekule keeps no geometries a reader read, but for the geometry 0
+that lazy processing checks its steps on, and starts no threads: caching,
+read-ahead, and parallel observation belong to the host.
+
+A reader describes geometries and their order and never a distribution, so
+`Processed` and a host's own readers carry none. Processing neither removes
+nor reorders geometries, so indices are preserved, and a host that wants a
+processed ensemble reads the processed set and pairs it with the distribution
+it already had.
+
+A host loads chosen geometries of any reader with `StructureSet::from_reader`,
+which takes indices (a range, a stride, or a list) in any order and makes a
+faithful copy: each picked geometry whole, with the reader's order values. It
+keeps no set properties. Every index is checked against the reader's length
+first, and a repeated index is read once and its geometry shared. Geometries
+picked out of ascending order keep their times, so `validate_monotonic_time`
+refuses the set when a time decreases. The host changes what the geometries
+mean with `set_order` and by building an `Ensemble`; `Ensemble::select`
+restricts a distribution to the geometries it keeps. A host that needs
+progress or cancellation reads geometry by geometry through
+`StructureSetRead`.
+
+These live in `kekule::structure`. `kekule::traj` owns file codecs, streaming
+reader and writer contracts, the reusable `FrameBuffer`, the `IndexedFile`
+storage of structure sets, periodic preprocessing, streaming superposition,
+and lazy processing (`Processed`); it owns no second in-memory trajectory
+type. A trajectory writer takes a `FrameView`: a borrowed `Geometry` with its
+time and step. `FrameView::from_geometry` lends a geometry of a time-ordered
+set and `FrameView::new` one held apart from a set, without copying arrays. A
+`FrameBuffer` holds one `Geometry` bound to its topology plus the frame's time
+and step; it lends its frame as a `FrameView` and becomes a `Geometry` with
+its `Place` through `into_geometry`, again without copying. A frame the buffer
+publishes replaces every field, occupancies and B factors included, so a
+buffer never keeps a previous frame's state. `read_structure_set` and
+`write_structure_set` move whole time-ordered sets.
 
 ## Trajectories and streaming
 
@@ -611,8 +608,8 @@ file after them, and appends under the writer settings the file records, so
 the continued file equals one written straight through; a reader following
 the file sees the cut as an index mismatch and opens the file again.
 Streaming buffers bind to one topology layout and publish complete frames
-transactionally. A buffer hands its frame out as a sample with its place,
-and takes a sample back, by moving it; the sample stays bound and validated. Eager reads use the same decoder path through clean EOF.
+transactionally. A buffer hands its frame out as a geometry with its place,
+and takes a geometry back, by moving it; the geometry stays bound and validated. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
 stream writers write the same bytes into a host's `Write + Seek` stream and
 leave placing the file to the host. `write_structure_set` writes a structure set
@@ -633,20 +630,20 @@ each frame step and time it replaces.
 
 `open_indexed_structure_set` opens a file as a `StructureSet<IndexedFile>`,
 `open_indexed_structure_set_from_index` opens it from a kept frame index, and
-`IndexedFileTrajectoryReader::into_sample_set` makes one from a reader the
+`IndexedFileTrajectoryReader::into_structure_set` makes one from a reader the
 host opened, without opening or scanning the file again. The
 set's order is the index's time axis, and it exposes the index and its
-fingerprint. Sample `i` is frame `i`, decoded on every read into a sample
+fingerprint. Geometry `i` is frame `i`, decoded on every read into a geometry
 that holds the only copy of its coordinates: the codec decodes them once
-into the arrays the sample keeps. XTC decodes to single precision first,
+into the arrays the geometry keeps. XTC decodes to single precision first,
 and DCD with fixed atoms fills a frame's array with the fixed atoms before
 its free ones. Reads take `&self` and run on any number of threads at once:
 each read takes an idle indexed reader from a pool, or forks one from the
 set's reader, and returns it, so no lock is held while decoding. Every
 reader reads the file object the set opened, through positional reads, and
 shares the set's frame index (`Arc`), so forking reads the start of the
-file alone and every reader gives the same sample. A read allocates the
-sample's arrays on the calling thread, and a pooled reader keeps none for
+file alone and every reader gives the same geometry. A read allocates the
+geometry's arrays on the calling thread, and a pooled reader keeps none for
 its next read, so the arrays are allocated and freed on one thread however
 the host's threads take the readers. On Windows, reads of
 the one shared handle run one after another, so threads take turns reading
@@ -662,11 +659,11 @@ otherwise; the pool's readers are kept and read by the new index. It opens
 the path again, so a replacement that begins with the indexed bytes is
 taken and every reader moves to it. A truncated or rewritten file fails
 `refresh`, and the host opens it again. A host that must know of changes
-between refreshes compares the fingerprint, or `FrameIndex::prefix_fingerprint`
+between refreshes compares the fingerprint, or `TrajectoryFrameIndex::prefix_fingerprint`
 of the frames it used, which samples the indexed bytes of those frames alone.
 A host keeping the frame index, or a live clone, makes each growing refresh
-copy the offsets. A distribution over every sample becomes one over the
-samples it covered, so appended frames are not members;
+copy the offsets. A distribution over every geometry becomes one over the
+geometries it covered, so appended frames are not members;
 `Distribution::extended_to` is the same operation, and
 `StructureSetDescription::extended_to` applies it to a saved description,
 which takes the longer set's order. A
@@ -674,32 +671,32 @@ clone of the set reads nothing: it shares the set's reader, file object and
 index, starts with an empty pool, and forks its own reader at its first
 refresh, so a host hands it to an analysis while the set goes on refreshing.
 Refreshing either one changes only that one. A failed
-read names the sample (`StructureSetReadError::Trajectory`). `load` reads every
-sample, or listed ones, into a set in memory that keeps their order values
+read names the geometry (`StructureSetReadError::Trajectory`). `load` reads every
+geometry, or listed ones, into a set in memory that keeps their order values
 and restricts the distribution, as `select` does.
 
 `Processed` reads another `StructureSetRead` and runs `ProcessingSteps` on each
-sample as it is read: make whole or wrap, center, fit onto a sample of the
+geometry as it is read: make whole or wrap, center, fit onto a geometry of the
 same reader or onto given positions, smooth over an odd window, and project
 onto an atom subset, in that order. Each step is optional. Wrapping images
 the molecules around the anchors and moves the anchors' centroid to the
 cell center, so every molecule's center lies within the cell; centering on
-the anchors then keeps them there. Samples without a cell skip making
+the anchors then keeps them there. Geometries without a cell skip making
 whole and wrapping, where the in-memory functions fail with `MissingCell`;
-`Processed::skipped_periodic_steps` tells a host which samples did.
+`Processed::skipped_periodic_steps` tells a host which geometries did.
 Centering moves the centroid to half the sum of all three cell vectors, or
-without a cell to where it lies in sample 0, so a reader mixing samples
+without a cell to where it lies in geometry 0, so a reader mixing geometries
 with and without cells centers them on different targets. Construction
-checks the steps and processes sample 0, so steps that cannot process the
-samples fail there. Making whole and wrapping call the same kernels as the
+checks the steps and processes geometry 0, so steps that cannot process the
+geometries fail there. Making whole and wrapping call the same kernels as the
 in-memory periodic functions and `MoleculeImager`, and fitting the same as
 `FrameSuperposer`, so each step gives the same bits. The steps change the
-sample in place: a sample the reader below owns alone is not copied by
+geometry in place: a geometry the reader below owns alone is not copied by
 them, and a shared one is copied once. Smoothing averages the window's
-samples after the steps before it, each molecule imaged onto the sample, so
-it expects whole molecules; it keeps everything else of the sample.
+geometries after the steps before it, each molecule imaged onto the geometry, so
+it expects whole molecules; it keeps everything else of the geometry.
 Analyses read the same steps without smoothing, through a second reader
-with `ProcessingSteps::without_smoothing`. `Processed` keeps sample 0, the
+with `ProcessingSteps::without_smoothing`. `Processed` keeps geometry 0, the
 one construction processed, and lends it through `peek`; it keeps nothing
 else it read, so a host caches in front of it.
 
@@ -707,14 +704,14 @@ Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in
 place and stage all affected state before publication; clone first to keep the
 source. Superposition and RMSD are methods of structure sets, against one of
-the set's samples or an independent view; streaming superposition applies the
+the set's geometries or an independent view; streaming superposition applies the
 same kernel to a buffer. Streaming tools take the caller's frame index for
 diagnostics. Superposition rotates cells, velocities, and forces consistently.
 Periodic reconstruction uses asserted bonds and checks ring closure. Imaging
 acts on whole molecules, around anchors or onto the same molecules of a
 borrowed reference; reference imaging is per frame, has no temporal state, and
 works in any frame order, using the frame's own cell. Unwrapping retains temporal state and requires ordered,
-sufficiently close samples; it precedes downsampling. Failed streaming operations
+sufficiently close geometries; it precedes downsampling. Failed streaming operations
 change neither the frame buffer nor temporal state. Diagnostics are opt-in.
 
 RMSF and contact occupancy, of atom pairs or of pairs of atom groups, are
@@ -723,7 +720,7 @@ Every observation is a borrowed structure together with an explicit, finite,
 positive weight, so no structure is reduced with an implied weight.
 `StructureSet` methods observe each member of the distribution with its
 probability, its weight over the members' total, and leave the other geometries
-out; a set without a distribution observes every sample with weight one,
+out; a set without a distribution observes every geometry with weight one,
 taking them as equally weighted equilibrium geometries, and other weights are
 passed to the accumulators explicitly. Streamed frames reach the same accumulators through their buffer's
 `StructureView`; `kekule::traj` adds no statistics of its own. Accumulators consume
@@ -741,8 +738,8 @@ restricted to them as `select` restricts it, or weight one without a
 distribution. An accumulator's `observe_samples` reads a range of those
 observations in order, and `observe_samples_cancellable` stops on a
 `Cancellation`; a set's own statistics run the same loop, so a set read
-from a file gives the results of the set in memory. `alignment::sample_rmsd`
-and `alignment::sample_aligned_rmsd` measure listed samples of a reader
+from a file gives the results of the set in memory. `alignment::geometry_rmsd`
+and `alignment::geometry_aligned_rmsd` measure listed geometries of a reader
 through the kernels of a set's RMSD.
 Results retain atom/pair associations; observation
 indices are diagnostic labels. Preprocessing, including alignment or imaging,
@@ -750,12 +747,12 @@ is explicit. These are separate analysis results, not new topology state or a
 generic reduction framework.
 
 Clustering is weight-aware and groups the members of a distribution: those
-of a structure set, or every sample of a set without one. It returns a
+of a structure set, or every geometry of a set without one. It returns a
 `Partition`, the grouping type a distribution owns, and never changes the
 set. A structure set's distances and partitions are indexed by member
 position, so `DistributionMut::regroup` installs a partition directly, and a
-set without a distribution takes it as a new distribution of every sample;
-errors name sample indices. `DistributionMut::regroup` applies a partition without changing any weight or sample
+set without a distribution takes it as a new distribution of every geometry;
+errors name geometry indices. `DistributionMut::regroup` applies a partition without changing any weight or sample
 order: a new state that contains every member of an old state keeps the
 energy and properties of its representative's old state, and a state split
 apart loses them. Collapsing makes a new collection of each state's
@@ -813,7 +810,7 @@ streaming sequence/reset contracts, see
 [file I/O](crates/kekule/src/traj/io/mod.rs),
 [structure sets read from files](crates/kekule/src/traj/io/indexed_file.rs),
 [lazy processing](crates/kekule/src/traj/processed.rs),
-[sample readers](crates/kekule/src/structure/structure_set/read.rs),
+[structure set readers](crates/kekule/src/structure/structure_set/read.rs),
 [periodic operations](crates/kekule/src/traj/periodic.rs),
 [streaming periodic operations](crates/kekule/src/traj/periodic/stream.rs), and
 [weighted statistics](crates/kekule/src/statistics.rs).
@@ -898,8 +895,8 @@ ways: `kekule::xyz` interprets its frames into structures through this
 pipeline, and `kekule::traj` streams its coordinates against a topology, such
 as the one that interpretation produced. Writing XYZ keeps elements and
 coordinates only, so the writer reports the topology content it leaves out in
-the shared write report. It writes a structure set as one frame per sample,
-with the PDB writer's rules for sample state: a sample
+the shared write report. It writes a structure set as one frame per geometry,
+with the PDB writer's rules for set state: a geometry
 outside the distribution, unequal weights, several states, energies, state
 properties, a representative that is not its state's first member, a
 temperature, a place in the order, a time order without times or steps,
@@ -911,10 +908,10 @@ distribution, since the file states none.
 | --- | --- |
 | SMILES record | All connected components, with topology projection |
 | Molfile | One structure with topology and molecule projections |
-| SDF record | Model, title, fields, and reports; each record independent |
-| CIF data block | One model, or compatible coordinate models as a structure set of one unweighted state |
-| PDB entry | One model, or compatible coordinate models as a structure set of one unweighted state |
-| XYZ file | One frame as a model, or frames of the same atoms and inferred bonds as a structure set without a distribution |
+| SDF record | Structure, title, fields, and reports; each record independent |
+| CIF data block | One structure, or compatible coordinate models as a structure set of one unweighted state |
+| PDB entry | One structure, or compatible coordinate models as a structure set of one unweighted state |
+| XYZ file | One frame as a structure, or frames of the same atoms and inferred bonds as a structure set without a distribution |
 
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
@@ -941,7 +938,7 @@ the format report. Occupancy ranks representatives, not whole-structure
 probabilities. Assembling coordinate models into a structure set never expands
 alternate labels; caller-supplied conformation selections must pass the same identity and
 topology checks. mmCIF carries no model weights, so every coordinate model
-becomes a sample of one state without weights; occupancy is never converted
+becomes a geometry of one state without weights; occupancy is never converted
 into a weight.
 
 Macromolecular formats (mmCIF and PDB) do not carry complete bonds, and molecule
@@ -1045,11 +1042,11 @@ by rendering it; SDF still streams record by record. Each source type
 is a struct with private fields, constructors for the inputs it accepts, and
 the record's title or name (`with_title`, `with_name`), and it converts from
 the inputs that format can represent: molecules,
-models, collection items, interpreted records, or mmCIF block sources carrying
-classifications or reports. Models and collection items share a borrowed
+structures, set geometries, interpreted records, or mmCIF block sources carrying
+classifications or reports. Structures and set geometries share a borrowed
 structure path. Coordinate-bearing writers emit atoms in dense order.
 Unsupported representational content must fail explicitly. Writers read the
-view's `kind()`: sample or frame state the format cannot carry fails unless
+view's `kind()`: set or frame state the format cannot carry fails unless
 the caller sets `UnrepresentablePolicy::Omit` for it, and a format that can
 carry it writes it whichever path supplied the view. Each kind of
 unrepresentable content has its own policy, so omitting one never omits
@@ -1066,38 +1063,38 @@ export.
   promotes to V3000; explicitly requested versions fail on unsupported content.
   Coordinate stereo must agree with the actual rounded emitted geometry. Writers
   must not invent assertions from an unasserted drawing or hide a conflict. A
-  Molfile or SDF record cannot carry a periodic cell, so writing a model with
+  Molfile or SDF record cannot carry a periodic cell, so writing a structure with
   one fails unless the caller chooses to omit it.
-- SDF represents independent records. A sample writes its membership in the
+- SDF represents independent records. A geometry writes its membership in the
   distribution (its weight when the distribution has weights, its state, and,
   on the representative's record, its state's energy and the distribution's
   temperature) and its place in a step or coordinate order as data fields. A
-  sample outside the distribution is marked with `kekule.member` `false`
+  geometry outside the distribution is marked with `kekule.member` `false`
   instead. State and set properties, structure properties, occupancies, and B
-  factors fail unless omitted. Only the explicit `sdf::sample_set` assembles records into a
+  factors fail unless omitted. Only the explicit `sdf::structure_set` assembles records into a
   structure set, whose order the steps or coordinates give. It has a
   distribution only when a record has a distribution field, one state per
   record unless the records name their states, and weights only when a
   record has a weight. A coordinate unit travels as the symbol of a unit
   constant, which both the writer and the reader take from one table of
-  `units`. `sdf::sample_set` takes only a marked record as outside the
-  distribution, so a distribution over some samples, or over none,
+  `units`. `sdf::structure_set` takes only a marked record as outside the
+  distribution, so a distribution over some geometries, or over none,
   round-trips, and a record that lacks the fields the others carry is an
   error. A Molfile, an
   mmCIF block, and a PDB entry cannot carry a place, and PDB writes a step or
-  coordinate order as one `MODEL` per sample once places are omitted. A
+  coordinate order as one `MODEL` per geometry once places are omitted. A
   Molfile, an SDF record, and an mmCIF block cannot carry a frame's time,
-  step, velocities, or forces. A Molfile cannot carry a sample's weight or
+  step, velocities, or forces. A Molfile cannot carry a geometry's weight or
   its state's energy. mmCIF distinguishes independent model blocks from one
   structure set's multi-model block, which, like a PDB entry, reads back as one
   state of equal weights without an energy or temperature, so writing unequal
-  weights, several states, any energy, a temperature, or one sample as a model
+  weights, several states, any energy, a temperature, or one geometry as a model
   block fails unless the caller chooses to omit them. mmCIF writes a cell periodic along all three
   axes in the standard crystallographic frame as `_cell` in space group P 1,
-  and reads `_cell` as the model's cell only in P 1 (or with no space group),
+  and reads `_cell` as the structure's cell only in P 1 (or with no space group),
   where the coordinates are a whole unit cell; PDB reads `CRYST1` by the same
   rule. PDB's 1 Å placeholder cube is no cell, and stated cell parameters that
-  are not the model's cell are reported as omitted. Biological assemblies are
+  are not the structure's cell are reported as omitted. Biological assemblies are
   report data: mmCIF `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
   `_pdbx_struct_oper_list`, and PDB `REMARK 350` biomolecules, which the PDB
   parser types while keeping their lines verbatim. Each assembly lists its
@@ -1138,8 +1135,8 @@ export.
   ones are written under the label with a copy serial (`A-2`) and their
   author names, and read back with those labels. The hierarchy keeps
   labels as appended, since a label names a source's instance, not one
-  of the combined model's.
-- PDB writes one entry per call, with `MODEL` records only for a sample
+  of the combined structure's.
+- PDB writes one entry per call, with `MODEL` records only for a structure
   set. It writes what its reader reads back and no more: author
   identifiers, a `TER` record after each chain's polymer, and `CONECT` for
   every bond the reader cannot derive. Standard residues covered by the
@@ -1158,7 +1155,7 @@ export.
   as `LINK` records before the coordinates, with the atom records'
   identifiers and the symmetry operator `1555`. `LINK` records belong to
   the entry, not to a model, so a structure set states the coordination every
-  sample's report states. The rest are left out and reported, and so are
+  geometry's report states. The rest are left out and reported, and so are
   records naming a chain written as a segment identifier, records between
   two metals, which readers would take for a bond, and records whose
   partner identifiers also name another atom.
@@ -1227,10 +1224,10 @@ native persistence and must not weaken these boundaries. See
 [reconstruction regressions](crates/kekule/tests/molecule/identity.rs).
 
 Exact persistence is the `native` format module, the one owner of Kekule's
-binary encoding of molecules, topologies, models, and structure sets. A model or structure set may carry its structure interpretation reports, stored
+binary encoding of molecules, topologies, structures, and structure sets. A structure or structure set may carry its structure interpretation reports, stored
 as they are, so that an application that saves structures in native files
 keeps what the source stated beyond the structure. A structure set record may
-also keep its samples elsewhere and store only their number, with its
+also keep its geometries elsewhere and store only their number, with its
 topology, order, and distribution, as a `StructureSetDescription`. It stores
 each owner's authoritative state, including
 explicit or inferred class assignments and adjacency order, and reconstructs
@@ -1291,7 +1288,7 @@ foundational crate has no optional features.
   conversion. Consuming does not promise zero allocation, but should transfer
   compatible storage.
 - **Ownership.** Constructors that take ownership of chemistry accept values
-  (`Molecule`, `Model`), and callers clone explicitly.
+  (`Molecule`, `Structure`), and callers clone explicitly.
 - **Getters.** No `get_` prefix. Counts are `*_count()`; `len()` belongs only
   to collection types.
 - **Molecule vocabulary.** An *instance* is an occurrence of a molecule in a
@@ -1353,7 +1350,7 @@ Every operation has exactly one home.
   adds nothing to its cause is transparent: it displays the cause and returns
   the cause's own source.
 - `diagnostics::ErrorChain` writes an error and its source chain as
-  consecutive sentences: `Cannot build the solvated model. Atom 12 overlaps
+  consecutive sentences: `Cannot build the solvated structure. Atom 12 overlaps
   atom 3.`
 - Every format's parse, interpretation, and write failures, SMARTS included,
   are one `diagnostics::FormatError`. It carries the stage, a
@@ -1387,7 +1384,7 @@ Every operation has exactly one home.
   The variant's documentation explains the cause and names the API that
   avoids it.
 - A wrapper's sentence says what failed at its level, `Cannot build the
-  solvated model.`, so that its cause reads as the next sentence.
+  solvated structure.`, so that its cause reads as the next sentence.
 - A `FormatError`'s first sentence names the stage, the format, and the
   place, `Cannot parse the PDB input at line 12.`, and its message follows.
 - Identifiers display as lowercase noun phrases, such as `atom 3`, for use

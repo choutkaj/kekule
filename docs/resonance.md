@@ -62,7 +62,7 @@ Valence, ring or aromaticity replacement invalidates conjugation and resonance. 
 
 All five RDKit options can be combined with `|`: `ALLOW_INCOMPLETE_OCTETS`, `ALLOW_CHARGE_SEPARATION`, `KEKULE_ALL`, `UNCONSTRAINED_CATIONS`, and `UNCONSTRAINED_ANIONS`. The unconstrained-cation option implies incomplete octets and charge separation; unconstrained anions imply charge separation. Default enumeration returns at most 1,000 contributors. `limit_reached()` means completeness is not claimed. The independent work budget returns an error on exhaustion, never a success containing an unfinished search. A zero structure limit returns no contributors. RDKit 2026.03.3 cannot materialize conjugated results at a structure limit of one; Kekule reports `InvalidStructureLimit` for that case.
 
-No contributor enumeration runs during ordinary molecule, topology, model, ensemble or trajectory perception. No runtime RDKit dependency or SMARTS extension is introduced. Stereo and rotatable-bond algorithms retain their existing rules.
+No contributor enumeration runs during ordinary molecule, topology, structure, or structure set perception. No runtime RDKit dependency or SMARTS extension is introduced. Stereo and rotatable-bond algorithms retain their existing rules.
 
 Earlier external comparisons against pinned RDKit 2026.03.3 covered conjugation, connected conjugated groups and contributor enumeration under all 32 option masks, with complete indexed charges, localized orders and contributor multiplicity. Focused synthetic examples are unit regressions. Resonance delocalization has no external reference; focused regressions pin its rules.
 

@@ -24,7 +24,7 @@ An alternative missing sites present in another alternative of that component is
 excluded and reported. Exact selection of an incomplete alternative fails. Atoms
 are never borrowed from a different label to complete it. Alternative component
 identities at a numbered residue position are mutually exclusive; they can produce
-separate Models but may be incompatible with a shared-topology structure set.
+separate structures but may be incompatible with a shared-topology structure set.
 
 Source occupancies are site fractions, not probabilities of whole structures.
 Independent residue choices do not establish global physical compatibility or a

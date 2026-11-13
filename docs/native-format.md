@@ -7,7 +7,7 @@ may carry its structure interpretation reports, as a
 record may also store only the number of its geometries, kept elsewhere, as a
 `StructureSetDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
-[Identity and reconstruction](../ARCHITECTURE.md#identity-and-reconstruction).
+[Identity and reconstruction](../SPEC.md#identity-and-reconstruction).
 The API lives in [`kekule::native`](../crates/kekule/src/lib.rs); the codec is
 in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 

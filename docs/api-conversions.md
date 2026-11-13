@@ -1,6 +1,6 @@
 # Conversion APIs
 
-As defined in `ARCHITECTURE.md`, `into_*` transfers ownership, `to_*` retains the
+As defined in `SPEC.md`, `into_*` transfers ownership, `to_*` retains the
 source while producing a converted result, and `as_*` returns a cheap borrowed
 view. Ordinary getters and operations use semantic names. Copyable views may take
 `self` without consuming their underlying owner.
@@ -17,14 +17,14 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 | `Quantity::into_unit(unit)`, `Quantity::into_value()` | Consume the quantity; the payload need not be cloneable. |
 | `FrameBuffer::into_geometry()` | Consume a buffer; its geometry and place move without copying. |
 | `MemoryTrajectoryWriter::into_structure_set()` | Transfer writer ownership. |
-| `as_model_view()` (`AsModelView`), `Quantity::as_ref()`, `PropertyKey::as_str()` | Return borrowed projections. |
+| `as_structure_view()` (`AsStructureView`), `Quantity::as_ref()`, `PropertyKey::as_str()` | Return borrowed projections. |
 
 Ownership does not imply cost: opening an indexed reader scans input, and extracting
 molecules from shared topology may clone definitions. Likewise,
 `document.interpret(options)?.into_structure()` retains the document and consumes only
 the temporary interpretation.
-`model.to_editor()` creates a detached draft; `model.into_editor()` moves the model
-into its draft.
+`structure.to_editor()` creates a detached draft; `structure.into_editor()` moves the
+structure into its draft.
 
 Public API regressions verify source retention, conversions of non-cloneable
 values, storage transfer, view materialization, and editor recovery.
