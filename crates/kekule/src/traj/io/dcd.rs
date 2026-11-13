@@ -19,7 +19,7 @@
 //! use std::io::Cursor;
 //! use std::sync::Arc;
 //!
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
@@ -65,7 +65,7 @@ use std::sync::Arc;
 use crate::diagnostics::{
     LimitExceeded, Resource, StructureField, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::DecodedSample;
 use crate::topology::Topology;
 use crate::traj::{

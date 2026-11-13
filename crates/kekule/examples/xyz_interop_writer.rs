@@ -4,7 +4,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::topology::TopologyBuilder;
 use kekule::traj::io::xyz::XyzWriteOptions;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::geometry::{Matrix3, Point3, Vector3};
+use crate::math::{Matrix3, Point3, Vector3};
 use crate::properties::PropertyKey;
 use crate::structure::{AsModelView, Model, ModelView};
 use crate::topology::{AppendMapping, ChainIds, Topology};
@@ -39,7 +39,7 @@ impl ModelEditor {
     /// the intended cell before retrying. Failure leaves the entire editor unchanged.
     ///
     /// ```
-    /// use kekule::{smiles, structure::{Model, Positions}, geometry::Point3,
+    /// use kekule::{smiles, structure::{Model, Positions}, math::Point3,
     ///     units::{Quantity, ANGSTROM}};
     /// let molecule = smiles::to_molecules("CO")?.pop().unwrap();
     /// let ligand = Model::from_molecule(molecule, &Positions::new(Quantity::new(

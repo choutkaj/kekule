@@ -7,7 +7,7 @@ use std::error::Error;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::structure::{
     DenseArrayError, Place, Positions, Sample, SampleSetError, StructureError, StructureKind,
 };

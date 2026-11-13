@@ -1,6 +1,6 @@
 //! Named fragments with ideal 3D coordinates and an attachment atom.
 use super::PlacementError;
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{AtomId, BondOrder, Molecule};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::collections::BTreeSet;

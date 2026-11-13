@@ -2,7 +2,7 @@ use kekule::diagnostics::{LimitExceeded, Resource};
 use std::sync::Arc;
 
 use kekule::{
-    geometry::{PeriodicCell, Point3, Vector3},
+    math::{PeriodicCell, Point3, Vector3},
     molecule::{Atom, AtomId, BondId, BondOrder, Element, MoleculeEditor},
     smiles,
     stereo::{

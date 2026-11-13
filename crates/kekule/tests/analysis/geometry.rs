@@ -1,4 +1,4 @@
-use kekule::geometry::Vector3;
+use kekule::math::Vector3;
 
 #[test]
 fn vector_norm_preserves_representable_extreme_magnitudes() {

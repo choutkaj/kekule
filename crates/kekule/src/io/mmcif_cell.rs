@@ -1,7 +1,7 @@
 //! mmCIF `_cell` parameters and Kekule periodic cells, both in the standard
 //! crystallographic frame mmCIF Cartesian coordinates use: a along x, b in
 //! the xy plane, c completing a right-handed basis.
-use crate::geometry::{PeriodicCell, PeriodicCellError, Vector3};
+use crate::math::{PeriodicCell, PeriodicCellError, Vector3};
 use crate::units::{Quantity, ANGSTROM};
 
 use super::CellOmissionReason;

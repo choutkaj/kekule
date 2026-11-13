@@ -13,7 +13,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::diagnostics::{Cancellation, Cancelled, FormatError};
-use crate::geometry::{Matrix3, Vector3};
+use crate::math::{Matrix3, Vector3};
 use crate::structure::{Model, ModelEditError, ModelEditor, ModelError};
 use crate::topology::{AtomSelection, ChainId, SelectionError, Topology};
 use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};

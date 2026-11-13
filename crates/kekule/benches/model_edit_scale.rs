@@ -22,7 +22,7 @@ use std::error::Error;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::mmcif;
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::structure::ModelEditor;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kekule::alignment::{AlignmentError, AlignmentOptions, AtomCorrespondence, Weighting};
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Forces, Model, Place, Positions, SampleSet, Velocities};
 use kekule::topology::AtomSelection;

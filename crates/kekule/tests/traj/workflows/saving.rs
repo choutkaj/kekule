@@ -336,7 +336,7 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
 
 /// One frame of three atoms whose first x coordinate is `shift` angstroms.
 fn single_frame(shift: f64) -> Frame {
-    use kekule::geometry::Point3;
+    use kekule::math::Point3;
     use kekule::units::{Quantity, ANGSTROM};
 
     let positions = Positions::new(Quantity::new(
@@ -487,7 +487,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     use kekule::traj::periodic::{self, MoleculeImager, TrajectoryUnwrapper};
     use kekule::traj::{TrajectoryReader, TrajectoryWriter};
     use kekule::{
-        geometry::{PeriodicCell, Vector3},
+        math::{PeriodicCell, Vector3},
         structure::{Order, TimeAxis},
         topology::AtomSelection,
         units::{Quantity, DIMENSIONLESS, NANOMETER, PICOSECOND},
@@ -838,7 +838,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
 
 #[test]
 fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
-    use kekule::geometry::{PeriodicCell, Point3, Vector3};
+    use kekule::math::{PeriodicCell, Point3, Vector3};
     use kekule::structure::{Sample, StructureError};
     use kekule::topology::TopologyBuilder;
     use kekule::units::{Quantity, NANOMETER, PICOSECOND};
@@ -921,7 +921,7 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
     let ethanol = kekule::smiles::to_topology("CCO").unwrap();
     let water = kekule::smiles::to_topology("O").unwrap();
     let points = (0..ethanol.atom_count())
-        .map(|atom| kekule::geometry::Point3::new(atom as f64, 0.5, -0.25))
+        .map(|atom| kekule::math::Point3::new(atom as f64, 0.5, -0.25))
         .collect::<Vec<_>>();
     let mut sample = Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
     let before = sample.clone();

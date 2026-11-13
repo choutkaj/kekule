@@ -5,7 +5,7 @@ pub use append::{ModelAppend, ModelAppendReport};
 
 use super::model_state::ModelState;
 use super::{DenseArrayError, Model, ModelError, Positions, StructureError};
-use crate::geometry::{PeriodicCell, Point3};
+use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{OwnerProperties, PropertyError};
 use crate::topology::{
@@ -33,7 +33,7 @@ use std::fmt;
 /// that arbitrary derived values remain valid.
 ///
 /// ```
-/// use kekule::{molecule::{Atom, Element, BondOrder}, geometry::Point3,
+/// use kekule::{molecule::{Atom, Element, BondOrder}, math::Point3,
 ///     structure::ModelEditor, units::{Quantity, ANGSTROM}};
 /// let mut editor = ModelEditor::new();
 /// let c = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()),

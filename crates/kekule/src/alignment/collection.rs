@@ -2,7 +2,7 @@
 //! over listed samples of any [`SampleRead`], through one implementation.
 
 use crate::diagnostics::Cancellation;
-use crate::geometry::RigidTransform;
+use crate::math::RigidTransform;
 use crate::structure::{
     visit_sample, AsModelView, ModelView, Sample, SampleRead, SampleSet, SampleView,
 };
@@ -365,7 +365,7 @@ fn sample_values(
 ///
 /// ```
 /// use kekule::alignment::sample_rmsd;
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::structure::{Positions, Sample, SampleSet};
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, NANOMETER};

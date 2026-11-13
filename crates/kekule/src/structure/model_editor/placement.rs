@@ -4,11 +4,11 @@ use crate::algorithms::{
     AddHydrogensOptions, AddHydrogensScope, AddedHydrogenOrigin, RetainedHydrogenReason,
 };
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens};
 use crate::structure::placement::{
     fragment_names, free_sites, ideal_bond_length, name_prefix, next_free_number, perceive_domains,
-    unit, AtomGeometry, AtomShape, AttachedAtom, AttachedFragment, AttachmentSite, DomainInput,
+    unit, AtomDomains, AtomShape, AttachedAtom, AttachedFragment, AttachmentSite, DomainInput,
     Fragment, NameAllocator, PlacedFragment, PlacedHydrogens, PlacedHydrogensReport,
     PlacementError, RemovedHydrogens, RemovedHydrogensReport, Rotation, SiteQuery,
 };
@@ -31,7 +31,7 @@ impl ModelEditor {
     ///
     /// [`PlacementError::Edit`] when `atom` names no live atom, and
     /// [`PlacementError::UnsupportedGeometry`] for more than six domains.
-    pub fn atom_geometry(&self, atom: EditAtomId) -> Result<AtomGeometry, PlacementError> {
+    pub fn atom_domains(&self, atom: EditAtomId) -> Result<AtomDomains, PlacementError> {
         let (domains, lone_pairs, neighbors, implicit) = self.domains(atom)?;
         let shape = match domains {
             0 => None,
@@ -40,7 +40,7 @@ impl ModelEditor {
                     .ok_or(PlacementError::UnsupportedGeometry { atom, domains })?,
             ),
         };
-        Ok(AtomGeometry {
+        Ok(AtomDomains {
             shape,
             neighbors,
             implicit_hydrogens: implicit,
@@ -49,7 +49,7 @@ impl ModelEditor {
     }
 
     /// Unit directions from `atom` to where its next substituents go, as for
-    /// its hydrogens: the free sites of its [`AtomGeometry`], those of its
+    /// its hydrogens: the free sites of its [`AtomDomains`], those of its
     /// implicit hydrogens included, in order of preference (anti to its
     /// neighbor's main substituent first).
     ///
@@ -60,7 +60,7 @@ impl ModelEditor {
     /// [`PlacementError::DegenerateGeometry`] when its neighbors give no
     /// orientation.
     pub fn free_directions(&self, atom: EditAtomId) -> Result<Vec<Vector3>, PlacementError> {
-        let geometry = self.atom_geometry(atom)?;
+        let geometry = self.atom_domains(atom)?;
         let Some(shape) = geometry.shape else {
             return Ok(Vec::new());
         };
@@ -405,7 +405,7 @@ impl ModelEditor {
             }
             _ => 0.0,
         };
-        let parent_shape = self.atom_geometry(parent)?.shape();
+        let parent_shape = self.atom_domains(parent)?.shape();
         let fragment_shape = fragment_attachment_shape(molecule, attachment);
         let steps: &[f64] = match (parent_shape, fragment_shape) {
             // A linear fragment turns into itself; a linear parent has no

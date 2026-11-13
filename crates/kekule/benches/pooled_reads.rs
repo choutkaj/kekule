@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::structure::SampleRead;
 use kekule::topology::{Topology, TopologyBuilder};

@@ -5,7 +5,7 @@ use crate::algorithms::{
     coordinates_are_planar, double_bond_geometry_is_supported, double_bond_orientation_from_points,
     tetrahedral_orientation_from_points, RingMembership, StereoValidationError,
 };
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 use crate::molecule::*;
 
 use super::normalization::{

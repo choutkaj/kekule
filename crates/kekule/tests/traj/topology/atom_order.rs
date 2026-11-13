@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::mmcif;
 use kekule::structure::Positions;
 use kekule::traj::io::{read_sample_set, write_sample_set};

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use kekule::alignment::AlignmentOptions;
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{

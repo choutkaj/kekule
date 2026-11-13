@@ -5,8 +5,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::chemistry::perceive_molecule;
-use crate::geometry::{Point3, Vector3};
 use crate::io::is_metal;
+use crate::math::{Point3, Vector3};
 use crate::molecule::{
     AromaticityModel, AtomId, BondOrder, Element, Molecule, RingBasisModel, ValenceModel,
     ValenceValidation,

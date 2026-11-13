@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif;
 use kekule::structure::{Sample, SampleRead};
 use kekule::topology::{AtomSelection, Topology};

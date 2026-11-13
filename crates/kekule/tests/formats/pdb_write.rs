@@ -4,11 +4,11 @@ use std::sync::Arc;
 use kekule::diagnostics::{
     DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy, WriteOmission,
 };
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::{
     ModelSelection, StructureInterpretOptions, StructureInterpretation,
     StructureInterpretationReport,
 };
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{AtomId, BondOrder};
 use kekule::pdb::{
     self, PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteIssue, PdbWriteOptions,

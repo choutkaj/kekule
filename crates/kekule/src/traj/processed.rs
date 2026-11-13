@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use crate::alignment::{self, AlignmentOptions};
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::OwnerProperties;
 use crate::structure::{
     subset_rows, DenseArrayError, Distribution, Model, ModelError, Order, Positions, Sample,
@@ -363,7 +363,7 @@ impl From<SampleReadError> for ProcessingError {
 /// the reader again with [`Self::new`].
 ///
 /// ```
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::structure::{Positions, Sample, SampleRead, SampleSet};
 /// use kekule::topology::AtomSelection;
 /// use kekule::traj::{FitReference, Processed, ProcessingSteps};

@@ -12,7 +12,7 @@ use std::num::NonZeroUsize;
 use std::time::Instant;
 
 use kekule::clustering::{ClusteringOptions, ClusteringRun, Cut, Linkage};
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::mmcif;
 use kekule::parallel::ScopedThreads;
 use kekule::structure::{Positions, Sample, SampleSet};

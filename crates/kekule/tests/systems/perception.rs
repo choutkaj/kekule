@@ -3,7 +3,7 @@ use std::error::Error;
 use crate::support::hierarchy_record;
 use std::sync::{Arc, Weak};
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Distribution, Members, Model, Partition, Positions, Sample, SampleSet};
 use kekule::topology::{

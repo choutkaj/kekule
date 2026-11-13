@@ -8,7 +8,7 @@ use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 
 use kekule::diagnostics::UnrepresentablePolicy;
-use kekule::geometry::{Matrix3, PeriodicCell, PeriodicGeometry, Point3, RigidTransform, Vector3};
+use kekule::math::{Lattice, Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
@@ -325,7 +325,7 @@ fn molecule_centers_from_cell_center(topology: &Topology, sample: &Sample) -> Ve
     let cell = sample.cell().unwrap();
     let [a, b, c] = cell.vectors().into_value();
     let middle = (a + b + c) * 0.5;
-    let lattice = PeriodicGeometry::new(*cell).unwrap();
+    let lattice = Lattice::new(*cell).unwrap();
     let values = sample.positions().values();
     let points = values.value();
     let count = topology.atom_count() / 2;

@@ -5,7 +5,7 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::chemistry::canonicalize_molecule_for_publication;
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, Element, Molecule, MoleculeEditor};
 use crate::structure::Positions;
 use crate::topology::{AtomSiteMetadata, Hierarchy};

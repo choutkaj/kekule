@@ -10,11 +10,11 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kekule::geometry::{Matrix3, RigidTransform, Vector3};
 use kekule::interactions::{
     find_interactions_between, find_interactions_within, InteractionCriteria, InteractionFeatures,
     InteractionKind, InteractionSide, Interactions,
 };
+use kekule::math::{Matrix3, RigidTransform, Vector3};
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, ANGSTROM};
 

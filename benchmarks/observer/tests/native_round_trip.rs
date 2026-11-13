@@ -11,7 +11,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::Molecule;
 use kekule::native::{self, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions};
 use kekule::structure::{Model, SampleSet};

@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::parallel::{Executor, ScopedThreads};
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, MergeMismatch, RmsfAccumulator,

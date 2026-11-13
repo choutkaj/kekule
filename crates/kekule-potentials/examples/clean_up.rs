@@ -17,7 +17,7 @@
 
 use std::{collections::BTreeSet, env, error::Error, fs, ops::ControlFlow, time::Instant};
 
-use kekule::geometry::{Point3, Vector3};
+use kekule::math::{Point3, Vector3};
 use kekule::structure::Model;
 use kekule::topology::{AtomSelection, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT, NANOMETER};

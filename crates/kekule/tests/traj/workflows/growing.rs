@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use kekule::diagnostics::UnrepresentablePolicy;
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Positions, Sample, SampleSet};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};

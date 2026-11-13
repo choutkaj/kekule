@@ -1,5 +1,5 @@
 use crate::support::hierarchy_record;
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Model, ModelEditor, Positions};

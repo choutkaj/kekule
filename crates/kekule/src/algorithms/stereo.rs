@@ -1,6 +1,6 @@
 use crate::chemistry::AtomPositionSource;
 use crate::diagnostics::Capitalized;
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 use crate::molecule::*;
 use crate::structure::Positions;
 use std::fmt;

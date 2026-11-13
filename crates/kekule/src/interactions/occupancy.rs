@@ -105,7 +105,7 @@ impl Scope {
 ///     find_interactions_within, HydrogenBondOccupancyAccumulator, InteractionCriteria,
 ///     InteractionFeatures,
 /// };
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::structure::{Model, Positions};
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, ANGSTROM};

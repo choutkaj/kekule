@@ -1,7 +1,7 @@
 use super::neighbors::Neighbors;
 use super::*;
 use crate::{
-    geometry::{PeriodicCell, PeriodicGeometry, Vector3},
+    math::{Lattice, PeriodicCell, Vector3},
     molecule::{
         Atom, AtomId, BondOrder, Element, Molecule, MoleculeEditor, VanDerWaalsRadiusSource,
     },
@@ -41,7 +41,7 @@ pub(super) fn solvate(
     if cell.periodic_axes() != [true; 3] {
         return Err(SolvationError::NotFullyPeriodic);
     }
-    let geometry = PeriodicGeometry::new(cell)?;
+    let geometry = Lattice::new(cell)?;
     let shortest = geometry.shortest_translation_canonical()?.norm();
     if shortest < WATER_RADIUS {
         return Err(SolvationError::NoSolventSpace);
@@ -270,7 +270,7 @@ pub(super) fn solvate(
 
 fn pack(
     cell: PeriodicCell,
-    geometry: &PeriodicGeometry,
+    geometry: &Lattice,
     solute: &Neighbors<'_>,
     cutoffs: &[f64],
     limit: usize,
@@ -440,7 +440,7 @@ fn translated(origin: Point3, local: Point3) -> Result<Point3, SolvationError> {
     let delta = local - Point3::origin();
     let placed = origin + delta;
     if !placed.is_finite() || ((placed - origin) - delta).norm() > 1e-8 {
-        return Err(PeriodicGeometryError::NumericalFailure.into());
+        return Err(LatticeError::NumericalFailure.into());
     }
     Ok(placed)
 }

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
 /// A dense numerical coordinate array in Kekule's canonical length unit.

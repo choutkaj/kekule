@@ -16,7 +16,7 @@ mod types;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
-use crate::geometry::PeriodicCell;
+use crate::math::PeriodicCell;
 use crate::structure::ModelBuilder;
 use crate::topology::HierarchyBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};

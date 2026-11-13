@@ -25,7 +25,7 @@
 //! ```
 //! use std::sync::Arc;
 //!
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::structure::{Positions, Sample, SampleSet};
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use kekule::{smiles, topology::Topology};

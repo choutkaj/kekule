@@ -6,10 +6,10 @@
 //! left unstated only when reading the block gives it back with its order.
 use super::prepare::{AtomRow, ConnectionRow, Implied};
 use crate::components::{Component, ComponentLibrary};
-use crate::geometry::Point3;
 use crate::io::structure_connectivity::{
     hydrogen_differences, template_bond_order, within_bonding_distance, PolymerLink,
 };
+use crate::math::Point3;
 use crate::molecule::{BondOrder, Element};
 use std::collections::{BTreeMap, BTreeSet};
 

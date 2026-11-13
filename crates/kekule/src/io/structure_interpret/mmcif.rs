@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use super::types::{poll, structure_error};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError, FormatErrorDetail};
-use crate::geometry::PeriodicCell;
+use crate::math::PeriodicCell;
 use crate::molecule::BondOrder;
 
 use super::super::mmcif_category::MmcifCategory;

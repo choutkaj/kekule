@@ -1,4 +1,4 @@
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{DenseArrayError, Positions, Sample};
 use kekule::topology::TopologyAtomIndex;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
 use crate::topology::{Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder};
@@ -1589,7 +1589,7 @@ fn editing_one_sample_of_a_shared_set_copies_that_sample_alone() {
 
     // Transforms and position replacement leave the original unchanged.
     let mut transformed = original.clone();
-    use crate::geometry::{Matrix3, RigidTransform};
+    use crate::math::{Matrix3, RigidTransform};
     let shift =
         RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(2.0, 0.0, 0.0)).unwrap();
     transformed
@@ -1991,7 +1991,7 @@ fn model_views_report_which_structure_they_borrow() {
 
 #[test]
 fn rigid_transforms_move_models_and_samples_with_their_cells() {
-    use crate::geometry::{Matrix3, RigidTransform};
+    use crate::math::{Matrix3, RigidTransform};
     let topology = Arc::new(single_atom_topology());
     let box_cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(1.0, 2.0, 3.0), NANOMETER),

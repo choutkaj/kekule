@@ -6,7 +6,7 @@ pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxError, PeriodicBoxOptions
 use crate::diagnostics::{LimitExceeded, Resource};
 use crate::structure::{DenseArrayError, Model, ModelBuildError};
 use crate::{
-    geometry::{PeriodicGeometryError, Point3},
+    math::{LatticeError, Point3},
     properties::PropertyKey,
     topology::{HierarchyError, InstanceAtomId, Topology},
     units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT, MOLAR, NANOMETER},
@@ -396,7 +396,7 @@ pub enum SolvationError {
     /// A quantity could not be converted to the required unit; see the source.
     Unit(UnitError),
     /// A periodic-geometry calculation failed; see the source.
-    Geometry(PeriodicGeometryError),
+    Geometry(LatticeError),
     /// Position data was rejected; see the source.
     Position(DenseArrayError),
     /// Building the solvated model failed; see the source.
@@ -471,7 +471,7 @@ macro_rules! from_error {
     };
 }
 from_error!(UnitError, Unit);
-from_error!(PeriodicGeometryError, Geometry);
+from_error!(LatticeError, Geometry);
 from_error!(DenseArrayError, Position);
 from_error!(ModelBuildError, Build);
 from_error!(HierarchyError, Hierarchy);
@@ -533,7 +533,7 @@ pub fn solvate(
 }
 
 /// Numerically safer bounding-box midpoint than `(min + max) / 2`.
-fn center(points: &[Point3]) -> Result<Point3, PeriodicGeometryError> {
+fn center(points: &[Point3]) -> Result<Point3, LatticeError> {
     let mut low = points[0];
     let mut high = points[0];
     for p in &points[1..] {
@@ -546,7 +546,7 @@ fn center(points: &[Point3]) -> Result<Point3, PeriodicGeometryError> {
         low.z * 0.5 + high.z * 0.5,
     );
     if !result.is_finite() {
-        return Err(PeriodicGeometryError::NumericalFailure);
+        return Err(LatticeError::NumericalFailure);
     }
     Ok(result)
 }

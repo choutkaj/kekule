@@ -12,7 +12,7 @@ use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{AtomId, BondOrder, Element, Molecule, MoleculeEditor};
 
 use super::mmcif_category::MmcifCategory;

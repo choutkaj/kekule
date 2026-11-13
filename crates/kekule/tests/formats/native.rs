@@ -5,8 +5,8 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use kekule::diagnostics::{DiagnosticKind, Format, FormatErrorDetail, Resource};
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::{AltLocPolicy, StructureInterpretOptions};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif::MmcifWriteOptions;
 use kekule::molecule::{AtomId, Molecule};
 use kekule::native::{

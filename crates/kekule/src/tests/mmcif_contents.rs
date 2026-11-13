@@ -2,12 +2,12 @@ use super::{
     debug_fingerprint, deterministic_text_mutations, error_detail, mmcif_issue, test_positions,
 };
 use crate::diagnostics::{FormatErrorDetail, StructureField};
-use crate::geometry::Point3;
 use crate::io::{UnrepresentablePolicy, WriteOmission};
 use crate::macromolecular::{
     self, AltLocPolicy, EntityKind, InstanceProvenance, ModelSelection, StructureInterpretOptions,
     StructureInterpretationReport,
 };
+use crate::math::Point3;
 use crate::mmcif::{
     self, MmcifEntityClassifications, MmcifParseOptions, MmcifWriteIssue, MmcifWriteOptions,
 };

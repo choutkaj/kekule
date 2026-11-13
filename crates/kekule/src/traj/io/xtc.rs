@@ -18,7 +18,7 @@
 //! use std::io::Cursor;
 //! use std::sync::Arc;
 //!
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::xtc::{
@@ -60,7 +60,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::DecodedSample;
 use crate::topology::Topology;
 use crate::traj::{

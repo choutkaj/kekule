@@ -1,4 +1,4 @@
-use crate::geometry::{PeriodicCell, Point3};
+use crate::math::{PeriodicCell, Point3};
 use crate::properties::StructureProperties;
 use crate::topology::TopologyAtomIndex;
 use crate::units::Quantity;

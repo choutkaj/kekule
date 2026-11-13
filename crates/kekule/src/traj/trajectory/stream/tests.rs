@@ -1,6 +1,6 @@
 //! The in-memory test reader and the in-memory stream contracts.
 
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use crate::structure::{Forces, Place, Positions, Sample, Velocities};

@@ -1,5 +1,5 @@
 use kekule::diagnostics::{DiagnosticKind, Format, FormatErrorDetail, UnsupportedContent};
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::{BondOrder, Element, ImplicitHydrogens};
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{ANGSTROM, BOHR, KELVIN};

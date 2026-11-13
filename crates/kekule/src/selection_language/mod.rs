@@ -13,7 +13,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::parallel::Executor;
 use crate::properties::PropertyKey;
 use crate::structure::{AsModelView, ModelView, Positions};

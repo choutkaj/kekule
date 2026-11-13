@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Forces, Positions, SampleSet, Velocities};
 use kekule::topology::TopologyBuilder;

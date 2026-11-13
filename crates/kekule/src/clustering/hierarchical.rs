@@ -4,7 +4,7 @@ use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentOptions, Coordinates, FitAtoms, NormalizedWeights,
     Pairs, PeriodicPolicy,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::parallel::map_ranges;
 use crate::structure::{visit_sample, Members, Partition, SampleRead, SampleSet, SampleStorage};
 use crate::topology::TopologyAtomIndex;
@@ -465,7 +465,7 @@ const MEMBERS_PER_WORK_ITEM: usize = 16;
 ///
 /// ```
 /// use kekule::clustering::{pairwise_fitted_rmsd, ClusteringRun};
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::structure::{Positions, Sample, SampleSet};
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, ANGSTROM};
@@ -648,7 +648,7 @@ impl SampleSet {
     /// spreads them over threads, reports progress, and can be cancelled.
     ///
     /// ```
-    /// use kekule::geometry::Point3;
+    /// use kekule::math::Point3;
     /// use kekule::structure::{
     ///     Distribution, Partition, Members, Positions, Sample, SampleSet,
     /// };
@@ -715,7 +715,7 @@ impl SampleSet {
     /// use std::num::NonZeroUsize;
     /// use std::sync::atomic::{AtomicUsize, Ordering};
     /// use kekule::clustering::{ClusteringProgress, ClusteringRun};
-    /// use kekule::geometry::Point3;
+    /// use kekule::math::Point3;
     /// use kekule::parallel::ScopedThreads;
     /// use kekule::structure::{Positions, Sample, SampleSet};
     /// use kekule::topology::AtomSelection;

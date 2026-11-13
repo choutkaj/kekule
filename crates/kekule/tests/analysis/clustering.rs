@@ -10,7 +10,7 @@ use kekule::alignment::{
 use kekule::clustering::{
     ClusterOrder, ClusteringError, ClusteringOptions, Cut, Dendrogram, DistanceMatrix, Linkage,
 };
-use kekule::geometry::{Matrix3, Point3, RigidTransform, Vector3};
+use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
     Distribution, Members, Partition, PartitionError, Positions, Requirement, Sample, SampleSet,

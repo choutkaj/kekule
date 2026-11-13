@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::thread;
 
 use kekule::diagnostics::UnrepresentablePolicy;
-use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
+use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::native::SampleSetDescription;
 use kekule::structure::{
     Distribution, Members, Order, Partition, Positions, Sample, SampleRead, SampleReadError,

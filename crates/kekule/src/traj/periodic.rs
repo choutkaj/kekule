@@ -25,7 +25,7 @@
 //! ```
 //! use std::sync::Arc;
 //!
-//! use kekule::geometry::{PeriodicCell, Point3, Vector3};
+//! use kekule::math::{PeriodicCell, Point3, Vector3};
 //! use kekule::structure::{Positions, Sample, SampleSet};
 //! use kekule::units::{Quantity, NANOMETER};
 //! use kekule::{smiles, topology::Topology};
@@ -98,7 +98,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::{AsModelView, DenseArrayError, Place, Positions, SampleSet, SampleSetError};
 use crate::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use crate::traj::FrameView;
@@ -634,7 +634,7 @@ fn center(points: &[Point3], atoms: &[usize], frame: usize) -> Result<Point3, Pe
 }
 
 struct Lattice {
-    geometry: crate::geometry::PeriodicGeometry,
+    geometry: crate::math::Lattice,
     periodic: [bool; 3],
     frame: usize,
 }
@@ -642,7 +642,7 @@ impl Lattice {
     fn new(cell: Option<PeriodicCell>, frame: usize) -> Result<Self, PeriodicError> {
         let cell = cell.ok_or(PeriodicError::MissingCell { frame })?;
         Ok(Self {
-            geometry: crate::geometry::PeriodicGeometry::new(cell)
+            geometry: crate::math::Lattice::new(cell)
                 .map_err(|error| geometry_error(error, frame))?,
             periodic: cell.periodic_axes(),
             frame,
@@ -669,12 +669,10 @@ impl Lattice {
             .map_err(|error| geometry_error(error, self.frame))
     }
 }
-fn geometry_error(error: crate::geometry::PeriodicGeometryError, frame: usize) -> PeriodicError {
+fn geometry_error(error: crate::math::LatticeError, frame: usize) -> PeriodicError {
     match error {
-        crate::geometry::PeriodicGeometryError::NumericalFailure => {
-            PeriodicError::NumericalFailure { frame }
-        }
-        crate::geometry::PeriodicGeometryError::LimitExceeded(limit) => {
+        crate::math::LatticeError::NumericalFailure => PeriodicError::NumericalFailure { frame },
+        crate::math::LatticeError::LimitExceeded(limit) => {
             PeriodicError::LimitExceeded { frame, limit }
         }
         _ => PeriodicError::NumericalFailure { frame },

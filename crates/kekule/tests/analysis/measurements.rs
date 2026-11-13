@@ -1,5 +1,5 @@
 use kekule::{
-    geometry::{PeriodicCell, Point3, Vector3},
+    math::{PeriodicCell, Point3, Vector3},
     smiles,
     structure::{
         measure::{self, ConnectivityCheck, MeasurementError},

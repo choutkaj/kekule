@@ -1264,7 +1264,7 @@ The public modules of `kekule`, by domain:
 
 | Domain | Modules |
 | --- | --- |
-| Foundations | `units`, `geometry`, `properties`, `diagnostics`, `parallel` |
+| Foundations | `units`, `math`, `properties`, `diagnostics`, `parallel` |
 | Chemistry | `molecule`, `stereo` (`cip`, `coordinates`, `cleanup`), `perception` (`valence`, `rings`, `aromaticity`, `conjugation`, `resonance`), `hydrogens`, `descriptors` |
 | Queries | `query`, `substructure`, `select` |
 | Systems and structures | `topology` (`edit`), `structure` (`measure`, `placement`), `solvation` |

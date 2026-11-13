@@ -31,7 +31,7 @@
 //! # Example
 //!
 //! ```
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::interactions::{
 //!     find_interactions_within, InteractionCriteria, InteractionFeatures, InteractionKind,
 //! };
@@ -70,7 +70,7 @@ mod search;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 use crate::topology::{SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 

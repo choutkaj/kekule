@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use kekule::diagnostics::{Cancellation, Cancelled};
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::structure::Positions;
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdReadOptions, DcdTimePolicy};

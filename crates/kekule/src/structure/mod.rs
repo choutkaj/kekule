@@ -54,7 +54,7 @@
 //! invalid structure state shared by all of them.
 //!
 //! ```
-//! use kekule::{geometry::Point3, smiles, units::{Quantity, NANOMETER}};
+//! use kekule::{math::Point3, smiles, units::{Quantity, NANOMETER}};
 //! use kekule::structure::{Model, Positions};
 //!
 //! let positions = Positions::new(Quantity::new(
@@ -74,7 +74,7 @@
 //! move connected fragments. Prepare a [`DihedralEdit`] (or [`DistanceEdit`] /
 //! [`AngleEdit`]) once for repeated absolute targets on the same topology:
 //! ```
-//! use kekule::{smiles, geometry::Point3, structure::{Model, Positions, DihedralEdit},
+//! use kekule::{smiles, math::Point3, structure::{Model, Positions, DihedralEdit},
 //!     units::{Quantity, ANGSTROM, DEGREE}};
 //! let topology = smiles::to_topology("CCCC")?;
 //! let positions = Positions::new(Quantity::new([

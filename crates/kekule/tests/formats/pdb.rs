@@ -2058,7 +2058,7 @@ fn read_model(text: &str) -> kekule::structure::Model {
 
 #[test]
 fn separately_read_models_become_samples_with_their_own_state() {
-    use kekule::geometry::{PeriodicCell, Point3, Vector3};
+    use kekule::math::{PeriodicCell, Point3, Vector3};
     use kekule::properties::{PropertyKey, PropertyValue};
     use kekule::structure::{Distribution, Members, Partition, SampleSet, SampleSetError};
     use kekule::topology::{TopologyAtomIndex, TopologyBondIndex};

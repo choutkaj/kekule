@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 use crate::structure::{Model, Positions};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, ANGSTROM, DEGREE, NANOMETER};

@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::geometry::{Point3, PointGrid, Vector3};
 use crate::io::is_metal;
+use crate::math::{Point3, PointGrid, Vector3};
 use crate::molecule::{AtomId, Element};
 use crate::structure::{AsModelView, ModelView};
 use crate::topology::{

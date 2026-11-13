@@ -38,7 +38,7 @@
 //! # Examples
 //!
 //! ```
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::structure::{Distribution, Members, Partition, Positions, Sample, SampleSet};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, NANOMETER};
@@ -73,7 +73,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::diagnostics::{Cancellation, Cancelled};
-use crate::geometry::{Point3, PointGrid, Vector3};
+use crate::math::{Point3, PointGrid, Vector3};
 use crate::structure::{
     visit_sample, AsModelView, ModelView, SampleRead, SampleReadError, SampleSet, SampleStorage,
 };
@@ -1250,7 +1250,7 @@ const DIRECT_PAIRS: usize = 256;
 /// parallel, as shown for [`RmsfAccumulator`].
 ///
 /// ```
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::statistics::GroupContactOccupancyAccumulator;
 /// use kekule::structure::{Positions, Sample, SampleSet};
 /// use kekule::topology::AtomSelection;

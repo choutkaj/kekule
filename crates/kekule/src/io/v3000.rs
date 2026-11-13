@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::{DiagnosticKind, LimitExceeded, Resource};
-use crate::geometry::Point3;
 use crate::io::MolfileParseOptions;
+use crate::math::Point3;
 
 use super::molfile_document::{
     MolfileAtom, MolfileAtomParity, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileCtab,

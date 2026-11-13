@@ -1235,7 +1235,7 @@ fn sparse_subset_retains_only_selected_component_storage() {
 
 #[test]
 fn compact_subset_projects_properties_bonds_and_model_positions() {
-    use crate::geometry::Point3;
+    use crate::math::Point3;
     use crate::structure::{Model, Positions};
     use crate::units::{Quantity, NANOMETER};
 

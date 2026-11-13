@@ -6,7 +6,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, Element};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::{

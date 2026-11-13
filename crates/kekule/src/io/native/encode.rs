@@ -9,8 +9,8 @@ use super::{
     NATIVE_MAGIC,
 };
 use crate::diagnostics::{counted, DiagnosticKind, Format, FormatError};
-use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::io::StructureInterpretationReport;
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{
     AtomRadical, AxisOrientation, BondOrder, DoubleBondOrientation, ImplicitHydrogens, Molecule,
     StereoCarrier, StereoDescriptor, StereoElementKind, StereoGroupKind, TetrahedralOrientation,

@@ -5,7 +5,7 @@
 use std::io::{Cursor, Seek, Write};
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions, DcdWriter};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions, TrrWriter};

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use kekule::alignment::{self, AlignmentError, AlignmentGeometry};
 use kekule::clustering::{ClusteringError, ClusteringProgress, ClusteringRun};
 use kekule::diagnostics::Cancellation;
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::parallel::{Executor, ScopedThreads};
 use kekule::structure::{Distribution, Members, Partition, Positions, Sample, SampleSet};
 use kekule::topology::{AtomSelection, Topology};

@@ -8,7 +8,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::parallel::{Executor, ScopedThreads};
 use kekule::smiles;
 use kekule::statistics::{ContactOccupancyAccumulator, RmsfAccumulator};

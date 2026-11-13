@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::statistics::{ContactOccupancyAccumulator, RmsfAccumulator};
 use kekule::structure::Positions;
 use kekule::topology::AtomSelection;

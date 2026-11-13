@@ -23,7 +23,6 @@ use crate::diagnostics::{
     counted, Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail,
     StructureField,
 };
-use crate::geometry::{PeriodicCell, Point3};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::mmcif_write::bond_order_name;
@@ -38,6 +37,7 @@ use crate::io::write_error::{
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
+use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
 use crate::structure::{AsModelView, Model, ModelView, SampleSet, SampleView};
 use crate::topology::{

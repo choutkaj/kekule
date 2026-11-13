@@ -223,7 +223,7 @@ fn large_tiled_structure_round_trips_through_mmcif() {
 }
 
 fn tiled_round_trip(copies: u32) {
-    use kekule::geometry::{Matrix3, RigidTransform, Vector3};
+    use kekule::math::{Matrix3, RigidTransform, Vector3};
     use kekule::units::{Quantity, ANGSTROM};
 
     // The entry read through PDB, as an application that opened it there

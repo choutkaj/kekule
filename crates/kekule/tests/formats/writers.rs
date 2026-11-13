@@ -5,8 +5,8 @@ use kekule::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, FormatStage, StructureField,
     UnrepresentablePolicy, WriteOmission,
 };
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::macromolecular::EntityKind;
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif::{self, MmcifEntityClassifications, MmcifWriteIssue, MmcifWriteOptions};
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::pdb::{self, PdbWriteOptions};

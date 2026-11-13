@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3, RigidTransform, Vector3};
+use crate::math::{PeriodicCell, Point3, RigidTransform, Vector3};
 use crate::properties::{StructureProperties, StructurePropertiesMut};
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::Quantity;

@@ -2,11 +2,11 @@
 //! built from them.
 
 use kekule::diagnostics::Cancellation;
-use kekule::geometry::Point3;
 use kekule::macromolecular::{
     Assembly, AssemblyError, AssemblyOmissionReason, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
+use kekule::math::Point3;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule::{mmcif, pdb};
 
@@ -83,7 +83,7 @@ fn assert_copies_are_placed(
         for (offset, atom) in source.iter().enumerate().step_by(97) {
             let from = angstroms(model.position(*atom).unwrap());
             let turned =
-                rotation.transform_vector(kekule::geometry::Vector3::new(from.x, from.y, from.z));
+                rotation.transform_vector(kekule::math::Vector3::new(from.x, from.y, from.z));
             let copy = angstroms(
                 built
                     .position(copies[index * source.len() + offset])

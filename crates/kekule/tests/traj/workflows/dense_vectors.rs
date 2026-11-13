@@ -1,4 +1,4 @@
-use kekule::geometry::Vector3;
+use kekule::math::Vector3;
 use kekule::structure::{DenseArrayError, Forces, Velocities};
 use kekule::traj::FrameBuffer;
 use kekule::units::{Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT};

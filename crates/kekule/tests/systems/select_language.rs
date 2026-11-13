@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use kekule::diagnostics::{DiagnosticKind, Format};
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::Element;
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::select::{

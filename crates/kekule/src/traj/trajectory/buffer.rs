@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{OwnerProperties, StructureProperties, StructurePropertiesMut};
 use crate::structure::scalars::AtomScalars;
 use crate::structure::{

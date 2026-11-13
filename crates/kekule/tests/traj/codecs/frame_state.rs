@@ -8,7 +8,7 @@ use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
 
 use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Forces, Order, Place, Positions, SampleSet, TimeAxis, Velocities};
 use kekule::topology::Topology;

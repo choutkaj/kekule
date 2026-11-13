@@ -3,7 +3,7 @@ use crate::DraftError;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3, RigidTransform};
+use crate::math::{PeriodicCell, Point3, RigidTransform};
 use crate::molecule::Molecule;
 use crate::properties::{StructureProperties, TopologyPropertiesMut};
 use crate::topology::TopologySubsetError;
@@ -180,7 +180,7 @@ impl Model {
     /// while keeping the cell.
     ///
     /// ```
-    /// use kekule::{smiles, geometry::{Matrix3, PeriodicCell, RigidTransform, Vector3},
+    /// use kekule::{smiles, math::{Matrix3, PeriodicCell, RigidTransform, Vector3},
     ///     structure::{Model, Positions}, units::{Quantity, NANOMETER}};
     /// let mut model = Model::new(smiles::to_topology("O")?, Positions::zeros(1))?;
     /// let cell = PeriodicCell::orthorhombic(
@@ -606,7 +606,7 @@ impl<'a> ModelView<'a> {
 /// let model = Model::new(smiles::to_topology("CO")?, Positions::zeros(2))?;
 /// let oxygen = model.atoms().find(|atom| atom.element().symbol() == "O").unwrap();
 /// assert_eq!(oxygen.occupancy(), None);
-/// assert_eq!(oxygen.position().into_value(), kekule::geometry::Point3::origin());
+/// assert_eq!(oxygen.position().into_value(), kekule::math::Point3::origin());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Copy)]

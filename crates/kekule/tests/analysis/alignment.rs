@@ -8,7 +8,7 @@ use kekule::alignment::{
     AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide, PeriodicPolicy, Reference,
     SymmetricSelection, Weighting,
 };
-use kekule::geometry::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
+use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{

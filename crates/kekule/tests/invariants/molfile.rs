@@ -1,6 +1,6 @@
 //! Molfile and SDF output re-reads to the same chemistry in the same atom order.
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::Molecule;
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf;

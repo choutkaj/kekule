@@ -615,7 +615,7 @@ pub fn write_sample_set(
 ///
 /// ```
 /// # use std::io::Cursor;
-/// # use kekule::geometry::Point3;
+/// # use kekule::math::Point3;
 /// # use kekule::structure::{Order, Place, Positions, Sample, SampleSet, TimeAxis};
 /// # use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
 /// use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission};

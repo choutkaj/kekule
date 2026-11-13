@@ -7,7 +7,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::smiles;
 use kekule::statistics::{ContactOccupancyAccumulator, GroupContactOccupancyAccumulator};
 use kekule::structure::{Positions, Sample, SampleSet, SampleView};

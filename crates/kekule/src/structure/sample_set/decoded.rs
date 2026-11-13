@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{OwnerProperties, StructureProperties};
 use crate::structure::{DenseArrayError, Forces, Positions, StructureError, Velocities};
 use crate::topology::Topology;

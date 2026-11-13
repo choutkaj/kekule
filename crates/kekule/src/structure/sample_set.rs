@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::diagnostics::Cancellation;
-use crate::geometry::RigidTransform;
+use crate::math::RigidTransform;
 use crate::properties::{OwnerProperties, TopologyPropertiesMut};
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 

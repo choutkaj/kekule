@@ -1,23 +1,20 @@
-use crate::geometry::{PeriodicGeometry, PeriodicGeometryError, Point3};
+use crate::math::{Lattice, LatticeError, Point3};
 use std::collections::BTreeMap;
 
 /// Fractional bins sized from reciprocal-vector norms. Every displacement within
 /// cutoff changes each wrapped fractional coordinate by at most one bin. Exact
 /// Cartesian nearest-image checks are still necessary for skewed cells.
 pub(super) struct Neighbors<'a> {
-    geometry: &'a PeriodicGeometry,
+    geometry: &'a Lattice,
     bins: [usize; 3],
     cells: BTreeMap<[usize; 3], Vec<usize>>,
     points: Vec<Point3>,
 }
 impl<'a> Neighbors<'a> {
-    pub(super) fn new(
-        geometry: &'a PeriodicGeometry,
-        cutoff: f64,
-    ) -> Result<Self, PeriodicGeometryError> {
+    pub(super) fn new(geometry: &'a Lattice, cutoff: f64) -> Result<Self, LatticeError> {
         let spans = geometry.reciprocal_norms().map(|r| r * cutoff);
         if cutoff <= 0.0 || spans.iter().any(|v| !v.is_finite() || *v <= 0.0) {
-            return Err(PeriodicGeometryError::NumericalFailure);
+            return Err(LatticeError::NumericalFailure);
         }
         let bins = spans.map(|span| {
             (1.0 / (span * (1.0 + 128.0 * f64::EPSILON)))
@@ -31,19 +28,19 @@ impl<'a> Neighbors<'a> {
             points: Vec::new(),
         })
     }
-    fn cell(&self, point: Point3) -> Result<[usize; 3], PeriodicGeometryError> {
+    fn cell(&self, point: Point3) -> Result<[usize; 3], LatticeError> {
         let fractional = self
             .geometry
             .fractional_canonical(point - Point3::origin())?;
         if fractional.iter().any(|v| v.abs() >= 2.0_f64.powi(48)) {
-            return Err(PeriodicGeometryError::NumericalFailure);
+            return Err(LatticeError::NumericalFailure);
         }
         Ok(std::array::from_fn(|i| {
             ((fractional[i].rem_euclid(1.0) * self.bins[i] as f64).floor() as usize)
                 .min(self.bins[i] - 1)
         }))
     }
-    pub(super) fn insert(&mut self, point: Point3) -> Result<(), PeriodicGeometryError> {
+    pub(super) fn insert(&mut self, point: Point3) -> Result<(), LatticeError> {
         let key = self.cell(point)?;
         self.cells.entry(key).or_default().push(self.points.len());
         self.points.push(point);
@@ -54,7 +51,7 @@ impl<'a> Neighbors<'a> {
         &self,
         point: Point3,
         mut predicate: impl FnMut(usize, f64) -> bool,
-    ) -> Result<bool, PeriodicGeometryError> {
+    ) -> Result<bool, LatticeError> {
         let key = self.cell(point)?;
         let axes: [[usize; 3]; 3] = std::array::from_fn(|i| {
             [
@@ -82,7 +79,7 @@ impl<'a> Neighbors<'a> {
                                 .minimum_image_canonical(point - self.points[index])?
                                 .norm();
                             if !distance.is_finite() {
-                                return Err(PeriodicGeometryError::NumericalFailure);
+                                return Err(LatticeError::NumericalFailure);
                             }
                             if predicate(index, distance) {
                                 return Ok(true);
@@ -100,7 +97,7 @@ impl<'a> Neighbors<'a> {
 mod tests {
     use super::*;
     use crate::{
-        geometry::{PeriodicCell, Vector3},
+        math::{PeriodicCell, Vector3},
         units::{Quantity, NANOMETER},
     };
     #[test]
@@ -122,7 +119,7 @@ mod tests {
                 Vector3::new(0.0, 0.0, 4.0),
             ],
         ] {
-            let geometry = PeriodicGeometry::new(
+            let geometry = Lattice::new(
                 PeriodicCell::new(Quantity::new(basis, NANOMETER), [true; 3]).unwrap(),
             )
             .unwrap();

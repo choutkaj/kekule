@@ -1,7 +1,7 @@
 use super::center;
 use crate::structure::Model;
 use crate::{
-    geometry::{PeriodicCell, PeriodicCellError, PeriodicGeometry, PeriodicGeometryError, Vector3},
+    math::{Lattice, LatticeError, PeriodicCell, PeriodicCellError, Vector3},
     units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT},
 };
 use std::fmt;
@@ -51,7 +51,7 @@ pub enum PeriodicBoxError {
     Cell(PeriodicCellError),
     /// Centering the solute or validating the cell geometry failed; see the
     /// source.
-    Geometry(PeriodicGeometryError),
+    Geometry(LatticeError),
 }
 impl fmt::Display for PeriodicBoxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -140,7 +140,7 @@ pub fn add_periodic_box(
     if cell.periodic_axes() != [true; 3] {
         return Err(PeriodicBoxError::NotFullyPeriodic);
     }
-    PeriodicGeometry::new(cell).map_err(PeriodicBoxError::Geometry)?;
+    Lattice::new(cell).map_err(PeriodicBoxError::Geometry)?;
     model.set_cell(Some(cell));
     Ok(())
 }

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use crate::diagnostics::DiagnosticKind;
-use crate::geometry::Point3;
+use crate::math::Point3;
 
 use super::molfile_document::{
     MolfileAtom, MolfileBond, MolfileBondOrder, MolfileBondStereo, MolfileCtab, MolfileLines,

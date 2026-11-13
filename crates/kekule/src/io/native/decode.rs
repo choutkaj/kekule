@@ -18,8 +18,8 @@ use super::{
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
 };
-use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::io::{StructureInterpretation, StructureSampleSetInterpretation};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{
     Atom, AtomId, AtomRadical, AxisOrientation, AxisStereo, BondId, BondOrder,
     DoubleBondOrientation, DoubleBondStereo, Element, ImplicitHydrogens, Molecule, MoleculeEditor,

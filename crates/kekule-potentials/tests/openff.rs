@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Distribution, Members, Model, ModelView, Partition, Positions};
 use kekule::structure::{Order, Sample, SampleSet, TimeAxis};
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};

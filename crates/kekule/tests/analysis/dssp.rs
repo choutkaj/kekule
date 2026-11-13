@@ -227,7 +227,7 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
 
 #[test]
 fn dssp_instance_membership_handles_many_reused_solvent_instances() {
-    use kekule::geometry::Point3;
+    use kekule::math::Point3;
     use kekule::molecule::AtomId;
     use kekule::structure::Positions;
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
@@ -272,7 +272,7 @@ fn dssp_instance_membership_handles_many_reused_solvent_instances() {
 
 #[test]
 fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
-    use kekule::geometry::Point3;
+    use kekule::math::Point3;
     use kekule::molecule::AtomId;
     use kekule::structure::{Model, Positions};
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId, TopologyBuilder};
@@ -367,7 +367,7 @@ fn adenylate_kinase_model() -> kekule::structure::Model {
 /// different copies become hydrogen-bond candidates, and copies repeat chain
 /// labels.
 fn tiled(model: &kekule::structure::Model, copies: usize) -> kekule::structure::Model {
-    use kekule::geometry::Point3;
+    use kekule::math::Point3;
     let positions = model.positions().values();
     let points = positions.value();
     let (low, high) = points.iter().fold(

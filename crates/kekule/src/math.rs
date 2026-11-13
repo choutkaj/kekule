@@ -1,17 +1,17 @@
-//! Dependency-light three-dimensional geometry shared by structure, analysis,
-//! trajectory, and modelling code.
+//! Dependency-light three-dimensional vector and lattice mathematics, shared
+//! by structure, analysis, trajectory, and modelling code.
 //!
 //! [`Point3`], [`Vector3`] and [`Matrix3`] are bare Cartesian values; wrap them
 //! in a [`Quantity`] to give them a unit. [`RigidTransform`] is a validated
 //! proper rotation plus translation, [`PeriodicCell`] a validated simulation
-//! cell, and [`PeriodicGeometry`] its prepared lattice for fractional
-//! coordinates and exact nearest-image searches. Cell and lattice outputs use
+//! cell, and [`Lattice`] its prepared basis for fractional coordinates and
+//! exact nearest-image searches. Cell and lattice outputs use
 //! the canonical length unit (nm).
 //!
 //! # Example
 //!
 //! ```
-//! use kekule::geometry::{PeriodicCell, PeriodicGeometry, Point3, Vector3};
+//! use kekule::math::{PeriodicCell, Lattice, Point3, Vector3};
 //! use kekule::units::{Quantity, NANOMETER};
 //!
 //! let a = Point3::new(0.5, 0.0, 0.0);
@@ -22,7 +22,7 @@
 //!     Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
 //!     [true; 3],
 //! )?;
-//! let lattice = PeriodicGeometry::new(cell)?;
+//! let lattice = Lattice::new(cell)?;
 //! let (image, shift) = lattice.nearest_image(Quantity::new(b - a, NANOMETER))?;
 //! assert_eq!(shift, [1, 0, 0]);
 //! assert_eq!(image, Quantity::new(Vector3::new(-0.75, 0.0, 0.0), NANOMETER));
@@ -32,7 +32,7 @@
 mod grid;
 mod periodic;
 pub(crate) use grid::PointGrid;
-pub use periodic::{PeriodicGeometry, PeriodicGeometryError, MAX_LATTICE_IMAGES};
+pub use periodic::{Lattice, LatticeError, MAX_LATTICE_IMAGES};
 
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};

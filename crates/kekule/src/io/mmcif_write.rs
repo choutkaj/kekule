@@ -2,7 +2,6 @@
 use crate::diagnostics::{
     Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField,
 };
-use crate::geometry::PeriodicCell;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::{
     EntityKind, StructureInterpretation, StructureInterpretationReport,
@@ -13,6 +12,7 @@ use crate::io::write_error::{
     unrepresentable_state, Omissions, StatePolicies,
 };
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::math::PeriodicCell;
 use crate::molecule::BondOrder;
 use crate::structure::{AsModelView, Model, ModelView, SampleSet, SampleView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};

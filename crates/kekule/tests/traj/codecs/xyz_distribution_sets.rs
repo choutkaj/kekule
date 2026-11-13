@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
-use kekule::geometry::{PeriodicCell, Vector3};
+use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Distribution, Members, Order, Partition, SampleSet, TimeAxis, Velocities};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};

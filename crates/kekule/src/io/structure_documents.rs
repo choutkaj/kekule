@@ -9,7 +9,7 @@ use crate::chemistry::{
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, SourceLocation, UnsupportedContent};
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{
     Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
     MoleculeEditor,

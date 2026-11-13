@@ -14,7 +14,7 @@
 use crate::diagnostics::{
     read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::Element;
 
 use super::xyz_interpret::{interpret_xyz, interpret_xyz_sample_set};
@@ -200,7 +200,7 @@ impl XyzDocument {
     /// rejects it.
     ///
     /// ```
-    /// use kekule::geometry::Point3;
+    /// use kekule::math::Point3;
     /// use kekule::molecule::Element;
     /// use kekule::xyz::{XyzAtom, XyzDocument, XyzFrame};
     ///

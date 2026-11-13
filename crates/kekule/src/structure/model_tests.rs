@@ -1,6 +1,6 @@
 //! Model construction, identity, and position-update regressions.
 
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::structure::{DenseArrayError, Model, ModelBuildError, Positions, StructureError};
 use crate::topology::AtomSiteMetadata;

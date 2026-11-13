@@ -2,7 +2,7 @@ use crate::support::hierarchy_record;
 use kekule::diagnostics::{
     DiagnosticKind, Format, FormatErrorDetail, FormatStage, SourceLocation, UnsupportedContent,
 };
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::{
     molecule::{Element, Molecule},
     perception::Perception,

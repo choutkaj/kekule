@@ -1,6 +1,6 @@
 use crate::support::{chain_record, residue_record};
 use kekule::{
-    geometry::{PeriodicCell, PeriodicGeometry, PeriodicGeometryError, Point3, Vector3},
+    math::{Lattice, LatticeError, PeriodicCell, Point3, Vector3},
     molecule::{Element, VanDerWaalsRadiusSource},
     properties::{PropertyKey, PropertyValue},
     solvation::{
@@ -69,7 +69,7 @@ fn box_shapes_units_padding_and_snapshot_identity() {
         assert!((m.cell().unwrap().signed_volume().into_value() - 27.0 * ratio).abs() < 1e-12);
         assert_eq!(m.positions(), source.positions());
         assert!(Arc::ptr_eq(&m.shared_topology(), &source.shared_topology()));
-        let geometry = PeriodicGeometry::new(*m.cell().unwrap()).unwrap();
+        let geometry = Lattice::new(*m.cell().unwrap()).unwrap();
         assert!((geometry.shortest_translation().unwrap().into_value().norm() - 3.0).abs() < 1e-12);
     }
     let mut single = model("[Na+]");
@@ -171,7 +171,7 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
         assert_eq!(m.cell(), old.cell());
         assert_eq!(points(&m)[0], points(&old)[0]);
         assert!(!Arc::ptr_eq(&m.shared_topology(), &old.shared_topology()));
-        let geometry = PeriodicGeometry::new(*m.cell().unwrap()).unwrap();
+        let geometry = Lattice::new(*m.cell().unwrap()).unwrap();
         let mut oxygens = vec![];
         for water in m.topology().instances().skip(1) {
             assert_eq!(water.class(), MoleculeClass::Water);
@@ -248,7 +248,7 @@ fn charge_salt_rounding_and_seeded_ion_placement() {
                 .sum::<i64>(),
             0
         );
-        let geom = PeriodicGeometry::new(*a.cell().unwrap()).unwrap();
+        let geom = Lattice::new(*a.cell().unwrap()).unwrap();
         let ions: Vec<_> = a
             .topology()
             .instances()
@@ -518,7 +518,7 @@ fn rotated_skewed_and_left_handed_cells_fill_without_moving_solute() {
         let report = solvation::solvate(&mut m, &options()).unwrap();
         assert!(report.waters_added() > 100);
         assert_eq!(m.position(atom).unwrap().into_value(), position);
-        let geometry = PeriodicGeometry::new(cell).unwrap();
+        let geometry = Lattice::new(cell).unwrap();
         for water in m.topology().instances().skip(1) {
             let oxygen = water.atoms().next().unwrap().id();
             let f = geometry
@@ -546,14 +546,14 @@ fn core_periodic_kernel_checks_limits_and_shortest_skew_translation() {
         [true; 3],
     )
     .unwrap();
-    let geometry = PeriodicGeometry::new(cell).unwrap();
+    let geometry = Lattice::new(cell).unwrap();
     assert!(
         (geometry.shortest_translation().unwrap().into_value().norm() - 0.1_f64.hypot(0.3)).abs()
             < 1e-12
     );
     assert!(matches!(
         geometry.minimum_image(Quantity::new(Vector3::new(f64::NAN, 0.0, 0.0), NANOMETER)),
-        Err(PeriodicGeometryError::NumericalFailure)
+        Err(LatticeError::NumericalFailure)
     ));
     let bad = PeriodicCell::new(
         Quantity::new(
@@ -568,10 +568,10 @@ fn core_periodic_kernel_checks_limits_and_shortest_skew_translation() {
     )
     .unwrap();
     assert!(matches!(
-        PeriodicGeometry::new(bad).unwrap().shortest_translation(),
-        Err(PeriodicGeometryError::LimitExceeded(limit))
+        Lattice::new(bad).unwrap().shortest_translation(),
+        Err(LatticeError::LimitExceeded(limit))
             if limit.resource() == kekule::diagnostics::Resource::LatticeImages
-                && limit.limit() == kekule::geometry::MAX_LATTICE_IMAGES
+                && limit.limit() == kekule::math::MAX_LATTICE_IMAGES
                 && limit.observed() > limit.limit()
     ));
 }
@@ -627,9 +627,7 @@ fn translation_that_loses_water_geometry_is_rejected_atomically() {
     let before = m.clone();
     assert!(matches!(
         solvation::solvate(&mut m, &options()),
-        Err(SolvationError::Geometry(
-            PeriodicGeometryError::NumericalFailure
-        ))
+        Err(SolvationError::Geometry(LatticeError::NumericalFailure))
     ));
     assert_eq!(m, before);
 }

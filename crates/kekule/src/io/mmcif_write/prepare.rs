@@ -5,8 +5,8 @@ use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
 use super::{fail, invalid_model, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
 use crate::diagnostics::{Capitalized, FormatError};
-use crate::geometry::Point3;
 use crate::io::UnrepresentablePolicy;
+use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::structure::ModelView;
 use crate::topology::{

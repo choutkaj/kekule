@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use crate::diagnostics::{
     read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 
 use super::structure_interpret::{
     interpret_pdb, interpret_pdb_conformations, interpret_pdb_sample_set, pdb_alternate_locations,

@@ -29,7 +29,7 @@
 //! 1-3 exceptions, which SMIRNOFF scales to zero, so only the bond term remains.
 //!
 //! ```
-//! use kekule::{geometry::Point3, smiles, structure::{Model, Positions}};
+//! use kekule::{math::Point3, smiles, structure::{Model, Positions}};
 //! use kekule::units::{Quantity, NANOMETER};
 //! use kekule_openff::{ChargeMethod, ForceField};
 //! use kekule_potentials::{openff::OpenFfPotential, ComponentKind, Potential};
@@ -76,7 +76,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use kekule::geometry::Vector3;
+use kekule::math::Vector3;
 use kekule::structure::ModelView;
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{

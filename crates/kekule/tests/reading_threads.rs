@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use kekule::diagnostics::UnrepresentablePolicy;
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::structure::{
     Forces, Order, Place, Positions, Sample, SampleRead, SampleSet, TimeAxis, Velocities,

@@ -1,7 +1,7 @@
 //! Builder placement on model drafts: hydrogens with coordinates, ideal
 //! geometry, attaching atoms, and names.
-use kekule::geometry::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::hydrogens::{AddHydrogensOptions, AddHydrogensScope, RetainedHydrogenReason};
+use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, ImplicitHydrogens};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::smiles;
@@ -166,7 +166,7 @@ fn completed_hydrogens_agree_with_valence_and_collapse_back() {
         for entry in placed.atoms() {
             let atom = entry.atom();
             assert_eq!(entry.hydrogens().len(), expected[&atom], "{name}");
-            let shape = editor.atom_geometry(atom).unwrap().shape().unwrap();
+            let shape = editor.atom_domains(atom).unwrap().shape().unwrap();
             for &hydrogen in entry.hydrogens() {
                 let length = ideal(element_of(&editor, atom), element("H"), BondOrder::Single);
                 assert!((distance(&editor, atom, hydrogen) - length).abs() < 1e-9);
@@ -272,7 +272,7 @@ fn hydrides_take_ideal_lengths_and_angles() {
     ] {
         let (editor, atom, hydrogens) = completed(symbol, charge);
         assert_eq!(hydrogens.len(), count, "{symbol}{charge}");
-        assert_eq!(editor.atom_geometry(atom).unwrap().shape(), Some(shape));
+        assert_eq!(editor.atom_domains(atom).unwrap().shape(), Some(shape));
         let length = ideal(element(symbol), element("H"), BondOrder::Single);
         for (i, a) in hydrogens.iter().enumerate() {
             assert!((distance(&editor, atom, *a) - length).abs() < 1e-9);
@@ -377,7 +377,7 @@ fn chains_grow_anti_and_multiple_bonds_set_the_shape() {
     for entry in report.atoms() {
         let atom = entry.atom();
         assert_eq!(
-            editor.atom_geometry(atom).unwrap().shape(),
+            editor.atom_domains(atom).unwrap().shape(),
             Some(AtomShape::TrigonalPlanar)
         );
         for hydrogen in entry.hydrogens() {
@@ -447,7 +447,7 @@ fn hypervalent_atoms_take_bipyramidal_and_octahedral_sites() {
     let mut editor = star("S(F)(F)(F)(F)F", &[x, -x, y, -y, z]);
     let sulfur = editor.topology().atom_ids().next().unwrap();
     assert_eq!(
-        editor.atom_geometry(sulfur).unwrap().shape(),
+        editor.atom_domains(sulfur).unwrap().shape(),
         Some(AtomShape::Octahedral)
     );
     let report = editor
@@ -464,7 +464,7 @@ fn hypervalent_atoms_take_bipyramidal_and_octahedral_sites() {
     let mut editor = star("P(F)(F)(F)F", &[z, -z, equatorial[0], equatorial[1]]);
     let phosphorus = editor.topology().atom_ids().next().unwrap();
     assert_eq!(
-        editor.atom_geometry(phosphorus).unwrap().shape(),
+        editor.atom_domains(phosphorus).unwrap().shape(),
         Some(AtomShape::TrigonalBipyramidal)
     );
     let report = editor
@@ -1082,7 +1082,7 @@ fn fragments_on_linear_parents_turn_clear_of_their_surroundings() {
     let parent = handles[&ethynyl.attachment_atom()];
     let hydrogen = handles[&ethynyl.leaving_atom()];
     assert_eq!(
-        editor.atom_geometry(parent).unwrap().shape(),
+        editor.atom_domains(parent).unwrap().shape(),
         Some(AtomShape::Linear)
     );
     let phenyl = fragment("phenyl").unwrap();

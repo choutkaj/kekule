@@ -47,7 +47,7 @@ fn index_hard_capacity_uses_the_smallest_configured_bound() {
 /// reading a sample of the clone reads the file.
 #[test]
 fn a_clone_of_a_set_over_a_file_reads_nothing() {
-    use crate::geometry::Point3;
+    use crate::math::Point3;
     use crate::structure::{Positions, Sample, SampleRead, SampleSet};
     use crate::units::{Quantity, NANOMETER};
 

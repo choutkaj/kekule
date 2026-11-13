@@ -9,7 +9,7 @@ use std::sync::Arc;
 use kekule::alignment::{self, AlignedRmsdOptions, AlignmentError, AlignmentOptions, Weighting};
 use kekule::clustering::{self, ClusteringError, ClusteringRun, Cut, Linkage};
 use kekule::diagnostics::Cancellation;
-use kekule::geometry::{Matrix3, Point3, RigidTransform, Vector3};
+use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::parallel::ScopedThreads;
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator,

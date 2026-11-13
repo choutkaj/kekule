@@ -8,7 +8,7 @@
 //!   collapses their explicit hydrogens back into implicit counts, each
 //!   reporting per atom what changed ([`PlacedHydrogensReport`],
 //!   [`RemovedHydrogensReport`]).
-//! - [`ModelEditor::atom_geometry`] perceives an atom's [`AtomGeometry`] and
+//! - [`ModelEditor::atom_domains`] perceives an atom's [`AtomDomains`] and
 //!   [`ModelEditor::free_directions`] gives where its next substituents go.
 //! - [`ModelEditor::attach_atom`] bonds a new atom to an existing one, in place
 //!   of an explicit hydrogen or at the free position nearest a direction
@@ -60,7 +60,7 @@
 //! use kekule::{smiles, structure::{Model, Positions}};
 //! use kekule::hydrogens::AddHydrogensOptions;
 //! use kekule::units::{Quantity, NANOMETER};
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //!
 //! // Ethanol's heavy atoms, then its hydrogens placed in the same draft.
 //! let topology = smiles::to_topology("CCO")?;
@@ -162,14 +162,14 @@ impl AtomShape {
 
 /// An atom's perceived ideal geometry; see the [module](self) for the rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AtomGeometry {
+pub struct AtomDomains {
     pub(crate) shape: Option<AtomShape>,
     pub(crate) neighbors: usize,
     pub(crate) implicit_hydrogens: usize,
     pub(crate) lone_pairs: usize,
 }
 
-impl AtomGeometry {
+impl AtomDomains {
     /// The arrangement of the atom's domains, or `None` for an atom with none
     /// (an isolated atom without hydrogens or lone pairs).
     pub const fn shape(&self) -> Option<AtomShape> {
@@ -208,7 +208,7 @@ pub enum AttachmentSite {
     Hydrogen(EditAtomId),
     /// At the parent's free position nearest this direction, such as a drag
     /// in a viewport; the direction need not be normalized.
-    Toward(crate::geometry::Vector3),
+    Toward(crate::math::Vector3),
 }
 
 /// The atom [`ModelEditor::attach_atom`] added.

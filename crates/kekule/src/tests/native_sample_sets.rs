@@ -4,7 +4,7 @@
 
 use super::native_reports::{find, parts, read, report, resealed};
 use crate::diagnostics::{DiagnosticKind, Format};
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::native::{self, NativeSource, NativeWriteOptions, SampleSetDescription};
 use crate::structure::{
     Distribution, Members, Order, Partition, Positions, Sample, SampleSet, State, TimeAxis,

@@ -55,7 +55,7 @@
 //! use std::error::Error;
 //!
 //! use kekule::alignment::SymmetricSelection;
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::structure::{Distribution, Members, Partition, Positions, Sample, SampleSet, State};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM, KELVIN, KILOJOULE_PER_MOLE};

@@ -4,7 +4,6 @@ use std::io::Read;
 
 use super::{Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
-use crate::geometry::{Matrix3, Vector3};
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
     AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
@@ -13,6 +12,7 @@ use crate::io::{
     SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
     StructureInterpretIssue, StructureInterpretationReport,
 };
+use crate::math::{Matrix3, Vector3};
 use crate::molecule::AtomId;
 use crate::sequence::{CodeOrigin, ResidueCode};
 use crate::topology::{ChainId, InstanceAtomId, MoleculeInstanceId, ResidueId};

@@ -16,7 +16,7 @@ use std::{
 };
 
 use crate::diagnostics::Capitalized;
-use crate::geometry::{Point3, RigidTransform, Vector3};
+use crate::math::{Point3, RigidTransform, Vector3};
 use crate::topology::{AtomSelection, InstanceAtomId, Topology};
 use crate::units::{Quantity, Unit, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 

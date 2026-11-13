@@ -16,7 +16,7 @@ use kekule::clustering::{
     Linkage,
 };
 use kekule::diagnostics::Cancellation;
-use kekule::geometry::{Matrix3, Point3, RigidTransform, Vector3};
+use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::parallel::ScopedThreads;
 use kekule::statistics::{
     ContactOccupancyResult, GroupContactOccupancyResult, RmsfResult, StatisticsError,

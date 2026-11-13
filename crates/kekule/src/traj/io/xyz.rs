@@ -22,7 +22,7 @@
 //! use std::io::Cursor;
 //! use std::sync::Arc;
 //!
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
@@ -57,7 +57,7 @@ use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::Element;
 use crate::structure::{DecodedSample, ModelView, Positions, SampleSet};
 use crate::topology::Topology;

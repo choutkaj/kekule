@@ -4,7 +4,7 @@
 use kekule::diagnostics::{
     DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy, WriteOmission,
 };
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif::{self, MmcifWriteOptions};
 use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
@@ -99,7 +99,7 @@ fn weighted_methanes() -> SampleSet {
         Model::new(
             topology.clone(),
             Positions::new(Quantity::new(
-                [kekule::geometry::Point3::new(x, 0.0, 0.0)],
+                [kekule::math::Point3::new(x, 0.0, 0.0)],
                 ANGSTROM,
             ))
             .unwrap(),

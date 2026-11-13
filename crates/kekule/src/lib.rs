@@ -33,7 +33,7 @@
 //! | Area | Modules |
 //! | --- | --- |
 //! | Molecules and systems | [`molecule`], [`topology`] (with [`topology::edit`]), [`structure`] (with [`structure::measure`]), [`prelude`] |
-//! | Values and diagnostics | [`units`], [`properties`], [`geometry`], [`diagnostics`], [`parallel`] |
+//! | Values and diagnostics | [`units`], [`properties`], [`math`], [`diagnostics`], [`parallel`] |
 //! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
 //! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
@@ -48,7 +48,7 @@
 //!
 //! ```
 //! use kekule::{
-//!     geometry::Point3,
+//!     math::Point3,
 //!     smiles,
 //!     structure::{Model, Positions},
 //!     units::{Quantity, ANGSTROM},
@@ -153,9 +153,9 @@ pub mod descriptors;
 pub mod diagnostics;
 mod draft;
 pub mod dssp;
-pub mod geometry;
 pub mod interactions;
 mod io;
+pub mod math;
 pub mod molecule;
 pub mod parallel;
 pub mod properties;
@@ -795,7 +795,7 @@ pub mod molfile {
 /// merged into one model or reinterpreted as a sample set.
 ///
 /// ```
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::structure::{Model, Positions};
 /// use kekule::units::{Quantity, ANGSTROM};
 /// use kekule::{sdf, smiles};
@@ -858,7 +858,7 @@ pub mod sdf {
     /// symbol of a unit constant of [`crate::units`].
     ///
     /// ```
-    /// use kekule::geometry::Point3;
+    /// use kekule::math::Point3;
     /// use kekule::sdf;
     /// use kekule::structure::{Model, Order, Positions};
     /// use kekule::units::{Quantity, ANGSTROM};
@@ -1821,7 +1821,7 @@ pub mod hydrogens {
 ///
 /// ```
 /// use kekule::prelude::*;
-/// use kekule::{geometry::Point3, units::ANGSTROM};
+/// use kekule::{math::Point3, units::ANGSTROM};
 ///
 /// let mut editor = MoleculeEditor::new();
 /// let carbon = editor.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;

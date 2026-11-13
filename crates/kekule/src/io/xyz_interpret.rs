@@ -6,7 +6,7 @@ use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
     SourceLocation, UnsupportedContent,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
 use crate::structure::{Model, ModelBuilder, Positions, Sample, SampleSet};
 use crate::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyAtomIndex};

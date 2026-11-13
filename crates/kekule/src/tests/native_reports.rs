@@ -2,7 +2,6 @@
 //! every report field, and rejection of corrupt report sections.
 
 use crate::diagnostics::{DiagnosticKind, Format, SourceLocation};
-use crate::geometry::{Matrix3, Vector3};
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
     AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
@@ -11,6 +10,7 @@ use crate::io::{
     SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
     StructureInterpretIssue, StructureInterpretationReport, StructureSampleSetInterpretation,
 };
+use crate::math::{Matrix3, Vector3};
 use crate::molecule::AtomId;
 use crate::native::{self, NativeReadOptions, NativeSource, NativeWriteOptions};
 use crate::sequence::{CodeOrigin, ResidueCode};

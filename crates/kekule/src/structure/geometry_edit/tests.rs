@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    geometry::{Matrix3, PeriodicCell},
+    math::{Matrix3, PeriodicCell},
     properties::{PropertyKey, PropertyValue},
     smiles,
     structure::Positions,

@@ -10,7 +10,7 @@ pub const MAX_LATTICE_IMAGES: usize = 1_000_000;
 /// A nonfinite, unrepresentable, or excessively expensive periodic calculation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum PeriodicGeometryError {
+pub enum LatticeError {
     /// A Cartesian input is not a length; see the source.
     Unit(Box<UnitError>),
     /// The calculation exceeds numerical precision or range.
@@ -18,7 +18,7 @@ pub enum PeriodicGeometryError {
     /// More than [`MAX_LATTICE_IMAGES`] lattice images would need examination.
     LimitExceeded(LimitExceeded),
 }
-impl fmt::Display for PeriodicGeometryError {
+impl fmt::Display for LatticeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unit(_) => f.write_str("A periodic calculation input is not a length."),
@@ -38,17 +38,17 @@ impl fmt::Display for PeriodicGeometryError {
 
 /// The nearest-image search would examine `images` lattice images, more than
 /// [`MAX_LATTICE_IMAGES`]; `None` means more than `u64` counts.
-fn image_limit(images: Option<u64>) -> PeriodicGeometryError {
+fn image_limit(images: Option<u64>) -> LatticeError {
     let observed = images
         .and_then(|images| usize::try_from(images).ok())
         .unwrap_or(usize::MAX);
-    PeriodicGeometryError::LimitExceeded(LimitExceeded::new(
+    LatticeError::LimitExceeded(LimitExceeded::new(
         Resource::LatticeImages,
         MAX_LATTICE_IMAGES,
         observed.max(MAX_LATTICE_IMAGES + 1),
     ))
 }
-impl std::error::Error for PeriodicGeometryError {
+impl std::error::Error for LatticeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unit(error) => Some(error.as_ref()),
@@ -57,13 +57,13 @@ impl std::error::Error for PeriodicGeometryError {
     }
 }
 
-impl From<UnitError> for PeriodicGeometryError {
+impl From<UnitError> for LatticeError {
     fn from(error: UnitError) -> Self {
         Self::Unit(Box::new(error))
     }
 }
 
-fn canonical(vector: Quantity<Vector3>) -> Result<Vector3, PeriodicGeometryError> {
+fn canonical(vector: Quantity<Vector3>) -> Result<Vector3, LatticeError> {
     Ok(vector.value_in(CANONICAL_LENGTH_UNIT)?)
 }
 
@@ -75,20 +75,20 @@ fn canonical(vector: Quantity<Vector3>) -> Result<Vector3, PeriodicGeometryError
 /// dimensionless. No approximate image fallback
 /// is used when the one-million-candidate bound is exceeded.
 #[derive(Debug, Clone)]
-pub struct PeriodicGeometry {
+pub struct Lattice {
     basis: [Vector3; 3],
     reciprocal: [Vector3; 3],
     periodic: [bool; 3],
 }
 
-impl PeriodicGeometry {
+impl Lattice {
     /// Prepares the reciprocal basis of `cell`.
     ///
     /// # Errors
     ///
-    /// [`PeriodicGeometryError::NumericalFailure`] when the reciprocal basis is
+    /// [`LatticeError::NumericalFailure`] when the reciprocal basis is
     /// not finite, such as for a nearly degenerate cell.
-    pub fn new(cell: PeriodicCell) -> Result<Self, PeriodicGeometryError> {
+    pub fn new(cell: PeriodicCell) -> Result<Self, LatticeError> {
         let [a, b, c] = cell.vectors().into_value();
         let inverse_volume = 1.0 / a.dot(b.cross(c));
         let reciprocal = [
@@ -97,7 +97,7 @@ impl PeriodicGeometry {
             a.cross(b) * inverse_volume,
         ];
         if !reciprocal.iter().all(|v| v.is_finite()) {
-            return Err(PeriodicGeometryError::NumericalFailure);
+            return Err(LatticeError::NumericalFailure);
         }
         Ok(Self {
             basis: [a, b, c],
@@ -110,10 +110,10 @@ impl PeriodicGeometry {
     ///
     /// # Errors
     ///
-    /// [`PeriodicGeometryError::Unit`] when `vector` is not a length, and
-    /// [`PeriodicGeometryError::NumericalFailure`] when a coordinate is not
+    /// [`LatticeError::Unit`] when `vector` is not a length, and
+    /// [`LatticeError::NumericalFailure`] when a coordinate is not
     /// finite.
-    pub fn fractional(&self, vector: Quantity<Vector3>) -> Result<[f64; 3], PeriodicGeometryError> {
+    pub fn fractional(&self, vector: Quantity<Vector3>) -> Result<[f64; 3], LatticeError> {
         self.fractional_canonical(canonical(vector)?)
     }
 
@@ -131,7 +131,7 @@ impl PeriodicGeometry {
     pub fn minimum_image(
         &self,
         delta: Quantity<Vector3>,
-    ) -> Result<Quantity<Vector3>, PeriodicGeometryError> {
+    ) -> Result<Quantity<Vector3>, LatticeError> {
         self.minimum_image_canonical(canonical(delta)?)
             .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))
     }
@@ -144,15 +144,15 @@ impl PeriodicGeometry {
     ///
     /// # Errors
     ///
-    /// [`PeriodicGeometryError::Unit`] when `delta` is not a length,
-    /// [`PeriodicGeometryError::NumericalFailure`] when the search exceeds
+    /// [`LatticeError::Unit`] when `delta` is not a length,
+    /// [`LatticeError::NumericalFailure`] when the search exceeds
     /// numerical precision or range, and
-    /// [`PeriodicGeometryError::LimitExceeded`] when more than
+    /// [`LatticeError::LimitExceeded`] when more than
     /// [`MAX_LATTICE_IMAGES`] candidate images would need examination.
     pub fn nearest_image(
         &self,
         delta: Quantity<Vector3>,
-    ) -> Result<(Quantity<Vector3>, [i64; 3]), PeriodicGeometryError> {
+    ) -> Result<(Quantity<Vector3>, [i64; 3]), LatticeError> {
         self.nearest_image_canonical(canonical(delta)?)
             .map(|(vector, images)| (Quantity::new(vector, CANONICAL_LENGTH_UNIT), images))
     }
@@ -161,22 +161,19 @@ impl PeriodicGeometry {
     ///
     /// # Errors
     ///
-    /// [`PeriodicGeometryError::NumericalFailure`] when the search exceeds
+    /// [`LatticeError::NumericalFailure`] when the search exceeds
     /// numerical precision or range, and
-    /// [`PeriodicGeometryError::LimitExceeded`] when more than
+    /// [`LatticeError::LimitExceeded`] when more than
     /// [`MAX_LATTICE_IMAGES`] integer candidates would need examination.
-    pub fn shortest_translation(&self) -> Result<Quantity<Vector3>, PeriodicGeometryError> {
+    pub fn shortest_translation(&self) -> Result<Quantity<Vector3>, LatticeError> {
         self.shortest_translation_canonical()
             .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))
     }
 
-    pub(crate) fn fractional_canonical(
-        &self,
-        vector: Vector3,
-    ) -> Result<[f64; 3], PeriodicGeometryError> {
+    pub(crate) fn fractional_canonical(&self, vector: Vector3) -> Result<[f64; 3], LatticeError> {
         let fractional = self.reciprocal.map(|dual| dual.dot(vector));
         if !fractional.iter().all(|v| v.is_finite()) {
-            return Err(PeriodicGeometryError::NumericalFailure);
+            return Err(LatticeError::NumericalFailure);
         }
         Ok(fractional)
     }
@@ -187,10 +184,7 @@ impl PeriodicGeometry {
             + self.basis[2] * fractional[2]
     }
 
-    pub(crate) fn minimum_image_canonical(
-        &self,
-        delta: Vector3,
-    ) -> Result<Vector3, PeriodicGeometryError> {
+    pub(crate) fn minimum_image_canonical(&self, delta: Vector3) -> Result<Vector3, LatticeError> {
         self.nearest_image_canonical(delta)
             .map(|(vector, _)| vector)
     }
@@ -198,7 +192,7 @@ impl PeriodicGeometry {
     pub(crate) fn nearest_image_canonical(
         &self,
         delta: Vector3,
-    ) -> Result<(Vector3, [i64; 3]), PeriodicGeometryError> {
+    ) -> Result<(Vector3, [i64; 3]), LatticeError> {
         let fractional = self.fractional_canonical(delta)?;
         let mut images = [0.0; 3];
         for axis in 0..3 {
@@ -210,7 +204,7 @@ impl PeriodicGeometry {
         let mut best_images = images.map(|n| n as i64);
         let mut best_squared = best.norm_squared();
         if !best_squared.is_finite() {
-            return Err(PeriodicGeometryError::NumericalFailure);
+            return Err(LatticeError::NumericalFailure);
         }
         // In an exactly orthogonal basis the three image choices are independent.
         // Besides avoiding enumeration, this handles very elongated rectangular
@@ -237,7 +231,7 @@ impl PeriodicGeometry {
                     || !high.is_finite()
                     || low.abs().max(high.abs()) >= 2.0_f64.powi(52)
                 {
-                    return Err(PeriodicGeometryError::NumericalFailure);
+                    return Err(LatticeError::NumericalFailure);
                 }
                 let (low, high) = (low as i64, high as i64);
                 let count = (high - low + 1).max(0) as u64;
@@ -265,21 +259,21 @@ impl PeriodicGeometry {
     }
 }
 
-fn checked_image(value: f64) -> Result<f64, PeriodicGeometryError> {
+fn checked_image(value: f64) -> Result<f64, LatticeError> {
     if !value.is_finite() || value.abs() >= 2.0_f64.powi(52) {
-        return Err(PeriodicGeometryError::NumericalFailure);
+        return Err(LatticeError::NumericalFailure);
     }
     Ok(value.round())
 }
 
-impl PeriodicGeometry {
+impl Lattice {
     /// Reciprocal basis lengths, for conservative fractional neighbor bounds.
     pub(crate) fn reciprocal_norms(&self) -> [f64; 3] {
         self.reciprocal.map(|v| v.norm())
     }
 }
-impl PeriodicGeometry {
-    pub(crate) fn shortest_translation_canonical(&self) -> Result<Vector3, PeriodicGeometryError> {
+impl Lattice {
+    pub(crate) fn shortest_translation_canonical(&self) -> Result<Vector3, LatticeError> {
         let mut best = self
             .basis
             .iter()
@@ -327,7 +321,7 @@ impl PeriodicGeometry {
             }
         }
         if !best.is_finite() || best.norm() == 0.0 {
-            return Err(PeriodicGeometryError::NumericalFailure);
+            return Err(LatticeError::NumericalFailure);
         }
         Ok(best)
     }

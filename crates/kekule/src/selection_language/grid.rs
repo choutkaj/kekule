@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::geometry::Point3;
+use crate::math::Point3;
 
 /// A grid maps every cell of its box, at under two bits a cell, when the box
 /// has at most this many cells per reference point, plus
@@ -737,7 +737,7 @@ fn slot(dims: Cell, (x, y, z): Cell) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{Cells, Grid};
-    use crate::geometry::Point3;
+    use crate::math::Point3;
 
     /// Marks every candidate within `cutoff` (inclusive, Cartesian) of any
     /// reference point.

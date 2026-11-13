@@ -27,7 +27,7 @@ use std::fmt;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use kekule::geometry::{Point3, Vector3};
+use kekule::math::{Point3, Vector3};
 use kekule::structure::{DenseArrayError, Model, ModelView, Positions, StructureError};
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
@@ -172,7 +172,7 @@ impl Default for MinimizeOptions {
 /// applies to any view sharing that layout.
 ///
 /// ```
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::smiles;
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER, NANOMETER};

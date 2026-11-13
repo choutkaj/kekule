@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::structure::ModelView;
 use crate::topology::{Chain, ChainId, Hierarchy, Residue, ResidueClass, ResidueId, Topology};
 use crate::units::ANGSTROM;

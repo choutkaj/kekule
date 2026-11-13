@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use kekule::geometry::PeriodicCell;
+use kekule::math::PeriodicCell;
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::structure::{
     Forces, Order, Place, Positions, Sample, SampleRead, SampleReadError, SampleSet, SampleView,
@@ -73,7 +73,7 @@ impl Frame {
     }
 
     #[must_use]
-    pub(crate) fn with_cell(mut self, cell: kekule::geometry::PeriodicCell) -> Self {
+    pub(crate) fn with_cell(mut self, cell: kekule::math::PeriodicCell) -> Self {
         self.sample = self.sample.with_cell(cell);
         self
     }

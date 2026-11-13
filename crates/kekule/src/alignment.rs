@@ -37,7 +37,7 @@
 //!
 //! ```
 //! use kekule::alignment::fit;
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::smiles;
 //! use kekule::structure::{Model, Positions};
 //! use kekule::topology::AtomSelection;
@@ -81,7 +81,7 @@
 use std::fmt;
 
 use crate::diagnostics::Cancelled;
-use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
+use crate::math::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
 use crate::structure::{ModelView, SampleReadError, StructureError};
 use crate::topology::{AtomSelection, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -1241,7 +1241,7 @@ fn matrix_is_finite(matrix: Matrix) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::PeriodicCell;
+    use crate::math::PeriodicCell;
     use crate::molecule::{Atom, BondOrder, Element};
     use crate::structure::{Model, Positions};
     use crate::topology::{AtomSelection, Topology, TopologyBuilder};

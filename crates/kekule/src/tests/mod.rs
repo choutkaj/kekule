@@ -1,6 +1,6 @@
 use crate::chemistry::*;
 use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::*;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,

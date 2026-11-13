@@ -2,7 +2,7 @@
 //! oriented on the atom's existing neighbors, staggered against the
 //! substituents of a single neighbor.
 use super::AtomShape;
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 
 /// The tetrahedral angle, `acos(-1/3)`.
 const TETRAHEDRAL: f64 = 1.910_633_236_249_018_5;

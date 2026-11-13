@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::structure::{Model, ModelEditor, Positions};
 use kekule::topology::edit::{EditAtomId, EditBondId, EditCorrespondence, TopologyEditor};

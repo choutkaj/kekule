@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::{AsModelView, ModelView, Positions, SampleSetError};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
@@ -89,7 +89,7 @@ impl MoleculeImager {
     /// ```
     /// use std::sync::Arc;
     ///
-    /// use kekule::geometry::{PeriodicCell, Point3, Vector3};
+    /// use kekule::math::{PeriodicCell, Point3, Vector3};
     /// use kekule::structure::{Positions, Sample, SampleSet};
     /// use kekule::units::{Quantity, NANOMETER};
     /// use kekule::{smiles, topology::Topology};

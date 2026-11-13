@@ -1,5 +1,5 @@
 use kekule::{
-    geometry::Point3,
+    math::Point3,
     smiles,
     structure::{
         measure::{self, BondDihedral},

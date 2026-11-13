@@ -292,7 +292,7 @@ fn any_sample_may_carry_site_fields_and_dynamics() {
     assert_eq!(model.as_model_view().kind(), StructureKind::Model);
     assert_eq!(model.occupancy(ATOM0), Some(0.5));
     // A rigid motion rotates the velocities with the positions.
-    use crate::geometry::{Matrix3, RigidTransform};
+    use crate::math::{Matrix3, RigidTransform};
     let turn = Matrix3::from_columns(
         Vector3::new(0.0, 1.0, 0.0),
         Vector3::new(-1.0, 0.0, 0.0),

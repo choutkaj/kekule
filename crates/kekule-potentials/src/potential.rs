@@ -11,7 +11,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use kekule::geometry::Vector3;
+use kekule::math::Vector3;
 use kekule::structure::ModelView;
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIENT_UNIT};

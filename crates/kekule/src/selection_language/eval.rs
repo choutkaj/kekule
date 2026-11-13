@@ -12,7 +12,7 @@ use super::{
     HostRequest, HostRole, HostTerm, HostValue, ReferencePoints, SelectEvaluateError,
     SelectEvaluateOptions, SelectionExpr,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{Element, Molecule};
 use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::ModelView;

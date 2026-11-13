@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use crate::geometry::{PeriodicCell, PeriodicCellError, RigidTransform};
+use crate::math::{PeriodicCell, PeriodicCellError, RigidTransform};
 use crate::properties::{PropertyError, StructureProperties};
 use crate::topology::TopologySubset;
 use crate::topology::{Topology, TopologyAtomIndex};
@@ -138,7 +138,7 @@ macro_rules! structure_readers {
         }
 
         /// The periodic cell, or `None` for a non-periodic structure.
-        pub fn cell(&self) -> Option<&$crate::geometry::PeriodicCell> {
+        pub fn cell(&self) -> Option<&$crate::math::PeriodicCell> {
             self.storage_ref().cell.as_ref()
         }
 
@@ -189,7 +189,7 @@ macro_rules! structure_mutators {
     () => {
         /// Replaces every position without changing the atom count. Units,
         /// dimensions, and finite values are checked before mutation.
-        pub fn set_positions<T: AsRef<[$crate::geometry::Point3]>>(
+        pub fn set_positions<T: AsRef<[$crate::math::Point3]>>(
             &mut self,
             positions: $crate::units::Quantity<T>,
         ) -> Result<(), $crate::structure::StructureError> {
@@ -200,14 +200,14 @@ macro_rules! structure_mutators {
         pub fn set_position_at(
             &mut self,
             atom: $crate::topology::TopologyAtomIndex,
-            position: $crate::units::Quantity<$crate::geometry::Point3>,
+            position: $crate::units::Quantity<$crate::math::Point3>,
         ) -> Result<(), $crate::structure::StructureError> {
             Ok(self.storage().positions.set(atom.index(), position)?)
         }
 
         /// Replaces the periodic cell; `None` makes the structure non-periodic.
         /// Positions are not wrapped or rescaled.
-        pub fn set_cell(&mut self, cell: Option<$crate::geometry::PeriodicCell>) {
+        pub fn set_cell(&mut self, cell: Option<$crate::math::PeriodicCell>) {
             self.storage().cell = cell;
         }
 

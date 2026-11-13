@@ -15,7 +15,7 @@
 //! [`BondDihedral`] once to reuse its topology-bound references across frames.
 //!
 //! ```
-//! use kekule::{geometry::Point3, smiles, units::{Quantity, NANOMETER}};
+//! use kekule::{math::Point3, smiles, units::{Quantity, NANOMETER}};
 //! use kekule::structure::{measure::{self, ConnectivityCheck}, Model, Positions};
 //!
 //! let positions = Positions::new(Quantity::new(
@@ -57,7 +57,7 @@
 use std::fmt;
 
 use crate::diagnostics::Capitalized;
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError};
 use crate::units::{Quantity, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 

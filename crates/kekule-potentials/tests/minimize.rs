@@ -4,7 +4,7 @@
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use kekule::geometry::{Point3, Vector3};
+use kekule::math::{Point3, Vector3};
 use kekule::structure::{Model, ModelView, Positions};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{
