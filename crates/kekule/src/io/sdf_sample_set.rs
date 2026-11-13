@@ -7,8 +7,9 @@ use crate::units::{named_unit, Quantity, KELVIN, KILOJOULE_PER_MOLE};
 
 use super::sdf_document::SdfRecordInterpretation;
 use super::sdf_write::{
-    SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD, SDF_ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD,
-    SDF_STATE_FIELD, SDF_STEP_FIELD, SDF_TEMPERATURE_FIELD, SDF_WEIGHT_FIELD,
+    SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD, SDF_ENERGY_FIELD, SDF_MEMBER_FIELD,
+    SDF_REPRESENTATIVE_FIELD, SDF_STATE_FIELD, SDF_STEP_FIELD, SDF_TEMPERATURE_FIELD,
+    SDF_WEIGHT_FIELD,
 };
 
 fn set_error(error: SampleSetError) -> FormatError {
@@ -61,6 +62,9 @@ fn field<'r>(
 
 /// The ensemble data fields of one record.
 struct RecordFields {
+    /// Whether [`SDF_MEMBER_FIELD`] marks the record outside the
+    /// distribution.
+    outside: bool,
     weight: Option<f64>,
     state: Option<usize>,
     representative: bool,
@@ -109,22 +113,57 @@ impl RecordFields {
                 ))
             }
         };
-        Ok(Self {
+        let outside = match text(SDF_MEMBER_FIELD)? {
+            None => false,
+            Some("false") => true,
+            Some(value) => {
+                return Err(invalid(
+                    DiagnosticKind::InvalidValue,
+                    number,
+                    SDF_MEMBER_FIELD,
+                    &format!("holds {value:?}, not \"false\"."),
+                ))
+            }
+        };
+        let fields = Self {
+            outside,
             weight: real(SDF_WEIGHT_FIELD)?,
             state,
             representative,
             energy: real(SDF_ENERGY_FIELD)?,
             temperature: real(SDF_TEMPERATURE_FIELD)?,
-        })
+        };
+        if outside {
+            // A record outside the distribution carries none of a member's
+            // fields.
+            if let Some(name) = fields.member_field() {
+                return Err(invalid(
+                    DiagnosticKind::Inconsistent,
+                    number,
+                    name,
+                    "is on a record outside the distribution.",
+                ));
+            }
+        }
+        Ok(fields)
+    }
+
+    /// The first member data field the record has, if any.
+    fn member_field(&self) -> Option<&'static str> {
+        [
+            (self.weight.is_some(), SDF_WEIGHT_FIELD),
+            (self.state.is_some(), SDF_STATE_FIELD),
+            (self.representative, SDF_REPRESENTATIVE_FIELD),
+            (self.energy.is_some(), SDF_ENERGY_FIELD),
+            (self.temperature.is_some(), SDF_TEMPERATURE_FIELD),
+        ]
+        .into_iter()
+        .find_map(|(present, name)| present.then_some(name))
     }
 
     /// Whether the record has any ensemble data field.
     fn any(&self) -> bool {
-        self.weight.is_some()
-            || self.state.is_some()
-            || self.representative
-            || self.energy.is_some()
-            || self.temperature.is_some()
+        self.outside || self.member_field().is_some()
     }
 }
 
@@ -135,7 +174,8 @@ impl RecordFields {
 ///
 /// The set has a distribution when a record has a distribution data field
 /// ([`SDF_WEIGHT_FIELD`], [`SDF_STATE_FIELD`], [`SDF_REPRESENTATIVE_FIELD`],
-/// [`SDF_ENERGY_FIELD`], or [`SDF_TEMPERATURE_FIELD`]), and none otherwise.
+/// [`SDF_ENERGY_FIELD`], [`SDF_TEMPERATURE_FIELD`], or [`SDF_MEMBER_FIELD`]),
+/// and none otherwise.
 /// The distribution has weights only when a record has [`SDF_WEIGHT_FIELD`],
 /// each sample's weight being its record's (1.0 when absent). Records
 /// without [`SDF_STATE_FIELD`] are one state each, with the energy of
@@ -143,8 +183,12 @@ impl RecordFields {
 /// the SDF writer emits for samples of a distribution, are grouped by it:
 /// states are numbered in ascending order of its values, each represented
 /// by the one record marked with [`SDF_REPRESENTATIVE_FIELD`], which alone
-/// may carry the state's energy. [`SDF_TEMPERATURE_FIELD`], in kelvin, must
-/// be absent from every record or the same on every record.
+/// may carry the state's energy. A record marked with [`SDF_MEMBER_FIELD`]
+/// is outside the distribution, which is then over the other records, and
+/// carries no other distribution field; a record is never taken as outside
+/// for lacking fields. [`SDF_TEMPERATURE_FIELD`], in kelvin, must be absent
+/// from every member or the same on every member. Records that all lie
+/// outside the distribution give a distribution without members.
 ///
 /// The samples are ordered by the records' [`SDF_STEP_FIELD`] or, in the
 /// unit [`SDF_COORDINATE_UNIT_FIELD`] names, [`SDF_COORDINATE_FIELD`], when
@@ -182,25 +226,30 @@ pub(crate) fn sdf_sample_set<'a>(
     }
     let mut set = SampleSet::from_samples(topology, samples).map_err(set_error)?;
     if fields.iter().any(RecordFields::any) {
+        let members = (0..fields.len())
+            .filter(|&index| !fields[index].outside)
+            .collect::<Vec<_>>();
+        let partition = partition(&members, &fields)?;
         let mut distribution =
-            Distribution::new(Members::All, partition(&fields)?).map_err(set_error)?;
+            Distribution::new(Members::Subset(members.clone()), partition).map_err(set_error)?;
         if fields.iter().any(|read| read.weight.is_some()) {
+            let weights = members.iter().map(|&index| weights[index]).collect();
             distribution = distribution.with_weights(weights).map_err(set_error)?;
         }
-        let temperature = temperature(&fields)?;
+        let temperature = temperature(&members, &fields)?;
         set.set_distribution(Some(distribution))
             .map_err(set_error)?;
         let mut distribution = set
             .distribution_mut()
             .expect("the distribution was just installed");
-        for (index, read) in fields.iter().enumerate() {
-            let Some(energy) = read.energy else {
+        for (position, &index) in members.iter().enumerate() {
+            let Some(energy) = fields[index].energy else {
                 continue;
             };
             let number = index + 1;
             let partition = distribution.partition();
-            let state = partition.assignments()[index];
-            if partition.representatives()[state] != index {
+            let state = partition.assignments()[position];
+            if partition.representatives()[state] != position {
                 return Err(invalid(
                     DiagnosticKind::Inconsistent,
                     number,
@@ -227,7 +276,7 @@ pub(crate) fn sdf_sample_set<'a>(
             .map_err(|error| {
                 invalid(
                     DiagnosticKind::InvalidValue,
-                    1,
+                    members[0] + 1,
                     SDF_TEMPERATURE_FIELD,
                     "holds an invalid temperature.",
                 )
@@ -325,7 +374,7 @@ fn record_order(records: &[&SdfRecordInterpretation]) -> Result<Option<Order>, F
                             DiagnosticKind::Inconsistent,
                             index + 1,
                             SDF_COORDINATE_UNIT_FIELD,
-                            "differs from that of the first record.",
+                            "differs from that of record 1.",
                         ));
                     }
                     let value = required(index, SDF_COORDINATE_FIELD)?;
@@ -344,14 +393,16 @@ fn record_order(records: &[&SdfRecordInterpretation]) -> Result<Option<Order>, F
     }
 }
 
-/// One state per record without state fields; otherwise the states the
-/// fields name, numbered in ascending order of their values.
-fn partition(fields: &[RecordFields]) -> Result<Partition, FormatError> {
-    let stated = fields.iter().filter(|read| read.state.is_some()).count();
-    if stated == 0 {
-        return Ok(Partition::state_per_sample(fields.len()));
+/// One state per member record without state fields; otherwise the states
+/// the fields name, numbered in ascending order of their values. `members`
+/// lists the records of the members, by index into `fields`, and the
+/// partition is by member position.
+fn partition(members: &[usize], fields: &[RecordFields]) -> Result<Partition, FormatError> {
+    let stated = members.iter().any(|&index| fields[index].state.is_some());
+    if !stated {
+        return Ok(Partition::state_per_sample(members.len()));
     }
-    if let Some(missing) = fields.iter().position(|read| read.state.is_none()) {
+    if let Some(&missing) = members.iter().find(|&&index| fields[index].state.is_none()) {
         return Err(invalid(
             DiagnosticKind::Inconsistent,
             missing + 1,
@@ -359,21 +410,22 @@ fn partition(fields: &[RecordFields]) -> Result<Partition, FormatError> {
             "is missing. Other records have it.",
         ));
     }
-    let mut values = fields
+    let mut values = members
         .iter()
-        .filter_map(|read| read.state)
+        .filter_map(|&index| fields[index].state)
         .collect::<Vec<_>>();
     values.sort_unstable();
     values.dedup();
-    let mut assignments = Vec::with_capacity(fields.len());
+    let mut assignments = Vec::with_capacity(members.len());
     let mut representatives = vec![None; values.len()];
-    for (index, read) in fields.iter().enumerate() {
-        let value = read.state.expect("every record has a state");
+    for (position, &index) in members.iter().enumerate() {
+        let read = &fields[index];
+        let value = read.state.expect("every member has a state");
         let state = values
             .binary_search(&value)
             .expect("every state value is listed");
         assignments.push(state);
-        if read.representative && representatives[state].replace(index).is_some() {
+        if read.representative && representatives[state].replace(position).is_some() {
             return Err(invalid(
                 DiagnosticKind::Inconsistent,
                 index + 1,
@@ -393,7 +445,7 @@ fn partition(fields: &[RecordFields]) -> Result<Partition, FormatError> {
                     .expect("every state has a record");
                 invalid(
                     DiagnosticKind::Inconsistent,
-                    first + 1,
+                    members[first] + 1,
                     SDF_REPRESENTATIVE_FIELD,
                     &format!("marks no record of state {}.", values[state]),
                 )
@@ -404,19 +456,23 @@ fn partition(fields: &[RecordFields]) -> Result<Partition, FormatError> {
         .expect("every state is numbered and represented by one of its records"))
 }
 
-/// The temperature every record states, if any does.
-fn temperature(fields: &[RecordFields]) -> Result<Option<f64>, FormatError> {
-    let first = fields.first().and_then(|read| read.temperature);
+/// The temperature every member's record states, if any does; the first
+/// member's record is the reference.
+fn temperature(members: &[usize], fields: &[RecordFields]) -> Result<Option<f64>, FormatError> {
+    let Some(&reference) = members.first() else {
+        return Ok(None);
+    };
+    let first = fields[reference].temperature;
     let bits = first.map(f64::to_bits);
-    if let Some(index) = fields
+    if let Some(&index) = members
         .iter()
-        .position(|read| read.temperature.map(f64::to_bits) != bits)
+        .find(|&&index| fields[index].temperature.map(f64::to_bits) != bits)
     {
         return Err(invalid(
             DiagnosticKind::Inconsistent,
             index + 1,
             SDF_TEMPERATURE_FIELD,
-            "differs from that of the first record.",
+            &format!("differs from that of record {}.", reference + 1),
         ));
     }
     Ok(first)

@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::alignment::{self, AlignmentOptions};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::properties::OwnerProperties;
 use crate::structure::{
     subset_rows, DenseArrayError, Distribution, Model, ModelError, Order, Positions, Sample,
     SampleRead, SampleReadError, SampleView, StructureError,
@@ -29,7 +30,8 @@ use super::periodic::{MoleculeImager, PeriodicError};
 ///    of it. A sample without a cell skips this step, where those two
 ///    functions fail with
 ///    [`PeriodicError::MissingCell`](super::periodic::PeriodicError::MissingCell),
-///    so a trajectory whose frames have no box is read as stored.
+///    so a trajectory whose frames have no box is read as stored;
+///    [`Processed::skipped_periodic_steps`] tells such a sample.
 /// 2. Center ([`Self::with_center`]): the sample translated so that the
 ///    centroid of the centered atoms lies at the center of its cell, half
 ///    the sum of all three cell vectors, periodic or not. Centering on the
@@ -486,6 +488,27 @@ impl<R: SampleRead> Processed<R> {
         (self.inner, self.steps)
     }
 
+    /// Whether this reader passed `sample`, one it read, through making
+    /// whole and wrapping unchanged because the sample has no cell: the
+    /// steps make whole or wrap, and the sample has no cell. Every step
+    /// keeps a sample's cell or its lack of one, so the sample read tells.
+    /// The other steps ran on it as on any sample.
+    ///
+    /// ```
+    /// use kekule::structure::{Positions, Sample, SampleRead, SampleSet};
+    /// use kekule::traj::{Processed, ProcessingSteps};
+    ///
+    /// let topology = kekule::smiles::to_topology("O")?;
+    /// let mut set = SampleSet::new(topology.clone());
+    /// set.push(Sample::new(Positions::zeros(topology.atom_count())), None)?;
+    /// let whole = Processed::new(&set, ProcessingSteps::default().with_whole(true))?;
+    /// assert!(whole.skipped_periodic_steps(&whole.read(0)?));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn skipped_periodic_steps(&self, sample: &Sample) -> bool {
+        (self.steps.whole || self.steps.wrap.is_some()) && sample.cell().is_none()
+    }
+
     /// The model fitting superposes onto.
     fn reference_model(&self, reference: &FitReference) -> Result<Model, ProcessingError> {
         match reference {
@@ -666,6 +689,10 @@ impl<R: SampleRead> SampleRead for Processed<R> {
 
     fn distribution(&self) -> Option<&Distribution> {
         self.inner.distribution()
+    }
+
+    fn properties(&self) -> Option<&OwnerProperties> {
+        self.inner.properties()
     }
 
     /// Sample 0, which the reader keeps; `None` for every other sample.

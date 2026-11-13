@@ -2,7 +2,8 @@
 
 use std::fmt;
 
-use crate::structure::{Forces, Velocities};
+use crate::properties::OwnerProperties;
+use crate::structure::{Distribution, Forces, Velocities};
 use crate::units::Quantity;
 
 use super::{Place, Sample, SampleRead, SampleView};
@@ -56,6 +57,23 @@ impl<'a> SampleContext<'a> {
                 .distribution()
                 .is_some_and(|distribution| distribution.membership(view.index).is_none()),
             Source::Frame(..) => false,
+        }
+    }
+
+    /// The distribution of the sample's set, whether or not the sample is a
+    /// member.
+    pub(crate) fn distribution(self) -> Option<&'a Distribution> {
+        match self.source {
+            Source::Set(view) => view.reader.distribution(),
+            Source::Frame(..) => None,
+        }
+    }
+
+    /// The properties of the sample's set, when its reader has them.
+    pub(crate) fn set_properties(self) -> Option<&'a OwnerProperties> {
+        match self.source {
+            Source::Set(view) => view.reader.properties(),
+            Source::Frame(..) => None,
         }
     }
 

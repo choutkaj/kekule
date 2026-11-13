@@ -23,6 +23,7 @@ fn v3000_fixed_hydrogens_use_molecular_valence_not_query_constraints() {
                     .with_version(molfile::MolfileWriteVersion::V3000),
             )
             .unwrap()
+            .0
         } else {
             molfile::write(
                 &original,
@@ -30,6 +31,7 @@ fn v3000_fixed_hydrogens_use_molecular_valence_not_query_constraints() {
                     .with_version(molfile::MolfileWriteVersion::V3000),
             )
             .unwrap()
+            .0
         };
         assert!(!written.contains("HCOUNT="), "{written}");
         assert!(written.contains("VAL="), "{written}");
@@ -82,7 +84,8 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
         model,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     let parsed = molfile::parse_str(&direct, Default::default()).unwrap();
     check(parsed.interpret(Default::default()).unwrap().model());
     for version in [
@@ -90,7 +93,7 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
         molfile::MolfileWriteVersion::Auto,
     ] {
         let options = molfile::MolfileWriteOptions::default().with_version(version);
-        let text = molfile::write(model, options).unwrap();
+        let text = molfile::write(model, options).unwrap().0;
         assert!(text.lines().nth(3).unwrap().ends_with("V3000"));
         let mut sink = Vec::new();
         molfile::write_to(&mut sink, model, options).unwrap();
@@ -101,7 +104,8 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
             [model],
             sdf::SdfWriteOptions::default().with_version(version),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         let parsed = sdf::parse_str(&text, Default::default()).unwrap();
         check(
             parsed.records()[0]
@@ -136,7 +140,8 @@ fn v3000_stereo_projection_uses_unrounded_coordinates() {
             interpreted.model(),
             molfile::MolfileWriteOptions::default().with_version(version),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert!(text.lines().nth(3).unwrap().ends_with("V3000"));
         let reparsed = read_molfile(&text).unwrap();
         assert_eq!(&reparsed.stereo_elements().next().unwrap().1.kind, expected);
@@ -207,13 +212,15 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
                     molfile::MolfileWriteOptions::default()
                         .with_version(molfile::MolfileWriteVersion::V2000),
                 )
-                .unwrap(),
+                .unwrap()
+                .0,
                 molfile::write(
                     interpreted.model(),
                     molfile::MolfileWriteOptions::default()
                         .with_version(molfile::MolfileWriteVersion::V3000),
                 )
-                .unwrap(),
+                .unwrap()
+                .0,
             ] {
                 let mut reread = read_molfile(&output).unwrap();
                 perceive(&mut reread).unwrap();
@@ -281,7 +288,8 @@ fn v3000_atom_cfg_checks_redundant_wedges_and_unknown_precedence() {
         interpreted.model(),
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     let atom_line = wedged
         .lines()
         .find(|line| line.starts_with("M  V30 1 C "))
@@ -378,13 +386,15 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V2000),
             )
-            .unwrap(),
+            .unwrap()
+            .0,
             molfile::write(
                 &model,
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V3000),
             )
-            .unwrap(),
+            .unwrap()
+            .0,
         ] {
             let mut reread = read_molfile(&output).unwrap();
             assert_eq!(reread.stereo_elements().count(), 1);
@@ -458,13 +468,15 @@ fn molfile_model_preserves_drawn_stereo_on_large_ring_imines() {
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V2000),
         )
-        .unwrap(),
+        .unwrap()
+        .0,
         molfile::write(
             &model,
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V3000),
         )
-        .unwrap(),
+        .unwrap()
+        .0,
     ] {
         let actual = read_molfile(&output).unwrap();
         assert_eq!(actual.stereo_elements().count(), 1);
@@ -517,7 +529,8 @@ fn molfile_drawn_double_bond_unknown_annotations_override_coordinates() {
         &model,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     for marked in [
         source.replace("M  V30 2 2 2 3", "M  V30 2 2 2 3 CFG=2"),
         source.replace("M  V30 1 1 1 2", "M  V30 1 1 1 2 CFG=2"),
@@ -560,13 +573,15 @@ fn molfile_model_does_not_promote_unasserted_alkene_geometry_to_specified_stereo
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V2000),
         )
-        .unwrap(),
+        .unwrap()
+        .0,
         molfile::write(
             &model,
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V3000),
         )
-        .unwrap(),
+        .unwrap()
+        .0,
     ] {
         let mut reread = read_molfile(&output).unwrap();
         assert_eq!(reread.stereo_elements().count(), 1);
@@ -660,7 +675,8 @@ fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
             interpretation.model(),
             molfile::MolfileWriteOptions::default().with_version(version),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert!(read_molfile(&written)
             .unwrap()
             .stereo_elements()
@@ -721,13 +737,15 @@ fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V2000),
             )
-            .unwrap(),
+            .unwrap()
+            .0,
             molfile::write(
                 &model,
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V3000),
             )
-            .unwrap(),
+            .unwrap()
+            .0,
         ] {
             let mut reread = read_molfile(&output).unwrap();
             perceive(&mut reread).unwrap();
@@ -884,7 +902,8 @@ M  END
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V3000),
         )
-        .expect("canonical stereo should project with its drawing");
+        .expect("canonical stereo should project with its drawing")
+        .0;
         let (reparsed, report) =
             read_molfile_with_report(&written).expect("projected V3000 stereo should re-interpret");
         assert_eq!(report.created_stereo_elements().len(), 1);
@@ -941,7 +960,8 @@ M  END
         &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .expect("unknown stereo should project");
+    .expect("unknown stereo should project")
+    .0;
     assert!(written.contains("CFG=2"));
     let reparsed = read_molfile(&written).expect("projected unknown stereo should interpret");
     assert!(reparsed.stereo_elements().any(|(_, element)| matches!(
@@ -1292,7 +1312,8 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         molecule.working(),
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .expect("V3000 should write");
+    .expect("V3000 should write")
+    .0;
     assert_eq!(written.lines().nth(1), Some("  kekule            2D"));
     assert!(written.contains("V3000"));
     assert!(written.contains("CHG=1"));
@@ -1371,7 +1392,8 @@ fn mol_writers_encode_single_electron_radicals_as_doublets() {
         &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     assert!(
         v2000.lines().any(|line| line == "M  RAD  1   1   2"),
         "{v2000}"
@@ -1380,7 +1402,8 @@ fn mol_writers_encode_single_electron_radicals_as_doublets() {
         &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     assert!(v3000.contains(" RAD=2"), "{v3000}");
     for text in [v2000, v3000] {
         let reread = molfile::parse_str(&text, Default::default())
@@ -1403,7 +1426,8 @@ fn v3000_explicit_zero_radical_matches_the_default() {
         &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     let explicit = source.replace("M  V30 1 C 0 0 0 0", "M  V30 1 C 0 0 0 0 RAD=0");
     assert_ne!(source, explicit, "fixture must contain an explicit RAD=0");
     let parsed = read_molfile(&explicit).expect("RAD=0 is a supported nonradical atom");
@@ -1414,7 +1438,8 @@ fn v3000_explicit_zero_radical_matches_the_default() {
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V3000)
         )
-        .unwrap(),
+        .unwrap()
+        .0,
         source
     );
 }

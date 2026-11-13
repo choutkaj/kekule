@@ -154,6 +154,9 @@ pub(crate) fn sample_field(field: StructureField) -> TrajectoryField {
         StructureField::AtomProperties => TrajectoryField::AtomProperties,
         StructureField::BondProperties => TrajectoryField::BondProperties,
         StructureField::Properties => TrajectoryField::Properties,
+        StructureField::SetProperties => TrajectoryField::CollectionProperties,
+        StructureField::Occupancies => TrajectoryField::Occupancies,
+        StructureField::BFactors => TrajectoryField::BFactors,
     }
 }
 

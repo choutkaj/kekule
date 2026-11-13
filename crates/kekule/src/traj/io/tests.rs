@@ -42,3 +42,47 @@ fn index_hard_capacity_uses_the_smallest_configured_bound() {
     assert_eq!(next_index_capacity(64, 64, 125), Some(125));
     assert_eq!(next_index_capacity(125, 125, 125), None);
 }
+
+/// Cloning a set over a file reads nothing and shares the frame index;
+/// reading a sample of the clone reads the file.
+#[test]
+fn a_clone_of_a_set_over_a_file_reads_nothing() {
+    use crate::geometry::Point3;
+    use crate::structure::{Positions, Sample, SampleRead, SampleSet};
+    use crate::units::{Quantity, NANOMETER};
+
+    let topology = crate::smiles::to_topology("CC").unwrap();
+    let mut set = SampleSet::new(std::sync::Arc::clone(&topology));
+    for shift in [0.0, 0.1, 0.2] {
+        let points = vec![Point3::new(shift, 0.0, 0.0), Point3::new(0.15, shift, 0.0)];
+        let positions = Positions::new(Quantity::new(points, NANOMETER)).unwrap();
+        set.push(Sample::new(positions), None).unwrap();
+    }
+    let path = std::env::temp_dir().join(format!(
+        "kekule-clone-reads-nothing-{}.xyz",
+        std::process::id()
+    ));
+    write_sample_set(
+        &path,
+        &set,
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
+    )
+    .unwrap();
+    let opened =
+        open_indexed_sample_set(&path, topology, TrajectoryOpenOptions::default()).unwrap();
+    let reads = || super::shared_file::READS.with(std::cell::Cell::get);
+
+    let before = reads();
+    let copy = opened.clone();
+    assert_eq!(reads(), before);
+    assert_eq!(copy.len(), 3);
+    assert_eq!(copy.order(), opened.order());
+    assert_eq!(
+        copy.storage().frame_index().frame_offsets().as_ptr(),
+        opened.storage().frame_index().frame_offsets().as_ptr()
+    );
+    assert_eq!(copy.read(2).unwrap(), opened.read(2).unwrap());
+    assert!(reads() > before);
+    drop((copy, opened));
+    std::fs::remove_file(&path).unwrap();
+}

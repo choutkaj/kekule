@@ -76,7 +76,7 @@ pub(crate) use sdf_sample_set::sdf_sample_set;
 pub(crate) use sdf_write::{write_sdf, write_sdf_to};
 pub use sdf_write::{
     SdfRecordSource, SdfWriteOptions, SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD,
-    SDF_ENERGY_FIELD, SDF_REPRESENTATIVE_FIELD, SDF_STATE_FIELD, SDF_STEP_FIELD,
+    SDF_ENERGY_FIELD, SDF_MEMBER_FIELD, SDF_REPRESENTATIVE_FIELD, SDF_STATE_FIELD, SDF_STEP_FIELD,
     SDF_TEMPERATURE_FIELD, SDF_WEIGHT_FIELD,
 };
 pub(crate) use smiles::{

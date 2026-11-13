@@ -418,7 +418,8 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
         &[interpretations[1].clone()],
         sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
-    .expect("single-component rich record writes");
+    .expect("single-component rich record writes")
+    .0;
     let round_trip_document =
         sdf::parse_str(&written, Default::default()).expect("written record parses");
     let round_trip = round_trip_document.records()[0]

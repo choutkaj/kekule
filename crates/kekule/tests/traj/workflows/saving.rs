@@ -835,3 +835,138 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
         ))
     );
 }
+
+#[test]
+fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
+    use kekule::geometry::{PeriodicCell, Point3, Vector3};
+    use kekule::structure::{Sample, StructureError};
+    use kekule::topology::TopologyBuilder;
+    use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+
+    // Ten thousand waters: 30,000 atoms and 20,000 bonds.
+    let waters = 10_000;
+    let mut builder = TopologyBuilder::new();
+    let water = builder
+        .add_molecule_definition(kekule::smiles::to_molecules("[H]O[H]").unwrap().remove(0))
+        .unwrap();
+    for _ in 0..waters {
+        builder.add_instance(water).unwrap();
+    }
+    let topology = Arc::new(builder.build().unwrap());
+    assert_eq!(topology.bond_count(), 2 * waters);
+    let points = (0..topology.atom_count())
+        .map(|atom| {
+            let atom = atom as f64;
+            Point3::new(atom * 0.001, (atom * 0.37) % 3.0, (atom * 0.11) % 3.0)
+        })
+        .collect::<Vec<_>>();
+    let positions = Positions::new(Quantity::new(points, NANOMETER)).unwrap();
+    // A solvated system in a box, as XTC stores it.
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(30.0, 3.0, 3.0), NANOMETER),
+        [true; 3],
+    )
+    .unwrap();
+    let mut sample = Sample::new(positions.clone()).with_cell(cell);
+    assert_eq!(
+        FrameView::new(&topology, &sample, None, Some(5)).unwrap_err(),
+        StructureError::BondCountMismatch {
+            expected: 2 * waters,
+            actual: 0,
+        }
+    );
+    let stored = sample.positions().values().value().as_ptr();
+    sample.bind(&topology).unwrap();
+    // Binding gives the sample bond rows without copying its positions.
+    assert_eq!(sample.positions().values().value().as_ptr(), stored);
+
+    let time = Quantity::new(10.0, PICOSECOND);
+    let directory = Directory::new();
+    let path = directory.file("water.xtc");
+    let mut writer = create_trajectory_writer(
+        &path,
+        Arc::clone(&topology),
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc),
+    )
+    .unwrap();
+    writer
+        .write_frame(FrameView::new(&topology, &sample, Some(time), Some(5)).unwrap())
+        .unwrap();
+    writer.finish().unwrap();
+    let read = read_sample_set(
+        &path,
+        Arc::clone(&topology),
+        TrajectoryOpenOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(read.len(), 1);
+    let frame = read.get(0).unwrap();
+    assert_eq!(frame.atom_count(), topology.atom_count());
+    for (read, written) in frame
+        .positions()
+        .values()
+        .value()
+        .iter()
+        .zip(positions.values().value().iter())
+    {
+        assert!((*read - *written).norm() < 1.0e-3);
+    }
+}
+
+#[test]
+fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
+    use kekule::structure::{Sample, StructureError};
+    use kekule::units::{Quantity, NANOMETER};
+
+    let ethanol = kekule::smiles::to_topology("CCO").unwrap();
+    let water = kekule::smiles::to_topology("O").unwrap();
+    let points = (0..ethanol.atom_count())
+        .map(|atom| kekule::geometry::Point3::new(atom as f64, 0.5, -0.25))
+        .collect::<Vec<_>>();
+    let mut sample = Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
+    let before = sample.clone();
+    let stored = sample.positions().values().value().as_ptr();
+
+    // Another atom count fails and leaves the sample as it was.
+    assert!(matches!(
+        sample.bind(&water).unwrap_err(),
+        StructureError::Array(_)
+    ));
+    assert_eq!(sample, before);
+    assert!(sample.shares_structure_with(&before));
+    assert_eq!(sample.positions().values().value().as_ptr(), stored);
+
+    // Bound, the sample refuses the bond rows of another topology with as
+    // many atoms and keeps its own.
+    sample.bind(&ethanol).unwrap();
+    let bound = sample.clone();
+    let dimethyl_ether = kekule::smiles::to_topology("COC").unwrap();
+    let ring = kekule::smiles::to_topology("C1CO1").unwrap();
+    assert_eq!(ring.atom_count(), ethanol.atom_count());
+    assert!(matches!(
+        sample.bind(&ring).unwrap_err(),
+        StructureError::BondCountMismatch { .. }
+    ));
+    assert_eq!(sample, bound);
+    assert!(sample.shares_structure_with(&bound));
+    // A topology with the same bond count binds as the sample already is.
+    sample.bind(&dimethyl_ether).unwrap();
+    assert!(sample.shares_structure_with(&bound));
+
+    // Binding a sample that shares its storage copies it once and leaves the
+    // other sample unbound and unchanged.
+    let mut copy = before.clone();
+    assert!(copy.shares_structure_with(&before));
+    copy.bind(&ethanol).unwrap();
+    assert!(!copy.shares_structure_with(&before));
+    assert_eq!(copy.positions(), before.positions());
+    assert_eq!(
+        FrameView::new(&ethanol, &before, None, None).unwrap_err(),
+        StructureError::BondCountMismatch {
+            expected: ethanol.bond_count(),
+            actual: 0,
+        }
+    );
+    assert!(FrameView::new(&ethanol, &copy, None, None).is_ok());
+    assert_eq!(before.positions().values().value().as_ptr(), stored);
+}

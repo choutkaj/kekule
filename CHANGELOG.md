@@ -11,6 +11,23 @@ are marked **Breaking:**.
 
 ### Added
 
+- Sample set follow-ups (SeekDelta K75). `Sample::bind(&topology)` gives
+  a sample held apart from a set the bond rows of a topology, so
+  `FrameView::new` lends it as a frame; it copies no positions of a sample
+  only it holds. `Distribution::states` views the states, and
+  `Distribution::extended_to(len)` re-expresses a distribution over the
+  first samples of a longer set, as `refresh` of a growing file does
+  (`Members::All` becomes a subset of the samples it covered).
+  `SampleSetDescription::extended_to(sample_count, order)` does the same
+  to a saved description and takes the longer set's order, checked
+  against `sample_count`. `FrameIndex::prefix_fingerprint(path, frames)` fingerprints
+  a file's first frames through the frame index, as `fingerprint` samples
+  a whole file, so a host learns whether the frames it used are unchanged
+  after the file grew or its tail was rewritten. A `SampleSet<IndexedFile>`
+  is `Clone`: a clone reads nothing, shares the open file, reader and frame
+  index, and refreshes on its own. `Processed::skipped_periodic_steps(&sample)`
+  says whether making whole or wrapping skipped a sample because it has no
+  cell.
 - `SampleSet::clear_velocities_and_forces` removes every sample's
   velocities and forces; a sample without them stays shared (SeekDelta
   K74).
@@ -22,10 +39,7 @@ are marked **Breaking:**.
   `SampleSet<IndexedFile>` from a reader the host opened, so a host that
   opens the reader itself, for the scan's progress or a file still being
   written, does not open and scan the file twice.
-  `SampleSet<IndexedFile>::snapshot` makes a set of the samples indexed so
-  far that reads the same open file and shares the frame index, keeping
-  the set properties, order, and distribution; the set goes on refreshing
-  without changing it. `Processed` keeps the sample 0 its construction
+  `Processed` keeps the sample 0 its construction
   processes and lends it through `peek`, and `read(0)` returns it, so a
   cache in front of the reader does not process it again. The
   `clustering_fits` benchmark times the pairwise fitted RMSD matrix,
@@ -918,6 +932,59 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** the Molfile and SDF writers return a `WriteReport`, as the
+  PDB and mmCIF writers do (SeekDelta K75). `molfile::write` and
+  `sdf::write` return `(String, WriteReport)`, and `molfile::write_to` and
+  `sdf::write_to` return `WriteReport`; the report names the cells and the
+  sample state that `UnrepresentablePolicy::Omit` left out, with the number
+  of records. Migration: take `.0` of `write`, or bind `(text, report)`.
+- **Breaking:** SDF writes a distribution over some samples so it reads
+  back (SeekDelta K75). A sample outside the distribution writes a record
+  marked `kekule.member` with `false` (`sdf::MEMBER_FIELD`), and
+  `sdf::sample_set` takes only a marked record as outside the distribution.
+  A record without the fields the other records carry stays an error ("The
+  data field "kekule.state" is missing. Other records have it."). An
+  output of records all outside the distribution reads back as a set whose
+  distribution has no members. A marked record that carries another
+  distribution field fails ("... is on a record outside the
+  distribution."), as does a marker other than `false`. A sample of a set
+  with a distribution reserves the distribution's field names, the marker
+  included. Migration: none for members; files written earlier without
+  markers read as before when every record is a member.
+- **Breaking:** SDF writes `kekule.weight` only when the distribution has
+  weights (SeekDelta K75), so an unweighted distribution reads back
+  unweighted, over every sample or some. Outputs of unweighted
+  distributions change: they lose the `kekule.weight` field of 1.
+- **Breaking:** every structure writer refuses or reports the state it
+  cannot store (SeekDelta K75). `PdbWriteOptions`, `MmcifWriteOptions`,
+  `MolfileWriteOptions`, and `SdfWriteOptions` gain `properties` with
+  `with_properties`: a structure's per-atom, per-bond, and own properties
+  and its sample set's properties fail by default ("The structure
+  properties of the model have no PDB representation.", "The sample set
+  properties have no SDF representation.") and are reported as
+  `WriteOmission::StructureState` under `UnrepresentablePolicy::Omit`.
+  PDB and mmCIF dropped them silently before. Molfile and SDF also refuse
+  occupancies and B factors ("The occupancies of the model have no SDF
+  representation."), reported as `WriteOmission::Occupancies` and
+  `WriteOmission::BFactors`, and state properties on the representative's
+  record, all under `sample_metadata`. `StructureField` gains
+  `SetProperties`, `Occupancies`, and `BFactors`; `SampleRead` gains a
+  provided `properties`, the set's properties, so writers see them through
+  any reader. Migration: a host that wrote such structures on purpose sets
+  `properties`, or `sample_metadata` for Molfile and SDF sites, to `Omit`.
+- **Breaking:** SDF reading names the reference record in a disagreement
+  (SeekDelta K75): "The data field "kekule.temperature.K" differs from
+  that of record 2." and "The data field "kekule.coordinate.unit"
+  differs from that of record 1." replace "differs from that of the first
+  record.".
+- **Breaking:** `SampleSet<IndexedFile>::snapshot` is removed; the set is
+  `Clone` (SeekDelta K75). Migration: `set.snapshot()?` becomes
+  `set.clone()`, which reads nothing and cannot fail.
+- **Breaking:** atom field texts agree with their subjects (SeekDelta K75).
+  mmCIF reads "The radical electrons of atom 0 of instance 0 have no mmCIF
+  representation." and "The implicit hydrogens of atom 0 of instance 0
+  have no mmCIF representation.", and PDB "The radical electrons of atom 0
+  of instance 0 have no PDB representation."; singular fields keep "has".
 - **Breaking:** one container for many structures (SeekDelta K74).
   `SampleSet` replaces `Ensemble` and `Trajectory`, which are removed with
   everything that existed only for them (see Removed).

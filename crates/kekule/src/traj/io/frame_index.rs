@@ -1107,6 +1107,93 @@ impl TrajectoryFrameIndex {
         &self.fingerprint
     }
 
+    /// The fingerprint of the bytes the first `frames` frames of this index
+    /// cover in the file at `path`: the file from its start to the end of
+    /// frame `frames - 1`, or to the start of frame 0 for none. The frames
+    /// are not decoded; the bytes are hashed as [`TrajectoryFileFingerprint`]
+    /// hashes a file, as if the file ended there, with the file's
+    /// modification time.
+    ///
+    /// The content of the first `frames` frames is one fingerprint whatever
+    /// follows them, so it is equal ([`TrajectoryFileFingerprint::same_content`])
+    /// for a file that grew by appending, for the index of a file holding
+    /// those frames alone ([`Self::fingerprint`]), and for a file whose
+    /// later frames a restarted run rewrote. A host that keeps the
+    /// fingerprint of the frames it has used checks that a file still
+    /// begins with them with [`TrajectoryFileFingerprint::is_prefix_of_path`],
+    /// or compares it with this fingerprint of a new index of the file.
+    ///
+    /// It detects what the fingerprint of a file detects: other bytes, more
+    /// or fewer of them, and so any change to a prefix of up to 256 KiB.
+    /// The hash of a longer prefix samples its content, its first and last
+    /// 64 KiB and sixteen 4 KiB blocks between, so a change to bytes
+    /// between the blocks of the same size goes unnoticed, as for a whole
+    /// file; reading a frame still verifies it. The frame-count fields of a
+    /// DCD header are not part of the content.
+    ///
+    /// ```no_run
+    /// use kekule::traj::io::open_indexed_trajectory;
+    ///
+    /// let topology = kekule::smiles::to_topology("CC")?;
+    /// let reader = open_indexed_trajectory("run.xtc", topology.clone(), Default::default())?;
+    /// let used = reader.to_frame_index().prefix_fingerprint("run.xtc", 100)?;
+    ///
+    /// // Later, after a restarted run rewrote the frames after frame 120:
+    /// assert!(used.is_prefix_of_path("run.xtc")?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`TrajectoryIoErrorKind::FrameIndexOutOfRange`] for more frames than
+    /// the index holds, [`TrajectoryIoErrorKind::IndexMismatch`] for a file
+    /// shorter than the frames, and [`TrajectoryIoErrorKind::Io`] when the
+    /// file cannot be opened or read.
+    pub fn prefix_fingerprint(
+        &self,
+        path: impl AsRef<Path>,
+        frames: usize,
+    ) -> Result<TrajectoryFileFingerprint, TrajectoryIoError> {
+        let end = match frames.checked_sub(1) {
+            None => self
+                .offsets
+                .starts()
+                .first()
+                .copied()
+                .unwrap_or(self.offsets.end()),
+            Some(last) => {
+                let (_, end) = self
+                    .offsets
+                    .frame(last)
+                    .ok_or_else(|| TrajectoryIoError::frame_index_out_of_range(last))?;
+                end
+            }
+        };
+        let path = path.as_ref();
+        let label = path.display().to_string();
+        let io = |error| {
+            io_context(
+                TrajectoryIoOperation::Open,
+                Some(self.format),
+                &label,
+                error,
+            )
+        };
+        let mut file = File::open(path).map_err(io)?;
+        let length = file.metadata().map_err(io)?.len();
+        if length < end {
+            return Err(index_mismatch(
+                TrajectoryIoOperation::Open,
+                self.format,
+                &label,
+                format!(
+                    "The file is {length} bytes, and its first {frames} frames end at byte {end}."
+                ),
+            ));
+        }
+        TrajectoryFileFingerprint::of_labelled_file_prefix(&mut file, end, &label)
+    }
+
     /// Encodes the index in the versioned layout described on the type.
     pub fn to_bytes(&self) -> Vec<u8> {
         let times = self.offsets.times();

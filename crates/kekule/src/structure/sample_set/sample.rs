@@ -174,7 +174,10 @@ impl SampleStructure {
 ///
 /// A sample has no place and no weight: an order's values and a
 /// distribution's weights belong to the set, so a sample taken out of its set
-/// claims neither. The sample carries no topology; it is bound when inserted.
+/// claims neither. The sample carries no topology. It is *bound* to one when
+/// it has a property row per atom and bond of that topology: a set binds the
+/// samples it takes, and [`Self::bind`] binds a sample outside a set, as a
+/// [`FrameView`](crate::traj::FrameView) of it needs.
 ///
 /// The structure is shared storage: cloning a sample, and therefore a set,
 /// copies no coordinates. Editing a sample whose storage is shared copies
@@ -200,6 +203,11 @@ pub struct Sample {
 impl Sample {
     /// A non-periodic sample without properties, occupancies, B-factors,
     /// velocities, or forces.
+    ///
+    /// The sample is bound to no topology: it has no bond rows. A set binds
+    /// it when it takes it; bind it with [`Self::bind`] to use it outside a
+    /// set, such as in a [`FrameView`](crate::traj::FrameView) of a topology
+    /// with bonds.
     pub fn new(positions: Positions) -> Self {
         Self::from_structure(Arc::new(SampleStructure::new(positions)))
     }
@@ -229,9 +237,31 @@ impl Sample {
         Arc::make_mut(&mut self.structure)
     }
 
-    /// Binds the sample to `topology`, allocating its bond property rows
-    /// unless it is bound already.
-    pub(crate) fn bind(&mut self, topology: &Topology) -> Result<(), StructureError> {
+    /// Binds the sample to `topology`, as a set binds the samples it takes:
+    /// checks that it has a position per atom, and gives it a property row
+    /// per bond unless it has them already. Binding never copies
+    /// positions of a sample whose storage only it holds, and a bound
+    /// sample stays as it is, sharing its storage.
+    ///
+    /// ```
+    /// use kekule::structure::{Positions, Sample};
+    /// use kekule::traj::FrameView;
+    ///
+    /// let topology = kekule::smiles::to_topology("CO")?;
+    /// let mut sample = Sample::new(Positions::zeros(topology.atom_count()));
+    /// assert!(FrameView::new(&topology, &sample, None, None).is_err());
+    /// sample.bind(&topology)?;
+    /// let frame = FrameView::new(&topology, &sample, None, Some(0))?;
+    /// assert_eq!(frame.step(), Some(0));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`StructureError::Array`] for another atom count, and
+    /// [`StructureError::BondCountMismatch`] for bond rows of another
+    /// topology. A failed binding changes nothing.
+    pub fn bind(&mut self, topology: &Topology) -> Result<(), StructureError> {
         SampleStructure::bind(&mut self.structure, topology)
     }
 

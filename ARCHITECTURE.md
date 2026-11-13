@@ -439,7 +439,10 @@ represents the state, the state's energy, and the temperature), and its
 velocities and forces. A frame of a codec or buffer reports its time and
 step as its place, so writers and reductions never lose that state silently.
 Structure writers hold a sample to one policy, `sample_metadata`, for all of
-that state, whether it belongs to a set or a frame. Owned
+that state, whether it belongs to a set or a frame. Per-atom, per-bond, and
+own properties of a structure, and the properties of its sample set, follow a
+second policy, `properties`. Molfile and SDF, which store no occupancies or B
+factors, put them under `sample_metadata`. Each of these fails by default. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
 topology. Collections built from models (`from_models`) consume them and require
 equal layouts (`same_layout`), keeping the first model's topology, and a
@@ -573,13 +576,18 @@ otherwise; the pool's readers are kept and read by the new index. It opens
 the path again, so a replacement that begins with the indexed bytes is
 taken and every reader moves to it. A truncated or rewritten file fails
 `refresh`, and the host opens it again. A host that must know of changes
-between refreshes compares the fingerprint. A host keeping the frame index,
-or a live snapshot, makes each growing refresh copy the offsets. A distribution over every
-sample becomes one over the samples it covered, so appended frames are not
-members. `snapshot` makes a set of the samples indexed so far that forks
-the set's reader: it reads the same file object and shares the index, so a
-host hands it to an analysis while the set goes on refreshing. Refreshing
-either one changes only that one. A failed
+between refreshes compares the fingerprint, or `FrameIndex::prefix_fingerprint`
+of the frames it used, which samples the indexed bytes of those frames alone.
+A host keeping the frame index, or a live clone, makes each growing refresh
+copy the offsets. A distribution over every sample becomes one over the
+samples it covered, so appended frames are not members;
+`Distribution::extended_to` is the same operation, and
+`SampleSetDescription::extended_to` applies it to a saved description,
+which takes the longer set's order. A
+clone of the set reads nothing: it shares the set's reader, file object and
+index, starts with an empty pool, and forks its own reader at its first
+refresh, so a host hands it to an analysis while the set goes on refreshing.
+Refreshing either one changes only that one. A failed
 read names the sample (`SampleReadError::Trajectory`). `load` reads every
 sample, or listed ones, into a set in memory that keeps their order values
 and restricts the distribution, as `select` does.
@@ -591,7 +599,8 @@ onto an atom subset, in that order. Each step is optional. Wrapping images
 the molecules around the anchors and moves the anchors' centroid to the
 cell center, so every molecule's center lies within the cell; centering on
 the anchors then keeps them there. Samples without a cell skip making
-whole and wrapping, where the in-memory functions fail with `MissingCell`.
+whole and wrapping, where the in-memory functions fail with `MissingCell`;
+`Processed::skipped_periodic_steps` tells a host which samples did.
 Centering moves the centroid to half the sum of all three cell vectors, or
 without a cell to where it lies in sample 0, so a reader mixing samples
 with and without cells centers them on different targets. Construction
@@ -955,9 +964,9 @@ view's `kind()`: sample or frame state the format cannot carry fails unless
 the caller sets `UnrepresentablePolicy::Omit` for it, and a format that can
 carry it writes it whichever path supplied the view. Each kind of
 unrepresentable content has its own policy, so omitting one never omits
-another. The PDB and mmCIF writers return a `WriteReport` with the text, or
-from `write_to`, that names every omission and the number of entities it
-affects. There is no universal save trait or implicit trajectory-to-structure
+another. The PDB, mmCIF, Molfile, and SDF writers return a `WriteReport`
+with the text, or from `write_to`, that names every omission and the number
+of entities it affects. There is no universal save trait or implicit trajectory-to-structure
 export.
 
 - SMILES exports represented chemistry and supported stereo. Canonical output
@@ -971,16 +980,21 @@ export.
   Molfile or SDF record cannot carry a periodic cell, so writing a model with
   one fails unless the caller chooses to omit it.
 - SDF represents independent records. A sample writes its membership in the
-  distribution (weight, state, and, on the representative's record, its
-  state's energy and the distribution's temperature) and its place in a step
-  or coordinate order as data fields; state and set properties are not
-  written. Only the explicit `sdf::sample_set` assembles records into a
+  distribution (its weight when the distribution has weights, its state, and,
+  on the representative's record, its state's energy and the distribution's
+  temperature) and its place in a step or coordinate order as data fields. A
+  sample outside the distribution is marked with `kekule.member` `false`
+  instead. State and set properties, structure properties, occupancies, and B
+  factors fail unless omitted. Only the explicit `sdf::sample_set` assembles records into a
   sample set, whose order the steps or coordinates give. It has a
   distribution only when a record has a distribution field, one state per
   record unless the records name their states, and weights only when a
   record has a weight. A coordinate unit travels as the symbol of a unit
   constant, which both the writer and the reader take from one table of
-  `units`. A sample outside the distribution has no SDF field. A Molfile, an
+  `units`. `sdf::sample_set` takes only a marked record as outside the
+  distribution, so a distribution over some samples, or over none,
+  round-trips, and a record that lacks the fields the others carry is an
+  error. A Molfile, an
   mmCIF block, and a PDB entry cannot carry a place, and PDB writes a step or
   coordinate order as one `MODEL` per sample once places are omitted. A
   Molfile, an SDF record, and an mmCIF block cannot carry a frame's time,

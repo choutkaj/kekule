@@ -9,8 +9,8 @@ use crate::io::structure_interpret::{
     StructureSampleSetInterpretation,
 };
 use crate::io::write_error::{
-    check_structure_state, record_multi_model_sample_set, unrepresentable_state, Omissions,
-    StatePolicies,
+    check_structure_state, record_multi_model_sample_set, record_sample_set_properties,
+    unrepresentable_state, Omissions, StatePolicies,
 };
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::molecule::BondOrder;
@@ -36,13 +36,14 @@ const MAX_COORDINATE_PRECISION: usize = 15;
 /// Options of the mmCIF writer.
 ///
 /// The default writes a block named `model` with coordinates to 3 decimal
-/// places and fails on sample state, a periodic cell, or fixed
+/// places and fails on sample state, properties, a periodic cell, or fixed
 /// implicit-hydrogen counts mmCIF cannot carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifWriteOptions {
     block_name: String,
     coordinate_precision: usize,
     sample_metadata: UnrepresentablePolicy,
+    properties: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
 }
@@ -118,9 +119,25 @@ impl MmcifWriteOptions {
         self
     }
 
-    /// The policies for the sample state of a model block.
+    /// A structure's per-atom, per-bond, and own properties and the
+    /// properties of a sample set or of a sample's set, which mmCIF cannot
+    /// carry: by default a structure or set with any fails to write, and
+    /// under [`UnrepresentablePolicy::Omit`] the report names each
+    /// ([`WriteOmission::StructureState`]).
+    pub const fn properties(&self) -> UnrepresentablePolicy {
+        self.properties
+    }
+
+    /// Sets [`Self::properties`].
+    #[must_use]
+    pub fn with_properties(mut self, properties: UnrepresentablePolicy) -> Self {
+        self.properties = properties;
+        self
+    }
+
+    /// The policies for the state of a model block.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::positions_only(self.sample_metadata)
+        StatePolicies::with_sites(self.sample_metadata, self.properties)
     }
 
     /// A periodic cell mmCIF cannot carry: one not periodic along all three
@@ -162,6 +179,7 @@ impl Default for MmcifWriteOptions {
             block_name: "model".to_owned(),
             coordinate_precision: 3,
             sample_metadata: UnrepresentablePolicy::Fail,
+            properties: UnrepresentablePolicy::Fail,
             cell: UnrepresentablePolicy::Fail,
             implicit_hydrogens: UnrepresentablePolicy::Fail,
         }
@@ -342,6 +360,17 @@ pub enum MmcifAtomField {
     SourceAsymId,
     /// `_atom_site.type_symbol`.
     TypeSymbol,
+}
+
+impl MmcifAtomField {
+    /// The verb for the field as the subject: "have" for a plural field,
+    /// "has" otherwise.
+    const fn verb(self) -> &'static str {
+        match self {
+            Self::Radical | Self::Hydrogens => "have",
+            _ => "has",
+        }
+    }
 }
 
 impl fmt::Display for MmcifAtomField {
@@ -554,7 +583,8 @@ impl fmt::Display for MmcifWriteIssue {
             ),
             Self::UnsupportedAtomField { atom, field } => write!(
                 f,
-                "The {field} of {atom} has no mmCIF representation."
+                "The {field} of {atom} {} no mmCIF representation.",
+                field.verb()
             ),
             Self::FormalChargeOutOfRange { atom, charge } => write!(
                 f,
@@ -956,11 +986,13 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
                     .map(|sample| sample.as_model_view())
                     .collect::<Vec<_>>();
                 let record_state = |state: &mut Omissions| {
-                    record_multi_model_sample_set(set, options.sample_metadata, state).map_err(
-                        |(sample, field)| {
-                            fail(MmcifWriteIssue::UnrepresentableSample { sample, field })
-                        },
-                    )
+                    let unrepresentable = |(sample, field)| {
+                        fail(MmcifWriteIssue::UnrepresentableSample { sample, field })
+                    };
+                    record_multi_model_sample_set(set, options.sample_metadata, state)
+                        .map_err(unrepresentable)?;
+                    record_sample_set_properties(set, options.properties, state)
+                        .map_err(unrepresentable)
                 };
                 write_multi_model_block_to(
                     writer,
@@ -984,7 +1016,7 @@ fn write_model_block_to(
     options: &MmcifWriteOptions,
     omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
-    check_structure_state(Format::Mmcif, view.kind(), options.state_policies())?;
+    check_structure_state(Format::Mmcif, view, options.state_policies())?;
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {
@@ -1018,7 +1050,7 @@ fn write_model_block_to(
     )?;
     render_model_to(writer, &prepared, cell, options)?;
     // Nothing is reported for a block that did not reach the sink.
-    omissions.record_structure_state(view.kind(), options.state_policies());
+    omissions.record_structure_state(view, options.state_policies());
     if cell.is_none() && view.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }

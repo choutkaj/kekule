@@ -32,8 +32,8 @@ use crate::io::structure_interpret::{
     StructureSampleSetInterpretation,
 };
 use crate::io::write_error::{
-    check_structure_state, record_multi_model_sample_set, unrepresentable_state, Omissions,
-    StatePolicies,
+    check_structure_state, record_multi_model_sample_set, record_sample_set_properties,
+    unrepresentable_state, Omissions, StatePolicies,
 };
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
@@ -81,6 +81,7 @@ pub enum PdbChainIdPolicy {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PdbWriteOptions {
     sample_metadata: UnrepresentablePolicy,
+    properties: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
     chemistry: UnrepresentablePolicy,
@@ -111,9 +112,25 @@ impl PdbWriteOptions {
         self
     }
 
-    /// The policies for the sample state of one structure.
+    /// A structure's per-atom, per-bond, and own properties and the
+    /// properties of a sample set or of a sample's set, which PDB cannot
+    /// carry: by default a structure or set with any fails to write, and
+    /// under [`UnrepresentablePolicy::Omit`] the report names each
+    /// ([`WriteOmission::StructureState`]).
+    pub const fn properties(&self) -> UnrepresentablePolicy {
+        self.properties
+    }
+
+    /// Sets [`Self::properties`].
+    #[must_use]
+    pub const fn with_properties(mut self, properties: UnrepresentablePolicy) -> Self {
+        self.properties = properties;
+        self
+    }
+
+    /// The policies for the state of one structure.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::positions_only(self.sample_metadata)
+        StatePolicies::with_sites(self.sample_metadata, self.properties)
     }
 
     /// A periodic cell `CRYST1` cannot carry as the model's cell: one not
@@ -199,6 +216,17 @@ pub enum PdbAtomField {
     Hydrogens,
     /// An atom-map number.
     AtomMap,
+}
+
+impl PdbAtomField {
+    /// The verb for the field as the subject: "have" for a plural field,
+    /// "has" otherwise.
+    const fn verb(self) -> &'static str {
+        match self {
+            Self::Radical => "have",
+            _ => "has",
+        }
+    }
 }
 
 impl fmt::Display for PdbAtomField {
@@ -471,9 +499,11 @@ impl fmt::Display for PdbWriteIssue {
                 "{} has formal charge {charge}, outside PDB's range of -9 to 9.",
                 Capitalized(atom)
             ),
-            Self::UnsupportedAtomField { atom, field } => {
-                write!(f, "The {field} of {atom} has no PDB representation.")
-            }
+            Self::UnsupportedAtomField { atom, field } => write!(
+                f,
+                "The {field} of {atom} {} no PDB representation.",
+                field.verb()
+            ),
             Self::UnsupportedStereo(molecule) => write!(
                 f,
                 "The stereochemistry of {molecule} has no PDB representation."
@@ -549,8 +579,8 @@ impl<'a> PdbSource<'a> {
     }
 
     /// A sample set, one `MODEL` per sample in sample order. The state PDB
-    /// cannot carry follows [`PdbWriteOptions::sample_metadata`]; set and
-    /// sample properties are not written, as no structure's are.
+    /// cannot carry follows [`PdbWriteOptions::sample_metadata`], and the
+    /// set's and samples' properties [`PdbWriteOptions::properties`].
     pub fn sample_set(set: &'a SampleSet) -> Self {
         Self {
             content: Content::SampleSet(set),
@@ -646,17 +676,20 @@ pub(crate) fn write_pdb_to<'a>(
     let source = source.into();
     let (views, models) = match source.content {
         Content::Structure(view) => {
-            check_structure_state(Format::Pdb, view.kind(), options.state_policies())?;
-            omissions.record_structure_state(view.kind(), options.state_policies());
+            check_structure_state(Format::Pdb, view, options.state_policies())?;
+            omissions.record_structure_state(view, options.state_policies());
             (vec![view], false)
         }
         Content::SampleSet(set) => {
             if set.is_empty() {
                 return Err(fail(PdbWriteIssue::EmptySampleSet));
             }
-            record_multi_model_sample_set(set, options.sample_metadata, &mut omissions).map_err(
-                |(sample, field)| fail(PdbWriteIssue::UnrepresentableSample { sample, field }),
-            )?;
+            let unrepresentable =
+                |(sample, field)| fail(PdbWriteIssue::UnrepresentableSample { sample, field });
+            record_multi_model_sample_set(set, options.sample_metadata, &mut omissions)
+                .map_err(unrepresentable)?;
+            record_sample_set_properties(set, options.properties, &mut omissions)
+                .map_err(unrepresentable)?;
             let views = set.iter().map(|sample| sample.as_model_view()).collect();
             (views, true)
         }

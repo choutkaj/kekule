@@ -12,7 +12,7 @@ fuzz_target!(|data: &[u8]| {
         .filter_map(|record| record.interpret(Default::default()).ok())
         .collect::<Vec<_>>();
     let options = SdfWriteOptions::default().with_version(MolfileWriteVersion::V2000);
-    if let Ok(output) = write(&interpreted, options) {
+    if let Ok((output, _)) = write(&interpreted, options) {
         if let Ok(document) = parse_str(&output, Default::default()) {
             for record in document.records() {
                 let _ = record.interpret(Default::default());

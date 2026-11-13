@@ -315,24 +315,13 @@ impl<S: SampleStorage> SampleSet<S> {
             .as_ref()
             .is_none_or(|order| order.validate(self.len()).is_ok()));
         self.order = order;
-        if self.len() > previous {
+        let len = self.len();
+        if len > previous {
             if let Some(distribution) = &mut self.distribution {
-                distribution.push_non_member(previous);
+                distribution
+                    .extend(len)
+                    .expect("the distribution describes the samples before the new ones");
             }
-        }
-    }
-
-    /// The same set over `storage`, which holds the same samples: the
-    /// topology, the set properties, the order, and the distribution are
-    /// kept.
-    pub(crate) fn with_storage<T: SampleStorage>(&self, storage: T) -> SampleSet<T> {
-        debug_assert_eq!(storage.sample_count(), self.len());
-        SampleSet {
-            topology: self.shared_topology(),
-            properties: self.properties.clone(),
-            storage,
-            order: self.order.clone(),
-            distribution: self.distribution.clone(),
         }
     }
 }
@@ -583,7 +572,9 @@ impl SampleSet {
         self.bind(&mut sample)?;
         self.append(sample, stored);
         if let Some(distribution) = &mut self.distribution {
-            distribution.push_non_member(index);
+            distribution
+                .extend(index + 1)
+                .expect("the distribution describes the samples before the new one");
         }
         Ok(index)
     }
@@ -947,6 +938,10 @@ impl SampleRead for SampleSet {
 
     fn distribution(&self) -> Option<&Distribution> {
         self.distribution.as_ref()
+    }
+
+    fn properties(&self) -> Option<&OwnerProperties> {
+        Some(&self.properties)
     }
 
     fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
